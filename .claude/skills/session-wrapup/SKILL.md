@@ -16,6 +16,9 @@ Checkliste selbst beschreibt die Schritte; hier steht nur die Claude-Code-Mechan
    tatsächlichen Belege und übernimmt ihn (gekürzt/korrigiert) in `docs/ai/`.
 2. Ab hier wörtlich die Schritte 1–8 aus `docs/ai/checklists.md` § „Sitzungsabschluss" abarbeiten.
 3. Attribution/Commit-Format wie in der aktuellen Session vorgegeben verwenden.
+4. Bei eingeschaltetem Logging (`AGENTS.md` § Logging): nach dem Commit
+   `python .claude/scripts/ai-log.py INFO orchestrator commit "<hash> <message>"`, als letzte Aktion
+   `… INFO orchestrator session "ende · <Kurzbilanz>"` (`CLAUDE.md` § 7).
 
 ## Regeln
 - Läuft **immer** im Hauptkontext, nie in einem Sub-Agenten — nur der Orchestrator schreibt in `docs/ai/`

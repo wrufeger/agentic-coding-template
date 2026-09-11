@@ -27,6 +27,16 @@ Worker im Sinne von `AGENTS.md`. Du pflegst Projekt-Doku, nicht Zusammenarbeits-
 - Große Dateien nur ausschnittsweise lesen (`grep -n`, `sed -n`), nicht komplett.
 - Keine vollständigen Rohdumps in die Rückgabe übernehmen, nur die belegrelevanten Zeilen.
 
+## Logging
+Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende
+deines Laufs schreibt der Hook automatisch. Du meldest ≤ 5 Meilensteine unter deinem Namen, eine Zeile je
+Aufruf, keine Secrets. Hat dir {{ORCHESTRATOR}} im Auftrag einen Log-Namen genannt (z. B. `builder#2`),
+verwendest du genau diesen statt des nackten Typnamens. Beispiele:
+
+```text
+python .claude/scripts/ai-log.py INFO doc-writer docs "architecture.md + features.md nachgezogen, Datenstände aktualisiert"
+```
+
 ## Rückgabe an den Orchestrator
 ≤ 40 Zeilen, keine Rohdumps, Tabellen ≤ 15 Zeilen.
 1. Was geändert wurde, je Datei ein bis zwei Zeilen.

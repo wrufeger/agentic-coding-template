@@ -18,6 +18,16 @@ Worker im Sinne von `AGENTS.md`, ausschließlich lesend. Du änderst nichts, du 
 - Kontext aus `docs/project/architecture.md` und `docs/project/coding_rules.md` nutzen, um Muster einzuordnen,
   statt sie neu zu erraten.
 
+## Logging
+Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende
+deines Laufs schreibt der Hook automatisch. Du meldest ≤ 5 Meilensteine unter deinem Namen, eine Zeile je
+Aufruf, keine Secrets. Hat dir {{ORCHESTRATOR}} im Auftrag einen Log-Namen genannt (z. B. `builder#2`),
+verwendest du genau diesen statt des nackten Typnamens. Beispiele:
+
+```text
+python .claude/scripts/ai-log.py INFO explorer result "3 Fundstellen: src/auth/*.ts, Formkomponente in src/ui/Form.vue"
+```
+
 ## Bericht
 Kurz und strukturiert: Antwort auf die Frage zuerst, dann die belegten Fundstellen, dann Nebenfunde (Bugs,
 Risiken, tote Stellen) getrennt davon. Keine Dateidumps, ≤ 40 Zeilen.

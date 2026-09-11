@@ -62,9 +62,10 @@ Neutrale Arbeitsanweisung in Spalte 1 (funktioniert mit jedem Assistenten), Clau
 
 | # | Schritt | Neutrale Anweisung | Claude Code | Was das Publikum sieht |
 | :-- | :--- | :--- | :--- | :--- |
+| 0 | Log-Fenster öffnen | `AI_LOG=ein` in `AGENTS.md`, zweites Terminal: `python .claude/scripts/ai-log.py --tail` | Hooks loggen automatisch | Live-Mitschnitt: Entscheidungen, Worker-Start/-Ende (`AGENTS.md` § Logging) |
 | 1 | Template übernehmen | „Checkliste Template anpassen ausführen." | `/adapt-template` | Platzhalter weg |
 | 2 | Aufgabe anlegen | Aufgabe in `docs/ai/tasks.md` eintragen | — | Eine neue Zeile in `tasks.md` |
-| 3 | Delegieren | „Checkliste Delegation ausführen, Aufgabe umsetzen." | `/delegate` | Sub-Agenten laufen parallel |
+| 3 | Delegieren | „Checkliste Delegation ausführen, Aufgabe umsetzen." | `/delegate` | Sub-Agenten laufen parallel — im Log-Fenster als `[start]`/`[end]`-Zeilen |
 | 4 | Prüfen | „Adversarialen Review der Änderung durchführen." | Sub-Agent `reviewer` | Kritischer Blick, Belege |
 | 5 | Doku nachziehen | „Checkliste Doku-Nachzug ausführen." | `/project-docs` | `docs/project/*` aktualisiert sich |
 | 6 | Abschließen | „Checkliste Sitzungsabschluss ausführen." | `/session-wrapup` | Neuer Ledger-Eintrag, Commit |
@@ -76,7 +77,8 @@ Neutrale Arbeitsanweisung in Spalte 1 (funktioniert mit jedem Assistenten), Clau
 AGENTS.md            # anbieterneutrale Grundregeln (zuerst lesen)
 CLAUDE.md             # Claude-Code-Ergänzung (Sub-Agenten, Skills, Modell-IDs)
 GEMINI.md  .aider.conf.yml  .cursor/rules/agents.mdc  .github/copilot-instructions.md   # Werkzeug-Verweise
-.claude/              # Claude Code: Sub-Agenten, Skills, Wartungs-Runner, Scripte, Settings
+.claude/              # Claude Code: Sub-Agenten, Skills, Wartungs-Runner, Scripte, Settings (inkl. Logging-Hooks)
+ai.log                # optionaler Live-Mitschnitt aller Agentenaktionen (gitignored, AGENTS.md § Logging)
 docs/
   README.md           # Index aller Doku-Dateien
   project/            # Projekt-Doku (IST-Zustand): Architektur, Coding-Regeln, Tests, Features, ADRs, ...

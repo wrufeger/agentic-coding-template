@@ -55,6 +55,16 @@ Fälligkeit ausführen.
 für `docs/ai/tasks.md`/`questions.md` (der Orchestrator trägt ein) · Belege (Befehl/Tool + Kernausgabe,
 Worker-Kurzfazit). `.claude/maintenance/status.json`: erledigte Aufgaben mit heutigem Datum aktualisieren.
 
+## Logging
+Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende
+deines Laufs schreibt der Hook automatisch. Du meldest ≤ 5 Meilensteine unter deinem Namen, eine Zeile je
+Aufruf, keine Secrets. Hat dir {{ORCHESTRATOR}} im Auftrag einen Log-Namen genannt (z. B. `builder#2`),
+verwendest du genau diesen statt des nackten Typnamens. Beispiele:
+
+```text
+python .claude/scripts/ai-log.py INFO maintenance result "kurz: 0 offene Änderungen · docs: 2 Datenstände veraltet · deps: 1 Major-Update"
+```
+
 ## Rückgabe an den Orchestrator
 ≤ 40 Zeilen, keine Rohdumps, Tabellen ≤ 15 Zeilen.
 1. Welche Wartungsaufgaben liefen, Ergebnis in 1 Zeile je Aufgabe.

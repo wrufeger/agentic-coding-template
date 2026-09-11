@@ -9,12 +9,150 @@
       "Bash(cat*)",
       "Bash(grep*)",
       "Bash(find*)",
-      "Bash(wc -l*)"
+      "Bash(wc -l*)",
+      "Bash(python .claude/scripts/ai-log.py*)",
+      "Bash(python3 .claude/scripts/ai-log.py*)"
     ],
     "deny": [
       "Bash(git push --force*)",
       "Bash(git reset --hard*)",
       "Bash(rm -rf*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "^(?!Agent$)",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }

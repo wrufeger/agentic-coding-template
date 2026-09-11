@@ -33,6 +33,9 @@ Läuft immer im Hauptkontext (Orchestrator), nie bei einem Worker.
    mitnehmen — sichten, dann entscheiden.
 8. **Abschlussmeldung an {{AUFTRAGGEBER}}:** Ergebnis zuerst, Belege (Hash, Zahlen), offene Punkte/Fragen mit
    Nummern.
+9. **Logging (falls eingeschaltet, `AGENTS.md` § Logging):** Commit als `[orchestrator] [commit] <hash> <message>`,
+   Abschluss als `[orchestrator] [session] ende · <Kurzbilanz>` schreiben — das Log ist Mitschnitt, kein
+   Ersatz für Ledger oder Beleg.
 
 ## Delegation
 
@@ -53,6 +56,9 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
   ist günstiger.
 - Nach jeder Welle: Lint + Typecheck laufen lassen, betroffene Funktionen real ausprobieren; „fertig" nur mit
   Beleg; Ledger nachziehen (Checkliste „Sitzungsabschluss").
+- Bei eingeschaltetem Logging (`AGENTS.md` § Logging): vor jeder Welle die Entscheidung als
+  `[orchestrator] [decision]` schreiben, jede Delegation als `[delegate]`, Start/Ende der Worker als
+  `[start]`/`[end]` — sofern das Werkzeug das nicht automatisch tut (Claude Code: Hooks, `CLAUDE.md` § 7).
 
 ## Doku-Nachzug
 

@@ -23,6 +23,17 @@ Kopf des Projekts ist {{AUFTRAGGEBER}}; dessen Codestil bleibt erhalten, solange
 - Nie schreiben in `docs/ai/` und nie `git commit`/`git add` — das macht ausschließlich {{ORCHESTRATOR}}.
 - Ignorieren: Build-/Abhängigkeitsordner (siehe `.gitignore`), generierte Artefakte.
 
+## Logging
+Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende
+deines Laufs schreibt der Hook automatisch. Du meldest ≤ 5 Meilensteine unter deinem Namen, eine Zeile je
+Aufruf, keine Secrets. Hat dir {{ORCHESTRATOR}} im Auftrag einen Log-Namen genannt (z. B. `builder#2`),
+verwendest du genau diesen statt des nackten Typnamens. Beispiele:
+
+```text
+python .claude/scripts/ai-log.py INFO builder test "lint ok · typecheck ok · 14 tests ok"
+python .claude/scripts/ai-log.py INFO builder result "2 Dateien geändert (src/auth/login.ts, tests/login.test.ts)"
+```
+
 ## Abschluss
 Vor dem Bericht die Pflichtläufe aus `docs/project/testing.md` ausführen (Lint, Typecheck, Tests) und Ergebnis
 nennen. Bericht ≤ 40 Zeilen: geänderte Dateien mit Zeilen, was warum, welche Annahmen (**Annahme**), was offen

@@ -3,7 +3,8 @@
 Gilt **zusätzlich zu `AGENTS.md`** (zuerst lesen — dort stehen die werkzeugunabhängigen Grundregeln: Rollen,
 `docs/ai/`, „Fertig nur mit Beleg", Commit per Pathspec, Safeguard-Verhalten, Doku-/Test-/Coding-Verweise,
 Modell-/Kostenlogik). Diese Datei ergänzt nur, was für Claude Code spezifisch ist: Sub-Agenten, Skills,
-`context: fork`, feste Modell-IDs, Token-Sparregeln, MCP-Hinweise, Memory. Platzhalter wie in `AGENTS.md`.
+`context: fork`, feste Modell-IDs, Token-Sparregeln, MCP-Hinweise, Memory, Logging-Hooks. Platzhalter wie in
+`AGENTS.md`.
 
 ## 1. Sub-Agenten-Routing (`.claude/agents/`)
 
@@ -91,15 +92,57 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 │   ├── skills/                  # delegate, project-docs, new-idea, adapt-template, docs-audit, maintenance,
 │   │                            # session-wrapup
 │   ├── maintenance/              # Runner + Status für wiederkehrende Wartung, Logs gitignored
-│   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge
-│   ├── settings.json              # geteilte, unkritische Permissions (keine Secrets)
+│   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging)
+│   ├── settings.json              # geteilte, unkritische Permissions (keine Secrets) + Logging-Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot
 ├── .github/workflows/ci.yml      # Lint/Typecheck/Test als Platzhalter-Steps
 ├── .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore
+├── ai.log                        # optionaler Live-Mitschnitt (gitignored), Schalter in AGENTS.md § Logging
 └── docs/
     ├── README.md                 # Index-Tabelle: Datei · Inhalt · Datenstand · wann lesen
     ├── project/                  # Projekt-Doku (IST-Zustand), s. `AGENTS.md`
     └── ai/                       # Zusammenarbeit Mensch/KI (Board, Aufgaben, Fragen, Ledger, Checklisten)
 ```
+
+## 7. Logging (Claude-Code-Mechanik zu `AGENTS.md` § Logging)
+
+Schalter (`AI_LOG`, `AI_LOG_LEVEL`), Format und Themenliste stehen in `AGENTS.md` § Logging — dort wird
+umgeschaltet, nicht hier. Claude Code liefert dazu zwei Schreibwege in dieselbe `ai.log`:
+
+- **Automatisch per Hooks** (`.claude/settings.json` → `hooks`, `shell: bash`; Agent-Aufruf und
+  Sub-Agent-Start/-Ende laufen synchron mit Timeout 10 s, damit die Nummernvergabe in Startreihenfolge bleibt,
+  alle übrigen Events `async`; bei `AI_LOG=aus` sofortiges No-op): `python .claude/scripts/ai-log.py --hook`
+  erzeugt `[user] [prompt]` bei jeder Eingabe, `[<aufrufer>] [delegate]` bei jedem Agent-Aufruf (Sub-Agent,
+  Auftrag, Modell; Aufrufer ist meist `orchestrator`, bei verschachtelten Aufrufen der Sub-Agent), `[<agent>#<n>] [start]` und
+  `[end]` für jeden Sub-Agenten, `[session] start/ende`, `[error]` bei fehlgeschlagenen Tools und
+  `wartet auf Freigabe` bei Permission-Prompts. Auf `DEBUG` zusätzlich jeder Tool-Aufruf — auch innerhalb von
+  Sub-Agenten, per `agent_id` dem Verursacher zugeordnet — und die gekürzten Rückgaben der Sub-Agenten.
+  **Nummerierung:** jeder Sub-Agent bekommt beim `SubagentStart` eine laufende Nummer je Sitzung und Typ
+  (`builder#1`, `builder#2`, …; Zuordnung `agent_id → Name` in `ai.log.state.json`, gitignored). Der Auftrag
+  in der `[start]`-Zeile stammt aus dem zeitlich passenden Agent-Aufruf (Reihenfolge je Typ) — bei mehreren
+  gleichzeitig gestarteten Agenten desselben Typs ist das eine Zuordnung nach Startreihenfolge, keine
+  Garantie. Zur Kontrolle der echten Hook-Felder einmal mit `AI_LOG_RAW=1` starten: dann landet jede
+  Hook-Payload zusätzlich als JSON-Zeile in `ai.log.raw.jsonl` (gitignored, danach löschen).
+- **Von Hand (Pflicht bei `ein`)** für das, was kein Hook sehen kann — die Überlegungen des Orchestrators und
+  die Meilensteine der Worker. {{ORCHESTRATOR}} schreibt **vor** jeder Welle die Entscheidung, nach jedem Commit
+  den Hash, beim Abschluss die Bilanz; Sub-Agenten schreiben unter ihrem Namen (`[test]`, `[result]`,
+  `[review]`, `[docs]`), ≤ 5 Zeilen je Lauf (Regel steht in jeder Agenten-Definition). Startet
+  {{ORCHESTRATOR}} mehrere Sub-Agenten desselben Typs in einer Welle, nennt er jedem im Prompt seinen Log-Namen
+  in Startreihenfolge („Dein Log-Name: `builder#2`") — `--status` zeigt die zuletzt vergebenen Nummern:
+
+  ```text
+  python .claude/scripts/ai-log.py INFO orchestrator decision "#12 in 3 Teile: explorer (Bestand), 2× builder parallel (Form, Tests)"
+  python .claude/scripts/ai-log.py INFO orchestrator commit "3f9c2ab feat: Login-Formular mit Validierung"
+  python .claude/scripts/ai-log.py INFO orchestrator session "ende · 1 Feature, 2 Commits, 1 offene Frage (#7)"
+  ```
+
+  Ein Aufruf je Zeile, kein Roh-Dump, keine Secrets; die Permission dafür ist in `settings.json` freigegeben.
+- **Vortrag:** zweites Terminal mit `python .claude/scripts/ai-log.py --tail` (farbig, `--grep builder` für
+  einen Worker), Level `INFO`; vorher `--reset` (alte Datei wird zu `ai.log.<zeitstempel>.bak`); `--status`
+  zeigt, ob der Schalter greift und woher der Wert stammt (`AGENTS.md`, `env`).
+- **Voraussetzung/Abschalten:** Python 3 im PATH (Windows: Git Bash + Python; der Hook nimmt `python3`, sonst
+  `python` — in den Beispielen hier steht `python`, auf macOS/Linux `python3`). `AI_LOG=aus` genügt zum
+  Abschalten; wer die Hooks ganz los sein will, entfernt den `hooks`-Block aus `settings.json`. Das Log ist
+  Mitschnitt, kein Beleg — Belege bleiben Testlauf, Commit-Hash, Ledger.

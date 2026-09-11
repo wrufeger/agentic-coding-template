@@ -93,11 +93,107 @@ Diese Zuordnung ist ein Beispiel, keine Pflicht — welches Modell welche Rolle 
 Werkzeug, das gerade genutzt wird (siehe die werkzeugspezifischen Dateien für feste IDs, sofern das Werkzeug das
 unterstützt).
 
+## Logging (optional)
+
+Optionale Protokollierung aller Agentenaktionen in **`ai.log` im Projekt-Root** (gitignored, reine Textdatei,
+eine Zeile je Ereignis). Zweck: neben der Konsole des Assistenten live mitlesen, was der Orchestrator
+entscheidet, welche Worker wann starten, enden und was sie zurückliefern — im Alltag zum Nachvollziehen, im
+Vortrag als zweites Fenster, in dem das Publikum zusieht, wie mehrere Worker parallel an einer Anwendung
+arbeiten. Das Log ersetzt keinen Beleg und keinen Ledger-Eintrag (`docs/ai/ledger.md`); es ist ein Mitschnitt.
+
+### Schalter (einzige Quelle: dieser Block)
+
+```text
+AI_LOG=aus           # ein | aus        — Protokollierung ein-/ausschalten
+AI_LOG_LEVEL=INFO    # DEBUG | INFO | WARN | ERROR — Tiefe: alles ab dieser Stufe wird geschrieben
+```
+
+{{AUFTRAGGEBER}} ändert die beiden Werte direkt hier in `AGENTS.md`; die Schreibmechanik liest genau diesen
+Block. Für einen einzelnen Lauf oder eine Demo lässt sich der Block per gleichnamiger Umgebungsvariable
+übersteuern (`AI_LOG=ein AI_LOG_LEVEL=DEBUG`), ohne die Datei anzufassen. Bei `AI_LOG=aus` wird nichts
+geschrieben und keine Datei angelegt.
+
+### Format
+
+```text
+[YYYY-MM-DD HH:MM:SS] [LEVEL] [agent] [topic] Text in einer Zeile
+```
+
+- `LEVEL`: `DEBUG` · `INFO` · `WARN` · `ERROR`.
+- `agent`: wer handelt — `orchestrator`, `user` ({{AUFTRAGGEBER}}), sonst der Worker-Name (`builder`,
+  `explorer`, `reviewer`, `doc-writer`, `quick-check`, `maintenance`, …), `system` für die Mechanik selbst.
+  Worker tragen eine **laufende Nummer je Sitzung und Typ** (`builder#1`, `builder#2`, …), damit mehrere
+  gleichnamige Worker — parallel oder nacheinander — auseinanderzuhalten sind; die Nummer wird beim Start
+  vergeben und bleibt bis zum Ende dieselbe. Ein Worker, der selbst loggt, nutzt den Namen, den ihm der
+  Orchestrator im Auftrag genannt hat (z. B. `builder#2`), sonst den nackten Typnamen.
+- `topic` (feste Wortliste, klein geschrieben): `session` · `prompt` · `decision` · `delegate` · `start` ·
+  `end` · `result` · `tool` · `test` · `review` · `docs` · `commit` · `safeguard` · `error`.
+- `Text`: eine Zeile, ≤ 200 Zeichen, gekürzt mit `…`; keine Zeilenumbrüche, keine Secrets (Tokens, Passwörter,
+  Schlüssel, Zugangsdaten — auch nicht in gekürzten Tool-Argumenten).
+
+Beispiel eines Delegationslaufs:
+
+```text
+[2026-09-11 14:02:11] [INFO] [user] [prompt] Aufgabe #12 umsetzen: Login-Formular mit Validierung
+[2026-09-11 14:02:15] [INFO] [orchestrator] [decision] #12 in 3 Teile: Explorer (Bestand), Builder (Form), Builder (Tests)
+[2026-09-11 14:02:16] [INFO] [orchestrator] [delegate] explorer ← Bestand Auth-Modul + Formkomponenten sichten
+[2026-09-11 14:02:16] [INFO] [explorer#1] [start] Bestand Auth-Modul + Formkomponenten sichten
+[2026-09-11 14:03:40] [INFO] [explorer#1] [end] ok · 3 Fundstellen (src/auth/*.ts)
+[2026-09-11 14:03:41] [INFO] [orchestrator] [delegate] builder ← Login-Formular nach coding_rules.md
+[2026-09-11 14:03:41] [INFO] [orchestrator] [delegate] builder ← Unit-Tests für Login-Validierung
+[2026-09-11 14:03:42] [INFO] [builder#1] [start] Login-Formular nach coding_rules.md
+[2026-09-11 14:03:42] [INFO] [builder#2] [start] Unit-Tests für Login-Validierung
+[2026-09-11 14:05:02] [INFO] [builder#1] [test] lint ok · typecheck ok · 14 tests ok
+[2026-09-11 14:05:03] [INFO] [builder#1] [end] ok · 2 Dateien geändert
+[2026-09-11 14:05:40] [INFO] [builder#2] [end] ok · 6 neue Tests, alle grün
+[2026-09-11 14:05:50] [WARN] [reviewer#1] [review] BLOCK · fehlende Server-Validierung in src/auth/login.ts:42
+[2026-09-11 14:07:30] [INFO] [orchestrator] [commit] 3f9c2ab feat: Login-Formular mit Validierung
+```
+
+### Was protokolliert wird (je Tiefe)
+
+| Tiefe | Inhalt (jede Stufe enthält die darüber liegenden) |
+| :--- | :--- |
+| `ERROR` | abgebrochene Worker, fehlgeschlagene Tool-Aufrufe/Testläufe, Fehler der Mechanik selbst |
+| `WARN` | Safeguard-Warnungen (siehe oben), Review-Urteil `BLOCK`, rote Tests, Einträge für den Tabu-Bereich |
+| `INFO` | Sitzungsstart/-ende · jede Eingabe von {{AUFTRAGGEBER}} (gekürzt) · **jede Entscheidung des Orchestrators** (was, warum, an wen) · **Start und Ende jedes Workers** mit Auftrag bzw. Ergebnis-Kurzfassung · Review-Urteile · Doku-Nachzug · Commits |
+| `DEBUG` | zusätzlich jeder Tool-Aufruf (Name + Kurzargument, z. B. Datei oder Befehl) und die Rückgaben der Worker (gekürzt) |
+
+### Pflichten bei eingeschaltetem Logging
+
+- **Orchestrator:** vor jeder Ausführung die Entscheidung als `[orchestrator] [decision]` schreiben (Plan,
+  Aufteilung, Modellwahl, warum), jede Delegation als `[delegate] <worker> ← <Auftrag>`, jeden Commit als
+  `[commit] <hash> <message>`, Sitzungsende als `[session] ende · <Kurzbilanz>`.
+- **Worker:** melden Meilensteine unter ihrem eigenen Namen (`[test]`, `[result]`, `[review]`, `[docs]`); Start
+  und Ende schreibt der Orchestrator bzw. — wo das Werkzeug es kann — die Werkzeugmechanik automatisch.
+  Startet der Orchestrator mehrere Worker desselben Typs, nennt er jedem im Auftrag seinen Log-Namen
+  (`builder#1`, `builder#2`, … in Startreihenfolge), damit dessen eigene Zeilen zur Mechanik passen.
+- **Schreibweg (werkzeugunabhängig):** `python .claude/scripts/ai-log.py <LEVEL> <agent> <topic> "<Text>"`
+  (Stdlib-Python 3, kein Paket nötig, auf macOS/Linux `python3`; prüft den Schalter oben selbst und ist bei
+  `aus` ein No-op). Assistenten
+  ohne Shell-Zugriff (ChatGPT-Web o. Ä.) können nicht loggen — dann bleibt das Log leer, alles andere gilt
+  unverändert. Claude Code schreibt Sitzungs-, Prompt- und Worker-Start/Ende-Zeilen zusätzlich automatisch
+  per Hooks (`CLAUDE.md` § Logging).
+
+### Mitlesen
+
+```text
+tail -f ai.log                              # Git Bash, Linux, macOS
+Get-Content ai.log -Wait -Tail 20           # PowerShell
+python .claude/scripts/ai-log.py --tail     # plattformunabhängig, farbig je Level (für Beamer/Vortrag)
+python .claude/scripts/ai-log.py --tail --grep builder   # nur ein Worker
+```
+
+Für den Vortrag: zweites Terminal neben der Assistenten-Konsole mit `--tail` öffnen, `AI_LOG=ein` und
+`AI_LOG_LEVEL=INFO` setzen (bei `DEBUG` verdeckt der Tool-Lärm die Entscheidungen). Die Datei wächst nur an —
+zum Leeren vor einer Demo `python .claude/scripts/ai-log.py --reset` (legt die alte Datei als
+`ai.log.<zeitstempel>.bak` ab, ebenfalls gitignored).
+
 ## Werkzeugspezifische Ergänzungsdateien
 
 | Werkzeug | Datei | Inhalt |
 | :--- | :--- | :--- |
-| Claude Code | `CLAUDE.md` | Sub-Agenten, Skills, feste Modell-IDs, Token-Sparregeln, MCP |
+| Claude Code | `CLAUDE.md` | Sub-Agenten, Skills, feste Modell-IDs, Token-Sparregeln, MCP, Logging-Hooks |
 | GitHub Copilot | `.github/copilot-instructions.md` | Verweis auf diese Datei |
 | Cursor | `.cursor/rules/agents.mdc` | Verweis auf diese Datei, `alwaysApply: true` |
 | Aider | `.aider.conf.yml` | lädt diese Datei plus `docs/ai/board.md` automatisch |

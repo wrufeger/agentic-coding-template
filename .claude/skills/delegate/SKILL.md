@@ -27,6 +27,11 @@ Aufruf über das Agent-Tool mit `subagent_type` gleich dem Agentennamen und **ex
 - Skills mit `context: fork` bevorzugen, wenn eine ganze Aufgabe (nicht nur ein Teilschritt) in einem
   Sub-Agenten laufen soll — der Hauptkontext bekommt dann nur die Rückgabe.
 - Jeder Auftrag: Kontext (2–3 Sätze), konkreter Liefergegenstand, Format des Ergebnisses, was zu ignorieren ist.
+- Bei eingeschaltetem Logging (`AGENTS.md` § Logging): **vor** dem Start der Welle die Entscheidung schreiben —
+  `python .claude/scripts/ai-log.py INFO orchestrator decision "<Aufteilung, Modellwahl, warum>"`. Die
+  `[delegate]`-, `[start]`- und `[end]`-Zeilen der Sub-Agenten erzeugen die Hooks von selbst (`CLAUDE.md` § 7).
+  Mehrere Sub-Agenten desselben Typs in einer Welle: jedem im Prompt seinen Log-Namen nennen (`builder#1`,
+  `builder#2`, … in der Reihenfolge der Agent-Aufrufe; nächste freie Nummer zeigt `ai-log.py --status`).
 
 Restliche Regeln (Auftrags-Schablone, Abschluss-Disziplin, wann nicht delegieren) stehen unverändert in
 `docs/ai/checklists.md` § „Delegation".

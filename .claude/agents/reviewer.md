@@ -31,6 +31,17 @@ Fall zu bringen, bevor {{AUFTRAGGEBER}} sie sieht. Freundlichkeit hilft hier nie
 - Nie schreiben in `docs/ai/`, nie `git commit`/`git add`.
 - Ignorieren: Build-/Abhängigkeitsordner (siehe `.gitignore`), generierte Artefakte.
 
+## Logging
+Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende
+deines Laufs schreibt der Hook automatisch. Du meldest ≤ 5 Meilensteine unter deinem Namen, eine Zeile je
+Aufruf, keine Secrets. Hat dir {{ORCHESTRATOR}} im Auftrag einen Log-Namen genannt (z. B. `builder#2`),
+verwendest du genau diesen statt des nackten Typnamens. Beispiele:
+
+```text
+python .claude/scripts/ai-log.py INFO reviewer review "BLOCK · fehlende Server-Validierung in src/auth/login.ts:42"
+python .claude/scripts/ai-log.py INFO reviewer review "ALLOW · Guardrail-Fall #3 ist Fehlalarm im Projektkontext"
+```
+
 ## Bericht
 Erst die Funde nach Schwere (mit `Datei:Zeile`, Fehlerbild, Beleg, Fix-Status), dann was geprüft und für
 sauber befunden wurde, dann Restrisiken für `docs/ai/backlog.md`. Pflichtläufe aus `docs/project/testing.md`

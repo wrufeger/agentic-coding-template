@@ -24,5 +24,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Agenten-Protokoll (AGENTS.md § Logging) - Mitschnitt, kein Beleg
+ai.log
+ai.log.*
+
 # Logs allgemein
 *.log
