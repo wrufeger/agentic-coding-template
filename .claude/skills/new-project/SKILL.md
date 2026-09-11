@@ -34,7 +34,6 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
 5. `docs/ai/ledger.md`-Eintrag „Projekt angelegt aus CONFIG.md" schreiben, mit allen Setzungen (Werte,
    entfernte Dateien, Logging-Schalter aus der `--apply`-Ausgabe).
 6. `python .claude/scripts/new-project.py --finish` ausführen (löscht `CONFIG.md`, prüft vorher Schritt 3/5).
-7. `grep -rn "{{" .` prüfen — nur `docs/ai/checklists.md`, diese Datei (`.claude/skills/new-project/
-   SKILL.md`) und die Scripte in `.claude/scripts/` dürfen noch Platzhalter zeigen (`no_replace` in
-   `.claude/template.json`).
+7. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
+   `no_replace` in `.claude/template.json`) und `CONFIG.md` dürfen noch Platzhalter zeigen.
 8. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/session-wrapup`).

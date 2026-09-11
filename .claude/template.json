@@ -31,8 +31,6 @@
     ".mcp.json.example"
   ],
   "no_replace": [
-    "docs/ai/checklists.md",
-    ".claude/skills/new-project/SKILL.md",
     ".claude/scripts/new-project.py",
     ".claude/scripts/template-update.py"
   ],

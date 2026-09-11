@@ -108,8 +108,6 @@ DEFAULT_KEEP_LOCAL = [
 # normal gemergt, aber NIE ersetzt - sonst macht ein Update aus "Alle Platzhalter (`{{PROJEKTNAME}}`, ...)"
 # die Zeile "Alle Platzhalter (`Kundenportal`, ...)" und die Anleitung ist kaputt.
 DEFAULT_NO_REPLACE = [
-    "docs/ai/checklists.md",
-    ".claude/skills/new-project/SKILL.md",
     ".claude/scripts/new-project.py",
     ".claude/scripts/template-update.py",
 ]

@@ -49,8 +49,6 @@ for _stream in (sys.stdout, sys.stderr):
 CONFIG_REL = "CONFIG.md"
 EXCLUDED_FROM_REPLACE = {
     "CONFIG.md",
-    "docs/ai/checklists.md",
-    ".claude/skills/new-project/SKILL.md",
     # Diese beiden Scripte erklaeren die Platzhalter-Mechanik in ihren Kopfkommentaren ("ersetzt
     # `{{PROJEKTNAME}}` usw.") - wird dort ersetzt, steht danach Unsinn im Kommentar. Gleiche Liste wie
     # `no_replace` in `.claude/template.json`.

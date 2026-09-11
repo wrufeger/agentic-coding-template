@@ -102,9 +102,9 @@ Idee, das Formular `CONFIG.md` deckt beides ab:
    (eingesetzte Werte, entfernte Dateien, Logging-Schalter).
 7. `python .claude/scripts/new-project.py --finish` ausführen (prüft die Vorbedingungen aus Schritt 4/6,
    entfernt danach `CONFIG.md`).
-8. `grep -rn "{{" .` prüfen — nur `docs/ai/checklists.md`, `.claude/skills/new-project/SKILL.md` und die
-   Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare, siehe `no_replace` in
-   `.claude/template.json`) dürfen noch Platzhalter zeigen, alles andere klären.
+8. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare,
+   siehe `no_replace` in `.claude/template.json`) und `CONFIG.md` dürfen noch Platzhalter zeigen, alles
+   andere klären.
 9. Commit per Pathspec nach Freigabe (Checkliste „Sitzungsabschluss").
 
 ## Projekt nachrüsten
@@ -148,7 +148,7 @@ Arbeitsdateien, README) bleiben dabei erhalten:
    `CLAUDE.md` und den Checklisten übernehmen, projektspezifische Zeilen (echte Werte, eigene Regeln)
    erhalten.
 5. In den vom Update berührten Dateien Platzhalter durch die bereits im Projekt eingesetzten echten Werte
-   ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit `{{PROJEKTNAME}}` mitbringt).
+   ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit einem Platzhalter der Form `{{NAME}}` mitbringt).
 6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,
    Konfigurationsdateien weiterhin gültig, Logging weiterhin funktionsfähig.
 7. Commit per Pathspec.

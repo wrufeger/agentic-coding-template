@@ -21,8 +21,8 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
    beide Seiten zusammenführen, nie blind eine Seite nehmen. `.claude/template.json` selbst und
    `keep_local`-Pfade hat das Script bereits automatisch zugunsten der Projektfassung gelöst. Danach
    `python .claude/scripts/template-update.py --continue` ausführen.
-5. Prüfen: `grep -rn "{{" .` (nur bekannte Fundstellen in `.claude/skills/new-project/SKILL.md`,
-   `docs/ai/checklists.md`, `.claude/scripts/` und diese Datei sind unbedenklich, alles andere klären),
+5. Prüfen: `grep -rn "{{" .` (nur die Scripte in `.claude/scripts/` sind unbedenklich — `no_replace` —,
+   alles andere klären),
    `python -m json.tool .claude/settings.json`, `python .claude/scripts/ai-log.py --status`.
 6. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (oder `--commit` bei Schritt 3/4, wenn die
    Freigabe vorab erteilt wurde).
