@@ -1,0 +1,28 @@
+# Secrets / lokale Konfiguration
+.env
+.mcp.json
+.claude/settings.local.json
+
+# Wartungslogs/-berichte
+.claude/maintenance/reports/
+.claude/maintenance/*.log
+
+# Abhaengigkeiten / Build-Artefakte (Beispiele - beim Zuschneiden des Templates fuer den Stack anpassen)
+node_modules/
+dist/
+build/
+.output/
+.nuxt/
+__pycache__/
+*.pyc
+.venv/
+
+# Editor/OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs allgemein
+*.log

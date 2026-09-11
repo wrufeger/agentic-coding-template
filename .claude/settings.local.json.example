@@ -1,0 +1,7 @@
+{
+  "_hinweis": "Muster fuer persoenliche/projektlokale Claude-Code-Einstellungen. Kopieren nach settings.local.json (gitignored). NIE Secrets/Zugangsdaten hier eintragen - echte Werte gehoeren in .env bzw. die lokale Claude-Config ausserhalb des Repos.",
+  "permissions": {
+    "allow": []
+  },
+  "env": {}
+}

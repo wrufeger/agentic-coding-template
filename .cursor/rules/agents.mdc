@@ -1,0 +1,10 @@
+---
+description: Projektregeln für {{PROJEKTNAME}} — Verweis auf AGENTS.md
+alwaysApply: true
+---
+
+Die Projektregeln stehen in `AGENTS.md` (Repo-Root) — zuerst lesen und befolgen. Diese Datei ist nur ein
+Verweis für Cursor, keine eigene Regelquelle.
+
+Zusätzlich beachten: `docs/ai/board.md` (aktueller Stand, nächster Schritt), `docs/project/coding_rules.md`
+(Stil- und Sprachregeln für dieses Projekt).

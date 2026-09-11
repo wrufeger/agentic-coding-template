@@ -1,0 +1,26 @@
+name: ci
+
+on: push
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Platzhalter-Steps - beim Zuschneiden des Templates (docs/ai/checklists.md "Template anpassen")
+      # durch die echten Befehle des Stacks ersetzen (siehe docs/project/testing.md "Pflichtläufe").
+
+      - name: Install dependencies
+        run: echo "TODO {{INSTALL_BEFEHL}}"
+
+      - name: Lint
+        run: echo "TODO {{LINT_BEFEHL}}"
+
+      - name: Typecheck
+        run: echo "TODO {{TYPECHECK_BEFEHL}}"
+
+      - name: Test
+        run: echo "TODO {{TEST_BEFEHL}}"

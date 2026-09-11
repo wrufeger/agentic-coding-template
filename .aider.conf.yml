@@ -1,0 +1,7 @@
+# Aider-Konfiguration fuer {{PROJEKTNAME}}.
+# AGENTS.md (Projektregeln) und docs/ai/board.md (aktueller Stand) werden bei jeder Session
+# automatisch in den Kontext geladen. Details/Ausfuellhinweise: docs/project/setup.md.
+
+read:
+  - AGENTS.md
+  - docs/ai/board.md

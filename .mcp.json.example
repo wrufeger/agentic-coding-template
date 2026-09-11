@@ -1,0 +1,12 @@
+{
+  "_hinweis": "Muster fuer projektspezifische MCP-Server. Kopieren nach .mcp.json (gitignored) und anpassen. Secrets nie als Klartext eintragen, sondern per ${VAR}-Referenz aus der Umgebung/.env laden.",
+  "mcpServers": {
+    "beispiel-server": {
+      "command": "npx",
+      "args": ["-y", "beispiel-mcp-server@latest"],
+      "env": {
+        "BEISPIEL_API_KEY": "${BEISPIEL_API_KEY}"
+      }
+    }
+  }
+}
