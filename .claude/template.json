@@ -1,0 +1,41 @@
+{
+  "template_remote": "template",
+  "template_branch": "main",
+  "template_url": null,
+  "base_commit": null,
+  "values": {
+    "PROJEKTNAME": null,
+    "AUFTRAGGEBER": null,
+    "ORCHESTRATOR": null,
+    "STACK": null,
+    "DATUM": null,
+    "INSTALL_BEFEHL": null,
+    "DEV_START_BEFEHL": null,
+    "LINT_BEFEHL": null,
+    "TYPECHECK_BEFEHL": null,
+    "TEST_BEFEHL": null,
+    "E2E_BEFEHL": null
+  },
+  "keep_local": [
+    "docs/project/**",
+    "docs/ai/board.md",
+    "docs/ai/tasks.md",
+    "docs/ai/questions.md",
+    "docs/ai/questions_archive.md",
+    "docs/ai/ledger.md",
+    "docs/ai/backlog.md",
+    "README.md",
+    "CONFIG.md",
+    ".env.example",
+    ".github/workflows/ci.yml",
+    ".mcp.json.example"
+  ],
+  "no_replace": [
+    "docs/ai/checklists.md",
+    ".claude/skills/new-project/SKILL.md",
+    ".claude/scripts/new-project.py",
+    ".claude/scripts/template-update.py"
+  ],
+  "updates": [],
+  "_hinweis": "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `template-update.py --init` befuellt; `values` nie Secrets."
+}

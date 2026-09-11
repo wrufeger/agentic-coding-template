@@ -20,7 +20,7 @@
 | Unit-/Integrationstests | `{{TEST_BEFEHL}}` | vor jedem Commit, in der CI |
 | E2E-Tests | `{{E2E_BEFEHL}}` | bei UI-relevanten Änderungen |
 
-*(Platzhalter-Befehle beim Zuschneiden des Templates durch echte Skripte/Befehle ersetzen.)*
+*(Platzhalter-Befehle beim Anlegen des Projekts (Checkliste „Neues Projekt") durch echte Skripte/Befehle ersetzen.)*
 
 ## Testdaten
 

@@ -1,7 +1,7 @@
 # AGENTS.md — anbieterneutrale Regeln für {{PROJEKTNAME}}
 
-> Platzhalter (`{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}`, `{{STACK}}`) werden beim Anpassen des
-> Templates ersetzt (Checkliste „Template anpassen" in `docs/ai/checklists.md`).
+> Platzhalter (`{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}`, `{{STACK}}`) werden beim Anlegen des
+> Projekts aus `CONFIG.md` ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`).
 
 Diese Datei gilt für **jeden** KI-Assistenten, der an diesem Projekt arbeitet — unabhängig vom Werkzeug: Claude
 Code, ChatGPT/Codex, GitHub Copilot, Cursor, Aider, Gemini CLI, ein lokales Modell über Ollama oder ein anderer
@@ -188,6 +188,28 @@ Für den Vortrag: zweites Terminal neben der Assistenten-Konsole mit `--tail` ö
 `AI_LOG_LEVEL=INFO` setzen (bei `DEBUG` verdeckt der Tool-Lärm die Entscheidungen). Die Datei wächst nur an —
 zum Leeren vor einer Demo `python .claude/scripts/ai-log.py --reset` (legt die alte Datei als
 `ai.log.<zeitstempel>.bak` ab, ebenfalls gitignored).
+
+## Template-Herkunft und Updates
+
+Ist dieses Projekt aus dem Template entstanden — per `git clone` (Checkliste „Neues Projekt",
+`docs/ai/checklists.md`) oder nachträglich per `consume-template.py` + `--graft` (Checkliste „Projekt
+nachrüsten") —, teilen Projekt und Template über den Git-Remote `template` eine gemeinsame Historie —
+spätere Template-Änderungen lassen sich so per Merge nachziehen, ohne bereits eingesetzte echte Werte wieder
+durch Platzhalter zu ersetzen. `.claude/template.json` hält dafür Remote/Branch des Templates, den zuletzt
+eingespielten Basis-Commit, die eingesetzten Platzhalterwerte und die Update-Historie fest; `keep_local`
+darin listet Dateien/Ordner, deren Projektfassung **bei Konflikten** gewinnt (u. a. `docs/project/**`,
+`docs/ai/`-Arbeitsdateien, `README.md`, `CONFIG.md`) — konfliktfreie Template-Änderungen an diesen Dateien
+werden normal mitgemergt. `no_replace` listet zusätzlich Dateien, die zwar normal mitgemergt, aber nie
+platzhalter-ersetzt werden, weil sie Platzhalter absichtlich als Beispiel zeigen (`docs/ai/checklists.md`,
+`.claude/skills/new-project/SKILL.md`).
+
+Regel bei einem Update: Template-Logik in `.claude/`, `AGENTS.md`, `CLAUDE.md` und den Checklisten wird
+nachgezogen; Projektinhalte in `docs/project/`, die `docs/ai/`-Arbeitsdateien und die README werden nie
+überschrieben — bei Konflikten außerhalb von `keep_local` beide Seiten zusammenführen, nie blind eine Seite
+nehmen. Ablauf: Checkliste „Template-Update" (`docs/ai/checklists.md`); Claude-Code-Mechanik dazu in
+`CLAUDE.md` § 2 (Skill `/template-update`). Ein per `consume-template.py` nachgerüstetes Projekt hat zunächst
+keinen gemeinsamen Vorfahren mit dem Template — `template-update.py --graft` stellt ihn per leerem
+Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `--check`/`--apply` normal.
 
 ## Werkzeugspezifische Ergänzungsdateien
 

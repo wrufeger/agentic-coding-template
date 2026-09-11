@@ -75,28 +75,82 @@ Nach jeder Feature-Welle, jedem produktionsrelevanten Bugfix:
 - Grundsatz: Doku beschreibt den IST-Zustand, nicht den Wunsch. Was noch nicht gebaut ist, gehört auf die
   Umbauliste oder ins Fragen-Board. Kein Doku-Eintrag ohne Prüfung am Code.
 
-## Idee → Projekt
+## Neues Projekt
 
-Wenn aus einer Idee ein neues Projekt entstehen soll:
+Wenn ein komplett neues Projekt aus diesem Template entstehen soll — leer oder mit einer schon feststehenden
+Idee, das Formular `CONFIG.md` deckt beides ab:
 
-1. Interview mit {{AUFTRAGGEBER}}: Ziel, Nutzer/Zielgruppe, Scope und Non-Scope, gewünschter Stack, bekannte
-   Risiken/Unsicherheiten.
-2. Ergebnis in `docs/project/project_description.md` (Ziel, Nutzer, Scope/Non-Scope, Erfolgskriterien) und
-   `docs/project/architecture.md` (grober Aufbau, Datenfluss) festhalten.
-3. Erste Aufgaben in `docs/ai/tasks.md` anlegen, offene Entscheidungen in `docs/ai/questions.md`.
-4. `docs/ai/board.md` mit dem neuen Stand aktualisieren.
+0. Projekt per `git clone <Template-URL> <projekt>` anlegen, damit Projekt und Template eine gemeinsame
+   Git-Historie teilen (Voraussetzung für spätere Updates per Merge, siehe § „Template-Update" unten); danach
+   `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
+1. `CONFIG.md` im Repo-Root ausfüllen — alles optional, leer lassen ist gültig (Kommentare je Zeile erklären,
+   was bei „leer" passiert). Bei Unklarheit mit {{AUFTRAGGEBER}} kurz rückfragen statt zu raten.
+2. `python .claude/scripts/new-project.py --dry-run` ausführen, Plan (Werte, zu entfernende Dateien,
+   Logging-Schalter, offene Platzhalter) gegen {{AUFTRAGGEBER}} prüfen.
+3. `python .claude/scripts/new-project.py --apply` ausführen: ersetzt Platzhalter im ganzen Repo (außer
+   `CONFIG.md`, `docs/ai/checklists.md`, `.claude/skills/new-project/SKILL.md`), entfernt nicht genutzte
+   Werkzeug-Dateien (nur wenn `KI-Werkzeuge` gesetzt ist), setzt `AI_LOG`/`AI_LOG_LEVEL` in `AGENTS.md` und
+   schreibt die Werte (und bei vorhandenem Remote `template` den Basis-Commit) in `.claude/template.json`.
+4. Aus den `CONFIG.md`-Abschnitten befüllen: `docs/project/project_description.md` (Ziel, Nutzer, Scope aus
+   Features, Non-Scope, Risiken), `docs/project/architecture.md` (Architektur-Text), `docs/project/
+   coding_rules.md` § „Stack-spezifisch" (aus Stack), erste Aufgaben aus Features nach `docs/ai/tasks.md`,
+   offene Platzhalterwerte/Lücken nach `docs/ai/questions.md`, Stand nach `docs/ai/board.md`. Bei leerem
+   `CONFIG.md` bleiben die Skelette bestehen — nur Name/Datum sind gesetzt.
+5. Werkzeug-Verweise prüfen: `docs/README.md`-Index und `AGENTS.md`-Tabelle „Werkzeugspezifische
+   Ergänzungsdateien" gegen die tatsächlich noch vorhandenen Dateien.
+6. Ersten `docs/ai/ledger.md`-Eintrag „Projekt angelegt aus CONFIG.md" schreiben — mit allen Setzungen
+   (eingesetzte Werte, entfernte Dateien, Logging-Schalter).
+7. `python .claude/scripts/new-project.py --finish` ausführen (prüft die Vorbedingungen aus Schritt 4/6,
+   entfernt danach `CONFIG.md`).
+8. `grep -rn "{{" .` prüfen — nur `docs/ai/checklists.md`, `.claude/skills/new-project/SKILL.md` und die
+   Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare, siehe `no_replace` in
+   `.claude/template.json`) dürfen noch Platzhalter zeigen, alles andere klären.
+9. Commit per Pathspec nach Freigabe (Checkliste „Sitzungsabschluss").
 
-## Template anpassen
+## Projekt nachrüsten
 
-Wenn dieses Template auf ein konkretes Projekt zugeschnitten wird:
+Wenn ein bestehendes Repo (eigene Historie, kein Template-Klon) die Agentic-Coding-Grundausstattung
+nachträglich bekommen soll:
 
-1. Alle Platzhalter (`{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}`, `{{STACK}}`, `{{DATUM}}`) im
-   ganzen Repo suchen und durch echte Werte ersetzen (`grep -rn "{{"`).
-2. Stack-spezifische Regeln in `docs/project/coding_rules.md` § „Stack-spezifisch" ergänzen (Sprache, Layer,
-   Typisierung, Migrationskonvention, Linter/Formatter).
-3. `.github/workflows/ci.yml` auf die echten Lint-/Typecheck-/Testbefehle des Projekts umstellen.
-4. Nicht benötigte Vorlagendateien entfernen (z. B. Beispiel-Agenten für einen nicht genutzten Stack) und im
-   Doku-Index (`docs/README.md`) nachziehen.
-5. Jede Doku-Datei bekommt einen echten Datenstand (`YYYY-MM-DD`) statt „Status: Vorlage".
-6. Abschlusscheck: `docs/ai/board.md` mit dem realen Projektstart-Stand befüllen, ersten Eintrag in
-   `docs/ai/ledger.md` schreiben.
+1. Aus dem Template-Checkout heraus: `python <template>/.claude/scripts/consume-template.py --target
+   <ziel-repo>` ausführen — kopiert `AGENTS.md`, die Werkzeug-Verweisdateien, `.claude/`, `docs/ai/`,
+   `docs/project/`-Skelette, `CONFIG.md` u. a. ins Ziel, ohne dort etwas zu überschreiben (Ausnahmen/Details
+   im Kopfkommentar des Scripts). Schreibt `.claude/template.json` mit Basis-Commit/Remote-URL des Templates
+   und legt im Ziel den Remote `template` an.
+2. Im Ziel-Repo weiterarbeiten: `git status` sichten, übersprungene Dateien (u. a. `README.md`,
+   `.gitignore`-Vorschlag) von Hand zusammenführen.
+3. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
+4. `CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/new-project.py --apply`
+   ausführen (ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt Werte).
+5. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
+   Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
+   `docs/ai/board.md`).
+6. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
+   `python .claude/scripts/new-project.py --finish` ausführen.
+7. Commit per Pathspec nach Freigabe.
+8. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe) — stellt per leerem
+   Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
+   Voraussetzung für spätere `/template-update`-Läufe.
+
+## Template-Update
+
+Wenn Änderungen aus dem Template (übergeordnetes Vorlagen-Repo, per Remote „template" verbunden) in ein
+bereits laufendes, abgeleitetes Projekt nachgezogen werden sollen — die eingesetzten Platzhalterwerte
+(Projektname, Auftraggeber, Befehle, …) und die projektspezifische Doku (`docs/project/`, `docs/ai/`-
+Arbeitsdateien, README) bleiben dabei erhalten:
+
+1. Verfügbare Änderungen abrufen (fetch) und sichten: wie viele Commits, welche Dateien betroffen.
+2. Prüfen, welche der betroffenen Dateien projektspezifisch sind (bleiben unverändert) und welche die
+   Template-Logik übernehmen sollen.
+3. Änderungen per Merge einspielen.
+4. Bei Konflikten: projektspezifische Dateien/Bereiche (siehe `keep_local` in `.claude/template.json`)
+   gewinnen automatisch; übrige Konflikte von Hand auflösen — Template-Logik in `.claude/`, `AGENTS.md`,
+   `CLAUDE.md` und den Checklisten übernehmen, projektspezifische Zeilen (echte Werte, eigene Regeln)
+   erhalten.
+5. In den vom Update berührten Dateien Platzhalter durch die bereits im Projekt eingesetzten echten Werte
+   ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit `{{PROJEKTNAME}}` mitbringt).
+6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,
+   Konfigurationsdateien weiterhin gültig, Logging weiterhin funktionsfähig.
+7. Commit per Pathspec.
+8. Den nachgezogenen Basis-Commit des Templates in `.claude/template.json` fortschreiben, damit das nächste
+   Update wieder ab diesem Stand vergleicht.

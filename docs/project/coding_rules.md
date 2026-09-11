@@ -2,8 +2,8 @@
 
 # Coding-Regeln — {{PROJEKTNAME}}
 
-Generische Regeln gelten sofort; der Abschnitt „Stack-spezifisch" wird beim Zuschneiden des Templates
-(Checkliste „Template anpassen", `docs/ai/checklists.md`) für {{STACK}} ausgefüllt.
+Generische Regeln gelten sofort; der Abschnitt „Stack-spezifisch" wird beim Anlegen des Projekts
+(Checkliste „Neues Projekt", `docs/ai/checklists.md`) für {{STACK}} ausgefüllt.
 
 ## Generische Regeln (gelten unabhängig vom Stack)
 

@@ -15,7 +15,7 @@ cp .mcp.json.example .mcp.json   # falls MCP-Server genutzt werden, Werte anpass
 {{DEV_START_BEFEHL}}
 ```
 
-*(Platzhalter-Befehle beim Zuschneiden des Templates durch echte Befehle ersetzen.)*
+*(Platzhalter-Befehle beim Anlegen des Projekts (Checkliste „Neues Projekt") durch echte Befehle ersetzen.)*
 
 ## Umgebungsvariablen
 

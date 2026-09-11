@@ -30,10 +30,11 @@ Checkliste selbst beschreibt, WAS zu tun ist (werkzeugneutral), der Skill beschr
 | :--- | :--- | :--- |
 | `/delegate` | „Delegation" | wann/wie an Sub-Agenten delegiert wird, Prompt-Schablone, Parallelstart |
 | `/project-docs` | „Doku-Nachzug" | läuft als `context: fork` über `doc-writer` |
-| `/new-idea` | „Idee → Projekt" | Interview → befüllt `project_description.md` + `architecture.md` |
-| `/adapt-template` | „Template anpassen" | Platzhalter ersetzen, Stack-Regeln ergänzen |
+| `/new-project` | „Neues Projekt" | `CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/new-project.py`, läuft **nie** in einem Sub-Agenten |
+| `/consume-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `consume-template.py`; Fan-out auf `explorer`/`doc-writer` |
 | `/docs-audit` | „Doku-Audit" | `context: fork` über `maintenance-orchestrator`, Fan-out auf `doc-writer` |
 | `/maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator` |
+| `/template-update` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/template-update.py` |
 | `/session-wrapup` | „Sitzungsabschluss" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext |
 
 ## 3. Token-/Modellregeln
@@ -86,19 +87,23 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 .
 ├── AGENTS.md                     # anbieterneutrale Grundregeln (zuerst lesen)
 ├── CLAUDE.md                     # diese Datei — Claude-Code-Ergänzung
+├── CONFIG.md                     # Formular für ein neues Projekt (Weg 1), von /new-project gelesen+entfernt
 ├── GEMINI.md  .aider.conf.yml    # Verweise auf AGENTS.md für weitere Werkzeuge
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, maintenance-orch.
-│   ├── skills/                  # delegate, project-docs, new-idea, adapt-template, docs-audit, maintenance,
-│   │                            # session-wrapup
+│   ├── skills/                  # delegate, project-docs, new-project, consume-template, docs-audit,
+│   │                            # maintenance, template-update, session-wrapup
 │   ├── maintenance/              # Runner + Status für wiederkehrende Wartung, Logs gitignored
-│   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging)
+│   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging),
+│   │                            # template-update.py (Template-Updates per Merge, --graft), new-project.py
+│   │                            # (Weg 1), consume-template.py (Weg 2, läuft aus dem Template-Checkout)
+│   ├── template.json              # Herkunft/Update-Stand ggü. dem Template (Remote, Basis-Commit, Werte)
 │   ├── settings.json              # geteilte, unkritische Permissions (keine Secrets) + Logging-Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot
 ├── .github/workflows/ci.yml      # Lint/Typecheck/Test als Platzhalter-Steps
-├── .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore
+├── .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes
 ├── ai.log                        # optionaler Live-Mitschnitt (gitignored), Schalter in AGENTS.md § Logging
 └── docs/
     ├── README.md                 # Index-Tabelle: Datei · Inhalt · Datenstand · wann lesen

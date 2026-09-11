@@ -2,8 +2,8 @@
 
 # Projektbeschreibung — {{PROJEKTNAME}}
 
-Wird im Rahmen der Checkliste „Idee → Projekt" (`docs/ai/checklists.md`) ausgefüllt. Bis dahin ein Skelett mit
-den Fragen, die vor dem ersten Code beantwortet sein sollten.
+Wird im Rahmen der Checkliste „Neues Projekt" (`docs/ai/checklists.md`, aus den `CONFIG.md`-Abschnitten)
+ausgefüllt. Bis dahin ein Skelett mit den Fragen, die vor dem ersten Code beantwortet sein sollten.
 
 ## Ziel
 
