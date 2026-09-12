@@ -17,6 +17,7 @@
 #
 # Kopiert (nie ueberschrieben - vorhandene Zieldateien bleiben unangetastet und werden am Ende als "vorhanden
 #   - wird beim Zusammenfuehren beruecksichtigt" gelistet, siehe `migrate-project.py --plan` im Ziel):
+#   LICENSE (landet im Ziel als .claude/TEMPLATE-LICENSE, damit eine vorhandene Projekt-LICENSE bleibt),
 #   AGENTS.md, CLAUDE.md, GEMINI.md, .aider.conf.yml, .cursor/, .github/copilot-instructions.md,
 #   .claude/ (komplett AUSSER .claude/settings.local.json - `migrate-project.py` kommt darueber automatisch
 #   mit), docs/ai/ (alle), docs/project/ (alle Skelette inkl. incidents/), docs/README.md, CONFIG.md,
@@ -46,6 +47,7 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 COPY_ITEMS = [
+    "LICENSE",
     "AGENTS.md",
     "CLAUDE.md",
     "GEMINI.md",
@@ -67,6 +69,11 @@ COPY_ITEMS = [
 
 # Nie kopieren: lokale Secrets/Permissions und gitignorierte Laufzeit-Artefakte des Template-Checkouts
 # (Wartungslogs/-berichte, Mitschnitte) - die gehoeren nicht in ein fremdes Repo.
+# Dateien, die im Ziel unter einem anderen Namen landen. Die Lizenz des Templates muss mitkommen (die
+# kopierten Scripte und Regeldateien stehen unter MIT), darf aber eine vorhandene LICENSE des Zielprojekts
+# nicht verdraengen - deshalb liegt sie dort bei den Template-Dateien.
+COPY_RENAME = {"LICENSE": ".claude/TEMPLATE-LICENSE"}
+
 EXCLUDE_FILES = {".claude/settings.local.json"}
 EXCLUDE_GLOBS = [
     ".claude/maintenance/reports/*",
@@ -151,11 +158,12 @@ def copy_into_target(template_root: Path, target_root: Path, dry_run: bool):
     copied, skipped = [], []
     for rel in _plan_files(template_root):
         src = template_root / rel
-        dest = target_root / rel
+        rel_dest = COPY_RENAME.get(rel, rel)
+        dest = target_root / rel_dest
         if dest.exists():
-            skipped.append(rel)
+            skipped.append(rel_dest)
             continue
-        copied.append(rel)
+        copied.append(rel_dest if rel_dest == rel else f"{rel} -> {rel_dest}")
         if not dry_run:
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)

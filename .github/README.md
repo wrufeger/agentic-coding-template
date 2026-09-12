@@ -58,6 +58,13 @@ Werkzeuge werden beim Anlegen des Projekts entfernt.
 Dokumentation, Oberflächentexte und Kommentare auf Deutsch, Code-Bezeichner auf Englisch. Beides ist im
 Template als Regel hinterlegt und lässt sich projektweit ändern.
 
+## Lizenz
+
+[MIT](../LICENSE) — nutzen, ändern, weitergeben und kommerziell einsetzen ist ausdrücklich erlaubt. Einzige
+Bedingung: Der Copyright-Hinweis auf **Wolfgang Rufeger &lt;wolfgang@rufeger.de&gt;** und der Lizenztext bleiben
+erhalten, wenn Teile dieses Templates weitergegeben werden. Für den eigenen Projektcode gilt die Lizenz des
+jeweiligen Projekts.
+
 ---
 
 Die ausführliche Anleitung mit Schnellstart, Ordnerübersicht und FAQ steht in der

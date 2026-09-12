@@ -101,6 +101,7 @@ docs/
 .github/README.md     # Beschreibung des Templates (GitHub zeigt sie statt dieser Datei); beim
                       # Anlegen eines Projekts entfernt
 .github/workflows/ci.yml   # Lint/Typecheck/Test (Platzhalter-Befehle)
+LICENSE               # MIT (Wolfgang Rufeger) — gilt für das Template, nicht für deinen Projektcode
 .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes
 ```
 
@@ -114,6 +115,17 @@ bei den Helfern, nicht am Kopf: der Orchestrator läuft auf dem starken Modell (
 in `.claude/settings.json`). Scheitert ein Helfer zweimal an derselben Aufgabe, übernimmt einmal eine
 Eskalationsrolle mit hoher Denkstufe statt eines dritten Anlaufs. Details und eine Beispiel-Tabelle je Anbieter
 stehen in `AGENTS.md` § „Modell-/Kostenlogik".
+
+## Lizenz
+
+Das Template steht unter der [MIT-Lizenz](LICENSE): nutzen, ändern, weitergeben und kommerziell einsetzen ist
+erlaubt, solange der Copyright-Hinweis auf Wolfgang Rufeger (`wolfgang@rufeger.de`) und der Lizenztext
+erhalten bleiben.
+
+Für ein daraus entstandenes Projekt heißt das: Die `LICENSE` bleibt liegen, solange Template-Teile
+(`.claude/`, `AGENTS.md`, die Checklisten, die Scripte) im Repo sind. Der eigene Projektcode kann unter einer
+beliebigen anderen Lizenz stehen — dann eine zweite Lizenzdatei ergänzen und in der Projekt-README benennen,
+welche Lizenz für welchen Teil gilt.
 
 ## FAQ
 
