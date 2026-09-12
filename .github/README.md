@@ -46,9 +46,8 @@ den Code und sammelt Verbesserungsvorschläge — ohne eine Zeile zu ändern.
 | `/new-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
 | `/consume-template` | Bestehendes Repository nachrüsten und angleichen |
 | `/template-update` | Neuerungen aus dem Template nachziehen |
-| `/delegate` | Aufgabe auf parallele Sub-Agenten verteilen |
 | `/project-docs` · `/docs-audit` | Dokumentation nachziehen bzw. gegen den Code prüfen |
-| `/session-wrapup` | Sitzung abschließen: Journal, Aufgaben, Commit |
+| `/commit` | Aufgabe abnehmen: archivieren, Index, Bilanz, Commit |
 | `/maintenance` | Wiederkehrende Wartung (optional) |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den entsprechenden Satz sagen, etwa
@@ -67,7 +66,7 @@ Werte und die Projekt-Dokumentation bleiben unangetastet.
 - **Sub-Agenten** für Umsetzung, Recherche, adversarialen Review, Dokumentation, Kurzchecks und eine
   Eskalationsrolle, die erst einspringt, wenn ein Agent zweimal an derselben Aufgabe gescheitert ist.
 - **Skills** als ausführbare Checklisten: Projekt anlegen, nachrüsten, delegieren, Dokumentation nachziehen,
-  Doku-Audit, Sitzungsabschluss, Template-Update.
+  Doku-Audit, Aufgabe abschließen, Template-Update.
 - **Arbeitsordner** `docs/ai/`: Board, Aufgaben mit Nummern und Ständen, Fragen mit vorgegebenen
   Antwortmöglichkeiten, Journal mit Belegen, Umbauliste.
 - **Optionale Bausteine**: wiederkehrende Wartung mit Fälligkeitsprüfung und ein Mitschnitt aller

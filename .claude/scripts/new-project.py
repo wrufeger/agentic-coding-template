@@ -870,8 +870,8 @@ def remove_maintenance_references(root: Path) -> dict:
         "",
     )
     new_text = new_text.replace(
-        "│   │                            # maintenance, template-update, session-wrapup\n",
-        "│   │                            # template-update, session-wrapup\n",
+        "│   │                            # maintenance, template-update, commit\n",
+        "│   │                            # template-update, commit\n",
     )
 
     if new_text != text:

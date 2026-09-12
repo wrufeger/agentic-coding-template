@@ -38,4 +38,4 @@ Für automatisierte/geplante Läufe außerhalb einer interaktiven Session: `.cla
 - Der `maintenance-orchestrator` schreibt `status.json` bereits per `maintenance-check.py --done <aufgabe>`
   fort — keine Handarbeit an `status.json` nötig.
 - Vorschläge in `docs/ai/tasks.md`/`questions.md` einarbeiten, `docs/ai/ledger.md` ergänzen (Skill
-  `/session-wrapup`), Commit per Pathspec.
+  `/commit`).

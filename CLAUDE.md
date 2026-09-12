@@ -81,14 +81,13 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
-| `/delegate` | „Delegation" | wann/wie an Sub-Agenten delegiert wird, Prompt-Schablone, Parallelstart |
 | `/project-docs` | „Doku-Nachzug" | läuft als `context: fork` über `doc-writer` |
 | `/new-project` | „Neues Projekt" | `CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/new-project.py`, läuft **nie** in einem Sub-Agenten |
 | `/consume-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `consume-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
 | `/docs-audit` | „Doku-Audit" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer` (bewusst unabhängig von der optionalen Wartung) |
 | `/maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `CONFIG.md` `Wartung: aus`, entfernt `/new-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
 | `/template-update` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/template-update.py` |
-| `/session-wrapup` | „Sitzungsabschluss" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext |
+| `/commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
 
 ## 3. Token-/Modellregeln
 
@@ -107,7 +106,8 @@ in Sub-Agenten verlagern und den eigenen Kontext kleinhalten:
   Entscheidungen und `docs/ai/`.
 - Rückgaben der Sub-Agenten ≤ 40 Zeilen (siehe „Rückgabe" je Agent), keine Rohdumps, Tabellen ≤ 15 Zeilen.
 - Skills mit `context: fork` bevorzugen (Aufgabe läuft im Sub-Agenten, {{ORCHESTRATOR}} bekommt nur die Rückgabe).
-- Ledger-Entwürfe von einem Sonnet-Agenten vorschreiben lassen (Checkliste „Sitzungsabschluss" § 0),
+- Journal-Entwürfe bei langen Sitzungen von einem Sonnet-Agenten vorschreiben lassen (Checkliste
+  „Aufgabe abschließen"),
   {{ORCHESTRATOR}} prüft und übernimmt nur.
 - **Script statt Sub-Agent:** Für komplexe, langwierige, token-intensive und wiederkehrende Vorgänge (Zählungen,
   Statusabfragen, Dateiübersichten, Datenstand-Prüfungen) beim ersten Mal ein Script unter `.claude/scripts/`
@@ -153,8 +153,8 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
 │   │                            # optimizer (optional), maintenance-orchestrator (optional)
-│   ├── skills/                  # delegate, project-docs, new-project, consume-template, docs-audit,
-│   │                            # maintenance, template-update, session-wrapup
+│   ├── skills/                  # project-docs, new-project, consume-template, docs-audit,
+│   │                            # maintenance, template-update, commit
 │   ├── maintenance/              # optional: Status/Intervalle + Runner für wiederkehrende Wartung
 │   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging),
 │   │                            # template-update.py (Template-Updates per Merge, --graft), new-project.py

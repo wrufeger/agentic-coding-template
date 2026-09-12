@@ -10,7 +10,7 @@ model: claude-sonnet-5
 
 Läuft als Fork in einem `general-purpose`-Worker: der Worker übernimmt Fan-out, Auswertung und Index-Pflege
 nach diesem Ablauf; der Hauptkontext prüft danach die Diffs, pflegt `docs/ai/` (Board/Aufgaben/Fragen/Ledger)
-und committet (Skill `/session-wrapup`, nicht delegierbar). Bewusst **kein** projekteigener Agent als Träger:
+und committet (Skill `/commit`, nicht delegierbar). Bewusst **kein** projekteigener Agent als Träger:
 der Doku-Audit gehört nicht zur wiederkehrenden Wartung und muss auch dann laufen, wenn diese abgewählt ist
 (`CONFIG.md` § `Wartung`).
 
@@ -25,7 +25,7 @@ der Doku-Audit gehört nicht zur wiederkehrenden Wartung und muss auch dann lauf
 
 ## Abschluss (Hauptkontext, nicht delegierbar)
 `git status`/`git diff --stat docs` gegenprüfen, Vorschläge in `docs/ai/tasks.md`/`questions.md` einarbeiten,
-dann Skill `/session-wrapup`.
+dann Skill `/commit`.
 
 ## Grenzen
 Nichts wird am Code geändert; Findings, die Code-Änderungen brauchen, werden Aufgaben in `docs/ai/tasks.md`.

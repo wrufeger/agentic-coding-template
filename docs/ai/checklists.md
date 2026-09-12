@@ -3,51 +3,45 @@
 # Checklisten für die Zusammenarbeit
 
 Werkzeugneutrale Arbeitsanweisungen (gelten für jeden Assistenten, siehe `AGENTS.md`). {{AUFTRAGGEBER}} kann sie
-wörtlich als Anweisung geben, z. B. „Führe die Checkliste Sitzungsabschluss aus (`docs/ai/checklists.md` §
-Sitzungsabschluss)". Welche zusätzliche Mechanik ein bestimmtes Werkzeug dafür anbietet (automatisierter
+wörtlich als Anweisung geben, z. B. „Führe die Checkliste Aufgabe abschließen aus
+(`docs/ai/checklists.md` § Aufgabe abschließen)". Welche zusätzliche Mechanik ein bestimmtes Werkzeug dafür anbietet (automatisierter
 Aufruf, Ablauf in einer separaten Session o. Ä.), steht in der jeweiligen werkzeugspezifischen Ergänzungsdatei
 (siehe `AGENTS.md` § „Werkzeugspezifische Ergänzungsdateien"), nicht in dieser Checkliste.
 
-## Sitzungsabschluss
+## Aufgabe abschließen
 
-Läuft immer im Hauptkontext (Orchestrator), nie bei einem Worker.
+Läuft **nach jeder abgeschlossenen Aufgabe** im Hauptkontext (Orchestrator), nie bei einem Worker — nicht
+erst am Sitzungsende.
 
-0. **Entwürfe auslagern:** Einen Ledger-Entwurf von einem Worker (zweite Session/günstigeres Modell) mit Auftrag
-   „nur Entwurf, nichts committen" schreiben lassen; der Orchestrator liest den Entwurf, prüft ihn gegen die
-   tatsächlichen Belege und übernimmt ihn (gekürzt/korrigiert).
-1. **Belege sammeln:** Commit-Hashes, Testläufe/Ausgabezeilen, Dateipfade mit Größe, Rückmeldungen von Workern.
-   „Fertig" nur mit Beleg (`AGENTS.md`).
-2. **`docs/ai/ledger.md`:** neue Sitzung/neuer Lauf **oben** (`## YYYY-MM-DD (n. Lauf) — Titel`), Stichpunkte mit
-   Belegen, was offen blieb.
-3. **`docs/ai/tasks.md`:** erledigte Aufgaben mit Marker (✅/🔄/❓) kommentieren, `Stand <Datum>:` aktualisieren.
-   Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur hinzufügen/präzisieren/als erledigt markieren, wenn
-   {{AUFTRAGGEBER}} es meldet — nie ausführen. Als ✅ markierte Aufgaben mit Volltext nach
-   `docs/ai/tasks_archive.md` verschieben (nicht löschen), Nummer (`A<n>`) bleibt gültig, Beleg bleibt im
-   Ledger.
-4. **`docs/ai/questions.md`:** neue Fragen oben (fortlaufende Nummern `F<n>`), dringende markiert, je Frage
-   eigene `* Antwort:`-Zeile, keine Tabellen, ~72 Zeichen Zeilenumbruch. Jede Frage mit **vorgegebenen
-   Antwortmöglichkeiten** (ja/nein oder `a)`/`b)`/`c)`, freier Text zusätzlich möglich); eine Frage = eine
-   Entscheidung, Längeres aufteilen. Nur gemeinsam umsetzbare Entscheidungen als Teilfragen `F<n>a`/`F<n>b`
-   stellen und erst verarbeiten, wenn **alle** beantwortet sind. Offene Fragen nach Nummer sortiert halten
-   (nie umnummerieren), ab etwa zehn Stück nach Themen gruppieren. **Keine Standardantwort annehmen** —
-   unbeantwortete Fragen bleiben offen und werden nie stillschweigend entschieden; blockierende Fragen mit 🔴
-   markieren und im Board unter „offene Freigaben" führen, dann an etwas anderem weiterarbeiten.
-   Beantwortete Fragen verbuchen (Bestätigung
-   darunter), unter „Erledigt" zusammenfassen, im nächsten Lauf nach `questions_archive.md` verschieben.
-   Antworten von {{AUFTRAGGEBER}} in den `* Antwort:`-Zeilen des Tabu-Abschnitts von `tasks.md` genauso
-   verbuchen — delegierte Aufgaben wandern dabei in den oberen Abschnitt, erweiterte Rechte mit Datum ins
-   Ledger.
-5. **Ledger verdichten:** ältere Einträge zusammenfassen (Regeln im Ledger-Kopf); Commit-Hashes, Nummern,
-   Versionen, Pfade bleiben immer erhalten.
-6. **Doku-Index:** neue Dateien in `docs/README.md` eintragen; Datenstand-Zeilen der geänderten Dateien prüfen.
-7. **Commit:** `git add <pathspec …>` (nie ein catch-all), kurze Message im Repo-Stil; Secrets/Zip/Originalfotos
-   bleiben draußen (`.gitignore` prüfen). Fremde uncommittete Änderungen anderer Sitzungen nicht stillschweigend
-   mitnehmen — sichten, dann entscheiden.
-8. **Abschlussmeldung an {{AUFTRAGGEBER}}:** Ergebnis zuerst, Belege (Hash, Zahlen), offene Punkte/Fragen mit
+Journal, Aufgabenstand und neue Fragen sind zu diesem Zeitpunkt bereits nachgezogen: Das passiert laufend
+während der Arbeit, solange die Belege frisch sind (`AGENTS.md` § Grundregeln). Diese Checkliste räumt auf,
+was sich angesammelt hat, und sichert das Ergebnis.
+
+1. **Beleg prüfen:** Testlauf, Commit-Hash oder ein Aufruf von außen. Pflichtläufe aus
+   `docs/project/testing.md` grün. Ohne Beleg keine Abnahme — dann nur `Stand <Datum>:` in
+   `docs/ai/tasks.md` aktualisieren und die Aufgabe offen lassen.
+2. **Archivieren:** als ✅ markierte Aufgaben mit Volltext nach `docs/ai/tasks_archive.md`, verbuchte Fragen
+   nach `docs/ai/questions_archive.md`. Nummern (`A<n>`/`F<n>`) bleiben gültig und werden nie neu vergeben.
+   Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur auf dessen Meldung hin abhaken; Antworten in deren
+   `* Antwort:`-Zeilen genauso verbuchen — delegierte Aufgaben wandern in den oberen Abschnitt, erweiterte
+   Rechte mit Datum ins Journal.
+3. **Journal ergänzen und verdichten:** fehlt ein Eintrag zur gerade abgeschlossenen Aufgabe, jetzt
+   nachtragen. Ältere Einträge nach den Regeln im Kopf von `docs/ai/ledger.md` zusammenfassen — Commit-Hashes,
+   Nummern, Versionen und Pfade bleiben immer erhalten.
+4. **Doku-Index:** neue Dateien in `docs/README.md` eintragen, Datenstände der geänderten Dateien prüfen.
+5. **Board:** `docs/ai/board.md` auf den neuen Stand bringen (Kurzbilanz, nächster Schritt, offene Freigaben).
+6. **Commit per Pathspec:** `git add <pathspec …>`, nie ein catch-all; kurze Message im Repo-Stil. Committet
+   wird die abgenommene Arbeit, nicht ein Zeitabschnitt. Secrets, Archive und Originalmedien bleiben draußen
+   (`.gitignore` prüfen). Fremde uncommittete Änderungen anderer Sitzungen nicht stillschweigend mitnehmen —
+   sichten, dann entscheiden.
+7. **Bilanz an {{AUFTRAGGEBER}}:** Ergebnis zuerst, Belege (Hash, Zahlen), offene Punkte und Fragen mit
    Nummern.
-9. **Logging (falls eingeschaltet, `AGENTS.md` § Logging):** Commit als `[orchestrator] [commit] <hash> <message>`,
-   Abschluss als `[orchestrator] [session] ende · <Kurzbilanz>` schreiben — das Log ist Mitschnitt, kein
-   Ersatz für Ledger oder Beleg.
+8. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
+   `[orchestrator] [commit] <hash> <message>` schreiben — das Log ist Mitschnitt, kein Ersatz für Journal
+   oder Beleg.
+9. **Kontext freigeben:** Der Detailkontext der erledigten Aufgabe wird nicht mehr gebraucht, der Stand liegt
+   vollständig in Git und `docs/ai/`. Werkzeuge mit Kontext-Komprimierung (Claude Code: `/compact`) hier
+   einsetzen; steht die nächste Aufgabe schon fest, sie dabei erwähnen.
 
 ## Delegation
 
@@ -73,7 +67,7 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
   ausgeschlossene Ursachen). Den Befund danach verbuchen (Ledger, ggf. Coding-Regeln/Umbauliste). Eskalation
   ist billiger als die dritte Wiederholung.
 - Nach jeder Welle: Lint + Typecheck laufen lassen, betroffene Funktionen real ausprobieren; „fertig" nur mit
-  Beleg; Ledger nachziehen (Checkliste „Sitzungsabschluss").
+  Beleg; Journal laufend nachziehen (`AGENTS.md` § Grundregeln).
 - Nach jeder Umsetzungswelle kann eine kurze Optimierungsrunde über die neu geschriebenen Stellen laufen —
   Ziel ist Verständlichkeit und Kürze, Geschwindigkeit nur, wo sie ohne Mehrkomplexität zu haben ist;
   höchstens zwei Runden, Verhalten und Tests müssen unverändert bleiben. Ist der Aufwand größer, wird daraus
@@ -135,7 +129,7 @@ Idee, das Formular `CONFIG.md` deckt beides ab:
 8. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare,
    siehe `no_replace` in `.claude/template.json`) und `CONFIG.md` dürfen noch Platzhalter zeigen, alles
    andere klären.
-9. Commit per Pathspec nach Freigabe (Checkliste „Sitzungsabschluss").
+9. Commit per Pathspec nach Freigabe (Checkliste „Aufgabe abschließen").
 
 ## Projekt nachrüsten
 

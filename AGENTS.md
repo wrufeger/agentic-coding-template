@@ -61,6 +61,13 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
 - Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in
   `docs/ai/README.md`.
 - „Fertig" gilt nur mit Beleg: Testlauf, Commit-Hash oder ein Aufruf von außen, der das Ergebnis zeigt.
+- **Laufend nachziehen, nicht sammeln.** Journal (`docs/ai/ledger.md`), Aufgabenstand (`Stand <Datum>:` in
+  `docs/ai/tasks.md`) und neue Fragen werden **sofort** nach der jeweiligen Teilaufgabe geschrieben, solange
+  der Beleg frisch ist — nicht am Ende einer Sitzung aus der Erinnerung. Bricht eine Sitzung ab, ist der Stand
+  dann trotzdem vollständig.
+- **Committet wird abgenommene Arbeit**, kein Zeitabschnitt: sobald eine Aufgabe fertig und belegt ist,
+  folgt der Abschluss (Checkliste „Aufgabe abschließen"). Mehrere Commits pro Sitzung sind der Normalfall,
+  ein einziger Sammel-Commit am Ende die Ausnahme.
 - Commits ausschließlich per Pathspec (nie ein catch-all wie `git add -A`/`git add .`), kurze Commit-Messages im
   bisherigen Stil des Repos.
 - Nur der Orchestrator schreibt in `docs/ai/` und committet. Worker liefern Ergebnis und Beleg an den

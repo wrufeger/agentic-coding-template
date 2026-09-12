@@ -13,7 +13,7 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
 
 1. `python .claude/scripts/template-update.py --check` ausführen; Zusammenfassung an {{AUFTRAGGEBER}}
    (Anzahl Commits, geänderte Dateien, welche davon `(keep_local)` markiert sind).
-2. Sauberer Arbeitsbaum prüfen (`git status`) — sonst zuerst Checkliste „Sitzungsabschluss" ausführen.
+2. Sauberer Arbeitsbaum prüfen (`git status`) — sonst zuerst die laufende Aufgabe abschließen (Skill `/commit`).
 3. `python .claude/scripts/template-update.py --apply` ausführen.
 4. **Bei Exit 4 (Konflikte offen): inhaltlich zusammenführen, nicht eine Seite wegwerfen.**
    `python .claude/scripts/template-update.py --conflicts` liefert je Konflikt die Art, die geltende
@@ -57,7 +57,7 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
 ## Wann NICHT
 
 Bei laufender Feature-Welle mit uncommitteten Änderungen — erst abschließen (Checkliste
-„Sitzungsabschluss"), dann Template-Update.
+„Aufgabe abschließen"), dann Template-Update.
 
 ## Abbrechen
 

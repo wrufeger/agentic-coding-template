@@ -11,7 +11,7 @@ model: claude-sonnet-5
 Läuft als Fork im Sub-Agenten `doc-writer`: der Worker liest die geänderten Dateien/Commits dieser Sitzung,
 setzt die werkzeugneutrale Checkliste „Doku-Nachzug" (`docs/ai/checklists.md`) um und meldet die geänderten
 Doku-Abschnitte zurück. Der Hauptkontext prüft die Diffs, pflegt `docs/ai/` und committet
-(Skill `session-wrapup`, nicht delegierbar).
+(Skill `/commit`, nicht delegierbar).
 
 ## Auftrag an den Worker
 - Übergib: was wurde gebaut/geändert (Stichpunkte, Commit-Bezug), welche Dateien unter `docs/project/`

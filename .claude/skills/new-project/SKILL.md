@@ -41,4 +41,4 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
 6. `python .claude/scripts/new-project.py --finish` ausführen (löscht `CONFIG.md`, prüft vorher Schritt 3/5).
 7. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
    `no_replace` in `.claude/template.json`) und `CONFIG.md` dürfen noch Platzhalter zeigen.
-8. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/session-wrapup`).
+8. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).

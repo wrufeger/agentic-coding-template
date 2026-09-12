@@ -46,10 +46,9 @@ im Projekt selbst.
 | `/new-project` | Neues Projekt aus `CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
 | `/consume-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
 | `/template-update` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
-| `/delegate` | Aufgabe auf parallele Sub-Agenten verteilen |
 | `/project-docs` | Projekt-Doku nach einer Feature-Welle nachziehen |
 | `/docs-audit` | Doku gegen den echten Code-Stand prüfen |
-| `/session-wrapup` | Sitzung abschließen: Journal, Aufgaben, Fragen, Commit |
+| `/commit` | Aufgabe abnehmen: archivieren, Doku-Index, Bilanz, Commit — nach **jeder** fertigen Aufgabe |
 | `/maintenance` | Wiederkehrende Wartung (optional, per `CONFIG.md` abwählbar) |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den Satz sagen: „Führe die Checkliste
