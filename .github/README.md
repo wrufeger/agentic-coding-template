@@ -5,8 +5,8 @@ Anwendungen ebenso wie für gewachsene Codebasen.
 
 Es liefert ausgearbeitete Regeln und Rollen für den Orchestrator, seine Sub-Agenten, Skills und Scripte, dazu
 einen Arbeitsordner für die tägliche Zusammenarbeit (Board, Aufgaben, Fragen, Journal) und ein Skelett für die
-Projekt-Dokumentation. Die Grundidee: **ein starker Assistent plant, prüft und committet**, günstigere Modelle
-arbeiten die klar umrissenen Teilaufgaben parallel ab — und „fertig" gilt nur mit Beleg.
+Projekt-Dokumentation. Die Grundidee: **ein starker Assistent plant**, prüft und committet, **günstigere Modelle
+arbeiten** die klar umrissenen Teilaufgaben parallel ab — und „fertig" gilt nur mit Beleg.
 
 Schon bei der Einrichtung passt sich das Template an: Ein Formular wird ausgefüllt, dann ersetzt der Assistent
 die Platzhalter, entfernt die Dateien nicht genutzter Werkzeuge und befüllt die Dokumentation — bei einem
