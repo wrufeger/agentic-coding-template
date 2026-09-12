@@ -1,7 +1,7 @@
 # AGENTS.md — anbieterneutrale Regeln für {{PROJEKTNAME}}
 
 > Platzhalter (`{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}`, `{{STACK}}`) werden beim Anlegen des
-> Projekts aus `CONFIG.md` ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`).
+> Projekts aus `AI-CONFIG.md` ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`).
 
 Diese Datei gilt für **jeden** KI-Assistenten, der an diesem Projekt arbeitet — unabhängig vom Werkzeug: Claude
 Code, ChatGPT/Codex, GitHub Copilot, Cursor, Aider, Gemini CLI, ein lokales Modell über Ollama oder ein anderer
@@ -58,6 +58,10 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
 
 ## Grundregeln
 
+- **`AI-CONFIG.md` im Repo-Root** steuert die Zusammenarbeit: Der Abschnitt „Betrieb" (Modell des
+  Orchestrators, Commit-Verhalten, Logging, Wartung, Code-Optimierung) wird **zu Beginn jeder Sitzung
+  gelesen** und gilt laufend; „Einrichtung" dokumentiert, mit welchen Werten das Projekt angelegt wurde.
+  {{AUFTRAGGEBER}} ändert dort jederzeit, ohne dass Code angefasst werden muss.
 - Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in
   `docs/ai/README.md`.
 - „Fertig" gilt nur mit Beleg: Testlauf, Commit-Hash oder ein Aufruf von außen, der das Ergebnis zeigt.
@@ -224,7 +228,7 @@ Beispiel eines Delegationslaufs:
 | :--- | :--- |
 | `ERROR` | abgebrochene Worker, fehlgeschlagene Tool-Aufrufe/Testläufe, Fehler der Mechanik selbst |
 | `WARN` | Safeguard-Warnungen (siehe oben), Review-Urteil `BLOCK`, rote Tests, Einträge für den Tabu-Bereich |
-| `INFO` | Sitzungsstart/-ende · jede Eingabe von {{AUFTRAGGEBER}} (gekürzt) · **jede Entscheidung des Orchestrators** (was, warum, an wen) · **Start und Ende jedes Workers** mit Auftrag bzw. Ergebnis-Kurzfassung · Review-Urteile · Doku-Nachzug · Commits |
+| `INFO` | Sitzungsstart/-ende · jede Eingabe von {{AUFTRAGGEBER}} (gekürzt) · **jede Entscheidung des Orchestrators** (was, warum, an wen) · **Start und Ende jedes Workers** mit Auftrag bzw. Ergebnis-Kurzfassung · Review-Urteile · Doku prüfen und nachziehen · Commits |
 | `DEBUG` | zusätzlich jeder Tool-Aufruf (Name + Kurzargument, z. B. Datei oder Befehl) und die Rückgaben der Worker (gekürzt) |
 
 ### Pflichten bei eingeschaltetem Logging
@@ -260,23 +264,23 @@ zum Leeren vor einer Demo `python .claude/scripts/ai-log.py --reset` (legt die a
 ## Template-Herkunft und Updates
 
 Ist dieses Projekt aus dem Template entstanden — per `git clone` (Checkliste „Neues Projekt",
-`docs/ai/checklists.md`) oder nachträglich per `consume-template.py` + `--graft` (Checkliste „Projekt
+`docs/ai/checklists.md`) oder nachträglich per `apply-template.py` + `--graft` (Checkliste „Projekt
 nachrüsten") —, teilen Projekt und Template über den Git-Remote `template` eine gemeinsame Historie —
 spätere Template-Änderungen lassen sich so per Merge nachziehen, ohne bereits eingesetzte echte Werte wieder
 durch Platzhalter zu ersetzen. `.claude/template.json` hält dafür Remote/Branch des Templates, den zuletzt
 eingespielten Basis-Commit, die eingesetzten Platzhalterwerte und die Update-Historie fest; `keep_local`
 darin listet Dateien/Ordner, deren Projektfassung **bei Konflikten** gewinnt (u. a. `docs/project/**`,
-`docs/ai/`-Arbeitsdateien, `README.md`, `CONFIG.md`) — konfliktfreie Template-Änderungen an diesen Dateien
+`docs/ai/`-Arbeitsdateien, `README.md`, `AI-CONFIG.md`) — konfliktfreie Template-Änderungen an diesen Dateien
 werden normal mitgemergt. `no_replace` listet zusätzlich Dateien, die zwar normal mitgemergt, aber nie
 platzhalter-ersetzt werden, weil sie Platzhalter absichtlich als Beispiel zeigen (`docs/ai/checklists.md`,
-`.claude/skills/new-project/SKILL.md`).
+`.claude/skills/create-project/SKILL.md`).
 
 Regel bei einem Update: Template-Logik in `.claude/`, `AGENTS.md`, `CLAUDE.md` und den Checklisten wird
 nachgezogen; Projektinhalte in `docs/project/`, die `docs/ai/`-Arbeitsdateien und die README werden nie
 überschrieben — bei Konflikten außerhalb von `keep_local` beide Seiten zusammenführen, nie blind eine Seite
 nehmen. Ablauf: Checkliste „Template-Update" (`docs/ai/checklists.md`); Claude-Code-Mechanik dazu in
-`CLAUDE.md` § 2 (Skill `/template-update`). Ein per `consume-template.py` nachgerüstetes Projekt hat zunächst
-keinen gemeinsamen Vorfahren mit dem Template — `template-update.py --graft` stellt ihn per leerem
+`CLAUDE.md` § 2 (Skill `/update-template`). Ein per `apply-template.py` nachgerüstetes Projekt hat zunächst
+keinen gemeinsamen Vorfahren mit dem Template — `update-template.py --graft` stellt ihn per leerem
 Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `--check`/`--apply` normal.
 
 ## Werkzeugspezifische Ergänzungsdateien

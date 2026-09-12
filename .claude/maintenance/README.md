@@ -1,9 +1,9 @@
 # Wartungslauf — Runner
 
-Wiederkehrende Wartung für den Skill `/maintenance` (`.claude/skills/maintenance/SKILL.md`), fälligkeitsgesteuert
-über `status.json`. **Optional:** per `CONFIG.md` § „Wartung" abwählbar — bei „aus" entfernt `/new-project`
-diesen Ordner, den Skill `/maintenance`, den Agenten `maintenance-orchestrator`, `maintenance-check.py` und den
-zugehörigen `SessionStart`-Hook (siehe `.claude/scripts/new-project.py`).
+Wiederkehrende Wartung für den Skill `/run-maintenance` (`.claude/skills/run-maintenance/SKILL.md`), fälligkeitsgesteuert
+über `status.json`. **Optional:** per `AI-CONFIG.md` § „Wartung" abwählbar — bei „aus" entfernt `/create-project`
+diesen Ordner, den Skill `/run-maintenance`, den Agenten `maintenance-orchestrator`, `maintenance-check.py` und den
+zugehörigen `SessionStart`-Hook (siehe `.claude/scripts/create-project.py`).
 
 ## Dateien
 - `status.json` — Aufgaben mit Intervall (Tage) und Datum des letzten/nächsten Laufs, siehe unten.
@@ -23,8 +23,8 @@ zugehörigen `SessionStart`-Hook (siehe `.claude/scripts/new-project.py`).
   "_hinweis": "…"
 }
 ```
-- `intervall_tage: null` = **ereignisgesteuert** — die Aufgabe läuft nur auf Zuruf (`/maintenance <name>` bzw.
-  `/maintenance alle`), nie automatisch fällig.
+- `intervall_tage: null` = **ereignisgesteuert** — die Aufgabe läuft nur auf Zuruf (`/run-maintenance <name>` bzw.
+  `/run-maintenance alle`), nie automatisch fällig.
 - Fehlt eine Aufgabe unter `aufgaben`, gilt sie als **deaktiviert**.
 - Fällig ist eine Aufgabe, wenn `naechster_lauf` gesetzt und `<= heute` ist, oder wenn `intervall_tage` gesetzt
   und `letzter_lauf` noch `null` ist (noch nie gelaufen).

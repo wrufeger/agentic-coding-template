@@ -5,7 +5,7 @@
 Einstiegs-/Wiedereinstiegsboard: erster Blick jeder neuen Sitzung. Nur der Orchestrator schreibt hier
 (siehe `docs/ai/README.md`).
 
-Stand: {{DATUM}} — Projekt noch nicht gestartet. Nach dem Anlegen aus `CONFIG.md` (Checkliste „Neues Projekt",
+Stand: {{DATUM}} — Projekt noch nicht gestartet. Nach dem Anlegen aus `AI-CONFIG.md` (Checkliste „Neues Projekt",
 `docs/ai/checklists.md`) oder nach dem Nachrüsten eines bestehenden Repos (Checkliste „Projekt nachrüsten")
 hier die Kurzbilanz eintragen: was zuletzt passiert ist, was als Nächstes ansteht, welche Freigaben noch
 offen sind.

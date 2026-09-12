@@ -6,19 +6,19 @@
 #        `.claude/template.json` (Remote/Branch des Templates, zuletzt eingespielter Basis-Commit, die
 #        eingesetzten Platzhalterwerte, Dateien/Ordner, deren Projektfassung bei Konflikten immer gewinnt,
 #        Update-Historie). Siehe AGENTS.md § "Template-Herkunft und Updates", CLAUDE.md § 2 (Skill
-#        `/template-update`), docs/ai/checklists.md § "Template-Update". Reine Python-Stdlib, kein Paket
+#        `/update-template`), docs/ai/checklists.md § "Template-Update". Reine Python-Stdlib, kein Paket
 #        noetig.
 #
 # Aufruf:
-#   python .claude/scripts/template-update.py --init [--url URL] [--base HASH] [--set KEY=WERT ...]
+#   python .claude/scripts/update-template.py --init [--url URL] [--base HASH] [--set KEY=WERT ...]
 #       Legt Remote "template" an (falls noetig), ermittelt/uebernimmt den Basis-Commit, speichert Werte.
-#   python .claude/scripts/template-update.py --set KEY=WERT [--set KEY=WERT ...]
+#   python .claude/scripts/update-template.py --set KEY=WERT [--set KEY=WERT ...]
 #       Nur Platzhalterwerte schreiben (ohne Remote/Basis-Commit anzufassen).
-#   python .claude/scripts/template-update.py --check [--quiet]
+#   python .claude/scripts/update-template.py --check [--quiet]
 #       Prueft, ob das Template neuer ist als der gespeicherte Basis-Commit (mit fetch, Timeout 20s).
 #       Exit 0 = aktuell/nicht konfiguriert (bei --quiet), 2 = nicht konfiguriert/Netzwerkfehler (ohne
 #       --quiet), 3 = Update verfuegbar (Ausgabe: Commits, geaenderte Dateien, keep_local-Markierung).
-#   python .claude/scripts/template-update.py --apply [--commit]
+#   python .claude/scripts/update-template.py --apply [--commit]
 #       Mergt template/<branch> in den Arbeitsbaum (git merge --no-ff --no-commit). Konflikte in
 #       .claude/template.json werden IMMER zugunsten der Projektfassung geloest (auch "both added" beim
 #       Bootstrap, siehe unten) - unabhaengig von keep_local. Konflikte vom Typ "DD" (von beiden geloescht)
@@ -31,35 +31,35 @@
 #       muessen von Hand geloest werden (Analyse siehe --conflicts, danach --continue). Ohne Konflikte bzw.
 #       nach deren Aufloesung: Platzhalter in den vom Merge beruehrten Textdateien (ausser keep_local und
 #       no_replace) ersetzen, base_commit/updates fortschreiben, git add.
-#   python .claude/scripts/template-update.py --continue [--commit]
+#   python .claude/scripts/update-template.py --continue [--commit]
 #       Nach manueller Konfliktaufloesung: prueft, dass keine Konflikte mehr offen sind, fuehrt den
 #       Abschlussschritt von --apply aus.
-#   python .claude/scripts/template-update.py --conflicts
+#   python .claude/scripts/update-template.py --conflicts
 #       Nur waehrend eines laufenden Merges (MERGE_HEAD vorhanden, sonst Hinweis + Exit 0): analysiert jeden
 #       noch offenen Konflikt fuer den Assistenten (Art, Prioritaetsregel, Zeilenumfang der Aenderung je
 #       Seite, Umbenennungs-Kandidat bei "DU" per Git-Rename-Erkennung bzw. Inhaltsaehnlichkeit unter
 #       docs/ai/, passende git-Befehle zum Nachschauen). Schreibt nichts, loest nichts auf - reine Analyse
 #       fuer die inhaltliche Zusammenfuehrung, die der Assistent macht.
-#   python .claude/scripts/template-update.py --abort
+#   python .claude/scripts/update-template.py --abort
 #       Bricht einen laufenden Merge ab (git merge --abort); .claude/template.json bleibt unveraendert.
-#   python .claude/scripts/template-update.py --status
+#   python .claude/scripts/update-template.py --status
 #       Zeigt Konfiguration, Remote-URL, base_commit, letztes Update, Anzahl ausstehender Commits (ohne
 #       fetch, also ggf. veralteter Stand), ob eine gemeinsame Historie mit base_commit existiert
 #       (graft-Status) sowie ob gerade ein Merge laeuft und wie viele Konflikte offen sind.
-#   python .claude/scripts/template-update.py --graft
-#       Fuer per `consume-template.py` nachgeruestete Projekte (kein gemeinsamer Vorfahr mit dem Template):
+#   python .claude/scripts/update-template.py --graft
+#       Fuer per `apply-template.py` nachgeruestete Projekte (kein gemeinsamer Vorfahr mit dem Template):
 #       stellt per leerem Merge (`git merge -s ours --allow-unrelated-histories`) eine gemeinsame Historie
 #       zu base_commit her, OHNE den Arbeitsbaum zu veraendern - danach funktionieren --check/--apply wie
 #       bei einem per `git clone` angelegten Projekt. Voraussetzung: sauberer Arbeitsbaum, base_commit
-#       gesetzt (siehe .claude/template.json), Remote vorher gefetcht (macht `consume-template.py` bzw. der
-#       Skill /consume-template bereits). Existiert bereits ein gemeinsamer Vorfahr (`git merge-base HEAD
+#       gesetzt (siehe .claude/template.json), Remote vorher gefetcht (macht `apply-template.py` bzw. der
+#       Skill /apply-template bereits). Existiert bereits ein gemeinsamer Vorfahr (`git merge-base HEAD
 #       base_commit`), ist --graft ein No-op (Exit 0, Hinweis).
 #
 # --commit auf --apply/--continue erstellt den Merge-Commit direkt; ohne --commit bleiben die Aenderungen
 # gestaged, damit sie vor dem Commit geprueft werden koennen.
 #
 # Bootstrap (bestehendes Projekt hat dieses Script noch nicht): mit
-#   CLAUDE_PROJECT_DIR=<projekt> python <template-checkout>/.claude/scripts/template-update.py --init ...
+#   CLAUDE_PROJECT_DIR=<projekt> python <template-checkout>/.claude/scripts/update-template.py --init ...
 #   aufrufen - die Root kommt strikt aus CLAUDE_PROJECT_DIR, das Script selbst kann ausserhalb des
 #   Projekts liegen. Fehlt .claude/template.json im Projekt, wird intern mit einer leeren Default-
 #   Konfiguration gearbeitet (--init legt die Datei an; --check --quiet ohne Datei ist still Exit 0).
@@ -68,7 +68,7 @@
 # konfliktfreie Template-Aenderungen an diesen Dateien merged git ganz normal mit hinein.
 # Vergleichsziel (compare_ref): normalerweise <template_remote>/<template_branch>. Fehlt der Remote,
 # existiert aber ein lokaler Branch dieses Namens, wird lokal verglichen und nicht gefetcht - das ist
-# der Fall "Projekt entstand als Branch im Template-Checkout" (siehe new-project.py).
+# der Fall "Projekt entstand als Branch im Template-Checkout" (siehe create-project.py).
 # no_replace (template.json) = Dateien, die den Platzhalter selbst dokumentieren; sie werden gemergt, aber
 # nie ersetzt.
 #
@@ -115,7 +115,7 @@ DEFAULT_KEEP_LOCAL = [
     "docs/ai/backlog.md",
     "docs/ai/tasks_archive.md",
     "README.md",
-    "CONFIG.md",
+    "AI-CONFIG.md",
     ".env.example",
     ".github/workflows/ci.yml",
     ".mcp.json.example",
@@ -126,8 +126,8 @@ DEFAULT_KEEP_LOCAL = [
 # normal gemergt, aber NIE ersetzt - sonst macht ein Update aus "Alle Platzhalter (`{{PROJEKTNAME}}`, ...)"
 # die Zeile "Alle Platzhalter (`Kundenportal`, ...)" und die Anleitung ist kaputt.
 DEFAULT_NO_REPLACE = [
-    ".claude/scripts/new-project.py",
-    ".claude/scripts/template-update.py",
+    ".claude/scripts/create-project.py",
+    ".claude/scripts/update-template.py",
 ]
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
@@ -187,7 +187,7 @@ TEMPLATE_JSON_REL = ".claude/template.json"
 
 _HINWEIS = (
     "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte "
-    "Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `template-update.py --init` befuellt; "
+    "Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `update-template.py --init` befuellt; "
     "`values` nie Secrets."
 )
 
@@ -233,7 +233,7 @@ def compare_ref(root: Path, cfg: dict):
     """Vergleichsziel fuer Template-Updates -> (ref, fetch_noetig) oder (None, False).
 
     Normalfall: der Remote-Branch `<remote>/<branch>`. Entsteht das Projekt dagegen als Branch im
-    Template-Checkout selbst (new-project.py setzt dann base_commit aus main/master), gibt es keinen
+    Template-Checkout selbst (create-project.py setzt dann base_commit aus main/master), gibt es keinen
     passenden Remote - dann wird gegen den gleichnamigen LOKALEN Branch verglichen und nicht gefetcht."""
     remote = cfg.get("template_remote") or "template"
     branch = cfg.get("template_branch") or "main"
@@ -467,7 +467,7 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         lines.append(raw_line + marker)
 
     lines.append("")
-    lines.append("Einspielen: Skill /template-update bzw. python .claude/scripts/template-update.py --apply")
+    lines.append("Einspielen: Skill /update-template bzw. python .claude/scripts/update-template.py --apply")
     print("\n".join(lines))
     return 3
 
@@ -647,7 +647,7 @@ def _print_unresolved(root: Path, still_open, intro: str) -> None:
     for rel_path in still_open:
         kind = _conflict_kind_word(status_map.get(rel_path, "?"))
         print(f"  - {rel_path}  ({kind})", file=sys.stderr)
-    print("Analyse je Konflikt: python .claude/scripts/template-update.py --conflicts", file=sys.stderr)
+    print("Analyse je Konflikt: python .claude/scripts/update-template.py --conflicts", file=sys.stderr)
 
 
 def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bool) -> int:
@@ -922,7 +922,7 @@ def cmd_conflicts(root: Path, cfg: dict) -> int:
         lines.append("")
 
     lines.append("Weiter: Datei inhaltlich zusammenfuehren (Prioritaetsregel beachten), je geloestem Pfad")
-    lines.append("'git add <pfad>', danach 'template-update.py --continue [--commit]'.")
+    lines.append("'git add <pfad>', danach 'update-template.py --continue [--commit]'.")
     lines.append("Bei 'umbenannt?': die Template-Aenderung gehoert in die NEUE Datei - die alte bleibt")
     lines.append("geloescht (kein 'git add' auf den alten Pfad).")
     print("\n".join(lines).rstrip())
@@ -942,7 +942,7 @@ def _has_common_ancestor(root: Path, base_commit: str) -> bool:
 def cmd_graft(root: Path, cfg: dict) -> int:
     base_commit = cfg.get("base_commit")
     if not base_commit:
-        print("Fehler: kein base_commit in .claude/template.json - zuerst consume-template.py bzw. --init ausfuehren.", file=sys.stderr)
+        print("Fehler: kein base_commit in .claude/template.json - zuerst apply-template.py bzw. --init ausfuehren.", file=sys.stderr)
         return 2
 
     res_status = run_git(root, ["status", "--porcelain"])
@@ -1059,7 +1059,7 @@ def cmd_status(root: Path, cfg: dict) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="template-update.py",
+        prog="update-template.py",
         description="Template-Updates per Git-Merge einspielen, ohne echte Werte durch Platzhalter zu ersetzen.",
     )
     parser.add_argument("--init", action="store_true", help="Remote/Basis-Commit/Werte initialisieren")
@@ -1114,7 +1114,7 @@ def main() -> int:
     except SystemExit:
         raise
     except BaseException as e:  # noqa: BLE001 - darf nie mit Traceback nach aussen dringen
-        print(f"template-update: Fehler: {e}", file=sys.stderr)
+        print(f"update-template: Fehler: {e}", file=sys.stderr)
         return 2
 
 

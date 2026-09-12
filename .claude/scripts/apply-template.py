@@ -5,12 +5,12 @@
 #        Agentic-Coding-Grundausstattung dieses Template-Checkouts in ein bestehendes, fremdes Repo, ohne
 #        dort etwas zu ueberschreiben. Legt im Ziel `.claude/template.json` an (Remote/Basis-Commit des
 #        Templates, Werte noch leer) und richtet den Git-Remote "template" ein, damit
-#        `template-update.py --graft` danach eine gemeinsame Historie herstellen kann. Laeuft AUS DIESEM
+#        `update-template.py --graft` danach eine gemeinsame Historie herstellen kann. Laeuft AUS DIESEM
 #        TEMPLATE-CHECKOUT HERAUS (nicht im Zielrepo). Reine Python-Stdlib, kein Paket noetig. Siehe
-#        `.claude/skills/consume-template/SKILL.md`, `docs/ai/checklists.md` § "Projekt nachruesten".
+#        `.claude/skills/apply-template/SKILL.md`, `docs/ai/checklists.md` § "Projekt nachruesten".
 #
 # Aufruf:
-#   python .claude/scripts/consume-template.py --target <ziel-repo> [--dry-run]
+#   python .claude/scripts/apply-template.py --target <ziel-repo> [--dry-run]
 #       --dry-run (optional): nur anzeigen, was kopiert/uebersprungen wuerde, nichts schreiben.
 #       ohne --dry-run: kopiert tatsaechlich, schreibt .claude/template.json im Ziel, legt bei Bedarf den
 #       Remote "template" an und fetcht ihn.
@@ -20,7 +20,7 @@
 #   LICENSE (landet im Ziel als .claude/TEMPLATE-LICENSE, damit eine vorhandene Projekt-LICENSE bleibt),
 #   AGENTS.md, CLAUDE.md, GEMINI.md, .aider.conf.yml, .cursor/, .github/copilot-instructions.md,
 #   .claude/ (komplett AUSSER .claude/settings.local.json - `migrate-project.py` kommt darueber automatisch
-#   mit), docs/ai/ (alle), docs/project/ (alle Skelette inkl. incidents/), docs/README.md, CONFIG.md,
+#   mit), docs/ai/ (alle), docs/project/ (alle Skelette inkl. incidents/), docs/README.md, AI-CONFIG.md,
 #   .editorconfig, .gitattributes, renovate.json, .mcp.json.example, .env.example,
 #   .github/workflows/ci.yml.
 # NIE kopiert: README.md (wird im Ziel meist schon existieren; eigener Abschnitt statt Ersetzung, siehe
@@ -58,7 +58,7 @@ COPY_ITEMS = [
     "docs/ai",
     "docs/project",
     "docs/README.md",
-    "CONFIG.md",
+    "AI-CONFIG.md",
     ".editorconfig",
     ".gitattributes",
     "renovate.json",
@@ -119,7 +119,7 @@ def run_git(root: Path, args, timeout=None):
 
 
 def _load_template_update_module(template_root: Path):
-    tu_path = template_root / ".claude" / "scripts" / "template-update.py"
+    tu_path = template_root / ".claude" / "scripts" / "update-template.py"
     spec = importlib.util.spec_from_file_location("_template_update_ct", tu_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -253,7 +253,7 @@ def setup_template_remote(template_root: Path, target_root: Path, template_url: 
 
 def _run(argv) -> int:
     parser = argparse.ArgumentParser(
-        prog="consume-template.py",
+        prog="apply-template.py",
         description="Agentic-Coding-Grundausstattung dieses Templates in ein bestehendes Repo kopieren (Weg 2).",
     )
     parser.add_argument("--target", required=True, help="Pfad zum Ziel-Repo")
@@ -282,7 +282,7 @@ def _run(argv) -> int:
     cfg = write_target_template_json(template_root, target_root, args.dry_run)
     remote_status = setup_template_remote(template_root, target_root, cfg.get("template_url"), args.dry_run)
 
-    lines = [f"consume-template.py {'--dry-run' if args.dry_run else '--apply'} -> {target_root}", ""]
+    lines = [f"apply-template.py {'--dry-run' if args.dry_run else '--apply'} -> {target_root}", ""]
     lines.append(f"Kopiert ({len(copied)}):")
     lines.extend(f"  {rel}" for rel in copied[:60])
     if len(copied) > 60:
@@ -309,10 +309,10 @@ def _run(argv) -> int:
     lines.append(f"Remote 'template': {remote_status}")
 
     lines.append("")
-    lines.append("Naechste Schritte: im Zielrepo Skill /consume-template ausfuehren; darin "
+    lines.append("Naechste Schritte: im Zielrepo Skill /apply-template ausfuehren; darin "
                   "'python .claude/scripts/migrate-project.py --plan' fuer den Struktur-Migrationsplan "
-                  "(CONFIG.md befuellen, docs/project mit dem IST-Zustand befuellen, danach "
-                  "template-update.py --graft).")
+                  "(AI-CONFIG.md befuellen, docs/project mit dem IST-Zustand befuellen, danach "
+                  "update-template.py --graft).")
 
     print("\n".join(lines))
     return 0
@@ -324,7 +324,7 @@ def main() -> int:
     except SystemExit:
         raise
     except BaseException as e:  # noqa: BLE001 - darf nie mit Traceback nach aussen dringen
-        print(f"consume-template: Fehler: {e}", file=sys.stderr)
+        print(f"apply-template: Fehler: {e}", file=sys.stderr)
         return 2
 
 

@@ -27,16 +27,16 @@
     "docs/ai/backlog.md",
     "docs/ai/tasks_archive.md",
     "README.md",
-    "CONFIG.md",
+    "AI-CONFIG.md",
     ".env.example",
     ".github/workflows/ci.yml",
     ".mcp.json.example",
     ".claude/maintenance/status.json"
   ],
   "no_replace": [
-    ".claude/scripts/new-project.py",
-    ".claude/scripts/template-update.py"
+    ".claude/scripts/create-project.py",
+    ".claude/scripts/update-template.py"
   ],
   "updates": [],
-  "_hinweis": "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `template-update.py --init` befuellt; `values` nie Secrets. `is_template: true` kennzeichnet den Template-Checkout selbst - `new-project.py --apply` verweigert dort die Arbeit auf dem Standard-Branch und entfernt das Feld, sobald daraus ein echtes Projekt geworden ist."
+  "_hinweis": "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `update-template.py --init` befuellt; `values` nie Secrets. `is_template: true` kennzeichnet den Template-Checkout selbst - `create-project.py --apply` verweigert dort die Arbeit auf dem Standard-Branch und entfernt das Feld, sobald daraus ein echtes Projekt geworden ist."
 }

@@ -24,15 +24,19 @@ angesammelt hat, und sichert das Ergebnis.
    Commit-Hashes, Nummern, Versionen und Pfade bleiben dabei immer erhalten.
 4. **Doku-Index.** Neue Dateien in `docs/README.md` eintragen, Datenstände der geänderten Dateien prüfen.
 5. **Board.** `docs/ai/board.md` auf den neuen Stand bringen: Kurzbilanz, nächster Schritt, offene Freigaben.
-6. **Commit per Pathspec.** `git add <pfad …>` — nie ein catch-all. Committet wird **abgenommene Arbeit**,
+6. **Commit-Verhalten prüfen.** `AI-CONFIG.md` § „Betrieb" → `Commit-Verhalten` entscheidet, wie es weitergeht:
+   `automatisch` committet direkt (Schritt 7), `fragen` (Default) schlägt den Commit vor und wartet auf
+   Zustimmung, `manuell` committet nur auf ausdrückliche Anweisung von {{AUFTRAGGEBER}} — sonst bleibt die
+   Arbeit abgenommen, aber uncommittet.
+7. **Commit per Pathspec.** `git add <pfad …>` — nie ein catch-all. Committet wird **abgenommene Arbeit**,
    nicht ein Zeitabschnitt; mehrere Commits pro Sitzung sind der Normalfall. Kurze Message im Repo-Stil,
    Attribution wie in der laufenden Sitzung vorgegeben. Fremde uncommittete Änderungen anderer Sitzungen nicht
    stillschweigend mitnehmen — sichten, dann entscheiden.
-7. **Bilanz an {{AUFTRAGGEBER}}.** Ergebnis zuerst, Belege (Hash, Testzahlen), offene Punkte und Fragen mit
+8. **Bilanz an {{AUFTRAGGEBER}}.** Ergebnis zuerst, Belege (Hash, Testzahlen), offene Punkte und Fragen mit
    Nummern.
-8. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): `python .claude/scripts/ai-log.py INFO
+9. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): `python .claude/scripts/ai-log.py INFO
    orchestrator commit "<hash> <message>"`.
-9. **Kontext freigeben.** Der Detailkontext der erledigten Aufgabe wird nicht mehr gebraucht — der Stand
+10. **Kontext freigeben.** Der Detailkontext der erledigten Aufgabe wird nicht mehr gebraucht — der Stand
    liegt vollständig in Git und in `docs/ai/`. Jetzt ist der günstigste Zeitpunkt zum Komprimieren.
    `/compact` kann ein Assistent **nicht selbst auslösen** (Slash-Befehle sind dem Menschen vorbehalten) —
    also {{AUFTRAGGEBER}} in der Bilanz darauf hinweisen, am besten mit einem Satz zur nächsten Aufgabe, damit

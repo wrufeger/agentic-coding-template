@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 #
 # Zweck: Weg 2 ("Projekt nachruesten") von "nur ergaenzen" auf "auf Template-Struktur migrieren" erweitern.
-#        Laeuft IM ZIELREPO (nicht im Template-Checkout), nachdem consume-template.py bereits dorthin
+#        Laeuft IM ZIELREPO (nicht im Template-Checkout), nachdem apply-template.py bereits dorthin
 #        kopiert hat. Erkennt vorhandene KI-Arbeitsordner (z.B. fable/, ai/, docs/ki/) samt ihrer
 #        Arbeitsdateien (Board/Aufgaben/Fragen/Ledger/Backlog/Checklisten unter beliebigem Namen) und
 #        schlaegt vor, sie nach docs/ai/<template-name> zu verschieben; erkennt Dateien, die im Ziel UND im
 #        Template existieren und sich inhaltlich unterscheiden (Zusammenfuehren noetig); erkennt einen im
 #        Projekt fest verwendeten Orchestrator-Rufnamen (z.B. "Fable") und kann ihn projektweit durch den
-#        neuen Namen ersetzen. Siehe .claude/skills/consume-template/SKILL.md,
+#        neuen Namen ersetzen. Siehe .claude/skills/apply-template/SKILL.md,
 #        docs/ai/checklists.md § "Projekt nachruesten". Reine Python-Stdlib, kein Paket noetig.
 #
 # Aufruf:
@@ -19,14 +19,14 @@
 #       Fuehrt den Plan aus: verschiebt Arbeitsdateien per 'git mv' nach docs/ai/<template-name>
 #       (Historie bleibt erhalten), loest Zielkollisionen auf (inhaltsgleich -> Altdatei geloescht,
 #       unterschiedlich -> Altdatei als docs/ai/<name>.alt.md danebengelegt), fuehrt danach automatisch die
-#       Orchestrator-Umbenennung aus, wenn ein Name per --rename-orchestrator uebergeben oder in CONFIG.md
+#       Orchestrator-Umbenennung aus, wenn ein Name per --rename-orchestrator uebergeben oder in AI-CONFIG.md
 #       § "Alter Orchestrator-Name" gesetzt ist. Vorbedingung: sauberer Arbeitsbaum (git status --porcelain
 #       leer) - sonst Exit 2, damit die Migration bei Bedarf rueckgaengig gemacht werden kann. Kein Git-Repo
 #       -> Exit 2.
 #   python .claude/scripts/migrate-project.py --rename-orchestrator ALT=NEU
 #       Nur die Namensersetzung (auch einzeln nutzbar, ohne Struktur-Migration). Schreibt in jede Textdatei
 #       des Repos und hat deshalb dieselbe Vorbedingung wie --apply: Git-Repo, sauberer Arbeitsbaum, sonst
-#       Exit 2. Ausgelassen werden CONFIG.md, .claude/scripts/*.py, Binaerdateien und die Ordner aus
+#       Exit 2. Ausgelassen werden AI-CONFIG.md, .claude/scripts/*.py, Binaerdateien und die Ordner aus
 #       RENAME_SKIP_DIR_NAMES (node_modules, .venv, dist, build, ...). Zeilenenden und BOM bleiben erhalten.
 #       Mit --plan kombiniert wird nur gezeigt, was ersetzt wuerde (kein Schreibzugriff).
 #   python .claude/scripts/migrate-project.py --status
@@ -67,7 +67,7 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
-# Dieses Script laedt template-update.py/new-project.py aus dem Ziel dynamisch nach (siehe _load_module) -
+# Dieses Script laedt update-template.py/create-project.py aus dem Ziel dynamisch nach (siehe _load_module) -
 # ohne dies wuerde ein reiner --plan-Lauf ein __pycache__/ im Ziel hinterlassen und damit "git status
 # --porcelain" verschmutzen (blockiert dann faelschlich die Vorbedingung von --apply).
 sys.dont_write_bytecode = True
@@ -414,7 +414,7 @@ def _iter_text_files_for_rename(root: Path):
         for fname in filenames:
             fp = Path(dirpath) / fname
             rel = fp.relative_to(root).as_posix()
-            if rel == "CONFIG.md":
+            if rel == "AI-CONFIG.md":
                 continue
             if rel.startswith(".claude/scripts/") and rel.endswith(".py"):
                 continue
@@ -422,7 +422,7 @@ def _iter_text_files_for_rename(root: Path):
 
 
 def rename_orchestrator(root: Path, alt: str, neu: str):
-    """Ersetzt ALT durch NEU (3 Schreibvarianten, Wortgrenzen) in allen Textdateien ausser CONFIG.md,
+    """Ersetzt ALT durch NEU (3 Schreibvarianten, Wortgrenzen) in allen Textdateien ausser AI-CONFIG.md,
     .claude/scripts/*.py und den Ordnern aus RENAME_SKIP_DIR_NAMES. Gibt (per_file: [(rel, anzahl)], total,
     fehler: [rel]) zurueck. Geschrieben wird ueber Bytes - Zeilenenden und BOM bleiben, wie sie waren."""
     if alt == neu:
@@ -468,7 +468,7 @@ def find_leftover_alt_dirs(root: Path, alt: str):
 
 
 # ---------------------------------------------------------------------------
-# Git-Grundlagen + Modul-Wiederverwendung (template-update.py / new-project.py aus dem Ziel)
+# Git-Grundlagen + Modul-Wiederverwendung (update-template.py / create-project.py aus dem Ziel)
 # ---------------------------------------------------------------------------
 
 
@@ -502,8 +502,8 @@ def _load_module(root: Path, rel: str, mod_name: str):
 
 def _template_ref(root: Path):
     """(remote, 'remote/branch') aus .claude/template.json - oder (None, None), wenn kein Remote 'template'
-    existiert bzw. template-update.py im Ziel fehlt."""
-    tu = _load_module(root, ".claude/scripts/template-update.py", "_template_update_mp")
+    existiert bzw. update-template.py im Ziel fehlt."""
+    tu = _load_module(root, ".claude/scripts/update-template.py", "_template_update_mp")
     if tu is None:
         return None, None
     cfg, _path = tu.load_template_json(root)
@@ -517,12 +517,12 @@ def _template_ref(root: Path):
 
 
 def _config_orchestrator_values(root: Path):
-    """(orchestrator, alter_orchestrator_name) aus CONFIG.md, ueber den new-project.py-Parser des Ziels.
-    (None, None), wenn CONFIG.md/new-project.py fehlen."""
-    cfg_path = root / "CONFIG.md"
+    """(orchestrator, alter_orchestrator_name) aus AI-CONFIG.md, ueber den create-project.py-Parser des Ziels.
+    (None, None), wenn AI-CONFIG.md/create-project.py fehlen."""
+    cfg_path = root / "AI-CONFIG.md"
     if not cfg_path.exists():
         return None, None
-    np = _load_module(root, ".claude/scripts/new-project.py", "_new_project_mp")
+    np = _load_module(root, ".claude/scripts/create-project.py", "_new_project_mp")
     if np is None:
         return None, None
     try:
@@ -773,7 +773,7 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
         cfg_orch, cfg_alt = _config_orchestrator_values(root)
         if cfg_alt:
             alt = cfg_alt
-            # Kein fester Rueckfallname: ohne CONFIG.md § Orchestrator wuerde sonst ein fremder Name ins
+            # Kein fester Rueckfallname: ohne AI-CONFIG.md § Orchestrator wuerde sonst ein fremder Name ins
             # ganze Repo geschrieben.
             neu = neu or cfg_orch
 
@@ -793,11 +793,11 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
             for d in leftover:
                 lines.append(f"    {d}")
     elif alt:
-        lines.append(f"Orchestrator-Name: alter Name '{alt}' bekannt, aber kein neuer - CONFIG.md § "
+        lines.append(f"Orchestrator-Name: alter Name '{alt}' bekannt, aber kein neuer - AI-CONFIG.md § "
                       "\"Orchestrator\" ist leer. Keine Ersetzung ausgefuehrt, bei Bedarf einzeln mit "
                       "--rename-orchestrator ALT=NEU.")
     else:
-        lines.append("Orchestrator-Name: kein Name uebergeben und keiner in CONFIG.md § \"Alter "
+        lines.append("Orchestrator-Name: kein Name uebergeben und keiner in AI-CONFIG.md § \"Alter "
                       "Orchestrator-Name\" gesetzt - keine Ersetzung ausgefuehrt.")
 
     print("\n".join(lines))

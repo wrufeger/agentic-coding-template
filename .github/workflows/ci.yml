@@ -11,7 +11,7 @@ jobs:
         uses: actions/checkout@v4
 
       # Platzhalter-Steps - beim Anlegen des Projekts (docs/ai/checklists.md "Neues Projekt",
-      # .claude/scripts/new-project.py aus CONFIG.md) durch die echten Befehle des Stacks ersetzen
+      # .claude/scripts/create-project.py aus AI-CONFIG.md) durch die echten Befehle des Stacks ersetzen
       # (siehe docs/project/testing.md "Pflichtläufe").
 
       - name: Install dependencies

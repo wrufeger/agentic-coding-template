@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Zweck: Weg 1 ("Neues Projekt") aus README.md/AGENTS.md umsetzen - CONFIG.md (Formular im Repo-Root)
-#        einlesen, Platzhalter (`{{PROJEKTNAME}}` usw.) ersetzen, nicht genutzte Werkzeug-Dateien entfernen,
-#        Logging-Schalter in AGENTS.md setzen und die eingesetzten Werte in `.claude/template.json`
-#        festhalten. Ergaenzt/ersetzt die frueheren Skills `adapt-template` + `new-idea`. Reine Python-
-#        Stdlib, kein Paket noetig. Siehe `.claude/skills/new-project/SKILL.md`,
-#        `docs/ai/checklists.md` § "Neues Projekt".
+# Zweck: Weg 1 ("Neues Projekt") aus README.md/AGENTS.md umsetzen - AI-CONFIG.md (Formular im Repo-Root,
+#        bleibt danach dauerhaft im Projekt) einlesen, Platzhalter (`{{PROJEKTNAME}}` usw.) ersetzen, nicht
+#        genutzte Werkzeug-Dateien entfernen, Logging-Schalter in AGENTS.md setzen und die eingesetzten
+#        Werte in `.claude/template.json` festhalten. Ergaenzt/ersetzt die frueheren Skills
+#        `adapt-template` + `new-idea`. Reine Python-Stdlib, kein Paket noetig. Siehe
+#        `.claude/skills/create-project/SKILL.md`, `docs/ai/checklists.md` § "Neues Projekt".
 #
 # Aufruf:
-#   python .claude/scripts/new-project.py --dry-run
-#       (Default, auch ohne Argument) CONFIG.md parsen (fehlt sie oder ist sie leer -> Defaults), Plan
+#   python .claude/scripts/create-project.py --dry-run
+#       (Default, auch ohne Argument) AI-CONFIG.md parsen (fehlt sie oder ist sie leer -> Defaults), Plan
 #       ausgeben: Werte je Platzhalter, zu entfernende Dateien, Logging-Schalter, Orchestrator-Modell,
-#       Wartung (ein/aus, ggf. Aufgaben bzw. zu entfernende Dateien), offene Platzhalter.
-#   python .claude/scripts/new-project.py --apply
-#       Platzhalter ersetzen (ausser .git, CONFIG.md, docs/ai/checklists.md,
-#       .claude/skills/new-project/SKILL.md und den beiden Scripten new-project.py/template-update.py -
+#       Commit-Verhalten, Wartung (ein/aus, ggf. Aufgaben bzw. zu entfernende Dateien), offene Platzhalter.
+#   python .claude/scripts/create-project.py --apply
+#       Platzhalter ersetzen (ausser .git, AI-CONFIG.md, docs/ai/checklists.md,
+#       .claude/skills/create-project/SKILL.md und den beiden Scripten create-project.py/update-template.py -
 #       dort sind sie absichtlich als Beispiel sichtbar), nicht genannte Werkzeug-Dateien entfernen (nur
 #       wenn KI-Werkzeuge gesetzt ist), AI_LOG/AI_LOG_LEVEL in AGENTS.md setzen, "model" in
 #       .claude/settings.json setzen (Orchestrator-Modell; "inherit" entfernt den Schluessel; fehlt
@@ -23,20 +23,23 @@
 #       Wartungsaufgaben schreiben, bei "aus" die Wartungsdateien/den Hook/die CLAUDE.md-Verweise entfernen,
 #       bei Code-Optimierung "aus" den Agenten .claude/agents/optimizer.md entfernen,
 #       Werte in .claude/template.json schreiben (direkt) und - falls ein Git-Remote "template" existiert und
-#       noch kein base_commit gesetzt ist - `template-update.py --init` per Subprocess aufrufen.
-#       Bricht vor jeder Aenderung ab (Exit 2), wenn KI-Werkzeuge/Orchestrator-Modell/Wartung/
-#       Wartungsaufgaben unbekannte bzw. ungueltige Werte enthalten - sonst wuerde ein Tippfehler
+#       noch kein base_commit gesetzt ist - `update-template.py --init` per Subprocess aufrufen.
+#       Bricht vor jeder Aenderung ab (Exit 2), wenn KI-Werkzeuge/Orchestrator-Modell/Commit-Verhalten/
+#       Wartung/Wartungsaufgaben unbekannte bzw. ungueltige Werte enthalten - sonst wuerde ein Tippfehler
 #       (z. B. "Claude" statt "Claude Code") stillschweigend Dateien loeschen oder eine falsche Konfiguration
-#       schreiben. CONFIG.md bleibt bestehen.
+#       schreiben. AI-CONFIG.md bleibt bestehen (Commit-Verhalten steuert nur den Orchestrator, keine Datei).
 #       Laeuft das Script im Template-Checkout selbst (Marker `is_template` in .claude/template.json), ist
 #       --apply nur auf einem eigenen Branch erlaubt - auf main/master bricht es ab, sonst wuerde das
 #       Template seine Platzhalter verlieren. Auf einem eigenen Branch entsteht das Projekt als Branch des
 #       Templates: base_commit = letzter gemeinsamer Commit mit main/master, template_remote = origin, der
 #       Marker wird entfernt. Spaetere Updates laufen dann per Merge aus dem Standard-Branch.
-#   python .claude/scripts/new-project.py --finish
+#   python .claude/scripts/create-project.py --finish
 #       Prueft, dass docs/project/project_description.md ausgefuellt wurde (keine Vorlagenzeile mehr) und
-#       docs/ai/ledger.md einen echten Eintrag hat, loescht danach CONFIG.md. Idempotent: fehlt CONFIG.md
-#       bereits, Exit 0 mit Hinweis (nichts zu tun).
+#       docs/ai/ledger.md einen echten Eintrag hat. Schreibt danach AI-CONFIG.md fort statt sie zu loeschen:
+#       die Freitext-Abschnitte (## Ziel .. ## Sonstiges, bereits in docs/project/ eingearbeitet) werden
+#       durch einen Verweis-Abschnitt "## Projektbeschreibung" ersetzt, ein Datums-Vermerk kommt vor die
+#       erste Zeile. "## Betrieb" und "## Einrichtung" bleiben unveraendert - "Betrieb" wirkt danach weiter
+#       in jeder Sitzung. Idempotent: steht der Vermerk schon da, Exit 0 mit Hinweis, keine erneute Aenderung.
 #
 # Exit-Codes: 0 = ok, 2 = Vorbedingungs-/Parsefehler. Ein Fehler dieses Scripts darf nie mit Traceback nach
 # aussen dringen: main() laeuft komplett in try/except, Fehlermeldungen auf stderr.
@@ -58,14 +61,14 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
-CONFIG_REL = "CONFIG.md"
+CONFIG_REL = "AI-CONFIG.md"
 EXCLUDED_FROM_REPLACE = {
-    "CONFIG.md",
+    "AI-CONFIG.md",
     # Diese beiden Scripte erklaeren die Platzhalter-Mechanik in ihren Kopfkommentaren ("ersetzt
     # `{{PROJEKTNAME}}` usw.") - wird dort ersetzt, steht danach Unsinn im Kommentar. Gleiche Liste wie
     # `no_replace` in `.claude/template.json`.
-    ".claude/scripts/new-project.py",
-    ".claude/scripts/template-update.py",
+    ".claude/scripts/create-project.py",
+    ".claude/scripts/update-template.py",
 }
 
 KEY_MAP = {
@@ -76,6 +79,7 @@ KEY_MAP = {
     "KI-Werkzeuge": "ki_werkzeuge",
     "Stack": "stack",
     "Orchestrator-Modell": "orchestrator_modell",
+    "Commit-Verhalten": "commit_verhalten",
     "Logging": "logging",
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
@@ -130,9 +134,12 @@ REMOVABLE_TOOLS = list(TOOL_FILES.keys())
 
 # Orchestrator-Modell (steuert "model" in .claude/settings.json) und Wartung (ein/aus).
 ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
+# Steuert nur den Orchestrator (Checkliste "Aufgabe abschliessen"/Skill /commit), keine Datei -
+# analog zu Code-Analyse/Code-Optimierung.
+COMMIT_VERHALTEN_WERTE = {"automatisch", "fragen", "manuell"}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
-# Nur fuer Weg 2 (/consume-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
+# Nur fuer Weg 2 (/apply-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
 # Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
 CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 # Optionaler Politur-Agent nach jeder Umsetzungswelle: "aus" entfernt ihn, "ein"/"streng" behalten ihn
@@ -140,10 +147,10 @@ CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "streng"}
 OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
 # Vorgefertigte Regelsaetze je Sprache/Framework (docs/project/coding_rules.d/). Beim Anlegen bleiben nur
-# die in CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
+# die in AI-CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
 # zurueck. Leere Angabe = keine (kein Ballast im Projekt).
 GUIDELINES_DIR = "docs/project/coding_rules.d"
-# Nur fuer Weg 2 (/consume-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
+# Nur fuer Weg 2 (/apply-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
 # Template-Struktur migriert und zusammengefuehrt werden (siehe migrate-project.py)? "fragen" = der
 # Assistent zeigt den Plan und fragt im Chat nach.
 STRUKTUR_MIGRATION_WERTE = {"ja", "nein", "fragen"}
@@ -160,7 +167,7 @@ MAINTENANCE_REMOVE_PATHS = [
 ]
 
 # Gleicher Hinweistext wie _HINWEIS in maintenance-check.py (dort massgeblich) - hier dupliziert, weil
-# new-project.py status.json direkt schreibt, ohne das Script zu importieren.
+# create-project.py status.json direkt schreibt, ohne das Script zu importieren.
 MAINTENANCE_HINWEIS = (
     "Aufgabe je Schluessel unter 'aufgaben'. intervall_tage: null = ereignisgesteuert (laeuft nur auf "
     "Zuruf, nie automatisch faellig). Fehlt eine Aufgabe hier, ist sie deaktiviert. Nach einem Lauf setzt "
@@ -222,9 +229,9 @@ def run_git(root: Path, args, timeout=None):
 
 
 def _load_template_update_module():
-    """Laedt template-update.py als Modul (gleicher Ordner) - eine gemeinsame Quelle fuer die Struktur von
+    """Laedt update-template.py als Modul (gleicher Ordner) - eine gemeinsame Quelle fuer die Struktur von
     .claude/template.json statt sie hier zu duplizieren."""
-    tu_path = Path(__file__).resolve().parent / "template-update.py"
+    tu_path = Path(__file__).resolve().parent / "update-template.py"
     spec = importlib.util.spec_from_file_location("_template_update", tu_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -232,7 +239,7 @@ def _load_template_update_module():
 
 
 # ---------------------------------------------------------------------------
-# CONFIG.md parsen
+# AI-CONFIG.md parsen
 # ---------------------------------------------------------------------------
 
 
@@ -267,7 +274,7 @@ def parse_config(text: str) -> dict:
         if current_section is not None:
             section_buf.append(line)
             continue
-        # CONFIG.md fuehrt die Schluessel-Liste eingerueckt (4 Leerzeichen) - fuehrenden Leerraum daher
+        # AI-CONFIG.md fuehrt die Schluessel-Liste eingerueckt (4 Leerzeichen) - fuehrenden Leerraum daher
         # tolerieren, sonst wird keine einzige Zeile erkannt.
         m = re.match(r"^[ \t]*([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\- ]*):\s?(.*)$", line)
         if m and KEY_LOOKUP.get(m.group(1).strip().lower()):
@@ -358,6 +365,26 @@ def normalize_orchestrator_modell(cfg: dict):
     return val, None
 
 
+def normalize_commit_verhalten(cfg: dict):
+    """Gibt (commit_verhalten, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
+    'fragen'. Der Wert aendert keine Datei, sondern nur, wie der Orchestrator mit der Checkliste "Aufgabe
+    abschliessen" (Skill /commit) umgeht."""
+    raw = cfg.get("commit_verhalten")
+    if not raw:
+        return "fragen", None
+    val = raw.strip().lower()
+    if val not in COMMIT_VERHALTEN_WERTE:
+        return None, raw
+    return val, None
+
+
+COMMIT_VERHALTEN_TEXT = {
+    "automatisch": "automatisch - committet abgenommene Arbeit selbst",
+    "fragen": "fragen - schlaegt den Commit vor und wartet auf Zustimmung (Default)",
+    "manuell": "manuell - nur auf ausdrueckliche Anweisung",
+}
+
+
 def normalize_wartung(cfg: dict):
     """Gibt (wartung, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'aus'."""
     raw = cfg.get("wartung")
@@ -371,7 +398,7 @@ def normalize_wartung(cfg: dict):
 
 def normalize_code_analyse(cfg: dict):
     """Gibt (code_analyse, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'fragen'.
-    Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /consume-template (Weg 2)."""
+    Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /apply-template (Weg 2)."""
     raw = cfg.get("code_analyse")
     if not raw:
         return "fragen", None
@@ -481,7 +508,7 @@ CODE_ANALYSE_TEXT = {
 def normalize_struktur_migration(cfg: dict):
     """Gibt (struktur_migration, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
     'fragen'. Der Wert aendert selbst keine Datei, sondern steuert nur den Ablauf des Skills
-    /consume-template (Weg 2, migrate-project.py)."""
+    /apply-template (Weg 2, migrate-project.py)."""
     raw = cfg.get("struktur_migration")
     if not raw:
         return "fragen", None
@@ -815,7 +842,7 @@ def remove_maintenance_files(root: Path) -> list:
 
 
 def remove_maintenance_references(root: Path) -> dict:
-    """Entfernt bei Wartung 'aus' den Sub-Agenten-Eintrag [MAINTENANCE] und die '/maintenance'-Zeile aus
+    """Entfernt bei Wartung 'aus' den Sub-Agenten-Eintrag [MAINTENANCE] und die '/run-maintenance'-Zeile aus
     CLAUDE.md (gleiche Technik wie remove_tool_files/_remove_table_row). Wird eine Stelle nicht gefunden,
     still weitermachen - das Ergebnis wird im Bericht genannt."""
     result = {"agent_zeile": False, "skill_zeile": False, "modell_zeile": False, "baum_zeile": False}
@@ -833,7 +860,7 @@ def remove_maintenance_references(root: Path) -> dict:
         new_text = agent_pattern.sub("", new_text)
         result["agent_zeile"] = True
 
-    skill_pattern = re.compile(r"^\|\s*`/maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
+    skill_pattern = re.compile(r"^\|\s*`/run-maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
     if skill_pattern.search(new_text):
         new_text = skill_pattern.sub("", new_text)
         result["skill_zeile"] = True
@@ -870,8 +897,10 @@ def remove_maintenance_references(root: Path) -> dict:
         "",
     )
     new_text = new_text.replace(
-        "│   │                            # maintenance, template-update, commit\n",
-        "│   │                            # template-update, commit\n",
+        "│   ├── skills/                  # apply-template, audit-docs, create-project,\n"
+        "│   │                            # run-maintenance, update-template, commit\n",
+        "│   ├── skills/                  # apply-template, audit-docs, create-project,\n"
+        "│   │                            # update-template, commit\n",
     )
 
     if new_text != text:
@@ -903,7 +932,7 @@ DEFAULT_BRANCH_NAMES = {"main", "master"}
 
 def init_base_from_default_branch(root: Path, cfg_tu: dict) -> str:
     """Projekt entsteht als Branch im Template-Checkout: base_commit = letzter gemeinsamer Commit mit dem
-    Standard-Branch (main/master), damit `template-update.py` spaeter von dort mergen kann."""
+    Standard-Branch (main/master), damit `update-template.py` spaeter von dort mergen kann."""
     tu = _load_template_update_module()
     base = None
     quelle = None
@@ -930,7 +959,7 @@ def init_base_from_default_branch(root: Path, cfg_tu: dict) -> str:
     return (
         f"Projekt als Branch im Template: base_commit = {base[:7]} (aus '{quelle}'), "
         f"template_branch = {cfg_tu['template_branch']}. Updates spaeter per "
-        "'template-update.py --check' gegen diesen Branch."
+        "'update-template.py --check' gegen diesen Branch."
     )
 
 
@@ -984,13 +1013,13 @@ def template_repo_guard(root: Path):
 
 
 def maybe_init_template_update(root: Path, ist_template: bool = False) -> str:
-    """Ruft template-update.py --init per Subprocess auf, wenn ein Git-Remote 'template' existiert.
+    """Ruft update-template.py --init per Subprocess auf, wenn ein Git-Remote 'template' existiert.
     `ist_template` kommt aus template_repo_guard() und muss uebergeben werden, weil der Marker zu diesem
     Zeitpunkt bereits aus template.json entfernt ist. Gibt eine Statuszeile fuer die Zusammenfassung."""
     tu = _load_template_update_module()
     cfg_tu, _ = tu.load_template_json(root)
     if cfg_tu.get("base_commit"):
-        return "base_commit bereits gesetzt (consume-template.py/--init) - --init uebersprungen."
+        return "base_commit bereits gesetzt (apply-template.py/--init) - --init uebersprungen."
     res = run_git(root, ["remote"])
     remotes = res.stdout.split() if res.returncode == 0 else []
     if "template" not in remotes:
@@ -1000,7 +1029,7 @@ def maybe_init_template_update(root: Path, ist_template: bool = False) -> str:
         if ist_template or cfg_tu.get("is_template"):
             return init_base_from_default_branch(root, cfg_tu)
         return "kein Remote 'template' - base_commit nicht gesetzt."
-    script = Path(__file__).resolve().parent / "template-update.py"
+    script = Path(__file__).resolve().parent / "update-template.py"
     py = sys.executable or "python3"
     try:
         res_init = subprocess.run(
@@ -1013,10 +1042,10 @@ def maybe_init_template_update(root: Path, ist_template: bool = False) -> str:
             timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        return f"template-update.py --init fehlgeschlagen: {e}"
+        return f"update-template.py --init fehlgeschlagen: {e}"
     if res_init.returncode != 0:
-        return f"template-update.py --init: {res_init.stderr.strip() or res_init.stdout.strip()}"
-    return "template-update.py --init ok (base_commit gesetzt)."
+        return f"update-template.py --init: {res_init.stderr.strip() or res_init.stdout.strip()}"
+    return "update-template.py --init ok (base_commit gesetzt)."
 
 
 # ---------------------------------------------------------------------------
@@ -1030,6 +1059,7 @@ def cmd_dry_run(root: Path) -> int:
     logging_val, logging_tiefe = logging_settings(cfg)
     remove_list = tools_to_remove(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
+    commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
@@ -1038,7 +1068,7 @@ def cmd_dry_run(root: Path) -> int:
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
-    lines = ["new-project.py --dry-run", ""]
+    lines = ["create-project.py --dry-run", ""]
     ist_template, branch, guard_fehler = template_repo_guard(root)
     if guard_fehler:
         lines.append("ACHTUNG - --apply wuerde hier abbrechen:")
@@ -1080,6 +1110,13 @@ def cmd_dry_run(root: Path) -> int:
                       + (" (kein 'model'-Schluessel in .claude/settings.json)" if orch_modell == "inherit" else ""))
 
     lines.append("")
+    if commit_verhalten_unbekannt:
+        lines.append(f"Commit-Verhalten: \"{commit_verhalten_unbekannt}\" ist kein bekannter Wert - --apply "
+                      "bricht damit ab. Erlaubt: automatisch, fragen, manuell.")
+    else:
+        lines.append("Commit-Verhalten: " + COMMIT_VERHALTEN_TEXT[commit_verhalten])
+
+    lines.append("")
     if wartung_unbekannt:
         lines.append(f"Wartung: \"{wartung_unbekannt}\" ist kein bekannter Wert - --apply bricht damit ab. "
                       "Erlaubt: aus, ein.")
@@ -1101,7 +1138,7 @@ def cmd_dry_run(root: Path) -> int:
         lines.append(f"Code-Analyse: \"{code_analyse_unbekannt}\" ist kein bekannter Wert - --apply bricht "
                      "damit ab. Erlaubt: nein, vorschlagen, fragen.")
     else:
-        lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
+        lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
 
     lines.append("")
     if code_opt_unbekannt:
@@ -1128,7 +1165,7 @@ def cmd_dry_run(root: Path) -> int:
         lines.append(f"Struktur-Migration: \"{struktur_migration_unbekannt}\" ist kein bekannter Wert - "
                       "--apply bricht damit ab. Erlaubt: ja, nein, fragen.")
     else:
-        lines.append("Struktur-Migration (nur Weg 2 /consume-template): "
+        lines.append("Struktur-Migration (nur Weg 2 /apply-template): "
                       + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")
     if alter_name:
@@ -1141,7 +1178,7 @@ def cmd_dry_run(root: Path) -> int:
     unbekannt = unbekannte_werkzeuge(cfg)
     if warnungen or unbekannt:
         lines.append("")
-        lines.append("Hinweise zu CONFIG.md:")
+        lines.append("Hinweise zu AI-CONFIG.md:")
         for w in warnungen:
             lines.append(f"  {w}")
         for name in unbekannt:
@@ -1170,6 +1207,7 @@ def cmd_apply(root: Path) -> int:
     # fuehren, dass stillschweigend Dateien geloescht oder eine falsche Konfiguration geschrieben wird.
     unbekannt = unbekannte_werkzeuge(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
+    commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
@@ -1180,39 +1218,43 @@ def cmd_apply(root: Path) -> int:
 
     fehler = False
     if unbekannt:
-        print("Fehler: --apply abgebrochen, CONFIG.md § KI-Werkzeuge nicht eindeutig:", file=sys.stderr)
+        print("Fehler: --apply abgebrochen, AI-CONFIG.md § KI-Werkzeuge nicht eindeutig:", file=sys.stderr)
         for name in unbekannt:
             print(f"  - unbekannter Name: \"{name}\"", file=sys.stderr)
         print(f"  Erlaubt sind: {', '.join(sorted(set(TOOL_CANON.values())))} "
               "(leer = alle behalten, nichts wird entfernt).", file=sys.stderr)
         fehler = True
     if orch_unbekannt:
-        print(f"Fehler: --apply abgebrochen, CONFIG.md § Orchestrator-Modell nicht eindeutig: "
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Orchestrator-Modell nicht eindeutig: "
               f"\"{orch_unbekannt}\" - erlaubt sind opus, sonnet, haiku, inherit.", file=sys.stderr)
         fehler = True
+    if commit_verhalten_unbekannt:
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Commit-Verhalten nicht eindeutig: "
+              f"\"{commit_verhalten_unbekannt}\" - erlaubt sind automatisch, fragen, manuell.", file=sys.stderr)
+        fehler = True
     if wartung_unbekannt:
-        print(f"Fehler: --apply abgebrochen, CONFIG.md § Wartung nicht eindeutig: \"{wartung_unbekannt}\" - "
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Wartung nicht eindeutig: \"{wartung_unbekannt}\" - "
               "erlaubt sind aus, ein.", file=sys.stderr)
         fehler = True
     if code_analyse_unbekannt:
-        print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Analyse nicht eindeutig: "
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Code-Analyse nicht eindeutig: "
               f"\"{code_analyse_unbekannt}\" - erlaubt sind nein, vorschlagen, fragen.", file=sys.stderr)
         fehler = True
     if code_opt_unbekannt:
-        print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Optimierung nicht eindeutig: "
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Code-Optimierung nicht eindeutig: "
               f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, streng.", file=sys.stderr)
         fehler = True
     if guidelines_unbekannt:
-        print("Fehler: --apply abgebrochen, CONFIG.md § Coding-Guidelines kennt diese Regelsaetze nicht: "
+        print("Fehler: --apply abgebrochen, AI-CONFIG.md § Coding-Guidelines kennt diese Regelsaetze nicht: "
               + ", ".join(guidelines_unbekannt), file=sys.stderr)
         print("  Verfuegbar: " + ", ".join(available_guidelines(root)), file=sys.stderr)
         fehler = True
     if struktur_migration_unbekannt:
-        print(f"Fehler: --apply abgebrochen, CONFIG.md § Struktur-Migration nicht eindeutig: "
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Struktur-Migration nicht eindeutig: "
               f"\"{struktur_migration_unbekannt}\" - erlaubt sind ja, nein, fragen.", file=sys.stderr)
         fehler = True
     if wartung_val == "ein" and wartungsaufgaben_fehler:
-        print("Fehler: --apply abgebrochen, CONFIG.md § Wartungsaufgaben ungueltig: "
+        print("Fehler: --apply abgebrochen, AI-CONFIG.md § Wartungsaufgaben ungueltig: "
               + ", ".join(wartungsaufgaben_fehler), file=sys.stderr)
         print("  Format: name=tage, name=tage (tage: Zahl >= 0, oder leer/'null'/'-' fuer "
               "ereignisgesteuert).", file=sys.stderr)
@@ -1259,7 +1301,7 @@ def cmd_apply(root: Path) -> int:
         ]
         wartung_status = "aus - " + "; ".join(teile)
 
-    lines = ["new-project.py --apply", ""]
+    lines = ["create-project.py --apply", ""]
     for w in config_warnungen(cfg):
         lines.append(f"Hinweis: {w}")
     if config_warnungen(cfg):
@@ -1269,13 +1311,14 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Entfernte Werkzeug-Dateien: {', '.join(removed_files) if removed_files else '(keine)'}")
     lines.append(f"Logging: AI_LOG={logging_val}, AI_LOG_LEVEL={logging_tiefe}" + (" (geschrieben)" if logging_changed else " (unveraendert)"))
     lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
+    lines.append("Commit-Verhalten: " + COMMIT_VERHALTEN_TEXT[commit_verhalten])
     lines.append(f"Wartung: {wartung_status}")
-    lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
+    lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
                  + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else ""))
     lines.append("Coding-Guidelines: " + (", ".join(guidelines_gewaehlt) if guidelines_gewaehlt else "keine")
                  + (" (entfernt: " + ", ".join(guidelines_entfernt) + ")" if guidelines_entfernt else ""))
-    lines.append("Struktur-Migration (nur Weg 2 /consume-template): "
+    lines.append("Struktur-Migration (nur Weg 2 /apply-template): "
                   + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")
     if alter_name:
@@ -1294,10 +1337,10 @@ def cmd_apply(root: Path) -> int:
         for entry in remaining:
             lines.append(f"  {entry}")
     else:
-        lines.append("Offene Platzhalter: keine (ausser den bekannten Fundstellen in checklists.md/new-project SKILL.md).")
+        lines.append("Offene Platzhalter: keine (ausser den bekannten Fundstellen in checklists.md/create-project SKILL.md).")
 
     lines.append("")
-    lines.append("CONFIG-Abschnitte (Hinweis fuer die Doku-Befuellung durch den Skill):")
+    lines.append("AI-CONFIG-Abschnitte (Hinweis fuer die Doku-Befuellung durch den Skill):")
     for name in SECTION_NAMES:
         content = cfg["sections"].get(name) or "(leer)"
         lines.append(f"  ## {name}: {content if content != '(leer)' else content}")
@@ -1314,11 +1357,38 @@ def cmd_apply(root: Path) -> int:
 TEMPLATE_LINE_MARKER = "Wird im Rahmen der Checkliste"
 LEDGER_EMPTY_MARKER = "noch kein Eintrag"
 
+# Vermerk, den --finish vor die erste Zeile von AI-CONFIG.md setzt - macht --finish idempotent (steht er
+# schon da, war die Einrichtung bereits abgeschlossen) und dient maintenance-check.py als Signal, dass das
+# Projekt fertig angelegt ist (vorher waeren alle Wartungsaufgaben "noch nie gelaufen" - kein echter
+# Faelligkeitszustand, siehe dort). Gleicher Text dort dupliziert, weil maintenance-check.py create-project.py
+# nicht importiert.
+FINISH_MARKER_TEXT = "Einrichtung abgeschlossen am"
+
+# Ersetzt die Freitext-Abschnitte "## Ziel" .. "## Sonstiges" (SECTION_NAMES) - ihr Inhalt ist zu diesem
+# Zeitpunkt in docs/project/ eingearbeitet, siehe Vorbedingungen unten.
+FINISH_REPLACEMENT_SECTION = (
+    "## Projektbeschreibung\n"
+    "\n"
+    "Die Angaben aus der Einrichtung sind in `docs/project/project_description.md` und `architecture.md`\n"
+    "eingearbeitet — dort weiterpflegen, nicht hier.\n"
+)
+
 
 def cmd_finish(root: Path) -> int:
     config_path = root / CONFIG_REL
     if not config_path.exists():
-        print(f"{CONFIG_REL} bereits entfernt - nichts zu tun.")
+        print(f"Fehler: {CONFIG_REL} fehlt - Einrichtung kann nicht abgeschlossen werden.", file=sys.stderr)
+        return 2
+
+    try:
+        config_text = config_path.read_text(encoding="utf-8-sig")
+    except OSError as e:
+        print(f"Fehler: {CONFIG_REL} konnte nicht gelesen werden: {e}", file=sys.stderr)
+        return 2
+
+    erste_zeile = config_text.split("\n", 1)[0] if config_text else ""
+    if FINISH_MARKER_TEXT in erste_zeile:
+        print(f"{CONFIG_REL}: Einrichtung bereits abgeschlossen - keine Aenderung.")
         return 0
 
     pd_path = root / "docs" / "project" / "project_description.md"
@@ -1354,13 +1424,24 @@ def cmd_finish(root: Path) -> int:
             print(f"  - {p}", file=sys.stderr)
         return 2
 
+    ziel_match = re.search(r"(?m)^##\s+Ziel\s*$", config_text)
+    kopf = config_text[: ziel_match.start()] if ziel_match else config_text
+    kopf = kopf.rstrip("\n")
+
+    heute = time.strftime("%Y-%m-%d")
+    vermerk = (
+        f"> {FINISH_MARKER_TEXT} {heute} — der Abschnitt „Betrieb\" wirkt weiterhin in jeder Sitzung."
+    )
+    neuer_text = vermerk + "\n\n" + kopf + "\n\n" + FINISH_REPLACEMENT_SECTION
+
     try:
-        config_path.unlink()
+        config_path.write_text(neuer_text, encoding="utf-8", newline="\n")
     except OSError as e:
-        print(f"Fehler: {CONFIG_REL} konnte nicht geloescht werden: {e}", file=sys.stderr)
+        print(f"Fehler: {CONFIG_REL} konnte nicht geschrieben werden: {e}", file=sys.stderr)
         return 2
 
-    print(f"{CONFIG_REL} entfernt - Projekt-Setup abgeschlossen.")
+    print(f"{CONFIG_REL} fortgeschrieben - Einrichtung abgeschlossen, Datei bleibt bestehen "
+          "(Abschnitt 'Betrieb' wirkt weiterhin).")
     return 0
 
 
@@ -1373,13 +1454,14 @@ def build_parser():
     import argparse
 
     parser = argparse.ArgumentParser(
-        prog="new-project.py",
-        description="CONFIG.md einlesen und ein neues Projekt aus dem Template zuschneiden (Weg 1).",
+        prog="create-project.py",
+        description="AI-CONFIG.md einlesen und ein neues Projekt aus dem Template zuschneiden (Weg 1).",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", help="Plan anzeigen, nichts aendern (Default)")
     group.add_argument("--apply", action="store_true", help="Platzhalter ersetzen, Werkzeug-Dateien entfernen, Werte speichern")
-    group.add_argument("--finish", action="store_true", help="Vorbedingungen pruefen, CONFIG.md entfernen")
+    group.add_argument("--finish", action="store_true",
+                        help="Vorbedingungen pruefen, AI-CONFIG.md fortschreiben (bleibt bestehen)")
     return parser
 
 
@@ -1409,7 +1491,7 @@ def main() -> int:
     except SystemExit:
         raise
     except BaseException as e:  # noqa: BLE001 - darf nie mit Traceback nach aussen dringen
-        print(f"new-project: Fehler: {e}", file=sys.stderr)
+        print(f"create-project: Fehler: {e}", file=sys.stderr)
         return 2
 
 

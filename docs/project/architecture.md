@@ -2,7 +2,7 @@
 
 # Architektur — {{PROJEKTNAME}}
 
-Beschreibt den IST-Zustand (nicht den Wunsch) — bei jeder Feature-Welle nachziehen (Checkliste „Doku-Nachzug",
+Beschreibt den IST-Zustand (nicht den Wunsch) — bei jeder Feature-Welle nachziehen (Checkliste „Doku prüfen und nachziehen",
 `docs/ai/checklists.md`). Was noch nicht gebaut ist, gehört auf `docs/ai/backlog.md`.
 
 ## Schichten/Module

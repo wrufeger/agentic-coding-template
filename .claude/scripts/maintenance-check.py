@@ -3,8 +3,8 @@
 #
 # Zweck: Faelligkeit der wiederkehrenden Wartung (`.claude/maintenance/status.json`) pruefen und pflegen -
 #        Grundlage fuer den SessionStart-Hook (meldet nur, wenn tatsaechlich etwas faellig ist) und fuer den
-#        Skill `/maintenance` (Default ohne Argument = nur faellige Aufgaben). Siehe
-#        `.claude/maintenance/README.md`, `.claude/skills/maintenance/SKILL.md`,
+#        Skill `/run-maintenance` (Default ohne Argument = nur faellige Aufgaben). Siehe
+#        `.claude/maintenance/README.md`, `.claude/skills/run-maintenance/SKILL.md`,
 #        `.claude/agents/maintenance-orchestrator.md`. Reine Python-Stdlib, kein Paket noetig.
 #
 # Aufruf:
@@ -195,11 +195,21 @@ def _status_text(task: dict, today: date) -> str:
 
 
 def cmd_check(root: Path, quiet: bool) -> int:
-    # Solange CONFIG.md existiert, ist das Projekt noch nicht angelegt (Template-Checkout oder frischer Klon
-    # vor dem /new-project-Lauf). Dann waeren alle Aufgaben "noch nie gelaufen" - das ist keine Faelligkeit,
-    # sondern der Auslieferungszustand, und wuerde jede Sitzung mit einer sinnlosen Meldung eroeffnen.
-    if (root / "CONFIG.md").exists():
-        return 0
+    # AI-CONFIG.md bleibt seit create-project.py --finish dauerhaft im Projekt - anders als frueher (CONFIG.md
+    # wurde geloescht) taugt ihre blosse Existenz daher nicht mehr als Signal. Massgeblich ist jetzt der
+    # Vermerk "Einrichtung abgeschlossen am ..." in ihrer ersten Zeile (von --finish gesetzt, gleicher Text
+    # wie FINISH_MARKER_TEXT in create-project.py - hier dupliziert, kein Import). Fehlt er, ist das Projekt noch
+    # nicht fertig angelegt (Template-Checkout, frischer Klon vor /create-project, oder /create-project ohne
+    # --finish). Dann waeren alle Aufgaben "noch nie gelaufen" - das ist keine Faelligkeit, sondern der
+    # Auslieferungszustand, und wuerde jede Sitzung mit einer sinnlosen Meldung eroeffnen.
+    config_path = root / "AI-CONFIG.md"
+    if config_path.exists():
+        try:
+            erste_zeile = config_path.read_text(encoding="utf-8-sig").split("\n", 1)[0]
+        except OSError:
+            erste_zeile = ""
+        if "Einrichtung abgeschlossen am" not in erste_zeile:
+            return 0
     data, _path = load_status_raw(root)
     if data is None:
         return 0
@@ -228,7 +238,7 @@ def cmd_check(root: Path, quiet: bool) -> int:
         body.append(f"  {name}: {tage_txt} (letzter Lauf {_fmt_date(letzter)}, Intervall {intervall} Tage)")
 
     header = f"Wartung faellig: {names}"
-    footer = "Starten: Skill /maintenance bzw. python .claude/scripts/maintenance-check.py --list"
+    footer = "Starten: Skill /run-maintenance bzw. python .claude/scripts/maintenance-check.py --list"
     available = 8 - 2  # Kopf- und Schlusszeile
     if len(body) > available:
         shown = body[: max(available - 1, 0)]
@@ -289,7 +299,7 @@ def cmd_done(root: Path, aufgaben_arg: str, date_arg: str) -> int:
     if data is None:
         print(
             "Fehler: status.json fehlt oder ist ungueltig - zuerst --set verwenden oder Wartung ueber "
-            "CONFIG.md aktivieren.",
+            "AI-CONFIG.md aktivieren.",
             file=sys.stderr,
         )
         return 2

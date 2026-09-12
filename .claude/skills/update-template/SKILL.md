@@ -1,22 +1,22 @@
 ---
-name: template-update
+name: update-template
 description: Checkliste Template-Update - Änderungen des Templates per Merge einspielen, Platzhalterwerte bleiben erhalten.
 ---
 
 # Template-Update (nur Hauptkontext)
 
 Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklists.md` um, mit der Mechanik von
-`.claude/scripts/template-update.py`. Läuft im Hauptkontext, da mögliche Merge-Konflikte Entscheidungen mit
+`.claude/scripts/update-template.py`. Läuft im Hauptkontext, da mögliche Merge-Konflikte Entscheidungen mit
 {{AUFTRAGGEBER}} brauchen und nur der Orchestrator committet.
 
 ## Ablauf
 
-1. `python .claude/scripts/template-update.py --check` ausführen; Zusammenfassung an {{AUFTRAGGEBER}}
+1. `python .claude/scripts/update-template.py --check` ausführen; Zusammenfassung an {{AUFTRAGGEBER}}
    (Anzahl Commits, geänderte Dateien, welche davon `(keep_local)` markiert sind).
 2. Sauberer Arbeitsbaum prüfen (`git status`) — sonst zuerst die laufende Aufgabe abschließen (Skill `/commit`).
-3. `python .claude/scripts/template-update.py --apply` ausführen.
+3. `python .claude/scripts/update-template.py --apply` ausführen.
 4. **Bei Exit 4 (Konflikte offen): inhaltlich zusammenführen, nicht eine Seite wegwerfen.**
-   `python .claude/scripts/template-update.py --conflicts` liefert je Konflikt die Art, die geltende
+   `python .claude/scripts/update-template.py --conflicts` liefert je Konflikt die Art, die geltende
    Prioritätsregel, den Umfang beider Änderungen, mögliche Umbenennungen und die Befehle, mit denen sich beide
    Fassungen ansehen lassen (`git show <ref>:<pfad>`, `git show HEAD:<pfad>`).
 
@@ -46,7 +46,7 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
    `.claude/template.json` und die `keep_local`-Pfade mit gewöhnlichem Konflikt hat das Script bereits
    zugunsten der Projektfassung gelöst; offen bleiben genau die Fälle, die eine Entscheidung brauchen. Nach dem
    Auflösen jeweils `git add <pfad>` (bzw. `git rm` für bewusst Gelöschtes), dann
-   `python .claude/scripts/template-update.py --continue` ausführen.
+   `python .claude/scripts/update-template.py --continue` ausführen.
 5. Prüfen: `grep -rn "{{" .` (nur die Scripte in `.claude/scripts/` sind unbedenklich — `no_replace` —,
    alles andere klären),
    `python -m json.tool .claude/settings.json`, `python .claude/scripts/ai-log.py --status`.
@@ -61,5 +61,5 @@ Bei laufender Feature-Welle mit uncommitteten Änderungen — erst abschließen 
 
 ## Abbrechen
 
-`python .claude/scripts/template-update.py --abort` bricht einen laufenden Merge ab, ohne
+`python .claude/scripts/update-template.py --abort` bricht einen laufenden Merge ab, ohne
 `.claude/template.json` zu verändern.

@@ -43,12 +43,12 @@ den Code und sammelt Verbesserungsvorschläge — ohne eine Zeile zu ändern.
 
 | Befehl | Wofür |
 | :--- | :--- |
-| `/new-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
-| `/consume-template` | Bestehendes Repository nachrüsten und angleichen |
-| `/template-update` | Neuerungen aus dem Template nachziehen |
-| `/project-docs` · `/docs-audit` | Dokumentation nachziehen bzw. gegen den Code prüfen |
+| `/create-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
+| `/apply-template` | Bestehendes Repository nachrüsten und angleichen |
+| `/update-template` | Neuerungen aus dem Template nachziehen |
+| `/audit-docs` | Dokumentation gegen den echten Stand prüfen und nachziehen |
 | `/commit` | Aufgabe abnehmen: archivieren, Index, Bilanz, Commit |
-| `/maintenance` | Wiederkehrende Wartung (optional) |
+| `/run-maintenance` | Wiederkehrende Wartung (optional) |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den entsprechenden Satz sagen, etwa
 „Führe die Checkliste Neues Projekt aus".
@@ -65,8 +65,8 @@ Werte und die Projekt-Dokumentation bleiben unangetastet.
   auf laufende Systeme, Modell- und Kostenlogik.
 - **Sub-Agenten** für Umsetzung, Recherche, adversarialen Review, Dokumentation, Kurzchecks und eine
   Eskalationsrolle, die erst einspringt, wenn ein Agent zweimal an derselben Aufgabe gescheitert ist.
-- **Skills** als ausführbare Checklisten: Projekt anlegen, nachrüsten, delegieren, Dokumentation nachziehen,
-  Doku-Audit, Aufgabe abschließen, Template-Update.
+- **Skills** als ausführbare Checklisten: Projekt anlegen, nachrüsten, Dokumentation prüfen und nachziehen,
+  Aufgabe abschließen, Template-Update.
 - **Arbeitsordner** `docs/ai/`: Board, Aufgaben mit Nummern und Ständen, Fragen mit vorgegebenen
   Antwortmöglichkeiten, Journal mit Belegen, Umbauliste.
 - **Optionale Bausteine**: wiederkehrende Wartung mit Fälligkeitsprüfung und ein Mitschnitt aller

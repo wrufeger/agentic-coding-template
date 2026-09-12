@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zweck: Headless-Wartungslauf ueber den Skill /maintenance (.claude/skills/maintenance/SKILL.md) anstossen,
+# Zweck: Headless-Wartungslauf ueber den Skill /run-maintenance (.claude/skills/run-maintenance/SKILL.md) anstossen,
 #        fuer einen Aufruf aus cron/systemd-timer heraus (siehe .claude/maintenance/README.md).
 # Aufruf: ./.claude/maintenance/run-maintenance.sh [kurz|docs|deps|alle]
 # Ausgabeformat: Log-Datei .claude/maintenance/run-YYYY-MM-DD-HHMMSS.log (gitignored), Exit-Code 0 = ok.
@@ -13,9 +13,9 @@ timestamp="$(date +%Y-%m-%d-%H%M%S)"
 log_file="$script_dir/run-$timestamp.log"
 
 if [ -n "$modus" ]; then
-    prompt="/maintenance $modus"
+    prompt="/run-maintenance $modus"
 else
-    prompt="/maintenance"
+    prompt="/run-maintenance"
 fi
 
 cd "$root"

@@ -1,8 +1,8 @@
 # {{PROJEKTNAME}} — Vorlage für „Agentic Coding"
 
 > Diese README richtet sich an Menschen (keine Vorkenntnisse über KI-Assistenten nötig). Platzhalter wie
-> `{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}` werden beim Anlegen des Projekts aus `CONFIG.md`
-> ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`, Claude Code: `/new-project`).
+> `{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}` werden beim Anlegen des Projekts aus `AI-CONFIG.md`
+> ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`, Claude Code: `/create-project`).
 
 ## Was ist das?
 
@@ -31,7 +31,7 @@ Nutze das Template in der bestehenden Anwendung C:\development\mein-langjaehrige
    und mache ein Code Review
 ```
 
-Bei einer neuen Anwendung fragt der Assistent kurz nach Ziel, Stack und ersten Features und füllt `CONFIG.md`
+Bei einer neuen Anwendung fragt der Assistent kurz nach Ziel, Stack und ersten Features und füllt `AI-CONFIG.md`
 selbst aus. „Leeres Projekt" überspringt die Fragen und legt ein Gerüst unter dem Namen „MyApp" an. Bei einem
 bestehenden Repository analysiert er den Bestand, dokumentiert den Ist-Zustand, schlägt die Umstellung auf die
 Template-Struktur vor und prüft auf Wunsch den Code.
@@ -43,13 +43,12 @@ im Projekt selbst.
 
 | Befehl | Wofür |
 | :--- | :--- |
-| `/new-project` | Neues Projekt aus `CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
-| `/consume-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
-| `/template-update` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
-| `/project-docs` | Projekt-Doku nach einer Feature-Welle nachziehen |
-| `/docs-audit` | Doku gegen den echten Code-Stand prüfen |
+| `/create-project` | Neues Projekt aus `AI-CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
+| `/apply-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
+| `/update-template` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
+| `/audit-docs [project\|ai\|alle]` | Doku gegen den echten Stand prüfen und nachziehen |
 | `/commit` | Aufgabe abnehmen: archivieren, Doku-Index, Bilanz, Commit — nach **jeder** fertigen Aufgabe |
-| `/maintenance` | Wiederkehrende Wartung (optional, per `CONFIG.md` abwählbar) |
+| `/run-maintenance` | Wiederkehrende Wartung (optional, per `AI-CONFIG.md` abwählbar) |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den Satz sagen: „Führe die Checkliste
 Neues Projekt aus (`docs/ai/checklists.md`)."
@@ -58,27 +57,27 @@ Neues Projekt aus (`docs/ai/checklists.md`)."
 
 **Neues Projekt.** `git clone <Template-URL> <projekt>`, dann
 `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`. Danach
-`CONFIG.md` ausfüllen (oder leer lassen) und `/new-project` starten. In `CONFIG.md` stehen auch die Schalter
+`AI-CONFIG.md` ausfüllen (oder leer lassen) und `/create-project` starten. In `AI-CONFIG.md` stehen auch die Schalter
 für das Modell der Hauptsession, das Agenten-Logging und die Wartung.
 
 *Ohne Klon:* Wer im Template-Checkout bleiben will, legt einen Branch an (`git switch -c projekt/<name>`) —
 das Projekt entsteht dann als Branch, Updates kommen später per Merge aus `main`. Auf `main` selbst bricht
-`/new-project` ab, damit das Template seine Platzhalter behält.
+`/create-project` ab, damit das Template seine Platzhalter behält.
 
-**Bestehendes Projekt.** `python .claude/scripts/consume-template.py --target <ziel-repo>` kopiert die
-Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/consume-template`: Der Assistent
+**Bestehendes Projekt.** `python .claude/scripts/apply-template.py --target <ziel-repo>` kopiert die
+Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/apply-template`: Der Assistent
 dokumentiert den Ist-Zustand, schlägt die Struktur-Migration vor (vorhandene KI-Ordner wandern nach
 `docs/ai/`, der bisherige Rufname des Assistenten wird projektweit ersetzt, Regeldateien werden
 zusammengeführt) und fragt, ob er zusätzlich den Code prüfen soll. Zum Schluss verknüpft
-`python .claude/scripts/template-update.py --graft` die Historien, damit spätere Updates funktionieren.
+`python .claude/scripts/update-template.py --graft` die Historien, damit spätere Updates funktionieren.
 
 ## Template später aktualisieren
 
 Ein `SessionStart`-Hook meldet in Claude Code automatisch, wenn das Template neuer ist als der zuletzt
 eingespielte Stand. Einspielen: Assistenten anweisen „Führe die Checkliste Template-Update aus"
-(`docs/ai/checklists.md`), Claude Code: `/template-update`. Die in `.claude/template.json` unter
+(`docs/ai/checklists.md`), Claude Code: `/update-template`. Die in `.claude/template.json` unter
 `keep_local` gelisteten Dateien (u. a. `docs/project/**`, `docs/ai/`-Arbeitsdateien, `README.md`,
-`CONFIG.md`) gewinnen **bei Konflikten** immer mit der Projektfassung; `no_replace` listet zusätzlich
+`AI-CONFIG.md`) gewinnen **bei Konflikten** immer mit der Projektfassung; `no_replace` listet zusätzlich
 Dateien, die zwar normal mitgemergt, aber nie platzhalter-ersetzt werden (sie zeigen Platzhalter absichtlich
 als Beispiel, u. a. `docs/ai/checklists.md`).
 
@@ -99,11 +98,11 @@ als Beispiel, u. a. `docs/ai/checklists.md`).
 ```text
 AGENTS.md            # anbieterneutrale Grundregeln (zuerst lesen)
 CLAUDE.md             # Claude-Code-Ergänzung (Sub-Agenten, Skills, Modell-IDs)
-CONFIG.md             # Formular für Weg 1 (Projektname, Modell, Logging, Wartung, Ziel/Features) — wird von
-                      # /new-project gelesen und danach entfernt
+AI-CONFIG.md          # Betrieb (Modell, Commit-Verhalten, Logging, Wartung — laufend) + Einrichtung
+                      # (einmalig, Weg 1: Projektname, Stack, Ziel/Features) — bleibt dauerhaft im Projekt
 GEMINI.md  .aider.conf.yml  .cursor/rules/agents.mdc  .github/copilot-instructions.md   # Werkzeug-Verweise
 .claude/              # Claude Code: Sub-Agenten, Skills, Scripte, Settings (Modell + Hooks), Wartung (optional)
-.claude/scripts/      # u. a. new-project.py, consume-template.py, template-update.py, ai-log.py
+.claude/scripts/      # u. a. create-project.py, apply-template.py, update-template.py, ai-log.py
 .claude/template.json # Herkunft/Update-Stand ggü. dem Template (Remote, Basis-Commit, eingesetzte Werte)
 ai.log                # optionaler Live-Mitschnitt aller Agentenaktionen (gitignored, AGENTS.md § Logging)
 docs/

@@ -1,20 +1,20 @@
 ---
-name: consume-template
+name: apply-template
 description: Checkliste Projekt nachrüsten - bestehendes Repo mit der Agentic-Coding-Grundausstattung ausstatten, IST-Zustand dokumentieren.
 ---
 
 # Projekt nachrüsten
 
 Setzt die werkzeugneutrale Checkliste „Projekt nachrüsten" aus `docs/ai/checklists.md` um (Weg 2). Läuft im
-Hauptkontext, **im Ziel-Repo** — nachdem `consume-template.py` (aus dem Template-Checkout heraus) bereits
-dorthin kopiert hat. Mechanik: `.claude/scripts/consume-template.py` (Kopiervorgang, läuft vorher aus dem
+Hauptkontext, **im Ziel-Repo** — nachdem `apply-template.py` (aus dem Template-Checkout heraus) bereits
+dorthin kopiert hat. Mechanik: `.claude/scripts/apply-template.py` (Kopiervorgang, läuft vorher aus dem
 Template), `.claude/scripts/migrate-project.py` (Struktur-Migration im Ziel: KI-Ordner umstellen,
-Orchestrator-Name ersetzen), `.claude/scripts/new-project.py` (Platzhalter/Werte),
-`.claude/scripts/template-update.py --graft` (Historie verknüpfen).
+Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/Werte),
+`.claude/scripts/update-template.py --graft` (Historie verknüpfen).
 
 ## Ablauf
 
-1. `git status` sichten, die von `consume-template.py` kopierten Dateien stichprobenartig prüfen. Dateien, die
+1. `git status` sichten, die von `apply-template.py` kopierten Dateien stichprobenartig prüfen. Dateien, die
    im Ziel schon existierten, wurden **nicht** überschrieben — sie stehen in der Ausgabe unter
    „zusammenführen". Die Template-Fassung jeder Datei zeigt `git show template/<branch>:<pfad>` — der Branch steht in
    `.claude/template.json` (`template_branch`, meist `main`); `migrate-project.py --plan` nennt den fertigen
@@ -22,16 +22,16 @@ Orchestrator-Name ersetzen), `.claude/scripts/new-project.py` (Platzhalter/Werte
 
    **Vor allem Weiteren: Arbeitsbaum committen.** Die Migration in Schritt 2 verschiebt Dateien und ersetzt
    Namen im ganzen Repo — ohne sauberen Stand ist sie nicht rückgängig zu machen.
-2. **Struktur-Migration** (`CONFIG.md` § `Struktur-Migration`: `ja` | `nein` | `fragen`, Default `fragen`).
+2. **Struktur-Migration** (`AI-CONFIG.md` § `Struktur-Migration`: `ja` | `nein` | `fragen`, Default `fragen`).
    `python .claude/scripts/migrate-project.py --plan` ausführen und den Plan zeigen: welche KI-Arbeitsordner
    gefunden wurden (`fable/`, `ai/`, `ki/`, `docs/fable/`, …), wohin ihre Dateien wandern, welche Dateien
    inhaltlich zusammengeführt werden müssen, welcher Orchestrator-Name ersetzt würde.
    - Bei `fragen`: Plan zeigen und **einmal** nachfragen: „Soll ich das Repo auf die Template-Struktur
      umstellen (Dateien werden per `git mv` verschoben, Orchestrator-Name projektweit ersetzt)? a) ja
      b) nein, nur fehlende Dateien ergänzen". Ohne Antwort **nicht** migrieren.
-   - Bei `ja` bzw. nach Zustimmung: `--apply` ausführen. Ist der alte Orchestrator-Name nicht in `CONFIG.md`
+   - Bei `ja` bzw. nach Zustimmung: `--apply` ausführen. Ist der alte Orchestrator-Name nicht in `AI-CONFIG.md`
      hinterlegt, die erkannten Kandidaten kurz bestätigen lassen, dann
-     `--rename-orchestrator <Alt>=<Neu>`; `<Neu>` ist der Wert aus `CONFIG.md` § `Orchestrator`.
+     `--rename-orchestrator <Alt>=<Neu>`; `<Neu>` ist der Wert aus `AI-CONFIG.md` § `Orchestrator`.
    - Bei `nein`: überspringen, weiter mit Schritt 3.
 
    **Prioritäten beim Zusammenführen** (gilt für alles, was das Script als „zusammenführen" meldet):
@@ -53,16 +53,16 @@ Orchestrator-Name ersetzen), `.claude/scripts/new-project.py` (Platzhalter/Werte
 3. Sub-Agent `explorer` (Sonnet) analysiert das bestehende Repo: Projektname (`package.json` o. Ä.), Stack,
    Verzeichnisstruktur, Tests, Befehle (Install/Dev-Start/Lint/Typecheck/Test/E2E), CI — Rückgabe ≤ 40
    Zeilen mit Belegen (`Datei:Zeile`).
-4. `CONFIG.md` daraus befüllen (Projektname, Stack, Befehle; `KI-Werkzeuge` nach kurzer Rückfrage an
+4. `AI-CONFIG.md` daraus befüllen (Projektname, Stack, Befehle; `KI-Werkzeuge` nach kurzer Rückfrage an
    {{AUFTRAGGEBER}}, welche Werkzeuge im Projekt genutzt werden). Danach `python .claude/scripts/
-   new-project.py --apply` ausführen — ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt
+   create-project.py --apply` ausführen — ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt
    die Werte in `.claude/template.json`.
 5. `docs/project/*` mit dem **echten IST-Zustand** befüllen — nicht raten, am Code prüfen (Sub-Agent
    `doc-writer`, Sonnet). `.gitignore`-Vorschläge aus Schritt 1 übernehmen (von Hand zusammenführen, nie
    automatisch überschreiben). Im Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten"
    ergänzen (Verweis auf `AGENTS.md` und `docs/ai/board.md`).
-6. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `CONFIG.md` § `Code-Analyse` (der Wert steht auch in
-   der Ausgabe von `new-project.py`):
+6. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `AI-CONFIG.md` § `Code-Analyse` (der Wert steht auch in
+   der Ausgabe von `create-project.py`):
    - `nein` → überspringen, direkt zu Schritt 7.
    - `fragen` (Default) → jetzt, **nach** dem Befüllen von `docs/project/`, einmal im Chat nachfragen:
      „`docs/project/` ist befüllt. Soll ich zusätzlich den Bestand prüfen und Verbesserungen vorschlagen
@@ -76,11 +76,13 @@ Orchestrator-Name ersetzen), `.claude/scripts/new-project.py` (Platzhalter/Werte
    Punkt: Befund, Fundstelle `Datei:Zeile`, Vorschlag, geschätzter Aufwand) — kein Code wird geändert, keine
    Aufgabe wird angelegt. {{AUFTRAGGEBER}} entscheidet dort mit einem Marker, was in `docs/ai/tasks.md` wandert.
 7. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
-   Beleg: was `consume-template.py` kopiert/übersprungen hat, was befüllt wurde, ob eine Code-Analyse lief).
-8. `python .claude/scripts/new-project.py --finish` ausführen (löscht `CONFIG.md`, prüft vorher Schritt 5/7).
+   Beleg: was `apply-template.py` kopiert/übersprungen hat, was befüllt wurde, ob eine Code-Analyse lief).
+8. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 5/7, schreibt danach
+   `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
+   „Einrichtung" bleiben).
 9. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
-10. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe — erzeugt einen
-   Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/template-update`-Läufe).
+10. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
+   Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/update-template`-Läufe).
 
 ## Grenzen
 

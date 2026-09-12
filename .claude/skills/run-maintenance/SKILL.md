@@ -1,5 +1,5 @@
 ---
-name: maintenance
+name: run-maintenance
 description: Wiederkehrende Wartung, fälligkeitsgesteuert oder per Argument, läuft im maintenance-orchestrator.
 context: fork
 agent: maintenance-orchestrator
@@ -10,7 +10,7 @@ argument-hint: "[faellig|kurz|docs|deps|alle]"
 
 # Wartung (läuft im Sub-Agenten `maintenance-orchestrator`)
 
-**Optional:** per `CONFIG.md` § „Wartung" abwählbar — bei „aus" entfernt `/new-project` diesen Skill samt
+**Optional:** per `AI-CONFIG.md` § „Wartung" abwählbar — bei „aus" entfernt `/create-project` diesen Skill samt
 Agent, Ordner und Hook (siehe `.claude/maintenance/README.md`).
 
 Dieser Skill läuft **nicht** im Hauptkontext, sondern startet den Sub-Agenten `maintenance-orchestrator`
@@ -19,13 +19,13 @@ Dieser Skill läuft **nicht** im Hauptkontext, sondern startet den Sub-Agenten `
 ## Fälligkeit
 Der `SessionStart`-Hook (`.claude/settings.json`) ruft bei jeder neuen Session automatisch
 `maintenance-check.py --check --quiet` auf und meldet im Kontext, wenn Aufgaben fällig sind (sonst keine
-Meldung). Das ist der Hinweis, `/maintenance` zu starten.
+Meldung). Das ist der Hinweis, `/run-maintenance` zu starten.
 
 ## Argumente
 - Ohne Argument bzw. `faellig`: nur was `.claude/scripts/maintenance-check.py --check` als fällig meldet
   (anhand `.claude/maintenance/status.json`).
 - `kurz`: nur Kurzaudit (`git status`, Pflichtläufe aus `docs/project/testing.md`), unabhängig von der Fälligkeit.
-- `docs`: nur Doku-Audit (Fan-out wie Skill `/docs-audit`), unabhängig von der Fälligkeit.
+- `docs`: nur Doku-Audit (Fan-out wie Skill `/audit-docs`), unabhängig von der Fälligkeit.
 - `deps`: nur Abhängigkeits-Check, unabhängig von der Fälligkeit.
 - `alle`: alle konfigurierten Aufgaben unabhängig von der Fälligkeit.
 

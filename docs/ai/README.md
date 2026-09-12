@@ -27,7 +27,7 @@ IST-Zustand des Projekts selbst.
 | `questions_archive.md` | Beantwortete/archivierte Fragen | bei Bedarf nachschlagen |
 | `ledger.md` | Sitzungsjournal mit Belegen, neueste Sitzung oben | zur Historie/Übergabe |
 | `backlog.md` | Verbesserungsvorschläge, {{AUFTRAGGEBER}} entscheidet inline | vor größeren Umbauten |
-| `checklists.md` | Neutrale Arbeitsanweisungen (Abschluss, Delegation, Doku-Nachzug, …) | vor der jeweiligen Aktion |
+| `checklists.md` | Neutrale Arbeitsanweisungen (Abschluss, Delegation, Doku prüfen und nachziehen, …) | vor der jeweiligen Aktion |
 
 ## Formregeln (verbindlich für `questions.md`/`questions_archive.md`)
 
