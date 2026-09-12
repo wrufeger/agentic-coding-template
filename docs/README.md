@@ -7,7 +7,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 
 ## Reihenfolge zum Einlesen
 
-1. `README.md` (Repo-Root) — Einstieg, Schnellstart, Demo-Ablauf.
+1. `README.md` (Repo-Root) — Einstieg, Schnellstart, Ordnerübersicht.
 2. `AGENTS.md` (Repo-Root) — werkzeugunabhängige Grundregeln.
 3. `docs/ai/board.md` — aktueller Stand, nächster Schritt.
 4. Diese Tabelle — je nach Aufgabe gezielt die passende Datei.
@@ -30,6 +30,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/ai/README.md` | Aufbau/Formregeln des Zusammenarbeits-Ordners | {{DATUM}} | vor Nutzung von `docs/ai/` |
 | `docs/ai/board.md` | Einstiegs-/Wiedereinstiegsboard | {{DATUM}} | immer zuerst |
 | `docs/ai/tasks.md` | Aufgabenliste inkl. Tabu-Abschnitt | {{DATUM}} | vor jeder neuen Aufgabe |
+| `docs/ai/tasks_archive.md` | Erledigte Aufgaben im Volltext | {{DATUM}} | bei Bedarf nachschlagen |
 | `docs/ai/questions.md` / `questions_archive.md` | Offene/archivierte Fragen | {{DATUM}} | nach jeder Antwort |
 | `docs/ai/ledger.md` | Sitzungsjournal mit Belegen | {{DATUM}} | zur Historie/Übergabe |
 | `docs/ai/backlog.md` | Priorisierte Verbesserungsvorschläge | {{DATUM}} | vor größeren Umbauten |

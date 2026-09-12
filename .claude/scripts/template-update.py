@@ -97,11 +97,13 @@ DEFAULT_KEEP_LOCAL = [
     "docs/ai/questions_archive.md",
     "docs/ai/ledger.md",
     "docs/ai/backlog.md",
+    "docs/ai/tasks_archive.md",
     "README.md",
     "CONFIG.md",
     ".env.example",
     ".github/workflows/ci.yml",
     ".mcp.json.example",
+    ".claude/maintenance/status.json",
 ]
 
 # Dateien, die den Platzhalter selbst dokumentieren (Beispielaufzaehlungen in Checklisten/Skills). Sie werden

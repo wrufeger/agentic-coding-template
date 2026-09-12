@@ -1,7 +1,8 @@
 {
-  "letzter_lauf": {
-    "kurz": null,
-    "docs": null,
-    "deps": null
-  }
+  "aufgaben": {
+    "kurz": { "intervall_tage": 14, "letzter_lauf": null, "naechster_lauf": null },
+    "docs": { "intervall_tage": 30, "letzter_lauf": null, "naechster_lauf": null },
+    "deps": { "intervall_tage": 90, "letzter_lauf": null, "naechster_lauf": null }
+  },
+  "_hinweis": "Aufgabe je Schluessel unter 'aufgaben'. intervall_tage: null = ereignisgesteuert (laeuft nur auf Zuruf, nie automatisch faellig). Fehlt eine Aufgabe hier, ist sie deaktiviert. Nach einem Lauf setzt der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') letzter_lauf = heute und naechster_lauf = heute + intervall_tage (bei null nur letzter_lauf). Datumsformat YYYY-MM-DD. Siehe .claude/maintenance/README.md."
 }

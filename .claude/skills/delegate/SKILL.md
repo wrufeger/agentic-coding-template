@@ -16,6 +16,8 @@ Setzt die werkzeugneutrale Checkliste „Delegation" aus `docs/ai/checklists.md`
   auch für Guardrail-Bewertungen (`AGENTS.md` § Safeguard-Verhalten).
 - `doc-writer` (Sonnet) — pflegt `docs/project/`, nie `docs/ai/`.
 - `quick-check` (Haiku) — feste Lese-Kurzchecks ohne Bewertung.
+- `expert-solver` (Fable 5.1, `effort: high`) — High-Reasoning-Eskalation, nur nach zweimaligem Scheitern
+  desselben Auftrags oder bei einem unlösbaren Edge-Case aufrufen, nicht für normale Arbeit.
 
 Aufruf über das Agent-Tool mit `subagent_type` gleich dem Agentennamen und **explizitem** `model` (siehe
 `CLAUDE.md` § Token-/Modellregeln).
@@ -32,6 +34,19 @@ Aufruf über das Agent-Tool mit `subagent_type` gleich dem Agentennamen und **ex
   `[delegate]`-, `[start]`- und `[end]`-Zeilen der Sub-Agenten erzeugen die Hooks von selbst (`CLAUDE.md` § 7).
   Mehrere Sub-Agenten desselben Typs in einer Welle: jedem im Prompt seinen Log-Namen nennen (`builder#1`,
   `builder#2`, … in der Reihenfolge der Agent-Aufrufe; nächste freie Nummer zeigt `ai-log.py --status`).
+
+## Eskalation
+
+Scheitert ein Worker an derselben Aufgabe **zweimal**, wird nicht ein drittes Mal derselbe Auftrag gestellt:
+
+- (a) Lag der Fehler erkennbar am Auftrag (unklar, unvollständig, falsche Annahme), den Auftrag schärfen und
+  **einmal** neu starten — mit demselben oder einem anderen Standard-Worker.
+- (b) Sonst `expert-solver` mit dem vollständigen Kontext starten: ursprünglicher Auftrag, beide Fehlversuche
+  (was wurde versucht, welche Ausgabe kam zurück), betroffene Dateien, bereits ausgeschlossene Ursachen.
+- (c) Den Befund von `expert-solver` verbuchen (`docs/ai/ledger.md`, ggf. `docs/project/coding_rules.md`/
+  `docs/ai/backlog.md`).
+
+Merksatz: Eskalation ist billiger als die dritte Wiederholung.
 
 Restliche Regeln (Auftrags-Schablone, Abschluss-Disziplin, wann nicht delegieren) stehen unverändert in
 `docs/ai/checklists.md` § „Delegation".

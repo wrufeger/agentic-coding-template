@@ -29,6 +29,11 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
   Claude-Sub-Agenten, eine zweite Codex-/Cursor-Instanz, ein separater Ollama-Lauf). Arbeiten nach einem klar
   umrissenen Auftrag mit Kontext, Liefergegenstand und Format, liefern Ergebnis **plus Beleg** zurück. Ein Worker
   committet **nie** und schreibt **nie** in `docs/ai/`.
+- **Experte** — eine Eskalationsrolle für den Fall, dass ein Worker an derselben Aufgabe **zweimal** scheitert
+  oder ein Fehler unlösbar erscheint: ein stärkeres/höher eingestelltes Modell bekommt den vollständigen Kontext
+  (ursprünglicher Auftrag, beide Fehlversuche mit Ausgaben, bereits ausgeschlossene Ursachen) und sucht die
+  eigentliche Ursache statt das Symptom. Wird bewusst selten gerufen — sie ist teuer, aber billiger als die
+  dritte Wiederholung desselben Auftrags.
 - **Auftraggeber** — {{AUFTRAGGEBER}}, der Mensch, der Ziele setzt, Fragen beantwortet und kritische Schritte
   freigibt.
 
@@ -47,7 +52,21 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
   Assistenten (Orchestrator oder Worker) je ausgeführt — dort stehen Dinge, die fehlende Rechte, ein
   Produktionsrisiko oder eine Entscheidung betreffen, die nur ein Mensch treffen darf (Zugangsdaten anlegen,
   Produktions-Deployments, endgültiges Löschen, Rechte-/Kontenänderungen). Einträge dort dürfen ergänzt,
-  präzisiert oder als erledigt markiert werden, sobald {{AUFTRAGGEBER}} es meldet.
+  präzisiert oder als erledigt markiert werden, sobald {{AUFTRAGGEBER}} es meldet. Jede Aufgabe dort hat eine
+  eigene `* Antwort:`-Zeile: {{AUFTRAGGEBER}} meldet darin die Erledigung (mit Zusatzinfos zur Umsetzung),
+  stellt eine Rückfrage oder **delegiert** die Aufgabe an den Assistenten. Eine Delegation gilt nur für genau
+  diese Aufgabe, schließt die dafür nötigen erweiterten Rechte ein und wird mit Datum im Ledger festgehalten.
+- **Kurz halten:** Aufgaben und Fragen sind Stichpunkte, kein Fließtext — Ziel in einem Satz, Schritte je eine
+  Zeile, eine Aufgabe = ein Ergebnis, eine Frage = eine Entscheidung. Fragen bekommen vorgegebene
+  Antwortmöglichkeiten (ja/nein oder a/b/c), damit eine Antwort in Sekunden möglich ist; freier Text bleibt
+  immer erlaubt. Längeres wird geteilt oder gehört nach `docs/project/`. Formregeln: `docs/ai/README.md`.
+- **Keine Standardantwort annehmen:** Eine Frage an {{AUFTRAGGEBER}} gilt erst als beantwortet, wenn er
+  tatsächlich geantwortet hat. Offene Fragen werden nicht stillschweigend nach eigener Einschätzung
+  entschieden — eine naheliegende Option darf als Empfehlung markiert werden, mehr nicht. Blockiert eine
+  offene Frage, wird sie markiert und im Board als offene Freigabe geführt; die Arbeit läuft an anderer Stelle
+  weiter. Entscheidungen, die nur gemeinsam umsetzbar sind, werden als Teilfragen (`F5a`, `F5b`, …) gestellt
+  und **erst verarbeitet, wenn alle beantwortet sind**. Fragen bleiben nach Nummer sortiert und werden nie
+  umnummeriert; bei vielen offenen Fragen kommen Themen-Überschriften dazu.
 
 ## Umgang mit Sicherheits-/Safeguard-Warnungen
 
@@ -62,6 +81,23 @@ Berechtigungs-Eskalation). Regel für jeden Assistenten:
    „Review"), statt den ganzen Orchestrator-Kontext dauerhaft umzustellen.
 4. Bleibt sie geflaggt und betrifft sie den Tabu-Bereich (siehe oben): als Aufgabe mit Rezept (Kontext + genauer
    Schritt) unter „Aufgaben nur für {{AUFTRAGGEBER}}" ablegen statt zu erzwingen.
+
+## Zugriff auf laufende Systeme
+
+Gilt, sobald ein Assistent nicht nur das Repo anfasst, sondern erreichbare Systeme: Server per SSH, Datenbanken,
+APIs von Diensten, Container-Hosts, Router, Smart-Home- oder Monitoring-Instanzen.
+
+- **Lesen ist der Normalfall.** Statusabfragen, Inventar, Logs, Konfiguration auslesen — jederzeit erlaubt.
+- **Schreiben nur mit ausdrücklicher, datierter Freigabe** von {{AUFTRAGGEBER}} für genau diesen Zweck. Die
+  Freigabe wird im Ledger (`docs/ai/ledger.md`) mit Datum festgehalten und gilt nicht automatisch für den
+  nächsten ähnlichen Fall.
+- **Vor jeder ändernden Aktion:** aktuellen Stand sichern (Backup, Export, Kopie der Konfigurationsdatei) und
+  den Rückweg benennen. Ohne Rückweg keine Änderung.
+- **Vorschau vor destruktiven oder umfangreichen Änderungen:** erst zusammenfassen, was genau passieren wird
+  (betroffene Objekte, Anzahl, Nebenwirkungen), Bestätigung abwarten, dann ausführen — nicht umgekehrt.
+- **Wiederkehrende Schreibzugriffe** laufen über ein geprüftes Script unter `.claude/scripts/` (nachlesbar,
+  wiederholbar, kein frei formulierter Einzelbefehl) statt über wechselnde Ad-hoc-Kommandos.
+- Löschen von Daten/Konten, Produktions-Deployments und Rechteänderungen bleiben im Tabu-Bereich (siehe oben).
 
 ## Doku, Tests, Coding
 
@@ -86,8 +122,14 @@ Doku oder Commit übernommen werden.
 | Rolle | Zweck | Anthropic | OpenAI | Google | lokal (Ollama) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Orchestrator/Review | planen, prüfen, Sicherheitsurteil | Opus | GPT-5-Pro/o-Serie | Gemini 2.x Pro | größtes Modell |
+| Eskalation („Experte") | zweimal gescheiterte Aufgabe, unlösbarer Fehler | Fable 5.1, hohe Denkstufe | GPT-5-Pro, hohes Reasoning | Gemini 2.x Pro (Thinking) | größtes Modell, lange Laufzeit |
 | Standard-Arbeit | Umsetzung, Tool-Ketten, Doku | Sonnet | GPT-5 | Gemini 2.x Flash | mittleres Modell (30–70B) |
 | Kurzcheck | Lese-/Zähl-/Existenzprüfung | Haiku | GPT-5-mini/nano | Gemini Flash-Lite | kleines Modell (3–8B) |
+
+Der Orchestrator läuft standardmäßig auf dem **starken** Modell (bei Anthropic: Opus), weil er plant, Ergebnisse
+prüft und entscheidet — nicht auf dem günstigsten. Gespart wird über die Worker, nicht über den Kopf: die breite
+Arbeit übernimmt das mittlere Modell, reine Zähl- und Leseprüfungen das kleine. Die Eskalationsrolle wird nur bei
+Bedarf gerufen (siehe § Rollen).
 
 Diese Zuordnung ist ein Beispiel, keine Pflicht — welches Modell welche Rolle übernimmt, richtet sich nach dem
 Werkzeug, das gerade genutzt wird (siehe die werkzeugspezifischen Dateien für feste IDs, sofern das Werkzeug das

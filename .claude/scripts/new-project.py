@@ -11,17 +11,22 @@
 # Aufruf:
 #   python .claude/scripts/new-project.py --dry-run
 #       (Default, auch ohne Argument) CONFIG.md parsen (fehlt sie oder ist sie leer -> Defaults), Plan
-#       ausgeben: Werte je Platzhalter, zu entfernende Dateien, Logging-Schalter, offene Platzhalter.
+#       ausgeben: Werte je Platzhalter, zu entfernende Dateien, Logging-Schalter, Orchestrator-Modell,
+#       Wartung (ein/aus, ggf. Aufgaben bzw. zu entfernende Dateien), offene Platzhalter.
 #   python .claude/scripts/new-project.py --apply
 #       Platzhalter ersetzen (ausser .git, CONFIG.md, docs/ai/checklists.md,
 #       .claude/skills/new-project/SKILL.md und den beiden Scripten new-project.py/template-update.py -
 #       dort sind sie absichtlich als Beispiel sichtbar), nicht genannte Werkzeug-Dateien entfernen (nur
-#       wenn KI-Werkzeuge gesetzt ist), AI_LOG/AI_LOG_LEVEL in AGENTS.md setzen, Werte in
-#       .claude/template.json schreiben (direkt) und - falls ein Git-Remote "template" existiert und noch
-#       kein base_commit gesetzt ist - `template-update.py --init` per Subprocess aufrufen.
-#       Bricht vor jeder Aenderung ab (Exit 2), wenn KI-Werkzeuge einen unbekannten Namen enthaelt - sonst
-#       wuerde ein Tippfehler ("Claude" statt "Claude Code") die Dateien des gemeinten Werkzeugs loeschen.
-#       CONFIG.md bleibt bestehen.
+#       wenn KI-Werkzeuge gesetzt ist), AI_LOG/AI_LOG_LEVEL in AGENTS.md setzen, "model" in
+#       .claude/settings.json setzen (Orchestrator-Modell; "inherit" entfernt den Schluessel; fehlt
+#       settings.json, wird uebersprungen), bei Wartung "ein" .claude/maintenance/status.json aus
+#       Wartungsaufgaben schreiben, bei "aus" die Wartungsdateien/den Hook/die CLAUDE.md-Verweise entfernen,
+#       Werte in .claude/template.json schreiben (direkt) und - falls ein Git-Remote "template" existiert und
+#       noch kein base_commit gesetzt ist - `template-update.py --init` per Subprocess aufrufen.
+#       Bricht vor jeder Aenderung ab (Exit 2), wenn KI-Werkzeuge/Orchestrator-Modell/Wartung/
+#       Wartungsaufgaben unbekannte bzw. ungueltige Werte enthalten - sonst wuerde ein Tippfehler
+#       (z. B. "Claude" statt "Claude Code") stillschweigend Dateien loeschen oder eine falsche Konfiguration
+#       schreiben. CONFIG.md bleibt bestehen.
 #   python .claude/scripts/new-project.py --finish
 #       Prueft, dass docs/project/project_description.md ausgefuellt wurde (keine Vorlagenzeile mehr) und
 #       docs/ai/ledger.md einen echten Eintrag hat, loescht danach CONFIG.md. Idempotent: fehlt CONFIG.md
@@ -31,6 +36,7 @@
 # aussen dringen: main() laeuft komplett in try/except, Fehlermeldungen auf stderr.
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -63,8 +69,11 @@ KEY_MAP = {
     "Sprache": "sprache",
     "KI-Werkzeuge": "ki_werkzeuge",
     "Stack": "stack",
+    "Orchestrator-Modell": "orchestrator_modell",
     "Logging": "logging",
     "Logging-Tiefe": "logging_tiefe",
+    "Wartung": "wartung",
+    "Wartungsaufgaben": "wartungsaufgaben",
     "Install-Befehl": "install_befehl",
     "Dev-Start-Befehl": "dev_start_befehl",
     "Lint-Befehl": "lint_befehl",
@@ -107,6 +116,32 @@ TOOL_FILES = {
     ],
 }
 REMOVABLE_TOOLS = list(TOOL_FILES.keys())
+
+# Orchestrator-Modell (steuert "model" in .claude/settings.json) und Wartung (ein/aus).
+ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
+WARTUNG_WERTE = {"aus", "ein"}
+DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
+WARTUNGSAUFGABEN_EREIGNISGESTEUERT = {"0", "", "null", "none", "-"}
+
+# Bei Wartung "aus" zu entfernende Pfade - identisch zu den Wartungsdateien unter TOOL_FILES["Claude Code"],
+# hier aber unabhaengig davon, ob Claude Code selbst als KI-Werkzeug abgewaehlt wird (Doppelentfernung ist
+# tolerant, siehe remove_maintenance_files).
+MAINTENANCE_REMOVE_PATHS = [
+    ".claude/maintenance",
+    ".claude/skills/maintenance",
+    ".claude/agents/maintenance-orchestrator.md",
+    ".claude/scripts/maintenance-check.py",
+]
+
+# Gleicher Hinweistext wie _HINWEIS in maintenance-check.py (dort massgeblich) - hier dupliziert, weil
+# new-project.py status.json direkt schreibt, ohne das Script zu importieren.
+MAINTENANCE_HINWEIS = (
+    "Aufgabe je Schluessel unter 'aufgaben'. intervall_tage: null = ereignisgesteuert (laeuft nur auf "
+    "Zuruf, nie automatisch faellig). Fehlt eine Aufgabe hier, ist sie deaktiviert. Nach einem Lauf setzt "
+    "der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') letzter_lauf = heute und "
+    "naechster_lauf = heute + intervall_tage (bei null nur letzter_lauf). Datumsformat YYYY-MM-DD. Siehe "
+    ".claude/maintenance/README.md."
+)
 
 # Erste Tabellenspalte in AGENTS.md § "Werkzeugspezifische Ergaenzungsdateien" bzw. README.md
 # § "Mit welchem Assistenten?" - identisch fuer beide Tabellen.
@@ -206,7 +241,9 @@ def parse_config(text: str) -> dict:
         if current_section is not None:
             section_buf.append(line)
             continue
-        m = re.match(r"^([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\- ]*):\s?(.*)$", line)
+        # CONFIG.md fuehrt die Schluessel-Liste eingerueckt (4 Leerzeichen) - fuehrenden Leerraum daher
+        # tolerieren, sonst wird keine einzige Zeile erkannt.
+        m = re.match(r"^[ \t]*([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\- ]*):\s?(.*)$", line)
         if m and KEY_LOOKUP.get(m.group(1).strip().lower()):
             raw_key = m.group(1).strip()
             key = KEY_LOOKUP[raw_key.lower()]
@@ -282,6 +319,58 @@ def config_warnungen(cfg: dict) -> list:
 
 def unbekannte_werkzeuge(cfg: dict) -> list:
     return list(cfg.get("ki_werkzeuge_unbekannt") or [])
+
+
+def normalize_orchestrator_modell(cfg: dict):
+    """Gibt (modell, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'opus'."""
+    raw = cfg.get("orchestrator_modell")
+    if not raw:
+        return "opus", None
+    val = raw.strip().lower()
+    if val not in ORCHESTRATOR_MODELLE:
+        return None, raw
+    return val, None
+
+
+def normalize_wartung(cfg: dict):
+    """Gibt (wartung, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'aus'."""
+    raw = cfg.get("wartung")
+    if not raw:
+        return "aus", None
+    val = raw.strip().lower()
+    if val not in WARTUNG_WERTE:
+        return None, raw
+    return val, None
+
+
+def parse_wartungsaufgaben(raw: str):
+    """Format 'name=tage, name=tage'. tage: Zahl >= 0, oder 0/leer/'null'/'-' = ereignisgesteuert (None).
+    Gibt (dict name->intervall_tage_oder_None, liste_ungueltiger_eintraege) zurueck."""
+    result = {}
+    errors = []
+    for pair in (p.strip() for p in raw.split(",")):
+        if not pair:
+            continue
+        if "=" not in pair:
+            errors.append(pair)
+            continue
+        name, val = (part.strip() for part in pair.split("=", 1))
+        if not name:
+            errors.append(pair)
+            continue
+        if val.lower() in WARTUNGSAUFGABEN_EREIGNISGESTEUERT:
+            result[name] = None
+            continue
+        try:
+            intervall = int(val)
+        except ValueError:
+            errors.append(pair)
+            continue
+        if intervall < 0:
+            errors.append(pair)
+            continue
+        result[name] = intervall if intervall > 0 else None
+    return result, errors
 
 
 def tools_to_remove(cfg: dict):
@@ -409,6 +498,184 @@ def set_logging_switch(root: Path, logging_val: str, logging_tiefe: str) -> bool
 
 
 # ---------------------------------------------------------------------------
+# .claude/settings.json: Orchestrator-Modell + Wartungs-Hook/-Permissions
+# ---------------------------------------------------------------------------
+
+
+def _write_json(path: Path, data: dict) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def set_orchestrator_model(root: Path, modell: str) -> str:
+    """Schreibt/entfernt den Top-Level-Schluessel 'model' in .claude/settings.json ('inherit' entfernt ihn).
+    Fehlt settings.json (Claude Code als KI-Werkzeug abgewaehlt), wird still uebersprungen."""
+    path = root / ".claude" / "settings.json"
+    if not path.exists():
+        return "settings.json: nicht vorhanden (Claude Code abgewaehlt) - uebersprungen."
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "settings.json: konnte nicht gelesen werden - 'model' nicht gesetzt."
+    if not isinstance(data, dict):
+        return "settings.json: kein JSON-Objekt - 'model' nicht gesetzt."
+
+    if modell == "inherit":
+        if "model" in data:
+            del data["model"]
+            _write_json(path, data)
+            return "settings.json: 'model' entfernt (inherit)."
+        return "settings.json: 'model' war bereits nicht gesetzt (inherit)."
+
+    if data.get("model") == modell:
+        return f"settings.json: 'model' bereits '{modell}'."
+    ordered = {"model": modell}
+    for k, v in data.items():
+        if k != "model":
+            ordered[k] = v
+    _write_json(path, ordered)
+    return f"settings.json: 'model' = '{modell}'."
+
+
+def remove_maintenance_hook(root: Path) -> bool:
+    """Entfernt den dritten SessionStart-Hook (maintenance-check.py) und die zugehoerigen zwei
+    Permissions aus .claude/settings.json. Fehlt die Datei, still False (schon weg/Claude Code abgewaehlt)."""
+    path = root / ".claude" / "settings.json"
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    changed = False
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        session_start = hooks.get("SessionStart")
+        if isinstance(session_start, list):
+            new_list = [e for e in session_start if "maintenance-check.py" not in json.dumps(e)]
+            if len(new_list) != len(session_start):
+                hooks["SessionStart"] = new_list
+                changed = True
+
+    perms = data.get("permissions")
+    if isinstance(perms, dict):
+        allow = perms.get("allow")
+        if isinstance(allow, list):
+            new_allow = [p for p in allow if "maintenance-check.py" not in p]
+            if len(new_allow) != len(allow):
+                perms["allow"] = new_allow
+                changed = True
+
+    if changed:
+        _write_json(path, data)
+    return changed
+
+
+# ---------------------------------------------------------------------------
+# Wartung: status.json schreiben bzw. Wartungsdateien/CLAUDE.md-Verweise entfernen
+# ---------------------------------------------------------------------------
+
+
+def write_maintenance_status(root: Path, aufgaben: dict) -> None:
+    path = root / ".claude" / "maintenance" / "status.json"
+    data = {
+        "aufgaben": {
+            name: {"intervall_tage": intervall, "letzter_lauf": None, "naechster_lauf": None}
+            for name, intervall in aufgaben.items()
+        },
+        "_hinweis": MAINTENANCE_HINWEIS,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(path, data)
+
+
+def remove_maintenance_files(root: Path) -> list:
+    removed = []
+    for rel in MAINTENANCE_REMOVE_PATHS:
+        fp = root / rel
+        if not fp.exists():
+            continue
+        try:
+            if fp.is_dir():
+                shutil.rmtree(fp)
+            else:
+                fp.unlink()
+            removed.append(rel)
+        except OSError:
+            pass
+    return removed
+
+
+def remove_maintenance_references(root: Path) -> dict:
+    """Entfernt bei Wartung 'aus' den Sub-Agenten-Eintrag [MAINTENANCE] und die '/maintenance'-Zeile aus
+    CLAUDE.md (gleiche Technik wie remove_tool_files/_remove_table_row). Wird eine Stelle nicht gefunden,
+    still weitermachen - das Ergebnis wird im Bericht genannt."""
+    result = {"agent_zeile": False, "skill_zeile": False, "modell_zeile": False, "baum_zeile": False}
+    path = root / "CLAUDE.md"
+    if not path.exists():
+        return result
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return result
+    new_text = text
+
+    agent_pattern = re.compile(r"^- \*\*\[MAINTENANCE\]\*\*.*\n(?:  .+\n)*", re.MULTILINE)
+    if agent_pattern.search(new_text):
+        new_text = agent_pattern.sub("", new_text)
+        result["agent_zeile"] = True
+
+    skill_pattern = re.compile(r"^\|\s*`/maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
+    if skill_pattern.search(new_text):
+        new_text = skill_pattern.sub("", new_text)
+        result["skill_zeile"] = True
+
+    # Zeile der Modell-Zuordnungstabelle (| `maintenance-orchestrator` | ... |)
+    modell_pattern = re.compile(
+        r"^\|\s*`maintenance-orchestrator`[^\n|]*\|[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE
+    )
+    if modell_pattern.search(new_text):
+        new_text = modell_pattern.sub("", new_text)
+        result["modell_zeile"] = True
+
+    # Verweise im Fliesstext und im Projektbaum, die sonst ins Leere zeigen.
+    fliesstext = (
+        "  `maintenance-orchestrator` prüft regelmäßig, welche Agentenläufe scriptfähig sind.\n"
+    )
+    if fliesstext in new_text:
+        new_text = new_text.replace(fliesstext, "")
+        result["baum_zeile"] = True
+    baum = "│   │                            # maintenance-orchestrator (optional)\n"
+    if baum in new_text:
+        new_text = new_text.replace(baum, "")
+        result["baum_zeile"] = True
+    new_text = new_text.replace(
+        "│   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,\n",
+        "│   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver\n",
+    )
+    new_text = new_text.replace(
+        "│   ├── maintenance/              # optional: Status/Intervalle + Runner für wiederkehrende Wartung\n",
+        "",
+    )
+    new_text = new_text.replace(
+        "│   │                            # maintenance-check.py (Fälligkeit der Wartung, SessionStart-Hook)\n",
+        "",
+    )
+    new_text = new_text.replace(
+        "│   │                            # maintenance, template-update, session-wrapup\n",
+        "│   │                            # template-update, session-wrapup\n",
+    )
+
+    if new_text != text:
+        path.write_text(new_text, encoding="utf-8", newline="\n")
+    return result
+
+
+# ---------------------------------------------------------------------------
 # template.json
 # ---------------------------------------------------------------------------
 
@@ -465,6 +732,10 @@ def cmd_dry_run(root: Path) -> int:
     values = compute_values(cfg)
     logging_val, logging_tiefe = logging_settings(cfg)
     remove_list = tools_to_remove(cfg)
+    orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
+    wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
+    wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
     lines = ["new-project.py --dry-run", ""]
     if not (root / CONFIG_REL).exists():
@@ -488,6 +759,31 @@ def cmd_dry_run(root: Path) -> int:
                 lines.append(f"  {tool}: {rel}")
     else:
         lines.append("Zu entfernende Werkzeug-Dateien: keine (KI-Werkzeuge leer oder nicht gesetzt).")
+
+    lines.append("")
+    if orch_unbekannt:
+        lines.append(f"Orchestrator-Modell: \"{orch_unbekannt}\" ist kein bekannter Wert - --apply bricht "
+                      "damit ab. Erlaubt: opus, sonnet, haiku, inherit.")
+    else:
+        lines.append(f"Orchestrator-Modell: {orch_modell}"
+                      + (" (kein 'model'-Schluessel in .claude/settings.json)" if orch_modell == "inherit" else ""))
+
+    lines.append("")
+    if wartung_unbekannt:
+        lines.append(f"Wartung: \"{wartung_unbekannt}\" ist kein bekannter Wert - --apply bricht damit ab. "
+                      "Erlaubt: aus, ein.")
+    elif wartung_val == "ein":
+        if wartungsaufgaben_fehler:
+            lines.append("Wartung: ein - ungueltige Wartungsaufgaben-Eintraege (--apply bricht damit ab): "
+                          + ", ".join(wartungsaufgaben_fehler))
+        else:
+            lines.append("Wartung: ein - Aufgaben:")
+            for name, intervall in wartungsaufgaben.items():
+                lines.append(f"  {name}: {intervall} Tage" if intervall else f"  {name}: ereignisgesteuert")
+    else:
+        lines.append("Wartung: aus - zu entfernende Dateien:")
+        for rel in MAINTENANCE_REMOVE_PATHS:
+            lines.append(f"  {rel}")
 
     warnungen = config_warnungen(cfg)
     unbekannt = unbekannte_werkzeuge(cfg)
@@ -518,15 +814,37 @@ def cmd_apply(root: Path) -> int:
     values = compute_values(cfg)
     logging_val, logging_tiefe = logging_settings(cfg)
 
-    # Vor jeder Aenderung: ein Tippfehler in KI-Werkzeuge darf nicht dazu fuehren, dass das betroffene
-    # Werkzeug als "nicht genutzt" gilt und seine Dateien geloescht werden.
+    # Vor jeder Aenderung: ein Tippfehler in KI-Werkzeuge/Orchestrator-Modell/Wartung darf nicht dazu
+    # fuehren, dass stillschweigend Dateien geloescht oder eine falsche Konfiguration geschrieben wird.
     unbekannt = unbekannte_werkzeuge(cfg)
+    orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
+    wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
+    wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
+
+    fehler = False
     if unbekannt:
         print("Fehler: --apply abgebrochen, CONFIG.md § KI-Werkzeuge nicht eindeutig:", file=sys.stderr)
         for name in unbekannt:
             print(f"  - unbekannter Name: \"{name}\"", file=sys.stderr)
         print(f"  Erlaubt sind: {', '.join(sorted(set(TOOL_CANON.values())))} "
               "(leer = alle behalten, nichts wird entfernt).", file=sys.stderr)
+        fehler = True
+    if orch_unbekannt:
+        print(f"Fehler: --apply abgebrochen, CONFIG.md § Orchestrator-Modell nicht eindeutig: "
+              f"\"{orch_unbekannt}\" - erlaubt sind opus, sonnet, haiku, inherit.", file=sys.stderr)
+        fehler = True
+    if wartung_unbekannt:
+        print(f"Fehler: --apply abgebrochen, CONFIG.md § Wartung nicht eindeutig: \"{wartung_unbekannt}\" - "
+              "erlaubt sind aus, ein.", file=sys.stderr)
+        fehler = True
+    if wartung_val == "ein" and wartungsaufgaben_fehler:
+        print("Fehler: --apply abgebrochen, CONFIG.md § Wartungsaufgaben ungueltig: "
+              + ", ".join(wartungsaufgaben_fehler), file=sys.stderr)
+        print("  Format: name=tage, name=tage (tage: Zahl >= 0, oder leer/'null'/'-' fuer "
+              "ereignisgesteuert).", file=sys.stderr)
+        fehler = True
+    if fehler:
         return 2
 
     remove_list = tools_to_remove(cfg)
@@ -536,6 +854,29 @@ def cmd_apply(root: Path) -> int:
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
     write_template_json_values(root, values)
     init_status = maybe_init_template_update(root)
+    model_status = set_orchestrator_model(root, orch_modell)
+
+    if wartung_val == "ein":
+        write_maintenance_status(root, wartungsaufgaben)
+        aufgaben_txt = ", ".join(
+            f"{name}={intervall}" if intervall else f"{name}=ereignisgesteuert"
+            for name, intervall in wartungsaufgaben.items()
+        )
+        wartung_status = f"ein - status.json geschrieben ({aufgaben_txt})"
+    else:
+        removed_maintenance = remove_maintenance_files(root)
+        hook_removed = remove_maintenance_hook(root)
+        claude_refs = remove_maintenance_references(root)
+        teile = [
+            "entfernt: " + (", ".join(removed_maintenance) if removed_maintenance else "(keine, bereits entfernt)"),
+            "Hook/Permissions " + ("entfernt" if hook_removed else "(nicht vorhanden)"),
+            "CLAUDE.md " + (
+                "Agenten-/Skill-Zeile entfernt" if claude_refs["agent_zeile"] and claude_refs["skill_zeile"]
+                else "teilweise angepasst (siehe Bericht)" if claude_refs["agent_zeile"] or claude_refs["skill_zeile"]
+                else "(Zeilen nicht gefunden oder Datei fehlt)"
+            ),
+        ]
+        wartung_status = "aus - " + "; ".join(teile)
 
     lines = ["new-project.py --apply", ""]
     for w in config_warnungen(cfg):
@@ -546,6 +887,8 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Dateien mit ersetzten Platzhaltern: {len(changed)}")
     lines.append(f"Entfernte Werkzeug-Dateien: {', '.join(removed_files) if removed_files else '(keine)'}")
     lines.append(f"Logging: AI_LOG={logging_val}, AI_LOG_LEVEL={logging_tiefe}" + (" (geschrieben)" if logging_changed else " (unveraendert)"))
+    lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
+    lines.append(f"Wartung: {wartung_status}")
     lines.append(f"template.json: {init_status}")
 
     lines.append("")

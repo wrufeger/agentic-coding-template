@@ -19,12 +19,24 @@ Läuft immer im Hauptkontext (Orchestrator), nie bei einem Worker.
    „Fertig" nur mit Beleg (`AGENTS.md`).
 2. **`docs/ai/ledger.md`:** neue Sitzung/neuer Lauf **oben** (`## YYYY-MM-DD (n. Lauf) — Titel`), Stichpunkte mit
    Belegen, was offen blieb.
-3. **`docs/ai/tasks.md`:** erledigte Aufgaben mit Marker (✅/🔄/❓) kommentieren. Aufgaben unter „nur für
-   {{AUFTRAGGEBER}}" nur hinzufügen/präzisieren/als erledigt markieren, wenn {{AUFTRAGGEBER}} es meldet — nie
-   ausführen.
-4. **`docs/ai/questions.md`:** neue Fragen oben (fortlaufende Nummern), dringende markiert, je Frage eigene
-   `* Antwort:`-Zeile, keine Tabellen, ~72 Zeichen Zeilenumbruch. Beantwortete Fragen verbuchen (Bestätigung
+3. **`docs/ai/tasks.md`:** erledigte Aufgaben mit Marker (✅/🔄/❓) kommentieren, `Stand <Datum>:` aktualisieren.
+   Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur hinzufügen/präzisieren/als erledigt markieren, wenn
+   {{AUFTRAGGEBER}} es meldet — nie ausführen. Als ✅ markierte Aufgaben mit Volltext nach
+   `docs/ai/tasks_archive.md` verschieben (nicht löschen), Nummer (`A<n>`) bleibt gültig, Beleg bleibt im
+   Ledger.
+4. **`docs/ai/questions.md`:** neue Fragen oben (fortlaufende Nummern `F<n>`), dringende markiert, je Frage
+   eigene `* Antwort:`-Zeile, keine Tabellen, ~72 Zeichen Zeilenumbruch. Jede Frage mit **vorgegebenen
+   Antwortmöglichkeiten** (ja/nein oder `a)`/`b)`/`c)`, freier Text zusätzlich möglich); eine Frage = eine
+   Entscheidung, Längeres aufteilen. Nur gemeinsam umsetzbare Entscheidungen als Teilfragen `F<n>a`/`F<n>b`
+   stellen und erst verarbeiten, wenn **alle** beantwortet sind. Offene Fragen nach Nummer sortiert halten
+   (nie umnummerieren), ab etwa zehn Stück nach Themen gruppieren. **Keine Standardantwort annehmen** —
+   unbeantwortete Fragen bleiben offen und werden nie stillschweigend entschieden; blockierende Fragen mit 🔴
+   markieren und im Board unter „offene Freigaben" führen, dann an etwas anderem weiterarbeiten.
+   Beantwortete Fragen verbuchen (Bestätigung
    darunter), unter „Erledigt" zusammenfassen, im nächsten Lauf nach `questions_archive.md` verschieben.
+   Antworten von {{AUFTRAGGEBER}} in den `* Antwort:`-Zeilen des Tabu-Abschnitts von `tasks.md` genauso
+   verbuchen — delegierte Aufgaben wandern dabei in den oberen Abschnitt, erweiterte Rechte mit Datum ins
+   Ledger.
 5. **Ledger verdichten:** ältere Einträge zusammenfassen (Regeln im Ledger-Kopf); Commit-Hashes, Nummern,
    Versionen, Pfade bleiben immer erhalten.
 6. **Doku-Index:** neue Dateien in `docs/README.md` eintragen; Datenstand-Zeilen der geänderten Dateien prüfen.
@@ -54,6 +66,12 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
   sie in Board, Doku oder Entscheidungen wandern.
 - Ein Worker, der sich festgefressen hat, wird nicht endlos weitergefüttert — Auftrag schärfen und neu starten
   ist günstiger.
+- **Eskalation:** Scheitert ein Worker **zweimal** an derselben Aufgabe, wird nicht ein drittes Mal derselbe
+  Auftrag gestellt. Entweder (a) lag der Fehler am Auftrag — dann schärfen und einmal neu starten — oder (b)
+  an die stärkere Denkstufe/„Experten"-Rolle eskalieren, mit vollständigem Kontext beider Fehlversuche
+  (ursprünglicher Auftrag, was jeweils versucht wurde, welche Ausgabe kam zurück, betroffene Dateien, bereits
+  ausgeschlossene Ursachen). Den Befund danach verbuchen (Ledger, ggf. Coding-Regeln/Umbauliste). Eskalation
+  ist billiger als die dritte Wiederholung.
 - Nach jeder Welle: Lint + Typecheck laufen lassen, betroffene Funktionen real ausprobieren; „fertig" nur mit
   Beleg; Ledger nachziehen (Checkliste „Sitzungsabschluss").
 - Bei eingeschaltetem Logging (`AGENTS.md` § Logging): vor jeder Welle die Entscheidung als

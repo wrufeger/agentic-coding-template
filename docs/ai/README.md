@@ -22,6 +22,7 @@ IST-Zustand des Projekts selbst.
 | :--- | :--- | :--- |
 | `board.md` | Einstiegs-/Wiedereinstiegsboard: Kurzbilanz, nächster Schritt, offene Freigaben | immer zuerst |
 | `tasks.md` | Aufgabenliste inkl. Tabu-Abschnitt „nur für {{AUFTRAGGEBER}}" | vor jeder neuen Aufgabe |
+| `tasks_archive.md` | Erledigte Aufgaben im Volltext | bei Bedarf nachschlagen |
 | `questions.md` | Offene Fragen/Entscheidungen, die auf {{AUFTRAGGEBER}} warten | nach jeder Antwort verbuchen |
 | `questions_archive.md` | Beantwortete/archivierte Fragen | bei Bedarf nachschlagen |
 | `ledger.md` | Sitzungsjournal mit Belegen, neueste Sitzung oben | zur Historie/Übergabe |
@@ -33,9 +34,30 @@ IST-Zustand des Projekts selbst.
 - **Keine Markdown-Tabellen** — die Datei muss auch in einem einfachen Texteditor lesbar bleiben.
 - Zeilen bei ca. 72 Zeichen umbrechen.
 - Jede Frage einzeln, mit einer eigenen `* Antwort:`-Zeile direkt darunter.
-- Offenes steht oben, Dringendes zuerst (Markierung z. B. 🔴).
+- **Antwortmöglichkeiten vorgeben** (ja/nein oder `a)`/`b)`/`c)`, je Option eine Zeile); freier Text ist immer
+  zusätzlich möglich. Eine Frage = eine Entscheidung; Längeres wird in mehrere Fragen geteilt statt in einen
+  Absatz gepackt. Höchstens drei bis vier Zeilen Kontext, kein Fließtext.
+- **Keine Standardantwort annehmen:** Eine unbeantwortete Frage bleibt offen und wird nie stillschweigend nach
+  Einschätzung des Assistenten entschieden. Eine naheliegende Option darf als „(Empfehlung)" markiert werden.
+- **Teilfragen** (`F5a`, `F5b`, …) für Entscheidungen, die nur gemeinsam umsetzbar sind: als Block
+  untereinander, Verarbeitung erst, wenn **alle** beantwortet sind.
+- Offene Fragen stehen oben, **nach Nummer sortiert** (nie umnummerieren, Lücken bleiben); Dringendes wird mit
+  🔴 markiert statt vorgezogen. Ab etwa zehn offenen Fragen nach Themen gruppieren, innerhalb des Themas
+  weiterhin nach Nummer.
 - Beantwortete Fragen werden vom Orchestrator verbucht (kurze Bestätigungszeile darunter) und beim nächsten
   Aufräum-Lauf nach `questions_archive.md` verschoben.
+
+## Nummern- und Aufgabenschema (`tasks.md`/`tasks_archive.md`)
+
+Aufgaben laufen unter `A<n>`, Fragen unter `F<n>` — fortlaufende, projektweite Referenz-IDs, die in Ledger und
+Commits zitiert werden und nie neu vergeben werden. Jede Aufgabe folgt dem festen Format (Nummer/Titel/Marker,
+Ziel, Schritte, `Stand <Datum>:`) aus `tasks.md`; erledigte Aufgaben wandern mit Volltext nach
+`tasks_archive.md`. Details dort, nicht hier wiederholt.
+
+Auch Aufgaben sind **Stichpunkte, kein Fließtext**: Ziel ein Satz, Schritte je eine Zeile, eine Aufgabe = ein
+Ergebnis (sonst teilen). Aufgaben im Tabu-Abschnitt „nur für {{AUFTRAGGEBER}}" tragen zusätzlich eine
+`* Antwort:`-Zeile — dort meldet {{AUFTRAGGEBER}} Erledigung, delegiert die Aufgabe an den Assistenten oder
+stellt eine Rückfrage.
 
 ## Tabu-Bereich
 

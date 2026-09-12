@@ -26,7 +26,8 @@ arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
    gemeinsame Git-Historie (Voraussetzung für spätere Updates per Merge). Danach
    `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
 2. `CONFIG.md` im Repo-Root ausfüllen — oder leer lassen: dann entsteht ein leeres Projekt „MyApp", es wird
-   nichts entfernt.
+   nichts entfernt. Dort stehen auch die Schalter für das Modell der Hauptsession (`Orchestrator-Modell`,
+   Default Opus), das Agenten-Logging und die wiederkehrende Wartung (`Wartung: aus` entfernt sie komplett).
 3. Assistenten anweisen: „Führe die Checkliste Neues Projekt aus (`docs/ai/checklists.md`)."
    Claude Code: `/new-project`.
 4. Ergebnis: Platzhalter sind ersetzt, `docs/project/*` ist (bei ausgefüllter `CONFIG.md`) mit den Angaben
@@ -66,30 +67,15 @@ als Beispiel, u. a. `docs/ai/checklists.md`).
 | Gemini CLI | `GEMINI.md` (Verweis) | `gemini` im Repo-Root starten |
 | ChatGPT (Web), Ollama, sonstige | nichts automatisch | `AGENTS.md` + `docs/ai/board.md` als System-Prompt |
 
-## Demo-Ablauf für einen Vortrag (ca. 15 Minuten)
-
-Neutrale Arbeitsanweisung in Spalte 1 (funktioniert mit jedem Assistenten), Claude-Code-Kurzform in Spalte 2
-(was das Publikum bei Claude Code zusätzlich sieht: Sub-Agenten, die parallel laufen).
-
-| # | Schritt | Neutrale Anweisung | Claude Code | Was das Publikum sieht |
-| :-- | :--- | :--- | :--- | :--- |
-| 0 | Log-Fenster öffnen | `AI_LOG=ein` in `AGENTS.md`, zweites Terminal: `python .claude/scripts/ai-log.py --tail` | Hooks loggen automatisch | Live-Mitschnitt: Entscheidungen, Worker-Start/-Ende (`AGENTS.md` § Logging) |
-| 1 | Neues Projekt | „Checkliste Neues Projekt ausführen." | `/new-project` | Platzhalter weg |
-| 2 | Aufgabe anlegen | Aufgabe in `docs/ai/tasks.md` eintragen | — | Eine neue Zeile in `tasks.md` |
-| 3 | Delegieren | „Checkliste Delegation ausführen, Aufgabe umsetzen." | `/delegate` | Sub-Agenten laufen parallel — im Log-Fenster als `[start]`/`[end]`-Zeilen |
-| 4 | Prüfen | „Adversarialen Review der Änderung durchführen." | Sub-Agent `reviewer` | Kritischer Blick, Belege |
-| 5 | Doku nachziehen | „Checkliste Doku-Nachzug ausführen." | `/project-docs` | `docs/project/*` aktualisiert sich |
-| 6 | Abschließen | „Checkliste Sitzungsabschluss ausführen." | `/session-wrapup` | Neuer Ledger-Eintrag, Commit |
-| 7 | Beleg zeigen | `git log -1 --stat` + Ledger-Eintrag zeigen | — | Nachvollziehbarer Beleg der Arbeit |
-
 ## Ordnerübersicht
 
 ```text
 AGENTS.md            # anbieterneutrale Grundregeln (zuerst lesen)
 CLAUDE.md             # Claude-Code-Ergänzung (Sub-Agenten, Skills, Modell-IDs)
-CONFIG.md             # Formular für ein neues Projekt (Weg 1) — wird von /new-project gelesen und entfernt
+CONFIG.md             # Formular für Weg 1 (Projektname, Modell, Logging, Wartung, Ziel/Features) — wird von
+                      # /new-project gelesen und danach entfernt
 GEMINI.md  .aider.conf.yml  .cursor/rules/agents.mdc  .github/copilot-instructions.md   # Werkzeug-Verweise
-.claude/              # Claude Code: Sub-Agenten, Skills, Wartungs-Runner, Scripte, Settings (inkl. Logging-Hooks)
+.claude/              # Claude Code: Sub-Agenten, Skills, Scripte, Settings (Modell + Hooks), Wartung (optional)
 .claude/scripts/      # u. a. new-project.py, consume-template.py, template-update.py, ai-log.py
 .claude/template.json # Herkunft/Update-Stand ggü. dem Template (Remote, Basis-Commit, eingesetzte Werte)
 ai.log                # optionaler Live-Mitschnitt aller Agentenaktionen (gitignored, AGENTS.md § Logging)
@@ -106,8 +92,11 @@ docs/
 Ein starkes/teures Modell plant, integriert und prüft — die eigentliche Kleinarbeit übernehmen günstigere/
 schnellere Modelle in klar umrissenen Teilaufgaben. Unabhängige Teilaufgaben laufen parallel, nicht
 nacheinander. Ergebnisse werden vor der Übernahme stichprobenartig gegen den echten Stand geprüft, nie
-blind übernommen. „Fertig" gilt nur mit einem Beleg (Testlauf, Commit-Hash, Aufruf von außen). Details und
-eine Beispiel-Tabelle je Anbieter stehen in `AGENTS.md` § „Modell-/Kostenlogik".
+blind übernommen. „Fertig" gilt nur mit einem Beleg (Testlauf, Commit-Hash, Aufruf von außen). Gespart wird
+bei den Helfern, nicht am Kopf: der Orchestrator läuft auf dem starken Modell (bei Claude Code: Opus, festgelegt
+in `.claude/settings.json`). Scheitert ein Helfer zweimal an derselben Aufgabe, übernimmt einmal eine
+Eskalationsrolle mit hoher Denkstufe statt eines dritten Anlaufs. Details und eine Beispiel-Tabelle je Anbieter
+stehen in `AGENTS.md` § „Modell-/Kostenlogik".
 
 ## FAQ
 

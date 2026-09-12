@@ -5,20 +5,29 @@ context: fork
 agent: maintenance-orchestrator
 model: claude-sonnet-5
 disable-model-invocation: true
-argument-hint: "[kurz|docs|deps|alle]"
+argument-hint: "[faellig|kurz|docs|deps|alle]"
 ---
 
 # Wartung (läuft im Sub-Agenten `maintenance-orchestrator`)
 
+**Optional:** per `CONFIG.md` § „Wartung" abwählbar — bei „aus" entfernt `/new-project` diesen Skill samt
+Agent, Ordner und Hook (siehe `.claude/maintenance/README.md`).
+
 Dieser Skill läuft **nicht** im Hauptkontext, sondern startet den Sub-Agenten `maintenance-orchestrator`
 (`.claude/agents/maintenance-orchestrator.md`) mit dem übergebenen Argument.
 
+## Fälligkeit
+Der `SessionStart`-Hook (`.claude/settings.json`) ruft bei jeder neuen Session automatisch
+`maintenance-check.py --check --quiet` auf und meldet im Kontext, wenn Aufgaben fällig sind (sonst keine
+Meldung). Das ist der Hinweis, `/maintenance` zu starten.
+
 ## Argumente
-- Ohne Argument: fälligkeitsgesteuert anhand `.claude/maintenance/status.json`.
-- `kurz`: nur Kurzaudit (`git status`, Pflichtläufe aus `docs/project/testing.md`).
-- `docs`: nur Doku-Audit (Fan-out wie Skill `/docs-audit`).
-- `deps`: nur Abhängigkeits-Check.
-- `alle`: alle Aufgaben unabhängig von der Fälligkeit.
+- Ohne Argument bzw. `faellig`: nur was `.claude/scripts/maintenance-check.py --check` als fällig meldet
+  (anhand `.claude/maintenance/status.json`).
+- `kurz`: nur Kurzaudit (`git status`, Pflichtläufe aus `docs/project/testing.md`), unabhängig von der Fälligkeit.
+- `docs`: nur Doku-Audit (Fan-out wie Skill `/docs-audit`), unabhängig von der Fälligkeit.
+- `deps`: nur Abhängigkeits-Check, unabhängig von der Fälligkeit.
+- `alle`: alle konfigurierten Aufgaben unabhängig von der Fälligkeit.
 
 ## Headless-Runner
 Für automatisierte/geplante Läufe außerhalb einer interaktiven Session: `.claude/maintenance/run-maintenance.ps1`
@@ -26,5 +35,7 @@ Für automatisierte/geplante Läufe außerhalb einer interaktiven Session: `.cla
 
 ## Nach dem Lauf (Hauptkontext)
 - Bericht `.claude/maintenance/reports/YYYY-MM-DD.md` und die Rückgabe des Worker-Orchestrators prüfen.
+- Der `maintenance-orchestrator` schreibt `status.json` bereits per `maintenance-check.py --done <aufgabe>`
+  fort — keine Handarbeit an `status.json` nötig.
 - Vorschläge in `docs/ai/tasks.md`/`questions.md` einarbeiten, `docs/ai/ledger.md` ergänzen (Skill
   `/session-wrapup`), Commit per Pathspec.

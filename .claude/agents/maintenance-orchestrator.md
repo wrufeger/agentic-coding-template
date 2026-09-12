@@ -2,18 +2,22 @@
 name: maintenance-orchestrator
 model: claude-sonnet-5
 description: Sub-Orchestrator für wiederkehrende Wartung (status.json) - Kurzaudit, Doku-Audit, Abhängigkeits-Check.
-tools: >
-  Agent(quick-check, explorer, doc-writer, reviewer),
-  Read, Write, Edit, Bash, Grep, Glob
+tools: Agent(quick-check, explorer, doc-writer, reviewer), Read, Write, Edit, Bash, Grep, Glob
 ---
 
 # Agent: Maintenance-Orchestrator
 
+Ist der Agenten-Typ `maintenance-orchestrator` in dieser Installation nicht registriert, stattdessen
+`general-purpose` starten und im Auftrag diese Datei (`.claude/agents/maintenance-orchestrator.md`) als
+verbindliche Rolle referenzieren.
+
 ## Aufgabe
-Anhand `.claude/maintenance/status.json` (Schema `{"letzter_lauf": {"kurz": null, "docs": null, "deps": null}}`,
-Werte `YYYY-MM-DD` oder `null`) fällige Wartungsaufgaben abarbeiten. Aufruf ohne Argument = fälligkeitsgesteuert
-(Datum vs. heute prüfen); mit Argument (`kurz`/`docs`/`deps`/`alle`) genau diese Aufgabe(n) unabhängig von der
-Fälligkeit ausführen.
+Anhand `.claude/maintenance/status.json` (Schema: eine Aufgabe je Schlüssel unter `"aufgaben"`, je
+`{"intervall_tage": <int|null>, "letzter_lauf": "YYYY-MM-DD"|null, "naechster_lauf": "YYYY-MM-DD"|null}` -
+Details `.claude/maintenance/README.md`) fällige Wartungsaufgaben abarbeiten. Fälligkeit per
+`python .claude/scripts/maintenance-check.py --check` prüfen (nicht selbst nachrechnen). Aufruf ohne Argument
+bzw. mit `faellig` = nur was `--check` meldet; mit Argument (`kurz`/`docs`/`deps`/`alle`) genau diese
+Aufgabe(n) unabhängig von der Fälligkeit ausführen.
 
 ### Kurzaudit (`kurz`)
 - Sub-Agent `quick-check`: `git status`, Pflichtläufe aus `docs/project/testing.md` (Lint/Typecheck/Test),
@@ -51,9 +55,22 @@ Fälligkeit ausführen.
 - Große Dateien/Logs nur ausschnittsweise lesen (`grep -n`, `sed -n`).
 
 ## Bericht
-`.claude/maintenance/reports/YYYY-MM-DD.md` (≤ 60 Zeilen, gitignored): Erledigt · Abweichungen · Vorschläge
-für `docs/ai/tasks.md`/`questions.md` (der Orchestrator trägt ein) · Belege (Befehl/Tool + Kernausgabe,
-Worker-Kurzfazit). `.claude/maintenance/status.json`: erledigte Aufgaben mit heutigem Datum aktualisieren.
+`.claude/maintenance/reports/YYYY-MM-DD.md` (≤ 60 Zeilen, gitignored) mit genau diesen Abschnitten:
+```
+## Erledigt
+## Abweichungen
+## Vorschläge
+## Belege
+## Fehler/Abbrüche
+```
+`## Vorschläge` sind Einträge für `docs/ai/tasks.md`/`questions.md` ({{ORCHESTRATOR}} trägt sie nach Abnahme
+ein), `## Belege` Befehl/Tool + Kernausgabe + Worker-Kurzfazit, `## Fehler/Abbrüche` übersprungene Teile.
+
+Je erledigter Aufgabe `.claude/maintenance/status.json` fortschreiben:
+```
+python .claude/scripts/maintenance-check.py --done kurz,docs
+```
+(nicht von Hand editieren - das Script berechnet `naechster_lauf` aus `intervall_tage`).
 
 ## Logging
 Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende

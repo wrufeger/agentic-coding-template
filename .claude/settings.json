@@ -1,4 +1,5 @@
 {
+  "model": "opus",
   "permissions": {
     "allow": [
       "Bash(git status)",
@@ -30,6 +31,8 @@
       "Bash(python3 .claude/scripts/template-update.py --abort)",
       "Bash(python .claude/scripts/new-project.py*)",
       "Bash(python3 .claude/scripts/new-project.py*)",
+      "Bash(python .claude/scripts/maintenance-check.py*)",
+      "Bash(python3 .claude/scripts/maintenance-check.py*)",
       "Bash(git fetch template*)",
       "Bash(git merge --abort)"
     ],
@@ -58,6 +61,16 @@
             "shell": "bash",
             "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/template-update.py\" --check --quiet; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/template-update.py\" --check --quiet; fi || true",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/maintenance-check.py\" --check --quiet; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/maintenance-check.py\" --check --quiet; fi || true",
+            "timeout": 15
           }
         ]
       }
