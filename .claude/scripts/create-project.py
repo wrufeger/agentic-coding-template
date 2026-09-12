@@ -40,6 +40,14 @@
 #       durch einen Verweis-Abschnitt "## Projektbeschreibung" ersetzt, ein Datums-Vermerk kommt vor die
 #       erste Zeile. "## Betrieb" und "## Einrichtung" bleiben unveraendert - "Betrieb" wirkt danach weiter
 #       in jeder Sitzung. Idempotent: steht der Vermerk schon da, Exit 0 mit Hinweis, keine erneute Aenderung.
+#   python .claude/scripts/create-project.py --check
+#       Selbstpruefung ohne Bezug zu einem konkreten Projekt-Zuschnitt: prueft je Pfad in den fest
+#       verdrahteten Listen OPTIMIZER_REMOVE_PATHS/MAINTENANCE_REMOVE_PATHS/TEMPLATE_ONLY_PATHS
+#       (STALE_PATH_CHECK_LISTS), ob er im Repo existiert, und warnt bei fehlenden Pfaden (Hinweis auf eine
+#       nach einer Umbenennung/Verschiebung veraltete Liste) - aber nur, solange der is_template-Marker in
+#       .claude/template.json noch gesetzt ist (--apply also noch nicht gelaufen ist); danach sind viele
+#       dieser Pfade absichtlich entfernt und die Pruefung wird ausgelassen statt Fehlalarm zu schlagen.
+#       Schreibt nichts, Exit immer 0.
 #
 # Exit-Codes: 0 = ok, 2 = Vorbedingungs-/Parsefehler. Ein Fehler dieses Scripts darf nie mit Traceback nach
 # aussen dringen: main() laeuft komplett in try/except, Fehlermeldungen auf stderr.
@@ -84,6 +92,7 @@ KEY_MAP = {
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
     "Wartungsaufgaben": "wartungsaufgaben",
+    "Wartungsberichte": "wartungsberichte",
     "Code-Analyse": "code_analyse",
     "Code-Optimierung": "code_optimierung",
     "Coding-Guidelines": "coding_guidelines",
@@ -139,6 +148,9 @@ ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
 COMMIT_VERHALTEN_WERTE = {"automatisch", "fragen", "manuell"}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
+# Ablageort der Wartungsberichte (.claude/maintenance/reports/YYYY-MM-DD.md) - "docs" legt zusaetzlich
+# docs/maintenance/README.md an, siehe setup_docs_maintenance_reports.
+WARTUNGSBERICHTE_WERTE = {"intern", "docs"}
 # Nur fuer Weg 2 (/apply-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
 # Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
 CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
@@ -161,7 +173,7 @@ WARTUNGSAUFGABEN_EREIGNISGESTEUERT = {"0", "", "null", "none", "-"}
 # tolerant, siehe remove_maintenance_files).
 MAINTENANCE_REMOVE_PATHS = [
     ".claude/maintenance",
-    ".claude/skills/maintenance",
+    ".claude/skills/run-maintenance",
     ".claude/agents/maintenance-orchestrator.md",
     ".claude/scripts/maintenance-check.py",
 ]
@@ -396,6 +408,42 @@ def normalize_wartung(cfg: dict):
     return val, None
 
 
+def normalize_wartungsberichte(cfg: dict):
+    """Gibt (wartungsberichte, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
+    'intern' (bisheriges Verhalten, .claude/maintenance/reports/, gitignored)."""
+    raw = cfg.get("wartungsberichte")
+    if not raw:
+        return "intern", None
+    val = raw.strip().lower()
+    if val not in WARTUNGSBERICHTE_WERTE:
+        return None, raw
+    return val, None
+
+
+WARTUNGSBERICHTE_TEXT = {
+    "intern": "intern - .claude/maintenance/reports/ (gitignored, Default)",
+    "docs": "docs - docs/maintenance/ (versioniert, im Doku-Index sichtbar)",
+}
+
+DOCS_MAINTENANCE_README = (
+    "# Wartungsberichte\n"
+    "\n"
+    "Berichte liegen hier je Lauf als `YYYY-MM-DD.md`. Das Abschnitts-Schema steht in "
+    "`.claude/maintenance/README.md`.\n"
+)
+
+
+def setup_docs_maintenance_reports(root: Path) -> bool:
+    """Legt bei 'Wartungsberichte: docs' docs/maintenance/README.md an (idempotent - vorhandene Datei bleibt
+    unangetastet). Gibt True zurueck, wenn die Datei neu angelegt wurde."""
+    readme = root / "docs" / "maintenance" / "README.md"
+    if readme.exists():
+        return False
+    readme.parent.mkdir(parents=True, exist_ok=True)
+    readme.write_text(DOCS_MAINTENANCE_README, encoding="utf-8", newline="\n")
+    return True
+
+
 def normalize_code_analyse(cfg: dict):
     """Gibt (code_analyse, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'fragen'.
     Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /apply-template (Weg 2)."""
@@ -567,6 +615,26 @@ def tools_to_remove(cfg: dict):
 # ---------------------------------------------------------------------------
 
 
+def _read_text_preserve_newline(path: Path, encoding: str = "utf-8"):
+    """Liest eine Textdatei und liefert (text, newline). `text` hat alle Zeilenenden auf '\\n' normalisiert
+    (fuer Regex/Vergleich/Ersetzung), `newline` ist '\\r\\n', wenn die Datei im Original CRLF verwendet hat,
+    sonst '\\n' - fuer _write_text_preserve_newline. Path.read_text() allein taugt hier nicht: es uebersetzt
+    CRLF beim Lesen bereits in '\\n' (universelle Zeilenenden) und macht die Erkennung unmoeglich, deshalb
+    Rohbytes lesen. Wirft OSError/UnicodeDecodeError wie read_bytes()/decode() - vom Aufrufer abzufangen."""
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode(encoding).replace("\r\n", "\n")
+    return text, newline
+
+
+def _write_text_preserve_newline(path: Path, text: str, newline: str, encoding: str = "utf-8") -> None:
+    """Schreibt `text` (interne Zeilenenden '\\n') zurueck, wobei '\\n' zu `newline` wird - haelt eine
+    CRLF-gepflegte Datei CRLF, eine LF-Datei LF (siehe _read_text_preserve_newline). Path.write_text() kennt
+    den newline-Parameter erst ab Python 3.10, deshalb open() direkt (Projekt-Minimum ist 3.9)."""
+    with open(path, "w", encoding=encoding, newline=newline) as f:
+        f.write(text)
+
+
 def _iter_text_files(root: Path):
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d != ".git"]
@@ -585,7 +653,7 @@ def replace_placeholders(root: Path, values: dict):
     remaining = []
     for fp, rel in _iter_text_files(root):
         try:
-            content = fp.read_text(encoding="utf-8")
+            content, newline = _read_text_preserve_newline(fp)
         except (UnicodeDecodeError, OSError):
             continue
         new_content = content
@@ -595,7 +663,7 @@ def replace_placeholders(root: Path, values: dict):
             new_content = new_content.replace("{{" + key + "}}", str(val))
         if new_content != content:
             try:
-                fp.write_text(new_content, encoding="utf-8", newline="\n")
+                _write_text_preserve_newline(fp, new_content, newline)
                 changed.append(rel)
             except OSError:
                 continue
@@ -644,8 +712,8 @@ def remove_tool_files(root: Path, remove_list) -> list:
             if not doc_path.exists():
                 continue
             try:
-                text = doc_path.read_text(encoding="utf-8")
-            except OSError:
+                text, newline = _read_text_preserve_newline(doc_path)
+            except (UnicodeDecodeError, OSError):
                 continue
             new_text = text
             for tool in remove_list:
@@ -653,7 +721,7 @@ def remove_tool_files(root: Path, remove_list) -> list:
                 if row_key:
                     new_text = _remove_table_row(new_text, row_key)
             if new_text != text:
-                doc_path.write_text(new_text, encoding="utf-8", newline="\n")
+                _write_text_preserve_newline(doc_path, new_text, newline)
 
     return removed
 
@@ -668,13 +736,13 @@ def set_logging_switch(root: Path, logging_val: str, logging_tiefe: str) -> bool
     if not agents_path.exists():
         return False
     try:
-        text = agents_path.read_text(encoding="utf-8")
-    except OSError:
+        text, newline = _read_text_preserve_newline(agents_path)
+    except (UnicodeDecodeError, OSError):
         return False
     new_text = re.sub(r"(?m)^(AI_LOG)=\S+", r"\1=" + logging_val, text)
     new_text = re.sub(r"(?m)^(AI_LOG_LEVEL)=\S+", r"\1=" + logging_tiefe, new_text)
     if new_text != text:
-        agents_path.write_text(new_text, encoding="utf-8", newline="\n")
+        _write_text_preserve_newline(agents_path, new_text, newline)
         return True
     return False
 
@@ -684,10 +752,23 @@ def set_logging_switch(root: Path, logging_val: str, logging_tiefe: str) -> bool
 # ---------------------------------------------------------------------------
 
 
-def _write_json(path: Path, data: dict) -> None:
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+def _write_json(path: Path, data: dict, newline: str = "\n") -> None:
+    """`newline` haelt eine bestehende Datei bei ihrem Zeilenende (CRLF/LF) - Aufrufer, die eine vorhandene
+    JSON-Datei lesen, ermitteln es vorher per _read_json_preserve_newline; bei einer neu angelegten Datei
+    bleibt der Default '\\n'."""
+    with open(path, "w", encoding="utf-8", newline=newline) as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
+
+
+def _read_json_preserve_newline(path: Path):
+    """Liest eine JSON-Datei und liefert (data, newline) - newline wie _read_text_preserve_newline, zum
+    Zurueckschreiben mit _write_json(..., newline=newline). Wirft OSError/ValueError (kaputtes JSON) wie
+    json.loads(), vom Aufrufer abzufangen."""
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    data = json.loads(raw.decode("utf-8"))
+    return data, newline
 
 
 def set_orchestrator_model(root: Path, modell: str) -> str:
@@ -697,8 +778,8 @@ def set_orchestrator_model(root: Path, modell: str) -> str:
     if not path.exists():
         return "settings.json: nicht vorhanden (Claude Code abgewaehlt) - uebersprungen."
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data, newline = _read_json_preserve_newline(path)
+    except (OSError, UnicodeDecodeError, ValueError):
         return "settings.json: konnte nicht gelesen werden - 'model' nicht gesetzt."
     if not isinstance(data, dict):
         return "settings.json: kein JSON-Objekt - 'model' nicht gesetzt."
@@ -706,7 +787,7 @@ def set_orchestrator_model(root: Path, modell: str) -> str:
     if modell == "inherit":
         if "model" in data:
             del data["model"]
-            _write_json(path, data)
+            _write_json(path, data, newline)
             return "settings.json: 'model' entfernt (inherit)."
         return "settings.json: 'model' war bereits nicht gesetzt (inherit)."
 
@@ -716,29 +797,59 @@ def set_orchestrator_model(root: Path, modell: str) -> str:
     for k, v in data.items():
         if k != "model":
             ordered[k] = v
-    _write_json(path, ordered)
+    _write_json(path, ordered, newline)
     return f"settings.json: 'model' = '{modell}'."
 
 
-def remove_maintenance_hook(root: Path) -> bool:
-    """Entfernt den dritten SessionStart-Hook (maintenance-check.py) und die zugehoerigen zwei
-    Permissions aus .claude/settings.json. Fehlt die Datei, still False (schon weg/Claude Code abgewaehlt)."""
+def _hook_command_desc(entry) -> str:
+    """Kurzbeschreibung eines SessionStart-Hook-Eintrags fuer den Bericht (Kommando-Text, gekuerzt) -
+    fallback auf den rohen JSON-Dump, falls die Struktur unerwartet ist."""
+    try:
+        inner = entry.get("hooks")
+        if isinstance(inner, list) and inner and isinstance(inner[0], dict):
+            cmd = inner[0].get("command")
+            if isinstance(cmd, str):
+                return cmd[:100] + ("…" if len(cmd) > 100 else "")
+    except AttributeError:
+        pass
+    return json.dumps(entry, ensure_ascii=False)[:100]
+
+
+def remove_maintenance_hook(root: Path):
+    """Entfernt aus .claude/settings.json nur SessionStart-Hooks, deren Kommando SOWOHL
+    'maintenance-check.py' ALS AUCH 'CLAUDE_PROJECT_DIR' enthaelt - das Muster der vom Template gesetzten
+    Hooks. Die CLAUDE_PROJECT_DIR-Pruefung ist bewusst tolerant (ohne '$', unabhaengig von '${...}'-Klammerung
+    und von Windows- vs. Unix-Pfadtrennern), damit z.B. '${CLAUDE_PROJECT_DIR}' statt '$CLAUDE_PROJECT_DIR'
+    weiterhin als Template-Hook erkannt wird. Ein fremder, selbst ergaenzter Hook, der maintenance-check.py
+    nur nebenbei aufruft (ohne CLAUDE_PROJECT_DIR-Bezug), bleibt stehen und wird ueber die zurueckgegebene
+    Liste gemeldet - inklusive Hinweis, dass maintenance-check.py trotzdem entfernt wurde und der Hook damit
+    ins Leere zeigt. Die zugehoerigen Permissions werden weiterhin allein anhand von 'maintenance-check.py'
+    entfernt (dort gibt es kein CLAUDE_PROJECT_DIR-Muster). Gibt (changed: bool, fremde: list[str]) zurueck;
+    fehlt die Datei, still (False, [])."""
     path = root / ".claude" / "settings.json"
     if not path.exists():
-        return False
+        return False, []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
+        data, newline = _read_json_preserve_newline(path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False, []
     if not isinstance(data, dict):
-        return False
+        return False, []
 
     changed = False
+    fremde = []
     hooks = data.get("hooks")
     if isinstance(hooks, dict):
         session_start = hooks.get("SessionStart")
         if isinstance(session_start, list):
-            new_list = [e for e in session_start if "maintenance-check.py" not in json.dumps(e)]
+            new_list = []
+            for e in session_start:
+                dumped = json.dumps(e, ensure_ascii=False).replace("\\\\", "/")
+                if "maintenance-check.py" in dumped and "CLAUDE_PROJECT_DIR" in dumped:
+                    continue  # vom Template gesetzt - entfernen
+                if "maintenance-check.py" in dumped:
+                    fremde.append(_hook_command_desc(e))
+                new_list.append(e)
             if len(new_list) != len(session_start):
                 hooks["SessionStart"] = new_list
                 changed = True
@@ -753,13 +864,25 @@ def remove_maintenance_hook(root: Path) -> bool:
                 changed = True
 
     if changed:
-        _write_json(path, data)
-    return changed
+        _write_json(path, data, newline)
+    return changed, fremde
 
 
 # ---------------------------------------------------------------------------
 # Wartung: status.json schreiben bzw. Wartungsdateien/CLAUDE.md-Verweise entfernen
 # ---------------------------------------------------------------------------
+
+
+# Runner/README des Wartungsordners - fehlen sie bei "Wartung: ein" (status.json wird unten trotzdem
+# geschrieben), ist das typisch fuer ein per apply-template.py nachgeruestetes Projekt, das nur status.json
+# bekommen hat. Siehe check_maintenance_runner_files.
+MAINTENANCE_RUNNER_FILES = ["run-maintenance.ps1", "run-maintenance.sh", "README.md"]
+
+
+def check_maintenance_runner_files(root: Path) -> list:
+    """Gibt die Dateinamen aus MAINTENANCE_RUNNER_FILES zurueck, die in .claude/maintenance/ fehlen."""
+    d = root / ".claude" / "maintenance"
+    return [name for name in MAINTENANCE_RUNNER_FILES if not (d / name).exists()]
 
 
 def write_maintenance_status(root: Path, aufgaben: dict) -> None:
@@ -780,6 +903,48 @@ def write_maintenance_status(root: Path, aufgaben: dict) -> None:
 # `.templatedev.md` (Umbauliste/Fragen/Journal der Template-Entwicklung - das einzige Dokument im Template
 # mit echtem Inhalt statt Platzhaltern).
 TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev.md"]
+
+# Fest verdrahtete Pfadlisten, deren Eintraege nach einer Umbenennung/Verschiebung veraltet sein koennen
+# (siehe check_stale_remove_paths) - ohne Gegenprobe faellt so etwas erst auf, wenn der jeweilige
+# Entfernen-Schritt eine nicht mehr existierende Datei "erfolgreich" ignoriert.
+STALE_PATH_CHECK_LISTS = {
+    "OPTIMIZER_REMOVE_PATHS": OPTIMIZER_REMOVE_PATHS,
+    "MAINTENANCE_REMOVE_PATHS": MAINTENANCE_REMOVE_PATHS,
+    "TEMPLATE_ONLY_PATHS": TEMPLATE_ONLY_PATHS,
+}
+
+
+def check_stale_remove_paths(root: Path) -> list:
+    """Selbstpruefung fuer '--check': prueft je Pfad in STALE_PATH_CHECK_LISTS, ob er im Repo existiert.
+
+    Ein fehlender Pfad ist nur dann verdaechtig (typischer Fehler nach einer Umbenennung, z.B. ein Ordner
+    wurde umbenannt, aber die Liste hier nicht mitgezogen), wenn die Ausgangslage noch unberuehrt ist - d.h.
+    solange der 'is_template'-Marker in .claude/template.json noch gesetzt ist (frischer Template-Checkout
+    oder frisch geklontes, noch nicht per --apply zugeschnittenes Projekt). Ist der Marker schon weg, hat
+    --apply bereits gelaufen und genau diese Pfade wurden absichtlich entfernt - eine Warnung waere dann ein
+    Fehlalarm, deshalb wird die Pruefung dafuer bewusst NICHT ausgefuehrt statt sie nur schwaecher zu
+    formulieren. Gibt eine Liste von Warnzeilen zurueck (leer = nichts zu melden)."""
+    template_json = root / ".claude" / "template.json"
+    try:
+        cfg = json.loads(template_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        cfg = {}
+    if not (isinstance(cfg, dict) and cfg.get("is_template")):
+        return [
+            "Selbstpruefung der Pfadlisten (STALE_PATH_CHECK_LISTS) uebersprungen: is_template-Marker in "
+            ".claude/template.json fehlt bereits - --apply ist auf diesem Repo vermutlich schon gelaufen, "
+            "fehlende Pfade waeren dann erwartungsgemaess."
+        ]
+
+    warnungen = []
+    for listen_name, pfade in STALE_PATH_CHECK_LISTS.items():
+        for rel in pfade:
+            if not (root / rel).exists():
+                warnungen.append(
+                    f"WARNUNG: Pfad '{rel}' aus {listen_name} existiert nicht (mehr) im Repo - "
+                    "moeglicherweise eine veraltete Liste nach einer Umbenennung/Verschiebung."
+                )
+    return warnungen
 
 
 # Abschnitte, die nur gelten, solange das Repo die Vorlage selbst ist. Sie stehen in den Regeldateien
@@ -809,7 +974,7 @@ def remove_template_intro(root: Path) -> list:
         if not fp.is_file():
             continue
         try:
-            text = fp.read_text(encoding="utf-8")
+            text, newline = _read_text_preserve_newline(fp)
         except (UnicodeDecodeError, OSError):
             continue
         neu_text, n = TEMPLATE_ONLY_BLOCK.subn("", text)
@@ -817,7 +982,7 @@ def remove_template_intro(root: Path) -> list:
             # Doppelte Leerzeilen, die durch das Entfernen entstehen, wieder zusammenziehen.
             neu_text = re.sub(r"\n{3,}", "\n\n", neu_text)
             try:
-                fp.write_text(neu_text, encoding="utf-8", newline="\n")
+                _write_text_preserve_newline(fp, neu_text, newline)
                 removed.append(f"{rel} (Abschnitt 'nur Template')")
             except OSError:
                 pass
@@ -850,8 +1015,8 @@ def remove_maintenance_references(root: Path) -> dict:
     if not path.exists():
         return result
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
+        text, newline = _read_text_preserve_newline(path)
+    except (UnicodeDecodeError, OSError):
         return result
     new_text = text
 
@@ -904,7 +1069,7 @@ def remove_maintenance_references(root: Path) -> dict:
     )
 
     if new_text != text:
-        path.write_text(new_text, encoding="utf-8", newline="\n")
+        _write_text_preserve_newline(path, new_text, newline)
     return result
 
 
@@ -1061,6 +1226,7 @@ def cmd_dry_run(root: Path) -> int:
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
@@ -1069,6 +1235,12 @@ def cmd_dry_run(root: Path) -> int:
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
     lines = ["create-project.py --dry-run", ""]
+    # Selbstpruefung der fest verdrahteten Pfadlisten (siehe check_stale_remove_paths) laeuft hier mit:
+    # --check allein wuerde niemand aufrufen, der Plan-Lauf dagegen steht in jeder Checkliste.
+    for _warnung in check_stale_remove_paths(root):
+        lines.append(_warnung)
+    if len(lines) > 2:
+        lines.append("")
     ist_template, branch, guard_fehler = template_repo_guard(root)
     if guard_fehler:
         lines.append("ACHTUNG - --apply wuerde hier abbrechen:")
@@ -1132,6 +1304,18 @@ def cmd_dry_run(root: Path) -> int:
         lines.append("Wartung: aus - zu entfernende Dateien:")
         for rel in MAINTENANCE_REMOVE_PATHS:
             lines.append(f"  {rel}")
+
+    lines.append("")
+    if wartungsberichte_unbekannt:
+        lines.append(f"Wartungsberichte: \"{wartungsberichte_unbekannt}\" ist kein bekannter Wert - --apply "
+                      "bricht damit ab. Erlaubt: intern, docs.")
+    else:
+        lines.append("Wartungsberichte: " + WARTUNGSBERICHTE_TEXT[wartungsberichte])
+        if wartungsberichte == "docs" and wartung_val != "ein":
+            lines.append("  ohne Wirkung, solange Wartung auf \"aus\" steht.")
+        elif wartungsberichte == "docs" and not (root / "docs" / "maintenance" / "README.md").exists():
+            lines.append("  --apply legt docs/maintenance/README.md an (docs/README.md muss der Index-Tabelle "
+                          "danach von Hand ergaenzt werden).")
 
     lines.append("")
     if code_analyse_unbekannt:
@@ -1209,6 +1393,7 @@ def cmd_apply(root: Path) -> int:
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
@@ -1235,6 +1420,10 @@ def cmd_apply(root: Path) -> int:
     if wartung_unbekannt:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Wartung nicht eindeutig: \"{wartung_unbekannt}\" - "
               "erlaubt sind aus, ein.", file=sys.stderr)
+        fehler = True
+    if wartungsberichte_unbekannt:
+        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Wartungsberichte nicht eindeutig: "
+              f"\"{wartungsberichte_unbekannt}\" - erlaubt sind intern, docs.", file=sys.stderr)
         fehler = True
     if code_analyse_unbekannt:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Code-Analyse nicht eindeutig: "
@@ -1286,9 +1475,17 @@ def cmd_apply(root: Path) -> int:
             for name, intervall in wartungsaufgaben.items()
         )
         wartung_status = f"ein - status.json geschrieben ({aufgaben_txt})"
+        fehlende_runner = check_maintenance_runner_files(root)
+        if fehlende_runner:
+            wartung_status += (
+                "; ACHTUNG: " + ", ".join(fehlende_runner) + " fehlen in .claude/maintenance/ (typisch fuer "
+                "ein per apply-template.py nachgeruestetes Projekt) - holen per 'git show "
+                "template/<branch>:.claude/maintenance/<datei> > .claude/maintenance/<datei>' je fehlender "
+                "Datei, oder erneut apply-template.py ausfuehren."
+            )
     else:
         removed_maintenance = remove_maintenance_files(root)
-        hook_removed = remove_maintenance_hook(root)
+        hook_removed, hooks_fremde = remove_maintenance_hook(root)
         claude_refs = remove_maintenance_references(root)
         teile = [
             "entfernt: " + (", ".join(removed_maintenance) if removed_maintenance else "(keine, bereits entfernt)"),
@@ -1299,7 +1496,24 @@ def cmd_apply(root: Path) -> int:
                 else "(Zeilen nicht gefunden oder Datei fehlt)"
             ),
         ]
+        for f in hooks_fremde:
+            teile.append(
+                f"fremder Hook mit maintenance-check.py belassen: {f} - ACHTUNG: maintenance-check.py wurde "
+                "entfernt, dieser Hook zeigt damit ins Leere."
+            )
         wartung_status = "aus - " + "; ".join(teile)
+
+    if wartungsberichte == "docs" and wartung_val == "ein":
+        docs_maintenance_neu = setup_docs_maintenance_reports(root)
+        wartungsberichte_status = WARTUNGSBERICHTE_TEXT["docs"] + (
+            " - docs/maintenance/README.md neu angelegt" if docs_maintenance_neu
+            else " - docs/maintenance/README.md bereits vorhanden"
+        )
+    elif wartungsberichte == "docs":
+        wartungsberichte_status = (WARTUNGSBERICHTE_TEXT["docs"]
+                                   + " - nichts angelegt, weil die Wartung ausgeschaltet ist")
+    else:
+        wartungsberichte_status = WARTUNGSBERICHTE_TEXT["intern"]
 
     lines = ["create-project.py --apply", ""]
     for w in config_warnungen(cfg):
@@ -1313,6 +1527,9 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
     lines.append("Commit-Verhalten: " + COMMIT_VERHALTEN_TEXT[commit_verhalten])
     lines.append(f"Wartung: {wartung_status}")
+    lines.append(f"Wartungsberichte: {wartungsberichte_status}")
+    if wartungsberichte == "docs":
+        lines.append("  Bitte docs/maintenance/ noch in docs/README.md eintragen.")
     lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
                  + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else ""))
@@ -1381,8 +1598,8 @@ def cmd_finish(root: Path) -> int:
         return 2
 
     try:
-        config_text = config_path.read_text(encoding="utf-8-sig")
-    except OSError as e:
+        config_text, config_newline = _read_text_preserve_newline(config_path, encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError) as e:
         print(f"Fehler: {CONFIG_REL} konnte nicht gelesen werden: {e}", file=sys.stderr)
         return 2
 
@@ -1435,7 +1652,7 @@ def cmd_finish(root: Path) -> int:
     neuer_text = vermerk + "\n\n" + kopf + "\n\n" + FINISH_REPLACEMENT_SECTION
 
     try:
-        config_path.write_text(neuer_text, encoding="utf-8", newline="\n")
+        _write_text_preserve_newline(config_path, neuer_text, config_newline)
     except OSError as e:
         print(f"Fehler: {CONFIG_REL} konnte nicht geschrieben werden: {e}", file=sys.stderr)
         return 2
@@ -1462,6 +1679,11 @@ def build_parser():
     group.add_argument("--apply", action="store_true", help="Platzhalter ersetzen, Werkzeug-Dateien entfernen, Werte speichern")
     group.add_argument("--finish", action="store_true",
                         help="Vorbedingungen pruefen, AI-CONFIG.md fortschreiben (bleibt bestehen)")
+    group.add_argument(
+        "--check", action="store_true",
+        help="Selbstpruefung: fest verdrahtete Pfadlisten (STALE_PATH_CHECK_LISTS) gegen das Repo pruefen, "
+        "aendert nichts (Exit 0, auch bei Warnungen)",
+    )
     return parser
 
 
@@ -1478,6 +1700,10 @@ def _run(argv) -> int:
         )
         return 2
 
+    if args.check:
+        warnungen = check_stale_remove_paths(root)
+        print("\n".join(warnungen) if warnungen else "Selbstpruefung ok: alle gelisteten Pfade vorhanden.")
+        return 0
     if args.apply:
         return cmd_apply(root)
     if args.finish:

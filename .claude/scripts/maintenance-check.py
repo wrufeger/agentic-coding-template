@@ -23,11 +23,13 @@
 #   python .claude/scripts/maintenance-check.py --done <aufgabe>[,<aufgabe>...] [--date YYYY-MM-DD]
 #       Setzt `letzter_lauf` (Default heute) und berechnet `naechster_lauf` = letzter_lauf + intervall_tage
 #       (ereignisgesteuerte Aufgaben bekommen `naechster_lauf: null`). `--done alle` trifft alle Aufgaben mit
-#       gesetztem intervall_tage. Unbekannte Aufgabe(n) -> Exit 2 mit Liste der bekannten Aufgaben.
+#       gesetztem intervall_tage. Unbekannte Aufgabe(n) -> Exit 2 mit Liste der bekannten Aufgaben. Ein
+#       leeres Argument (`--done ""`) faellt NICHT still auf --check zurueck, sondern -> Exit 2 mit Hinweis.
 #   python .claude/scripts/maintenance-check.py --set <aufgabe>=<tage>[,<aufgabe>=<tage>...]
 #       Setzt/aendert Intervalle (Tage als Zahl; 0, leer, 'null' oder '-' = ereignisgesteuert). Legt fehlende
 #       Aufgaben an (mit `letzter_lauf`/`naechster_lauf: null`). Ist bereits ein `letzter_lauf` gesetzt, wird
-#       `naechster_lauf` mit dem neuen Intervall neu berechnet.
+#       `naechster_lauf` mit dem neuen Intervall neu berechnet. Ein leeres Argument (`--set ""`) faellt NICHT
+#       still auf --check zurueck, sondern -> Exit 2 mit Hinweis.
 #   python .claude/scripts/maintenance-check.py --status
 #       Wie --list, zusaetzlich Pfad der Statusdatei und ob die Wartung im Projekt ueberhaupt eingerichtet ist.
 #
@@ -447,9 +449,21 @@ def _run(argv) -> int:
     if not (root / "AGENTS.md").exists():
         return 0  # kein Projekt aus diesem Template - still, kein Fehler
 
-    if args.done:
+    if args.done is not None:
+        if not args.done.strip():
+            print(
+                "Fehler: --done erwartet AUFGABE[,AUFGABE...] oder 'alle', z.B. --done kurz,docs",
+                file=sys.stderr,
+            )
+            return 2
         return cmd_done(root, args.done, args.date)
-    if args.set:
+    if args.set is not None:
+        if not args.set.strip():
+            print(
+                "Fehler: --set erwartet AUFGABE=TAGE[,AUFGABE=TAGE...], z.B. --set docs=7,deps=0",
+                file=sys.stderr,
+            )
+            return 2
         return cmd_set(root, args.set)
     if args.status:
         return cmd_status(root)

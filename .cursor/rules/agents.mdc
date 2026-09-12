@@ -8,3 +8,8 @@ Verweis für Cursor, keine eigene Regelquelle.
 
 Zusätzlich beachten: `docs/ai/board.md` (aktueller Stand, nächster Schritt), `docs/project/coding_rules.md`
 (Stil- und Sprachregeln für dieses Projekt).
+
+**Mehrere Agenten parallel:** Cursor kennt `/multitask <Auftrag>` für asynchrone Worker in derselben Session
+und den Cloud Agent für Läufe außerhalb. Rollendateien im Repo gibt es dafür nicht — der Auftrag muss den
+Kontext vollständig mitgeben (Rollenzuschnitte in `CLAUDE.md` § 1, Pflichten in `AGENTS.md` § „Worker
+starten“).

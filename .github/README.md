@@ -79,6 +79,15 @@ werkzeugunabhängig. Für GitHub Copilot, Cursor, Aider, Gemini CLI und Codex li
 jedem anderen Assistenten genügt es, die Regeldatei und das Board als Kontext zu laden. Nicht genutzte
 Werkzeuge werden beim Anlegen des Projekts entfernt.
 
+Parallele Worker beherrschen inzwischen auch andere Werkzeuge — `/fleet` in der Copilot CLI, Subagents in
+Gemini CLI und Codex, `/multitask` in Cursor, Subagents in Cline. Die Regeldatei nennt je Werkzeug
+Aufruf und Ablageort der Rollen, damit sich dasselbe Rollenmodell dort nachbauen lässt. Aider bleibt die
+Ausnahme: dort gibt es keine Sub-Agenten, nur die Architect/Editor-Trennung.
+
+Wer neu im Thema ist, findet in `docs/ai/resources.md` eine geprüfte Linksammlung: Einstieg, Werkzeug-Doku,
+Anbieter, Nachrichtenquellen und die bekannten Grenzen. Sie wandert in jedes abgeleitete Projekt mit und wird
+per `/update-template` aktuell gehalten.
+
 ## Sprache
 
 Dokumentation, Oberflächentexte und Kommentare auf Deutsch, Code-Bezeichner auf Englisch. Beides ist im

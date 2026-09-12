@@ -93,6 +93,16 @@ als Beispiel, u. a. `docs/ai/checklists.md`).
 | Gemini CLI | `GEMINI.md` (Verweis) | `gemini` im Repo-Root starten |
 | ChatGPT (Web), Ollama, sonstige | nichts automatisch | `AGENTS.md` + `docs/ai/board.md` als System-Prompt |
 
+Parallele Worker starten inzwischen auch andere Werkzeuge — `AGENTS.md` § „Worker starten“ nennt je Werkzeug
+Aufruf und Ablageort der Rollen.
+
+## Neu im Thema?
+
+`docs/ai/resources.md` sammelt geprüfte Quellen: was Agentic Coding ist, Einstiegsanleitungen der Hersteller,
+die Dokumentation der gängigen Werkzeuge, Anbieter und lokale Modelle, laufende Nachrichtenquellen und —
+ausdrücklich — die bekannten Grenzen und Sicherheitsrisiken. Das Template pflegt diese Datei; `/update-template`
+zieht spätere Fassungen nach.
+
 ## Ordnerübersicht
 
 ```text

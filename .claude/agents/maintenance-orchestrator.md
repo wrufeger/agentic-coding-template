@@ -55,7 +55,10 @@ Aufgabe(n) unabhängig von der Fälligkeit ausführen.
 - Große Dateien/Logs nur ausschnittsweise lesen (`grep -n`, `sed -n`).
 
 ## Bericht
-`.claude/maintenance/reports/YYYY-MM-DD.md` (≤ 60 Zeilen, gitignored) mit genau diesen Abschnitten:
+Ablageort kommt aus `AI-CONFIG.md` § Betrieb → `Wartungsberichte`: `intern` (Default) →
+`.claude/maintenance/reports/YYYY-MM-DD.md` (gitignored); `docs` → `docs/maintenance/YYYY-MM-DD.md`
+(versioniert, im Doku-Index sichtbar). Bei Unklarheit `intern` annehmen. Datei (≤ 60 Zeilen) mit genau diesen
+Abschnitten:
 ```
 ## Erledigt
 ## Abweichungen

@@ -19,9 +19,18 @@
 #       Exit 0 = aktuell/nicht konfiguriert (bei --quiet), 2 = nicht konfiguriert/Netzwerkfehler (ohne
 #       --quiet), 3 = Update verfuegbar (Ausgabe: Commits, geaenderte Dateien, keep_local-Markierung).
 #   python .claude/scripts/update-template.py --apply [--commit]
-#       Mergt template/<branch> in den Arbeitsbaum (git merge --no-ff --no-commit). Konflikte in
-#       .claude/template.json werden IMMER zugunsten der Projektfassung geloest (auch "both added" beim
-#       Bootstrap, siehe unten) - unabhaengig von keep_local. Konflikte vom Typ "DD" (von beiden geloescht)
+#       Mergt template/<branch> in den Arbeitsbaum (git merge --no-ff --no-commit). Schlaegt der Merge aus
+#       einem anderen Grund als offenen Konflikten fehl (z.B. "not something we can merge"), bricht --apply
+#       SOFORT ab (Exit 2) - VOR jedem Schreibzugriff auf .claude/template.json, damit ein sauberer
+#       Arbeitsbaum fuer den naechsten Versuch zurueckbleibt. Erst danach werden Konflikte in
+#       .claude/template.json feldweise gemergt (auch "both added" beim Bootstrap, siehe unten):
+#       base_commit/updates/template_remote/template_branch/template_url/is_template immer aus der
+#       Projektfassung OHNE Rueckfall auf das Template, wenn das Feld dort fehlt (fehlt es im Projekt, soll
+#       es fehlen); values feldweise (Projektwert gewinnt je Schluessel, neue Platzhalter aus dem Template
+#       werden mit null ergaenzt, damit sie nicht unersetzt in Zieldateien stehen bleiben); keep_local/
+#       no_replace als Vereinigung (Projekt zuerst, dann neue Template-Eintraege) - unabhaengig von
+#       keep_local selbst. Schlaegt das Parsen einer Seite fehl, faellt es auf das alte Verhalten zurueck
+#       (Projektfassung komplett). Konflikte vom Typ "DD" (von beiden geloescht)
 #       werden immer automatisch bereinigt (unstrittig). Konflikte vom Typ "DU" (vom Projekt geloescht, im
 #       Template geaendert) werden NUR DANN automatisch als "geloescht belassen" entschieden, wenn der Pfad
 #       in keep_local steht UND keine Umbenennung erkennbar ist (siehe --conflicts) - das Script darf sonst
@@ -38,8 +47,9 @@
 #       Nur waehrend eines laufenden Merges (MERGE_HEAD vorhanden, sonst Hinweis + Exit 0): analysiert jeden
 #       noch offenen Konflikt fuer den Assistenten (Art, Prioritaetsregel, Zeilenumfang der Aenderung je
 #       Seite, Umbenennungs-Kandidat bei "DU" per Git-Rename-Erkennung bzw. Inhaltsaehnlichkeit unter
-#       docs/ai/, passende git-Befehle zum Nachschauen). Schreibt nichts, loest nichts auf - reine Analyse
-#       fuer die inhaltliche Zusammenfuehrung, die der Assistent macht.
+#       docs/ai/; bei "AU"/"UA" - beide Seiten haben dieselbe Datei verschoben - beide Zielpfade per
+#       Git-Rename-Erkennung, passende git-Befehle zum Nachschauen). Schreibt nichts, loest nichts auf -
+#       reine Analyse fuer die inhaltliche Zusammenfuehrung, die der Assistent macht.
 #   python .claude/scripts/update-template.py --abort
 #       Bricht einen laufenden Merge ab (git merge --abort); .claude/template.json bleibt unveraendert.
 #   python .claude/scripts/update-template.py --status
@@ -91,6 +101,14 @@ import sys
 import time
 from pathlib import Path
 
+# Windows liest sonst in der ANSI-Codepage - Pfade mit Umlauten kaemen als Mojibake an (dasselbe Muster wie
+# in ai-log.py/create-project.py; try/except, damit aeltere Python-Versionen ohne reconfigure() nicht scheitern).
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 DEFAULT_VALUE_KEYS = [
     "PROJEKTNAME",
     "AUFTRAGGEBER",
@@ -131,19 +149,9 @@ DEFAULT_NO_REPLACE = [
 ]
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
-# migrate-project.py - dort nachsehen, falls sich die Regeln je aendern).
-PRIORITY_RULES = """.claude/**, AGENTS.md, CLAUDE.md, docs/ai/checklists.md, docs/ai/README.md
-  -> Template gewinnt, Projektergaenzungen einarbeiten
-docs/ai/** (uebrige Arbeitsdateien: board, tasks, questions, ledger, backlog)
-  -> Template-Struktur, Projekt-Inhalt
-docs/project/coding_rules.md
-  -> strengere Regel gewinnt
-docs/project/**
-  -> Projekt gewinnt
-README.md, .gitignore
-  -> Projekt gewinnt, Template ergaenzt
-sonst
-  -> abwaegen"""
+# migrate-project.py - dort nachsehen/nachziehen, falls sich die Regeln je aendern - z.B. die
+# docs/ai/resources.md-Sonderregel unten). Die Regeln stehen hier nur noch als priority_label()-Logik, ohne
+# eigene String-Konstante (die gab es fuer --conflicts nie zu lesen).
 
 
 def priority_label(rel_path: str) -> str:
@@ -154,6 +162,12 @@ def priority_label(rel_path: str) -> str:
         return "strengere Regel gewinnt"
     if norm.startswith("docs/project/"):
         return "Projekt gewinnt"
+    # docs/ai/resources.md pflegt das TEMPLATE (kuratierte Linksammlung), nicht das Projekt - anders als der
+    # Rest von docs/ai/. Ausnahme: der Abschnitt "Eigene Quellen dieses Projekts" am Ende der Datei ist
+    # Projekt-Inhalt und bleibt beim Projekt. Muss VOR der allgemeinen docs/ai/-Regel stehen, sonst greift sie
+    # nie (die naechste Regel unten ist ebenfalls startswith("docs/ai/") und wuerde sonst zuerst zutreffen).
+    if norm == "docs/ai/resources.md":
+        return "Template gewinnt, nur Abschnitt 'Eigene Quellen dieses Projekts' bleibt beim Projekt"
     if norm.startswith("docs/ai/"):
         return "Template-Struktur, Projekt-Inhalt"
     if norm in ("README.md", ".gitignore"):
@@ -290,8 +304,14 @@ def save_template_json(root: Path, cfg: dict, path: Path) -> None:
         "keep_local": cfg.get("keep_local") or list(DEFAULT_KEEP_LOCAL),
         "no_replace": cfg.get("no_replace") if isinstance(cfg.get("no_replace"), list) else list(DEFAULT_NO_REPLACE),
         "updates": cfg.get("updates") or [],
-        "_hinweis": cfg.get("_hinweis") or _HINWEIS,
     }
+    # Unbekannte Felder (z.B. "is_template", vom Template-Checkout selbst gesetzt) nicht verwerfen - nur
+    # die oben bereits behandelten Schluessel und den abschliessenden Hinweistext auslassen.
+    for key, value in cfg.items():
+        if key in ordered or key == "_hinweis":
+            continue
+        ordered[key] = value
+    ordered["_hinweis"] = cfg.get("_hinweis") or _HINWEIS
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(ordered, f, ensure_ascii=False, indent=2)
@@ -609,6 +629,39 @@ def _rename_candidate(root: Path, rel_path: str, rename_map: dict, merge_head):
     return None
 
 
+def _reverse_rename(rename_map: dict, new_path: str):
+    """Kehrt eine Rename-Map (alter_pfad -> (neuer_pfad, ...)) um: liefert den alten Pfad, dessen Ziel
+    new_path ist, oder None."""
+    for alt, (neu, _score) in rename_map.items():
+        if neu == new_path:
+            return alt
+    return None
+
+
+def _rename_pair_both_sides(rel_path: str, code: str, rename_map: dict, rename_map_theirs: dict):
+    """Fuer "AU"/"UA"-Konflikte (rename/rename: beide Seiten haben dieselbe Basisdatei verschoben, aber auf
+    unterschiedliche neue Pfade) -> (projekt_pfad, template_pfad) oder None, wenn die andere Seite nicht
+    ueber die Git-Rename-Erkennung auffindbar ist. rename_map = base..HEAD (Projekt), rename_map_theirs =
+    base..Template. rel_path ist bereits einer der beiden Zielpfade (der eigene, laut code)."""
+    if code == "AU":
+        alt = _reverse_rename(rename_map, rel_path)
+        if alt is None:
+            return None
+        hit = rename_map_theirs.get(alt)
+        if not hit:
+            return None
+        return rel_path, hit[0]
+    if code == "UA":
+        alt = _reverse_rename(rename_map_theirs, rel_path)
+        if alt is None:
+            return None
+        hit = rename_map.get(alt)
+        if not hit:
+            return None
+        return hit[0], rel_path
+    return None
+
+
 def _sh_quote(rel_path: str) -> str:
     """Pfad so einfassen, dass der ausgegebene git-Befehl auch mit Leerzeichen kopierbar bleibt."""
     if all(c.isalnum() or c in "._-/" for c in rel_path):
@@ -650,6 +703,168 @@ def _print_unresolved(root: Path, still_open, intro: str) -> None:
     print("Analyse je Konflikt: python .claude/scripts/update-template.py --conflicts", file=sys.stderr)
 
 
+def _git_show_json(root: Path, revision: str, rel_path: str):
+    """git show <revision>:<rel_path> -> geparstes JSON-Dict. revision ist ein normaler Commit/Branch-Verweis
+    (z.B. der Stand vor dem Merge, oder die Vergleichs-Ref des Templates) - KEIN Merge-Stage-Index: waehrend
+    eines echten Konflikts gibt es zwar zusaetzlich ":2"/":3" im Index, aber .claude/template.json mergt git
+    bei reinen Listenergaenzungen an unterschiedlichen Stellen oft klaglos OHNE Konflikt (siehe Kopfkommentar/
+    _resolve_template_json_merge) - dann existieren gar keine Stages, wohl aber die beiden Commits.
+
+    Rueckgabe (dict, False) bei Erfolg, (None, False) wenn der Pfad bei dieser Revision fehlt (kein Fehler -
+    z.B. "both added": vor dem Merge existierte die Datei projektseitig noch nicht), (None, True) wenn
+    Inhalt vorhanden, aber kein gueltiges JSON-Objekt (echter Parse-Fehler)."""
+    res = run_git(root, ["show", f"{revision}:{rel_path}"])
+    if res.returncode != 0:
+        return None, False
+    try:
+        data = json.loads(res.stdout)
+    except ValueError:
+        return None, True
+    if not isinstance(data, dict):
+        return None, True
+    return data, False
+
+
+# Felder, die bei einem Konflikt auf .claude/template.json IMMER aus der Projektfassung (ours) stammen UND
+# OHNE Rueckfall auf theirs, wenn ours das Feld nicht hat ("fehlt im Projekt" heisst hier "soll fehlen", nicht
+# "aus dem Template nachladen") - je Feld begruendet:
+#   - is_template: Sentinel des Template-Checkouts selbst (create-project.py entfernt ihn dort, wo daraus
+#     ein echtes Projekt wird). Faellt er im Projekt weg, darf ein Merge ihn nicht aus dem Template
+#     zurueckholen - genau das war der Review-Fund (Projekt hielt sich danach faelschlich fuer den
+#     Template-Checkout).
+#   - base_commit/updates: reine Projekt-Historie GEGENUEBER diesem Template - die eigene template.json des
+#     Templates hat dazu keine sinnvolle Aussage (dort stehen bestenfalls null/[]). base_commit wird direkt
+#     danach in _finalize ohnehin ueberschrieben, updates dort fortgeschrieben - ein Theirs-Fallback waere
+#     hier zwar folgenlos, aber semantisch falsch, deshalb einheitlich behandelt.
+#   - template_remote/template_branch/template_url: wo DIESES Projekt sein Template findet - eine
+#     Projektentscheidung (--init/--url), keine Aussage des Templates ueber sich selbst.
+# "values" ist bewusst NICHT hier drin: dort gewinnt zwar ebenfalls immer der Projektwert je Schluessel, aber
+# neue Platzhalter, die nur das Template mitbringt, muessen ergaenzt werden (sonst bleiben sie in
+# Zieldateien als "{{NEUER_PLATZHALTER}}" unersetzt stehen) - kein Ganzfeld-Fallback wie bei den obigen
+# Feldern, siehe _merge_template_json_values().
+_TEMPLATE_JSON_OURS_FIELDS = (
+    "base_commit",
+    "updates",
+    "template_remote",
+    "template_branch",
+    "template_url",
+    "is_template",
+)
+
+
+def _merge_template_json_values(ours_values, theirs_values):
+    """Merged das 'values'-Dict (Platzhalterwerte) schluesselweise: ein vorhandener Projektschluessel
+    gewinnt IMMER (auch wenn sein Wert null ist - bewusst noch nicht gesetzt). Schluessel, die nur das
+    Template mitbringt (neuer Platzhalter seit dem letzten Update), werden mit Wert null ergaenzt, damit sie
+    ueberhaupt in der Konfiguration auftauchen und im naechsten Schritt ersetzt/gemeldet werden koennen -
+    ohne einen vorhandenen Projektwert zu ueberschreiben.
+
+    Rueckgabe: (merged_dict oder None, wenn beide Seiten leer/fehlend sind; sortierte Liste der neu
+    ergaenzten Schluessel)."""
+    ours_values = ours_values if isinstance(ours_values, dict) else {}
+    theirs_values = theirs_values if isinstance(theirs_values, dict) else {}
+    if not ours_values and not theirs_values:
+        return None, []
+    merged = dict(ours_values)
+    neu = sorted(key for key in theirs_values if key not in merged)
+    for key in neu:
+        merged[key] = None
+    return merged, neu
+
+
+def _merge_template_json_fields(ours, theirs):
+    """Feldweiser Merge von .claude/template.json bei einem Merge-Konflikt (siehe Kopfkommentar).
+
+    ours/theirs: geparste Dicts (siehe _git_show_json) oder None, wenn diese Stufe fehlt. Rueckgabe
+    (merged_dict, hinweistext) oder (None, fehlertext), wenn keine Seite verwertbar ist."""
+    if ours is None and theirs is None:
+        return None, "keine Seite lesbar"
+
+    merged = {}
+    for key in _TEMPLATE_JSON_OURS_FIELDS:
+        if ours is not None and key in ours:
+            merged[key] = ours[key]
+        # kein "elif theirs...": siehe Begruendung an der Konstante - fehlt das Feld im Projekt, bleibt es
+        # auch nach dem Merge weg statt aus dem Template nachgeladen zu werden.
+
+    values_merged, neu_values = _merge_template_json_values(
+        (ours or {}).get("values"), (theirs or {}).get("values")
+    )
+    if values_merged is not None:
+        merged["values"] = values_merged
+
+    keep_local_ours = (ours or {}).get("keep_local") or []
+    keep_local_theirs = (theirs or {}).get("keep_local") or []
+    no_replace_ours = (ours or {}).get("no_replace") or []
+    no_replace_theirs = (theirs or {}).get("no_replace") or []
+    # Vereinigung, Reihenfolge: erst die Projekt-Eintraege in ihrer Reihenfolge, dann die neuen aus dem
+    # Template, Duplikate raus. dict.fromkeys() haelt genau diese Reihenfolge und entfernt Duplikate.
+    merged["keep_local"] = list(dict.fromkeys(list(keep_local_ours) + list(keep_local_theirs)))
+    merged["no_replace"] = list(dict.fromkeys(list(no_replace_ours) + list(no_replace_theirs)))
+    neu_keep_local = [p for p in keep_local_theirs if p not in keep_local_ours]
+    neu_no_replace = [p for p in no_replace_theirs if p not in no_replace_ours]
+
+    # Unbekannte Felder: Projektfassung gewinnt, nur-im-Template-vorhandene Felder werden uebernommen.
+    # "values" steht bewusst mit dabei, obwohl es nicht mehr in _TEMPLATE_JSON_OURS_FIELDS steht - es ist
+    # oben bereits schluesselweise gemergt (_merge_template_json_values); ohne diesen Eintrag wuerde die
+    # Schleife es hier als "unbekanntes Feld" nochmal aus ours ueberschreiben und die frisch ergaenzten
+    # Template-Schluessel wieder verwerfen.
+    known = set(_TEMPLATE_JSON_OURS_FIELDS) | {"keep_local", "no_replace", "values"}
+    for key, value in (ours or {}).items():
+        if key not in known:
+            merged[key] = value
+    for key, value in (theirs or {}).items():
+        if key not in known and key not in merged:
+            merged[key] = value
+
+    hinweis = (
+        f"template.json feldweise zusammengefuehrt: keep_local +{len(neu_keep_local)}, "
+        f"no_replace +{len(neu_no_replace)}"
+    )
+    if neu_values:
+        hinweis += f", values +{len(neu_values)} neu ({', '.join(neu_values)}) - Werte pruefen/setzen"
+    return merged, hinweis
+
+
+def _resolve_template_json_merge(root: Path, cfg: dict, ours_ref: str, theirs_ref: str, rel_path: str):
+    """Fuehrt .claude/template.json feldweise zusammen (siehe _merge_template_json_fields) - UNABHAENGIG
+    davon, ob git den Pfad als Konflikt markiert hat: reine Listenergaenzungen an unterschiedlichen Stellen
+    (Projekt ergaenzt keep_local, Template ergaenzt no_replace) mergt git oft klaglos automatisch, und der
+    abschliessende save_template_json(cfg) in _finalize wuerde eine so automatisch gemergte Fassung sonst
+    unbemerkt wieder verwerfen, weil cfg noch den Vor-Merge-Stand des Projekts traegt (siehe .templatedev.md
+    Punkt 1 - genau dieser Fall blieb bisher unbemerkt liegen). ours_ref/theirs_ref: Commit vor dem Merge
+    (Projekt) bzw. die Vergleichs-Ref des Templates.
+
+    Schreibt bei Erfolg das Ergebnis in cfg (in place) UND auf die Platte, git add - das loest nebenbei auch
+    einen echten Git-Konflikt auf diesem Pfad auf. Rueckgabe: Hinweistext fuer den Report, oder None, wenn
+    der Pfad auf keiner Seite existiert (nichts zu tun)."""
+    ours_data, ours_err = _git_show_json(root, ours_ref, rel_path)
+    theirs_data, theirs_err = _git_show_json(root, theirs_ref, rel_path)
+
+    if ours_data is None and theirs_data is None and not ours_err and not theirs_err:
+        return None  # Pfad existiert auf keiner Seite - nichts zu tun
+
+    if not ours_err and not theirs_err:
+        merged, note = _merge_template_json_fields(ours_data, theirs_data)
+        if merged is not None:
+            cfg.clear()
+            cfg.update(merged)
+            save_template_json(root, cfg, root / rel_path)
+            run_git(root, ["add", "--", rel_path])
+            return note
+
+    # Fallback: Parsen einer Seite fehlgeschlagen -> altes Verhalten (Projektfassung gewinnt komplett, bzw.
+    # die einzige lesbare Seite, wenn die Projektfassung selbst kaputt ist).
+    fallback_data = ours_data if ours_data is not None else theirs_data
+    if fallback_data is not None:
+        cfg.clear()
+        cfg.update(fallback_data)
+        save_template_json(root, cfg, root / rel_path)
+        run_git(root, ["add", "--", rel_path])
+    grund = "Parsen einer Seite fehlgeschlagen" if (ours_err or theirs_err) else "kein Feld-Merge moeglich"
+    return f"immer Projektfassung ({grund})"
+
+
 def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bool) -> int:
     remote = cfg.get("template_remote") or "template"
     branch = cfg.get("template_branch") or "main"
@@ -684,32 +899,45 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     print(f"Template-Update: aktuell (kein Unterschied zu {ref}) - nichts zu tun.")
                     return 0
 
+        pre_merge_head = run_git(root, ["rev-parse", "HEAD"]).stdout.strip()
         res_merge = run_git(root, ["merge", "--no-ff", "--no-commit", ref])
+
+        # Vor dem Aufloesen von TEMPLATE_JSON_REL feststellen, ob es UEBERHAUPT unaufgeloeste Pfade gab -
+        # sonst wuerde "danach keine Konflikte mehr offen" (z.B. weil TEMPLATE_JSON_REL der einzige war und
+        # gleich aufgeloest wird) faelschlich als "Merge aus anderem Grund fehlgeschlagen" gewertet.
+        merge_failed_hard = res_merge.returncode != 0 and not get_unmerged_status(root)
+
+        # Harten Merge-Fehler (nicht: offene Konflikte) SOFORT melden und abbrechen - VOR jedem Schreibzugriff
+        # auf .claude/template.json. _resolve_template_json_merge() schreibt die Datei auf die Platte und
+        # macht ein 'git add'; das darf bei einem Abbruch nicht passieren, sonst bleibt ein schmutziger
+        # Arbeitsbaum zurueck (M .claude/template.json), der den dokumentierten Wiederholungsweg blockiert
+        # (cmd_apply verlangt oben einen sauberen Arbeitsbaum) - war der Review-Fund.
+        if merge_failed_hard:
+            print(f"Fehler: 'git merge {ref}' fehlgeschlagen: {res_merge.stderr.strip()}", file=sys.stderr)
+            return 2
+
+        # .claude/template.json IMMER feldweise mergen - unabhaengig davon, ob git sie hier als Konflikt
+        # markiert hat (siehe _resolve_template_json_merge). base_commit/updates werden ohnehin gleich
+        # danach im Abschlussschritt aus dem hier gemergten cfg neu geschrieben. Das erledigt nebenbei auch
+        # einen echten Git-Konflikt auf dem Pfad (git add loest ihn auf) - unten also aus den weiter zu
+        # bearbeitenden Konflikten herausnehmen.
+        template_json_note = _resolve_template_json_merge(root, cfg, pre_merge_head, ref, TEMPLATE_JSON_REL)
+        if template_json_note:
+            print(f"{TEMPLATE_JSON_REL}: {template_json_note}")
+
         if res_merge.returncode != 0:
+            # get_unmerged_status() erst JETZT (nach _resolve_template_json_merge) neu abfragen: dessen
+            # 'git add' hat einen echten Konflikt auf TEMPLATE_JSON_REL bereits aufgeloest (z.B. war es der
+            # einzige Konflikt ueberhaupt - "both added" beim Bootstrap) - der Pfad taucht hier also nur
+            # noch auf, falls er NICHT ueber diesen Mechanismus geloest werden konnte.
             conflicts = get_unmerged_status(root)
-            if not conflicts:
-                print(f"Fehler: 'git merge {ref}' fehlgeschlagen: {res_merge.stderr.strip()}", file=sys.stderr)
-                return 2
 
             keep_local = cfg.get("keep_local") or []
             merge_head = _merge_head(root)
             rename_map = _find_renames(root, cfg.get("base_commit"), "HEAD")
             auto_resolved, deleted_kept, dd_removed, du_decision = [], [], [], []
             for rel_path, code in conflicts.items():
-                if rel_path == TEMPLATE_JSON_REL:
-                    # Eigene Zustandsdatei: Konflikte IMMER zugunsten der Projektfassung ("ours") loesen -
-                    # unabhaengig von keep_local, auch bei "both added" (Projekt hat sie per --init
-                    # angelegt, das Template bringt sie im selben Update erstmals mit). base_commit/
-                    # updates werden ohnehin gleich danach im Abschlussschritt aus dem hier geladenen
-                    # cfg neu geschrieben.
-                    res_co = run_git(root, ["checkout", "--ours", "--", rel_path])
-                    if res_co.returncode == 0:
-                        run_git(root, ["add", "--", rel_path])
-                    else:
-                        # keine "ours"-Stufe im Index (z.B. von uns geloescht) -> Konflikt nur bereinigen
-                        run_git(root, ["rm", "-f", "--cached", "--", rel_path])
-                    auto_resolved.append(rel_path + " (immer Projektfassung)")
-                elif code == "DD":
+                if code == "DD":
                     # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
                     res_rm = run_git(root, ["rm", "--", rel_path])
                     if res_rm.returncode != 0:
@@ -785,8 +1013,16 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
         if not fp.exists() or not fp.is_file():
             continue
         try:
-            content = fp.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+            raw = fp.read_bytes()
+        except OSError:
+            continue
+        try:
+            # Byteweise lesen/decodieren statt read_text(): read_text() macht per Default eine
+            # Zeilenende-Uebersetzung (universal newlines, \r\n -> \n) - eine bewusst mit CRLF gepflegte
+            # Datei wuerde dann beim Zurueckschreiben still auf LF umgestellt. decode() fasst \r\n als
+            # gewoehnliche Zeichen im String an, die Ersetzung unten laesst sie unangetastet.
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
             continue  # keine Textdatei (oder nicht lesbar) -> unangetastet lassen
 
         if matches_keep_local(rel_path, no_replace):
@@ -803,7 +1039,7 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
 
         if new_content != content:
             try:
-                fp.write_text(new_content, encoding="utf-8", newline="\n")
+                fp.write_bytes(new_content.encode("utf-8"))
             except OSError:
                 continue
             run_git(root, ["add", "--", rel_path])
@@ -891,6 +1127,7 @@ def cmd_conflicts(root: Path, cfg: dict) -> int:
 
     base = cfg.get("base_commit")
     rename_map = _find_renames(root, base, "HEAD")
+    rename_map_theirs = _find_renames(root, base, merge_head)
 
     lines = []
     for rel_path in paths:
@@ -910,6 +1147,13 @@ def cmd_conflicts(root: Path, cfg: dict) -> int:
                 neu, pct = kandidat
                 pct_txt = f"{pct}%" if pct is not None else "?"
                 lines.append(f"  umbenannt?: {neu} (Aehnlichkeit {pct_txt})")
+        elif code in ("AU", "UA"):
+            # Beide Seiten haben dieselbe Basisdatei verschoben (rename/rename-Konflikt) - rel_path selbst
+            # ist bereits der eine Zielpfad, gesucht wird der jeweils andere.
+            paar = _rename_pair_both_sides(rel_path, code, rename_map, rename_map_theirs)
+            if paar:
+                projekt_pfad, template_pfad = paar
+                lines.append(f"  umbenannt?: Projekt -> {projekt_pfad} | Template -> {template_pfad}")
 
         base_txt = base or "<base_commit fehlt>"
         q = _sh_quote(rel_path)
@@ -925,6 +1169,8 @@ def cmd_conflicts(root: Path, cfg: dict) -> int:
     lines.append("'git add <pfad>', danach 'update-template.py --continue [--commit]'.")
     lines.append("Bei 'umbenannt?': die Template-Aenderung gehoert in die NEUE Datei - die alte bleibt")
     lines.append("geloescht (kein 'git add' auf den alten Pfad).")
+    lines.append("Bei beidseitiger Umbenennung (Projekt und Template -> unterschiedliche neue Pfade) wird in")
+    lines.append("den PROJEKT-Pfad zusammengefuehrt; der Template-Pfad wird entfernt (kein 'git add' darauf).")
     print("\n".join(lines).rstrip())
     return 0
 

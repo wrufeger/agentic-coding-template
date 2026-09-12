@@ -34,7 +34,9 @@ Für automatisierte/geplante Läufe außerhalb einer interaktiven Session: `.cla
 (Windows) bzw. `.claude/maintenance/run-maintenance.sh` (POSIX) — siehe `.claude/maintenance/README.md`.
 
 ## Nach dem Lauf (Hauptkontext)
-- Bericht `.claude/maintenance/reports/YYYY-MM-DD.md` und die Rückgabe des Worker-Orchestrators prüfen.
+- Bericht prüfen (Ablageort aus `AI-CONFIG.md` § Betrieb → `Wartungsberichte`: `intern` →
+  `.claude/maintenance/reports/YYYY-MM-DD.md`, gitignored; `docs` → `docs/maintenance/YYYY-MM-DD.md`,
+  versioniert) und die Rückgabe des Worker-Orchestrators prüfen.
 - Der `maintenance-orchestrator` schreibt `status.json` bereits per `maintenance-check.py --done <aufgabe>`
   fort — keine Handarbeit an `status.json` nötig.
 - Vorschläge in `docs/ai/tasks.md`/`questions.md` einarbeiten, `docs/ai/ledger.md` ergänzen (Skill

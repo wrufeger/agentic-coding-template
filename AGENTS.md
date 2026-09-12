@@ -293,3 +293,34 @@ Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `-
 | Aider | `.aider.conf.yml` | lädt diese Datei plus `docs/ai/board.md` automatisch |
 | Gemini CLI | `GEMINI.md` | Verweis auf diese Datei |
 | ChatGPT/Codex, Ollama, sonstige | — | Inhalt dieser Datei + `docs/ai/board.md` manuell laden |
+
+## Worker starten — was das jeweilige Werkzeug dafür mitbringt
+
+Das Rollenmodell oben (Orchestrator, Worker, Experte) ist bewusst werkzeugunabhängig. Wie ein Orchestrator
+seine Worker startet, unterscheidet sich aber — hier der Stand vom 2026-09-13, vor dem Einsatz kurz
+gegenprüfen, das Feld bewegt sich schnell:
+
+| Werkzeug | Funktion | Aufruf | Rollen liegen in |
+| :--- | :--- | :--- | :--- |
+| Claude Code | Sub-Agenten | automatisch durch den Orchestrator, Rollen als Markdown | `.claude/agents/*.md` |
+| GitHub Copilot (CLI) | Fleet | `/fleet <Auftrag>`, eigene Rollen per `@name` | `.github/agents/` |
+| Gemini CLI | Subagents | automatisch oder `@name`, Verwaltung per `/agents` | `.gemini/agents/*.md` |
+| OpenAI Codex (CLI) | Subagents | über `codex exec`, Schalter `multi_agent` in `config.toml` | `.codex/agents/*.toml` |
+| Cursor | Multitask + Cloud Agent | `/multitask <Auftrag>`; Cloud Agent läuft asynchron in der Cloud | Cursor-Einstellungen |
+| Cline | Subagents (experimentell) | delegiert selbst; Worker dürfen **nur lesen**, nicht schreiben | — |
+| Amp | Subagents | automatisch, per Prompt anstoßbar; Worker reden nicht miteinander | — |
+| Devin | Managed Devins | ein Koordinator verteilt an weitere Devins in eigenen VMs | Devin-Playbooks |
+| Aider | **keine** Sub-Agenten | nur Architect/Editor-Trennung: `--architect`, `--editor-model`, `/code` | — |
+
+Was das für dieses Projekt heißt:
+
+- **Die Regeln in dieser Datei gelten unverändert**, egal welches Werkzeug die Worker startet: Ein Worker
+  committet nie, schreibt nie in `docs/ai/` und liefert Ergebnis **plus Beleg**.
+- **Rollen versioniert halten.** Wo das Werkzeug Rollendateien im Repo kennt (Claude Code, Copilot, Gemini CLI,
+  Codex), gehören sie ins Repo — dieselben Rollen wie in `CLAUDE.md` § 1, nur in der jeweiligen Syntax.
+  Wo es keine gibt (Cursor, Amp, Devin), wird der Auftrag im Prompt vollständig mitgegeben.
+- **Schreibrechte prüfen.** Cline und Amp führen ihre Worker als reine Lese-/Recherchehelfer. Eine
+  Umsetzungsaufgabe (`builder`) lässt sich dort nicht delegieren, wohl aber die Recherche (`explorer`).
+- **Aider braucht einen anderen Zuschnitt.** Ohne Sub-Agenten übernimmt der Mensch die Rolle des
+  Orchestrators und fährt die Schritte nacheinander; die Architect/Editor-Trennung ersetzt keine parallele
+  Delegation.

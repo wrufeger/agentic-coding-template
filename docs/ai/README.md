@@ -28,6 +28,7 @@ IST-Zustand des Projekts selbst.
 | `ledger.md` | Sitzungsjournal mit Belegen, neueste Sitzung oben | zur Historie/Übergabe |
 | `backlog.md` | Verbesserungsvorschläge, {{AUFTRAGGEBER}} entscheidet inline | vor größeren Umbauten |
 | `checklists.md` | Neutrale Arbeitsanweisungen (Abschluss, Delegation, Doku prüfen und nachziehen, …) | vor der jeweiligen Aktion |
+| `resources.md` | Quellen zu Agentic Coding — vom Template gepflegt | beim Einarbeiten |
 
 ## Formregeln (verbindlich für `questions.md`/`questions_archive.md`)
 

@@ -17,6 +17,7 @@ Gilt laufend. Der Orchestrator liest diesen Abschnitt zu Beginn jeder Sitzung.
     Logging-Tiefe: INFO (DEBUG | INFO | WARN | ERROR — steuert `AI_LOG_LEVEL` in `AGENTS.md`)
     Wartung: aus (aus | ein — wiederkehrende Wartung; „aus" entfernt `.claude/maintenance/`, den Skill `/run-maintenance`, den Agenten `maintenance-orchestrator` und den Fälligkeits-Hook)
     Wartungsaufgaben: kurz=14, docs=30, deps=90 (nur bei „Wartung: ein"; Aufgabe=Intervall in Tagen, weggelassene Aufgabe wird deaktiviert; schreibt `.claude/maintenance/status.json`)
+    Wartungsberichte: intern (intern | docs — intern = `.claude/maintenance/reports/`, gitignored; docs = `docs/maintenance/`, versioniert und im Doku-Index sichtbar)
     Code-Optimierung: aus (aus | ein | streng — ein = eine Runde über frisch geschriebenen Code (kürzer, lesbarer); streng = bis zu zwei Runden, zusätzlich Geschwindigkeit und Speicher; „aus" entfernt den Agenten `optimizer`)
 
 ## Einrichtung

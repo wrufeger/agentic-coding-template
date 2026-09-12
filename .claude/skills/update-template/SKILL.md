@@ -43,6 +43,10 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
    tatsächlich steht — und nicht in eine wiederbelebte Datei nach Template-Schema. Im Zweifel {{AUFTRAGGEBER}}
    fragen, statt eine Struktur zurückzudrehen, für die es einen Grund gab.
 
+   `docs/ai/resources.md` ist der umgekehrte Fall: Die Quellensammlung pflegt das Template, nur der Abschnitt
+   „Eigene Quellen dieses Projekts“ am Dateiende gehört dem Projekt. Bei einem Konflikt dort also die
+   Template-Fassung nehmen und den eigenen Abschnitt anhängen.
+
    `.claude/template.json` und die `keep_local`-Pfade mit gewöhnlichem Konflikt hat das Script bereits
    zugunsten der Projektfassung gelöst; offen bleiben genau die Fälle, die eine Entscheidung brauchen. Nach dem
    Auflösen jeweils `git add <pfad>` (bzw. `git rm` für bewusst Gelöschtes), dann

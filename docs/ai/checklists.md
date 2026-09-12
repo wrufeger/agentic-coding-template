@@ -220,6 +220,10 @@ Arbeitsdateien, README) bleiben dabei erhalten:
      „gelöscht".
    - Hat das Projekt Inhalte anders verteilt oder zusammengezogen, wandert die Änderung dorthin, wo das Thema
      im Projekt tatsächlich steht — eine gewachsene Struktur wird nicht auf das Template-Schema zurückgedreht.
+   - **`docs/ai/resources.md`** (Quellensammlung zum Thema) pflegt das Template: Bei einem Konflikt gewinnt
+     die Template-Fassung, nur der Abschnitt „Eigene Quellen dieses Projekts“ am Dateiende bleibt beim
+     Projekt. Die Sammlung enthält Links, die veralten — deshalb ist ein Update hier die Regel, nicht die
+     Ausnahme.
 5. In den vom Update berührten Dateien Platzhalter durch die bereits im Projekt eingesetzten echten Werte
    ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit einem Platzhalter der Form `{{NAME}}` mitbringt).
 6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,

@@ -13,43 +13,61 @@
 #
 # Aufruf:
 #   python .claude/scripts/migrate-project.py --plan (Default)
-#       Erkennt und zeigt den Migrationsplan (Verschieben/Zusammenfuehren/Orchestrator-Name/leere
-#       Altordner), schreibt nichts. Exit 0, auch wenn nichts zu tun ist.
+#       Erkennt und zeigt den Migrationsplan (Verschieben/gitignorierte Kandidaten/Zusammenfuehren/
+#       Orchestrator-Name/leere Altordner), schreibt nichts. Exit 0, auch wenn nichts zu tun ist.
 #   python .claude/scripts/migrate-project.py --apply
 #       Fuehrt den Plan aus: verschiebt Arbeitsdateien per 'git mv' nach docs/ai/<template-name>
 #       (Historie bleibt erhalten), loest Zielkollisionen auf (inhaltsgleich -> Altdatei geloescht,
-#       unterschiedlich -> Altdatei als docs/ai/<name>.alt.md danebengelegt), fuehrt danach automatisch die
-#       Orchestrator-Umbenennung aus, wenn ein Name per --rename-orchestrator uebergeben oder in AI-CONFIG.md
-#       § "Alter Orchestrator-Name" gesetzt ist. Vorbedingung: sauberer Arbeitsbaum (git status --porcelain
-#       leer) - sonst Exit 2, damit die Migration bei Bedarf rueckgaengig gemacht werden kann. Kein Git-Repo
-#       -> Exit 2.
-#   python .claude/scripts/migrate-project.py --rename-orchestrator ALT=NEU
-#       Nur die Namensersetzung (auch einzeln nutzbar, ohne Struktur-Migration). Schreibt in jede Textdatei
-#       des Repos und hat deshalb dieselbe Vorbedingung wie --apply: Git-Repo, sauberer Arbeitsbaum, sonst
+#       unterschiedlich -> Altdatei als docs/ai/<name>.alt.md danebengelegt). Kandidaten, die laut
+#       'git check-ignore' im alten Ordner bewusst gitignoriert waren, werden NICHT verschoben, sondern nur
+#       gemeldet (bei Bedarf von Hand verschieben). Fuehrt danach automatisch die Orchestrator-Umbenennung
+#       aus, wenn ein Name per --rename-orchestrator uebergeben oder in AI-CONFIG.md § "Alter
+#       Orchestrator-Name" gesetzt ist - die Bestaetigung (siehe --rename-orchestrator) gilt dabei als
+#       erteilt, weil der Plan vorher angezeigt wurde. Vorbedingung: sauberer Arbeitsbaum (git status
+#       --porcelain leer) - sonst Exit 2, damit die Migration bei Bedarf rueckgaengig gemacht werden kann.
+#       Kein Git-Repo -> Exit 2.
+#   python .claude/scripts/migrate-project.py --rename-orchestrator ALT=NEU [--yes]
+#       Nur die Namensersetzung (auch einzeln nutzbar, ohne Struktur-Migration). Zeigt zuerst je Datei, wie
+#       viele Treffer ersetzt wuerden und wie viele wegen Markdown-Schutz uebersprungen werden (siehe
+#       unten), schreibt aber nichts und braucht kein --yes (Exit 0). Erst mit --yes wird tatsaechlich
+#       geschrieben - dafuer gilt dieselbe Vorbedingung wie --apply: Git-Repo, sauberer Arbeitsbaum, sonst
 #       Exit 2. Ausgelassen werden AI-CONFIG.md, .claude/scripts/*.py, Binaerdateien und die Ordner aus
-#       RENAME_SKIP_DIR_NAMES (node_modules, .venv, dist, build, ...). Zeilenenden und BOM bleiben erhalten.
-#       Mit --plan kombiniert wird nur gezeigt, was ersetzt wuerde (kein Schreibzugriff).
+#       RENAME_SKIP_DIR_NAMES (node_modules, .venv, dist, build, ...). In .md-Dateien werden zusaetzlich
+#       eingerueckte Codebloecke (nur wenn ihnen eine Leerzeile vorausgeht, siehe unten), Fenced Code
+#       Blocks (auch in Blockzitaten), Inline-Code in Backticks, URLs (http(s)://, www.) und plausible
+#       Pfad-/Dateiangaben mit "/" (z.B. docs/fable/README.md, nicht aber beliebige Wort/Wort-Token)
+#       ausgemaskiert - dort wird nie ersetzt, auch nicht mit --yes. Zeilenenden und BOM bleiben erhalten.
+#       Mit --plan kombiniert bleibt es immer eine reine Vorschau (auch mit --yes). ACHTUNG: Die Maskierung
+#       ist ein Heuristik-Scanner ohne echten Markdown-Parser (kein Fremdpaket) - bekannte Luecke: Inline-
+#       Code in Backticks, das ueber einen Zeilenumbruch geht, wird nicht erkannt und damit doch ersetzt.
+#       Ergebnis nach dem Schreiben (--yes) deshalb immer mit 'git diff' pruefen.
 #   python .claude/scripts/migrate-project.py --status
 #       Kurzuebersicht: was ist bereits Template-konform, was nicht (Anzahl erkannter Altordner/
-#       Verschiebungen/Zusammenfuehrungen, Orchestrator-Kandidaten).
+#       Verschiebungen/gitignorierter Kandidaten/Zusammenfuehrungen, Orchestrator-Kandidaten).
 #
 # Erkennung KI-Arbeitsordner (find_ai_dirs): Verzeichnisse bis Tiefe 2 (ohne .git, node_modules, .venv,
 # dist, build, .claude), die mindestens eine Datei mit bekanntem Arbeitsdatei-Namen enthalten (siehe
 # TARGET_PATTERNS) und dabei entweder selbst {fable, ai, ki, agent, agents, assistant, kiki, copilot}
 # heissen - oder, bei beliebigem Namen, mindestens zwei solche Dateien haben. Der Name allein reicht
 # bewusst nicht: ein echter Quellcode-Ordner src/ai/ oder Fachdoku unter docs/ki/ wuerde sonst mitwandern.
-# Verschoben werden nur .md-Dateien direkt im Ordner (keine Unterordner, kein Quellcode).
+# Verschoben werden nur .md-Dateien direkt im Ordner (keine Unterordner, kein Quellcode). Davon werden laut
+# 'git check-ignore' bewusst gitignorierte Dateien vorab ausgenommen (Punkt 10 der Umbauliste) - eine
+# private Notiz im alten Ordner soll nicht in docs/ai/ landen und in den Index geraten.
 # docs/ai/ selbst gilt nie als "alt".
 #
 # Prioritaetsregeln bei "Zusammenfuehren" (macht der Assistent, nicht dieses Script) - siehe PRIORITY_RULES:
 # .claude/**, AGENTS.md, CLAUDE.md, docs/ai/checklists.md, docs/ai/README.md -> Template gewinnt;
-# docs/ai/-Arbeitsdateien -> Template-Struktur, Projekt-Inhalt; docs/project/** -> Projekt gewinnt (Ausnahme
-# coding_rules.md: strengere Regel gewinnt); README.md/.gitignore -> Projekt gewinnt, Template ergaenzt.
+# docs/ai/resources.md -> Template gewinnt, nur der Abschnitt "Eigene Quellen dieses Projekts" bleibt beim
+# Projekt (die Datei pflegt das Template, nicht das Projekt); docs/ai/-Arbeitsdateien (sonst) -> Template-
+# Struktur, Projekt-Inhalt; docs/project/** -> Projekt gewinnt (Ausnahme
+# GEMINI.md/.aider.conf.yml/.github/copilot-instructions.md/docs/README.md/.cursor/** (Werkzeug-
+# Verweisdateien) -> Template gewinnt, Projektergaenzungen einarbeiten; AI-CONFIG.md -> Projekt gewinnt
+# (dort stehen die Werte des Projekts).
 #
-# Exit-Codes: 0 = ok (auch "nichts zu tun"), 2 = Vorbedingungsfehler (kein Git, unsauberer Arbeitsbaum,
-# ungueltiges --rename-orchestrator, Zielverzeichnis sieht nicht nach einem Projekt aus diesem Template aus).
-# Ein Fehler dieses Scripts darf nie mit Traceback nach aussen dringen: main() laeuft komplett in
-# try/except, Fehlermeldungen auf stderr.
+# Exit-Codes: 0 = ok (auch "nichts zu tun", auch die Trefferliste ohne --yes), 2 = Vorbedingungsfehler
+# (kein Git, unsauberer Arbeitsbaum, ungueltiges --rename-orchestrator, Zielverzeichnis sieht nicht nach
+# einem Projekt aus diesem Template aus). Ein Fehler dieses Scripts darf nie mit Traceback nach aussen
+# dringen: main() laeuft komplett in try/except, Fehlermeldungen auf stderr.
 
 import argparse
 import importlib.util
@@ -196,10 +214,30 @@ def scan_ai_dir(ai_dir: Path):
     return matched, unmatched, in_unterordnern
 
 
+def compute_ignored_paths(root: Path, paths):
+    """Von 'paths' (absolute Path-Objekte unterhalb von root) die Teilmenge, die laut 'git check-ignore'
+    ignoriert ist - als Menge root-relativer Posix-Pfade. Ein Batch-Aufruf (alle Kandidaten als Argumente)
+    statt einem je Datei - bewusst nicht '--stdin': unter Windows haengt Python subprocess das Stdin einer
+    Text-Pipe an das Zeilenende os.linesep (CRLF), git bekommt dann "pfad\\r\\n" und matcht nicht mehr. Kein
+    Git-Repo (oder Git selbst nicht verfuegbar) -> leere Menge, kein Abbruch - siehe Punkt 10 der
+    Umbauliste."""
+    if not paths:
+        return set()
+    rels = sorted({p.relative_to(root).as_posix() for p in paths})
+    try:
+        res = run_git(root, ["check-ignore", "--"] + rels)
+    except OSError:
+        return set()
+    if res.returncode not in (0, 1):
+        return set()
+    return {line for line in res.stdout.splitlines() if line}
+
+
 def build_plan(root: Path):
-    """Liefert (ai_dirs, moves, conflicts, in_unterordnern). moves: Liste (src, dest, note).
+    """Liefert (ai_dirs, moves, conflicts, in_unterordnern, ignoriert). moves: Liste (src, dest, note).
     conflicts: target -> Liste zusaetzlicher Kandidaten (die nicht verschoben, sondern als unzugeordnet
-    gefuehrt werden)."""
+    gefuehrt werden). ignoriert: Kandidaten, die laut 'git check-ignore' im alten Ordner bewusst gitignoriert
+    waren (private Notizen o.ae.) - werden nicht verschoben, sondern separat gemeldet (Punkt 10)."""
     ai_dirs = find_ai_dirs(root)
     target_candidates = {}
     unassigned = []
@@ -210,6 +248,17 @@ def build_plan(root: Path):
             target_candidates.setdefault(target, []).extend(paths)
         unassigned.extend(unmatched)
         in_unterordnern.extend(sub_md)
+
+    all_candidates = [p for paths in target_candidates.values() for p in paths] + unassigned
+    ignored_rels = compute_ignored_paths(root, all_candidates)
+    ignored = [p for p in all_candidates if p.relative_to(root).as_posix() in ignored_rels]
+    if ignored_rels:
+        target_candidates = {
+            target: [p for p in paths if p.relative_to(root).as_posix() not in ignored_rels]
+            for target, paths in target_candidates.items()
+        }
+        target_candidates = {target: paths for target, paths in target_candidates.items() if paths}
+        unassigned = [p for p in unassigned if p.relative_to(root).as_posix() not in ignored_rels]
 
     moves = []
     conflicts = {}
@@ -226,7 +275,13 @@ def build_plan(root: Path):
     for p in sorted(set(unassigned), key=lambda p: p.as_posix()):
         moves.append((p, docs_ai / p.name, "unzugeordnet"))
 
-    return ai_dirs, moves, conflicts, sorted(set(in_unterordnern), key=lambda p: p.as_posix())
+    return (
+        ai_dirs,
+        moves,
+        conflicts,
+        sorted(set(in_unterordnern), key=lambda p: p.as_posix()),
+        sorted(set(ignored), key=lambda p: p.as_posix()),
+    )
 
 
 def compute_empty_dirs(root: Path, ai_dirs, moved_set=None):
@@ -248,23 +303,43 @@ def compute_empty_dirs(root: Path, ai_dirs, moved_set=None):
 # Zusammenfuehren-Kandidaten (Ziel und Template existieren, Inhalt unterscheidet sich)
 # ---------------------------------------------------------------------------
 
-MERGE_ROOT_FILES = ["AGENTS.md", "CLAUDE.md", "README.md", ".gitignore"]
+MERGE_ROOT_FILES = [
+    "AGENTS.md", "CLAUDE.md", "README.md", ".gitignore",
+    # Punkt 15 der Umbauliste: weitere Werkzeug-Verweisdateien und Konfiguration, die im Zielrepo schon
+    # eigenstaendig existieren koennen - .claude/settings.json passt hier hinein (Einzeldatei, nicht ueber
+    # MERGE_DIRS erfasst, da die dortigen Eintraege nur .claude/agents und .claude/skills abdecken).
+    "GEMINI.md", ".aider.conf.yml", ".github/copilot-instructions.md", "docs/README.md", "AI-CONFIG.md",
+    ".claude/settings.json",
+]
 # docs/ai gehoert dazu, weil die Prioritaetsregeln unten ausdruecklich docs/ai/checklists.md und
 # docs/ai/README.md nennen - ohne den Eintrag wuerden genau diese Dateien nie als "zusammenfuehren" gemeldet.
-MERGE_DIRS = [".claude/agents", ".claude/skills", "docs/ai", "docs/project"]
+# .cursor gehoert dazu (Punkt 15) - dieselbe Werkzeug-Verweisdatei-Rolle wie GEMINI.md, nur als Ordner.
+MERGE_DIRS = [".claude/agents", ".claude/skills", "docs/ai", "docs/project", ".cursor"]
 
 PRIORITY_RULES = """.claude/**, AGENTS.md, CLAUDE.md, docs/ai/checklists.md, docs/ai/README.md  -> Template gewinnt
+docs/ai/resources.md (Template pflegt die Linksammlung)                     -> Template gewinnt, nur
+   Abschnitt "Eigene Quellen dieses Projekts" bleibt beim Projekt
 docs/ai/ (Arbeitsdateien: board, tasks, questions, ledger, backlog)          -> Template-Struktur,
    Projekt-Inhalt
 docs/project/**                                                             -> Projekt gewinnt
 docs/project/coding_rules.md                                                -> strengere Regel gewinnt
 README.md, .gitignore                                                       -> Projekt gewinnt,
-   Template-Anteile werden ergaenzt"""
+   Template-Anteile werden ergaenzt
+GEMINI.md, .aider.conf.yml, .github/copilot-instructions.md, docs/README.md,
+.cursor/**                                                                  -> Template gewinnt,
+   Projektergaenzungen einarbeiten
+AI-CONFIG.md                                                                -> Projekt gewinnt (Projektwerte)"""
 
 
 def priority_label(rel_path: str) -> str:
     if rel_path in ("AGENTS.md", "CLAUDE.md", "docs/ai/checklists.md", "docs/ai/README.md") or rel_path.startswith(".claude/"):
         return "Template gewinnt"
+    # Vor der allgemeinen docs/ai/-Regel: die Datei pflegt das Template (kuratierte Linksammlung), nicht das
+    # Projekt - nur ihr Abschnitt "Eigene Quellen dieses Projekts" gehoert dem Projekt.
+    if rel_path == "docs/ai/resources.md":
+        return 'Template gewinnt, nur Abschnitt "Eigene Quellen dieses Projekts" bleibt beim Projekt'
+    if rel_path == "AI-CONFIG.md":
+        return "Projekt gewinnt (Projektwerte)"
     if rel_path == "docs/project/coding_rules.md":
         return "strengere Regel gewinnt"
     if rel_path.startswith("docs/project/"):
@@ -273,6 +348,9 @@ def priority_label(rel_path: str) -> str:
         return "Template-Struktur, Projekt-Inhalt"
     if rel_path in ("README.md", ".gitignore"):
         return "Projekt gewinnt, ergaenzt"
+    if rel_path in ("GEMINI.md", ".aider.conf.yml", ".github/copilot-instructions.md", "docs/README.md") \
+            or rel_path.startswith(".cursor/"):
+        return "Template gewinnt, Projektergaenzungen einarbeiten"
     return "Projekt gewinnt"
 
 
@@ -421,12 +499,186 @@ def _iter_text_files_for_rename(root: Path):
             yield fp, rel
 
 
-def rename_orchestrator(root: Path, alt: str, neu: str):
+# Punkt 11 der Umbauliste: in Markdown-Dateien werden Codebloecke, Inline-Code, URLs und Pfadangaben beim
+# projektweiten Ersetzen ausgemaskiert (nicht angefasst) - sonst traefe die Ersetzung auch Beispiel-Code und
+# https://<name>.io/-Links. Kein Fremdpaket, nur ein heuristischer Zeilen-/Regex-Scanner ohne echten
+# Markdown-Parser - Ergebnis nach dem Schreiben (--yes) deshalb immer mit 'git diff' pruefen. Bekannte
+# Luecke: mehrzeiliges Inline-Code in Backticks wird nicht erkannt (siehe _find_masked_spans_md).
+
+# Optionales Blockzitat-Praefix (">", ggf. verschachtelt "> >") vor der eigentlichen Einrueckung/dem
+# Fence-Marker - sonst matcht ein Fence innerhalb eines Blockzitats (Zeile beginnt mit ">") nicht.
+_BLOCKQUOTE_PREFIX = r"^(?:[ \t]{0,3}>[ \t]?)*"
+_FENCE_OPEN_RE = re.compile(_BLOCKQUOTE_PREFIX + r"[ \t]{0,3}(`{3,}|~{3,})[^\n]*$")
+
+
+def _is_fence_close(line: str, fence_char: str, fence_len: int) -> bool:
+    m = re.match(
+        _BLOCKQUOTE_PREFIX + r"[ \t]{0,3}(" + re.escape(fence_char) + r"{" + str(fence_len) + r",})[ \t]*$",
+        line,
+    )
+    return bool(m)
+
+
+# Wurzelverzeichnisse, an denen ein Token plausibel als Pfad erkannt wird (klein geschrieben verglichen -
+# nur eine Heuristik, kein vollstaendiges Verzeichnisregister dieses Repos).
+_PATH_ROOT_HINTS = (
+    "docs", "src", "scripts", "test", "tests", "lib", "bin", "config", "public", "assets",
+    "vendor", "app", "apps", "packages", "cmd", "pkg", "internal", "dist", "build", "node_modules",
+)
+_PATH_EXT_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,10}$")
+
+
+def _looks_like_path(token: str) -> bool:
+    """Heuristik, ob 'token' (ein Volltext-Treffer auf '\\S*/\\S+') plausibel eine Pfad- oder
+    Dateiangabe ist statt zwei durch '/' verbundener Woerter (z.B. 'Kiki/Nova'). Zaehlt als Pfad, wenn er
+    mit './', '../', '~/', '/' oder einem gaengigen Wurzelverzeichnis (docs/, src/, .claude/, ...) beginnt,
+    oder wenn das letzte Segment wie ein Dateiname mit Endung aussieht (z.B. 'README.md', 'foo.py')."""
+    token = token.rstrip(",.;:!?)]}'\"")
+    if not token:
+        return False
+    if token.startswith((".", "~", "/")):
+        return True
+    first = token.split("/", 1)[0].lower()
+    if first in _PATH_ROOT_HINTS:
+        return True
+    last = token.rsplit("/", 1)[-1]
+    return bool(_PATH_EXT_RE.match(last))
+
+
+def _merge_spans(spans):
+    """Sortiert und verschmilzt ueberlappende/angrenzende Zeichenspannen (start, end)."""
+    spans = sorted((s for s in spans if s[0] < s[1]), key=lambda s: s[0])
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _find_masked_spans_md(text: str):
+    """Zeichenspannen in 'text' (einer Markdown-Datei), die bei der Namensersetzung ausgelassen werden:
+    eingerueckte Codebloecke (nur wenn ihnen eine Leerzeile vorausgeht - siehe CommonMark: ein eingerueckter
+    Codeblock kann keinen Absatz unterbrechen), Fenced Code Blocks (``` / ~~~, auch mit Sprachangabe und
+    auch in Blockzitaten), Inline-Code in Backticks (einzeilig - siehe Kopfkommentar fuer die bekannte
+    Luecke bei mehrzeiligem Inline-Code), URLs (http(s)://, www.) und plausible Pfad-/Dateiangaben mit '/'
+    in Fliesstext (z.B. docs/fable/README.md - siehe _looks_like_path fuer die Abgrenzung von zufaelligen
+    Wort/Wort-Token wie 'Kiki/Nova')."""
+    lines = text.splitlines(keepends=True)
+    offsets = []
+    pos = 0
+    for ln in lines:
+        offsets.append(pos)
+        pos += len(ln)
+
+    protected_line_idx = set()
+
+    # Fenced Code Blocks: komplette Zeilen inklusive Begrenzer.
+    fence_char, fence_len, fence_start = None, 0, None
+    for i, raw in enumerate(lines):
+        line = raw.rstrip("\r\n")
+        if fence_char is None:
+            m = _FENCE_OPEN_RE.match(line)
+            if m:
+                marker = m.group(1)
+                fence_char, fence_len, fence_start = marker[0], len(marker), i
+        elif _is_fence_close(line, fence_char, fence_len):
+            for j in range(fence_start, i + 1):
+                protected_line_idx.add(j)
+            fence_char = None
+    if fence_char is not None:
+        # Nicht geschlossen bis Dateiende - konservativ den Rest ausmaskieren statt zu raten.
+        for j in range(fence_start, len(lines)):
+            protected_line_idx.add(j)
+
+    # Eingerueckte Codebloecke: Zeilen mit mind. 4 Leerzeichen oder einem Tab Einrueckung, nicht leer - aber
+    # nur, wenn dem Block eine Leerzeile vorausgeht (oder er am Dateianfang steht). Nach CommonMark kann ein
+    # eingerueckter Codeblock keinen Absatz unterbrechen: eine eingerueckte Fortsetzungszeile mitten in einem
+    # Absatz oder eine eingerueckte Unterliste ist damit KEIN Codeblock und bleibt fuer die Ersetzung offen.
+    # Einmal begonnen, bleibt ein Block ueber eingestreute Leerzeilen hinweg geschuetzt, solange danach
+    # wieder eingerueckter Text folgt.
+    in_indented_block = False
+    prev_blank = True  # Dateianfang zaehlt wie eine vorausgehende Leerzeile
+    for i, raw in enumerate(lines):
+        if i in protected_line_idx:
+            in_indented_block = False
+            prev_blank = raw.strip(" \t\r\n") == ""
+            continue
+        is_blank = raw.strip(" \t\r\n") == ""
+        if is_blank:
+            prev_blank = True
+            continue
+        stripped = raw.lstrip(" \t")
+        indent = raw[: len(raw) - len(stripped)]
+        is_indented = "\t" in indent or len(indent) >= 4
+        if is_indented and (in_indented_block or prev_blank):
+            protected_line_idx.add(i)
+            in_indented_block = True
+        else:
+            in_indented_block = False
+        prev_blank = False
+
+    spans = [(offsets[i], offsets[i] + len(lines[i])) for i in protected_line_idx]
+
+    # Inline-Code, URLs, Pfadangaben - zeichenbasiert im Volltext (auch innerhalb sonst ungeschuetzter
+    # Zeilen).
+    for m in re.finditer(r"`[^`\n]+`", text):
+        spans.append(m.span())
+    for m in re.finditer(r"(?:https?://|www\.)\S+", text):
+        spans.append(m.span())
+    for m in re.finditer(r"\S*/\S+", text):
+        if _looks_like_path(m.group(0)):
+            spans.append(m.span())
+
+    return _merge_spans(spans)
+
+
+def _apply_rename_to_text(content: str, patterns, spans):
+    """Wendet 'patterns' (Liste (compiled_regex, ersatz)) auf 'content' an, laesst aber die Zeichenspannen
+    'spans' (sortiert, nicht ueberlappend) unangetastet. Gibt (neuer_text, ersetzt, geschuetzt) zurueck -
+    'geschuetzt' zaehlt Treffer, die wegen eines Schutzbereichs nicht ersetzt wurden (nur zur Anzeige)."""
+    if not spans:
+        new_text = content
+        replaced = 0
+        for pat, n in patterns:
+            new_text, k = pat.subn(n, new_text)
+            replaced += k
+        return new_text, replaced, 0
+
+    pieces = []
+    replaced = 0
+    skipped = 0
+    pos = 0
+    for start, end in spans:
+        segment = content[pos:start]
+        for pat, n in patterns:
+            segment, k = pat.subn(n, segment)
+            replaced += k
+        pieces.append(segment)
+        protected = content[start:end]
+        for pat, _n in patterns:
+            skipped += len(pat.findall(protected))
+        pieces.append(protected)
+        pos = end
+    tail = content[pos:]
+    for pat, n in patterns:
+        tail, k = pat.subn(n, tail)
+        replaced += k
+    pieces.append(tail)
+    return "".join(pieces), replaced, skipped
+
+
+def rename_orchestrator(root: Path, alt: str, neu: str, dry_run: bool = False):
     """Ersetzt ALT durch NEU (3 Schreibvarianten, Wortgrenzen) in allen Textdateien ausser AI-CONFIG.md,
-    .claude/scripts/*.py und den Ordnern aus RENAME_SKIP_DIR_NAMES. Gibt (per_file: [(rel, anzahl)], total,
-    fehler: [rel]) zurueck. Geschrieben wird ueber Bytes - Zeilenenden und BOM bleiben, wie sie waren."""
+    .claude/scripts/*.py und den Ordnern aus RENAME_SKIP_DIR_NAMES. In .md-Dateien werden Codebloecke,
+    Inline-Code, URLs und Pfadangaben ausgemaskiert (siehe _find_masked_spans_md). Mit dry_run=True wird
+    nichts geschrieben (Trefferliste/Vorschau vor --yes) - Rueckgabe wie bei echter Ausfuehrung, nur ohne
+    Schreibzugriff und ohne FEHLER-Eintraege. Gibt (per_file: [(rel, ersetzt, geschuetzt)], total,
+    fehler: [rel], total_geschuetzt) zurueck. Geschrieben wird ueber Bytes - Zeilenenden und BOM bleiben,
+    wie sie waren."""
     if alt == neu:
-        return [], 0, []
+        return [], 0, [], 0
     variants = _rename_variants(alt, neu)
     patterns = [
         (re.compile(r"(?<![\wÄÖÜäöüß])" + re.escape(a) + r"(?![\wÄÖÜäöüß])"), n)
@@ -435,24 +687,31 @@ def rename_orchestrator(root: Path, alt: str, neu: str):
     per_file = []
     fehler = []
     total = 0
+    total_skipped = 0
     for fp, rel in _iter_text_files_for_rename(root):
         content = _read_text_or_none(fp)
         if content is None:
             continue
-        new_content = content
-        count_here = 0
-        for pat, n in patterns:
-            new_content, k = pat.subn(n, new_content)
-            count_here += k
+        spans = _find_masked_spans_md(content) if fp.suffix.lower() == ".md" else []
+        new_content, count_here, skipped_here = _apply_rename_to_text(content, patterns, spans)
+        if not count_here and not skipped_here:
+            continue
+        total_skipped += skipped_here
+        if dry_run:
+            per_file.append((rel, count_here, skipped_here))
+            total += count_here
+            continue
         if count_here and new_content != content:
             try:
                 fp.write_bytes(new_content.encode("utf-8"))
             except OSError:
                 fehler.append(rel)
                 continue
-            per_file.append((rel, count_here))
+            per_file.append((rel, count_here, skipped_here))
             total += count_here
-    return per_file, total, fehler
+        elif skipped_here:
+            per_file.append((rel, 0, skipped_here))
+    return per_file, total, fehler, total_skipped
 
 
 def find_leftover_alt_dirs(root: Path, alt: str):
@@ -562,7 +821,7 @@ def _check_root(root: Path) -> int:
 
 
 def cmd_plan(root: Path, forced_alt=None, forced_neu=None) -> int:
-    ai_dirs, moves, _conflicts, sub_md = build_plan(root)
+    ai_dirs, moves, _conflicts, sub_md, ignored = build_plan(root)
     merge_entries = compute_merge_entries(root)
     if forced_alt and forced_neu:
         orch = [(forced_alt, count_occurrences(root, forced_alt))]
@@ -571,7 +830,7 @@ def cmd_plan(root: Path, forced_alt=None, forced_neu=None) -> int:
     moved_set = {m[0] for m in moves}
     empty_dirs = compute_empty_dirs(root, ai_dirs, moved_set)
 
-    if not moves and not merge_entries and not orch:
+    if not moves and not merge_entries and not orch and not ignored:
         print("migrate-project.py --plan\n\nNichts zu tun.")
         return 0
 
@@ -586,6 +845,14 @@ def cmd_plan(root: Path, forced_alt=None, forced_neu=None) -> int:
             lines.append(f"  ... und {len(moves) - 20} weitere")
     else:
         lines.append("  (keine)")
+
+    if ignored:
+        lines.append("")
+        lines.append("Gitignoriert, bewusst liegengelassen (bei Bedarf von Hand verschieben):")
+        for p in ignored[:20]:
+            lines.append(f"  {p.relative_to(root).as_posix()}")
+        if len(ignored) > 20:
+            lines.append(f"  ... und {len(ignored) - 20} weitere")
 
     lines.append("")
     lines.append("Zusammenfuehren (Inhalt, macht der Assistent):")
@@ -634,7 +901,7 @@ def cmd_plan(root: Path, forced_alt=None, forced_neu=None) -> int:
 
 
 def cmd_status(root: Path) -> int:
-    ai_dirs, moves, conflicts, sub_md = build_plan(root)
+    ai_dirs, moves, conflicts, sub_md, ignored = build_plan(root)
     merge_entries = compute_merge_entries(root)
     orch = detect_orchestrator_names(root, ai_dirs, moves)
 
@@ -645,6 +912,7 @@ def cmd_status(root: Path) -> int:
     lines.append(f"docs/ai/ vorhanden: {'ja' if (root / 'docs' / 'ai').is_dir() else 'nein'}")
     lines.append(f"Verschiebungen ausstehend: {len(moves)}")
     lines.append(f"Konflikte (mehrere Kandidaten je Zieldatei): {len(conflicts)}")
+    lines.append(f"Gitignoriert (liegengelassen): {len(ignored)}")
     lines.append(f"Zusammenfuehren ausstehend: {len(merge_entries)}")
     lines.append(f"Markdown in Unterordnern (manuell zuzuordnen): {len(sub_md)}")
     if orch:
@@ -727,6 +995,23 @@ def execute_move(root: Path, src: Path, dest: Path, note) -> str:
     return f"  {rel_src}  ->  {rel_dest}{note_txt}" + _mv_note(status)
 
 
+def _format_rename_report(alt: str, neu: str, per_file, total: int, fehler, total_skipped: int, executed: bool):
+    """Formatiert das Ergebnis von rename_orchestrator() als Zeilenliste - fuer die echte Ausfuehrung
+    (executed=True) wie fuer die Trefferliste vor --yes (executed=False, gleiche Zahlen als Vorschau)."""
+    verb = "ersetzt" if executed else "wuerden ersetzt"
+    files_touched = sum(1 for _rel, cnt, _skip in per_file if cnt)
+    skip_txt = f", {total_skipped} wegen Markdown-Schutz uebersprungen" if total_skipped else ""
+    lines = [f"Orchestrator-Name: '{alt}' -> '{neu}' ({total} Treffer {verb} in {files_touched} Dateien{skip_txt})"]
+    for rel, cnt, skip in per_file[:30]:
+        extra = f"  ({skip} geschuetzt uebersprungen)" if skip else ""
+        lines.append(f"  {rel}: {cnt}{extra}")
+    if len(per_file) > 30:
+        lines.append(f"  ... und {len(per_file) - 30} weitere Dateien")
+    for rel in fehler:
+        lines.append(f"  FEHLER, nicht geschrieben (schreibgeschuetzt?): {rel}")
+    return lines
+
+
 def check_clean_worktree(root: Path) -> int:
     """Vorbedingung fuer jeden schreibenden Lauf (--apply wie --rename-orchestrator): Git-Repo und sauberer
     Arbeitsbaum - beides schreibt breit ins Repo und ist sonst nicht rueckgaengig zu machen. 0 = ok."""
@@ -750,7 +1035,7 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
     if rc != 0:
         return rc
 
-    ai_dirs, moves, _conflicts, _sub = build_plan(root)
+    ai_dirs, moves, _conflicts, _sub, ignored = build_plan(root)
 
     lines = ["migrate-project.py --apply", ""]
     lines.append("Verschoben:")
@@ -760,6 +1045,12 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
             lines.append(execute_move(root, src, dest, note))
     else:
         lines.append("  (keine - nichts zu verschieben)")
+
+    if ignored:
+        lines.append("")
+        lines.append("Gitignoriert, bewusst liegengelassen (bei Bedarf von Hand verschieben):")
+        for p in ignored:
+            lines.append(f"  {p.relative_to(root).as_posix()}")
 
     empty_dirs = compute_empty_dirs(root, ai_dirs, moved_set=None)
     if empty_dirs:
@@ -779,14 +1070,10 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
 
     lines.append("")
     if alt and neu:
-        per_file, total, fehler = rename_orchestrator(root, alt, neu)
-        lines.append(f"Orchestrator-Name: '{alt}' -> '{neu}' ({total} Ersetzungen in {len(per_file)} Dateien)")
-        for rel, cnt in per_file[:20]:
-            lines.append(f"  {rel}: {cnt}")
-        if len(per_file) > 20:
-            lines.append(f"  ... und {len(per_file) - 20} weitere Dateien")
-        for rel in fehler:
-            lines.append(f"  FEHLER, nicht geschrieben (schreibgeschuetzt?): {rel}")
+        # --apply zeigt den Plan vorher an - die Bestaetigung gilt damit als erteilt, deshalb hier direkt
+        # ausfuehren (dry_run=False) statt erneut auf --yes zu warten.
+        per_file, total, fehler, total_skipped = rename_orchestrator(root, alt, neu)
+        lines.extend(_format_rename_report(alt, neu, per_file, total, fehler, total_skipped, executed=True))
         leftover = find_leftover_alt_dirs(root, alt)
         if leftover:
             lines.append("  Achtung: Ordner heissen noch wie der alte Name (manuell klaeren):")
@@ -821,7 +1108,12 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--status", action="store_true", help="Kurzuebersicht Template-Konformitaet")
     parser.add_argument(
         "--rename-orchestrator", metavar="ALT=NEU", default=None,
-        help="Orchestrator-Rufnamen ersetzen; mit --plan kombiniert nur anzeigen, sonst sofort ausfuehren",
+        help="Orchestrator-Rufnamen ersetzen; zeigt zuerst die Trefferliste (Vorschau, nichts geschrieben) - "
+        "erst --yes fuehrt sie aus. Mit --plan kombiniert bleibt es eine reine Vorschau.",
+    )
+    parser.add_argument(
+        "--yes", action="store_true",
+        help="Bestaetigt eine per --rename-orchestrator gezeigte Trefferliste und schreibt sie",
     )
     return parser
 
@@ -859,30 +1151,31 @@ def _run(argv) -> int:
         return cmd_apply(root, alt, neu)
     if args.rename_orchestrator and not args.plan:
         # Nur die Namensersetzung, ohne Struktur-Migration. Schreibt in jede Textdatei des Repos und braucht
-        # deshalb dieselbe Vorbedingung wie --apply.
-        rc = check_clean_worktree(root)
-        if rc != 0:
-            return rc
+        # deshalb dieselbe Vorbedingung wie --apply - aber erst beim tatsaechlichen Schreiben (--yes). Die
+        # reine Vorschau (kein --yes) schreibt nichts und darf deshalb auch in einem unsauberen Arbeitsbaum
+        # laufen (Exit 0).
+        if args.yes:
+            rc = check_clean_worktree(root)
+            if rc != 0:
+                return rc
         if alt == neu:
             print(f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - ALT und NEU "
                   "sind identisch.", file=sys.stderr)
             return 2
-        per_file, total, fehler = rename_orchestrator(root, alt, neu)
-        lines = [
-            f"migrate-project.py --rename-orchestrator {args.rename_orchestrator}", "",
-            f"Orchestrator-Name: '{alt}' -> '{neu}' ({total} Ersetzungen in {len(per_file)} Dateien)",
-        ]
-        for rel, cnt in per_file[:30]:
-            lines.append(f"  {rel}: {cnt}")
-        if len(per_file) > 30:
-            lines.append(f"  ... und {len(per_file) - 30} weitere Dateien")
-        for rel in fehler:
-            lines.append(f"  FEHLER, nicht geschrieben (schreibgeschuetzt?): {rel}")
+        per_file, total, fehler, total_skipped = rename_orchestrator(root, alt, neu, dry_run=not args.yes)
+        header = f"migrate-project.py --rename-orchestrator {args.rename_orchestrator}"
+        if args.yes:
+            header += " --yes"
+        lines = [header, ""]
+        lines.extend(_format_rename_report(alt, neu, per_file, total, fehler, total_skipped, executed=args.yes))
         leftover = find_leftover_alt_dirs(root, alt)
         if leftover:
             lines.append("Achtung: Ordner heissen noch wie der alte Name (manuell klaeren):")
             for d in leftover:
                 lines.append(f"  {d}")
+        if not args.yes:
+            lines.append("")
+            lines.append("Nichts geschrieben - mit --yes ausfuehren.")
         print("\n".join(lines))
         return 0
 

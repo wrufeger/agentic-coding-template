@@ -61,15 +61,17 @@ hier, **plus eine eigene `* Antwort:`-Zeile** je Aufgabe:
   * Antwort:
 ```
 
-In die `* Antwort:`-Zeile schreibt {{AUFTRAGGEBER}} formlos, was gelten soll — Stichworte reichen:
+In die `* Antwort:`-Zeile schreibt {{AUFTRAGGEBER}} formlos, was gelten soll — Stichworte reichen. Drei Fälle,
+jeweils mit einer möglichen Antwortzeile als Beispiel:
 
-- **erledigt** („erledigt, Konto heißt `ro-monitor`") — der Orchestrator verbucht es und ergänzt die
-  Zusatzinfos zur Umsetzung in der Aufgabe.
-- **delegiert** („mach du, Zugang liegt in `.env`") — die Aufgabe wandert damit aus dem Tabu-Bereich in den
-  oberen Abschnitt; erweiterte Rechte gelten nur für genau diese Aufgabe und werden im Ledger mit Datum
-  festgehalten (`AGENTS.md` § „Zugriff auf laufende Systeme").
-- **Rückfrage oder Bedingung** („erst nach dem Release", „warum braucht ihr das?") — der Orchestrator antwortet
-  darunter, die Aufgabe bleibt offen.
+- **erledigt** — `* Antwort: erledigt, Konto heißt monitor-readonly, Passwort in .env`
+  Der Orchestrator verbucht die Aufgabe und übernimmt die Zusatzangaben. Solche Angaben gehören dazu:
+  Kontoname und Ablageort sind Entscheidungen von {{AUFTRAGGEBER}}, der Assistent kennt sie sonst nicht.
+- **delegiert** — `* Antwort: mach du, Zugang liegt in .env`
+  Die Aufgabe wandert aus dem Tabu-Bereich in den oberen Abschnitt. Erweiterte Rechte gelten nur für genau
+  diese Aufgabe und werden im Ledger mit Datum festgehalten (`AGENTS.md` § „Zugriff auf laufende Systeme“).
+- **Rückfrage oder Bedingung** — `* Antwort: erst nach dem Release` oder `* Antwort: warum braucht ihr das?`
+  Der Orchestrator antwortet darunter, die Aufgabe bleibt offen.
 
 {{AUFTRAGGEBER}}s Zeilen bleiben unverändert stehen; der Orchestrator kommentiert nur darunter.
 
