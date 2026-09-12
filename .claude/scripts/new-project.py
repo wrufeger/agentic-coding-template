@@ -647,6 +647,20 @@ def write_maintenance_status(root: Path, aufgaben: dict) -> None:
     _write_json(path, data)
 
 
+def remove_template_intro(root: Path) -> bool:
+    """`.github/README.md` beschreibt das TEMPLATE und wird von GitHub bevorzugt vor der Root-README
+    angezeigt. In einem abgeleiteten Projekt waere das falsch - dort soll die eigene README die Startseite
+    sein. Deshalb beim Anlegen entfernen. Gibt True zurueck, wenn etwas entfernt wurde."""
+    intro = root / ".github" / "README.md"
+    if not intro.exists():
+        return False
+    try:
+        intro.unlink()
+    except OSError:
+        return False
+    return True
+
+
 def remove_maintenance_files(root: Path) -> list:
     removed = []
     for rel in MAINTENANCE_REMOVE_PATHS:
@@ -807,6 +821,13 @@ def template_repo_guard(root: Path):
         return False, None, None
     if not cfg_tu.get("is_template"):
         return False, current_branch(root), None
+    # Der Marker wird mitgeklont. Ein Klon nach Anleitung hat aber einen Remote "template" (aus
+    # `git remote rename origin template`) - dort ist main der richtige Arbeitsbranch, der Schutz muss
+    # schweigen. Fehlt dieser Remote, ist es entweder das Template selbst oder ein Klon ohne Umbenennung -
+    # in beiden Faellen ist die Meldung unten die richtige Antwort.
+    res_remotes = run_git(root, ["remote"])
+    if res_remotes.returncode == 0 and "template" in res_remotes.stdout.split():
+        return False, current_branch(root), None
     branch = current_branch(root)
     if branch is None:
         return True, None, (
@@ -815,12 +836,13 @@ def template_repo_guard(root: Path):
         )
     if branch in DEFAULT_BRANCH_NAMES:
         return True, branch, (
-            f"Dies ist der Template-Checkout selbst und du arbeitest auf '{branch}' - ein --apply wuerde\n"
-            "  das Template zerstoeren (Platzhalter weg, Werkzeug-Dateien geloescht). Zwei Wege:\n"
-            "    a) im Template bleiben:  git switch -c projekt/<name>   (Projekt als Branch, Updates per\n"
-            "       Merge aus dem Standard-Branch)\n"
-            "    b) sauber trennen:       git clone <Template-URL> <projekt> && cd <projekt> &&\n"
-            "       git remote rename origin template && git remote add origin <eigene-Repo-URL>"
+            f"Das hier ist noch ein unveraendertes Template und du arbeitest auf '{branch}' - ein --apply\n"
+            "  wuerde es zerstoeren (Platzhalter weg, Werkzeug-Dateien geloescht). Drei Wege:\n"
+            "    a) Projekt als Branch:   git switch -c projekt/<name>   (Updates spaeter per Merge aus dem\n"
+            "       Standard-Branch, kein zusaetzlicher Remote noetig)\n"
+            "    b) frisch geklont?       git remote rename origin template && git remote add origin\n"
+            "       <eigene-Repo-URL>     (danach laeuft --apply auf main durch)\n"
+            "    c) sauber trennen:       git clone <Template-URL> <projekt>, dann Weg b) dort"
         )
     return True, branch, None
 
@@ -1039,6 +1061,7 @@ def cmd_apply(root: Path) -> int:
     changed, remaining = replace_placeholders(root, values)
     removed_files = remove_tool_files(root, remove_list)
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
+    intro_entfernt = remove_template_intro(root)
     write_template_json_values(root, values)
     init_status = maybe_init_template_update(root, ist_template)
     model_status = set_orchestrator_model(root, orch_modell)
@@ -1085,6 +1108,8 @@ def cmd_apply(root: Path) -> int:
                       f"\"{values['ORCHESTRATOR']}\" ersetzt.")
     else:
         lines.append("Alter Orchestrator-Name: leer - Kandidaten werden erkannt (migrate-project.py --plan).")
+    if intro_entfernt:
+        lines.append(".github/README.md entfernt (Template-Beschreibung, gilt nicht fuer dieses Projekt).")
     lines.append(f"template.json: {init_status}")
 
     lines.append("")

@@ -120,6 +120,8 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
+├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
+│                                 # wird von /new-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot
 ├── .github/workflows/ci.yml      # Lint/Typecheck/Test als Platzhalter-Steps
 ├── .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes

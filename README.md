@@ -98,6 +98,8 @@ docs/
   README.md           # Index aller Doku-Dateien
   project/            # Projekt-Doku (IST-Zustand): Architektur, Coding-Regeln, Tests, Features, ADRs, ...
   ai/                 # Zusammenarbeit: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten
+.github/README.md     # Beschreibung des Templates (GitHub zeigt sie statt dieser Datei); beim
+                      # Anlegen eines Projekts entfernt
 .github/workflows/ci.yml   # Lint/Typecheck/Test (Platzhalter-Befehle)
 .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes
 ```
