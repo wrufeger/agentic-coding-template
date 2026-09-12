@@ -25,6 +25,11 @@ arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
 1. Dieses Repository klonen: `git clone <Template-URL> <projekt>` — Projekt und Template teilen damit eine
    gemeinsame Git-Historie (Voraussetzung für spätere Updates per Merge). Danach
    `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
+
+   *Variante ohne Klon:* Wer direkt im Template-Checkout bleiben will, legt stattdessen einen Branch an
+   (`git switch -c projekt/<name>`) — das Projekt entsteht dann als Branch, der Basis-Commit wird aus
+   `main` abgeleitet, und `/template-update` mergt später aus dem lokalen `main` statt von einem Remote.
+   Auf `main` selbst bricht `/new-project` ab, damit das Template nicht seine Platzhalter verliert.
 2. `CONFIG.md` im Repo-Root ausfüllen — oder leer lassen: dann entsteht ein leeres Projekt „MyApp", es wird
    nichts entfernt. Dort stehen auch die Schalter für das Modell der Hauptsession (`Orchestrator-Modell`,
    Default Opus), das Agenten-Logging und die wiederkehrende Wartung (`Wartung: aus` entfernt sie komplett).

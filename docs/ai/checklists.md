@@ -101,6 +101,10 @@ Idee, das Formular `CONFIG.md` deckt beides ab:
 0. Projekt per `git clone <Template-URL> <projekt>` anlegen, damit Projekt und Template eine gemeinsame
    Git-Historie teilen (Voraussetzung für spätere Updates per Merge, siehe § „Template-Update" unten); danach
    `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
+   **Alternative:** direkt im Template-Checkout einen Branch anlegen (`git switch -c projekt/<name>`). Dann
+   entsteht das Projekt als Branch, der Basis-Commit wird aus dem Standard-Branch abgeleitet und Updates
+   laufen später per Merge von dort — ohne zusätzlichen Remote. Auf dem Standard-Branch selbst (`main`/
+   `master`) verweigert der Anlege-Schritt die Arbeit, sonst würde das Template seine Platzhalter verlieren.
 1. `CONFIG.md` im Repo-Root ausfüllen — alles optional, leer lassen ist gültig (Kommentare je Zeile erklären,
    was bei „leer" passiert). Bei Unklarheit mit {{AUFTRAGGEBER}} kurz rückfragen statt zu raten.
 2. `python .claude/scripts/new-project.py --dry-run` ausführen, Plan (Werte, zu entfernende Dateien,

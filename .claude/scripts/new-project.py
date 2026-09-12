@@ -27,6 +27,11 @@
 #       Wartungsaufgaben unbekannte bzw. ungueltige Werte enthalten - sonst wuerde ein Tippfehler
 #       (z. B. "Claude" statt "Claude Code") stillschweigend Dateien loeschen oder eine falsche Konfiguration
 #       schreiben. CONFIG.md bleibt bestehen.
+#       Laeuft das Script im Template-Checkout selbst (Marker `is_template` in .claude/template.json), ist
+#       --apply nur auf einem eigenen Branch erlaubt - auf main/master bricht es ab, sonst wuerde das
+#       Template seine Platzhalter verlieren. Auf einem eigenen Branch entsteht das Projekt als Branch des
+#       Templates: base_commit = letzter gemeinsamer Commit mit main/master, template_remote = origin, der
+#       Marker wird entfernt. Spaetere Updates laufen dann per Merge aus dem Standard-Branch.
 #   python .claude/scripts/new-project.py --finish
 #       Prueft, dass docs/project/project_description.md ausgefuellt wurde (keine Vorlagenzeile mehr) und
 #       docs/ai/ledger.md einen echten Eintrag hat, loescht danach CONFIG.md. Idempotent: fehlt CONFIG.md
@@ -737,13 +742,93 @@ def write_template_json_values(root: Path, values: dict):
         val = values.get(key)
         if val is not None:
             tu_values[key] = val
+    # Ab hier ist aus dem Checkout ein echtes Projekt geworden - der Template-Marker gilt nicht mehr.
+    cfg.pop("is_template", None)
     tu.save_template_json(root, cfg, path)
     return cfg
 
 
-def maybe_init_template_update(root: Path) -> str:
+DEFAULT_BRANCH_NAMES = {"main", "master"}
+
+
+def init_base_from_default_branch(root: Path, cfg_tu: dict) -> str:
+    """Projekt entsteht als Branch im Template-Checkout: base_commit = letzter gemeinsamer Commit mit dem
+    Standard-Branch (main/master), damit `template-update.py` spaeter von dort mergen kann."""
+    tu = _load_template_update_module()
+    base = None
+    quelle = None
+    for cand in ("main", "master"):
+        res = run_git(root, ["rev-parse", "--verify", "--quiet", cand])
+        if res.returncode != 0:
+            continue
+        mb = run_git(root, ["merge-base", "HEAD", cand])
+        if mb.returncode == 0 and mb.stdout.strip():
+            base, quelle = mb.stdout.strip(), cand
+            break
+    if not base:
+        res = run_git(root, ["rev-parse", "HEAD"])
+        if res.returncode != 0 or not res.stdout.strip():
+            return "kein Git-Commit gefunden - base_commit nicht gesetzt."
+        base, quelle = res.stdout.strip(), "HEAD"
+    cfg_tu["base_commit"] = base
+    cfg_tu["template_remote"] = "origin"
+    cfg_tu["template_branch"] = quelle if quelle != "HEAD" else cfg_tu.get("template_branch") or "main"
+    try:
+        tu.save_template_json(root, cfg_tu, root / ".claude" / "template.json")
+    except Exception as e:
+        return f"base_commit konnte nicht geschrieben werden: {e}"
+    return (
+        f"Projekt als Branch im Template: base_commit = {base[:7]} (aus '{quelle}'), "
+        f"template_branch = {cfg_tu['template_branch']}. Updates spaeter per "
+        "'template-update.py --check' gegen diesen Branch."
+    )
+
+
+def current_branch(root: Path):
+    """Aktueller Branch-Name, oder None (detached HEAD / kein Git)."""
+    res = run_git(root, ["rev-parse", "--abbrev-ref", "HEAD"])
+    if res.returncode != 0:
+        return None
+    name = res.stdout.strip()
+    return None if name in ("", "HEAD") else name
+
+
+def template_repo_guard(root: Path):
+    """Laeuft dieses Script im Template-Checkout selbst (Marker `is_template` in .claude/template.json)?
+
+    Erlaubt ist das nur auf einem eigenen Branch - dann entsteht das neue Projekt als Branch des Templates,
+    was eine gemeinsame Historie und damit spaetere Updates ohne zusaetzlichen Remote ermoeglicht. Auf dem
+    Standard-Branch (main/master) waere es ein Unfall: das Template selbst wuerde seine Platzhalter
+    verlieren. Gibt (ist_template, branch, fehlermeldung_oder_None) zurueck."""
+    try:
+        tu = _load_template_update_module()
+        cfg_tu, _ = tu.load_template_json(root)
+    except Exception:
+        return False, None, None
+    if not cfg_tu.get("is_template"):
+        return False, current_branch(root), None
+    branch = current_branch(root)
+    if branch is None:
+        return True, None, (
+            "Dies ist der Template-Checkout selbst, und HEAD haengt an keinem Branch (detached HEAD).\n"
+            "  Erst einen Branch anlegen: git switch -c projekt/<name>"
+        )
+    if branch in DEFAULT_BRANCH_NAMES:
+        return True, branch, (
+            f"Dies ist der Template-Checkout selbst und du arbeitest auf '{branch}' - ein --apply wuerde\n"
+            "  das Template zerstoeren (Platzhalter weg, Werkzeug-Dateien geloescht). Zwei Wege:\n"
+            "    a) im Template bleiben:  git switch -c projekt/<name>   (Projekt als Branch, Updates per\n"
+            "       Merge aus dem Standard-Branch)\n"
+            "    b) sauber trennen:       git clone <Template-URL> <projekt> && cd <projekt> &&\n"
+            "       git remote rename origin template && git remote add origin <eigene-Repo-URL>"
+        )
+    return True, branch, None
+
+
+def maybe_init_template_update(root: Path, ist_template: bool = False) -> str:
     """Ruft template-update.py --init per Subprocess auf, wenn ein Git-Remote 'template' existiert.
-    Gibt eine kurze Statuszeile fuer die Zusammenfassung zurueck."""
+    `ist_template` kommt aus template_repo_guard() und muss uebergeben werden, weil der Marker zu diesem
+    Zeitpunkt bereits aus template.json entfernt ist. Gibt eine Statuszeile fuer die Zusammenfassung."""
     tu = _load_template_update_module()
     cfg_tu, _ = tu.load_template_json(root)
     if cfg_tu.get("base_commit"):
@@ -751,6 +836,11 @@ def maybe_init_template_update(root: Path) -> str:
     res = run_git(root, ["remote"])
     remotes = res.stdout.split() if res.returncode == 0 else []
     if "template" not in remotes:
+        # Sonderfall "Projekt als Branch im Template-Checkout": es gibt keinen Remote `template`, wohl aber
+        # eine gemeinsame Historie mit dem Standard-Branch. Als Basis dient dessen letzter gemeinsamer
+        # Commit - spaetere Updates laufen dann per Merge aus dem lokalen Standard-Branch bzw. aus `origin`.
+        if ist_template or cfg_tu.get("is_template"):
+            return init_base_from_default_branch(root, cfg_tu)
         return "kein Remote 'template' - base_commit nicht gesetzt."
     script = Path(__file__).resolve().parent / "template-update.py"
     py = sys.executable or "python3"
@@ -789,6 +879,16 @@ def cmd_dry_run(root: Path) -> int:
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
     lines = ["new-project.py --dry-run", ""]
+    ist_template, branch, guard_fehler = template_repo_guard(root)
+    if guard_fehler:
+        lines.append("ACHTUNG - --apply wuerde hier abbrechen:")
+        for _zeile in guard_fehler.split(chr(10)):
+            lines.append("  " + _zeile)
+        lines.append("")
+    elif ist_template:
+        lines.append(f"Projekt entsteht als Branch '{branch}' im Template-Checkout - der Basis-Commit wird "
+                     "aus dem Standard-Branch abgeleitet, spaetere Updates laufen per Merge von dort.")
+        lines.append("")
     if not (root / CONFIG_REL).exists():
         lines.append(f"Hinweis: {CONFIG_REL} nicht gefunden - es gelten Defaults.")
     lines.append("Werte:")
@@ -926,6 +1026,11 @@ def cmd_apply(root: Path) -> int:
         print("  Format: name=tage, name=tage (tage: Zahl >= 0, oder leer/'null'/'-' fuer "
               "ereignisgesteuert).", file=sys.stderr)
         fehler = True
+    # Schutz vor dem teuersten Unfall: --apply direkt im Template-Checkout auf dem Standard-Branch.
+    ist_template, branch, guard_fehler = template_repo_guard(root)
+    if guard_fehler:
+        print("Fehler: --apply abgebrochen. " + guard_fehler, file=sys.stderr)
+        fehler = True
     if fehler:
         return 2
 
@@ -935,7 +1040,7 @@ def cmd_apply(root: Path) -> int:
     removed_files = remove_tool_files(root, remove_list)
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
     write_template_json_values(root, values)
-    init_status = maybe_init_template_update(root)
+    init_status = maybe_init_template_update(root, ist_template)
     model_status = set_orchestrator_model(root, orch_modell)
 
     if wartung_val == "ein":

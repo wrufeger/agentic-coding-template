@@ -11,6 +11,11 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
 
 ## Ablauf
 
+0. **Läuft das hier im Template-Checkout selbst?** (Marker `is_template` in `.claude/template.json`.) Dann
+   muss ein eigener Branch aktiv sein — `git switch -c projekt/<name>`. Auf `main`/`master` bricht
+   `--apply` ab, weil es sonst das Template zerstören würde; `--dry-run` weist vorher darauf hin. Auf einem
+   eigenen Branch entsteht das Projekt als Branch des Templates: Basis-Commit aus dem Standard-Branch,
+   spätere `/template-update`-Läufe mergen von dort, ein Remote ist dafür nicht nötig.
 1. `python .claude/scripts/new-project.py --dry-run` ausführen und den Plan (Werte, zu entfernende Dateien,
    Logging-Schalter, offene Platzhalter) zeigen. Ist `CONFIG.md` leer oder fehlt sie: kurz nachfragen, ob
    {{AUFTRAGGEBER}} sie zuerst ausfüllen möchte oder bewusst mit Defaults (Projektname „MyApp", Orchestrator

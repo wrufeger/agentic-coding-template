@@ -55,6 +55,9 @@
 #
 # keep_local (template.json) = Projektfassung gewinnt BEI KONFLIKTEN und wird nie platzhalter-ersetzt;
 # konfliktfreie Template-Aenderungen an diesen Dateien merged git ganz normal mit hinein.
+# Vergleichsziel (compare_ref): normalerweise <template_remote>/<template_branch>. Fehlt der Remote,
+# existiert aber ein lokaler Branch dieses Namens, wird lokal verglichen und nicht gefetcht - das ist
+# der Fall "Projekt entstand als Branch im Template-Checkout" (siehe new-project.py).
 # no_replace (template.json) = Dateien, die den Platzhalter selbst dokumentieren; sie werden gemergt, aber
 # nie ersetzt.
 #
@@ -158,6 +161,21 @@ def _remote_exists(root: Path, remote: str) -> bool:
     res = run_git(root, ["remote"])
     remotes = res.stdout.split() if res.returncode == 0 else []
     return remote in remotes
+
+
+def compare_ref(root: Path, cfg: dict):
+    """Vergleichsziel fuer Template-Updates -> (ref, fetch_noetig) oder (None, False).
+
+    Normalfall: der Remote-Branch `<remote>/<branch>`. Entsteht das Projekt dagegen als Branch im
+    Template-Checkout selbst (new-project.py setzt dann base_commit aus main/master), gibt es keinen
+    passenden Remote - dann wird gegen den gleichnamigen LOKALEN Branch verglichen und nicht gefetcht."""
+    remote = cfg.get("template_remote") or "template"
+    branch = cfg.get("template_branch") or "main"
+    if _remote_exists(root, remote):
+        return f"{remote}/{branch}", True
+    if run_git(root, ["rev-parse", "--verify", "--quiet", branch]).returncode == 0:
+        return branch, False
+    return None, False
 
 
 def default_config() -> dict:
@@ -324,27 +342,29 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
     remote = cfg.get("template_remote") or "template"
     branch = cfg.get("template_branch") or "main"
 
-    if cfg.get("base_commit") is None or not _remote_exists(root, remote):
+    ref, fetch_noetig = compare_ref(root, cfg)
+    if cfg.get("base_commit") is None or ref is None:
         if quiet:
             return 0
-        print(f"Template-Update: nicht konfiguriert (Remote '{remote}'/base_commit fehlt) - zuerst '--init' ausfuehren.")
+        print(f"Template-Update: nicht konfiguriert (Remote '{remote}' bzw. Branch '{branch}'/base_commit "
+              "fehlt) - zuerst '--init' ausfuehren.")
         return 2
 
-    try:
-        res_fetch = run_git(root, ["fetch", remote], timeout=20)
-    except subprocess.TimeoutExpired:
-        if quiet:
-            return 0
-        print(f"Template-Update: 'git fetch {remote}' hat das Zeitlimit (20s) ueberschritten.")
-        return 2
-    if res_fetch.returncode != 0:
-        if quiet:
-            return 0
-        print(f"Template-Update: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}")
-        return 2
+    if fetch_noetig:
+        try:
+            res_fetch = run_git(root, ["fetch", remote], timeout=20)
+        except subprocess.TimeoutExpired:
+            if quiet:
+                return 0
+            print(f"Template-Update: 'git fetch {remote}' hat das Zeitlimit (20s) ueberschritten.")
+            return 2
+        if res_fetch.returncode != 0:
+            if quiet:
+                return 0
+            print(f"Template-Update: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}")
+            return 2
 
     base = cfg["base_commit"]
-    ref = f"{remote}/{branch}"
     res_count = run_git(root, ["rev-list", "--count", f"{base}..{ref}"])
     if res_count.returncode != 0:
         if quiet:
@@ -419,8 +439,10 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
     branch = cfg.get("template_branch") or "main"
 
     if not continuing:
-        if cfg.get("base_commit") is None or not _remote_exists(root, remote):
-            print(f"Fehler: nicht konfiguriert (Remote '{remote}'/base_commit fehlt) - zuerst '--init' ausfuehren.", file=sys.stderr)
+        ref, fetch_noetig = compare_ref(root, cfg)
+        if cfg.get("base_commit") is None or ref is None:
+            print(f"Fehler: nicht konfiguriert (Remote '{remote}' bzw. Branch '{branch}'/base_commit fehlt) "
+                  "- zuerst '--init' ausfuehren.", file=sys.stderr)
             return 2
 
         res_status = run_git(root, ["status", "--porcelain"])
@@ -428,12 +450,11 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             print("Fehler: Arbeitsbaum nicht sauber - erst committen/stashen, dann erneut versuchen.", file=sys.stderr)
             return 2
 
-        res_fetch = run_git(root, ["fetch", remote])
-        if res_fetch.returncode != 0:
-            print(f"Fehler: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}", file=sys.stderr)
-            return 2
-
-        ref = f"{remote}/{branch}"
+        if fetch_noetig:
+            res_fetch = run_git(root, ["fetch", remote])
+            if res_fetch.returncode != 0:
+                print(f"Fehler: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}", file=sys.stderr)
+                return 2
 
         base = cfg.get("base_commit")
         if base:
@@ -566,9 +587,9 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
         if "{{" in new_content:
             remaining_placeholders.append(rel_path)
 
-    remote = cfg.get("template_remote") or "template"
-    branch = cfg.get("template_branch") or "main"
-    ref = f"{remote}/{branch}"
+    ref, _fetch_noetig = compare_ref(root, cfg)
+    if ref is None:
+        ref = f"{cfg.get('template_remote') or 'template'}/{cfg.get('template_branch') or 'main'}"
     res_new = run_git(root, ["rev-parse", ref])
     if res_new.returncode != 0:
         print(f"Fehler: '{ref}' nicht aufloesbar: {res_new.stderr.strip()}", file=sys.stderr)
@@ -705,8 +726,9 @@ def print_status(root: Path, cfg: dict) -> None:
     else:
         print("letztes update:  (noch keins)")
 
-    if base and _remote_exists(root, remote):
-        ref = f"{remote}/{branch}"
+    ref_status, _f = compare_ref(root, cfg)
+    if base and ref_status:
+        ref = ref_status
         res_count = run_git(root, ["rev-list", "--count", f"{base}..{ref}"])
         if res_count.returncode == 0:
             print(f"ausstehend:      {res_count.stdout.strip()} Commits (lokaler Stand, ohne fetch)")
