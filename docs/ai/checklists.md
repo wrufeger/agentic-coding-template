@@ -143,10 +143,17 @@ nachträglich bekommen soll:
 5. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
    Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
    `docs/ai/board.md`).
-6. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
+6. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `CONFIG.md`
+   § `Code-Analyse` (`nein` | `vorschlagen` | `fragen`) oder — beim Default `fragen` — als einzelne Rückfrage
+   im Gespräch, **nachdem** `docs/project/` befüllt ist. Bei „ja": den Bestand read-only prüfen (Struktur,
+   Duplikate, tote Pfade, fehlende Tests, veraltete Abhängigkeiten, Sicherheitsrisiken) und das Ergebnis
+   **nur** als priorisierte Vorschläge nach `docs/ai/backlog.md` schreiben (Sicherheit zuerst, je Punkt
+   Befund, Fundstelle, Vorschlag, Aufwand). Kein Code wird geändert; Umsetzung erst, wenn {{AUFTRAGGEBER}}
+   einen Punkt freigibt und er als Aufgabe in `tasks.md` landet.
+7. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
    `python .claude/scripts/new-project.py --finish` ausführen.
-7. Commit per Pathspec nach Freigabe.
-8. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe) — stellt per leerem
+8. Commit per Pathspec nach Freigabe.
+9. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
    Voraussetzung für spätere `/template-update`-Läufe.
 

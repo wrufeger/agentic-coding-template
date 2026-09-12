@@ -39,7 +39,7 @@ Checkliste selbst beschreibt, WAS zu tun ist (werkzeugneutral), der Skill beschr
 | `/delegate` | „Delegation" | wann/wie an Sub-Agenten delegiert wird, Prompt-Schablone, Parallelstart |
 | `/project-docs` | „Doku-Nachzug" | läuft als `context: fork` über `doc-writer` |
 | `/new-project` | „Neues Projekt" | `CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/new-project.py`, läuft **nie** in einem Sub-Agenten |
-| `/consume-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `consume-template.py`; Fan-out auf `explorer`/`doc-writer` |
+| `/consume-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `consume-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
 | `/docs-audit` | „Doku-Audit" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer` (bewusst unabhängig von der optionalen Wartung) |
 | `/maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `CONFIG.md` `Wartung: aus`, entfernt `/new-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
 | `/template-update` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/template-update.py` |

@@ -8,6 +8,10 @@ Punkt (z. B. „-> machen", „-> später", „-> nein, weil …").
 Grundsatz: der bestehende Codestil/die bestehenden Muster bleiben erhalten, solange sie kein echtes Problem
 verursachen. Vorschläge hier sind Angebote, keine Aufträge — Umsetzung erst nach Freigabe in `tasks.md`.
 
+Hierher schreibt der Orchestrator auch die Befunde der optionalen Code-Analyse beim Nachrüsten eines
+bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 6) — je Punkt: Befund, Fundstelle
+`Datei:Zeile`, Vorschlag, geschätzter Aufwand.
+
 ---
 
 1. **`.claude/template.json` strukturell mergen** (Priorität mittel): Bei Konflikten gewinnt heute immer die

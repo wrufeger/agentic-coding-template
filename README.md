@@ -42,6 +42,9 @@ arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
 2. Im Ziel-Repo Assistenten anweisen: „Führe die Checkliste Projekt nachrüsten aus (`docs/ai/checklists.md`)."
    Claude Code: `/consume-template`. Der Assistent analysiert den IST-Zustand und befüllt `CONFIG.md`
    sowie `docs/project/*` entsprechend (den Remote `template` hat Schritt 1 bereits angelegt).
+   Danach fragt er einmal, ob er zusätzlich den bestehenden Code prüfen und Verbesserungen vorschlagen soll —
+   die Vorschläge landen in `docs/ai/backlog.md`, geändert wird nichts. Wer die Frage vermeiden will, setzt
+   `Code-Analyse: nein` oder `vorschlagen` in `CONFIG.md`.
 3. Zum Schluss `python .claude/scripts/template-update.py --graft` — verknüpft die Historie mit dem Template
    (leerer Merge-Commit, Arbeitsbaum bleibt unverändert), damit spätere `/template-update`-Läufe funktionieren.
 

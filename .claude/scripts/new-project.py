@@ -74,6 +74,7 @@ KEY_MAP = {
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
     "Wartungsaufgaben": "wartungsaufgaben",
+    "Code-Analyse": "code_analyse",
     "Install-Befehl": "install_befehl",
     "Dev-Start-Befehl": "dev_start_befehl",
     "Lint-Befehl": "lint_befehl",
@@ -121,6 +122,9 @@ REMOVABLE_TOOLS = list(TOOL_FILES.keys())
 ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
+# Nur fuer Weg 2 (/consume-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
+# Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
+CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 WARTUNGSAUFGABEN_EREIGNISGESTEUERT = {"0", "", "null", "none", "-"}
 
 # Bei Wartung "aus" zu entfernende Pfade - identisch zu den Wartungsdateien unter TOOL_FILES["Claude Code"],
@@ -341,6 +345,25 @@ def normalize_wartung(cfg: dict):
     if val not in WARTUNG_WERTE:
         return None, raw
     return val, None
+
+
+def normalize_code_analyse(cfg: dict):
+    """Gibt (code_analyse, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'fragen'.
+    Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /consume-template (Weg 2)."""
+    raw = cfg.get("code_analyse")
+    if not raw:
+        return "fragen", None
+    val = raw.strip().lower()
+    if val not in CODE_ANALYSE_WERTE:
+        return None, raw
+    return val, None
+
+
+CODE_ANALYSE_TEXT = {
+    "nein": "nein - nur docs/project/ aus dem Bestand befuellen",
+    "vorschlagen": "vorschlagen - danach Bestand pruefen, Verbesserungen nach docs/ai/backlog.md",
+    "fragen": "fragen - nach dem Befuellen von docs/project/ im Chat nachfragen (Default)",
+}
 
 
 def parse_wartungsaufgaben(raw: str):
@@ -734,6 +757,7 @@ def cmd_dry_run(root: Path) -> int:
     remove_list = tools_to_remove(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
@@ -785,6 +809,13 @@ def cmd_dry_run(root: Path) -> int:
         for rel in MAINTENANCE_REMOVE_PATHS:
             lines.append(f"  {rel}")
 
+    lines.append("")
+    if code_analyse_unbekannt:
+        lines.append(f"Code-Analyse: \"{code_analyse_unbekannt}\" ist kein bekannter Wert - --apply bricht "
+                     "damit ab. Erlaubt: nein, vorschlagen, fragen.")
+    else:
+        lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
+
     warnungen = config_warnungen(cfg)
     unbekannt = unbekannte_werkzeuge(cfg)
     if warnungen or unbekannt:
@@ -819,6 +850,7 @@ def cmd_apply(root: Path) -> int:
     unbekannt = unbekannte_werkzeuge(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
+    code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
@@ -837,6 +869,10 @@ def cmd_apply(root: Path) -> int:
     if wartung_unbekannt:
         print(f"Fehler: --apply abgebrochen, CONFIG.md § Wartung nicht eindeutig: \"{wartung_unbekannt}\" - "
               "erlaubt sind aus, ein.", file=sys.stderr)
+        fehler = True
+    if code_analyse_unbekannt:
+        print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Analyse nicht eindeutig: "
+              f"\"{code_analyse_unbekannt}\" - erlaubt sind nein, vorschlagen, fragen.", file=sys.stderr)
         fehler = True
     if wartung_val == "ein" and wartungsaufgaben_fehler:
         print("Fehler: --apply abgebrochen, CONFIG.md § Wartungsaufgaben ungueltig: "
@@ -889,6 +925,7 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Logging: AI_LOG={logging_val}, AI_LOG_LEVEL={logging_tiefe}" + (" (geschrieben)" if logging_changed else " (unveraendert)"))
     lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
     lines.append(f"Wartung: {wartung_status}")
+    lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append(f"template.json: {init_status}")
 
     lines.append("")

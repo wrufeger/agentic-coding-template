@@ -27,14 +27,30 @@ Template), `.claude/scripts/new-project.py` (Platzhalter/Werte), `.claude/script
    `doc-writer`, Sonnet). `.gitignore`-Vorschläge aus Schritt 1 übernehmen (von Hand zusammenführen, nie
    automatisch überschreiben). Im Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten"
    ergänzen (Verweis auf `AGENTS.md` und `docs/ai/board.md`).
-5. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
-   Beleg: was `consume-template.py` kopiert/übersprungen hat, was befüllt wurde).
-6. `python .claude/scripts/new-project.py --finish` ausführen (löscht `CONFIG.md`, prüft vorher Schritt 4/5).
-7. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
-8. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe — erzeugt einen
+5. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `CONFIG.md` § `Code-Analyse` (der Wert steht auch in
+   der Ausgabe von `new-project.py`):
+   - `nein` → überspringen, direkt zu Schritt 6.
+   - `fragen` (Default) → jetzt, **nach** dem Befüllen von `docs/project/`, einmal im Chat nachfragen:
+     „`docs/project/` ist befüllt. Soll ich zusätzlich den Bestand prüfen und Verbesserungen vorschlagen
+     (nur Vorschläge in `docs/ai/backlog.md`, kein Code wird geändert)? a) ja b) nein". Ohne Antwort **nicht**
+     analysieren — die Frage wird nicht stillschweigend entschieden (`AGENTS.md`).
+   - `vorschlagen` → ohne Rückfrage ausführen.
+
+   Ablauf der Analyse (read-only, parallel): `explorer` (Sonnet) je Bereich für Struktur, Duplikate, tote
+   Pfade, fehlende Tests, veraltete Abhängigkeiten; `reviewer` (Opus) für Sicherheits- und Risikobefunde.
+   Ergebnis geht **ausschließlich** als priorisierte Liste nach `docs/ai/backlog.md` (Sicherheit zuerst, je
+   Punkt: Befund, Fundstelle `Datei:Zeile`, Vorschlag, geschätzter Aufwand) — kein Code wird geändert, keine
+   Aufgabe wird angelegt. {{AUFTRAGGEBER}} entscheidet dort mit einem Marker, was in `docs/ai/tasks.md` wandert.
+6. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
+   Beleg: was `consume-template.py` kopiert/übersprungen hat, was befüllt wurde, ob eine Code-Analyse lief).
+7. `python .claude/scripts/new-project.py --finish` ausführen (löscht `CONFIG.md`, prüft vorher Schritt 4/6).
+8. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
+9. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe — erzeugt einen
    Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/template-update`-Läufe).
 
 ## Grenzen
 
-Kein Code wird am bestehenden Projekt geändert — nur die Agentic-Coding-Grundausstattung kommt hinzu. Findings
-zum Code selbst (fehlende Tests, TODOs) werden Aufgaben in `docs/ai/tasks.md`, nicht direkt umgesetzt.
+Kein Code wird am bestehenden Projekt geändert — nur die Agentic-Coding-Grundausstattung kommt hinzu. Das gilt
+auch für die Code-Analyse aus Schritt 5: sie liefert Vorschläge in `docs/ai/backlog.md`, nie Änderungen.
+Findings zum Code selbst (fehlende Tests, TODOs) werden Vorschläge bzw. — wenn {{AUFTRAGGEBER}} sie freigibt —
+Aufgaben in `docs/ai/tasks.md`, nicht direkt umgesetzt.

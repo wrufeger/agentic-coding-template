@@ -15,6 +15,7 @@ der Kopfliste ist egal (mit oder ohne führende Leerzeichen), Groß-/Kleinschrei
     Logging-Tiefe: INFO (DEBUG | INFO | WARN | ERROR — steuert `AI_LOG_LEVEL` in `AGENTS.md`)
     Wartung: aus (aus | ein — wiederkehrende Wartung; „aus" entfernt `.claude/maintenance/`, den Skill `/maintenance`, den Agenten `maintenance-orchestrator` und den Fälligkeits-Hook)
     Wartungsaufgaben: kurz=14, docs=30, deps=90 (nur bei „Wartung: ein"; Aufgabe=Intervall in Tagen, weggelassene Aufgabe wird deaktiviert; schreibt `.claude/maintenance/status.json`)
+    Code-Analyse: fragen (nur Weg 2 „Projekt nachrüsten": nein = nur `docs/project/` aus dem Code befüllen | vorschlagen = danach zusätzlich den Bestand prüfen und Verbesserungen in `docs/ai/backlog.md` sammeln | fragen = nach der Doku im Chat nachfragen, Default)
     Install-Befehl: (bleibt Platzhalter `{{INSTALL_BEFEHL}}` in `ci.yml`/`setup.md`, wenn leer)
     Dev-Start-Befehl: (bleibt Platzhalter `{{DEV_START_BEFEHL}}` in `setup.md`, wenn leer)
     Lint-Befehl: (bleibt Platzhalter `{{LINT_BEFEHL}}` in `ci.yml`/`testing.md`, wenn leer)
