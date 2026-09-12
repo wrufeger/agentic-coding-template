@@ -1,4 +1,10 @@
+@AGENTS.md
+
 # {{PROJEKTNAME}} — Claude-Code-Ergänzung
+
+<!-- Die Zeile @AGENTS.md oben ist ein echter Import, kein Verweis: Claude Code liest von sich aus nur
+     CLAUDE.md. Ohne den Import wären die Grundregeln nur eine Bitte im Fließtext. Die Zeile muss ohne
+     Backticks und außerhalb von Code-Blöcken stehen, sonst wird sie als Text behandelt. -->
 
 Gilt **zusätzlich zu `AGENTS.md`** (zuerst lesen — dort stehen die werkzeugunabhängigen Grundregeln: Rollen,
 `docs/ai/`, „Fertig nur mit Beleg", Commit per Pathspec, Safeguard-Verhalten, Doku-/Test-/Coding-Verweise,
@@ -140,6 +146,11 @@ Claude-Config; `.mcp.json` bleibt gitignored, sobald echte Werte eingetragen sin
 Nicht aus dem Repo ableitbares Wissen (Zugänge, Arbeitsweisen einzelner Personen, Umgebungsbesonderheiten) gehört
 ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidungen, Stand) gehören nach
 `docs/project/`/`docs/ai/` und werden dort gepflegt, nicht im Memory dupliziert.
+
+In der gleichen Nachbarschaft: Sub-Agenten-Rollen und die Skills `/commit`+`/audit-docs` können zusätzlich
+projektübergreifend unter `~/.claude/` liegen (`.claude/scripts/install-global.py`, angeboten von
+`/create-project`/`/apply-template`, Schalter `AI-CONFIG.md` § „Globale Ablage") — das ist Werkzeug-
+Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 
 ## 6. Projektstruktur
 

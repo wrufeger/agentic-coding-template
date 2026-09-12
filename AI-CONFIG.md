@@ -41,6 +41,7 @@ stehen; eine Änderung hier wirkt nicht rückwirkend.
     Code-Analyse: fragen (nur Weg 2 „Projekt nachrüsten": nein = nur `docs/project/` aus dem Code befüllen | vorschlagen = danach zusätzlich den Bestand prüfen und Verbesserungen in `docs/ai/backlog.md` sammeln | fragen = nach der Doku im Chat nachfragen, Default)
     Struktur-Migration: fragen (nur Weg 2: ja = vorhandene KI-Arbeitsordner und -Regeldateien auf die Template-Struktur umstellen und zusammenführen | nein = nur fehlende Dateien ergänzen, vorhandene unangetastet lassen | fragen = Plan zeigen und im Chat nachfragen, Default)
     Alter Orchestrator-Name: (nur bei Struktur-Migration: bisher im Projekt verwendeter Rufname, z. B. der Name des alten KI-Ordners; wird projektweit durch den Wert von `Orchestrator` ersetzt. Leer = das Migrations-Script schlägt erkannte Kandidaten vor)
+    Globale Ablage: nein (nein | agenten | agenten+skills | alles | fragen — bietet an, Teile der Grundausstattung zusätzlich nach `~/.claude/` zu legen, damit sie in allen Projekten dieses Rechners gelten, auch ohne dieses Template; agenten = nur `.claude/agents/`, agenten+skills = zusätzlich `/commit` und `/audit-docs`, alles = zusätzlich ein kurzer Regelauszug als `~/.claude/CLAUDE.md`; fragen = einmal im Chat nachfragen, Default „nein"; Mechanik `.claude/scripts/install-global.py --plan`/`--apply`)
 
 ## Ziel
 (Frage: welches Problem löst das Projekt, in ein bis zwei Sätzen? Leer = `project_description.md` bleibt

@@ -80,8 +80,16 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
 8. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 5/7, schreibt danach
    `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
    „Einrichtung" bleiben).
-9. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
-10. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
+9. **Globale Ablage anbieten** (`AI-CONFIG.md` § Einrichtung → `Globale Ablage`): `nein` → überspringen.
+   `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
+   --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
+   {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**
+   im Chat nachfragen: „Sollen Agenten-Rollen (und/oder `/commit`+`/audit-docs`, ein kurzer Regelauszug)
+   zusätzlich nach `~/.claude/` gelegt werden, damit sie in allen Projekten dieses Rechners gelten — auch
+   ohne dieses Template? a) nein b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht**
+   installieren — keine Standardantwort annehmen.
+10. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
+11. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
    Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/update-template`-Läufe).
 
 ## Grenzen

@@ -43,4 +43,12 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    „Einrichtung" bleiben).
 7. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
    `no_replace` in `.claude/template.json`) und `AI-CONFIG.md` dürfen noch Platzhalter zeigen.
-8. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).
+8. **Globale Ablage anbieten** (`AI-CONFIG.md` § Einrichtung → `Globale Ablage`): `nein` → überspringen.
+   `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
+   --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
+   {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**
+   im Chat nachfragen: „Sollen Agenten-Rollen (und/oder `/commit`+`/audit-docs`, ein kurzer Regelauszug)
+   zusätzlich nach `~/.claude/` gelegt werden, damit sie in allen Projekten dieses Rechners gelten? a) nein
+   b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht** installieren — keine Standardantwort
+   annehmen.
+9. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).

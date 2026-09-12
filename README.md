@@ -71,6 +71,18 @@ dokumentiert den Ist-Zustand, schlägt die Struktur-Migration vor (vorhandene KI
 zusammengeführt) und fragt, ob er zusätzlich den Code prüfen soll. Zum Schluss verknüpft
 `python .claude/scripts/update-template.py --graft` die Historien, damit spätere Updates funktionieren.
 
+## Global statt nur in diesem Projekt
+
+Beim Anlegen (`/create-project`) oder Nachrüsten (`/apply-template`) bietet der Assistent zusätzlich an, Teile
+der Grundausstattung nach `~/.claude/` zu legen — dann gelten sie in **allen** Projekten dieses Rechners, auch
+in solchen ohne dieses Template (Claude Code hängt `~/.claude/CLAUDE.md` an die projekteigene an und liest
+`~/.claude/agents/`, `~/.claude/skills/` automatisch mit; bei gleichem Namen gewinnt die Projektfassung).
+Global gehen nur die Agenten-Rollen, die Skills `/commit`+`/audit-docs` und optional ein kurzer Regelauszug
+als `~/.claude/CLAUDE.md` (Mechanik: `python .claude/scripts/install-global.py --plan`/`--apply`, Steuerung
+über `AI-CONFIG.md` § „Globale Ablage"). **Nicht** global: `docs/ai/`, `docs/project/` und alles andere
+Projektgebundene — ein Board oder eine Aufgabenliste für alle Projekte gleichzeitig ergibt keinen Sinn, und
+Team, CI und Cloud-Sessions sehen `~/.claude/` ohnehin nicht — Projektverbindlichkeiten müssen im Repo bleiben.
+
 ## Template später aktualisieren
 
 Ein `SessionStart`-Hook meldet in Claude Code automatisch, wenn das Template neuer ist als der zuletzt
@@ -85,7 +97,7 @@ als Beispiel, u. a. `docs/ai/checklists.md`).
 
 | Werkzeug | Liest automatisch | Start |
 | :--- | :--- | :--- |
-| Claude Code | `CLAUDE.md` + `AGENTS.md` (Verweis) | Repo öffnen, startet automatisch mit beiden Dateien |
+| Claude Code | `CLAUDE.md`, das `AGENTS.md` importiert | Repo öffnen, startet automatisch mit beiden Dateien |
 | Codex/ChatGPT (Repo-Modus) | `AGENTS.md` | Repo öffnen, als Projektkontext erkannt |
 | GitHub Copilot | `.github/copilot-instructions.md` | Repo öffnen, Copilot Chat nutzen |
 | Cursor | `.cursor/rules/agents.mdc` (`alwaysApply: true`) | Repo öffnen, Regel lädt automatisch |

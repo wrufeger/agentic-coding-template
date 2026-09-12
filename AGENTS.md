@@ -287,7 +287,7 @@ Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `-
 
 | Werkzeug | Datei | Inhalt |
 | :--- | :--- | :--- |
-| Claude Code | `CLAUDE.md` | Sub-Agenten, Skills, feste Modell-IDs, Token-Sparregeln, MCP, Logging-Hooks |
+| Claude Code | `CLAUDE.md` | Sub-Agenten, Skills, feste Modell-IDs, Token-Sparregeln, MCP, Logging-Hooks; importiert diese Datei per `@`-Zeile, weil Claude Code nur `CLAUDE.md` von selbst lädt |
 | GitHub Copilot | `.github/copilot-instructions.md` | Verweis auf diese Datei |
 | Cursor | `.cursor/rules/agents.mdc` | Verweis auf diese Datei, `alwaysApply: true` |
 | Aider | `.aider.conf.yml` | lädt diese Datei plus `docs/ai/board.md` automatisch |
