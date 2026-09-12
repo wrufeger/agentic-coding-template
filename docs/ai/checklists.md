@@ -135,25 +135,43 @@ nachträglich bekommen soll:
    `docs/project/`-Skelette, `CONFIG.md` u. a. ins Ziel, ohne dort etwas zu überschreiben (Ausnahmen/Details
    im Kopfkommentar des Scripts). Schreibt `.claude/template.json` mit Basis-Commit/Remote-URL des Templates
    und legt im Ziel den Remote `template` an.
-2. Im Ziel-Repo weiterarbeiten: `git status` sichten, übersprungene Dateien (u. a. `README.md`,
-   `.gitignore`-Vorschlag) von Hand zusammenführen.
-3. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
-4. `CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/new-project.py --apply`
+2. Im Ziel-Repo weiterarbeiten: `git status` sichten, den Arbeitsbaum **committen** (Voraussetzung für
+   Schritt 3). Dateien, die im Ziel schon existierten, wurden nicht überschrieben — sie werden in Schritt 3
+   zusammengeführt.
+3. **Struktur-Migration** (Entscheidung von {{AUFTRAGGEBER}}: `CONFIG.md` § `Struktur-Migration` = `ja` |
+   `nein` | `fragen`; beim Default `fragen` den Plan zeigen und einmal im Gespräch nachfragen, ohne Antwort
+   nicht migrieren). Bei „ja":
+   - Vorhandene KI-Arbeitsordner (heißen je nach Projekt `fable/`, `ai/`, `ki/`, `docs/fable/`, …) auf die
+     Template-Struktur umstellen: Board, Aufgaben, Fragen, Ledger, Umbauliste wandern unter ihren
+     Template-Namen nach `docs/ai/`. Verschieben statt kopieren, damit die Versionsgeschichte erhalten bleibt.
+     Kollidiert eine Altdatei mit einer schon vorhandenen, wird sie danebengelegt statt überschrieben (nur
+     inhaltsgleiche Dubletten entfallen). Dateien in Unterordnern (z. B. `archiv/`) werden aufgelistet, aber
+     nicht automatisch zugeordnet; leer gewordene Altordner werden nur gemeldet, nie selbst gelöscht.
+   - Den bisherigen Rufnamen des Orchestrators (oft der Name des alten Ordners) **projektweit** durch den
+     neuen ersetzen — auch in Ledger, Chatlogs und Archiven.
+   - Vorhandene Regeldateien mit dem Template zusammenführen. Prioritäten: **Template gewinnt** bei allem, was
+     Agenten, Skills und Zusammenarbeitsregeln betrifft (projektspezifische Ergänzungen werden eingearbeitet,
+     nicht verworfen); **Template-Struktur mit Projekt-Inhalt** bei den Arbeitsdateien; **das Projekt gewinnt**
+     in `docs/project/` (vorhandene Projektdefinition hat Vorrang) und bei `README.md`/`.gitignore`, die nur
+     ergänzt werden; **die strengere Regel gewinnt** in den Coding-Regeln — strengere Vorgaben des Templates
+     werden immer übernommen.
+4. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
+5. `CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/new-project.py --apply`
    ausführen (ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt Werte).
-5. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
+6. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
    Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
    `docs/ai/board.md`).
-6. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `CONFIG.md`
+7. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `CONFIG.md`
    § `Code-Analyse` (`nein` | `vorschlagen` | `fragen`) oder — beim Default `fragen` — als einzelne Rückfrage
    im Gespräch, **nachdem** `docs/project/` befüllt ist. Bei „ja": den Bestand read-only prüfen (Struktur,
    Duplikate, tote Pfade, fehlende Tests, veraltete Abhängigkeiten, Sicherheitsrisiken) und das Ergebnis
    **nur** als priorisierte Vorschläge nach `docs/ai/backlog.md` schreiben (Sicherheit zuerst, je Punkt
    Befund, Fundstelle, Vorschlag, Aufwand). Kein Code wird geändert; Umsetzung erst, wenn {{AUFTRAGGEBER}}
    einen Punkt freigibt und er als Aufgabe in `tasks.md` landet.
-7. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
+8. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
    `python .claude/scripts/new-project.py --finish` ausführen.
-8. Commit per Pathspec nach Freigabe.
-9. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe) — stellt per leerem
+9. Commit per Pathspec nach Freigabe.
+10. `python .claude/scripts/template-update.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
    Voraussetzung für spätere `/template-update`-Läufe.
 

@@ -9,7 +9,7 @@ Grundsatz: der bestehende Codestil/die bestehenden Muster bleiben erhalten, sola
 verursachen. Vorschläge hier sind Angebote, keine Aufträge — Umsetzung erst nach Freigabe in `tasks.md`.
 
 Hierher schreibt der Orchestrator auch die Befunde der optionalen Code-Analyse beim Nachrüsten eines
-bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 6) — je Punkt: Befund, Fundstelle
+bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 7) — je Punkt: Befund, Fundstelle
 `Datei:Zeile`, Vorschlag, geschätzter Aufwand.
 
 ---
@@ -48,3 +48,16 @@ bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 6) — je Punk
    auf `--check` zurück, statt mit Exit 2 abzubrechen. Außerdem meldet `Wartung: ein` bei fehlendem
    `.claude/maintenance/` nur die neue `status.json`, ohne darauf hinzuweisen, dass Runner und README des
    Wartungsordners fehlen (Fall „Projekt per `consume-template.py` nachgerüstet").
+10. **Gitignorierte Dateien bei der Migration** (Priorität mittel): `migrate-project.py --apply` verschiebt
+   eine Arbeitsdatei auch dann nach `docs/ai/` und legt sie in den Index, wenn sie im alten Ordner bewusst
+   gitignoriert war (z. B. private Notizen). Vorschlag: vor dem Verschieben `git check-ignore` prüfen und
+   solche Dateien nur melden statt zu verschieben.
+11. **Namensersetzung trifft Pfade, URLs und Code** (Priorität mittel): `--rename-orchestrator` ersetzt den
+   Rufnamen überall, wo er als eigenes Wort steht — auch in `https://fable.io/`, in Pfadangaben innerhalb von
+   Texten und in Code-Beispielen. Wortgrenzen schützen nur vor Teilwort-Treffern (`Fabelwesen` bleibt).
+   Vorschlag: Code-Blöcke und URLs in Markdown auslassen, oder vor dem Schreiben eine Trefferliste zur
+   Bestätigung anzeigen. Bis dahin gilt: vorher committen, Ergebnis mit `git diff` prüfen.
+12. **Merge-Kandidaten unvollständig** (Priorität niedrig): `migrate-project.py` meldet `AGENTS.md`,
+   `CLAUDE.md`, `.claude/**`, `docs/ai/**` und `docs/project/**` als zusammenzuführen, aber nicht
+   `.claude/settings.json`, `GEMINI.md`, `.aider.conf.yml`, `.cursor/`, `.github/copilot-instructions.md` und
+   `docs/README.md`. Existieren die im Zielrepo schon, bleiben Unterschiede unbemerkt.

@@ -113,6 +113,8 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 │   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging),
 │   │                            # template-update.py (Template-Updates per Merge, --graft), new-project.py
 │   │                            # (Weg 1), consume-template.py (Weg 2, läuft aus dem Template-Checkout),
+│   │                            # migrate-project.py (Weg 2: KI-Ordner auf die Template-Struktur
+│   │                            # umstellen, Orchestrator-Name ersetzen — läuft im Zielrepo),
 │   │                            # maintenance-check.py (Fälligkeit der Wartung, SessionStart-Hook)
 │   ├── template.json              # Herkunft/Update-Stand ggü. dem Template (Remote, Basis-Commit, Werte)
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks

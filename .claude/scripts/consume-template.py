@@ -15,11 +15,13 @@
 #       ohne --dry-run: kopiert tatsaechlich, schreibt .claude/template.json im Ziel, legt bei Bedarf den
 #       Remote "template" an und fetcht ihn.
 #
-# Kopiert (nie ueberschrieben - vorhandene Zieldateien werden uebersprungen und am Ende gelistet):
+# Kopiert (nie ueberschrieben - vorhandene Zieldateien bleiben unangetastet und werden am Ende als "vorhanden
+#   - wird beim Zusammenfuehren beruecksichtigt" gelistet, siehe `migrate-project.py --plan` im Ziel):
 #   AGENTS.md, CLAUDE.md, GEMINI.md, .aider.conf.yml, .cursor/, .github/copilot-instructions.md,
-#   .claude/ (komplett AUSSER .claude/settings.local.json), docs/ai/ (alle), docs/project/ (alle Skelette
-#   inkl. incidents/), docs/README.md, CONFIG.md, .editorconfig, .gitattributes, renovate.json,
-#   .mcp.json.example, .env.example, .github/workflows/ci.yml.
+#   .claude/ (komplett AUSSER .claude/settings.local.json - `migrate-project.py` kommt darueber automatisch
+#   mit), docs/ai/ (alle), docs/project/ (alle Skelette inkl. incidents/), docs/README.md, CONFIG.md,
+#   .editorconfig, .gitattributes, renovate.json, .mcp.json.example, .env.example,
+#   .github/workflows/ci.yml.
 # NIE kopiert: README.md (wird im Ziel meist schon existieren; eigener Abschnitt statt Ersetzung, siehe
 #   Skill), .gitignore (stattdessen werden fehlende Zeilen aus dem Template-.gitignore als Vorschlag
 #   ausgegeben, nie automatisch geschrieben).
@@ -278,9 +280,12 @@ def _run(argv) -> int:
     if len(copied) > 60:
         lines.append(f"  ... und {len(copied) - 60} weitere")
 
+    tmpl_branch = cfg.get("template_branch") or "main"
     lines.append("")
-    lines.append(f"Uebersprungen, vorhanden im Ziel - von Hand zusammenfuehren ({len(skipped)}):")
-    lines.extend(f"  {rel}" for rel in skipped)
+    lines.append(f"Vorhanden - wird beim Zusammenfuehren beruecksichtigt ({len(skipped)}):")
+    lines.extend(
+        f"  {rel}  (git show template/{tmpl_branch}:{rel} zeigt die Template-Fassung)" for rel in skipped
+    )
     if not skipped:
         lines.append("  (keine)")
 
@@ -296,8 +301,10 @@ def _run(argv) -> int:
     lines.append(f"Remote 'template': {remote_status}")
 
     lines.append("")
-    lines.append("Naechste Schritte: im Zielrepo Skill /consume-template ausfuehren (CONFIG.md befuellen, "
-                  "docs/project mit dem IST-Zustand befuellen, danach template-update.py --graft).")
+    lines.append("Naechste Schritte: im Zielrepo Skill /consume-template ausfuehren; darin "
+                  "'python .claude/scripts/migrate-project.py --plan' fuer den Struktur-Migrationsplan "
+                  "(CONFIG.md befuellen, docs/project mit dem IST-Zustand befuellen, danach "
+                  "template-update.py --graft).")
 
     print("\n".join(lines))
     return 0
