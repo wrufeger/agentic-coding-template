@@ -82,6 +82,7 @@ KEY_MAP = {
     "Wartungsaufgaben": "wartungsaufgaben",
     "Code-Analyse": "code_analyse",
     "Code-Optimierung": "code_optimierung",
+    "Coding-Guidelines": "coding_guidelines",
     "Struktur-Migration": "struktur_migration",
     "Alter Orchestrator-Name": "alter_orchestrator_name",
     "Install-Befehl": "install_befehl",
@@ -138,6 +139,10 @@ CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 # (die Stufe steuert nur, wie der Orchestrator ihn beauftragt - siehe .claude/agents/optimizer.md).
 CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "streng"}
 OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
+# Vorgefertigte Regelsaetze je Sprache/Framework (docs/project/coding_rules.d/). Beim Anlegen bleiben nur
+# die in CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
+# zurueck. Leere Angabe = keine (kein Ballast im Projekt).
+GUIDELINES_DIR = "docs/project/coding_rules.d"
 # Nur fuer Weg 2 (/consume-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
 # Template-Struktur migriert und zusammengefuehrt werden (siehe migrate-project.py)? "fragen" = der
 # Assistent zeigt den Plan und fragt im Chat nach.
@@ -374,6 +379,63 @@ def normalize_code_analyse(cfg: dict):
     if val not in CODE_ANALYSE_WERTE:
         return None, raw
     return val, None
+
+
+def available_guidelines(root: Path):
+    """Kennungen der im Repo vorhandenen Regelsatz-Bausteine (Dateiname ohne .md, ohne README)."""
+    d = root / GUIDELINES_DIR
+    if not d.is_dir():
+        return []
+    return sorted(
+        f.stem.lower() for f in d.glob("*.md") if f.is_file() and f.stem.lower() != "readme"
+    )
+
+
+def parse_coding_guidelines(cfg: dict, root: Path):
+    """Gibt (gewaehlt: [kennung], unbekannt: [rohwert]) zurueck. Leere Angabe -> ([], [])."""
+    raw = (cfg.get("coding_guidelines") or "").strip()
+    if not raw:
+        return [], []
+    vorhanden = set(available_guidelines(root))
+    gewaehlt, unbekannt = [], []
+    for teil in (t.strip().lower() for t in raw.split(",")):
+        if not teil:
+            continue
+        if teil in vorhanden:
+            if teil not in gewaehlt:
+                gewaehlt.append(teil)
+        else:
+            unbekannt.append(teil)
+    return gewaehlt, unbekannt
+
+
+def apply_coding_guidelines(root: Path, gewaehlt) -> list:
+    """Entfernt alle nicht gewaehlten Bausteine und schreibt den Index in coding_rules.md neu.
+    Gibt die Liste der entfernten Kennungen zurueck."""
+    d = root / GUIDELINES_DIR
+    if not d.is_dir():
+        return []
+    entfernt = []
+    for f in sorted(d.glob("*.md")):
+        if not f.is_file() or f.stem.lower() == "readme":
+            continue
+        if f.stem.lower() in gewaehlt:
+            continue
+        try:
+            f.unlink()
+            entfernt.append(f.stem.lower())
+        except OSError:
+            pass
+    script = Path(__file__).resolve().parent / "guidelines.py"
+    if script.exists():
+        try:
+            subprocess.run(
+                [sys.executable or "python3", str(script), "--sync"],
+                cwd=str(root), capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return entfernt
 
 
 def normalize_code_optimierung(cfg: dict):
@@ -693,9 +755,18 @@ def write_maintenance_status(root: Path, aufgaben: dict) -> None:
 TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev.md"]
 
 
+# Abschnitte, die nur gelten, solange das Repo die Vorlage selbst ist. Sie stehen in den Regeldateien
+# zwischen diesen Markern und werden beim Anlegen eines Projekts mitsamt der Marker entfernt.
+TEMPLATE_ONLY_BLOCK = re.compile(
+    r"[ \t]*<!--\s*template-only:start\s*-->.*?<!--\s*template-only:end\s*-->[ \t]*\n?",
+    re.DOTALL,
+)
+TEMPLATE_ONLY_BLOCK_FILES = ["AGENTS.md", "CLAUDE.md"]
+
+
 def remove_template_intro(root: Path) -> list:
-    """Entfernt die nur fuer das Template gedachten Dateien (TEMPLATE_ONLY_PATHS). Gibt die Liste der
-    tatsaechlich entfernten Pfade zurueck."""
+    """Entfernt die nur fuer das Template gedachten Dateien (TEMPLATE_ONLY_PATHS) und die
+    `template-only`-Bloecke aus den Regeldateien. Gibt zurueck, was entfernt wurde."""
     removed = []
     for rel in TEMPLATE_ONLY_PATHS:
         fp = root / rel
@@ -706,6 +777,23 @@ def remove_template_intro(root: Path) -> list:
             removed.append(rel)
         except OSError:
             pass
+    for rel in TEMPLATE_ONLY_BLOCK_FILES:
+        fp = root / rel
+        if not fp.is_file():
+            continue
+        try:
+            text = fp.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        neu_text, n = TEMPLATE_ONLY_BLOCK.subn("", text)
+        if n:
+            # Doppelte Leerzeilen, die durch das Entfernen entstehen, wieder zusammenziehen.
+            neu_text = re.sub(r"\n{3,}", "\n\n", neu_text)
+            try:
+                fp.write_text(neu_text, encoding="utf-8", newline="\n")
+                removed.append(f"{rel} (Abschnitt 'nur Template')")
+            except OSError:
+                pass
     return removed
 
 
@@ -945,6 +1033,7 @@ def cmd_dry_run(root: Path) -> int:
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
+    guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
@@ -1022,6 +1111,19 @@ def cmd_dry_run(root: Path) -> int:
         lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt])
 
     lines.append("")
+    if guidelines_unbekannt:
+        lines.append("Coding-Guidelines: unbekannt - " + ", ".join(guidelines_unbekannt)
+                     + " (--apply bricht damit ab). Verfuegbar: "
+                     + ", ".join(available_guidelines(root)))
+    elif guidelines_gewaehlt:
+        rest = [g for g in available_guidelines(root) if g not in guidelines_gewaehlt]
+        lines.append("Coding-Guidelines: " + ", ".join(guidelines_gewaehlt)
+                     + (" (entfernt werden: " + ", ".join(rest) + ")" if rest else ""))
+    else:
+        lines.append("Coding-Guidelines: keine - alle Bausteine werden entfernt "
+                     "(spaeter per guidelines.py --add nachladbar)")
+
+    lines.append("")
     if struktur_migration_unbekannt:
         lines.append(f"Struktur-Migration: \"{struktur_migration_unbekannt}\" ist kein bekannter Wert - "
                       "--apply bricht damit ab. Erlaubt: ja, nein, fragen.")
@@ -1071,6 +1173,7 @@ def cmd_apply(root: Path) -> int:
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
+    guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
@@ -1099,6 +1202,11 @@ def cmd_apply(root: Path) -> int:
         print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Optimierung nicht eindeutig: "
               f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, streng.", file=sys.stderr)
         fehler = True
+    if guidelines_unbekannt:
+        print("Fehler: --apply abgebrochen, CONFIG.md § Coding-Guidelines kennt diese Regelsaetze nicht: "
+              + ", ".join(guidelines_unbekannt), file=sys.stderr)
+        print("  Verfuegbar: " + ", ".join(available_guidelines(root)), file=sys.stderr)
+        fehler = True
     if struktur_migration_unbekannt:
         print(f"Fehler: --apply abgebrochen, CONFIG.md § Struktur-Migration nicht eindeutig: "
               f"\"{struktur_migration_unbekannt}\" - erlaubt sind ja, nein, fragen.", file=sys.stderr)
@@ -1123,6 +1231,7 @@ def cmd_apply(root: Path) -> int:
     removed_files = remove_tool_files(root, remove_list)
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
     optimizer_entfernt = remove_optimizer_files(root) if code_opt == "aus" else []
+    guidelines_entfernt = apply_coding_guidelines(root, guidelines_gewaehlt)
     intro_entfernt = remove_template_intro(root)
     write_template_json_values(root, values)
     init_status = maybe_init_template_update(root, ist_template)
@@ -1164,6 +1273,8 @@ def cmd_apply(root: Path) -> int:
     lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
                  + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else ""))
+    lines.append("Coding-Guidelines: " + (", ".join(guidelines_gewaehlt) if guidelines_gewaehlt else "keine")
+                 + (" (entfernt: " + ", ".join(guidelines_entfernt) + ")" if guidelines_entfernt else ""))
     lines.append("Struktur-Migration (nur Weg 2 /consume-template): "
                   + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")

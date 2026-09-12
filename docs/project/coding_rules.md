@@ -28,7 +28,28 @@ Generische Regeln gelten sofort; der Abschnitt „Stack-spezifisch" wird beim An
 - **Abhängigkeiten:** Versions-Updates laufen über die konfigurierte Abhängigkeits-Automatisierung
   (`renovate.json`), keine manuellen Ad-hoc-Bumps ohne Grund.
 
+## Vorgefertigte Regelsätze
+
+Technologiespezifische Regeln liegen als Bausteine unter `coding_rules.d/` — ein Baustein je Sprache oder
+Framework. Verwaltet werden sie mit `python .claude/scripts/guidelines.py` (`--list`, `--add <kennung>`,
+`--remove <kennung>`); der folgende Block wird dabei automatisch geschrieben, hier nichts von Hand ändern.
+
+<!-- guidelines:start -->
+- [Shell-Skripte](coding_rules.d/bash.md) — Regeln für Bash-Skripte: Robustheit, Quoting, Prüfbarkeit durch Linter.
+- [C#](coding_rules.d/csharp.md) — Regeln für modernes C# mit Nullable-Kontext, konsequent asynchronem Code und Re…
+- [Go](coding_rules.d/go.md) — Regeln für idiomatisches Go: Fehlerbehandlung, kleine Interfaces, Kontextpropag…
+- [Nuxt](coding_rules.d/nuxt.md) — Regeln für Nuxt-Projekte: Verzeichniskonvention, Datenzugriff, sichere Konfigur…
+- [PHP](coding_rules.d/php.md) — Regeln für moderne PHP-Versionen (8.x): Typisierung, PSR-12, sichere Datenbankz…
+- [Python](coding_rules.d/python.md) — Regeln für Python 3 mit Typannotationen, Stdlib-first und automatisiertem Linti…
+- [SQL und Datenbank](coding_rules.d/sql.md) — Regeln für Schemaänderungen und Datenbankzugriff aus Anwendungscode.
+- [Tailwind CSS](coding_rules.d/tailwind.md) — Regeln für Utility-First-Styling mit Tailwind, meist innerhalb eines Frontend-F…
+- [TypeScript](coding_rules.d/typescript.md) — Regeln für TypeScript im strict-Modus mit zentraler Typablage und sauberem Narr…
+- [Vue 3](coding_rules.d/vue.md) — Regeln für Vue-3-Komponenten mit Composition API und `<script setup>`.
+<!-- guidelines:end -->
+
 ## Stack-spezifisch (ausfüllen)
+
+Hier steht, was **kein** Baustein abdeckt — die Eigenheiten genau dieses Projekts.
 
 *(Beim Zuschneiden des Templates ergänzen: Programmiersprache(n), Verzeichnisstruktur/Aliasse, Typisierungs-
 regeln des gewählten Typsystems, Migrationswerkzeug und Namenskonvention, Linter/Formatter samt Befehl,

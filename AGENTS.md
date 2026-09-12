@@ -37,6 +37,25 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 - **Auftraggeber** — {{AUFTRAGGEBER}}, der Mensch, der Ziele setzt, Fragen beantwortet und kritische Schritte
   freigibt.
 
+<!-- template-only:start -->
+## Noch nicht initialisiert — abweichende Regeln
+
+Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das so ist:
+
+- **`docs/` ist Gerüst, kein Inhalt.** `docs/project/` beschreibt ein Projekt, das es hier nicht gibt;
+  `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Umbauliste) sind leere Formulare. Beides bleibt leer — alles,
+  was hier hineingeschrieben wird, landet später in jedem abgeleiteten Projekt.
+- **Stattdessen `.templatedev.md`** im Repo-Root: Umbauliste, Fragen und Journal der Template-Entwicklung in
+  einer Datei. Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist.
+- **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;
+  für die Arbeit am Template genügt das Journal in `.templatedev.md`.
+- **Alles Übrige gilt unverändert:** Rollen und Delegation an Worker, Modell-/Kostenlogik, „fertig nur mit
+  Beleg", Commits per Pathspec, Tabu-Bereich, Umgang mit Safeguard-Warnungen, Zugriff auf laufende Systeme.
+
+Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in `CLAUDE.md` und
+`.templatedev.md` automatisch entfernt.
+<!-- template-only:end -->
+
 ## Grundregeln
 
 - Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in

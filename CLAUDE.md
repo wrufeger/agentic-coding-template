@@ -25,11 +25,22 @@ folgenden Sub-Agenten sind die Worker:
 - Mehrere unabhängige Prüfungen immer **parallel** starten (ein Nachrichtenblock, mehrere Agent-Aufrufe).
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
-**Arbeit am Template selbst** (Marker `is_template` in `.claude/template.json`): `docs/ai/` und
-`docs/project/` sind hier **Vorlagen** und bleiben leer — was dort steht, wandert in jedes abgeleitete Projekt.
-Umbauliste, Fragen und Journal zur Weiterentwicklung des Templates gehören deshalb ausschließlich in
-`.templatedev.md` im Repo-Root. Sobald aus dem Checkout ein Projekt geworden ist, verschwinden Marker und
-Datei, und die normalen Regeln gelten.
+<!-- template-only:start -->
+**Solange dieses Repo noch nicht initialisiert ist** (Marker `is_template` in `.claude/template.json`), gelten
+für `docs/` abweichende Regeln:
+
+- `docs/ai/` und `docs/project/` sind **Vorlagen** und bleiben leer. Was dort steht, wandert in jedes
+  abgeleitete Projekt — auch ein gut gemeinter Backlog-Eintrag.
+- Board, Aufgaben, Fragen, Journal und Umbauliste zur Weiterentwicklung des Templates stehen ausschließlich in
+  `.templatedev.md` im Repo-Root. Das ist hier die einzige Arbeitsdatei mit echtem Inhalt.
+- Auch das Agenten-Logging (`AGENTS.md` § Logging) beschreibt nur die Mechanik für spätere Projekte; ein
+  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal von `.templatedev.md`.
+- Unverändert gültig bleibt alles andere: Rollen, Delegation an Sub-Agenten, Modellwahl, „fertig nur mit
+  Beleg", Commit per Pathspec, Safeguard-Verhalten.
+
+Beim Anlegen eines Projekts (`/new-project`) entfernt `new-project.py` `.templatedev.md` **und** die so
+markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die normalen Regeln.
+<!-- template-only:end -->
 
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
 drittes Mal gestellt. Lag es am Auftrag, wird er geschärft und einmal neu gestartet; sonst übernimmt
