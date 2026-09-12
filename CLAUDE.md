@@ -34,6 +34,29 @@ Lehre zusätzlich `docs/project/coding_rules.md` oder `docs/ai/backlog.md`.
 Jeder Skill ist die Claude-Code-Mechanik zu einer neutralen Checkliste aus `docs/ai/checklists.md` — die
 Checkliste selbst beschreibt, WAS zu tun ist (werkzeugneutral), der Skill beschreibt, WIE Claude Code es startet.
 
+**Einstieg in Alltagssprache.** Läuft diese Sitzung im Template-Checkout, kommt der erste Auftrag meist als
+Satz mit einem Zielpfad statt als Skill-Aufruf. Zuordnung:
+
+| Was {{AUFTRAGGEBER}} sagt | Was {{ORCHESTRATOR}} tut |
+| :--- | :--- |
+| „Erstelle eine neue Anwendung in `<pfad>`" | Template dorthin klonen, Remote einrichten, `CONFIG.md` im Gespräch ausfüllen, dann `/new-project` im Zielordner |
+| „Erstelle ein leeres Projekt in `<pfad>`" | dasselbe, aber **ohne Interview** — `CONFIG.md` bleibt leer, es entsteht „MyApp" |
+| „Nutze das Template in `<pfad>`" (bestehendes Repo) | `consume-template.py --target <pfad>`, dann `/consume-template` im Zielordner |
+| … „und mache ein Code Review" | zusätzlich `Code-Analyse: vorschlagen` setzen, statt im Chat nachzufragen |
+
+Ablauf für einen Zielpfad, der noch nicht existiert:
+
+```bash
+git clone <Template-URL oder dieser Checkout> <pfad>
+cd <pfad> && git remote rename origin template
+# eigenes origin erst setzen, wenn die Repo-URL feststeht
+```
+
+Danach mit `CLAUDE_PROJECT_DIR=<pfad>` weiterarbeiten: die Scripte nehmen den Pfad entgegen, Doku-Dateien
+werden mit absoluten Pfaden geschrieben. Existiert der Zielordner bereits und ist nicht leer, **nie**
+hineinklonen — dann ist es der Nachrüst-Weg. Zum Schluss {{AUFTRAGGEBER}} sagen, dass er für die eigentliche
+Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigene Regeln und Agenten.
+
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
 | `/delegate` | „Delegation" | wann/wie an Sub-Agenten delegiert wird, Prompt-Schablone, Parallelstart |

@@ -13,19 +13,46 @@ die Platzhalter, entfernt die Dateien nicht genutzter Werkzeuge und befüllt die
 bestehenden Projekt aus dem echten Code, nicht aus Vermutungen. Spätere Verbesserungen am Template lassen sich
 jederzeit nachziehen, ohne die eigenen Anpassungen zu verlieren.
 
-## Zwei Wege hinein
+## Loslegen
 
-**Neues Projekt.** Repository klonen, `CONFIG.md` ausfüllen (Projektname, Stack, Ziel, erste Features — alles
-optional) und den Assistenten die Checkliste „Neues Projekt" ausführen lassen. Wer das Formular leer lässt,
-bekommt ein sauberes, leeres Projekt.
+Repository klonen, Claude Code darin starten und einen Satz schreiben:
 
-**Bestehendes Projekt nachrüsten.** Ein Script kopiert die Grundausstattung in das vorhandene Repository, ohne
-etwas zu überschreiben. Danach analysiert der Assistent den Bestand, dokumentiert den Ist-Zustand und schlägt
-auf Wunsch vor, wie die Struktur an das Template angeglichen wird: bereits vorhandene KI-Arbeitsordner werden
-übernommen, der bisherige Rufname des Assistenten projektweit ersetzt, eigene Regeln mit denen des Templates
-zusammengeführt. Dabei gewinnt das Template bei allem, was Agenten und Zusammenarbeit betrifft, das Projekt
-behält seine eigene Dokumentation, und bei den Coding-Regeln setzt sich die strengere Vorgabe durch. Optional
-prüft der Assistent anschließend den Code und sammelt Verbesserungsvorschläge — ohne eine Zeile zu ändern.
+```text
+Erstelle eine neue Anwendung in C:\development\mein-neues-projekt
+Erstelle ein leeres Projekt in C:\empty-project
+Nutze das Template in der bestehenden Anwendung C:\development\mein-langjaehriges-projekt
+   und mache ein Code Review
+```
+
+Der Assistent erkennt daraus, welcher Weg gemeint ist, legt das Zielverzeichnis an, richtet Git ein und führt
+die passende Checkliste aus.
+
+**Neues Projekt.** Kurzes Interview zu Ziel, Stack und ersten Features, dann werden Platzhalter ersetzt, die
+Dateien nicht genutzter Werkzeuge entfernt und die Dokumentation befüllt. „Leeres Projekt" überspringt die
+Fragen und legt nur das Gerüst an.
+
+**Bestehendes Projekt nachrüsten.** Die Grundausstattung wird kopiert, ohne etwas zu überschreiben. Danach
+analysiert der Assistent den Bestand, dokumentiert den Ist-Zustand und schlägt vor, wie die Struktur an das
+Template angeglichen wird: bereits vorhandene KI-Arbeitsordner werden übernommen, der bisherige Rufname des
+Assistenten projektweit ersetzt, eigene Regeln mit denen des Templates zusammengeführt. Dabei gewinnt das
+Template bei allem, was Agenten und Zusammenarbeit betrifft, das Projekt behält seine eigene Dokumentation,
+und bei den Coding-Regeln setzt sich die strengere Vorgabe durch. Auf Wunsch prüft der Assistent anschließend
+den Code und sammelt Verbesserungsvorschläge — ohne eine Zeile zu ändern.
+
+## Befehle
+
+| Befehl | Wofür |
+| :--- | :--- |
+| `/new-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
+| `/consume-template` | Bestehendes Repository nachrüsten und angleichen |
+| `/template-update` | Neuerungen aus dem Template nachziehen |
+| `/delegate` | Aufgabe auf parallele Sub-Agenten verteilen |
+| `/project-docs` · `/docs-audit` | Dokumentation nachziehen bzw. gegen den Code prüfen |
+| `/session-wrapup` | Sitzung abschließen: Journal, Aufgaben, Commit |
+| `/maintenance` | Wiederkehrende Wartung (optional) |
+
+Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den entsprechenden Satz sagen, etwa
+„Führe die Checkliste Neues Projekt aus".
 
 ## Bleibt aktuell
 

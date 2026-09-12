@@ -19,46 +19,59 @@ CLI oder ein lokales Modell. Es liefert:
 Der Kerngedanke: **ein Assistent orchestriert** (plant, prüft, committet), **weitere Assistenten/Sessions
 arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
 
-## Schnellstart — zwei Wege
+## Schnellstart — einfach sagen, was entstehen soll
 
-**Weg 1 — Neues Projekt**
-1. Dieses Repository klonen: `git clone <Template-URL> <projekt>` — Projekt und Template teilen damit eine
-   gemeinsame Git-Historie (Voraussetzung für spätere Updates per Merge). Danach
-   `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
+Claude Code im Ordner dieses Templates starten und einen Satz schreiben. Der Assistent erkennt daraus, welcher
+Weg gemeint ist, legt das Zielverzeichnis an, richtet Git ein und führt die passende Checkliste aus:
 
-   *Variante ohne Klon:* Wer direkt im Template-Checkout bleiben will, legt stattdessen einen Branch an
-   (`git switch -c projekt/<name>`) — das Projekt entsteht dann als Branch, der Basis-Commit wird aus
-   `main` abgeleitet, und `/template-update` mergt später aus dem lokalen `main` statt von einem Remote.
-   Auf `main` selbst bricht `/new-project` ab, damit das Template nicht seine Platzhalter verliert.
-2. `CONFIG.md` im Repo-Root ausfüllen — oder leer lassen: dann entsteht ein leeres Projekt „MyApp", es wird
-   nichts entfernt. Dort stehen auch die Schalter für das Modell der Hauptsession (`Orchestrator-Modell`,
-   Default Opus), das Agenten-Logging und die wiederkehrende Wartung (`Wartung: aus` entfernt sie komplett).
-3. Assistenten anweisen: „Führe die Checkliste Neues Projekt aus (`docs/ai/checklists.md`)."
-   Claude Code: `/new-project`.
-4. Ergebnis: Platzhalter sind ersetzt, `docs/project/*` ist (bei ausgefüllter `CONFIG.md`) mit den Angaben
-   befüllt, nicht genutzte Werkzeug-Dateien sind entfernt, `.claude/template.json` hält Basis-Commit und Werte
-   fest — `CONFIG.md` ist danach weg.
+```text
+Erstelle eine neue Anwendung in C:\development\mein-neues-projekt
+Erstelle ein leeres Projekt in C:\empty-project
+Nutze das Template in der bestehenden Anwendung C:\development\mein-langjaehriges-projekt
+   und mache ein Code Review
+```
 
-**Weg 2 — Bestehendes Projekt nachrüsten**
-1. Aus diesem Template-Checkout heraus: `python .claude/scripts/consume-template.py --target <ziel-repo>` —
-   kopiert `AGENTS.md`, die Werkzeug-Verweisdateien, `.claude/`, `docs/ai/`, die `docs/project/`-Skelette und
-   `CONFIG.md` in das bestehende Repo, ohne dort etwas zu überschreiben (Ausnahmen wie `README.md`/
-   `.gitignore` werden als „von Hand zusammenführen" gemeldet).
-2. Im Ziel-Repo Assistenten anweisen: „Führe die Checkliste Projekt nachrüsten aus (`docs/ai/checklists.md`)."
-   Claude Code: `/consume-template`. Der Assistent analysiert den IST-Zustand und befüllt `CONFIG.md`
-   sowie `docs/project/*` entsprechend (den Remote `template` hat Schritt 1 bereits angelegt).
-3. Hat das Repo schon einen eigenen KI-Arbeitsordner (`fable/`, `ai/`, `ki/`, `docs/fable/`, …) oder eigene
-   Regeldateien, zeigt der Assistent einen **Migrationsplan** und fragt einmal nach: Arbeitsdateien wandern
-   unter ihren Template-Namen nach `docs/ai/` (per `git mv`, die Historie bleibt), der bisherige Rufname des
-   Orchestrators wird projektweit ersetzt, vorhandene Regeldateien werden zusammengeführt. Dabei gewinnt das
-   Template bei allem, was Agenten, Skills und Zusammenarbeitsregeln betrifft; das Projekt behält seine
-   Inhalte in `docs/project/`, in `README.md` und `.gitignore`; bei den Coding-Regeln setzt sich die
-   strengere Vorgabe durch. Steuerbar über `CONFIG.md` § `Struktur-Migration` (`ja`/`nein`/`fragen`).
-4. Danach fragt er einmal, ob er zusätzlich den bestehenden Code prüfen und Verbesserungen vorschlagen soll —
-   die Vorschläge landen in `docs/ai/backlog.md`, geändert wird nichts. Wer die Frage vermeiden will, setzt
-   `Code-Analyse: nein` oder `vorschlagen` in `CONFIG.md`.
-5. Zum Schluss `python .claude/scripts/template-update.py --graft` — verknüpft die Historie mit dem Template
-   (leerer Merge-Commit, Arbeitsbaum bleibt unverändert), damit spätere `/template-update`-Läufe funktionieren.
+Bei einer neuen Anwendung fragt der Assistent kurz nach Ziel, Stack und ersten Features und füllt `CONFIG.md`
+selbst aus. „Leeres Projekt" überspringt die Fragen und legt ein Gerüst unter dem Namen „MyApp" an. Bei einem
+bestehenden Repository analysiert er den Bestand, dokumentiert den Ist-Zustand, schlägt die Umstellung auf die
+Template-Struktur vor und prüft auf Wunsch den Code.
+
+Danach in den neuen Ordner wechseln und dort weiterarbeiten — die Regeln, Agenten und Skills liegen ab jetzt
+im Projekt selbst.
+
+## Die Befehle
+
+| Befehl | Wofür |
+| :--- | :--- |
+| `/new-project` | Neues Projekt aus `CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
+| `/consume-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
+| `/template-update` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
+| `/delegate` | Aufgabe auf parallele Sub-Agenten verteilen |
+| `/project-docs` | Projekt-Doku nach einer Feature-Welle nachziehen |
+| `/docs-audit` | Doku gegen den echten Code-Stand prüfen |
+| `/session-wrapup` | Sitzung abschließen: Journal, Aufgaben, Fragen, Commit |
+| `/maintenance` | Wiederkehrende Wartung (optional, per `CONFIG.md` abwählbar) |
+
+Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den Satz sagen: „Führe die Checkliste
+Neues Projekt aus (`docs/ai/checklists.md`)."
+
+## Von Hand, falls gewünscht
+
+**Neues Projekt.** `git clone <Template-URL> <projekt>`, dann
+`cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`. Danach
+`CONFIG.md` ausfüllen (oder leer lassen) und `/new-project` starten. In `CONFIG.md` stehen auch die Schalter
+für das Modell der Hauptsession, das Agenten-Logging und die Wartung.
+
+*Ohne Klon:* Wer im Template-Checkout bleiben will, legt einen Branch an (`git switch -c projekt/<name>`) —
+das Projekt entsteht dann als Branch, Updates kommen später per Merge aus `main`. Auf `main` selbst bricht
+`/new-project` ab, damit das Template seine Platzhalter behält.
+
+**Bestehendes Projekt.** `python .claude/scripts/consume-template.py --target <ziel-repo>` kopiert die
+Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/consume-template`: Der Assistent
+dokumentiert den Ist-Zustand, schlägt die Struktur-Migration vor (vorhandene KI-Ordner wandern nach
+`docs/ai/`, der bisherige Rufname des Assistenten wird projektweit ersetzt, Regeldateien werden
+zusammengeführt) und fragt, ob er zusätzlich den Code prüfen soll. Zum Schluss verknüpft
+`python .claude/scripts/template-update.py --graft` die Historien, damit spätere Updates funktionieren.
 
 ## Template später aktualisieren
 
