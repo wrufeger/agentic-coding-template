@@ -16,6 +16,8 @@ Setzt die werkzeugneutrale Checkliste „Delegation" aus `docs/ai/checklists.md`
   auch für Guardrail-Bewertungen (`AGENTS.md` § Safeguard-Verhalten).
 - `doc-writer` (Sonnet) — pflegt `docs/project/`, nie `docs/ai/`.
 - `quick-check` (Haiku) — feste Lese-Kurzchecks ohne Bewertung.
+- `optimizer` (Sonnet, optional) — eine kurze Politurrunde über frisch geschriebenen Code (Kürze,
+  Lesbarkeit), max. zwei Runden, kein Algorithmen-Tuning; per `CONFIG.md` § `Code-Optimierung` abwählbar.
 - `expert-solver` (Fable 5.1, `effort: high`) — High-Reasoning-Eskalation, nur nach zweimaligem Scheitern
   desselben Auftrags oder bei einem unlösbaren Edge-Case aufrufen, nicht für normale Arbeit.
 
@@ -26,6 +28,9 @@ Aufruf über das Agent-Tool mit `subagent_type` gleich dem Agentennamen und **ex
 
 - Unabhängige Worker immer in **einem** Nachrichtenblock mit mehreren Agent-Aufrufen starten (echte
   Parallelität), nie nacheinander, wenn sie voneinander unabhängig sind.
+- Nach der Umsetzung und vor dem Review läuft — wenn aktiviert (`CONFIG.md` § `Code-Optimierung`) — einmal
+  `optimizer` über die geänderten Dateien; er bekommt die Dateiliste der Welle im Auftrag, nie „das ganze
+  Projekt".
 - Skills mit `context: fork` bevorzugen, wenn eine ganze Aufgabe (nicht nur ein Teilschritt) in einem
   Sub-Agenten laufen soll — der Hauptkontext bekommt dann nur die Rückgabe.
 - Jeder Auftrag: Kontext (2–3 Sätze), konkreter Liefergegenstand, Format des Ergebnisses, was zu ignorieren ist.

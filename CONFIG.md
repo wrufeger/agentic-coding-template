@@ -16,6 +16,7 @@ der Kopfliste ist egal (mit oder ohne führende Leerzeichen), Groß-/Kleinschrei
     Wartung: aus (aus | ein — wiederkehrende Wartung; „aus" entfernt `.claude/maintenance/`, den Skill `/maintenance`, den Agenten `maintenance-orchestrator` und den Fälligkeits-Hook)
     Wartungsaufgaben: kurz=14, docs=30, deps=90 (nur bei „Wartung: ein"; Aufgabe=Intervall in Tagen, weggelassene Aufgabe wird deaktiviert; schreibt `.claude/maintenance/status.json`)
     Code-Analyse: fragen (nur Weg 2 „Projekt nachrüsten": nein = nur `docs/project/` aus dem Code befüllen | vorschlagen = danach zusätzlich den Bestand prüfen und Verbesserungen in `docs/ai/backlog.md` sammeln | fragen = nach der Doku im Chat nachfragen, Default)
+    Code-Optimierung: aus (aus | ein | streng — ein = eine Runde über frisch geschriebenen Code (kürzer, lesbarer); streng = bis zu zwei Runden, zusätzlich Geschwindigkeit und Speicher; „aus" entfernt den Agenten `optimizer`)
     Struktur-Migration: fragen (nur Weg 2: ja = vorhandene KI-Arbeitsordner und -Regeldateien auf die Template-Struktur umstellen und zusammenführen | nein = nur fehlende Dateien ergänzen, vorhandene unangetastet lassen | fragen = Plan zeigen und im Chat nachfragen, Default)
     Alter Orchestrator-Name: (nur bei Struktur-Migration: bisher im Projekt verwendeter Rufname, z. B. der Name des alten KI-Ordners; wird projektweit durch den Wert von `Orchestrator` ersetzt. Leer = das Migrations-Script schlägt erkannte Kandidaten vor)
     Install-Befehl: (bleibt Platzhalter `{{INSTALL_BEFEHL}}` in `ci.yml`/`setup.md`, wenn leer)

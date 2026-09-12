@@ -21,6 +21,7 @@
 #       .claude/settings.json setzen (Orchestrator-Modell; "inherit" entfernt den Schluessel; fehlt
 #       settings.json, wird uebersprungen), bei Wartung "ein" .claude/maintenance/status.json aus
 #       Wartungsaufgaben schreiben, bei "aus" die Wartungsdateien/den Hook/die CLAUDE.md-Verweise entfernen,
+#       bei Code-Optimierung "aus" den Agenten .claude/agents/optimizer.md entfernen,
 #       Werte in .claude/template.json schreiben (direkt) und - falls ein Git-Remote "template" existiert und
 #       noch kein base_commit gesetzt ist - `template-update.py --init` per Subprocess aufrufen.
 #       Bricht vor jeder Aenderung ab (Exit 2), wenn KI-Werkzeuge/Orchestrator-Modell/Wartung/
@@ -80,6 +81,7 @@ KEY_MAP = {
     "Wartung": "wartung",
     "Wartungsaufgaben": "wartungsaufgaben",
     "Code-Analyse": "code_analyse",
+    "Code-Optimierung": "code_optimierung",
     "Struktur-Migration": "struktur_migration",
     "Alter Orchestrator-Name": "alter_orchestrator_name",
     "Install-Befehl": "install_befehl",
@@ -132,6 +134,10 @@ DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
 # Nur fuer Weg 2 (/consume-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
 # Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
 CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
+# Optionaler Politur-Agent nach jeder Umsetzungswelle: "aus" entfernt ihn, "ein"/"streng" behalten ihn
+# (die Stufe steuert nur, wie der Orchestrator ihn beauftragt - siehe .claude/agents/optimizer.md).
+CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "streng"}
+OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
 # Nur fuer Weg 2 (/consume-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
 # Template-Struktur migriert und zusammengefuehrt werden (siehe migrate-project.py)? "fragen" = der
 # Assistent zeigt den Plan und fragt im Chat nach.
@@ -369,6 +375,39 @@ def normalize_code_analyse(cfg: dict):
         return None, raw
     return val, None
 
+
+def normalize_code_optimierung(cfg: dict):
+    """Gibt (code_optimierung, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'aus'."""
+    raw = cfg.get("code_optimierung")
+    if not raw:
+        return "aus", None
+    val = raw.strip().lower()
+    if val not in CODE_OPTIMIERUNG_WERTE:
+        return None, raw
+    return val, None
+
+
+def remove_optimizer_files(root: Path) -> list:
+    """Entfernt den optionalen Politur-Agenten bei 'Code-Optimierung: aus'. Tolerant, wenn er fehlt (z.B.
+    weil Claude Code als Werkzeug abgewaehlt wurde und .claude/agents/ schon weg ist)."""
+    removed = []
+    for rel in OPTIMIZER_REMOVE_PATHS:
+        fp = root / rel
+        if not fp.exists():
+            continue
+        try:
+            fp.unlink()
+            removed.append(rel)
+        except OSError:
+            pass
+    return removed
+
+
+CODE_OPTIMIERUNG_TEXT = {
+    "aus": "aus - Agent optimizer wird entfernt",
+    "ein": "ein - eine Politur-Runde je Umsetzungswelle (kuerzer, lesbarer)",
+    "streng": "streng - bis zu zwei Runden, zusaetzlich Geschwindigkeit und Speicher",
+}
 
 CODE_ANALYSE_TEXT = {
     "nein": "nein - nur docs/project/ aus dem Bestand befuellen",
@@ -647,18 +686,27 @@ def write_maintenance_status(root: Path, aufgaben: dict) -> None:
     _write_json(path, data)
 
 
-def remove_template_intro(root: Path) -> bool:
-    """`.github/README.md` beschreibt das TEMPLATE und wird von GitHub bevorzugt vor der Root-README
-    angezeigt. In einem abgeleiteten Projekt waere das falsch - dort soll die eigene README die Startseite
-    sein. Deshalb beim Anlegen entfernen. Gibt True zurueck, wenn etwas entfernt wurde."""
-    intro = root / ".github" / "README.md"
-    if not intro.exists():
-        return False
-    try:
-        intro.unlink()
-    except OSError:
-        return False
-    return True
+# Dateien, die nur das TEMPLATE selbst betreffen und in einem abgeleiteten Projekt nichts verloren haben:
+# `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt) und
+# `.templatedev.md` (Umbauliste/Fragen/Journal der Template-Entwicklung - das einzige Dokument im Template
+# mit echtem Inhalt statt Platzhaltern).
+TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev.md"]
+
+
+def remove_template_intro(root: Path) -> list:
+    """Entfernt die nur fuer das Template gedachten Dateien (TEMPLATE_ONLY_PATHS). Gibt die Liste der
+    tatsaechlich entfernten Pfade zurueck."""
+    removed = []
+    for rel in TEMPLATE_ONLY_PATHS:
+        fp = root / rel
+        if not fp.exists():
+            continue
+        try:
+            fp.unlink()
+            removed.append(rel)
+        except OSError:
+            pass
+    return removed
 
 
 def remove_maintenance_files(root: Path) -> list:
@@ -896,6 +944,7 @@ def cmd_dry_run(root: Path) -> int:
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
+    code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
@@ -966,6 +1015,13 @@ def cmd_dry_run(root: Path) -> int:
         lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
 
     lines.append("")
+    if code_opt_unbekannt:
+        lines.append(f"Code-Optimierung: \"{code_opt_unbekannt}\" ist kein bekannter Wert - --apply bricht "
+                     "damit ab. Erlaubt: aus, ein, streng.")
+    else:
+        lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt])
+
+    lines.append("")
     if struktur_migration_unbekannt:
         lines.append(f"Struktur-Migration: \"{struktur_migration_unbekannt}\" ist kein bekannter Wert - "
                       "--apply bricht damit ab. Erlaubt: ja, nein, fragen.")
@@ -1014,6 +1070,7 @@ def cmd_apply(root: Path) -> int:
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
+    code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
@@ -1038,6 +1095,10 @@ def cmd_apply(root: Path) -> int:
         print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Analyse nicht eindeutig: "
               f"\"{code_analyse_unbekannt}\" - erlaubt sind nein, vorschlagen, fragen.", file=sys.stderr)
         fehler = True
+    if code_opt_unbekannt:
+        print(f"Fehler: --apply abgebrochen, CONFIG.md § Code-Optimierung nicht eindeutig: "
+              f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, streng.", file=sys.stderr)
+        fehler = True
     if struktur_migration_unbekannt:
         print(f"Fehler: --apply abgebrochen, CONFIG.md § Struktur-Migration nicht eindeutig: "
               f"\"{struktur_migration_unbekannt}\" - erlaubt sind ja, nein, fragen.", file=sys.stderr)
@@ -1061,6 +1122,7 @@ def cmd_apply(root: Path) -> int:
     changed, remaining = replace_placeholders(root, values)
     removed_files = remove_tool_files(root, remove_list)
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
+    optimizer_entfernt = remove_optimizer_files(root) if code_opt == "aus" else []
     intro_entfernt = remove_template_intro(root)
     write_template_json_values(root, values)
     init_status = maybe_init_template_update(root, ist_template)
@@ -1100,6 +1162,8 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
     lines.append(f"Wartung: {wartung_status}")
     lines.append("Code-Analyse (nur Weg 2 /consume-template): " + CODE_ANALYSE_TEXT[code_analyse])
+    lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
+                 + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else ""))
     lines.append("Struktur-Migration (nur Weg 2 /consume-template): "
                   + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")
@@ -1109,7 +1173,8 @@ def cmd_apply(root: Path) -> int:
     else:
         lines.append("Alter Orchestrator-Name: leer - Kandidaten werden erkannt (migrate-project.py --plan).")
     if intro_entfernt:
-        lines.append(".github/README.md entfernt (Template-Beschreibung, gilt nicht fuer dieses Projekt).")
+        lines.append("Nur-Template-Dateien entfernt (gelten nicht fuer dieses Projekt): "
+                     + ", ".join(intro_entfernt))
     lines.append(f"template.json: {init_status}")
 
     lines.append("")

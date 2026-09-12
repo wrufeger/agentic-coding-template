@@ -16,6 +16,8 @@ folgenden Sub-Agenten sind die Worker:
 - **[REVIEW]** -> `.claude/agents/reviewer.md` (adversarialer Review vor der Abnahme, Sicherheitsurteil, ALLOW/BLOCK)
 - **[DOC-WRITE]** -> `.claude/agents/doc-writer.md` (Befunde in `docs/project/` einarbeiten; nie `docs/ai/`)
 - **[QUICK-CHECK]** -> `.claude/agents/quick-check.md` (feste Lese-Kurzchecks ohne Bewertung)
+- **[OPTIMIZE]** -> `.claude/agents/optimizer.md` (Politur von frisch geschriebenem Code auf Kürze/Lesbarkeit,
+  max. zwei Runden, kein Algorithmen-Tuning — optional, per `CONFIG.md` § `Code-Optimierung` abwählbar)
 - **[MAINTENANCE]** -> `.claude/agents/maintenance-orchestrator.md` (wiederkehrende Wartung nach
   `.claude/maintenance/status.json`; optional — per `CONFIG.md` § `Wartung` abwählbar)
 - **[EXPERT]** -> `.claude/agents/expert-solver.md` (Eskalation, Fable 5.1 mit hoher Denkstufe — **nur**, wenn
@@ -23,11 +25,20 @@ folgenden Sub-Agenten sind die Worker:
 - Mehrere unabhängige Prüfungen immer **parallel** starten (ein Nachrichtenblock, mehrere Agent-Aufrufe).
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
+**Arbeit am Template selbst** (Marker `is_template` in `.claude/template.json`): `docs/ai/` und
+`docs/project/` sind hier **Vorlagen** und bleiben leer — was dort steht, wandert in jedes abgeleitete Projekt.
+Umbauliste, Fragen und Journal zur Weiterentwicklung des Templates gehören deshalb ausschließlich in
+`.templatedev.md` im Repo-Root. Sobald aus dem Checkout ein Projekt geworden ist, verschwinden Marker und
+Datei, und die normalen Regeln gelten.
+
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
 drittes Mal gestellt. Lag es am Auftrag, wird er geschärft und einmal neu gestartet; sonst übernimmt
 `expert-solver` mit vollständigem Kontext (ursprünglicher Auftrag, beide Fehlversuche samt Ausgaben, betroffene
 Dateien, bereits ausgeschlossene Ursachen). Sein Befund wird verbucht — Ledger, bei einer wiederverwendbaren
 Lehre zusätzlich `docs/project/coding_rules.md` oder `docs/ai/backlog.md`.
+
+**Wann `optimizer` läuft:** nach einer Builder-Welle, vor dem `reviewer`, nur auf den Dateien dieser Welle —
+nie projektweit. Bei `Code-Optimierung: aus` (`CONFIG.md`) entfällt der Schritt ganz.
 
 ## 2. Skills (`.claude/skills/`)
 
@@ -105,6 +116,7 @@ Modell-Zuordnung je Agent (feste IDs, kein `inherit`; entspricht der Beispiel-Ta
 | `doc-writer` | Sonnet `claude-sonnet-5` | Stilurteil über mehrere Doku-Dateien | mehrere Dateien je Lauf |
 | `maintenance-orchestrator` | Sonnet `claude-sonnet-5` | orchestriert Sub-Agenten | ganzer Wartungslauf |
 | `reviewer` | Opus `claude-opus-5` | adversarialer Review, Sicherheitsurteil | isolierte Einzelfälle |
+| `optimizer` | Sonnet `claude-sonnet-5` | Politur, max. zwei Runden | frisch geschriebener Code |
 | `expert-solver` | Fable 5.1 `claude-fable-5-1`, `effort: high` | Eskalation nach zwei Fehlversuchen | ein festgefahrener Fall |
 
 ## 4. MCP-Server
@@ -129,7 +141,7 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 ├── GEMINI.md  .aider.conf.yml    # Verweise auf AGENTS.md für weitere Werkzeuge
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
-│   │                            # maintenance-orchestrator (optional)
+│   │                            # optimizer (optional), maintenance-orchestrator (optional)
 │   ├── skills/                  # delegate, project-docs, new-project, consume-template, docs-audit,
 │   │                            # maintenance, template-update, session-wrapup
 │   ├── maintenance/              # optional: Status/Intervalle + Runner für wiederkehrende Wartung
@@ -143,6 +155,8 @@ ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidung
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
+├── .templatedev.md               # nur im Template: Umbauliste/Fragen/Journal der Entwicklung
+│                                 # dieses Repos (wird von /new-project entfernt)
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
 │                                 # wird von /new-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot

@@ -85,6 +85,13 @@ Werkzeuge werden beim Anlegen des Projekts entfernt.
 Dokumentation, Oberflächentexte und Kommentare auf Deutsch, Code-Bezeichner auf Englisch. Beides ist im
 Template als Regel hinterlegt und lässt sich projektweit ändern.
 
+## Mitarbeiten
+
+Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
+jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — offene Punkte,
+Fragen, Journal — steht deshalb in `.templatedev.md` im Repo-Root und wird beim Anlegen eines Projekts
+entfernt.
+
 ## Lizenz
 
 [MIT](../LICENSE) — nutzen, ändern, weitergeben und kommerziell einsetzen ist ausdrücklich erlaubt. Einzige
