@@ -74,6 +74,10 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
   ist billiger als die dritte Wiederholung.
 - Nach jeder Welle: Lint + Typecheck laufen lassen, betroffene Funktionen real ausprobieren; „fertig" nur mit
   Beleg; Ledger nachziehen (Checkliste „Sitzungsabschluss").
+- Nach jeder Umsetzungswelle kann eine kurze Optimierungsrunde über die neu geschriebenen Stellen laufen —
+  Ziel ist Verständlichkeit und Kürze, Geschwindigkeit nur, wo sie ohne Mehrkomplexität zu haben ist;
+  höchstens zwei Runden, Verhalten und Tests müssen unverändert bleiben. Ist der Aufwand größer, wird daraus
+  ein Vorschlag in der Umbauliste statt einer Änderung.
 - Bei eingeschaltetem Logging (`AGENTS.md` § Logging): vor jeder Welle die Entscheidung als
   `[orchestrator] [decision]` schreiben, jede Delegation als `[delegate]`, Start/Ende der Worker als
   `[start]`/`[end]` — sofern das Werkzeug das nicht automatisch tut (Claude Code: Hooks, `CLAUDE.md` § 7).
@@ -101,6 +105,10 @@ Idee, das Formular `CONFIG.md` deckt beides ab:
 0. Projekt per `git clone <Template-URL> <projekt>` anlegen, damit Projekt und Template eine gemeinsame
    Git-Historie teilen (Voraussetzung für spätere Updates per Merge, siehe § „Template-Update" unten); danach
    `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`.
+   Diesen Schritt kann auch der Assistent übernehmen — es genügt, ihm im Template-Checkout zu sagen, wo das
+   Projekt entstehen soll („Erstelle eine neue Anwendung in `<pfad>`"; „leeres Projekt" überspringt das
+   Interview zu Ziel und Stack). Ein Zielordner, der bereits Inhalt hat, gehört zur Checkliste „Projekt
+   nachrüsten" — dort wird nie hineingeklont.
    **Alternative:** direkt im Template-Checkout einen Branch anlegen (`git switch -c projekt/<name>`). Dann
    entsteht das Projekt als Branch, der Basis-Commit wird aus dem Standard-Branch abgeleitet und Updates
    laufen später per Merge von dort — ohne zusätzlichen Remote. Auf dem Standard-Branch selbst (`main`/
@@ -191,9 +199,20 @@ Arbeitsdateien, README) bleiben dabei erhalten:
    Template-Logik übernehmen sollen.
 3. Änderungen per Merge einspielen.
 4. Bei Konflikten: projektspezifische Dateien/Bereiche (siehe `keep_local` in `.claude/template.json`)
-   gewinnen automatisch; übrige Konflikte von Hand auflösen — Template-Logik in `.claude/`, `AGENTS.md`,
-   `CLAUDE.md` und den Checklisten übernehmen, projektspezifische Zeilen (echte Werte, eigene Regeln)
-   erhalten.
+   gewinnen bei gewöhnlichen Konflikten automatisch; alle übrigen werden **inhaltlich zusammengeführt**, nie durch Wegwerfen einer Seite
+   gelöst. Dazu jeweils beide Fassungen lesen und die Absicht dahinter erkennen:
+   - **Beide Seiten geändert:** Template-Fassung als Gerüst, projektspezifische Zeilen (echte Werte, eigener
+     Stack, zusätzliche Agenten/Skills) hineinziehen. Nur bei echtem Widerspruch entscheidet die Priorität —
+     Template-Logik in `.claude/`, `AGENTS.md`, `CLAUDE.md` und den Checklisten, Projekt in `docs/project/`,
+     strengere Regel bei den Coding-Regeln; der verworfene Teil wird im Journal genannt.
+   - **Vom Projekt gelöscht, im Template geändert:** erst prüfen, ob die Datei im Projekt unter anderem Namen
+     weiterlebt (umstrukturierter Arbeitsordner ist der Normalfall). Dann gehört die Template-Änderung in die
+     neue Datei, und die alte bleibt gelöscht. Wurde die Datei dagegen bewusst entfernt, bleibt sie weg.
+     Sobald ein Umbenennungs-Kandidat erkennbar ist, wird der Fall immer vorgelegt statt automatisch
+     entschieden; nur ohne Kandidat und bei einer ohnehin projekteigenen Datei bleibt es automatisch bei
+     „gelöscht".
+   - Hat das Projekt Inhalte anders verteilt oder zusammengezogen, wandert die Änderung dorthin, wo das Thema
+     im Projekt tatsächlich steht — eine gewachsene Struktur wird nicht auf das Template-Schema zurückgedreht.
 5. In den vom Update berührten Dateien Platzhalter durch die bereits im Projekt eingesetzten echten Werte
    ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit einem Platzhalter der Form `{{NAME}}` mitbringt).
 6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,

@@ -21,20 +21,31 @@
 #   python .claude/scripts/template-update.py --apply [--commit]
 #       Mergt template/<branch> in den Arbeitsbaum (git merge --no-ff --no-commit). Konflikte in
 #       .claude/template.json werden IMMER zugunsten der Projektfassung geloest (auch "both added" beim
-#       Bootstrap, siehe unten) - unabhaengig von keep_local; Konflikte in keep_local-Pfaden ebenso
-#       automatisch zugunsten der Projektfassung, vom Projekt geloeschte/vom Template geaenderte Dateien
-#       bleiben geloescht; uebrige Konflikte muessen von Hand geloest werden (danach --continue). Ohne
-#       Konflikte bzw. nach deren Aufloesung: Platzhalter in den vom Merge beruehrten Textdateien (ausser
-#       keep_local und no_replace) ersetzen, base_commit/updates fortschreiben, git add.
+#       Bootstrap, siehe unten) - unabhaengig von keep_local. Konflikte vom Typ "DD" (von beiden geloescht)
+#       werden immer automatisch bereinigt (unstrittig). Konflikte vom Typ "DU" (vom Projekt geloescht, im
+#       Template geaendert) werden NUR DANN automatisch als "geloescht belassen" entschieden, wenn der Pfad
+#       in keep_local steht UND keine Umbenennung erkennbar ist (siehe --conflicts) - das Script darf sonst
+#       nicht allein entscheiden, ob die Loeschung bewusst war oder nur eine Umbenennung/Verschiebung ist
+#       (typisch: docs/ai/ auf eigene Dateinamen migriert). Sonstige Konflikte in keep_local-Pfaden werden
+#       automatisch zugunsten der Projektfassung geloest; alle uebrigen (inkl. offen gelassener DU-Faelle)
+#       muessen von Hand geloest werden (Analyse siehe --conflicts, danach --continue). Ohne Konflikte bzw.
+#       nach deren Aufloesung: Platzhalter in den vom Merge beruehrten Textdateien (ausser keep_local und
+#       no_replace) ersetzen, base_commit/updates fortschreiben, git add.
 #   python .claude/scripts/template-update.py --continue [--commit]
 #       Nach manueller Konfliktaufloesung: prueft, dass keine Konflikte mehr offen sind, fuehrt den
 #       Abschlussschritt von --apply aus.
+#   python .claude/scripts/template-update.py --conflicts
+#       Nur waehrend eines laufenden Merges (MERGE_HEAD vorhanden, sonst Hinweis + Exit 0): analysiert jeden
+#       noch offenen Konflikt fuer den Assistenten (Art, Prioritaetsregel, Zeilenumfang der Aenderung je
+#       Seite, Umbenennungs-Kandidat bei "DU" per Git-Rename-Erkennung bzw. Inhaltsaehnlichkeit unter
+#       docs/ai/, passende git-Befehle zum Nachschauen). Schreibt nichts, loest nichts auf - reine Analyse
+#       fuer die inhaltliche Zusammenfuehrung, die der Assistent macht.
 #   python .claude/scripts/template-update.py --abort
 #       Bricht einen laufenden Merge ab (git merge --abort); .claude/template.json bleibt unveraendert.
 #   python .claude/scripts/template-update.py --status
 #       Zeigt Konfiguration, Remote-URL, base_commit, letztes Update, Anzahl ausstehender Commits (ohne
-#       fetch, also ggf. veralteter Stand), sowie ob eine gemeinsame Historie mit base_commit existiert
-#       (graft-Status).
+#       fetch, also ggf. veralteter Stand), ob eine gemeinsame Historie mit base_commit existiert
+#       (graft-Status) sowie ob gerade ein Merge laeuft und wie viele Konflikte offen sind.
 #   python .claude/scripts/template-update.py --graft
 #       Fuer per `consume-template.py` nachgeruestete Projekte (kein gemeinsamer Vorfahr mit dem Template):
 #       stellt per leerem Merge (`git merge -s ours --allow-unrelated-histories`) eine gemeinsame Historie
@@ -64,12 +75,14 @@
 # git laeuft immer nicht-interaktiv (GIT_TERMINAL_PROMPT=0, stdin geschlossen): ein privates Template ohne
 # hinterlegten Credential-Helper meldet einen Fehler, statt im Hook auf eine Passworteingabe zu warten.
 #
-# Exit-Codes: 0 = ok/aktuell, 2 = Konfigurations-/Vorbedingungsfehler, 3 = Update verfuegbar (nur --check),
-#             4 = Konflikte offen (nur --apply/--continue). Ein Fehler dieses Scripts darf nie mit
-#             Traceback nach aussen dringen: main() laeuft komplett in try/except, Fehlermeldungen auf
-#             stderr. `--check --quiet` schreibt nie auf stdout, ausser es gibt tatsaechlich ein Update.
+# Exit-Codes: 0 = ok/aktuell (auch --conflicts ohne laufenden Merge bzw. ohne offene Konflikte), 2 =
+#             Konfigurations-/Vorbedingungsfehler, 3 = Update verfuegbar (nur --check), 4 = Konflikte offen
+#             (nur --apply/--continue). Ein Fehler dieses Scripts darf nie mit Traceback nach aussen
+#             dringen: main() laeuft komplett in try/except, Fehlermeldungen auf stderr. `--check --quiet`
+#             schreibt nie auf stdout, ausser es gibt tatsaechlich ein Update.
 
 import argparse
+import difflib
 import fnmatch
 import json
 import os
@@ -116,6 +129,59 @@ DEFAULT_NO_REPLACE = [
     ".claude/scripts/new-project.py",
     ".claude/scripts/template-update.py",
 ]
+
+# Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
+# migrate-project.py - dort nachsehen, falls sich die Regeln je aendern).
+PRIORITY_RULES = """.claude/**, AGENTS.md, CLAUDE.md, docs/ai/checklists.md, docs/ai/README.md
+  -> Template gewinnt, Projektergaenzungen einarbeiten
+docs/ai/** (uebrige Arbeitsdateien: board, tasks, questions, ledger, backlog)
+  -> Template-Struktur, Projekt-Inhalt
+docs/project/coding_rules.md
+  -> strengere Regel gewinnt
+docs/project/**
+  -> Projekt gewinnt
+README.md, .gitignore
+  -> Projekt gewinnt, Template ergaenzt
+sonst
+  -> abwaegen"""
+
+
+def priority_label(rel_path: str) -> str:
+    norm = rel_path.replace("\\", "/")
+    if norm in ("AGENTS.md", "CLAUDE.md", "docs/ai/checklists.md", "docs/ai/README.md") or norm.startswith(".claude/"):
+        return "Template gewinnt, Projektergaenzungen einarbeiten"
+    if norm == "docs/project/coding_rules.md":
+        return "strengere Regel gewinnt"
+    if norm.startswith("docs/project/"):
+        return "Projekt gewinnt"
+    if norm.startswith("docs/ai/"):
+        return "Template-Struktur, Projekt-Inhalt"
+    if norm in ("README.md", ".gitignore"):
+        return "Projekt gewinnt, Template ergaenzt"
+    return "abwaegen"
+
+
+# XY-Status (git status --porcelain=v1) -> (kurzes Ein-Wort-Label fuer die --apply-Konfliktliste,
+# ausfuehrliche Art-Beschreibung fuer --conflicts). "DU"/"UD" beziehen sich auf HEAD ("uns", das Projekt);
+# beim Merge template -> Projekt ist "uns" also immer das Projekt, "die andere Seite" das Template.
+_CONFLICT_KINDS = {
+    "UU": ("beide-geaendert", "beide geaendert"),
+    "AA": ("beide-neu", "von beiden neu angelegt"),
+    "DU": ("geloescht/geaendert", "vom Projekt geloescht, im Template geaendert"),
+    "UD": ("geaendert/geloescht", "vom Projekt geaendert, im Template geloescht"),
+    "DD": ("beide-geloescht", "von beiden geloescht"),
+    "AU": ("neu/geaendert", "vom Projekt neu angelegt, im Template geaendert"),
+    "UA": ("geaendert/neu", "vom Projekt geaendert, im Template neu angelegt"),
+}
+
+
+def _conflict_kind_word(code: str) -> str:
+    return _CONFLICT_KINDS.get(code, (code or "?", code or "unbekannt"))[0]
+
+
+def _conflict_art(code: str) -> str:
+    return _CONFLICT_KINDS.get(code, (code or "?", code or "unbekannt"))[1]
+
 
 TEMPLATE_JSON_REL = ".claude/template.json"
 
@@ -412,26 +478,176 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
 
 
 def get_unmerged_status(root: Path) -> dict:
-    """path -> XY-Statuscode fuer alle unaufgeloesten (unmerged) Pfade."""
-    res = run_git(root, ["status", "--porcelain=v1"])
+    """path -> XY-Statuscode fuer alle unaufgeloesten (unmerged) Pfade.
+
+    '-z' ist Pflicht: ohne das setzt `git status --porcelain` Pfade mit Leerzeichen in Anfuehrungszeichen
+    ("docs/project/mit leer zeichen.md") - core.quotePath=false schaltet nur das Oktal-Escaping der Umlaute
+    ab, nicht die Anfuehrungszeichen. Ein so verpackter Pfad passt auf kein keep_local-Muster und laesst
+    sich nicht an git zurueckgeben; der Konflikt bliebe stumm liegen."""
+    res = run_git(root, ["status", "--porcelain=v1", "-z"])
     out = {}
     if res.returncode != 0:
         return out
-    for line in res.stdout.splitlines():
-        if len(line) < 4:
+    records = [r for r in res.stdout.split("\0") if r]
+    idx = 0
+    while idx < len(records):
+        record = records[idx]
+        idx += 1
+        if len(record) < 4:
             continue
-        code = line[:2]
-        rel_path = line[3:]
+        code = record[:2]
+        rel_path = record[3:]
+        # Bei Umbenennungen/Kopien folgt der alte Pfad als eigener Datensatz - ueberspringen, sonst wird er
+        # als eigener Eintrag fehlgedeutet.
+        if code[0] in ("R", "C") or code[1] in ("R", "C"):
+            idx += 1
+            continue
         if code[0] == "U" or code[1] == "U" or code in ("DD", "AA"):
             out[rel_path] = code
     return out
 
 
 def _remaining_conflicts(root: Path):
-    res = run_git(root, ["diff", "--name-only", "--diff-filter=U"])
+    # -z wie in get_unmerged_status: keine Anfuehrungszeichen/Escapes um Sonderpfade.
+    res = run_git(root, ["diff", "--name-only", "-z", "--diff-filter=U"])
     if res.returncode != 0:
         return []
-    return [p for p in res.stdout.splitlines() if p.strip()]
+    return [p for p in res.stdout.split("\0") if p.strip()]
+
+
+def _list_conflicts(root: Path):
+    """Alle noch offenen Konflikt-Pfade -> (sortierte Liste, Pfad->XY-Code). Vereinigung aus
+    '--diff-filter=U' und 'status --porcelain=v1' (siehe get_unmerged_status) - deckt auch die Faelle ab,
+    die im jeweils anderen Kommando fehlen wuerden (z.B. DD)."""
+    status_map = get_unmerged_status(root)
+    paths = set(status_map.keys())
+    paths.update(_remaining_conflicts(root))
+    return sorted(paths), status_map
+
+
+def _merge_head(root: Path):
+    res = run_git(root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+    return res.stdout.strip() if res.returncode == 0 else None
+
+
+def _find_renames(root: Path, ref_a, ref_b: str) -> dict:
+    """Git-eigene Rename-Erkennung ref_a..ref_b (Default-Aufruf: base_commit..HEAD) -> {alter_pfad:
+    (neuer_pfad, aehnlichkeit_als_string)}. Leer, wenn ref_a fehlt oder der Aufruf fehlschlaegt."""
+    if not ref_a:
+        return {}
+    res = run_git(root, ["diff", "--find-renames=40%", "--name-status", ref_a, ref_b])
+    if res.returncode != 0:
+        return {}
+    mapping = {}
+    for line in res.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3 or not parts[0].startswith("R"):
+            continue
+        mapping[parts[1]] = (parts[2], parts[0][1:])
+    return mapping
+
+
+def _cap_text(text: str) -> str:
+    """Vergleichstext beschneiden: erste 200 Zeilen, hoechstens 20000 Zeichen. Die Zeichengrenze ist
+    noetig, weil ratio() quadratisch laeuft - 200 Zeilen koennen auch 1 MB sein (generierte Dateien)."""
+    return "\n".join(text.splitlines()[:200])[:20000]
+
+
+def _similarity(a: str, b: str) -> float:
+    """Inhaltsaehnlichkeit 0..1. quick_ratio() taugt NUR als billiger Vorfilter (obere Schranke): sie
+    zaehlt gemeinsame Zeichen ohne Reihenfolge und liegt fuer zwei beliebige deutsche Markdown-Skelette
+    bei 0.75-0.90, fuer zwei Zufallstexte sogar bei 0.998 - als Mass waere jede Datei die Umbenennung
+    jeder anderen. Gemessen wird darum mit ratio(), und mit autojunk=False: die Heuristik haelt bei
+    Zeichenvergleichen jedes haeufige Zeichen fuer "Junk" und drueckt echte Umbenennungen mit
+    Nacharbeit von 0.78 auf 0.40."""
+    if difflib.SequenceMatcher(None, a, b).quick_ratio() < 0.60:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+
+def _rename_fallback_scan(root: Path, rel_path: str, template_ref: str):
+    """Kein Treffer per Git-Rename-Erkennung -> unter docs/ai/ nach .md-Dateien suchen, deren Inhalt (erste
+    200 Zeilen) zu >= 60% mit der Template-Fassung von rel_path uebereinstimmt (SequenceMatcher, Stdlib,
+    siehe _similarity). Liefert (rel_kandidat, ratio) oder None."""
+    res = run_git(root, ["show", f"{template_ref}:{rel_path}"])
+    if res.returncode != 0:
+        return None
+    template_text = _cap_text(res.stdout)
+    docs_ai = root / "docs" / "ai"
+    if not docs_ai.is_dir():
+        return None
+    own_name = Path(rel_path).name
+    best = None
+    for fp in sorted(docs_ai.glob("*.md")):
+        if fp.name == own_name:
+            continue
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ratio = _similarity(template_text, _cap_text(content))
+        if ratio >= 0.60 and (best is None or ratio > best[1]):
+            best = (fp.relative_to(root).as_posix(), ratio)
+    return best
+
+
+def _rename_candidate(root: Path, rel_path: str, rename_map: dict, merge_head):
+    """(neuer_pfad, aehnlichkeit_in_prozent_oder_None) oder None - erst git-Rename-Erkennung (rename_map,
+    siehe _find_renames), dann Fallback ueber Inhaltsaehnlichkeit unter docs/ai/ gegen die Template-Fassung
+    (merge_head:rel_path). Nur fuer "DU"-Konflikte sinnvoll."""
+    hit = rename_map.get(rel_path)
+    if hit:
+        neu, score = hit
+        try:
+            return neu, int(score)
+        except ValueError:
+            return neu, None
+    if merge_head:
+        fb = _rename_fallback_scan(root, rel_path, merge_head)
+        if fb:
+            return fb[0], int(round(fb[1] * 100))
+    return None
+
+
+def _sh_quote(rel_path: str) -> str:
+    """Pfad so einfassen, dass der ausgegebene git-Befehl auch mit Leerzeichen kopierbar bleibt."""
+    if all(c.isalnum() or c in "._-/" for c in rel_path):
+        return rel_path
+    return "'" + rel_path.replace("'", "'\\''") + "'"
+
+
+def _numstat_lines(root: Path, ref_a, ref_b, rel_path: str):
+    """Summe added+deleted Zeilen (git diff --numstat) fuer rel_path zwischen ref_a und ref_b - oder None
+    bei fehlender Ref, Fehler oder Binaerdatei ("-" statt Zahl)."""
+    if not ref_a or not ref_b:
+        return None
+    res = run_git(root, ["diff", "--numstat", ref_a, ref_b, "--", rel_path])
+    if res.returncode != 0:
+        return None
+    out = res.stdout.strip()
+    if not out:
+        # Leere Ausgabe heisst "unveraendert" (0) ODER "auf beiden Seiten gar nicht vorhanden" - letzteres
+        # bei umbenannten Pfaden. Dann ist "0 Zeilen geaendert" irrefuehrend ("Template hat nichts
+        # geaendert, also Projektfassung nehmen"), richtig ist "?".
+        if run_git(root, ["cat-file", "-e", f"{ref_b}:{rel_path}"]).returncode != 0:
+            return None
+        return 0
+    parts = out.splitlines()[0].split("\t")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]) + int(parts[1])
+    except ValueError:
+        return None
+
+
+def _print_unresolved(root: Path, still_open, intro: str) -> None:
+    status_map = get_unmerged_status(root)
+    print(intro, file=sys.stderr)
+    for rel_path in still_open:
+        kind = _conflict_kind_word(status_map.get(rel_path, "?"))
+        print(f"  - {rel_path}  ({kind})", file=sys.stderr)
+    print("Analyse je Konflikt: python .claude/scripts/template-update.py --conflicts", file=sys.stderr)
 
 
 def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bool) -> int:
@@ -476,7 +692,9 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                 return 2
 
             keep_local = cfg.get("keep_local") or []
-            auto_resolved, deleted_kept = [], []
+            merge_head = _merge_head(root)
+            rename_map = _find_renames(root, cfg.get("base_commit"), "HEAD")
+            auto_resolved, deleted_kept, dd_removed, du_decision = [], [], [], []
             for rel_path, code in conflicts.items():
                 if rel_path == TEMPLATE_JSON_REL:
                     # Eigene Zustandsdatei: Konflikte IMMER zugunsten der Projektfassung ("ours") loesen -
@@ -491,37 +709,45 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                         # keine "ours"-Stufe im Index (z.B. von uns geloescht) -> Konflikt nur bereinigen
                         run_git(root, ["rm", "-f", "--cached", "--", rel_path])
                     auto_resolved.append(rel_path + " (immer Projektfassung)")
-                elif matches_keep_local(rel_path, keep_local):
-                    if code in ("DU", "DD"):
-                        # Projektfassung = geloescht. Es gibt keine "ours"-Stufe im Index; ein blindes
-                        # 'git add' wuerde hier die Template-Fassung wiederbeleben.
+                elif code == "DD":
+                    # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
+                    res_rm = run_git(root, ["rm", "--", rel_path])
+                    if res_rm.returncode != 0:
+                        run_git(root, ["rm", "--cached", "--", rel_path])
+                    dd_removed.append(rel_path)
+                elif code == "DU":
+                    # Vom Projekt geloescht, vom Template geaendert. Das Script darf das NICHT allein
+                    # entscheiden, wenn die "Loeschung" in Wahrheit nur eine Umbenennung/Verschiebung ist
+                    # (typisch: docs/ai/ auf eigene Dateinamen migriert) - sonst geht die Template-Aenderung
+                    # unbemerkt verloren. Automatisch "geloescht belassen" nur, wenn der Pfad in keep_local
+                    # steht (das Projekt hat bewusst entschieden) UND keine Umbenennung erkennbar ist.
+                    kandidat = _rename_candidate(root, rel_path, rename_map, merge_head)
+                    if kandidat is None and matches_keep_local(rel_path, keep_local):
                         res_rm = run_git(root, ["rm", "--", rel_path])
                         if res_rm.returncode != 0:
                             run_git(root, ["rm", "--cached", "--", rel_path])
                         deleted_kept.append(rel_path)
                     else:
-                        res_co = run_git(root, ["checkout", "--ours", "--", rel_path])
-                        if res_co.returncode == 0:
-                            run_git(root, ["add", "--", rel_path])
-                            auto_resolved.append(rel_path)
-                        # sonst: keine "ours"-Fassung vorhanden -> Konflikt bleibt offen, von Hand loesen
-                elif code == "DU":
-                    # vom Projekt geloescht, vom Template geaendert -> geloescht lassen
-                    res_rm = run_git(root, ["rm", "--", rel_path])
-                    if res_rm.returncode != 0:
-                        run_git(root, ["rm", "--cached", "--", rel_path])
-                    deleted_kept.append(rel_path)
+                        du_decision.append(rel_path)
+                elif matches_keep_local(rel_path, keep_local):
+                    res_co = run_git(root, ["checkout", "--ours", "--", rel_path])
+                    if res_co.returncode == 0:
+                        run_git(root, ["add", "--", rel_path])
+                        auto_resolved.append(rel_path)
+                    # sonst: keine "ours"-Fassung vorhanden -> Konflikt bleibt offen, von Hand loesen
 
             if auto_resolved:
                 print("keep_local automatisch uebernommen (Projektfassung gewinnt): " + ", ".join(sorted(auto_resolved)))
+            if dd_removed:
+                print("Von beiden geloescht (unstrittig) -> entfernt: " + ", ".join(sorted(dd_removed)))
             if deleted_kept:
-                print("Vom Projekt geloescht, im Template geaendert -> geloescht belassen: " + ", ".join(sorted(deleted_kept)))
+                print("Vom Projekt geloescht (keep_local, bewusst), im Template geaendert -> geloescht belassen: " + ", ".join(sorted(deleted_kept)))
+            if du_decision:
+                print("Vom Projekt geloescht, im Template geaendert (Entscheidung noetig): " + ", ".join(sorted(du_decision)))
 
             still_open = _remaining_conflicts(root)
             if still_open:
-                print("Fehler: ungeloeste Konflikte - bitte manuell aufloesen und danach '--continue' ausfuehren:", file=sys.stderr)
-                for rel_path in still_open:
-                    print(f"  - {rel_path}", file=sys.stderr)
+                _print_unresolved(root, still_open, "Fehler: ungeloeste Konflikte - bitte manuell aufloesen und danach '--continue' ausfuehren:")
                 return 4
     else:
         res_head = run_git(root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])
@@ -530,9 +756,7 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             return 2
         still_open = _remaining_conflicts(root)
         if still_open:
-            print("Fehler: noch ungeloeste Konflikte:", file=sys.stderr)
-            for rel_path in still_open:
-                print(f"  - {rel_path}", file=sys.stderr)
+            _print_unresolved(root, still_open, "Fehler: noch ungeloeste Konflikte:")
             return 4
 
     return _finalize(root, cfg, path, do_commit)
@@ -640,6 +864,68 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
     else:
         print("Aenderungen sind gestaged - pruefen, dann committen.")
 
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# --conflicts
+# ---------------------------------------------------------------------------
+
+
+def cmd_conflicts(root: Path, cfg: dict) -> int:
+    res_git = run_git(root, ["rev-parse", "--is-inside-work-tree"])
+    if res_git.returncode != 0 or res_git.stdout.strip() != "true":
+        print("Fehler: kein Git-Repo.", file=sys.stderr)
+        return 2
+
+    merge_head = _merge_head(root)
+    if not merge_head:
+        print("Kein laufender Merge (MERGE_HEAD fehlt) - '--conflicts' zeigt nur waehrend eines laufenden "
+              "'--apply' etwas an; siehe 'git status'.")
+        return 0
+
+    paths, status_map = _list_conflicts(root)
+    if not paths:
+        print("Keine offenen Konflikte.")
+        return 0
+
+    base = cfg.get("base_commit")
+    rename_map = _find_renames(root, base, "HEAD")
+
+    lines = []
+    for rel_path in paths:
+        code = status_map.get(rel_path, "?")
+        lines.append(rel_path)
+        lines.append(f"  art:        {_conflict_art(code)}")
+        lines.append(f"  regel:      {priority_label(rel_path)}")
+
+        t_n = _numstat_lines(root, base, merge_head, rel_path)
+        p_n = _numstat_lines(root, base, "HEAD", rel_path)
+        lines.append(f"  template:   {t_n if t_n is not None else '?'} Zeilen geaendert (base..ref)")
+        lines.append(f"  projekt:    {p_n if p_n is not None else '?'} Zeilen geaendert (base..HEAD)")
+
+        if code == "DU":
+            kandidat = _rename_candidate(root, rel_path, rename_map, merge_head)
+            if kandidat:
+                neu, pct = kandidat
+                pct_txt = f"{pct}%" if pct is not None else "?"
+                lines.append(f"  umbenannt?: {neu} (Aehnlichkeit {pct_txt})")
+
+        base_txt = base or "<base_commit fehlt>"
+        q = _sh_quote(rel_path)
+        befehle = [f"git show {merge_head}:{q}"]
+        # Bei "DU" gibt es die Datei in HEAD nicht mehr - der Befehl wuerde nur einen git-Fehler liefern.
+        if code != "DU":
+            befehle.append(f"git show HEAD:{q}")
+        befehle.append(f"git diff {base_txt} {merge_head} -- {q}")
+        lines.append("  befehle:    " + "  |  ".join(befehle))
+        lines.append("")
+
+    lines.append("Weiter: Datei inhaltlich zusammenfuehren (Prioritaetsregel beachten), je geloestem Pfad")
+    lines.append("'git add <pfad>', danach 'template-update.py --continue [--commit]'.")
+    lines.append("Bei 'umbenannt?': die Template-Aenderung gehoert in die NEUE Datei - die alte bleibt")
+    lines.append("geloescht (kein 'git add' auf den alten Pfad).")
+    print("\n".join(lines).rstrip())
     return 0
 
 
@@ -752,6 +1038,14 @@ def print_status(root: Path, cfg: dict) -> None:
     gesetzt = [k for k, v in values.items() if v is not None]
     print(f"values gesetzt:  {', '.join(gesetzt) if gesetzt else '(keine)'}")
 
+    merge_head = _merge_head(root)
+    if merge_head:
+        offene, _status_map = _list_conflicts(root)
+        print(f"merge:           laeuft (MERGE_HEAD {merge_head[:7]}), {len(offene)} Konflikt(e) offen "
+              "- siehe '--conflicts'")
+    else:
+        print("merge:           kein laufender Merge")
+
 
 def cmd_status(root: Path, cfg: dict) -> int:
     print_status(root, cfg)
@@ -773,6 +1067,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true", help="Auf Template-Updates pruefen (mit fetch)")
     parser.add_argument("--apply", action="store_true", help="Template-Update per Merge einspielen")
     parser.add_argument("--continue", dest="cont", action="store_true", help="Nach manueller Konfliktaufloesung fortsetzen")
+    parser.add_argument("--conflicts", action="store_true", help="Offene Konflikte eines laufenden Merges analysieren (schreibt nichts)")
     parser.add_argument("--abort", action="store_true", help="Laufenden Merge abbrechen")
     parser.add_argument("--status", action="store_true", help="Konfiguration/Stand anzeigen")
     parser.add_argument("--graft", action="store_true", help="Gemeinsame Historie mit base_commit herstellen (nachgeruestete Projekte)")
@@ -796,6 +1091,8 @@ def _run(argv) -> int:
         return cmd_graft(root, cfg)
     if args.abort:
         return cmd_abort(root)
+    if args.conflicts:
+        return cmd_conflicts(root, cfg)
     if args.cont:
         return cmd_apply(root, cfg, path, args.commit, continuing=True)
     if args.apply:

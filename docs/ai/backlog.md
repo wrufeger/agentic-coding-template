@@ -57,7 +57,17 @@ bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 7) — je Punk
    Texten und in Code-Beispielen. Wortgrenzen schützen nur vor Teilwort-Treffern (`Fabelwesen` bleibt).
    Vorschlag: Code-Blöcke und URLs in Markdown auslassen, oder vor dem Schreiben eine Trefferliste zur
    Bestätigung anzeigen. Bis dahin gilt: vorher committen, Ergebnis mit `git diff` prüfen.
-12. **Merge-Kandidaten unvollständig** (Priorität niedrig): `migrate-project.py` meldet `AGENTS.md`,
+12. **Umbenennung auf beiden Seiten** (Priorität mittel): Haben Template **und** Projekt dieselbe Datei
+   verschoben (`AU`/`UA`), liefert `template-update.py --conflicts` keinen Umbenennungs-Hinweis — die
+   Rename-Suche läuft nur für „vom Projekt gelöscht". Gerade bei einem umgebauten `docs/ai/` ist das der
+   wahrscheinlichste Fall. Vorschlag: die Suche auch für `AU`/`UA` ausführen und beide Zielpfade nennen.
+13. **Konsolen-Encoding unter Windows** (Priorität niedrig): Die Scripte schreiben nach stdout in der
+   ANSI-Codepage; Pfade mit Umlauten kommen bei einem UTF-8-lesenden Konsumenten als Mojibake an.
+   `sys.stdout.reconfigure(encoding="utf-8")` in allen Scripten wäre die Abhilfe (in `ai-log.py` und
+   `new-project.py` bereits vorhanden, in den übrigen nicht).
+14. **Toter Konstant** (Priorität niedrig): `PRIORITY_RULES` in `template-update.py` wird nirgends gelesen —
+   entweder für die Ausgabe von `--conflicts` nutzen oder entfernen.
+15. **Merge-Kandidaten unvollständig** (Priorität niedrig): `migrate-project.py` meldet `AGENTS.md`,
    `CLAUDE.md`, `.claude/**`, `docs/ai/**` und `docs/project/**` als zusammenzuführen, aber nicht
    `.claude/settings.json`, `GEMINI.md`, `.aider.conf.yml`, `.cursor/`, `.github/copilot-instructions.md` und
    `docs/README.md`. Existieren die im Zielrepo schon, bleiben Unterschiede unbemerkt.
