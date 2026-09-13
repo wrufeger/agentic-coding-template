@@ -28,18 +28,24 @@
 #       Projektfassung OHNE Rueckfall auf das Template, wenn das Feld dort fehlt (fehlt es im Projekt, soll
 #       es fehlen); values feldweise (Projektwert gewinnt je Schluessel, neue Platzhalter aus dem Template
 #       werden mit null ergaenzt, damit sie nicht unersetzt in Zieldateien stehen bleiben); keep_local/
-#       no_replace als Vereinigung (Projekt zuerst, dann neue Template-Eintraege) - unabhaengig von
-#       keep_local selbst. Schlaegt das Parsen einer Seite fehl, faellt es auf das alte Verhalten zurueck
+#       no_replace/template_only als Vereinigung (Projekt zuerst, dann neue Template-Eintraege) - unabhaengig
+#       von keep_local selbst. Schlaegt das Parsen einer Seite fehl, faellt es auf das alte Verhalten zurueck
 #       (Projektfassung komplett). Konflikte vom Typ "DD" (von beiden geloescht)
-#       werden immer automatisch bereinigt (unstrittig). Konflikte vom Typ "DU" (vom Projekt geloescht, im
-#       Template geaendert) werden NUR DANN automatisch als "geloescht belassen" entschieden, wenn der Pfad
-#       in keep_local steht UND keine Umbenennung erkennbar ist (siehe --conflicts) - das Script darf sonst
-#       nicht allein entscheiden, ob die Loeschung bewusst war oder nur eine Umbenennung/Verschiebung ist
-#       (typisch: docs/ai/ auf eigene Dateinamen migriert). Sonstige Konflikte in keep_local-Pfaden werden
-#       automatisch zugunsten der Projektfassung geloest; alle uebrigen (inkl. offen gelassener DU-Faelle)
-#       muessen von Hand geloest werden (Analyse siehe --conflicts, danach --continue). Ohne Konflikte bzw.
-#       nach deren Aufloesung: Platzhalter in den vom Merge beruehrten Textdateien (ausser keep_local und
-#       no_replace) ersetzen, base_commit/updates fortschreiben, git add.
+#       werden immer automatisch bereinigt (unstrittig). Ein Konflikt vom Typ "DU" auf einem template_only-
+#       Pfad (siehe DEFAULT_TEMPLATE_ONLY, z.B. .templatedev.md - create-project.py entfernt es beim Anlegen,
+#       seitdem "geloescht" aus Sicht des 3-Way-Merges) wird immer automatisch als "geloescht belassen"
+#       entschieden, ohne Rename-Pruefung - der Pfad ist bewusst und dauerhaft ausgeschlossen, nie eine
+#       Migration. Jeder ANDERE Konflikt vom Typ "DU" (vom Projekt geloescht, im Template geaendert) wird NUR
+#       DANN automatisch als "geloescht belassen" entschieden, wenn der Pfad in keep_local steht UND keine
+#       Umbenennung erkennbar ist (siehe --conflicts) - das Script darf sonst nicht allein entscheiden, ob die
+#       Loeschung bewusst war oder nur eine Umbenennung/Verschiebung ist (typisch: docs/ai/ auf eigene
+#       Dateinamen migriert). Sonstige Konflikte in keep_local-Pfaden werden automatisch zugunsten der
+#       Projektfassung geloest; alle uebrigen (inkl. offen gelassener DU-Faelle) muessen von Hand geloest
+#       werden (Analyse siehe --conflicts, danach --continue). Ohne Konflikte bzw. nach deren Aufloesung:
+#       template_only-Pfade werden aus dem Arbeitsbaum entfernt, falls sie doch hereingekommen sind (siehe
+#       _remove_template_only, greift NIE im Template-Checkout selbst); Platzhalter in den vom Merge
+#       beruehrten Textdateien (ausser keep_local und no_replace) ersetzen, base_commit/updates fortschreiben,
+#       git add.
 #   python .claude/scripts/update-template.py --continue [--commit]
 #       Nach manueller Konfliktaufloesung: prueft, dass keine Konflikte mehr offen sind, fuehrt den
 #       Abschlussschritt von --apply aus.
@@ -81,6 +87,9 @@
 # der Fall "Projekt entstand als Branch im Template-Checkout" (siehe create-project.py).
 # no_replace (template.json) = Dateien, die den Platzhalter selbst dokumentieren; sie werden gemergt, aber
 # nie ersetzt.
+# template_only (template.json) = Pfade, die es nur im Template gibt (siehe DEFAULT_TEMPLATE_ONLY). --check
+# zeigt sie getrennt als ausgelassen statt als einzuspielende Aenderung; --apply/--continue entfernt sie nach
+# dem Merge wieder aus dem Arbeitsbaum. Greift NIE im Template-Checkout selbst (Marker "is_template").
 #
 # git laeuft immer nicht-interaktiv (GIT_TERMINAL_PROMPT=0, stdin geschlossen): ein privates Template ohne
 # hinterlegten Credential-Helper meldet einen Fehler, statt im Hook auf eine Passworteingabe zu warten.
@@ -96,6 +105,7 @@ import difflib
 import fnmatch
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -148,6 +158,18 @@ DEFAULT_NO_REPLACE = [
     ".claude/scripts/setup-lib.py",
     ".claude/scripts/update-template.py",
     ".claude/scripts/sync-config.py",
+]
+
+# Pfade, die es NUR im Template-Checkout selbst gibt (Muss zu TEMPLATE_ONLY_PATHS in setup-lib.py passen -
+# kein Import zwischen den Scripten, jedes bleibt fuer sich Stdlib-eigenstaendig, siehe DEFAULT_NO_REPLACE
+# oben). `create-project.py` entfernt sie beim Anlegen eines Projekts, `apply-template.py` kopiert sie nie -
+# ein Merge darf sie darum nie ins Projekt tragen: `.templatedev.md` (Umbauliste/Fragen/Journal der
+# Template-Entwicklung) und `.github/README.md` (Template-Beschreibung fuer GitHub, hat Vorrang vor der
+# Projekt-README). Werden normal gemergt (--check zeigt sie nur getrennt als "nicht eingespielt"), aber
+# --apply/--continue entfernt sie danach wieder aus dem Arbeitsbaum - siehe _remove_template_only().
+DEFAULT_TEMPLATE_ONLY = [
+    ".github/README.md",
+    ".templatedev.md",
 ]
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
@@ -269,6 +291,7 @@ def default_config() -> dict:
         "values": {k: None for k in DEFAULT_VALUE_KEYS},
         "keep_local": list(DEFAULT_KEEP_LOCAL),
         "no_replace": list(DEFAULT_NO_REPLACE),
+        "template_only": list(DEFAULT_TEMPLATE_ONLY),
         "updates": [],
         "_hinweis": _HINWEIS,
     }
@@ -289,6 +312,8 @@ def load_template_json(root: Path):
                     cfg["keep_local"] = list(DEFAULT_KEEP_LOCAL)
                 if not isinstance(cfg.get("no_replace"), list):
                     cfg["no_replace"] = list(DEFAULT_NO_REPLACE)
+                if not isinstance(cfg.get("template_only"), list):
+                    cfg["template_only"] = list(DEFAULT_TEMPLATE_ONLY)
                 if not isinstance(cfg.get("updates"), list):
                     cfg["updates"] = []
         except (OSError, ValueError):
@@ -305,6 +330,7 @@ def save_template_json(root: Path, cfg: dict, path: Path) -> None:
         "values": cfg.get("values") or {},
         "keep_local": cfg.get("keep_local") or list(DEFAULT_KEEP_LOCAL),
         "no_replace": cfg.get("no_replace") if isinstance(cfg.get("no_replace"), list) else list(DEFAULT_NO_REPLACE),
+        "template_only": cfg.get("template_only") if isinstance(cfg.get("template_only"), list) else list(DEFAULT_TEMPLATE_ONLY),
         "updates": cfg.get("updates") or [],
     }
     # Unbekannte Felder (z.B. "is_template", vom Template-Checkout selbst gesetzt) nicht verwerfen - nur
@@ -500,15 +526,36 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         lines.extend(res_log.stdout.splitlines()[:20])
 
     keep_local = cfg.get("keep_local") or []
+    template_only = cfg.get("template_only") or []
+    is_template = bool(cfg.get("is_template"))
     res_diff = run_git(root, ["diff", "--name-status", f"{base}..{ref}"])
     diff_lines_raw = res_diff.stdout.splitlines() if res_diff.returncode == 0 else []
+
+    # template_only-Pfade (siehe DEFAULT_TEMPLATE_ONLY) NIE als einzuspielende Aenderung zeigen - sie werden
+    # nie ins Projekt gemergt (--apply raeumt sie danach ohnehin wieder weg). Greift nie im Template-Checkout
+    # selbst (is_template): dort sind es normale, gepflegte Dateien.
+    normal_lines, template_only_lines = [], []
+    for raw_line in diff_lines_raw:
+        parts = raw_line.split("\t")
+        rel_path = parts[-1] if parts else raw_line
+        if not is_template and matches_keep_local(rel_path, template_only):
+            template_only_lines.append(rel_path)
+        else:
+            normal_lines.append(raw_line)
+
     lines.append("")
     lines.append("Geaenderte Dateien:")
-    for raw_line in diff_lines_raw[:30]:
+    for raw_line in normal_lines[:30]:
         parts = raw_line.split("\t")
         rel_path = parts[-1] if parts else raw_line
         marker = "  (keep_local)" if matches_keep_local(rel_path, keep_local) else ""
         lines.append(raw_line + marker)
+
+    if template_only_lines:
+        lines.append("")
+        lines.append("Nur im Template, wird nicht eingespielt:")
+        for rel_path in template_only_lines[:30]:
+            lines.append(f"  {rel_path}")
 
     lines.append("")
     lines.append("Einspielen: Skill /update-template bzw. python .claude/scripts/update-template.py --apply")
@@ -821,19 +868,23 @@ def _merge_template_json_fields(ours, theirs):
     keep_local_theirs = (theirs or {}).get("keep_local") or []
     no_replace_ours = (ours or {}).get("no_replace") or []
     no_replace_theirs = (theirs or {}).get("no_replace") or []
+    template_only_ours = (ours or {}).get("template_only") or []
+    template_only_theirs = (theirs or {}).get("template_only") or []
     # Vereinigung, Reihenfolge: erst die Projekt-Eintraege in ihrer Reihenfolge, dann die neuen aus dem
     # Template, Duplikate raus. dict.fromkeys() haelt genau diese Reihenfolge und entfernt Duplikate.
     merged["keep_local"] = list(dict.fromkeys(list(keep_local_ours) + list(keep_local_theirs)))
     merged["no_replace"] = list(dict.fromkeys(list(no_replace_ours) + list(no_replace_theirs)))
+    merged["template_only"] = list(dict.fromkeys(list(template_only_ours) + list(template_only_theirs)))
     neu_keep_local = [p for p in keep_local_theirs if p not in keep_local_ours]
     neu_no_replace = [p for p in no_replace_theirs if p not in no_replace_ours]
+    neu_template_only = [p for p in template_only_theirs if p not in template_only_ours]
 
     # Unbekannte Felder: Projektfassung gewinnt, nur-im-Template-vorhandene Felder werden uebernommen.
     # "values" steht bewusst mit dabei, obwohl es nicht mehr in _TEMPLATE_JSON_OURS_FIELDS steht - es ist
     # oben bereits schluesselweise gemergt (_merge_template_json_values); ohne diesen Eintrag wuerde die
     # Schleife es hier als "unbekanntes Feld" nochmal aus ours ueberschreiben und die frisch ergaenzten
     # Template-Schluessel wieder verwerfen.
-    known = set(_TEMPLATE_JSON_OURS_FIELDS) | {"keep_local", "no_replace", "values"}
+    known = set(_TEMPLATE_JSON_OURS_FIELDS) | {"keep_local", "no_replace", "template_only", "values"}
     for key, value in (ours or {}).items():
         if key not in known:
             merged[key] = value
@@ -843,7 +894,7 @@ def _merge_template_json_fields(ours, theirs):
 
     hinweis = (
         f"template.json feldweise zusammengefuehrt: keep_local +{len(neu_keep_local)}, "
-        f"no_replace +{len(neu_no_replace)}"
+        f"no_replace +{len(neu_no_replace)}, template_only +{len(neu_template_only)}"
     )
     if neu_values:
         hinweis += f", values +{len(neu_values)} neu ({', '.join(neu_values)}) - Werte pruefen/setzen"
@@ -957,9 +1008,11 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             conflicts = get_unmerged_status(root)
 
             keep_local = cfg.get("keep_local") or []
+            template_only = cfg.get("template_only") or []
+            is_template = bool(cfg.get("is_template"))
             merge_head = _merge_head(root)
             rename_map = _find_renames(root, cfg.get("base_commit"), "HEAD")
-            auto_resolved, deleted_kept, dd_removed, du_decision = [], [], [], []
+            auto_resolved, deleted_kept, dd_removed, du_decision, template_only_removed = [], [], [], [], []
             for rel_path, code in conflicts.items():
                 if code == "DD":
                     # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
@@ -967,6 +1020,15 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     if res_rm.returncode != 0:
                         run_git(root, ["rm", "--cached", "--", rel_path])
                     dd_removed.append(rel_path)
+                elif code == "DU" and not is_template and matches_keep_local(rel_path, template_only):
+                    # Projekt hat den Pfad nie (mehr), Template hat ihn geaendert - genau der Fall, fuer den
+                    # template_only existiert (z.B. .templatedev.md: create-project.py entfernt es beim
+                    # Anlegen, seitdem "geloescht" aus Sicht des 3-Way-Merges). Keine Rename-Pruefung noetig -
+                    # dieser Pfad ist bewusst und dauerhaft ausgeschlossen, keine zu bewahrende Migration.
+                    res_rm = run_git(root, ["rm", "--", rel_path])
+                    if res_rm.returncode != 0:
+                        run_git(root, ["rm", "--cached", "--", rel_path])
+                    template_only_removed.append(rel_path)
                 elif code == "DU":
                     # Vom Projekt geloescht, vom Template geaendert. Das Script darf das NICHT allein
                     # entscheiden, wenn die "Loeschung" in Wahrheit nur eine Umbenennung/Verschiebung ist
@@ -990,6 +1052,8 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
 
             if auto_resolved:
                 print("keep_local automatisch uebernommen (Projektfassung gewinnt): " + ", ".join(sorted(auto_resolved)))
+            if template_only_removed:
+                print("Nur im Template, wird nicht eingespielt: " + ", ".join(sorted(template_only_removed)))
             if dd_removed:
                 print("Von beiden geloescht (unstrittig) -> entfernt: " + ", ".join(sorted(dd_removed)))
             if deleted_kept:
@@ -1014,7 +1078,41 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
     return _finalize(root, cfg, path, do_commit)
 
 
+def _remove_template_only(root: Path, cfg: dict) -> list:
+    """Entfernt Pfade aus `template_only` (siehe DEFAULT_TEMPLATE_ONLY), falls der Merge sie ins Projekt
+    gebracht hat - IM TEMPLATE-CHECKOUT SELBST (Marker "is_template") niemals, dort sind es normale, vom
+    Template selbst gepflegte Dateien. 'git rm -r -f --ignore-unmatch' entfernt Index UND Arbeitsbaum in
+    einem Schritt und meldet keinen Fehler, wenn der Pfad gar nicht existiert; ein danach trotzdem noch
+    vorhandener Pfad (z.B. von git nicht erfasste Dateien) wird direkt vom Dateisystem geloescht, damit keine
+    Karteileiche zurueckbleibt. Laeuft VOR dem Staging der Platzhalter-Ersetzung in _finalize(), damit ein
+    anschliessender Merge-Commit diese Pfade schon nicht mehr enthaelt. Rueckgabe: sortierte Liste der
+    tatsaechlich entfernten Pfade (leer = nichts zu tun)."""
+    if cfg.get("is_template"):
+        return []
+    template_only = cfg.get("template_only") if isinstance(cfg.get("template_only"), list) else list(DEFAULT_TEMPLATE_ONLY)
+    removed = []
+    for rel_path in template_only:
+        fp = root / rel_path
+        existed = fp.exists()
+        run_git(root, ["rm", "-r", "-f", "--ignore-unmatch", "--", rel_path])
+        if fp.exists():
+            try:
+                if fp.is_dir():
+                    shutil.rmtree(fp, ignore_errors=True)
+                else:
+                    fp.unlink()
+            except OSError:
+                pass
+        if existed:
+            removed.append(rel_path)
+    return sorted(removed)
+
+
 def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
+    removed_template_only = _remove_template_only(root, cfg)
+    if removed_template_only:
+        print("Nur im Template, aus dem Projekt entfernt: " + ", ".join(removed_template_only))
+
     res_cached = run_git(root, ["diff", "--cached", "--name-only"])
     res_unstaged = run_git(root, ["diff", "--name-only"])
     touched = set()
