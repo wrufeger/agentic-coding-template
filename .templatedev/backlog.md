@@ -59,8 +59,13 @@ sie werden in Journal und Commits zitiert.
    verlangen jetzt, die README zu **prüfen und zu überarbeiten**, wenn sie erkennbar nie angefasst wurde,
    mit Vorgabe für den Aufbau (Schnellstart, Befehlstabelle, Struktur, Doku-Wegweiser) und der Auflage,
    ehrlich zu bleiben — was rot ist oder fehlt, gehört sichtbar in die Tabelle.
-   Die Lehre dahinter: „ergänzen" ist eine schwächere Anweisung als gedacht. Wo eine Datei aus einer fremden
-   Vorlage stammt, muss die Regel sagen, dass sie **ersetzt** gehört, sonst wächst der neue Text oben drauf.
+   **Nachtrag am selben Tag:** Der erste Versuch war trotzdem falsch — die README begann mit dem technischen
+   Schnellstart, die Arbeitsweise stand als Abschnitt weit unten. Bei einem Projekt, das mit KI-Assistenten
+   entwickelt wird, gehört genau das nach oben, direkt nach der Einleitung, und zwar für Menschen lesbar mit
+   `AI-CONFIG.md` an erster Stelle. Die Regel sagt das jetzt ausdrücklich, samt Aufbau.
+   Die Lehre dahinter, zweimal dieselbe: **„ergänzen" und „erwähnen" sind schwache Anweisungen.** Wo die
+   Position und die Lesart zählen, muss die Regel beides vorgeben — sonst landet der wichtigste Teil unten
+   und liest sich wie eine Dateiliste.
 
 ## Erledigt
 

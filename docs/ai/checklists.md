@@ -270,8 +270,10 @@ nachträglich bekommen soll:
 7. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen.
    Die `README.md` prüfen und überarbeiten: Steht dort noch der Text der Projektvorlage („… Minimal
    Starter" o. Ä.), wird sie zu einer echten Projekt-README — was das Projekt ist, Schnellstart, Befehle,
-   Struktur, Wegweiser in die Doku; der generische Vorlagentext wandert ans Ende oder fällt weg. Dazu ein
-   Abschnitt „Zusammenarbeit mit KI-Assistenten" (Verweis auf die Regeldateien und `docs/ai/board.md`).
+   Struktur, Wegweiser in die Doku; der generische Vorlagentext wandert ans Ende oder fällt weg.
+   **Die Arbeitsweise steht dabei oben, direkt nach der Einleitung** — für Menschen lesbar, mit der
+   Konfigurationsdatei an erster Stelle (dort wird geändert, wie gearbeitet wird) und dem Board als
+   Sitzungseinstieg. Was im Projekt fehlt oder rot ist, wird sichtbar genannt, nicht weggelassen.
 8. **Prüf- und Testausstattung herstellen**, falls sie fehlt: die Prüfwerkzeuge des jeweiligen Stacks
    installieren und konfigurieren (bei Nuxt: ESLint, `vue-tsc`, Vitest, Playwright — siehe
    `docs/project/coding_rules.d/nuxt.md` § Werkzeuge). Kommen dabei Abhängigkeiten hinzu oder werden welche

@@ -117,6 +117,13 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/audit-docs [project\|ai\|alle]` | „Doku prüfen und nachziehen" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer`; Bereich `project` (Code-Abgleich) und/oder `ai` (Formprüfung Arbeitsordner), bewusst unabhängig von der optionalen Wartung |
 | `/run-maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `AI-CONFIG.md` `Wartung: aus`, entfernt `/create-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
 | `/update-template` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/update-template.py` |
+| `/onboard` | — (Mechanik ohne Checkliste) | ein fremdes Projekt verstehen; Ergebnis nach `docs/project/`, nicht in eine Chat-Antwort |
+| `/bug` | — (Mechanik ohne Checkliste) | Fehler beheben: reproduzieren, eingrenzen, **erst roter Test**, dann Fix |
+| `/refactor` | — (Mechanik ohne Checkliste) | umbauen ohne Verhaltensänderung; ohne Testnetz zuerst `/test-gap` |
+| `/test-gap` | — (Mechanik ohne Checkliste) | Testlücken nach **Risiko** priorisieren, nicht nach Coverage-Prozent |
+| `/deps` | — (Mechanik ohne Checkliste) | Abhängigkeiten aktualisieren: Major einzeln, je ein Commit |
+| `/perf` | — (Mechanik ohne Checkliste) | erst messen, dann ändern, erneut messen — sonst zurücknehmen |
+| `/release` | — (Mechanik ohne Checkliste) | Version, Änderungsprotokoll, Tag; nicht bei rotem Pflichtlauf |
 | `/design-ideas` | — (Mechanik ohne Checkliste) | drei bis vier Varianten als Vorschaubilder (Playwright), zur Auswahl; Wegwerf-Ordner `.design-varianten/`, kein Projektcode |
 | `/design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
 | `/design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |

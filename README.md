@@ -19,6 +19,12 @@ CLI oder ein lokales Modell. Es liefert:
 Der Kerngedanke: **ein Assistent orchestriert** (plant, prüft, committet), **weitere Assistenten/Sessions
 arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
 
+> **Neu bei Agentic Coding oder KI im Allgemeinen?** In **[`docs/ai/resources.md`](docs/ai/resources.md)**
+> liegt eine geprüfte Linksammlung: was Agentic Coding überhaupt ist, Einstiegsanleitungen der Hersteller,
+> die Dokumentation der gängigen Werkzeuge, Anbieter und lokale Modelle, Communities und laufende
+> Nachrichtenquellen — und ausdrücklich auch die bekannten Grenzen und Sicherheitsrisiken. Wer dort anfängt,
+> spart sich die ersten Umwege.
+
 ## Schnellstart — einfach sagen, was entstehen soll
 
 Claude Code im Ordner dieses Templates starten und einen Satz schreiben. Der Assistent erkennt daraus, welcher

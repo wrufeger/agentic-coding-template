@@ -72,9 +72,20 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    nie angefasst worden. Dann bekommt sie einen echten Kopf (was das Projekt ist, Schnellstart, Befehle als
    Tabelle, Struktur, Wegweiser in `docs/`), und der generische Vorlagentext wandert ans Ende oder fällt
    weg — Installationsvarianten für vier Paketmanager und Beispielbefehle stehen doppelt und meist auf
-   Englisch. Dazu der Abschnitt „Zusammenarbeit mit KI-Assistenten" (Verweis auf `AGENTS.md`, `CLAUDE.md`
-   und `docs/ai/board.md`). Ehrlich bleiben: Was rot ist oder fehlt (Typecheck, Tests, nicht verdrahtete
-   Bereiche), gehört sichtbar in die Befehlstabelle, nicht weggelassen.
+   Englisch.
+
+   **Die Arbeitsweise gehört nach oben, nicht nach unten.** Ein Projekt, das mit KI-Assistenten entwickelt
+   wird, sagt das **direkt nach der Einleitung** — vor dem technischen Schnellstart. Und zwar für Menschen
+   lesbar, nicht als Aufzählung von Dateinamen: eine kleine Tabelle der Dateien, die man kennen muss, mit
+   **`AI-CONFIG.md` an erster Stelle** (die Steuerung — dort wird geändert, wie gearbeitet wird, und sie
+   wirkt laufend), dann die Regeldateien und `docs/ai/board.md` als Sitzungseinstieg. Dazu drei kurze
+   Absätze: womit man anfängt (Assistent starten, Board lesen lassen), welche Skills es gibt, und wo die
+   Arbeit festgehalten wird — nichts Wichtiges bleibt im Chatverlauf. Ein Verweis auf `docs/ai/resources.md`
+   für Neueinsteiger gehört dazu.
+
+   Ehrlich bleiben: Was rot ist oder fehlt (Typecheck, Tests, nicht verdrahtete Bereiche), gehört sichtbar
+   in die Befehlstabelle und in die Einleitung, nicht weggelassen — wer das Repo öffnet, soll nicht
+   annehmen, es sei fertig.
 7. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `AI-CONFIG.md` § `Code-Analyse` (der Wert steht auch in
    der Ausgabe von `create-project.py`):
    - `nein` → überspringen, direkt zu Schritt 8.
