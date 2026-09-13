@@ -25,6 +25,9 @@ Kopf des Projekts ist {{AUFTRAGGEBER}}; dessen Codestil bleibt erhalten, solange
 - **Wird der Auftrag unterwegs deutlich größer als gedacht, melde das früh**, statt still weiterzuarbeiten.
   Eine kurze Zwischenmeldung mit dem, was schon steht, und einem Vorschlag zur Aufteilung ist wertvoller als
   ein Lauf, der sich hinzieht. Dasselbe gilt, wenn dich Nachträge zwingen, Fertiges zu verwerfen.
+- **Wirst du nach dem Zwischenstand gefragt, antworte sofort und mit einer Zahl:** was fertig ist, was noch
+  aussteht, wie viel Restaufwand du schätzt (Minuten oder Anteil), und was unerwartet kam. Keine Schätzung
+  abzugeben, weil sie unsicher ist, hilft niemandem — eine grobe Zahl mit Vorbehalt ist die Antwort.
 - **Kein Halbfertiges im Repo.** Wirst du abgebrochen oder brichst selbst ab, hinterlässt du entweder einen
   Stand, der für sich trägt (übersetzt, läuft, bricht nichts), oder gar keine Änderung — und sagst im
   Bericht, welche Dateien du angefasst hast und was fehlt.

@@ -87,9 +87,18 @@ zu dem hingesehen wird:
 
 | Stand des Laufs | Was der Orchestrator tut |
 | :--- | :--- |
-| ab ca. 10 Minuten oder 100.000 Token | Zwischenstand anfordern: Was steht, was fehlt, wie lange noch? |
-| ab ca. 20 Minuten oder 200.000 Token | Entscheiden: fertigmachen lassen, abbrechen oder eskalieren — nicht weiterlaufen lassen |
-| ab ca. 30 Minuten oder 300.000 Token | Abbrechen. Ein Lauf dieser Größe war falsch zugeschnitten |
+| ab ca. 5 Minuten oder 50.000 Token | Zwischenstand anfordern, mit **Schätzung des Restaufwands** |
+| ab ca. 15 Minuten oder 150.000 Token | Entscheiden: fertigmachen lassen, eskalieren oder abbrechen — nicht weiterlaufen lassen |
+| ab ca. 25 Minuten oder 250.000 Token | Abbrechen. Ein Lauf dieser Größe war falsch zugeschnitten |
+
+Die erste Nachfrage ist billig und stört kaum — der Worker antwortet in wenigen Zeilen und arbeitet weiter.
+Sie früh zu stellen lohnt sich doppelt: Sie zeigt nicht nur den Stand, sondern zwingt zu einer Zahl. Wer
+„ungefähr die Hälfte" nach fünf Minuten hört, weiß, dass der Auftrag zu groß war, und kann handeln,
+solange wenig verloren ist.
+
+**Was eine Zwischenmeldung enthalten muss:** was fertig ist, was noch aussteht, eine Schätzung des
+Restaufwands (Minuten oder Anteil), und ob etwas unerwartet dazwischenkam. Eine Meldung ohne Schätzung ist
+keine — dann wird nachgehakt oder abgebrochen.
 
 Erwartbar längere Läufe gibt es (breite Recherche, viele Testläufe). Dann wird das **vorher** im Auftrag
 gesagt und beim Start vermerkt — unerwartet lang ist etwas anderes als lang geplant.

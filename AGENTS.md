@@ -28,7 +28,9 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 - **Worker** — Sub-Agenten, zweite Sessions oder spezialisierte Modelle, die der Orchestrator beauftragt (z. B.
   Claude-Sub-Agenten, eine zweite Codex-/Cursor-Instanz, ein separater Ollama-Lauf). Arbeiten nach einem klar
   umrissenen Auftrag mit Kontext, Liefergegenstand und Format, liefern Ergebnis **plus Beleg** zurück. Ein Worker
-  committet **nie** und schreibt **nie** in `docs/ai/`.
+  committet **nie** und schreibt **nie** in `docs/ai/`. Wird er nach dem Zwischenstand gefragt, antwortet er
+  sofort und mit einer Zahl: was fertig ist, was aussteht, wie viel Restaufwand er schätzt. Wächst ihm ein
+  Auftrag unter den Händen, sagt er das von sich aus, statt still weiterzuarbeiten.
 - **Experte** — eine Eskalationsrolle für den Fall, dass ein Worker an derselben Aufgabe **zweimal** scheitert
   oder ein Fehler unlösbar erscheint: ein stärkeres/höher eingestelltes Modell bekommt den vollständigen Kontext
   (ursprünglicher Auftrag, beide Fehlversuche mit Ausgaben, bereits ausgeschlossene Ursachen) und sucht die
