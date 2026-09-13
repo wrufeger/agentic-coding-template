@@ -49,6 +49,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -151,10 +152,33 @@ def load_status_raw(root: Path):
 
 
 def save_status(root: Path, data: dict, path: Path) -> None:
+    """Schreibt atomar: erst in eine Temp-Datei im selben Verzeichnis, dann per os.replace an ihren Platz -
+    zwei gleichzeitige --done-Aufrufe verlieren so keinen Schreibvorgang mehr, und ein Leser sieht nie eine
+    halb geschriebene Datei (os.replace ist auf einem Dateisystem atomar). Die Temp-Datei bleibt bei einem
+    Fehler nicht liegen."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=str(path.parent),
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def _aufgaben(data: dict) -> dict:
@@ -200,7 +224,7 @@ def cmd_check(root: Path, quiet: bool) -> int:
     # AI-CONFIG.md bleibt seit create-project.py --finish dauerhaft im Projekt - anders als frueher (CONFIG.md
     # wurde geloescht) taugt ihre blosse Existenz daher nicht mehr als Signal. Massgeblich ist jetzt der
     # Vermerk "Einrichtung abgeschlossen am ..." in ihrer ersten Zeile (von --finish gesetzt, gleicher Text
-    # wie FINISH_MARKER_TEXT in create-project.py - hier dupliziert, kein Import). Fehlt er, ist das Projekt noch
+    # wie FINISH_MARKER_TEXT in setup-lib.py - hier dupliziert, kein Import). Fehlt er, ist das Projekt noch
     # nicht fertig angelegt (Template-Checkout, frischer Klon vor /create-project, oder /create-project ohne
     # --finish). Dann waeren alle Aufgaben "noch nie gelaufen" - das ist keine Faelligkeit, sondern der
     # Auslieferungszustand, und wuerde jede Sitzung mit einer sinnlosen Meldung eroeffnen.

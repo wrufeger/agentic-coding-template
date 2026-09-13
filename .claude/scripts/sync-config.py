@@ -5,7 +5,7 @@
 #        gleicht ab, was sich seit dem letzten Lauf geaendert hat, und setzt es um. Vergleichsgrundlage ist
 #        `.claude/template.json` § `applied_config` (von `create-project.py --apply` bzw. `--adopt`
 #        geschrieben) gegen den aktuellen Stand von AI-CONFIG.md. Baut bewusst NICHTS von dessen Parser/
-#        Normalisierern nach, sondern laedt create-project.py, migrate-project.py, guidelines.py,
+#        Normalisierern nach, sondern laedt setup-lib.py, rename-lib.py, guidelines.py,
 #        maintenance-check.py und update-template.py per importlib (Muster wie install-global.py) und ruft
 #        deren Funktionen direkt auf - Hinzufuegen (dort) und Entfernen (hier) laufen so nie auseinander.
 #        Reine Python-Stdlib, kein Paket noetig. Siehe AI-CONFIG.md (Kopf), CLAUDE.md § 1.
@@ -57,7 +57,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 # ---------------------------------------------------------------------------
-# Module per importlib laden (Muster wie install-global.py/migrate-project.py) - Parser/Normalisierer/
+# Module per importlib laden (Muster wie install-global.py/rename-lib.py) - Parser/Normalisierer/
 # Datei-Operationen leben in den jeweiligen Scripten, hier nur aufrufen.
 # ---------------------------------------------------------------------------
 
@@ -85,8 +85,8 @@ def load_modules(root: Path):
     """Gibt ein dict der benoetigten Module zurueck - fehlende (z.B. maintenance-check.py bei
     'Wartung: aus') werden als None eingetragen, Aufrufer pruefen das an der jeweiligen Stelle."""
     return {
-        "cp": _load_module(root, "create-project.py", "_sync_cp"),
-        "mp": _load_module(root, "migrate-project.py", "_sync_mp"),
+        "cp": _load_module(root, "setup-lib.py", "_sync_cp"),
+        "mp": _load_module(root, "rename-lib.py", "_sync_mp"),
         "gl": _load_module(root, "guidelines.py", "_sync_gl"),
         "mc": _load_module(root, "maintenance-check.py", "_sync_mc"),
         "tu": _load_module(root, "update-template.py", "_sync_tu"),
@@ -203,14 +203,14 @@ def plain_replace_in_repo(cp, root: Path, alt: str, neu: str):
 
 
 # ---------------------------------------------------------------------------
-# Wartungs-Hook in .claude/settings.json ergaenzen (Gegenstueck zu create-project.py:remove_maintenance_hook)
+# Wartungs-Hook in .claude/settings.json ergaenzen (Gegenstueck zu setup-lib.py:remove_maintenance_hook)
 # ---------------------------------------------------------------------------
 
 
 def _maintenance_hook_pieces_from_ref(tu, root: Path, ref: str):
     """(hook_eintraege, permission_eintraege) fuer maintenance-check.py aus der Template-Version von
     .claude/settings.json - dieselbe Erkennung (Kommando enthaelt 'maintenance-check.py' UND
-    'CLAUDE_PROJECT_DIR') wie create-project.py:remove_maintenance_hook, nur in die Gegenrichtung."""
+    'CLAUDE_PROJECT_DIR') wie setup-lib.py:remove_maintenance_hook, nur in die Gegenrichtung."""
     res = tu.run_git(root, ["show", f"{ref}:.claude/settings.json"])
     if res.returncode != 0:
         return [], []
@@ -330,7 +330,7 @@ def compute_current(cp, root: Path):
 # ---------------------------------------------------------------------------
 
 # Projektname/Auftraggeber/Orchestrator: echte Rufnamen, die zufaellig in Beispiel-Code/URLs auftauchen
-# koennen - dafuer rename_orchestrator() (Markdown-Schutz fuer Codebloecke/URLs, siehe migrate-project.py).
+# koennen - dafuer rename_orchestrator() (Markdown-Schutz fuer Codebloecke/URLs, siehe rename-lib.py).
 RENAME_KEYS = ["Projektname", "Auftraggeber", "Orchestrator"]
 # Befehls-Schluessel: der Wert (oder die Marke, wenn er leer ist) soll UEBERALL ersetzt werden, auch in
 # Codebloecken (z.B. docs/project/setup.md zeigt den Install-Befehl absichtlich in einem Codebeispiel) -
@@ -867,7 +867,7 @@ def _run(argv) -> int:
 
     mods = load_modules(root)
     if mods["cp"] is None or mods["tu"] is None:
-        print("Fehler: create-project.py/update-template.py fehlen unter .claude/scripts/ - kann nicht abgleichen.",
+        print("Fehler: setup-lib.py/update-template.py fehlen unter .claude/scripts/ - kann nicht abgleichen.",
               file=sys.stderr)
         return 2
 

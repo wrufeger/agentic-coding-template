@@ -34,8 +34,9 @@
     ".claude/maintenance/status.json"
   ],
   "no_replace": [
-    ".claude/scripts/create-project.py",
-    ".claude/scripts/update-template.py"
+    ".claude/scripts/setup-lib.py",
+    ".claude/scripts/update-template.py",
+    ".claude/scripts/sync-config.py"
   ],
   "updates": [],
   "_hinweis": "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte Platzhalterwerte) fuer spaetere Updates per Merge. Wird von `update-template.py --init` befuellt; `values` nie Secrets. `is_template: true` kennzeichnet den Template-Checkout selbst - `create-project.py --apply` verweigert dort die Arbeit auf dem Standard-Branch und entfernt das Feld, sobald daraus ein echtes Projekt geworden ist."

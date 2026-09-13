@@ -84,6 +84,7 @@ Satz mit einem Zielpfad statt als Skill-Aufruf. Zuordnung:
 | „Erstelle ein leeres Projekt in `<pfad>`" | dasselbe, aber **ohne Interview** — `AI-CONFIG.md` bleibt leer, es entsteht „MyApp" |
 | „Nutze das Template in `<pfad>`" (bestehendes Repo) | `apply-template.py --target <pfad>`, dann `/apply-template` im Zielordner |
 | … „und mache ein Code Review" | zusätzlich `Code-Analyse: vorschlagen` setzen, statt im Chat nachzufragen |
+| „Projekterstellung abschließen" / „Nachrüsten abschließen" / „Einrichtung fertig" | `/finalize` im Zielprojekt ausführen |
 
 Ablauf für einen Zielpfad, der noch nicht existiert:
 
@@ -106,6 +107,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/run-maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `AI-CONFIG.md` `Wartung: aus`, entfernt `/create-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
 | `/update-template` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/update-template.py` |
 | `/commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
+| `/finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project`/`apply-template` (Skills, Scripte) und sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
 
 ## 3. Token-/Modellregeln
 
@@ -176,17 +178,25 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
 │   │                            # optimizer (optional), maintenance-orchestrator (optional)
-│   ├── skills/                  # apply-template, audit-docs, create-project,
+│   ├── skills/                  # apply-template, audit-docs, create-project, finalize,
 │   │                            # run-maintenance, update-template, commit
+│   │                            # (apply-template und create-project verschwinden beim Abschluss der
+│   │                            # Einrichtung — Skill finalize, s. § 2)
 │   ├── maintenance/              # optional: Status/Intervalle + Runner für wiederkehrende Wartung
 │   ├── scripts/                  # Scripte statt Sub-Agent für wiederkehrende Vorgänge, ai-log.py (Logging),
-│   │                            # update-template.py (Template-Updates per Merge, --graft), create-project.py
-│   │                            # (Weg 1), apply-template.py (Weg 2, läuft aus dem Template-Checkout),
-│   │                            # migrate-project.py (Weg 2: KI-Ordner auf die Template-Struktur
-│   │                            # umstellen, Orchestrator-Name ersetzen — läuft im Zielrepo),
-│   │                            # maintenance-check.py (Fälligkeit der Wartung, SessionStart-Hook),
-│   │                            # sync-config.py (Änderungen an AI-CONFIG.md umsetzen, SessionStart-Hook),
-│   │                            # install-global.py (Rollen/Skills nach ~/.claude/ legen)
+│   │                            # update-template.py (Template-Updates per Merge, --graft), setup-lib.py
+│   │                            # (Bibliothek Weg 1 „Neues Projekt", von sync-config.py per importlib
+│   │                            # geladen; create-project.py davor nur noch dünner CLI-Wrapper),
+│   │                            # apply-template.py (Weg 2, läuft aus dem Template-Checkout), rename-lib.py
+│   │                            # (Bibliothek Weg 2 Struktur-Migration: KI-Ordner umstellen,
+│   │                            # Orchestrator-Name ersetzen — läuft im Zielrepo; migrate-project.py davor
+│   │                            # nur noch dünner CLI-Wrapper), maintenance-check.py (Fälligkeit der
+│   │                            # Wartung, SessionStart-Hook), sync-config.py (Änderungen an AI-CONFIG.md
+│   │                            # laufend umsetzen, SessionStart-Hook), install-global.py (Rollen/Skills
+│   │                            # nach ~/.claude/ legen), finish-setup.py (Skill finalize: entfernt
+│   │                            # create-project.py, apply-template.py, migrate-project.py,
+│   │                            # install-global.py und sich selbst — setup-lib.py/rename-lib.py bleiben,
+│   │                            # weil sync-config.py sie laufend braucht)
 │   ├── template.json              # Herkunft/Update-Stand, Werte, zuletzt umgesetzte AI-CONFIG (applied_config)
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example

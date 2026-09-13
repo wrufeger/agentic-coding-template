@@ -300,6 +300,14 @@ nehmen. Ablauf: Checkliste „Template-Update" (`docs/ai/checklists.md`); Claude
 keinen gemeinsamen Vorfahren mit dem Template — `update-template.py --graft` stellt ihn per leerem
 Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `--check`/`--apply` normal.
 
+Die Einrichtung selbst (Anlegen oder Nachrüsten) gilt erst als abgeschlossen, wenn {{AUFTRAGGEBER}} das
+ausdrücklich sagt — nicht automatisch am Ende der jeweiligen Checkliste. Danach verschwinden die Werkzeuge,
+die nur zum Anlegen/Nachrüsten gebraucht wurden, wieder aus dem Projekt (Checkliste „Einrichtung
+abschließen", `docs/ai/checklists.md`); was dauerhaft gebraucht wird — Template-Update, die laufend wirkende
+`AI-CONFIG.md`, Logging — bleibt unangetastet. Solange der Abschluss aussteht, erinnert eine kurze Meldung bei
+jedem Sitzungsstart daran; das gilt unabhängig vom Werkzeug, Mechanik-Details dazu stehen in der jeweiligen
+Ergänzungsdatei (Claude Code: `CLAUDE.md` § 2, Skill `/finalize`).
+
 ## Werkzeugspezifische Ergänzungsdateien
 
 | Werkzeug | Datei | Inhalt |

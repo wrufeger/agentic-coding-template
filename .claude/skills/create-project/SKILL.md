@@ -52,3 +52,7 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht** installieren — keine Standardantwort
    annehmen.
 9. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).
+10. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+    — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
+    `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
+    erinnert daran.

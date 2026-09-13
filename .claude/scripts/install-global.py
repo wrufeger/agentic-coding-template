@@ -169,7 +169,7 @@ def _strip_trailing_comment(value: str) -> str:
 
 
 def read_globale_ablage(own_root: Path) -> str:
-    """Liest AI-CONFIG.md -> "Globale Ablage" (siehe create-project.py:parse_config fuer das
+    """Liest AI-CONFIG.md -> "Globale Ablage" (siehe setup-lib.py:parse_config fuer das
     allgemeine Format). Fehlt die Datei/der Schluessel: "nein" (Default)."""
     path = own_root / "AI-CONFIG.md"
     if not path.exists():

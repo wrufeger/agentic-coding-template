@@ -220,6 +220,10 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
    siehe `no_replace` in `.claude/template.json`) und `AI-CONFIG.md` dürfen noch Platzhalter zeigen, alles
    andere klären.
 9. Commit per Pathspec nach Freigabe (Checkliste „Aufgabe abschließen").
+10. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
+    Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
+    „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"
+    bleibt alles liegen, bis {{AUFTRAGGEBER}} es später auslöst.
 
 ## Projekt nachrüsten
 
@@ -251,25 +255,60 @@ nachträglich bekommen soll:
      in `docs/project/` (vorhandene Projektdefinition hat Vorrang) und bei `README.md`/`.gitignore`, die nur
      ergänzt werden; **die strengere Regel gewinnt** in den Coding-Regeln — strengere Vorgaben des Templates
      werden immer übernommen.
-4. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
-5. `AI-CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/create-project.py --apply`
+4. **Fremde KI-Regeldateien einarbeiten.** Meldet `migrate-project.py --plan` aus Schritt 3 vorhandene
+   Regeldateien anderer Werkzeuge (`.junie/guidelines.md`, `.clinerules`, `.windsurfrules`, `.cursorrules`,
+   `.github/instructions/`, `AGENT.md`) in einer eigenen Kategorie: deren Inhalt nach `docs/project/
+   coding_rules.md` übernehmen, soweit dort noch nicht vorhanden (bei Widersprüchen die strengere Regel),
+   die Altdatei danach auf einen Verweis auf `AGENTS.md` eindampfen — nur löschen, wenn das Werkzeug sie gar
+   nicht mehr braucht und {{AUFTRAGGEBER}} zustimmt. Sonst gelten zwei Regelwerke nebeneinander und laufen
+   auseinander.
+5. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
+6. `AI-CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/create-project.py --apply`
    ausführen (ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt Werte).
-6. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
+7. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
    Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
    `docs/ai/board.md`).
-7. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `AI-CONFIG.md`
+8. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `AI-CONFIG.md`
    § `Code-Analyse` (`nein` | `vorschlagen` | `fragen`) oder — beim Default `fragen` — als einzelne Rückfrage
    im Gespräch, **nachdem** `docs/project/` befüllt ist. Bei „ja": den Bestand read-only prüfen (Struktur,
    Duplikate, tote Pfade, fehlende Tests, veraltete Abhängigkeiten, Sicherheitsrisiken) und das Ergebnis
    **nur** als priorisierte Vorschläge nach `docs/ai/backlog.md` schreiben (Sicherheit zuerst, je Punkt
    Befund, Fundstelle, Vorschlag, Aufwand). Kein Code wird geändert; Umsetzung erst, wenn {{AUFTRAGGEBER}}
    einen Punkt freigibt und er als Aufgabe in `tasks.md` landet.
-8. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
+9. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
    `python .claude/scripts/create-project.py --finish` ausführen.
-9. Commit per Pathspec nach Freigabe.
-10. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
+10. Commit per Pathspec nach Freigabe.
+11. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
    Voraussetzung für spätere `/update-template`-Läufe.
+12. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
+    Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
+    „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"
+    bleibt alles liegen, bis {{AUFTRAGGEBER}} es später auslöst.
+
+## Einrichtung abschließen
+
+Letzter, eigenständig ausgelöster Schritt nach „Neues Projekt" oder „Projekt nachrüsten": entfernt die
+Werkzeuge, die nur zum Anlegen bzw. Nachrüsten gebraucht wurden, aus dem fertig eingerichteten Projekt. Läuft
+nie automatisch am Ende der beiden Checklisten mit — {{AUFTRAGGEBER}} entscheidet, wann die Einrichtung
+wirklich fertig ist. Bis dahin erinnert ein kurzer Hinweis bei jedem Sitzungsstart daran, dass der Schritt
+noch offen ist.
+
+1. **Vorbedingung:** der Arbeitsbaum muss sauber sein — eine laufende Aufgabe zuerst regulär abschließen
+   (Checkliste „Aufgabe abschließen").
+2. `python .claude/scripts/finish-setup.py --plan` ausführen und vollständig zeigen: was entfernt wird, was
+   bewusst liegen bleibt, was inhaltlich noch offen ist.
+3. Meldet der Plan noch nicht eingearbeitete fremde KI-Regeldateien, diese zuerst erledigen (siehe Checkliste
+   „Projekt nachrüsten" Schritt 4) — sonst gelten zwei Regelwerke nebeneinander und laufen auseinander.
+4. **Einmal nachfragen**, auch wenn {{AUFTRAGGEBER}} den Schritt selbst ausgelöst hat — er ist nicht ohne
+   Weiteres rückgängig zu machen: „Einrichtung abschließen? Danach lassen sich in diesem Projekt keine neuen
+   Projekte mehr anlegen/nachrüsten. a) ja b) noch nicht". Ohne Antwort **nicht** ausführen.
+5. `python .claude/scripts/finish-setup.py --apply` ausführen: die Werkzeuge zum Anlegen und Nachrüsten
+   selbst verschwinden aus dem Projekt, dazu die beiden Checklisten-Abschnitte „Neues Projekt" und „Projekt
+   nachrüsten". Erhalten bleiben: Template-Update, die laufend wirkende `AI-CONFIG.md`, Logging sowie die
+   Checklisten „Doku prüfen und nachziehen" und „Aufgabe abschließen".
+6. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
+   Board-Kurzbilanz nachziehen — und per Pathspec committen (Checkliste „Aufgabe abschließen").
 
 ## Template-Update
 

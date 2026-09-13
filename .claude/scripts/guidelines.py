@@ -36,7 +36,7 @@
 #       vollstaendige Katalog.
 #   (b) `git ls-tree --name-only <ref>:docs/project/coding_rules.d`, <ref> aus derselben compare_ref-Logik
 #       wie `update-template.py` (Remote-Branch, sonst gleichnamiger lokaler Branch; update-template.py wird
-#       dafuer als Modul geladen wie create-project.py es tut - nicht dupliziert). Kein Remote/Branch
+#       dafuer als Modul geladen wie setup-lib.py es tut - nicht dupliziert). Kein Remote/Branch
 #       ermittelbar oder Fetch schlaegt fehl: (b) liefert nichts, ohne Fehler - (a) traegt trotzdem, was
 #       lokal schon da ist. `--list` funktioniert dann weiter (nur ohne "zusaetzlich verfuegbar"-Angabe);
 #       `--add` einer noch nicht lokalen Kennung meldet dann verstaendlich, dass die Quelle fehlt (Exit 2).
@@ -100,7 +100,7 @@ def _find_root() -> Path:
 
 def _load_template_update_module():
     """Laedt update-template.py als Modul (gleicher Ordner) - dieselbe Quelle fuer compare_ref/run_git wie
-    create-project.py, statt sie hier zu duplizieren."""
+    setup-lib.py, statt sie hier zu duplizieren."""
     tu_path = Path(__file__).resolve().parent / "update-template.py"
     spec = importlib.util.spec_from_file_location("_template_update_for_guidelines", tu_path)
     mod = importlib.util.module_from_spec(spec)

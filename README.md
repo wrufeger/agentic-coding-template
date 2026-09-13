@@ -49,6 +49,7 @@ im Projekt selbst.
 | `/audit-docs [project\|ai\|alle]` | Doku gegen den echten Stand prüfen und nachziehen |
 | `/commit` | Aufgabe abnehmen: archivieren, Doku-Index, Bilanz, Commit — nach **jeder** fertigen Aufgabe |
 | `/run-maintenance` | Wiederkehrende Wartung (optional, per `AI-CONFIG.md` abwählbar) |
+| `/finalize` | Einrichtung für abgeschlossen erklären: Anlege-/Nachrüst-Werkzeuge aus dem Projekt entfernen |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den Satz sagen: „Führe die Checkliste
 Neues Projekt aus (`docs/ai/checklists.md`)."
@@ -74,8 +75,15 @@ das Projekt entsteht dann als Branch, Updates kommen später per Merge aus `main
 Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/apply-template`: Der Assistent
 dokumentiert den Ist-Zustand, schlägt die Struktur-Migration vor (vorhandene KI-Ordner wandern nach
 `docs/ai/`, der bisherige Rufname des Assistenten wird projektweit ersetzt, Regeldateien werden
-zusammengeführt) und fragt, ob er zusätzlich den Code prüfen soll. Zum Schluss verknüpft
-`python .claude/scripts/update-template.py --graft` die Historien, damit spätere Updates funktionieren.
+zusammengeführt — dazu zählen auch Regeldateien anderer KI-Werkzeuge wie `.clinerules` oder `.cursorrules`,
+deren Inhalt nach `docs/project/coding_rules.md` wandert) und fragt, ob er zusätzlich den Code prüfen soll.
+Zum Schluss verknüpft `python .claude/scripts/update-template.py --graft` die Historien, damit spätere
+Updates funktionieren.
+
+**Einrichtung abschließen.** Beide Wege enden mit einer Rückfrage, ob die Einrichtung damit fertig ist oder
+noch etwas kommt. Bei „fertig" verschwinden die Werkzeuge zum Anlegen/Nachrüsten wieder aus dem Projekt
+(`/finalize`, Checkliste „Einrichtung abschließen"); bei „noch nicht" bleibt alles liegen, bis
+{{AUFTRAGGEBER}} den Abschluss später auslöst — ein Hinweis bei jedem Sitzungsstart erinnert so lange daran.
 
 ## Global statt nur in diesem Projekt
 

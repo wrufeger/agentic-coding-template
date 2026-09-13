@@ -50,20 +50,26 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    Markdown in **Unterordnern** eines alten KI-Ordners (typisch `archiv/`) verschiebt das Script bewusst nicht;
    es listet die Dateien auf, die Zuordnung machst du von Hand. Leer gewordene Altordner erst nach Sichtung
    entfernen.
-3. Sub-Agent `explorer` (Sonnet) analysiert das bestehende Repo: Projektname (`package.json` o. Ä.), Stack,
+3. **Fremde KI-Regeldateien einarbeiten.** Meldet `migrate-project.py --plan` aus Schritt 2 vorhandene
+   Regeldateien anderer Werkzeuge (`.junie/guidelines.md`, `.clinerules`, `.windsurfrules`, `.cursorrules`,
+   `.github/instructions/`, `AGENT.md`) in einer eigenen Kategorie: Inhalt per Sub-Agent `doc-writer`
+   (Sonnet) nach `docs/project/coding_rules.md` übernehmen, soweit dort noch nicht vorhanden (bei
+   Widersprüchen die strengere Regel), die Altdatei danach auf einen Verweis auf `AGENTS.md` eindampfen —
+   nur löschen, wenn das Werkzeug sie gar nicht mehr braucht und {{AUFTRAGGEBER}} zustimmt.
+4. Sub-Agent `explorer` (Sonnet) analysiert das bestehende Repo: Projektname (`package.json` o. Ä.), Stack,
    Verzeichnisstruktur, Tests, Befehle (Install/Dev-Start/Lint/Typecheck/Test/E2E), CI — Rückgabe ≤ 40
    Zeilen mit Belegen (`Datei:Zeile`).
-4. `AI-CONFIG.md` daraus befüllen (Projektname, Stack, Befehle; `KI-Werkzeuge` nach kurzer Rückfrage an
+5. `AI-CONFIG.md` daraus befüllen (Projektname, Stack, Befehle; `KI-Werkzeuge` nach kurzer Rückfrage an
    {{AUFTRAGGEBER}}, welche Werkzeuge im Projekt genutzt werden). Danach `python .claude/scripts/
    create-project.py --apply` ausführen — ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt
    die Werte in `.claude/template.json`.
-5. `docs/project/*` mit dem **echten IST-Zustand** befüllen — nicht raten, am Code prüfen (Sub-Agent
+6. `docs/project/*` mit dem **echten IST-Zustand** befüllen — nicht raten, am Code prüfen (Sub-Agent
    `doc-writer`, Sonnet). `.gitignore`-Vorschläge aus Schritt 1 übernehmen (von Hand zusammenführen, nie
    automatisch überschreiben). Im Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten"
    ergänzen (Verweis auf `AGENTS.md` und `docs/ai/board.md`).
-6. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `AI-CONFIG.md` § `Code-Analyse` (der Wert steht auch in
+7. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `AI-CONFIG.md` § `Code-Analyse` (der Wert steht auch in
    der Ausgabe von `create-project.py`):
-   - `nein` → überspringen, direkt zu Schritt 7.
+   - `nein` → überspringen, direkt zu Schritt 8.
    - `fragen` (Default) → jetzt, **nach** dem Befüllen von `docs/project/`, einmal im Chat nachfragen:
      „`docs/project/` ist befüllt. Soll ich zusätzlich den Bestand prüfen und Verbesserungen vorschlagen
      (nur Vorschläge in `docs/ai/backlog.md`, kein Code wird geändert)? a) ja b) nein". Ohne Antwort **nicht**
@@ -75,12 +81,12 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    Ergebnis geht **ausschließlich** als priorisierte Liste nach `docs/ai/backlog.md` (Sicherheit zuerst, je
    Punkt: Befund, Fundstelle `Datei:Zeile`, Vorschlag, geschätzter Aufwand) — kein Code wird geändert, keine
    Aufgabe wird angelegt. {{AUFTRAGGEBER}} entscheidet dort mit einem Marker, was in `docs/ai/tasks.md` wandert.
-7. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
+8. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
    Beleg: was `apply-template.py` kopiert/übersprungen hat, was befüllt wurde, ob eine Code-Analyse lief).
-8. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 5/7, schreibt danach
+9. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 6/8, schreibt danach
    `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
    „Einrichtung" bleiben).
-9. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
+10. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
    `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
    --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
    {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**
@@ -88,9 +94,13 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    zusätzlich nach `~/.claude/` gelegt werden, damit sie in allen Projekten dieses Rechners gelten — auch
    ohne dieses Template? a) nein b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht**
    installieren — keine Standardantwort annehmen.
-10. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
-11. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
+11. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
+12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
    Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/update-template`-Läufe).
+13. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+   — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
+   `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
+   erinnert daran.
 
 ## Grenzen
 

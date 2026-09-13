@@ -98,6 +98,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -144,13 +145,13 @@ DEFAULT_KEEP_LOCAL = [
 # normal gemergt, aber NIE ersetzt - sonst macht ein Update aus "Alle Platzhalter (`{{PROJEKTNAME}}`, ...)"
 # die Zeile "Alle Platzhalter (`Kundenportal`, ...)" und die Anleitung ist kaputt.
 DEFAULT_NO_REPLACE = [
-    ".claude/scripts/create-project.py",
+    ".claude/scripts/setup-lib.py",
     ".claude/scripts/update-template.py",
     ".claude/scripts/sync-config.py",
 ]
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
-# migrate-project.py - dort nachsehen/nachziehen, falls sich die Regeln je aendern - z.B. die
+# rename-lib.py - dort nachsehen/nachziehen, falls sich die Regeln je aendern - z.B. die
 # docs/ai/resources.md-Sonderregel unten). Die Regeln stehen hier nur noch als priority_label()-Logik, ohne
 # eigene String-Konstante (die gab es fuer --conflicts nie zu lesen).
 
@@ -314,9 +315,31 @@ def save_template_json(root: Path, cfg: dict, path: Path) -> None:
         ordered[key] = value
     ordered["_hinweis"] = cfg.get("_hinweis") or _HINWEIS
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(ordered, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    # Atomar schreiben: erst in eine Temp-Datei im selben Verzeichnis, dann per os.replace an ihren Platz -
+    # bricht der Lauf (z.B. --apply) danach ab, bleibt entweder der alte oder der vollstaendige neue Stand
+    # liegen, nie ein halb geschriebener. Die Temp-Datei bleibt bei einem Fehler nicht liegen.
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=str(path.parent),
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
+            json.dump(ordered, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def matches_keep_local(rel_path: str, patterns) -> bool:
