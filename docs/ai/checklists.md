@@ -69,7 +69,9 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
 - **Nicht delegieren:** kleine Einzeldatei-Fixes, alles, was `docs/ai/` beschreibt (nur der Orchestrator
   schreibt dort), finale Commits, finale Urteile/Freigaben.
 - **Auftrags-Regeln:** jeder Auftrag nennt Kontext (2–3 Sätze), konkreten Liefergegenstand, Format des
-  Ergebnisses, was zu ignorieren ist (Build-Ordner, `node_modules`, `.git`, generierte Dateien).
+  Ergebnisses, was zu ignorieren ist (Build-Ordner, `node_modules`, `.git`, generierte Dateien) und die
+  **erwartete Dauer** — der Orchestrator schätzt sie vor dem Start und misst den Lauf später dagegen
+  (siehe „Laufende Worker überwachen").
 - Unabhängige Worker **immer gleichzeitig** starten, nicht nacheinander.
 - Worker-Ergebnisse sind Rohmaterial: der Orchestrator verifiziert Kernaussagen stichprobenartig am Code, bevor
   sie in Board, Doku oder Entscheidungen wandern.
@@ -79,26 +81,39 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
 ### Laufende Worker überwachen
 
 **Wer delegiert, wartet nicht blind.** Ein Worker, der läuft, kostet Zeit und Geld, auch wenn er beschäftigt
-aussieht. Dass er seine Aufgabe ständig aktualisiert, ist **kein** Beleg für Fortschritt. Der Orchestrator
-behält Laufzeit und Verbrauch im Auge und greift ein, bevor der Lauf teuer wird.
+aussieht. Dass er seine Aufgabenzeile aktualisiert, ist **kein** Beleg für Fortschritt.
 
-Richtwerte für einen gewöhnlichen Umsetzungsauftrag — nicht als Grenzwert zu verstehen, sondern als Zeitpunkt,
-zu dem hingesehen wird:
+**Die Schätzung macht der Orchestrator, vor dem Start.** Wer den Auftrag schneidet, weiß am besten, wie groß
+er ist — der Worker sieht sich selbst nicht von außen und neigt dazu, das Ende für nah zu halten. Also: vor
+dem Start eine erwartete Dauer festlegen, sie dem Worker im Auftrag nennen (er hat dann eine Referenz) und
+den Lauf gegen diese Zahl messen, nicht gegen eine feste Uhrzeit.
 
-| Stand des Laufs | Was der Orchestrator tut |
+Anhaltspunkte für die Schätzung:
+
+| Auftragsart | erwartete Dauer |
 | :--- | :--- |
-| ab ca. 5 Minuten oder 50.000 Token | Zwischenstand anfordern, mit **Schätzung des Restaufwands** |
-| ab ca. 15 Minuten oder 150.000 Token | Entscheiden: fertigmachen lassen, eskalieren oder abbrechen — nicht weiterlaufen lassen |
-| ab ca. 25 Minuten oder 250.000 Token | Abbrechen. Ein Lauf dieser Größe war falsch zugeschnitten |
+| Kurzcheck: lesen, zählen, Existenz prüfen | unter 1 Minute |
+| Recherche über mehrere Dateien, Fundstellen belegen | 2 bis 5 Minuten |
+| Umsetzung in wenigen Dateien, mit Beleg | 3 bis 8 Minuten |
+| Umsetzung mit eigenen Testläufen über mehrere Dateien | 8 bis 15 Minuten |
+| Breite Web-Recherche mit Prüfung jeder Quelle | 5 bis 15 Minuten |
 
-Die erste Nachfrage ist billig und stört kaum — der Worker antwortet in wenigen Zeilen und arbeitet weiter.
-Sie früh zu stellen lohnt sich doppelt: Sie zeigt nicht nur den Stand, sondern zwingt zu einer Zahl. Wer
-„ungefähr die Hälfte" nach fünf Minuten hört, weiß, dass der Auftrag zu groß war, und kann handeln,
-solange wenig verloren ist.
+Gemessen wird am Vielfachen der eigenen Schätzung, nicht an absoluten Minuten:
 
-**Was eine Zwischenmeldung enthalten muss:** was fertig ist, was noch aussteht, eine Schätzung des
-Restaufwands (Minuten oder Anteil), und ob etwas unerwartet dazwischenkam. Eine Meldung ohne Schätzung ist
-keine — dann wird nachgehakt oder abgebrochen.
+| Stand gegenüber der Schätzung | Was der Orchestrator tut |
+| :--- | :--- |
+| doppelte Zeit | Zwischenstand anfordern: was steht, was fehlt, was kam dazwischen |
+| dreifache Zeit | Entscheiden: fertigmachen lassen, eskalieren oder abbrechen — nicht weiterlaufen lassen |
+| fünffache Zeit | Abbrechen. Die Schätzung war um eine Größenordnung daneben, also der Zuschnitt auch |
+
+Ein Auftrag von einer halben Minute wird damit nach zwei Minuten geprüft, nicht erst nach fünf. Zusätzlich
+gilt ein harter Deckel unabhängig von der Schätzung: **ab etwa 25 Minuten oder 250.000 Token wird abgebrochen**,
+auch wenn der Lauf als lang geplant war.
+
+**Die Bewertung bleibt beim Orchestrator.** Der Worker liefert Fakten — was fertig ist, was aussteht, was
+unerwartet kam. Ob das noch im Rahmen liegt, entscheidet der, der den Auftrag geschnitten hat. Eine
+Selbsteinschätzung des Workers ist ein Hinweis, kein Urteil: Wer seit zwanzig Minuten läuft und „fast fertig"
+meldet, hat sich schon einmal verschätzt.
 
 Erwartbar längere Läufe gibt es (breite Recherche, viele Testläufe). Dann wird das **vorher** im Auftrag
 gesagt und beim Start vermerkt — unerwartet lang ist etwas anderes als lang geplant.

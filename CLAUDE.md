@@ -31,10 +31,11 @@ folgenden Sub-Agenten sind die Worker:
 - Mehrere unabhängige Prüfungen immer **parallel** starten (ein Nachrichtenblock, mehrere Agent-Aufrufe).
 - **Laufende Sub-Agenten beobachten** — Pflicht, nicht Kür (Richtwerte und Eskalationswege in der Checkliste
   „Delegation" § „Laufende Worker überwachen"). `ListAgents` zeigt, wer läuft und seit wann; die
-  Abschlussmeldung nennt Tokenverbrauch und Dauer. Grobe Marken: ab **5 Minuten oder 50.000 Token**
-  Zwischenstand per `SendMessage` anfordern und dabei ausdrücklich nach dem **geschätzten Restaufwand**
-  fragen, ab **15 Minuten oder 150.000 Token** entscheiden, ab **25 Minuten oder 250.000 Token** mit
-  `TaskStop` beenden. Die erste Nachfrage kostet fast nichts — der Worker antwortet und arbeitet weiter. Dass ein Agent seine Aufgabenzeile aktualisiert, belegt keinen
+  Abschlussmeldung nennt Tokenverbrauch und Dauer. Gemessen wird gegen die **eigene Schätzung vor dem
+  Start**, die auch im Auftrag steht: bei doppelter Zeit Zwischenstand per `SendMessage` anfordern, bei
+  dreifacher entscheiden, bei fünffacher mit `TaskStop` beenden. Ein Kurzcheck von 30 Sekunden wird damit
+  nach zwei Minuten geprüft, nicht erst nach fünf. Harter Deckel unabhängig davon: **25 Minuten oder
+  250.000 Token**. Die Nachfrage kostet fast nichts — der Worker antwortet und arbeitet weiter. Dass ein Agent seine Aufgabenzeile aktualisiert, belegt keinen
   Fortschritt. Beim Eingreifen zuerst fertigmachen lassen, wenn nur Feinschliff fehlt; hängt der Worker an der
   Sache selbst, dasselbe Problem mit `model: opus` oder `expert-solver` neu ansetzen statt es zu wiederholen;
   sonst abbrechen und den Auftrag neu schneiden. Mehrfach nachgebesserte Aufträge sind ebenfalls ein
