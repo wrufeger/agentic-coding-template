@@ -42,6 +42,16 @@ sie werden in Journal und Commits zitiert.
    KI-generierte Werke sind nicht automatisch urheberrechtlich geschützt (menschlicher Schöpfungsanteil
    nötig) — bei einem Logo ist das wichtiger als die Bildqualität, steht deshalb im Skill.
 
+25. -> machen: **MCP-Auswahl aus `AI-CONFIG.md` automatisch einrichten** (Priorität mittel, angelegt
+   2026-09-14): Der Schlüssel `MCP-Server` hält heute nur fest, welche Server zum Projekt gehören —
+   eingerichtet werden sie von Hand. Zu bauen: `sync-config.py` liest die Kennungen, gleicht sie gegen
+   `.claude/mcp-katalog.md` ab und schreibt die Einträge nach `.mcp.json` (Secrets nur als `${VAR}`, nie
+   Werte). Aufnehmen läuft automatisch durch, **Entfernen braucht eine Zusage** — in `.mcp.json` kann
+   inzwischen projekteigene Konfiguration stehen. Dazu: unbekannte Kennungen melden statt still übergehen,
+   und die benötigten Umgebungsvariablen in `.env.example` ergänzen, damit sichtbar ist, was fehlt.
+   Voraussetzung ist ein maschinenlesbarer Katalog — die Markdown-Tabelle taugt dafür nur bedingt, ein
+   `.claude/mcp-katalog.json` neben der Doku wäre der sauberere Weg.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):
