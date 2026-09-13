@@ -39,11 +39,7 @@
 #
 # Verfolgte Schluessel (applied_config, siehe setup-lib.py:build_applied_config): Projektname, Auftraggeber,
 # Orchestrator, Sprache, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
-# Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung, Design. Design ist NICHT
-# symmetrisch wie Code-Optimierung: "aus" -> "ein"/"fragen" laedt docs/project/design.md aus dem Template
-# nach (automatisch), "ein"/"fragen" -> "aus" loescht die Datei UND ihre Indexzeile in docs/README.md (nur
-# mit --yes, siehe setup-lib.py:remove_design_files) - eine bestehende Datei kann echten Projektinhalt
-# tragen. Stack/Sprache stehen als
+# Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Stack/Sprache stehen als
 # Fliesstext in Dokumentation - eine Aenderung wird nur uebernommen und mit den Fundstellen des ALTEN Werts
 # gemeldet (`find_literal_occurrences`), NIE automatisch ersetzt (Risiko falscher Treffer in Prosa); dasselbe
 # gilt fuer Commit-Verhalten (reines Orchestrator-Verhalten, keine Datei-Wirkung) - alle drei fielen vorher
@@ -352,9 +348,6 @@ def compute_current(cp, root: Path):
     commit_verhalten, commit_verhalten_unbekannt = cp.normalize_commit_verhalten(cfg)
     if commit_verhalten_unbekannt:
         fehler.append(f"Commit-Verhalten: \"{commit_verhalten_unbekannt}\" unbekannt (automatisch, fragen, manuell).")
-    design, design_unbekannt = cp.normalize_design(cfg)
-    if design_unbekannt:
-        fehler.append(f"Design: \"{design_unbekannt}\" unbekannt (aus, ein, fragen).")
     # Bewusst NICHT cp.parse_coding_guidelines() (dessen "unbekannt" nur den LOKALEN Ordner prueft) - eine
     # Kennung, die lokal fehlt, aber im Template existiert, waere sonst faelschlich "unbekannt". Die echte
     # Pruefung (lokal + Template-Katalog) macht guidelines.py --add beim Ausfuehren.
@@ -375,7 +368,7 @@ def compute_current(cp, root: Path):
     snapshot = cp.build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
-        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten, design=design,
+        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
     )
     return cfg, values, snapshot, fehler, hinweise
 
@@ -530,17 +523,6 @@ def compute_diffs(old: dict, current: dict) -> list:
             kind, kat, wirkung = "code_opt_level", "automatisch", "keine Datei-Aenderung (nur Verhalten)"
         diffs.append({"key": "Code-Optimierung", "old": old_co, "new": new_co, "kategorie": kat,
                       "kind": kind, "marker": ["Code-Optimierung"], "wirkung": wirkung})
-
-    old_de, new_de = old.get("Design"), current.get("Design")
-    if old_de != new_de:
-        if old_de == "aus" and new_de in ("ein", "fragen"):
-            kind, kat, wirkung = "design_add", "automatisch", "docs/project/design.md aus dem Template nachladen"
-        elif old_de in ("ein", "fragen") and new_de == "aus":
-            kind, kat, wirkung = "design_remove", "zusage", "docs/project/design.md + Indexzeile entfernen"
-        else:
-            kind, kat, wirkung = "design_level", "automatisch", "keine Datei-Aenderung (nur Verhalten)"
-        diffs.append({"key": "Design", "old": old_de, "new": new_de, "kategorie": kat,
-                      "kind": kind, "marker": ["Design"], "wirkung": wirkung})
 
     return diffs
 
@@ -776,38 +758,6 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
     if kind == "code_opt_level":
         lines.append("Nur Stand uebernommen - Agentenverhalten liest AI-CONFIG.md direkt, keine Datei geaendert.")
         ref_holder["executed"].add("Code-Optimierung")
-        return lines
-
-    if kind == "design_add":
-        ref, hinweis, fehler = _get_ref(ref_holder, tu, root)
-        if hinweis:
-            lines.append(hinweis)
-        if fehler:
-            lines.append(f"Design nachladen: {fehler}")
-            return lines
-        geholt, vorhanden, fehl, offen = fetch_paths(tu, root, ref, cp.DESIGN_REMOVE_PATHS, values)
-        lines.append(f"design.md: {'geholt' if geholt else 'bereits vorhanden' if vorhanden else 'FEHLER'}")
-        if fehl:
-            lines.append(f"  FEHLER: {fehl}")
-        if offen:
-            lines.append(f"  Achtung, noch Platzhalter offen: {offen}")
-        if geholt:
-            lines.append("  Hinweis: docs/README.md ggf. von Hand um die Indexzeile fuer design.md ergaenzen.")
-        ref_holder["executed"].add("Design")
-        return lines
-
-    if kind == "design_remove":
-        if not yes:
-            lines.append("(Vorschau) wuerde docs/project/design.md + Indexzeile in docs/README.md entfernen.")
-            return lines
-        removed = cp.remove_design_files(root)
-        lines.append(f"Entfernt: {removed or '(nichts gefunden)'}")
-        ref_holder["executed"].add("Design")
-        return lines
-
-    if kind == "design_level":
-        lines.append("Nur Stand uebernommen - 'fragen' wird wie 'ein' behandelt, keine Datei geaendert.")
-        ref_holder["executed"].add("Design")
         return lines
 
     lines.append(f"Unbekannte Diff-Art '{kind}' - uebersprungen.")

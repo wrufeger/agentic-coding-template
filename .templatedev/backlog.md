@@ -21,7 +21,7 @@ sie werden in Journal und Commits zitiert.
    Template, nicht in der Notiz. **Umfang unbekannt:** Erst nach dem Durchgang lässt sich sagen, ob das eine
    Sitzung wird oder mehrere; bei mehr als etwa zehn Kandidaten in Teilaufgaben je Themenbereich schneiden.
 
-23. -> erledigt (2026-09-14): **Design-Wege über `/design` hinaus.** Recherchiert und in `CLAUDE.md` § 5
+23. -> erledigt (2026-09-14), teils überholt durch Punkt 24: **Design-Wege über `/design` hinaus.** Recherchiert und in `CLAUDE.md` § 5
    als Tabelle aufgenommen: Screenshot direkt einfügen (Grenzen: 8000 × 8000 px, 10 MB, unter 200 px
    unzuverlässig), Webseite über einen Chrome-Screenshot statt `WebFetch` (das liefert nur HTML als Text),
    Figma über den offiziellen MCP-Server (remote per Plugin oder Desktop über `127.0.0.1:3845/mcp`, als
@@ -29,6 +29,18 @@ sie werden in Journal und Commits zitiert.
    **Rückkanal**: die laufende Anwendung in Claude in Chrome öffnen und das Gebaute gegen die Vorlage prüfen —
    Anthropic nennt genau diesen Ablauf als Beispiel. Faustregel für ein bestehendes Projekt mit
    Komponentenbibliothek: Screenshot → echter Code → Prüfung im Browser, ohne Zwischenformat.
+
+24. -> erledigt (2026-09-14): **Design-Schalter raus, MCP-Katalog und drei Design-Skills rein.** Der Schalter
+   `Design` für Claude Design ist zurückgebaut — ein Schalter für ein einzelnes Cloud-Werkzeug war der
+   falsche Zuschnitt. Stattdessen: `.claude/mcp-katalog.md` mit 21 geprüften MCP-Servern (Kennung, Anbieter,
+   Transport, Secrets, Reifegrad, Einbindungsbefehl), auswählbar über `AI-CONFIG.md` § `MCP-Server`; dazu die
+   Skills `/design-ideas` (drei bis vier Varianten als Playwright-Screenshots zur Auswahl), `/design-build`
+   (umsetzen im echten Code, Selbstprüfung im Browser, höchstens drei Runden) und `/design-assets` (Logo,
+   Icons, Favicons als SVG; Rasterbilder nur über ein Bildmodell per MCP).
+   **Zwei Befunde aus der Recherche, die den Zuschnitt bestimmt haben:** Claude erzeugt keine Rasterbilder —
+   SVG ist Code und geht, alles Fotorealistische braucht einen externen Dienst mit Kosten je Bild. Und rein
+   KI-generierte Werke sind nicht automatisch urheberrechtlich geschützt (menschlicher Schöpfungsanteil
+   nötig) — bei einem Logo ist das wichtiger als die Bildqualität, steht deshalb im Skill.
 
 ## Erledigt
 

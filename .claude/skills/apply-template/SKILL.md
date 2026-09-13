@@ -83,22 +83,10 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    Aufgabe wird angelegt. {{AUFTRAGGEBER}} entscheidet dort mit einem Marker, was in `docs/ai/tasks.md` wandert.
 8. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag „Template nachgerüstet" schreiben (mit
    Beleg: was `apply-template.py` kopiert/übersprungen hat, was befüllt wurde, ob eine Code-Analyse lief).
-9. **Design anbieten — nur bei einem Projekt mit Oberfläche** (`AI-CONFIG.md` § `Design`): `aus` → nichts tun.
-   `ein` → `docs/project/design.md` bleibt und wird im Doku-Index geführt. `fragen` (Default) → **einmal**
-   nachfragen, und zwar nur, wenn das Projekt überhaupt eine Oberfläche hat (Frontend-Verzeichnis,
-   UI-Bibliothek, Templates — bei einer reinen Bibliothek oder einem CLI entfällt die Frage):
-
-   „Soll Claude Design (`/design`) für UI-Entwürfe genutzt werden? Die Entwürfe liegen als Artifact in der
-   Cloud, nicht im Repo; `docs/project/design.md` verzeichnet sie. Voraussetzungen und Grenzen stehen in
-   `CLAUDE.md` § Design. a) ja b) nein"
-
-   Ohne Antwort **nicht** einschalten. Vor der Frage prüfen, ob die Voraussetzungen erfüllt sind (Plan,
-   Provider, Claude-Code-Version) — ist der Skill `/design` in dieser Sitzung nicht verfügbar, die Frage
-   nicht stellen, sondern das in einem Satz erklären und den Schalter auf `aus` lassen.
-10. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 6/8, schreibt danach
+9. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 6/8, schreibt danach
    `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
    „Einrichtung" bleiben).
-11. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
+10. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
    `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
    --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
    {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**
@@ -106,10 +94,10 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    zusätzlich nach `~/.claude/` gelegt werden, damit sie in allen Projekten dieses Rechners gelten — auch
    ohne dieses Template? a) nein b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht**
    installieren — keine Standardantwort annehmen.
-12. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
-13. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
+11. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
+12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
    Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/update-template`-Läufe).
-14. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+13. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
    — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
    `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
    erinnert daran.

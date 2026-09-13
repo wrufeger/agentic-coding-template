@@ -125,7 +125,6 @@ KEY_MAP = {
     "Wartungsberichte": "wartungsberichte",
     "Code-Analyse": "code_analyse",
     "Code-Optimierung": "code_optimierung",
-    "Design": "design",
     "Coding-Guidelines": "coding_guidelines",
     "Struktur-Migration": "struktur_migration",
     "Alter Orchestrator-Name": "alter_orchestrator_name",
@@ -192,11 +191,6 @@ CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "intensiv"}
 CODE_OPTIMIERUNG_ALIASE = {"streng": "intensiv"}
 OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
-# Claude Design (/design, optional, siehe CLAUDE.md § Design): "aus" entfernt die Vorlage
-# docs/project/design.md wieder (sie ist Ballast ohne den Skill), "ein" und "fragen" behalten sie - die
-# Rueckfrage bei "fragen" stellt der Skill /design im Chat, nicht dieses Script.
-DESIGN_WERTE = {"aus", "ein", "fragen"}
-DESIGN_REMOVE_PATHS = ["docs/project/design.md"]
 # Vorgefertigte Regelsaetze je Sprache/Framework (docs/project/coding_rules.d/). Beim Anlegen bleiben nur
 # die in AI-CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
 # zurueck. Leere Angabe = keine (kein Ballast im Projekt).
@@ -633,64 +627,6 @@ CODE_OPTIMIERUNG_TEXT = {
 }
 
 
-def normalize_design(cfg: dict):
-    """Gibt (design, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'aus'."""
-    raw = cfg.get("design")
-    if not raw:
-        return "aus", None
-    val = raw.strip().lower()
-    if val not in DESIGN_WERTE:
-        return None, raw
-    return val, None
-
-
-def _remove_docs_index_row(text: str, path_marker: str) -> str:
-    """Entfernt eine Zeile der Index-Tabelle in docs/README.md, deren erste Spalte path_marker enthaelt
-    (z.B. 'docs/project/design.md') - toleriert Backticks/Leerzeichen um den Pfad. Analog zu
-    _remove_table_row (dort eine feste Zelle wie ein Werkzeugname, hier ein Dateipfad als Teilstring)."""
-    pattern = re.compile(r"^\|[^|\n]*" + re.escape(path_marker) + r"[^|\n]*\|.*\|[ \t]*\n?", re.MULTILINE)
-    return pattern.sub("", text)
-
-
-def remove_design_files(root: Path) -> list:
-    """Entfernt bei 'Design: aus' die Vorlage docs/project/design.md und ihre Zeile im Doku-Index
-    (docs/README.md), falls vorhanden. Tolerant, wenn beides fehlt (z.B. schon entfernt oder von der
-    Doku-Befuellung noch nicht angelegt)."""
-    removed = []
-    for rel in DESIGN_REMOVE_PATHS:
-        fp = root / rel
-        if not fp.exists():
-            continue
-        try:
-            fp.unlink()
-            removed.append(rel)
-        except OSError:
-            pass
-
-    readme_path = root / "docs" / "README.md"
-    if readme_path.exists():
-        try:
-            text, newline = _read_text_preserve_newline(readme_path)
-        except (UnicodeDecodeError, OSError):
-            text = None
-        if text is not None:
-            new_text = _remove_docs_index_row(text, "docs/project/design.md")
-            if new_text != text:
-                try:
-                    _write_text_preserve_newline(readme_path, new_text, newline)
-                    removed.append("docs/README.md (Indexzeile)")
-                except OSError:
-                    pass
-    return removed
-
-
-DESIGN_TEXT = {
-    "aus": "aus - docs/project/design.md wird entfernt (Default)",
-    "ein": "ein - docs/project/design.md bleibt",
-    "fragen": "fragen - wie 'ein' behandelt (docs/project/design.md bleibt); die Rueckfrage stellt der Skill "
-              "/design im Chat, nicht dieses Script",
-}
-
 CODE_ANALYSE_TEXT = {
     "nein": "nein - nur docs/project/ aus dem Bestand befuellen",
     "vorschlagen": "vorschlagen - danach Bestand pruefen, Verbesserungen nach docs/ai/backlog.md",
@@ -1084,7 +1020,6 @@ TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev"]
 # Entfernen-Schritt eine nicht mehr existierende Datei "erfolgreich" ignoriert.
 STALE_PATH_CHECK_LISTS = {
     "OPTIMIZER_REMOVE_PATHS": OPTIMIZER_REMOVE_PATHS,
-    "DESIGN_REMOVE_PATHS": DESIGN_REMOVE_PATHS,
     "MAINTENANCE_REMOVE_PATHS": MAINTENANCE_REMOVE_PATHS,
     "TEMPLATE_ONLY_PATHS": TEMPLATE_ONLY_PATHS,
 }
@@ -1281,7 +1216,7 @@ def write_template_json_values(root: Path, values: dict, applied_config: dict = 
 def build_applied_config(
     values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
     wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
-    sprache: str = None, commit_verhalten: str = None, design: str = None,
+    sprache: str = None, commit_verhalten: str = None,
 ) -> dict:
     """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
     fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
@@ -1316,7 +1251,6 @@ def build_applied_config(
         "Wartungsaufgaben": wartungsaufgaben if wartung_val == "ein" else {},
         "Wartungsberichte": wartungsberichte,
         "Code-Optimierung": code_opt,
-        "Design": design,
     }
 
 
@@ -1457,7 +1391,6 @@ def cmd_dry_run(root: Path) -> int:
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt, code_opt_hinweis = normalize_code_optimierung(cfg)
-    design, design_unbekannt = normalize_design(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
@@ -1563,13 +1496,6 @@ def cmd_dry_run(root: Path) -> int:
             lines.append("  Hinweis: " + code_opt_hinweis)
 
     lines.append("")
-    if design_unbekannt:
-        lines.append(f"Design: \"{design_unbekannt}\" ist kein bekannter Wert - --apply bricht damit ab. "
-                     "Erlaubt: aus, ein, fragen.")
-    else:
-        lines.append("Design: " + DESIGN_TEXT[design])
-
-    lines.append("")
     if guidelines_unbekannt:
         lines.append("Coding-Guidelines: unbekannt - " + ", ".join(guidelines_unbekannt)
                      + " (--apply bricht damit ab). Verfuegbar: "
@@ -1634,7 +1560,6 @@ def cmd_apply(root: Path) -> int:
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
     code_opt, code_opt_unbekannt, code_opt_hinweis = normalize_code_optimierung(cfg)
-    design, design_unbekannt = normalize_design(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
@@ -1672,10 +1597,6 @@ def cmd_apply(root: Path) -> int:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Code-Optimierung nicht eindeutig: "
               f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, intensiv.", file=sys.stderr)
         fehler = True
-    if design_unbekannt:
-        print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Design nicht eindeutig: "
-              f"\"{design_unbekannt}\" - erlaubt sind aus, ein, fragen.", file=sys.stderr)
-        fehler = True
     if guidelines_unbekannt:
         print("Fehler: --apply abgebrochen, AI-CONFIG.md § Coding-Guidelines kennt diese Regelsaetze nicht: "
               + ", ".join(guidelines_unbekannt), file=sys.stderr)
@@ -1705,13 +1626,12 @@ def cmd_apply(root: Path) -> int:
     removed_files = remove_tool_files(root, remove_list)
     logging_changed = set_logging_switch(root, logging_val, logging_tiefe)
     optimizer_entfernt = remove_optimizer_files(root) if code_opt == "aus" else []
-    design_entfernt = remove_design_files(root) if design == "aus" else []
     guidelines_entfernt = apply_coding_guidelines(root, guidelines_gewaehlt)
     intro_entfernt = remove_template_intro(root)
     applied_config = build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
-        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten, design=design,
+        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
     )
     write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
@@ -1783,8 +1703,6 @@ def cmd_apply(root: Path) -> int:
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
                  + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else "")
                  + (" - Hinweis: " + code_opt_hinweis if code_opt_hinweis else ""))
-    lines.append("Design: " + DESIGN_TEXT[design]
-                 + (" (entfernt: " + ", ".join(design_entfernt) + ")" if design_entfernt else ""))
     lines.append("Coding-Guidelines: " + (", ".join(guidelines_gewaehlt) if guidelines_gewaehlt else "keine")
                  + (" (entfernt: " + ", ".join(guidelines_entfernt) + ")" if guidelines_entfernt else ""))
     lines.append("Struktur-Migration (nur Weg 2 /apply-template): "

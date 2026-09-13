@@ -31,3 +31,5 @@ ai.log.*
 # Logs allgemein
 *.log
 
+# Design-Varianten und Pruef-Screenshots (Wegwerfware der Skills /design-ideas und /design-build)
+.design-varianten/

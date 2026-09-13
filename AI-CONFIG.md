@@ -47,17 +47,18 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
-| Design | aus | aus, ein, fragen |  | Claude Design (`/design`) für UI-Entwürfe nutzen — Research Preview, siehe `CLAUDE.md` § Design. |
+| MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Leer = keiner. |
 
 Zum Modell: Der Orchestrator plant, prüft und entscheidet — gespart wird bei den Workern, nicht hier.
 Zum Commit-Verhalten: `automatisch` committet abgenommene Arbeit selbst, `fragen` schlägt sie vor und wartet,
 `manuell` wartet auf eine ausdrückliche Anweisung.
 Zur Code-Optimierung: `ein` ist eine Runde, `intensiv` bis zu zwei und nimmt Geschwindigkeit und Speicher
 dazu, `aus` entfernt den Agenten `optimizer`. Der ältere Wert `streng` gilt weiter und bedeutet `intensiv`.
-Zum Design: `ein` heißt nur, dass `/design` in diesem Projekt erwünscht ist und `docs/project/design.md`
-die Entwürfe verzeichnet — es ändert nichts am Code. Voraussetzungen und Grenzen (Research Preview, Ergebnis
-liegt in der Cloud, kein Weg zu Framework-Code) stehen in `CLAUDE.md` § Design; wer sie nicht erfüllt, lässt
-den Schalter auf `aus`.
+Zu den MCP-Servern: Die Kennungen stehen mit Anbieter, Zweck, Reifegrad und benötigten Umgebungsvariablen
+in `.claude/mcp-katalog.md`. Eingetragen werden nur Server, die das Projekt wirklich braucht — jeder weitere
+ist eine zusätzliche Vertrauensbeziehung und bei den schreibfähigen zusätzlich ein Risiko. Secrets kommen nie
+in `.mcp.json`, sondern als `${VAR}` aus der Prozessumgebung (`CLAUDE.md` § MCP-Server); für Schreibzugriffe
+gilt `AGENTS.md` § „Zugriff auf laufende Systeme".
 Zur globalen Ablage: Was dort liegt, sehen Team, CI und Sitzungen in der Cloud **nicht** — Verbindliches
 gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
 

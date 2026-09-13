@@ -38,22 +38,12 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    Werkzeuge entfernt — stichprobenartig gegenprüfen).
 5. `docs/ai/ledger.md`-Eintrag „Projekt angelegt aus AI-CONFIG.md" schreiben, mit allen Setzungen (Werte,
    entfernte Dateien, Logging-Schalter aus der `--apply`-Ausgabe).
-6. **Design** (`AI-CONFIG.md` § `Design`): `aus` → `docs/project/design.md` ist bereits entfernt, nichts zu
-   tun. `ein` → die Datei bleibt und steht im Doku-Index. `fragen` (Default) → **einmal** nachfragen, aber
-   nur bei einem Projekt mit Oberfläche (bei Bibliothek oder CLI entfällt die Frage):
-
-   „Soll Claude Design (`/design`) für UI-Entwürfe genutzt werden? Die Entwürfe liegen als Artifact in der
-   Cloud, nicht im Repo; `docs/project/design.md` verzeichnet sie. Voraussetzungen und Grenzen stehen in
-   `CLAUDE.md` § Design. a) ja b) nein"
-
-   Ohne Antwort **nicht** einschalten. Ist der Skill `/design` in dieser Sitzung gar nicht verfügbar (Plan,
-   Provider, Version — siehe `CLAUDE.md` § Design), die Frage nicht stellen, sondern das kurz erklären.
-7. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 3/5, schreibt danach
+6. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 3/5, schreibt danach
    `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
    „Einrichtung" bleiben).
-8. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
+7. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
    `no_replace` in `.claude/template.json`) und `AI-CONFIG.md` dürfen noch Platzhalter zeigen.
-9. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
+8. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
    `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
    --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
    {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**
@@ -61,8 +51,8 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    zusätzlich nach `~/.claude/` gelegt werden, damit sie in allen Projekten dieses Rechners gelten? a) nein
    b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht** installieren — keine Standardantwort
    annehmen.
-10. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).
-11. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+9. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).
+10. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
     — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
     `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
     erinnert daran.
