@@ -47,7 +47,7 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
-| MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
+| MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, ha-mcp, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
 
 Zum Modell: Der Orchestrator plant, prüft und entscheidet — gespart wird bei den Workern, nicht hier.
 Zum Commit-Verhalten: `automatisch` committet abgenommene Arbeit selbst, `fragen` schlägt sie vor und wartet,

@@ -20,7 +20,8 @@ Nutzung gegen die verlinkte Quelle prüfen. Wer hier etwas korrigiert, trägt da
 | `chrome-devtools` | Google | Chrome inspizieren, Traces erstellen | stdio | — | offiziell |
 | `github` | GitHub | Repos, Issues, Pull Requests | http | OAuth, sonst `GITHUB_PERSONAL_ACCESS_TOKEN` | offiziell |
 | `grafana` | Grafana Labs | Dashboards, Alerts, Metriken lesen | stdio | `GRAFANA_URL`, `GRAFANA_API_KEY` | offiziell |
-| `home-assistant` | Home Assistant | Smart-Home abfragen und steuern | http/sse | `HOME_ASSISTANT_TOKEN` | offiziell (Core-Integration) |
+| `home-assistant` | Home Assistant | Geräte **steuern und messen** | http/sse | `HOME_ASSISTANT_TOKEN` | offiziell (Core-Integration) |
+| `ha-mcp` | Community (homeassistant-ai) | HA zusätzlich **aufsetzen und konfigurieren** | stdio | HA-Token | **Community** — siehe Hinweis unten |
 | `sentry` | Sentry | Fehler und Issues zum Debuggen | http | OAuth | offiziell |
 | `linear` | Linear | Issues und Projekte | http | OAuth | offiziell |
 | `notion` | Notion | Seiten und Datenbanken | http | OAuth | offiziell |
@@ -88,6 +89,12 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
   automatisch urheberrechtlich geschützt (das US Copyright Office verlangt einen menschlichen
   Schöpfungsanteil), und die Anbieter regeln kommerzielle Nutzung unterschiedlich — teils je Modellvariante.
   Für ein Logo ist das der entscheidende Punkt, nicht die Bildqualität. Siehe Skill `/design-assets`.
+- **Home Assistant braucht je nach Ziel beides.** Die offizielle Core-Integration (`home-assistant`) kann
+  Geräte steuern und Werte lesen — für eine Anwendung, die Zustände abfragt, genügt das. Wer Home Assistant
+  selbst **einrichten und konfigurieren** will (Integrationen anlegen, YAML ändern, Automatisierungen
+  aufsetzen), braucht `ha-mcp`; das leistet die Core-Integration nicht. Im Einsatz erprobt (Wolfgang,
+  2026-09-14). Dafür gilt umso mehr: Konfigurationsänderungen sind Schreibzugriffe auf ein laufendes System —
+  `AGENTS.md` § „Zugriff auf laufende Systeme", also vorher Stand sichern und Rückweg benennen.
 - **Community-Server** (`postgres`, `mysql-mariadb`, `context7`) sind hier gelistet, weil es keine
   Anbieter-Alternative gibt. Vor dem Einsatz kurz auf Wartungsstand prüfen.
 
@@ -95,7 +102,5 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
 
 - Die **archivierten Referenzserver** von Anthropic (Slack, Postgres, Sentry, GDrive, GitLab, Google Maps) —
   laut Anthropic ohne Sicherheitsgarantien, teils durch Anbieter-Server ersetzt.
-- **`ha-mcp`** für Home Assistant — weitreichende Gerätesteuerung ohne belegten Wartungsplan; die
-  Core-Integration ist der bessere Weg.
 - **Zapier-Slack-MCP** — leitet den Zugriff über eine dritte Plattform, seit dem offiziellen Slack-Server
   unnötig.
