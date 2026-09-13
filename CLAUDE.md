@@ -45,36 +45,31 @@ folgenden Sub-Agenten sind die Worker:
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
 <!-- template-only:start -->
-> **Sitzung im Template-Checkout? Dann fehlt dir hier der halbe Kontext.**
+> **Sitzung im Template-Checkout?** Dann ist `.templatedev/` dein Arbeitsbereich, nicht `docs/`.
 >
 > Dieses Repo ist die **Vorlage**: `docs/ai/` und `docs/project/` sind leere Formulare, die Platzhalter in
-> dieser Datei sind Absicht. Board, Aufgaben, Umbauliste, Journal und die Regeln für die Arbeit am Template
-> stehen im Projekt **`template-agentic-coding-project-development`**
-> (`D:/dev/rufeger/template-agentic-coding-project-development`).
+> dieser Datei sind Absicht. Umbauliste, Fragen, Journal, Regeln und die Testprojekte stehen in
+> `.templatedev/` — Einstieg über `.templatedev/INDEX.md`.
 >
-> **Vor einer Änderung hier** dort nachsehen: `docs/ai/board.md` (Stand, nächster Schritt),
-> `docs/ai/tasks.md` (Aufgaben) und `docs/project/template-pflege.md` (Regeln, u. a. die Tabelle der fünf
-> zusammenhängenden Pfadlisten). **Nach der Änderung** dort verbuchen: Journal, Board, ggf. Umbaupunkt.
->
-> Arbeitsteilung: **dort planen, bewerten, verbuchen — hier ändern, belegen, committen.** Wer nur hier
-> arbeitet, produziert Änderungen ohne Begründung und ohne Spur; wer nur dort arbeitet, ändert nichts.
+> **Vor einer Änderung:** `.templatedev/ledger.md` (letzter Stand), `.templatedev/backlog.md` (was offen ist)
+> und `.templatedev/regeln.md` (u. a. die Tabelle der fünf zusammenhängenden Pfadlisten).
+> **Nach der Änderung:** dort verbuchen — Journal, ggf. Umbaupunkt.
 
 **Solange dieses Repo noch nicht initialisiert ist** (Marker `is_template` in `.claude/template.json`), gelten
 für `docs/` abweichende Regeln:
 
 - `docs/ai/` und `docs/project/` sind **Vorlagen** und bleiben leer. Was dort steht, wandert in jedes
   abgeleitete Projekt — auch ein gut gemeinter Backlog-Eintrag.
-- Board, Aufgaben, Fragen, Journal und Umbauliste zur Weiterentwicklung des Templates stehen im eigenen
-  Projekt **`template-agentic-coding-project-development`** (lokal unter
-  `D:/dev/rufeger/template-agentic-coding-project-development`) — nicht hier. Dieses Repo enthält nur die
-  Vorlage selbst; geplant und verbucht wird dort, geändert und committet wird hier.
+- Umbauliste, Fragen, Journal, Regeln und die Testprojekte stehen im Ordner `.templatedev/` im Repo-Root,
+  versioniert wie jede andere Datei. Das ist hier der einzige Arbeitsbereich mit echtem Inhalt.
 - Auch das Agenten-Logging (`AGENTS.md` § Logging) beschreibt nur die Mechanik für spätere Projekte; ein
-  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal des Entwicklungsprojekts.
+  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal in `.templatedev/ledger.md`.
 - Unverändert gültig bleibt alles andere: Rollen, Delegation an Sub-Agenten, Modellwahl, „fertig nur mit
   Beleg", Commit per Pathspec, Safeguard-Verhalten.
 
-Beim Anlegen eines Projekts (`/create-project`) entfernt `create-project.py` die so markierten Blöcke aus
-`AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die normalen Regeln.
+Beim Anlegen eines Projekts (`/create-project`) entfernt `create-project.py` den Ordner `.templatedev/`
+**und** die so markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die
+normalen Regeln.
 <!-- template-only:end -->
 
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
@@ -237,6 +232,8 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
+├── .templatedev/                 # nur im Template: Umbauliste, Fragen, Journal, Regeln,
+│                                 # Testprojekte (wird von /create-project entfernt)
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
 │                                 # wird von /create-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot

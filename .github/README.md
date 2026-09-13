@@ -97,8 +97,8 @@ Template als Regel hinterlegt und lässt sich projektweit ändern.
 
 Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
 jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — offene Punkte,
-Fragen, Journal, Regeln und die Testprojekte — steht deshalb in einem eigenen Projekt
-(`template-agentic-coding-project-development`), das selbst aus diesem Template entstanden ist.
+Fragen, Journal, Regeln und die Testprojekte — steht deshalb im Ordner `.templatedev/` im Repo-Root und
+wird beim Anlegen eines Projekts entfernt.
 
 ## Lizenz
 

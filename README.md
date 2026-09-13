@@ -148,6 +148,8 @@ docs/
 .github/README.md     # Beschreibung des Templates (GitHub zeigt sie statt dieser Datei); beim
                       # Anlegen eines Projekts entfernt
 .github/workflows/ci.yml   # Lint/Typecheck/Test (Platzhalter-Befehle)
+.templatedev/         # nur im Template: Umbauliste, Fragen, Journal, Regeln, Testprojekte —
+                      # wird beim Anlegen eines Projekts entfernt
 LICENSE               # MIT (Wolfgang Rufeger) — gilt für das Template, nicht für deinen Projektcode
 .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes
 ```

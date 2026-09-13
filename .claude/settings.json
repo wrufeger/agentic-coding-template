@@ -99,16 +99,6 @@
             "timeout": 15
           }
         ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "shell": "bash",
-            "command": "T=\"$CLAUDE_PROJECT_DIR/.claude/template.json\"; D=\"/d/dev/rufeger/template-agentic-coding-project-development\"; if [ -f \"$T\" ] && grep -q '\"is_template\"[[:space:]]*:[[:space:]]*true' \"$T\" && [ -d \"$D\" ]; then echo \"Hinweis: Dies ist der Template-Checkout. Board, Aufgaben, Umbauliste, Journal und die Regeln der Template-Arbeit stehen im Projekt template-agentic-coding-project-development ($D) - dort planen und verbuchen, hier aendern und committen.\"; fi || true",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "SessionEnd": [
