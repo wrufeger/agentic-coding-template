@@ -187,12 +187,37 @@ gitignored, sobald echte Werte eingetragen sind.
 Belegt am 2026-09-13 im Projekt Bandliste (`claude mcp list` meldete die Variablen trotz gefüllter `.env` als
 fehlend).
 
-## 5. Design (`/design`, optional)
+## 5. Design (optional)
 
 Schalter: `AI-CONFIG.md` § `Design` (`aus` | `ein` | `fragen`, Default `aus`). Bei `ein` verzeichnet
 `docs/project/design.md` die Entwürfe; bei `aus` entfällt die Datei.
 
-**Was `/design` ist.** Ein Skill von Claude Code, der UI-Entwürfe als Artboards auf einer Zeichenfläche
+**Die Wahl des Wegs hängt daran, was am Ende herauskommen soll.** Soll fertiger Code im Projekt entstehen,
+ist ein Mockup-Werkzeug meist ein Umweg — der Entwurf muss danach ohnehin von Hand nachgebaut werden. Soll
+dagegen erst eine Form gefunden werden, bevor jemand Code schreibt, lohnt der Entwurf.
+
+| Vorlage | Weg | Zu beachten |
+| :--- | :--- | :--- |
+| Screenshot, Bild | direkt in die Sitzung geben (Drag & Drop, `Ctrl+V`, oder Dateipfad im Prompt) | JPEG/PNG/GIF/WebP, höchstens 8000 × 8000 px und 10 MB; unter 200 px Kantenlänge werden die Ergebnisse unzuverlässig |
+| Bestehende Webseite als Vorbild | Seite in Claude in Chrome öffnen, Screenshot speichern, den als Vorlage nutzen | **Nicht** `WebFetch` — das liefert HTML als Text, nicht das Aussehen |
+| Figma | offizieller Figma-MCP-Server: remote (`claude plugin install figma@claude-plugins-official`) oder Desktop-Variante über Dev Mode (`http://127.0.0.1:3845/mcp`) | Liefert Komponenten, Variablen und Layout — also Struktur statt Pixel. Reifegrad ist von Figma nicht ausgewiesen; vor dem Einsatz kurz gegenprüfen |
+| Photoshop (`.psd`) | als PNG exportieren, dann wie ein Screenshot behandeln | Claude Code liest `.psd` nicht; es gibt nur inoffizielle MCP-Server dafür |
+| Nur eine Beschreibung, noch kein Code | `/design` — Artboards auf einer Zeichenfläche | siehe unten |
+
+**Der Rückkanal ist wichtiger als die Eingabe.** Mit Claude in Chrome lässt sich die laufende Anwendung
+öffnen (`localhost:…`), die Konsole lesen und ein Screenshot aufnehmen — damit vergleicht der Assistent das
+Gebaute selbst mit der Vorlage und bessert nach, ohne dass jemand dazwischen Bilder hin- und herschiebt.
+Anthropic nennt genau diesen Ablauf als Beispiel: eine Oberfläche nach einer Figma-Vorlage bauen und im
+Browser prüfen, ob sie passt. Wo Playwright im Projekt eingerichtet ist, tut ein Screenshot-Test dasselbe in
+der CI.
+
+**Faustregel:** Bei einem bestehenden Projekt mit Komponentenbibliothek führt der kürzeste Weg über
+Screenshot als Vorlage → Umsetzung im echten Code → Prüfung im Browser. Ein Zwischenformat entfällt, und die
+vorhandenen Komponenten und Tokens sind von Anfang an im Spiel.
+
+### `/design` im Besonderen
+
+**Was es ist.** Ein Skill von Claude Code, der UI-Entwürfe als Artboards auf einer Zeichenfläche
 anlegt und sie als Artifact veröffentlicht — geeignet für Mockups, Screen-Flows, Landing-Pages, Poster. Für
 etwas Interaktives oder Datengetriebenes nimmt man einen normalen Artifact, für eine Skizze im Repo eine
 Inline-SVG-Grafik.

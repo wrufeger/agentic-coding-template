@@ -21,14 +21,14 @@ sie werden in Journal und Commits zitiert.
    Template, nicht in der Notiz. **Umfang unbekannt:** Erst nach dem Durchgang lässt sich sagen, ob das eine
    Sitzung wird oder mehrere; bei mehr als etwa zehn Kandidaten in Teilaufgaben je Themenbereich schneiden.
 
-23. -> offen: **Design-Wege über `/design` hinaus** (Priorität mittel, angelegt 2026-09-14): Der Schalter
-   `Design` und `CLAUDE.md` § 5 nennen bisher nur Claude Design. Für ein bestehendes Projekt mit
-   Komponentenbibliothek ist das aber selten der beste Weg — das Ergebnis ist ein Artifact in der Cloud, aus
-   dem niemand automatisch Code macht. Zu prüfen und zu ergänzen: Screenshot als Vorlage (Claude liest
-   Bilder), Webseite als Vorbild (`WebFetch` liefert nur HTML — es braucht einen Screenshot), Figma über den
-   offiziellen MCP-Server, `.psd` nur über PNG-Export. Wichtiger als die Eingabe ist der **Rückkanal**:
-   Gebautes im Browser ansehen und gegen die Vorlage vergleichen (`claude-in-chrome`, Playwright-Screenshots)
-   — erst das macht „bauen → ansehen → nachbessern" ohne Menschen dazwischen möglich. Recherche läuft.
+23. -> erledigt (2026-09-14): **Design-Wege über `/design` hinaus.** Recherchiert und in `CLAUDE.md` § 5
+   als Tabelle aufgenommen: Screenshot direkt einfügen (Grenzen: 8000 × 8000 px, 10 MB, unter 200 px
+   unzuverlässig), Webseite über einen Chrome-Screenshot statt `WebFetch` (das liefert nur HTML als Text),
+   Figma über den offiziellen MCP-Server (remote per Plugin oder Desktop über `127.0.0.1:3845/mcp`, als
+   Beispiel in `.mcp.json.example`), `.psd` nur über PNG-Export. Kernaussage des Abschnitts ist jetzt der
+   **Rückkanal**: die laufende Anwendung in Claude in Chrome öffnen und das Gebaute gegen die Vorlage prüfen —
+   Anthropic nennt genau diesen Ablauf als Beispiel. Faustregel für ein bestehendes Projekt mit
+   Komponentenbibliothek: Screenshot → echter Code → Prüfung im Browser, ohne Zwischenformat.
 
 ## Erledigt
 
