@@ -267,9 +267,11 @@ nachträglich bekommen soll:
 5. Bestand analysieren — nicht raten, am Code prüfen: Name, Stack, Struktur, Tests, Befehle, CI.
 6. `AI-CONFIG.md` mit dem gefundenen IST-Zustand befüllen, dann `python .claude/scripts/create-project.py --apply`
    ausführen (ersetzt Platzhalter, entfernt nicht genutzte Werkzeug-Dateien, setzt Werte).
-7. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
-   Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
-   `docs/ai/board.md`).
+7. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen.
+   Die `README.md` prüfen und überarbeiten: Steht dort noch der Text der Projektvorlage („… Minimal
+   Starter" o. Ä.), wird sie zu einer echten Projekt-README — was das Projekt ist, Schnellstart, Befehle,
+   Struktur, Wegweiser in die Doku; der generische Vorlagentext wandert ans Ende oder fällt weg. Dazu ein
+   Abschnitt „Zusammenarbeit mit KI-Assistenten" (Verweis auf die Regeldateien und `docs/ai/board.md`).
 8. **Prüf- und Testausstattung herstellen**, falls sie fehlt: die Prüfwerkzeuge des jeweiligen Stacks
    installieren und konfigurieren (bei Nuxt: ESLint, `vue-tsc`, Vitest, Playwright — siehe
    `docs/project/coding_rules.d/nuxt.md` § Werkzeuge). Kommen dabei Abhängigkeiten hinzu oder werden welche

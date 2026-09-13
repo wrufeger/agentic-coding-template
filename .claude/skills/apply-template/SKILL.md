@@ -65,8 +65,16 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
    die Werte in `.claude/template.json`.
 6. `docs/project/*` mit dem **echten IST-Zustand** befüllen — nicht raten, am Code prüfen (Sub-Agent
    `doc-writer`, Sonnet). `.gitignore`-Vorschläge aus Schritt 1 übernehmen (von Hand zusammenführen, nie
-   automatisch überschreiben). Im Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten"
-   ergänzen (Verweis auf `AGENTS.md` und `docs/ai/board.md`).
+   automatisch überschreiben).
+
+   **Die `README.md` mitnehmen — sie ist oft noch der Text der Projektvorlage.** Prüfen, ob sie das Projekt
+   überhaupt beschreibt: Steht dort „Nuxt Minimal Starter", „create-react-app" oder Vergleichbares, ist sie
+   nie angefasst worden. Dann bekommt sie einen echten Kopf (was das Projekt ist, Schnellstart, Befehle als
+   Tabelle, Struktur, Wegweiser in `docs/`), und der generische Vorlagentext wandert ans Ende oder fällt
+   weg — Installationsvarianten für vier Paketmanager und Beispielbefehle stehen doppelt und meist auf
+   Englisch. Dazu der Abschnitt „Zusammenarbeit mit KI-Assistenten" (Verweis auf `AGENTS.md`, `CLAUDE.md`
+   und `docs/ai/board.md`). Ehrlich bleiben: Was rot ist oder fehlt (Typecheck, Tests, nicht verdrahtete
+   Bereiche), gehört sichtbar in die Befehlstabelle, nicht weggelassen.
 7. **Code-Analyse — nur wenn gewünscht.** Maßgeblich ist `AI-CONFIG.md` § `Code-Analyse` (der Wert steht auch in
    der Ausgabe von `create-project.py`):
    - `nein` → überspringen, direkt zu Schritt 8.

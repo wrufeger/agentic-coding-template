@@ -52,6 +52,16 @@ sie werden in Journal und Commits zitiert.
    Voraussetzung ist ein maschinenlesbarer Katalog — die Markdown-Tabelle taugt dafür nur bedingt, ein
    `.claude/mcp-katalog.json` neben der Doku wäre der sauberere Weg.
 
+26. -> erledigt (2026-09-14): **README des Zielprojekts blieb der Vorlagentext.** In `bandliste` stand nach
+   dem Nachrüsten immer noch der englische „Nuxt Minimal Starter" — die Regel verlangte nur, einen Abschnitt
+   „Zusammenarbeit mit KI-Assistenten" zu **ergänzen**, und genau das war geschehen: Einleitung oben,
+   Starter-Text darunter, doppelte Installationsanweisungen für vier Paketmanager. Skill und Checkliste
+   verlangen jetzt, die README zu **prüfen und zu überarbeiten**, wenn sie erkennbar nie angefasst wurde,
+   mit Vorgabe für den Aufbau (Schnellstart, Befehlstabelle, Struktur, Doku-Wegweiser) und der Auflage,
+   ehrlich zu bleiben — was rot ist oder fehlt, gehört sichtbar in die Tabelle.
+   Die Lehre dahinter: „ergänzen" ist eine schwächere Anweisung als gedacht. Wo eine Datei aus einer fremden
+   Vorlage stammt, muss die Regel sagen, dass sie **ersetzt** gehört, sonst wächst der neue Text oben drauf.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):
