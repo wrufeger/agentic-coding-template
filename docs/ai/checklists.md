@@ -215,14 +215,19 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
    Ergänzungsdateien" gegen die tatsächlich noch vorhandenen Dateien.
 6. Ersten `docs/ai/ledger.md`-Eintrag „Projekt angelegt aus AI-CONFIG.md" schreiben — mit allen Setzungen
    (eingesetzte Werte, entfernte Dateien, Logging-Schalter).
-7. `python .claude/scripts/create-project.py --finish` ausführen (prüft die Vorbedingungen aus Schritt 4/6,
+7. **Design** (`AI-CONFIG.md` § `Design`, nur bei einem Projekt mit Oberfläche): `aus` → nichts tun,
+   `ein` → das Verzeichnis der Entwürfe (`docs/project/design.md`) bleibt und wird gepflegt, `fragen`
+   (Default) → einmal nachfragen. Ohne Antwort nicht einschalten. Was das Werkzeug leistet und wo seine
+   Grenzen liegen (Entwürfe liegen außerhalb des Repos, kein automatischer Weg zu Code), steht in der
+   werkzeugspezifischen Ergänzungsdatei — bei Claude Code `CLAUDE.md` § Design.
+8. `python .claude/scripts/create-project.py --finish` ausführen (prüft die Vorbedingungen aus Schritt 4/6,
    schreibt danach `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte durch einen Verweis auf
    `docs/project/` ersetzt, Vermerk in Zeile 1, „Betrieb"/„Einrichtung" bleiben unverändert).
-8. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare,
+9. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale bzw. Kopfkommentare,
    siehe `no_replace` in `.claude/template.json`) und `AI-CONFIG.md` dürfen noch Platzhalter zeigen, alles
    andere klären.
-9. Commit per Pathspec nach Freigabe (Checkliste „Aufgabe abschließen").
-10. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
+10. Commit per Pathspec nach Freigabe (Checkliste „Aufgabe abschließen").
+11. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
     Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
     „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"
     bleibt alles liegen, bis {{AUFTRAGGEBER}} es später auslöst.
@@ -286,11 +291,15 @@ nachträglich bekommen soll:
    einen Punkt freigibt und er als Aufgabe in `tasks.md` landet.
 10. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
    `python .claude/scripts/create-project.py --finish` ausführen.
-11. Commit per Pathspec nach Freigabe.
-12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
+11. **Design anbieten** (`AI-CONFIG.md` § `Design`) — nur, wenn das Projekt eine Oberfläche hat. `aus` →
+   überspringen, `ein` → `docs/project/design.md` bleibt, `fragen` (Default) → einmal nachfragen, ohne
+   Antwort nicht einschalten. Grenzen vorher nennen: Die Entwürfe liegen außerhalb des Repos, und es gibt
+   keinen automatischen Weg vom Entwurf zum Code.
+12. Commit per Pathspec nach Freigabe.
+13. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
    Voraussetzung für spätere `/update-template`-Läufe.
-13. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
+14. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
     Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
     „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"
     bleibt alles liegen, bis {{AUFTRAGGEBER}} es später auslöst.

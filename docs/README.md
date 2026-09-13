@@ -22,6 +22,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/project/testing.md` | Testpyramide, Pflichtläufe, ungetestete Bereiche | {{DATUM}} | vor/nach Tests |
 | `docs/project/features.md` | Feature-Liste mit Status und Beleg | {{DATUM}} | vor neuen Features |
 | `docs/project/decisions.md` | Architekturentscheidungen (ADRs) | {{DATUM}} | vor Architektur-Entscheidungen |
+| `docs/project/design.md` | Verzeichnis der UI-Entwürfe (Claude Design) | {{DATUM}} | nur bei `Design: ein` — sonst entfernt |
 | `docs/project/setup.md` | Einrichtung, Befehle, Umgebungsvariablen (Namen) | {{DATUM}} | beim ersten Einrichten |
 | `docs/project/deployment.md` | Zielumgebung, Ablauf, Konfiguration | {{DATUM}} | vor einem Deployment |
 | `docs/project/security.md` | Secrets-Regeln, Freigaben, Risiko-Liste | {{DATUM}} | vor Sicherheits-Änderungen |

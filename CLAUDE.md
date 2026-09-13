@@ -187,7 +187,35 @@ gitignored, sobald echte Werte eingetragen sind.
 Belegt am 2026-09-13 im Projekt Bandliste (`claude mcp list` meldete die Variablen trotz gefüllter `.env` als
 fehlend).
 
-## 5. Memory
+## 5. Design (`/design`, optional)
+
+Schalter: `AI-CONFIG.md` § `Design` (`aus` | `ein` | `fragen`, Default `aus`). Bei `ein` verzeichnet
+`docs/project/design.md` die Entwürfe; bei `aus` entfällt die Datei.
+
+**Was `/design` ist.** Ein Skill von Claude Code, der UI-Entwürfe als Artboards auf einer Zeichenfläche
+anlegt und sie als Artifact veröffentlicht — geeignet für Mockups, Screen-Flows, Landing-Pages, Poster. Für
+etwas Interaktives oder Datengetriebenes nimmt man einen normalen Artifact, für eine Skizze im Repo eine
+Inline-SVG-Grafik.
+
+**Grenzen — vor dem Einschalten lesen** (Stand 2026-09-14):
+
+- **Research Preview.** `/design` ist seit dem 17.08.2026 verfügbar, Claude Design selbst ist Beta. Die
+  Schnittstelle bewegt sich; was hier steht, kann in zwei Monaten anders sein.
+- **Voraussetzungen:** Pro-, Max-, Team- oder Enterprise-Plan, Anthropic-API als Provider (**nicht** Bedrock,
+  Vertex oder Foundry), angemeldete Sitzung, Claude Code ≥ 2.1.234, kein ZDR/CMEK/HIPAA-Konto. In
+  Enterprise-Organisationen ist es standardmäßig abgeschaltet. Fehlt eine dieser Bedingungen, bleibt der
+  Schalter auf `aus` — der Skill ist dann schlicht nicht da.
+- **Das Ergebnis liegt in der Cloud, nicht im Repo.** Die Artboards werden außerhalb des Projektverzeichnisses
+  erzeugt und als Artifact veröffentlicht; aus Claude Code heraus gibt es nur PNG- und PDF-Export. Versionen
+  führt die Artifact-Historie, nicht Git.
+- **Kein dokumentierter Weg vom Entwurf zu Framework-Code.** Ein Design wird nicht zu einer Vue- oder
+  Nuxt-Komponente. Die Umsetzung schreibt ein Assistent von Hand, mit dem Entwurf als Vorlage.
+
+**Was deshalb ins Repo gehört:** nur `docs/project/design.md` — je Entwurf eine Zeile mit Zweck,
+Artifact-URL, Datum und dem Stand der Umsetzung. Ohne diese Liste sind die Entwürfe nach zwei Wochen
+unauffindbar, weil im Repo nichts auf sie verweist.
+
+## 6. Memory
 
 Nicht aus dem Repo ableitbares Wissen (Zugänge, Arbeitsweisen einzelner Personen, Umgebungsbesonderheiten) gehört
 ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidungen, Stand) gehören nach
@@ -198,7 +226,7 @@ projektübergreifend unter `~/.claude/` liegen (`.claude/scripts/install-global.
 `/create-project`/`/apply-template`, Schalter `AI-CONFIG.md` § „Globale Ablage") — das ist Werkzeug-
 Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 
-## 6. Projektstruktur
+## 7. Projektstruktur
 
 ```text
 .
@@ -246,7 +274,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
     └── ai/                       # Zusammenarbeit Mensch/KI (Board, Aufgaben, Fragen, Ledger, Checklisten)
 ```
 
-## 7. Logging (Claude-Code-Mechanik zu `AGENTS.md` § Logging)
+## 8. Logging (Claude-Code-Mechanik zu `AGENTS.md` § Logging)
 
 Schalter (`AI_LOG`, `AI_LOG_LEVEL`), Format und Themenliste stehen in `AGENTS.md` § Logging — dort wird
 umgeschaltet, nicht hier. Claude Code liefert dazu zwei Schreibwege in dieselbe `ai.log`:
