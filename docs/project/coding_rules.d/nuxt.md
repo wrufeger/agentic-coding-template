@@ -9,9 +9,28 @@ Regeln für Nuxt-Projekte: Verzeichniskonvention, Datenzugriff, sichere Konfigur
 ## Struktur
 - `useFetch`/`useAsyncData` zum Lesen von Daten beim Rendern, `$fetch` für einmalige Schreibzugriffe/Aktionen.
 - Server-Routen unter `server/api/` mit Verb-Suffix benennen (`login.post.ts`, `users.get.ts`).
-- Geteilte Typen/Utilities unter `shared/` oder `utils/` ablegen, nicht in Komponenten duplizieren.
+- **Feste Ordner im Repo-Root, je mit eigenem Alias** — jeweils die einzige Ablage ihrer Art, keine zweite
+  Fassung unterhalb von `app/`:
+
+  | Ordner | Alias | Inhalt |
+  | :--- | :--- | :--- |
+  | `/types` | `~types` | geteilte Typen und Schnittstellen |
+  | `/constants` | `~constants` | Konstanten, Aufzählungen, feste Schlüssel |
+  | `/server` | `~server` | Nitro-Backend |
+
+  Die Aliasse gehören in `tsconfig.json` **und** `nuxt.config.ts` (Nuxts `~` zeigt ab Nuxt 4 auf `app/` —
+  ohne eigenen Eintrag zeigt `~/types` deshalb woanders hin als `~types`). Typen und Konstanten werden von
+  dort importiert, nicht in Komponenten dupliziert; ein zweiter Typ-Ordner unter `app/types/` ist ein Fehler,
+  keine Ergänzung.
 
 ## Typisierung / Fehlerbehandlung
+- **Strikt typisieren.** `strict` und `noImplicitAny` sind gesetzt; Props, Emits, Store-Aktionen, Composables
+  und `defineEventHandler` bekommen ausgeschriebene Typen samt Rückgabetyp. Kein `any`, keine stillen Casts.
+- **Grenze der Strenge:** Wird ein Typ so verschachtelt, dass er schwerer zu lesen ist als der Code, den er
+  beschreibt (tief verschachtelte Generics, mehrfach bedingte Typen, ausgereizte Mapped Types), ist ein
+  bewusst einfacherer Typ die bessere Wahl — dann `unknown` mit Prüfung an der Grenze oder ein schmales
+  `interface` für genau die benutzten Felder, mit einer Zeile Kommentar, warum. Diese Ausnahme gilt der
+  Lesbarkeit, nicht der Bequemlichkeit: `any` bleibt auch hier ausgeschlossen.
 - `runtimeConfig` für Konfigurationswerte verwenden, kein direkter Zugriff auf `process.env` in Komponenten.
 - Secrets ausschließlich im privaten Teil von `runtimeConfig`, niemals unter `public`.
 - Fehler aus `server/api`-Routen mit `createError` und passendem HTTP-Status zurückgeben.
