@@ -1,12 +1,25 @@
 {
   "_hinweis": "Muster fuer projektspezifische MCP-Server. Kopieren nach .mcp.json (gitignored) und anpassen. Secrets nie als Klartext eintragen, sondern per ${VAR}-Referenz.",
-  "_woher_kommt_var": "Claude Code loest ${VAR} NUR aus der Prozessumgebung auf und liest KEINE .env - steht der Wert nur dort, meldet 'claude mcp list' Missing environment variables. Bevorzugt laesst man den Server die .env selbst einlesen (Vorspann wie dotenv-cli im command/args) - dann bleibt .env die einzige Quelle fuer Zugangsdaten. Sonst: Variablen vor dem Start von Claude Code in die Umgebung setzen. Der env-Block in .claude/settings.local.json funktioniert auch, legt die Werte aber im Klartext in den Repo-Ordner - nur fuer unkritische Werte. Siehe CLAUDE.md Abschnitt MCP-Server.",
+  "_woher_kommt_var": "Claude Code loest ${VAR} NUR aus der Prozessumgebung auf und liest KEINE .env - steht der Wert nur dort, meldet 'claude mcp list' Missing environment variables. Bevorzugt laesst man den Server die .env selbst einlesen (Vorspann wie dotenv-cli im command/args, siehe beispiel-server-mit-dotenv) - dann bleibt .env die einzige Quelle fuer Zugangsdaten. Sonst: Variablen vor dem Start von Claude Code in die Umgebung setzen. Der env-Block in .claude/settings.local.json funktioniert auch, legt die Werte aber im Klartext in den Repo-Ordner - nur fuer unkritische Werte. Siehe CLAUDE.md Abschnitt MCP-Server.",
   "mcpServers": {
     "beispiel-server": {
+      "_hinweis": "Einfachster Fall: die Variable ist bereits in der Umgebung gesetzt, in der Claude Code laeuft.",
       "command": "npx",
       "args": ["-y", "beispiel-mcp-server@latest"],
       "env": {
         "BEISPIEL_API_KEY": "${BEISPIEL_API_KEY}"
+      }
+    },
+    "beispiel-server-mit-dotenv": {
+      "_hinweis": "Server liest die .env selbst. Zwei Stolpersteine, beide unter Windows nachgewiesen (2026-09-13): (1) dotenv-cli LAEDT nur, es benennt nicht um - heissen die Variablen in der .env anders als der Server sie erwartet, braucht es das 'sh -c' mit der Zuweisungszeile davor. (2) Paketnamen mit @-Scope gehoeren als 'npx -y -p \"@scope/paket\" befehl' geschrieben, nicht als 'npx -y @scope/paket' - cmd.exe liest das fuehrende @ sonst als Befehlspraefix. Endet der Server nicht bei stdin-EOF, killt ein 'timeout' nur den npx-Elternprozess; die Enkel laufen weiter.",
+      "command": "npx",
+      "args": [
+        "-y", "-p", "dotenv-cli", "dotenv", "-e", "${CLAUDE_PROJECT_DIR}/.env", "--",
+        "sh", "-c",
+        "ERWARTETER_NAME=$NAME_IN_DER_ENV exec npx -y -p \"@scope/beispiel-mcp-server\" beispiel-mcp-server"
+      ],
+      "env": {
+        "NUR_UNKRITISCHE_SCHALTER": "false"
       }
     }
   }

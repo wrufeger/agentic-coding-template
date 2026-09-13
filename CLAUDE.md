@@ -162,6 +162,11 @@ gitignored, sobald echte Werte eingetragen sind.
 
 1. **Der Server liest die `.env` selbst** — ein Vorspann im `command`/`args` (z. B. `dotenv-cli`) lädt sie,
    bevor der eigentliche Server startet. Bevorzugt, weil `.env` die einzige Quelle für Zugangsdaten bleibt.
+   Fertige Fassung in `.mcp.json.example` (`beispiel-server-mit-dotenv`), samt zweier Stolpersteine, die unter
+   Windows beide auftraten: `dotenv-cli` lädt nur und **benennt nicht um** (heißen die Variablen in der `.env`
+   anders als der Server sie erwartet, braucht es ein `sh -c` mit vorangestellter Zuweisung), und Paketnamen
+   mit `@`-Scope gehören als `npx -y -p "@scope/paket" befehl` geschrieben, sonst liest `cmd.exe` das führende
+   `@` als Befehlspräfix.
 2. **Umgebung des Aufrufers** — die Variablen sind schon gesetzt, wenn Claude Code startet (Shell-Profil,
    Dienst-Konfiguration, CI). Ebenfalls sauber, aber pro Rechner einzurichten.
 3. **`env`-Block in `.claude/settings.local.json`** (gitignored) — funktioniert, legt die Werte aber im
