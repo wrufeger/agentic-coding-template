@@ -12,19 +12,40 @@ Jede Aufgabe bekommt eine fortlaufende Nummer mit Präfix `A<n>` (z. B. `A7`) �
 Ledger und Commits zitiert wird und **nie neu vergeben** wird, auch nach dem Archivieren nicht. Fragen in
 `questions.md` laufen analog unter `F<n>`. Format je Aufgabe:
 
+**Offene Aufgabe:**
+
 ```
 - [ ] **A7 · Kurztitel der Aufgabe** 🔄
   Ziel: ein Satz, woran man erkennt, dass die Aufgabe erledigt ist.
   Schritte:
   1. …
   2. …
-  Stand 2026-01-31: was zuletzt passiert ist, was gerade blockiert.
+  Offen: was noch fehlt, um anfangen oder fertig werden zu können — fehlende Vorgaben, Zugänge,
+    unbeantwortete Fragen (`F<n>`), abhängige Aufgaben (`A<n>`). Entfällt, wenn nichts offen ist.
+  Entschieden: was bereits feststeht und nicht neu verhandelt wird, je Punkt eine Zeile mit Verweis
+    (`ADR-<n>`, `F<n>`). Entfällt, wenn nichts entschieden wurde.
+  Stand 2026-01-31: eine Zeile — wo die Aufgabe gerade steht.
 ```
 
-Die `Stand <Datum>:`-Zeile wird bei jeder Berührung der Aufgabe **aktualisiert**, nicht überschrieben oder
-gelöscht (ältere Stände ggf. darüber stehen lassen, wenn sie noch relevant sind). Erledigte Aufgaben (✅) werden
-**mit Volltext** nach `docs/ai/tasks_archive.md` verschoben (nicht gelöscht) — der Beleg für die Erledigung
-bleibt im `ledger.md`.
+**Erledigte Aufgabe** — Haken gesetzt, Marker ✅, und statt Schritten das Ergebnis:
+
+```
+- [x] **A7 · Kurztitel der Aufgabe** ✅
+  Ziel: unverändert stehen lassen.
+  Ergebnis: was tatsächlich getan wurde, in ein bis drei Zeilen, mit Beleg (Commit-Hash, Datei, Testlauf).
+  Stand 2026-02-03: erledigt.
+```
+
+**Der Entscheidungsverlauf gehört nicht hierher.** Wie eine Entscheidung zustande kam, steht in
+`docs/project/decisions.md` (ADR) und in `docs/ai/questions_archive.md`; was währenddessen passiert ist, im
+`ledger.md`. In der Aufgabe steht nur das **Ergebnis** dieses Verlaufs — sonst wächst jede Aufgabe zu einem
+Protokoll, das niemand mehr überfliegt.
+
+Die `Stand <Datum>:`-Zeile wird bei jeder Berührung **aktualisiert** und bleibt **eine** Zeile; ältere Stände
+werden ersetzt, nicht gestapelt. Erledigte Aufgaben (✅) werden **mit Volltext** nach
+`docs/ai/tasks_archive.md` verschoben (nicht gelöscht) — spätestens beim nächsten Lauf der Checkliste
+„Aufgabe abschließen", damit diese Datei nur zeigt, was noch aussteht. Der Beleg für die Erledigung bleibt im
+`ledger.md`.
 
 **Kurz und übersichtlich, kein Fließtext.** Diese Datei wird im Alltag überflogen, nicht gelesen:
 
@@ -32,6 +53,7 @@ bleibt im `ledger.md`.
   keine Erklärungen.
 - Keine Absätze, keine Prosa, keine Tabellen. Was länger wird, gehört in `docs/project/` und wird von hier aus
   nur verlinkt.
+- `Offen:` und `Entschieden:` sind Stichpunktlisten, keine Begründungen — die Begründung steht im ADR.
 - Eine Aufgabe = ein Ergebnis. Braucht sie mehr als etwa fünf Schritte oder mehrere Entscheidungen, wird sie
   in mehrere Aufgaben mit eigenen Nummern geteilt.
 - Unklarheiten werden nicht in der Aufgabe ausdiskutiert — sie werden zu einer Frage in `questions.md`.
