@@ -27,7 +27,7 @@ geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 | Schlüssel | Wert | Optionen | Platzhalter | Bedeutung |
 | :--- | :--- | :--- | :--- | :--- |
 | Stack |  |  | `STACK` | Sprachen, Frameworks, Datenbank — ein Satz reicht. |
-| Coding-Guidelines |  | bash, csharp, go, nuxt, php, python, sql, tailwind, typescript, vue |  | Kommaliste der Regelsätze, die das Projekt übernimmt. |
+| Coding-Guidelines |  | bash, csharp, go, java, nuxt, php, python, sql, tailwind, typescript, vue |  | Kommaliste der Regelsätze, die das Projekt übernimmt. |
 | Install-Befehl |  |  | `INSTALL_BEFEHL` | Steht in `ci.yml` und `setup.md`. |
 | Dev-Start-Befehl |  |  | `DEV_START_BEFEHL` | Steht in `setup.md`. |
 | Lint-Befehl |  |  | `LINT_BEFEHL` | Steht in `ci.yml` und `testing.md`. |

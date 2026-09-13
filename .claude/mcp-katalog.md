@@ -11,27 +11,79 @@ nicht selbst ein. Eine automatische Übernahme durch `sync-config.py` steht noch
 ein Server OAuth oder ein statisches Token verlangt, ändern sich erfahrungsgemäß schnell — vor der ersten
 Nutzung gegen die verlinkte Quelle prüfen. Wer hier etwas korrigiert, trägt das Datum nach.
 
-## Katalog
+## Code, Doku, Qualität
 
 | Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| `github` | GitHub | Repos, Issues, Pull Requests | http | OAuth, sonst `GITHUB_PERSONAL_ACCESS_TOKEN` | offiziell |
+| `gitlab` | GitLab | Repos, Issues, Merge Requests | http | OAuth | offiziell |
 | `figma` | Figma | Design-Dateien für Code auslesen | http | OAuth | offiziell |
+| `context7` | Upstash | aktuelle Bibliotheks-Doku nachschlagen | stdio | `CONTEXT7_API_KEY` | breit genutzt, Community-Betrieb |
+| `aws-knowledge` | AWS | AWS-Doku und Codebeispiele durchsuchen | http | — | offiziell |
+| `postman` | Postman | Collections, Environments, API-Tests | stdio | `POSTMAN_API_KEY` | offiziell |
+| `snyk` | Snyk | Code- und Abhängigkeits-Sicherheitsscans | stdio | `SNYK_TOKEN` | offiziell, **experimentell** |
+
+## Browser und Prüfung
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
 | `playwright` | Microsoft | Browser automatisieren, UI prüfen | stdio | — | offiziell |
 | `chrome-devtools` | Google | Chrome inspizieren, Traces erstellen | stdio | — | offiziell |
-| `github` | GitHub | Repos, Issues, Pull Requests | http | OAuth, sonst `GITHUB_PERSONAL_ACCESS_TOKEN` | offiziell |
+
+## Hosting und Auslieferung
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `vercel` | Vercel | Deployments, Projekte, Logs | http | OAuth | offiziell, Public Beta |
+| `netlify` | Netlify | Sites, Builds, Deployments | http/stdio | OAuth | offiziell |
+| `cloudflare-workers` | Cloudflare | Workers, KV, R2, D1 verwalten | http | `CLOUDFLARE_API_TOKEN` | offiziell — Cloudflare bietet rund 17 getrennte Endpunkte, hier nur „Bindings" |
+| `docker-hub` | Docker | Images und Repositories verwalten | stdio | `HUB_PAT_TOKEN` | offiziell, **sehr jung** — siehe Vorbehalte |
+
+## Daten
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `postgres` | Crystal DBA | PostgreSQL-Schema und Abfragen | stdio | `POSTGRES_URI` | **Community** |
+| `mysql-mariadb` | Bytebase | MySQL/MariaDB-Schema und Abfragen | stdio | `DB_DSN` | **Community** |
+| `mongodb` | MongoDB | Atlas-Cluster, Collections, Aggregationen | stdio | `MDB_MCP_CONNECTION_STRING` | offiziell |
+| `redis` | Redis | Datenstrukturen abfragen und verwalten | stdio | `REDIS_HOST`, `REDIS_PWD` | offiziell |
+| `neon` | Neon | Postgres-Projekte, Branches, Migrationen | http | `NEON_API_KEY` | offiziell |
+| `supabase` | Supabase | Projekte, SQL, Schema | http | `SUPABASE_ACCESS_TOKEN` | offiziell |
+| `planetscale` | PlanetScale | MySQL-Branches, Schema, Deploys | http | OAuth | offiziell |
+
+## Betrieb und Beobachtung
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
 | `grafana` | Grafana Labs | Dashboards, Alerts, Metriken lesen | stdio | `GRAFANA_URL`, `GRAFANA_API_KEY` | offiziell |
-| `home-assistant` | Home Assistant | Geräte **steuern und messen** | http/sse | `HOME_ASSISTANT_TOKEN` | offiziell (Core-Integration) |
-| `ha-mcp` | Community (homeassistant-ai) | HA zusätzlich **aufsetzen und konfigurieren** | stdio | HA-Token | **Community** — siehe Hinweis unten |
+| `datadog` | Datadog | Metriken, Logs, Monitore, Incidents | http | **unbelegt** — siehe Vorbehalte | offiziell |
 | `sentry` | Sentry | Fehler und Issues zum Debuggen | http | OAuth | offiziell |
+| `launchdarkly` | LaunchDarkly | Feature-Flags verwalten und auswerten | sse | `LD_ACCESS_TOKEN` | offiziell — selbstgehostete Variante |
+| `resend` | Resend | Transaktions-E-Mails versenden | stdio | `RESEND_API_KEY` | offiziell |
+
+## Projekt und Team
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
 | `linear` | Linear | Issues und Projekte | http | OAuth | offiziell |
 | `notion` | Notion | Seiten und Datenbanken | http | OAuth | offiziell |
 | `slack` | Slack | Nachrichten suchen und senden | http | OAuth | offiziell (GA seit 02/2026) |
-| `atlassian` | Atlassian | Jira und Confluence | http | OAuth | offiziell |
-| `context7` | Upstash | aktuelle Bibliotheks-Doku nachschlagen | stdio | `CONTEXT7_API_KEY` | breit genutzt, Community-Betrieb |
-| `postgres` | Crystal DBA | PostgreSQL-Schema und Abfragen | stdio | `POSTGRES_URI` | **Community** |
-| `mysql-mariadb` | Bytebase | MySQL/MariaDB-Schema und Abfragen | stdio | `DB_DSN` | **Community** |
-| `filesystem` | Anthropic (Referenz) | Dateien lesen und schreiben | stdio | — | offiziell (Referenz) |
-| `fetch` | Anthropic (Referenz) | Webinhalte abrufen und umwandeln | stdio | — | offiziell (Referenz) |
+| `atlassian` | Atlassian | Jira, Confluence, Bitbucket Cloud | http | OAuth | offiziell |
+| `stripe` | Stripe | Zahlungen, Kunden, Rechnungen | http | `STRIPE_SECRET_KEY` (nur lokal) | offiziell |
+
+## Haus und Hof
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `home-assistant` | Home Assistant | Geräte **steuern und messen** | http/sse | `HOME_ASSISTANT_TOKEN` | offiziell (Core-Integration) |
+| `ha-mcp` | Community (homeassistant-ai) | HA zusätzlich **aufsetzen und konfigurieren** | stdio | HA-Token | **Community** — siehe Hinweis unten |
+
+## Referenzserver von Anthropic
+
+| Kennung | Anbieter | Zweck | Transport | Secrets | Reifegrad |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `filesystem` | Anthropic | Dateien lesen und schreiben | stdio | — | offiziell (Referenz) |
+| `fetch` | Anthropic | Webinhalte abrufen und umwandeln | stdio | — | offiziell (Referenz) |
 
 ### Bildgenerierung (Rasterbilder)
 
@@ -58,10 +110,19 @@ claude mcp add --transport http notion https://mcp.notion.com/mcp
 claude mcp add --transport http slack https://mcp.slack.com/mcp
 claude mcp add --transport http atlassian https://mcp.atlassian.com/v2/mcp
 claude mcp add --transport http github https://api.githubcopilot.com/mcp/
+claude mcp add --transport http gitlab https://gitlab.com/api/v4/mcp
+claude mcp add --transport http vercel https://mcp.vercel.com
+claude mcp add --transport http planetscale https://mcp.pscale.dev/mcp/planetscale
+claude mcp add --transport http aws-knowledge https://knowledge-mcp.global.api.aws
+claude mcp add --transport http stripe https://mcp.stripe.com
 
 # stdio (lokaler Prozess)
 claude mcp add --transport stdio playwright -- npx -y @playwright/mcp@latest
 claude mcp add --transport stdio chrome-devtools -- npx -y chrome-devtools-mcp@latest
+claude mcp add --transport stdio postman -- npx -y @postman/postman-mcp-server
+claude mcp add --transport stdio resend -- npx -y resend-mcp
+claude mcp add --transport stdio mongodb -- npx -y @mongodb-js/mongodb-mcp-server
+claude mcp add --transport stdio netlify -- npx -y @netlify/mcp
 claude mcp add --transport stdio context7 -- npx -y @upstash/context7-mcp --api-key ${CONTEXT7_API_KEY}
 claude mcp add --env GRAFANA_URL=${GRAFANA_URL} --env GRAFANA_API_KEY=${GRAFANA_API_KEY} \
   --transport stdio grafana -- mcp-grafana
@@ -71,11 +132,14 @@ claude mcp add --env DATABASE_URI=${POSTGRES_URI} --transport stdio postgres -- 
 
 `home-assistant` wird nicht per Befehl eingerichtet, sondern in Home Assistant selbst: Einstellungen →
 Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Token von dort übernehmen.
+`neon` richtet `npx neon@latest init` ein, `snyk` die Snyk-CLI (`snyk mcp -t stdio --experimental`),
+`redis` läuft über `uvx --from redis-mcp-server@latest redis-mcp-server`.
 
 ## Regeln für dieses Projekt
 
-- **Lesen ist der Normalfall, Schreiben braucht eine Freigabe.** `github`, `linear`, `notion`, `atlassian`,
-  `slack`, `postgres` und `mysql-mariadb` können schreiben. Diese Rechte einzeln begrenzen, nicht pauschal
+- **Lesen ist der Normalfall, Schreiben braucht eine Freigabe.** Schreibfähig sind unter anderem `github`,
+  `gitlab`, `linear`, `notion`, `atlassian`, `slack`, `stripe`, die Datenbank- und die Hosting-Server. Bei
+  `stripe` und den Deployment-Servern hat ein falscher Aufruf unmittelbare Wirkung außerhalb des Repos. Diese Rechte einzeln begrenzen, nicht pauschal
   freigeben — es gilt `AGENTS.md` § „Zugriff auf laufende Systeme": Schreibzugriff nur mit datierter Freigabe
   im Journal.
 - **Secrets nie in `.mcp.json`.** Nur `${VAR}`; die Werte kommen aus der Prozessumgebung, **nicht** aus
@@ -98,9 +162,24 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
 - **Community-Server** (`postgres`, `mysql-mariadb`, `context7`) sind hier gelistet, weil es keine
   Anbieter-Alternative gibt. Vor dem Einsatz kurz auf Wartungsstand prüfen.
 
+### Drei Einträge mit Vorbehalt
+
+- **`docker-hub`** ist sehr jung und warnt selbst: Im HTTP-Transport wird bei jedem Werkzeugaufruf das
+  persönliche Zugriffstoken des Betreibers durchgereicht. Nur lokal über `stdio` nutzen.
+- **`datadog`**: Der Auth-Mechanismus des gehosteten Endpunkts war in der Doku nicht eindeutig benannt — vor
+  der Aufnahme in ein Projekt gegen die Datadog-Doku prüfen.
+- **`snyk`** ist ausdrücklich experimentell; die Schnittstelle kann sich ohne Vorwarnung ändern.
+
 ## Bewusst nicht aufgenommen
 
 - Die **archivierten Referenzserver** von Anthropic (Slack, Postgres, Sentry, GDrive, GitLab, Google Maps) —
   laut Anthropic ohne Sicherheitsgarantien, teils durch Anbieter-Server ersetzt.
-- **Zapier-Slack-MCP** — leitet den Zugriff über eine dritte Plattform, seit dem offiziellen Slack-Server
-  unnötig.
+- **Zapier, IFTTT, Make, n8n** — generische Automatisierungsplattformen, kein Entwicklungswerkzeug; beim
+  Slack-Zugriff zudem ein unnötiger Umweg über einen Dritten.
+- **Bitbucket** einzeln — über `atlassian` abgedeckt.
+- **Jenkins, CircleCI, GitHub Actions, npm, PyPI** — kein herstellergepflegter Server auffindbar.
+- **Bitrise, Heroku, Redis Cloud** — nur in einem Aggregator gesehen, Pflegestand nicht bestätigt.
+
+Zur Quellenlage: `mcpservers.org` blockiert automatisierte Abrufe (HTTP 403); Angaben von dort wurden über
+Suchtreffer ermittelt und am jeweiligen Repository gegengeprüft. Exakte Commit-Zeitstempel waren teils nicht
+einsehbar — vor der Aufnahme eines Servers lohnt ein Blick auf den letzten Commit.
