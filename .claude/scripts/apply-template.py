@@ -49,7 +49,7 @@ for _stream in (sys.stdout, sys.stderr):
 # Kanonische Adresse dieses Templates - nur Rueckfallebene: normalerweise wird die URL aus dem Remote
 # 'origin' des Template-Checkouts gelesen (ein Fork traegt so automatisch seine eigene Adresse ein). Sie
 # greift, wenn der Checkout keinen 'origin' hat. Beim Verschieben des Templates hier nachziehen.
-CANONICAL_TEMPLATE_URL = "git@github.com:wrufeger/template-agentic-coding-project.git"
+CANONICAL_TEMPLATE_URL = "git@github.com:wrufeger/agentic-coding-template.git"
 
 COPY_ITEMS = [
     "LICENSE",
