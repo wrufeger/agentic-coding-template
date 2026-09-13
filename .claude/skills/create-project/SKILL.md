@@ -43,7 +43,7 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    „Einrichtung" bleiben).
 7. `grep -rn "{{" .` prüfen — nur die Scripte in `.claude/scripts/` (Code-Literale, Kopfkommentare; siehe
    `no_replace` in `.claude/template.json`) und `AI-CONFIG.md` dürfen noch Platzhalter zeigen.
-8. **Globale Ablage anbieten** (`AI-CONFIG.md` § Einrichtung → `Globale Ablage`): `nein` → überspringen.
+8. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
    `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
    --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
    {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**

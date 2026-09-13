@@ -80,7 +80,7 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
 8. `python .claude/scripts/create-project.py --finish` ausführen (prüft vorher Schritt 5/7, schreibt danach
    `AI-CONFIG.md` fort statt sie zu löschen: Freitext-Abschnitte raus, Vermerk in Zeile 1, „Betrieb"/
    „Einrichtung" bleiben).
-9. **Globale Ablage anbieten** (`AI-CONFIG.md` § Einrichtung → `Globale Ablage`): `nein` → überspringen.
+9. **Globale Ablage anbieten** (`AI-CONFIG.md` → `Globale Ablage`): `nein` → überspringen.
    `agenten` / `agenten+skills` / `alles` → ohne Rückfrage `python .claude/scripts/install-global.py --plan
    --parts <entsprechend>` zeigen und nach Zustimmung `--apply` (mit `--force` nur, wenn
    {{AUFTRAGGEBER}} eine vorhandene Zieldatei ausdrücklich überschreiben will). `fragen` (Default) → **einmal**

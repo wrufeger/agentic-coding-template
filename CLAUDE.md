@@ -29,6 +29,15 @@ folgenden Sub-Agenten sind die Worker:
 - **[EXPERT]** -> `.claude/agents/expert-solver.md` (Eskalation, Fable 5.1 mit hoher Denkstufe — **nur**, wenn
   ein Worker zweimal an derselben Aufgabe gescheitert ist oder ein Fehler unlösbar erscheint)
 - Mehrere unabhängige Prüfungen immer **parallel** starten (ein Nachrichtenblock, mehrere Agent-Aufrufe).
+- **Laufende Sub-Agenten beobachten** — Pflicht, nicht Kür (Richtwerte und Eskalationswege in der Checkliste
+  „Delegation" § „Laufende Worker überwachen"). `ListAgents` zeigt, wer läuft und seit wann; die
+  Abschlussmeldung nennt Tokenverbrauch und Dauer. Grobe Marken: ab **10 Minuten oder 100.000 Token**
+  Zwischenstand per `SendMessage` anfordern, ab **20 Minuten oder 200.000 Token** entscheiden, ab **30 Minuten
+  oder 300.000 Token** mit `TaskStop` beenden. Dass ein Agent seine Aufgabenzeile aktualisiert, belegt keinen
+  Fortschritt. Beim Eingreifen zuerst fertigmachen lassen, wenn nur Feinschliff fehlt; hängt der Worker an der
+  Sache selbst, dasselbe Problem mit `model: opus` oder `expert-solver` neu ansetzen statt es zu wiederholen;
+  sonst abbrechen und den Auftrag neu schneiden. Mehrfach nachgebesserte Aufträge sind ebenfalls ein
+  Zuschnittsproblem: teilen statt nachbessern.
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
 <!-- template-only:start -->
@@ -158,7 +167,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 .
 ├── AGENTS.md                     # anbieterneutrale Grundregeln (zuerst lesen)
 ├── CLAUDE.md                     # diese Datei — Claude-Code-Ergänzung
-├── AI-CONFIG.md                   # Betrieb (laufend) + Einrichtung (einmalig, Weg 1) — bleibt dauerhaft im Projekt
+├── AI-CONFIG.md                   # Steuerung, laufend wirksam — Einstellungstabellen + Freitext, bleibt dauerhaft
 ├── GEMINI.md  .aider.conf.yml    # Verweise auf AGENTS.md für weitere Werkzeuge
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
@@ -171,8 +180,10 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   │                            # (Weg 1), apply-template.py (Weg 2, läuft aus dem Template-Checkout),
 │   │                            # migrate-project.py (Weg 2: KI-Ordner auf die Template-Struktur
 │   │                            # umstellen, Orchestrator-Name ersetzen — läuft im Zielrepo),
-│   │                            # maintenance-check.py (Fälligkeit der Wartung, SessionStart-Hook)
-│   ├── template.json              # Herkunft/Update-Stand ggü. dem Template (Remote, Basis-Commit, Werte)
+│   │                            # maintenance-check.py (Fälligkeit der Wartung, SessionStart-Hook),
+│   │                            # sync-config.py (Änderungen an AI-CONFIG.md umsetzen, SessionStart-Hook),
+│   │                            # install-global.py (Rollen/Skills nach ~/.claude/ legen)
+│   ├── template.json              # Herkunft/Update-Stand, Werte, zuletzt umgesetzte AI-CONFIG (applied_config)
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor

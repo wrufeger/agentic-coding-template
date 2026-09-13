@@ -58,10 +58,18 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
 
 ## Grundregeln
 
-- **`AI-CONFIG.md` im Repo-Root** steuert die Zusammenarbeit: Der Abschnitt „Betrieb" (Modell des
-  Orchestrators, Commit-Verhalten, Logging, Wartung, Code-Optimierung) wird **zu Beginn jeder Sitzung
-  gelesen** und gilt laufend; „Einrichtung" dokumentiert, mit welchen Werten das Projekt angelegt wurde.
-  {{AUFTRAGGEBER}} ändert dort jederzeit, ohne dass Code angefasst werden muss.
+- **`AI-CONFIG.md` im Repo-Root** steuert die Zusammenarbeit, und zwar **beide Abschnitte laufend**. Der
+  Orchestrator liest die Datei **vor jeder Aufgabe** und setzt um, was sich seit dem letzten Abgleich
+  geändert hat — sie ist Steuerung, nicht Protokoll. Die Einstellungen stehen dort als Tabellen, nach Thema
+  gruppiert: Projekt, Technik, Assistenten, Protokoll und Wartung, Nachrüsten. Geändert wird nur die Spalte
+  „Wert"; leer bedeutet den Standard.
+  {{AUFTRAGGEBER}} ändert dort jederzeit, ohne dass jemand Code anfassen muss.
+- **Geänderte Konfiguration wird umgesetzt, nicht nur vermerkt.** `python .claude/scripts/sync-config.py
+  --check` zeigt, was offen ist, `--apply` setzt es um. Ergänzungen laufen dabei durch: ein nachgetragenes
+  KI-Werkzeug holt sich seine Dateien aus dem Template, ein ergänzter Regelsatz kommt dazu. Alles, was
+  löscht oder projektweit ersetzt — ein gestrichenes Werkzeug, ein geänderter Rufname — wird vorher gezeigt
+  und braucht die Zusage von {{AUFTRAGGEBER}}. Der zuletzt umgesetzte Stand steht in `.claude/template.json`
+  § `applied_config`; nur daraus weiß der Abgleich, was neu ist.
 - Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in
   `docs/ai/README.md`.
 - „Fertig" gilt nur mit Beleg: Testlauf, Commit-Hash oder ein Aufruf von außen, der das Ergebnis zeigt.
@@ -164,6 +172,12 @@ Bedarf gerufen (siehe § Rollen).
 Diese Zuordnung ist ein Beispiel, keine Pflicht — welches Modell welche Rolle übernimmt, richtet sich nach dem
 Werkzeug, das gerade genutzt wird (siehe die werkzeugspezifischen Dateien für feste IDs, sofern das Werkzeug das
 unterstützt).
+
+**Ein laufender Worker kostet, auch wenn er beschäftigt aussieht.** Die Kostenlogik endet deshalb nicht bei der
+Modellwahl: Der Orchestrator behält Laufzeit und Verbrauch jedes Workers im Blick und greift ein, statt zu
+warten — Richtwerte, Eingriffswege und die Frage, wann ein Auftrag stattdessen geteilt gehört, stehen in
+`docs/ai/checklists.md` § Delegation → „Laufende Worker überwachen". Der teuerste Fehler ist nicht das falsche
+Modell, sondern ein zu groß geschnittener Auftrag, den niemand stoppt.
 
 ## Logging (optional)
 

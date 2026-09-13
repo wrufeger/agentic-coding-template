@@ -24,8 +24,8 @@ angesammelt hat, und sichert das Ergebnis.
    Commit-Hashes, Nummern, Versionen und Pfade bleiben dabei immer erhalten.
 4. **Doku-Index.** Neue Dateien in `docs/README.md` eintragen, Datenstände der geänderten Dateien prüfen.
 5. **Board.** `docs/ai/board.md` auf den neuen Stand bringen: Kurzbilanz, nächster Schritt, offene Freigaben.
-6. **Commit-Verhalten prüfen.** `AI-CONFIG.md` § „Betrieb" → `Commit-Verhalten` entscheidet, wie es weitergeht:
-   `automatisch` committet direkt (Schritt 7), `fragen` (Default) schlägt den Commit vor und wartet auf
+6. **Commit-Verhalten prüfen.** `AI-CONFIG.md` → `Commit-Verhalten` entscheidet, wie es weitergeht:
+   `automatisch` (Default) committet direkt (Schritt 7), `fragen` schlägt den Commit vor und wartet auf
    Zustimmung, `manuell` committet nur auf ausdrückliche Anweisung von {{AUFTRAGGEBER}} — sonst bleibt die
    Arbeit abgenommen, aber uncommittet.
 7. **Commit per Pathspec.** `git add <pfad …>` — nie ein catch-all. Committet wird **abgenommene Arbeit**,

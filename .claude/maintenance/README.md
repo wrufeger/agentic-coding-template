@@ -9,11 +9,11 @@ zugehörigen `SessionStart`-Hook (siehe `.claude/scripts/create-project.py`).
 - `status.json` — Aufgaben mit Intervall (Tage) und Datum des letzten/nächsten Laufs, siehe unten.
 - `run-maintenance.ps1` — Windows-Variante, ruft Claude Code headless mit dem Skill auf.
 - `run-maintenance.sh` — POSIX-Variante, gleiche Funktion.
-- `reports/` — Berichte je Lauf (`YYYY-MM-DD.md`), **nur wenn `AI-CONFIG.md` § Betrieb → `Wartungsberichte`
-  auf `intern` steht** (Default) — dann **gitignored** (siehe `.gitignore`). Steht der Schlüssel auf `docs`,
-  liegen die Berichte stattdessen versioniert unter `docs/maintenance/` (im Doku-Index sichtbar, gleiches
-  Schema); `create-project.py --apply` legt dafür `docs/maintenance/README.md` an. Dieser Ordner hier bleibt
-  in dem Fall leer/ungenutzt.
+- `reports/` — Berichte je Lauf (`YYYY-MM-DD.md`), **nur wenn `AI-CONFIG.md` → `Wartungsberichte`
+  auf `intern` steht** — dann **gitignored** (siehe `.gitignore`). Der Default ist `docs`: Dann liegen die
+  Berichte versioniert unter `docs/maintenance/` (im Doku-Index sichtbar, gleiches Schema), und
+  `create-project.py --apply` legt dafür `docs/maintenance/README.md` an — dieser Ordner hier bleibt dann
+  leer. Versioniert ist der Default, weil der Verlauf der Prüfungen sonst beim nächsten Checkout weg ist.
 - `*.log` — Log-Dateien der Runner, **gitignored**.
 
 ## `status.json` — Schema und Fälligkeit
@@ -59,7 +59,7 @@ Ohne Argument: fälligkeitsgesteuert anhand `status.json` (nur was `maintenance-
 meldet). Details zur Abarbeitung in `.claude/agents/maintenance-orchestrator.md`.
 
 ## Bericht-Schema
-Jeder Lauf schreibt einen Bericht `YYYY-MM-DD.md` unter dem in `AI-CONFIG.md` § Betrieb → `Wartungsberichte`
+Jeder Lauf schreibt einen Bericht `YYYY-MM-DD.md` unter dem in `AI-CONFIG.md` → `Wartungsberichte`
 gewählten Ordner (`.claude/maintenance/reports/`, gitignored — oder `docs/maintenance/`, versioniert) mit den
 Abschnitten:
 ```

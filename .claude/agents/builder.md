@@ -22,6 +22,12 @@ Kopf des Projekts ist {{AUFTRAGGEBER}}; dessen Codestil bleibt erhalten, solange
   § „Stack-spezifisch").
 - Nie schreiben in `docs/ai/` und nie `git commit`/`git add` — das macht ausschließlich {{ORCHESTRATOR}}.
 - Ignorieren: Build-/Abhängigkeitsordner (siehe `.gitignore`), generierte Artefakte.
+- **Wird der Auftrag unterwegs deutlich größer als gedacht, melde das früh**, statt still weiterzuarbeiten.
+  Eine kurze Zwischenmeldung mit dem, was schon steht, und einem Vorschlag zur Aufteilung ist wertvoller als
+  ein Lauf, der sich hinzieht. Dasselbe gilt, wenn dich Nachträge zwingen, Fertiges zu verwerfen.
+- **Kein Halbfertiges im Repo.** Wirst du abgebrochen oder brichst selbst ab, hinterlässt du entweder einen
+  Stand, der für sich trägt (übersetzt, läuft, bricht nichts), oder gar keine Änderung — und sagst im
+  Bericht, welche Dateien du angefasst hast und was fehlt.
 
 ## Logging
 Nur bei eingeschaltetem Logging (`AGENTS.md` § Logging; bei `aus` ist der Aufruf ein No-op): Start und Ende

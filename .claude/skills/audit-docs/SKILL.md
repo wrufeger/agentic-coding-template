@@ -12,7 +12,7 @@ argument-hint: "[project|ai|alle]"
 Läuft als Fork in einem `general-purpose`-Worker, der Fan-out und Auswertung übernimmt; der Hauptkontext
 prüft danach die Diffs und committet (Skill `/commit`, nicht delegierbar). Bewusst **kein** projekteigener
 Agent als Träger: Der Doku-Abgleich gehört nicht zur optionalen Wartung und muss auch dann laufen, wenn diese
-abgewählt ist (`AI-CONFIG.md` § Betrieb).
+abgewählt ist (`AI-CONFIG.md` → `Wartung`).
 
 Ersetzt die früheren Skills `/project-docs` und `/docs-audit`: Nachziehen und Prüfen sind derselbe Vorgang —
 wer nachzieht, gleicht zuerst ab.

@@ -51,7 +51,7 @@
 #       unveraendert sind (Hash-Vergleich). Von Hand geaenderte Dateien werden gemeldet, nicht geloescht.
 #       Exit 0.
 #   --parts agents,skills,rules
-#       Auswahl der Teile. Ohne Angabe: aus AI-CONFIG.md § "Einrichtung" -> "Globale Ablage" (nein |
+#       Auswahl der Teile. Ohne Angabe: aus AI-CONFIG.md -> "Globale Ablage" (nein |
 #       agenten | agenten+skills | alles | fragen). "nein"/fehlend -> nichts zu tun (Exit 0, kein Fehler).
 #       "fragen" ohne explizites --parts: bei --plan werden alle drei Teile als Vorschau gezeigt (mit
 #       Hinweis, dass die Auswahl im Chat noch offen ist); bei --apply Exit 2 (siehe oben).
@@ -169,7 +169,7 @@ def _strip_trailing_comment(value: str) -> str:
 
 
 def read_globale_ablage(own_root: Path) -> str:
-    """Liest AI-CONFIG.md § Einrichtung -> "Globale Ablage" (siehe create-project.py:parse_config fuer das
+    """Liest AI-CONFIG.md -> "Globale Ablage" (siehe create-project.py:parse_config fuer das
     allgemeine Format). Fehlt die Datei/der Schluessel: "nein" (Default)."""
     path = own_root / "AI-CONFIG.md"
     if not path.exists():
@@ -178,7 +178,13 @@ def read_globale_ablage(own_root: Path) -> str:
         text = path.read_text(encoding="utf-8-sig")
     except OSError:
         return "nein"
-    m = re.search(r"^[ \t]*Globale Ablage:\s?(.*)$", text, re.MULTILINE)
+    # Zwei Formate muessen gehen: die Tabellenzeile "| Globale Ablage | <wert> | ... |" (aktuell) und die
+    # aeltere Zeile "Globale Ablage: <wert> (kommentar)" - ein Projekt, das vor der Umstellung angelegt
+    # wurde, hat die alte Fassung, und niemand wird zum Wechsel gezwungen.
+    m = re.search(r"^[ \t]*\|\s*`?Globale Ablage`?\s*\|([^|]*)\|", text, re.MULTILINE | re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip("`").lower() or "nein"
+    m = re.search(r"^[ \t]*Globale Ablage:\s?(.*)$", text, re.MULTILINE | re.IGNORECASE)
     if not m:
         return "nein"
     val = _strip_trailing_comment(m.group(1)).lower()
@@ -313,7 +319,7 @@ def cmd_plan(own_root: Path, home_dir: Path, parts, ablage_hint: str) -> int:
     cfg, _ = tu.load_template_json(own_root)
     values = cfg.get("values") or {}
 
-    lines = [f"install-global.py --plan -> {home_dir}", f"AI-CONFIG.md § Globale Ablage: {ablage_hint}", ""]
+    lines = [f"install-global.py --plan -> {home_dir}", f"AI-CONFIG.md -> Globale Ablage: {ablage_hint}", ""]
     if not parts:
         lines.append("Keine Teile ausgewaehlt (Default 'nein' bzw. --parts leer) - nichts zu tun.")
         lines.append("Explizit anfordern mit --parts agents,skills,rules.")

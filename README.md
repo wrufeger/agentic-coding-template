@@ -60,6 +60,12 @@ Neues Projekt aus (`docs/ai/checklists.md`)."
 `AI-CONFIG.md` ausfüllen (oder leer lassen) und `/create-project` starten. In `AI-CONFIG.md` stehen auch die Schalter
 für das Modell der Hauptsession, das Agenten-Logging und die Wartung.
 
+**Später etwas ändern?** Einfach in `AI-CONFIG.md` ändern. Die Datei wirkt laufend: Der Assistent liest sie
+vor jeder Aufgabe und setzt um, was neu ist — ein nachgetragenes Werkzeug holt sich seine Dateien aus dem
+Template, ein ergänzter Regelsatz kommt dazu. Was etwas löscht oder projektweit ersetzt, etwa ein
+gestrichenes Werkzeug oder ein geänderter Rufname, wird vorher gezeigt und erst nach Zusage ausgeführt.
+Von Hand: `python .claude/scripts/sync-config.py --check` und `--apply`.
+
 *Ohne Klon:* Wer im Template-Checkout bleiben will, legt einen Branch an (`git switch -c projekt/<name>`) —
 das Projekt entsteht dann als Branch, Updates kommen später per Merge aus `main`. Auf `main` selbst bricht
 `/create-project` ab, damit das Template seine Platzhalter behält.
@@ -120,8 +126,8 @@ zieht spätere Fassungen nach.
 ```text
 AGENTS.md            # anbieterneutrale Grundregeln (zuerst lesen)
 CLAUDE.md             # Claude-Code-Ergänzung (Sub-Agenten, Skills, Modell-IDs)
-AI-CONFIG.md          # Betrieb (Modell, Commit-Verhalten, Logging, Wartung — laufend) + Einrichtung
-                      # (einmalig, Weg 1: Projektname, Stack, Ziel/Features) — bleibt dauerhaft im Projekt
+AI-CONFIG.md          # Steuerung, laufend wirksam: Einstellungen als Tabellen nach Thema (Projekt,
+                      # Technik, Assistenten, Protokoll/Wartung, Nachruesten) + Freitext zu Ziel und Features
 GEMINI.md  .aider.conf.yml  .cursor/rules/agents.mdc  .github/copilot-instructions.md   # Werkzeug-Verweise
 .claude/              # Claude Code: Sub-Agenten, Skills, Scripte, Settings (Modell + Hooks), Wartung (optional)
 .claude/scripts/      # u. a. create-project.py, apply-template.py, update-template.py, ai-log.py

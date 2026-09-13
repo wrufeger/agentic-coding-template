@@ -33,6 +33,8 @@
       "Bash(python3 .claude/scripts/create-project.py*)",
       "Bash(python .claude/scripts/maintenance-check.py*)",
       "Bash(python3 .claude/scripts/maintenance-check.py*)",
+      "Bash(python .claude/scripts/sync-config.py*)",
+      "Bash(python3 .claude/scripts/sync-config.py*)",
       "Bash(git fetch template*)",
       "Bash(git merge --abort)"
     ],
@@ -61,6 +63,16 @@
             "shell": "bash",
             "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/update-template.py\" --check --quiet; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/update-template.py\" --check --quiet; fi || true",
             "timeout": 30
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/sync-config.py\" --check --quiet; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/sync-config.py\" --check --quiet; fi || true",
+            "timeout": 20
           }
         ]
       },

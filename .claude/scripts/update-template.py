@@ -146,6 +146,7 @@ DEFAULT_KEEP_LOCAL = [
 DEFAULT_NO_REPLACE = [
     ".claude/scripts/create-project.py",
     ".claude/scripts/update-template.py",
+    ".claude/scripts/sync-config.py",
 ]
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in

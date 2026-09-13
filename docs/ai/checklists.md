@@ -8,6 +8,21 @@ wörtlich als Anweisung geben, z. B. „Führe die Checkliste Aufgabe abschließ
 Aufruf, Ablauf in einer separaten Session o. Ä.), steht in der jeweiligen werkzeugspezifischen Ergänzungsdatei
 (siehe `AGENTS.md` § „Werkzeugspezifische Ergänzungsdateien"), nicht in dieser Checkliste.
 
+## Aufgabe beginnen
+
+Läuft **vor jeder Aufgabe** im Hauptkontext, dauert im Normalfall Sekunden.
+
+1. `AI-CONFIG.md` lesen — beide Abschnitte, nicht nur „Betrieb". Die Datei ist Steuerung, kein Protokoll.
+2. Abgleich gegen den zuletzt umgesetzten Stand: `python .claude/scripts/sync-config.py --check`. Meldet er
+   nichts, weiter mit Schritt 4.
+3. Offene Punkte umsetzen: `--apply` erledigt die Ergänzungen. Was löscht oder projektweit ersetzt, wird
+   vorgelegt und erst nach der Zusage von {{AUFTRAGGEBER}} ausgeführt (`--apply --yes`). **Keine
+   Standardantwort annehmen** — ohne Zusage bleibt es offen, und die Aufgabe läuft mit dem alten Stand.
+4. `docs/ai/board.md` lesen: Stand, nächster Schritt, offene Freigaben.
+
+Wer das überspringt, arbeitet unter Umständen mit Einstellungen, die längst geändert wurden — etwa mit
+einem Werkzeug, dessen Dateien noch fehlen, oder unter einem Rufnamen, den es nicht mehr gibt.
+
 ## Aufgabe abschließen
 
 Läuft **nach jeder abgeschlossenen Aufgabe** im Hauptkontext (Orchestrator), nie bei einem Worker — nicht
@@ -60,6 +75,40 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
   sie in Board, Doku oder Entscheidungen wandern.
 - Ein Worker, der sich festgefressen hat, wird nicht endlos weitergefüttert — Auftrag schärfen und neu starten
   ist günstiger.
+
+### Laufende Worker überwachen
+
+**Wer delegiert, wartet nicht blind.** Ein Worker, der läuft, kostet Zeit und Geld, auch wenn er beschäftigt
+aussieht. Dass er seine Aufgabe ständig aktualisiert, ist **kein** Beleg für Fortschritt. Der Orchestrator
+behält Laufzeit und Verbrauch im Auge und greift ein, bevor der Lauf teuer wird.
+
+Richtwerte für einen gewöhnlichen Umsetzungsauftrag — nicht als Grenzwert zu verstehen, sondern als Zeitpunkt,
+zu dem hingesehen wird:
+
+| Stand des Laufs | Was der Orchestrator tut |
+| :--- | :--- |
+| ab ca. 10 Minuten oder 100.000 Token | Zwischenstand anfordern: Was steht, was fehlt, wie lange noch? |
+| ab ca. 20 Minuten oder 200.000 Token | Entscheiden: fertigmachen lassen, abbrechen oder eskalieren — nicht weiterlaufen lassen |
+| ab ca. 30 Minuten oder 300.000 Token | Abbrechen. Ein Lauf dieser Größe war falsch zugeschnitten |
+
+Erwartbar längere Läufe gibt es (breite Recherche, viele Testläufe). Dann wird das **vorher** im Auftrag
+gesagt und beim Start vermerkt — unerwartet lang ist etwas anderes als lang geplant.
+
+Beim Eingreifen gibt es drei Wege, in dieser Reihenfolge zu prüfen:
+
+1. **Fertigmachen lassen**, wenn der Zwischenstand zeigt, dass nur noch Tests oder Feinschliff fehlen.
+2. **Stärkeres Modell ansetzen**, wenn der Worker an der Sache selbst hängt und nicht an ihrem Umfang. Ein
+   Auftrag, der ein schwächeres Modell überfordert, wird durch Wiederholung nicht leichter — er gehört an
+   die nächsthöhere Stufe, mit vollständigem Kontext des bisherigen Laufs (siehe „Eskalation" unten).
+3. **Abbrechen und neu zuschneiden**, wenn der Auftrag schlicht zu groß war.
+
+Halbfertiges gehört dabei nie ins Repo: entweder ein Stand, der für sich trägt, oder gar keine Änderung.
+
+**Häuft sich das, war der Zuschnitt falsch.** Dann wird der Auftrag nicht noch einmal gleich gestellt, sondern
+geteilt: auf mehrere Worker, die nebeneinander an getrennten Dateien arbeiten, oder in Teilschritte, die
+nacheinander laufen und je für sich prüfbar sind. Ein Auftrag, der während des Laufs mehrfach nachgebessert
+wird, ist ebenfalls ein Zeichen dafür — jede Nachbesserung entwertet einen Teil der schon geleisteten Arbeit.
+Dann lieber abbrechen und neu schneiden, statt nachzubessern.
 - **Eskalation:** Scheitert ein Worker **zweimal** an derselben Aufgabe, wird nicht ein drittes Mal derselbe
   Auftrag gestellt. Entweder (a) lag der Fehler am Auftrag — dann schärfen und einmal neu starten — oder (b)
   an die stärkere Denkstufe/„Experten"-Rolle eskalieren, mit vollständigem Kontext beider Fehlversuche

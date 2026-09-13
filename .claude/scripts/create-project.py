@@ -38,8 +38,9 @@
 #       docs/ai/ledger.md einen echten Eintrag hat. Schreibt danach AI-CONFIG.md fort statt sie zu loeschen:
 #       die Freitext-Abschnitte (## Ziel .. ## Sonstiges, bereits in docs/project/ eingearbeitet) werden
 #       durch einen Verweis-Abschnitt "## Projektbeschreibung" ersetzt, ein Datums-Vermerk kommt vor die
-#       erste Zeile. "## Betrieb" und "## Einrichtung" bleiben unveraendert - "Betrieb" wirkt danach weiter
-#       in jeder Sitzung. Idempotent: steht der Vermerk schon da, Exit 0 mit Hinweis, keine erneute Aenderung.
+#       erste Zeile. Die Tabellen (## Projekt/Technik/Assistenten/...) bleiben unveraendert und wirken
+#       danach weiter, per `sync-config.py` laufend abgeglichen. Idempotent: steht der Vermerk schon da,
+#       Exit 0 mit Hinweis, keine erneute Aenderung.
 #   python .claude/scripts/create-project.py --check
 #       Selbstpruefung ohne Bezug zu einem konkreten Projekt-Zuschnitt: prueft je Pfad in den fest
 #       verdrahteten Listen OPTIMIZER_REMOVE_PATHS/MAINTENANCE_REMOVE_PATHS/TEMPLATE_ONLY_PATHS
@@ -73,10 +74,13 @@ CONFIG_REL = "AI-CONFIG.md"
 EXCLUDED_FROM_REPLACE = {
     "AI-CONFIG.md",
     # Diese beiden Scripte erklaeren die Platzhalter-Mechanik in ihren Kopfkommentaren ("ersetzt
-    # `{{PROJEKTNAME}}` usw.") - wird dort ersetzt, steht danach Unsinn im Kommentar. Gleiche Liste wie
-    # `no_replace` in `.claude/template.json`.
+    # `{{PROJEKTNAME}}` usw.") - wird dort ersetzt, steht danach Unsinn im Kommentar. sync-config.py fuehrt
+    # dieselben Marken zusaetzlich als echten Code (RENAME_PLATZHALTER-Dict fuer die Befehls-Schluessel/
+    # Rename-Diffs) - dort wuerde eine Ersetzung das Script funktional zerstoeren, nicht nur einen Kommentar
+    # verunstalten. Gleiche Liste wie `no_replace` in `.claude/template.json`.
     ".claude/scripts/create-project.py",
     ".claude/scripts/update-template.py",
+    ".claude/scripts/sync-config.py",
 }
 
 KEY_MAP = {
@@ -154,9 +158,12 @@ WARTUNGSBERICHTE_WERTE = {"intern", "docs"}
 # Nur fuer Weg 2 (/apply-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
 # Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
 CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
-# Optionaler Politur-Agent nach jeder Umsetzungswelle: "aus" entfernt ihn, "ein"/"streng" behalten ihn
+# Optionaler Politur-Agent nach jeder Umsetzungswelle: "aus" entfernt ihn, "ein"/"intensiv" behalten ihn
 # (die Stufe steuert nur, wie der Orchestrator ihn beauftragt - siehe .claude/agents/optimizer.md).
-CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "streng"}
+# "streng" war der frühere Name von "intensiv" - bestehende Projekte duerfen ihn weiter verwenden
+# (normalize_code_optimierung bildet ihn auf "intensiv" ab und weist einmal auf die Umbenennung hin).
+CODE_OPTIMIERUNG_WERTE = {"aus", "ein", "intensiv"}
+CODE_OPTIMIERUNG_ALIASE = {"streng": "intensiv"}
 OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
 # Vorgefertigte Regelsaetze je Sprache/Framework (docs/project/coding_rules.d/). Beim Anlegen bleiben nur
 # die in AI-CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
@@ -258,11 +265,40 @@ def _load_template_update_module():
 def _strip_trailing_comment(value: str) -> str:
     """Schneidet an der ersten oeffnenden Klammer ab (Erklaerungskommentar, ggf. ueber Zeilenende hinaus
     unbalanciert). Bleibt danach nichts uebrig, ist der Wert nicht gesetzt (Nutzer hat die Vorlagenzeile
-    unveraendert gelassen)."""
+    unveraendert gelassen). Nur fuer das alte "Schluessel: Wert"-Format - in einer Tabellenzelle ist der
+    gesamte Zellinhalt der Wert, auch wenn er Klammern enthaelt."""
     return value.split("(", 1)[0].strip()
 
 
+_TABLE_SEPARATOR_CELL = re.compile(r"^[:\-]+$")
+
+
+def _split_table_row(line: str):
+    """Zerlegt eine Markdown-Tabellenzeile ('| a | b | c |') in ihre Zellen, oder None, wenn die Zeile keine
+    Tabellenzeile ist (kein Rand-'|'). Trennt an nicht-escapten '|' - escapte '\\|' (typisch in Spalte 3
+    "automatisch \\| fragen \\| manuell") bleiben Teil der Zelle. Kein Verlass auf eine feste Spaltenzahl -
+    nur die ersten beiden Zellen werden ausgewertet."""
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", stripped)]
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells or None
+
+
+def _clean_table_key(raw: str) -> str:
+    """Spalte 1 einer Tabellenzeile: Backticks/Sternchen (Markdown-Hervorhebung) entfernen, trimmen."""
+    return raw.replace("`", "").replace("*", "").strip()
+
+
 def parse_config(text: str) -> dict:
+    """Liest sowohl das neue Tabellenformat (Schluessel/Wert je Tabellenzeile, Spalten 3+ sind Erklaerung)
+    als auch das aeltere "Schluessel: Wert (Kommentar)"-Format - beide duerfen sogar in derselben Datei
+    stehen. Bei doppeltem Schluessel gewinnt der zuletzt in der Datei gefundene Wert (Zeilen werden der Reihe
+    nach verarbeitet, spaetere ueberschreiben fruehere)."""
     cfg = {v: None for v in KEY_MAP.values()}
     cfg["sections"] = {name: "" for name in SECTION_NAMES}
     cfg["gekuerzt"] = []
@@ -286,8 +322,21 @@ def parse_config(text: str) -> dict:
         if current_section is not None:
             section_buf.append(line)
             continue
-        # AI-CONFIG.md fuehrt die Schluessel-Liste eingerueckt (4 Leerzeichen) - fuehrenden Leerraum daher
-        # tolerieren, sonst wird keine einzige Zeile erkannt.
+
+        cells = _split_table_row(line)
+        if cells is not None:
+            if len(cells) < 2:
+                continue
+            key_cell, val_cell = _clean_table_key(cells[0]), cells[1].strip()
+            if key_cell.lower() == "schlüssel" or _TABLE_SEPARATOR_CELL.match(cells[0].strip()):
+                continue  # Kopf- bzw. Trennzeile der Tabelle
+            key = KEY_LOOKUP.get(key_cell.lower())
+            if key:
+                cfg[key] = val_cell if val_cell else None
+            continue
+
+        # Altes Format: AI-CONFIG.md fuehrte die Schluessel-Liste eingerueckt (4 Leerzeichen) - fuehrenden
+        # Leerraum daher tolerieren, sonst wird keine einzige Zeile erkannt.
         m = re.match(r"^[ \t]*([A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9\- ]*):\s?(.*)$", line)
         if m and KEY_LOOKUP.get(m.group(1).strip().lower()):
             raw_key = m.group(1).strip()
@@ -337,7 +386,7 @@ def compute_values(cfg: dict) -> dict:
     today = time.strftime("%Y-%m-%d")
     return {
         "PROJEKTNAME": cfg.get("projektname") or "MyApp",
-        "AUFTRAGGEBER": cfg.get("auftraggeber"),
+        "AUFTRAGGEBER": cfg.get("auftraggeber") or "Entwickler",
         "ORCHESTRATOR": cfg.get("orchestrator") or "Fable",
         "STACK": cfg.get("stack"),
         "DATUM": today,
@@ -379,11 +428,11 @@ def normalize_orchestrator_modell(cfg: dict):
 
 def normalize_commit_verhalten(cfg: dict):
     """Gibt (commit_verhalten, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
-    'fragen'. Der Wert aendert keine Datei, sondern nur, wie der Orchestrator mit der Checkliste "Aufgabe
+    'automatisch'. Der Wert aendert keine Datei, sondern nur, wie der Orchestrator mit der Checkliste "Aufgabe
     abschliessen" (Skill /commit) umgeht."""
     raw = cfg.get("commit_verhalten")
     if not raw:
-        return "fragen", None
+        return "automatisch", None
     val = raw.strip().lower()
     if val not in COMMIT_VERHALTEN_WERTE:
         return None, raw
@@ -391,8 +440,8 @@ def normalize_commit_verhalten(cfg: dict):
 
 
 COMMIT_VERHALTEN_TEXT = {
-    "automatisch": "automatisch - committet abgenommene Arbeit selbst",
-    "fragen": "fragen - schlaegt den Commit vor und wartet auf Zustimmung (Default)",
+    "automatisch": "automatisch - committet abgenommene Arbeit selbst (Default)",
+    "fragen": "fragen - schlaegt den Commit vor und wartet auf Zustimmung",
     "manuell": "manuell - nur auf ausdrueckliche Anweisung",
 }
 
@@ -410,10 +459,10 @@ def normalize_wartung(cfg: dict):
 
 def normalize_wartungsberichte(cfg: dict):
     """Gibt (wartungsberichte, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
-    'intern' (bisheriges Verhalten, .claude/maintenance/reports/, gitignored)."""
+    'docs' (docs/maintenance/, versioniert, im Doku-Index sichtbar)."""
     raw = cfg.get("wartungsberichte")
     if not raw:
-        return "intern", None
+        return "docs", None
     val = raw.strip().lower()
     if val not in WARTUNGSBERICHTE_WERTE:
         return None, raw
@@ -421,8 +470,8 @@ def normalize_wartungsberichte(cfg: dict):
 
 
 WARTUNGSBERICHTE_TEXT = {
-    "intern": "intern - .claude/maintenance/reports/ (gitignored, Default)",
-    "docs": "docs - docs/maintenance/ (versioniert, im Doku-Index sichtbar)",
+    "intern": "intern - .claude/maintenance/reports/ (gitignored)",
+    "docs": "docs - docs/maintenance/ (versioniert, im Doku-Index sichtbar, Default)",
 }
 
 DOCS_MAINTENANCE_README = (
@@ -514,14 +563,19 @@ def apply_coding_guidelines(root: Path, gewaehlt) -> list:
 
 
 def normalize_code_optimierung(cfg: dict):
-    """Gibt (code_optimierung, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'aus'."""
+    """Gibt (code_optimierung, unbekannter_rohwert, alias_hinweis) zurueck - von den ersten beiden ist genau
+    einer None. Default 'aus'. Der frühere Wert 'streng' bleibt als Eingabe gueltig, wird auf 'intensiv'
+    abgebildet, alias_hinweis nennt dann die Umbenennung (sonst None)."""
     raw = cfg.get("code_optimierung")
     if not raw:
-        return "aus", None
+        return "aus", None, None
     val = raw.strip().lower()
+    if val in CODE_OPTIMIERUNG_ALIASE:
+        neu = CODE_OPTIMIERUNG_ALIASE[val]
+        return neu, None, f"Code-Optimierung: \"{val}\" heisst jetzt \"{neu}\" - bitte in AI-CONFIG.md nachziehen."
     if val not in CODE_OPTIMIERUNG_WERTE:
-        return None, raw
-    return val, None
+        return None, raw, None
+    return val, None, None
 
 
 def remove_optimizer_files(root: Path) -> list:
@@ -543,7 +597,7 @@ def remove_optimizer_files(root: Path) -> list:
 CODE_OPTIMIERUNG_TEXT = {
     "aus": "aus - Agent optimizer wird entfernt",
     "ein": "ein - eine Politur-Runde je Umsetzungswelle (kuerzer, lesbarer)",
-    "streng": "streng - bis zu zwei Runden, zusaetzlich Geschwindigkeit und Speicher",
+    "intensiv": "intensiv - bis zu zwei Runden, zusaetzlich Geschwindigkeit und Speicher",
 }
 
 CODE_ANALYSE_TEXT = {
@@ -1078,7 +1132,7 @@ def remove_maintenance_references(root: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def write_template_json_values(root: Path, values: dict):
+def write_template_json_values(root: Path, values: dict, applied_config: dict = None):
     tu = _load_template_update_module()
     cfg, path = tu.load_template_json(root)
     tu_values = cfg.setdefault("values", {})
@@ -1088,8 +1142,45 @@ def write_template_json_values(root: Path, values: dict):
             tu_values[key] = val
     # Ab hier ist aus dem Checkout ein echtes Projekt geworden - der Template-Marker gilt nicht mehr.
     cfg.pop("is_template", None)
+    if applied_config is not None:
+        # Vergleichsgrundlage fuer sync-config.py: die zuletzt umgesetzten Werte aus AI-CONFIG.md
+        # § Betrieb/Einrichtung (nur die Schluessel, die eine Datei-Wirkung haben - siehe
+        # sync-config.py Kopfkommentar). Fehlt dieses Feld (Projekt vor sync-config.py angelegt),
+        # gilt der Stand als unbekannt.
+        cfg["applied_config"] = applied_config
+        cfg["applied_config_stand"] = time.strftime("%Y-%m-%d")
     tu.save_template_json(root, cfg, path)
     return cfg
+
+
+def build_applied_config(
+    values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
+    wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
+) -> dict:
+    """Schnappschuss der Betrieb/Einrichtung-Schluessel mit Datei-Wirkung, wie sie soeben umgesetzt wurden -
+    Vergleichsgrundlage fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Bei
+    KI-Werkzeuge wird bewusst die RESULTIERENDE Entfernliste gespeichert (nicht die Roh-Kommaliste aus
+    AI-CONFIG.md) - "leer = alle behalten" waere sonst nicht von "alle explizit genannt" zu unterscheiden."""
+    return {
+        "Projektname": values.get("PROJEKTNAME"),
+        "Auftraggeber": values.get("AUFTRAGGEBER"),
+        "Orchestrator": values.get("ORCHESTRATOR"),
+        "KI-Werkzeuge-entfernt": sorted(entfernte_tools or []),
+        "Coding-Guidelines": sorted(guidelines_gewaehlt or []),
+        "Install-Befehl": values.get("INSTALL_BEFEHL"),
+        "Dev-Start-Befehl": values.get("DEV_START_BEFEHL"),
+        "Lint-Befehl": values.get("LINT_BEFEHL"),
+        "Typecheck-Befehl": values.get("TYPECHECK_BEFEHL"),
+        "Test-Befehl": values.get("TEST_BEFEHL"),
+        "E2E-Befehl": values.get("E2E_BEFEHL"),
+        "Orchestrator-Modell": orch_modell,
+        "Logging": logging_val,
+        "Logging-Tiefe": logging_tiefe,
+        "Wartung": wartung_val,
+        "Wartungsaufgaben": wartungsaufgaben if wartung_val == "ein" else {},
+        "Wartungsberichte": wartungsberichte,
+        "Code-Optimierung": code_opt,
+    }
 
 
 DEFAULT_BRANCH_NAMES = {"main", "master"}
@@ -1228,7 +1319,7 @@ def cmd_dry_run(root: Path) -> int:
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
-    code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
+    code_opt, code_opt_unbekannt, code_opt_hinweis = normalize_code_optimierung(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
@@ -1327,9 +1418,11 @@ def cmd_dry_run(root: Path) -> int:
     lines.append("")
     if code_opt_unbekannt:
         lines.append(f"Code-Optimierung: \"{code_opt_unbekannt}\" ist kein bekannter Wert - --apply bricht "
-                     "damit ab. Erlaubt: aus, ein, streng.")
+                     "damit ab. Erlaubt: aus, ein, intensiv.")
     else:
         lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt])
+        if code_opt_hinweis:
+            lines.append("  Hinweis: " + code_opt_hinweis)
 
     lines.append("")
     if guidelines_unbekannt:
@@ -1395,7 +1488,7 @@ def cmd_apply(root: Path) -> int:
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
-    code_opt, code_opt_unbekannt = normalize_code_optimierung(cfg)
+    code_opt, code_opt_unbekannt, code_opt_hinweis = normalize_code_optimierung(cfg)
     guidelines_gewaehlt, guidelines_unbekannt = parse_coding_guidelines(cfg, root)
     struktur_migration, struktur_migration_unbekannt = normalize_struktur_migration(cfg)
     wartungsaufgaben_raw = cfg.get("wartungsaufgaben") or DEFAULT_WARTUNGSAUFGABEN
@@ -1431,7 +1524,7 @@ def cmd_apply(root: Path) -> int:
         fehler = True
     if code_opt_unbekannt:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Code-Optimierung nicht eindeutig: "
-              f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, streng.", file=sys.stderr)
+              f"\"{code_opt_unbekannt}\" - erlaubt sind aus, ein, intensiv.", file=sys.stderr)
         fehler = True
     if guidelines_unbekannt:
         print("Fehler: --apply abgebrochen, AI-CONFIG.md § Coding-Guidelines kennt diese Regelsaetze nicht: "
@@ -1464,7 +1557,11 @@ def cmd_apply(root: Path) -> int:
     optimizer_entfernt = remove_optimizer_files(root) if code_opt == "aus" else []
     guidelines_entfernt = apply_coding_guidelines(root, guidelines_gewaehlt)
     intro_entfernt = remove_template_intro(root)
-    write_template_json_values(root, values)
+    applied_config = build_applied_config(
+        values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
+        wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
+    )
+    write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
     model_status = set_orchestrator_model(root, orch_modell)
 
@@ -1532,7 +1629,8 @@ def cmd_apply(root: Path) -> int:
         lines.append("  Bitte docs/maintenance/ noch in docs/README.md eintragen.")
     lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
-                 + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else ""))
+                 + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else "")
+                 + (" - Hinweis: " + code_opt_hinweis if code_opt_hinweis else ""))
     lines.append("Coding-Guidelines: " + (", ".join(guidelines_gewaehlt) if guidelines_gewaehlt else "keine")
                  + (" (entfernt: " + ", ".join(guidelines_entfernt) + ")" if guidelines_entfernt else ""))
     lines.append("Struktur-Migration (nur Weg 2 /apply-template): "
@@ -1647,7 +1745,8 @@ def cmd_finish(root: Path) -> int:
 
     heute = time.strftime("%Y-%m-%d")
     vermerk = (
-        f"> {FINISH_MARKER_TEXT} {heute} — der Abschnitt „Betrieb\" wirkt weiterhin in jeder Sitzung."
+        f"> {FINISH_MARKER_TEXT} {heute} — die Tabellen oben bleiben in Kraft und werden per "
+        "`sync-config.py` weiter laufend abgeglichen."
     )
     neuer_text = vermerk + "\n\n" + kopf + "\n\n" + FINISH_REPLACEMENT_SECTION
 
@@ -1658,7 +1757,7 @@ def cmd_finish(root: Path) -> int:
         return 2
 
     print(f"{CONFIG_REL} fortgeschrieben - Einrichtung abgeschlossen, Datei bleibt bestehen "
-          "(Abschnitt 'Betrieb' wirkt weiterhin).")
+          "(Tabellen wirken weiterhin, per sync-config.py).")
     return 0
 
 
