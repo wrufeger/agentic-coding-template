@@ -153,8 +153,23 @@ Modell-Zuordnung je Agent (feste IDs, kein `inherit`; entspricht der Beispiel-Ta
 ## 4. MCP-Server
 
 `.mcp.json` (aus `.mcp.json.example`) bindet projektspezifische MCP-Server ein (z. B. Datenbank-, Deployment-
-oder Ticket-Zugriff). Secrets nie in `.mcp.json` selbst, sondern per `${VAR}`-Referenz aus `.env`/der lokalen
-Claude-Config; `.mcp.json` bleibt gitignored, sobald echte Werte eingetragen sind.
+oder Ticket-Zugriff). Secrets nie in `.mcp.json` selbst, sondern per `${VAR}`-Referenz; `.mcp.json` bleibt
+gitignored, sobald echte Werte eingetragen sind.
+
+**Woher `${VAR}` kommt — nicht aus `.env`.** Claude Code löst die Referenzen ausschließlich aus der
+**Prozessumgebung** auf und liest dafür **keine `.env`**. Steht der Wert nur dort, startet der Server nicht und
+`claude mcp list` meldet „Missing environment variables". Drei Wege, in dieser Reihenfolge:
+
+1. **Der Server liest die `.env` selbst** — ein Vorspann im `command`/`args` (z. B. `dotenv-cli`) lädt sie,
+   bevor der eigentliche Server startet. Bevorzugt, weil `.env` die einzige Quelle für Zugangsdaten bleibt.
+2. **Umgebung des Aufrufers** — die Variablen sind schon gesetzt, wenn Claude Code startet (Shell-Profil,
+   Dienst-Konfiguration, CI). Ebenfalls sauber, aber pro Rechner einzurichten.
+3. **`env`-Block in `.claude/settings.local.json`** (gitignored) — funktioniert, legt die Werte aber im
+   Klartext in den Repo-Ordner. Nur für unkritische Werte; für echte Zugangsdaten gilt weiter, was
+   `.claude/settings.local.json.example` sagt: dort gehören sie nicht hinein.
+
+Belegt am 2026-09-13 im Projekt Bandliste (`claude mcp list` meldete die Variablen trotz gefüllter `.env` als
+fehlend).
 
 ## 5. Memory
 

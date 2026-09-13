@@ -1,5 +1,6 @@
 {
-  "_hinweis": "Muster fuer projektspezifische MCP-Server. Kopieren nach .mcp.json (gitignored) und anpassen. Secrets nie als Klartext eintragen, sondern per ${VAR}-Referenz aus der Umgebung/.env laden.",
+  "_hinweis": "Muster fuer projektspezifische MCP-Server. Kopieren nach .mcp.json (gitignored) und anpassen. Secrets nie als Klartext eintragen, sondern per ${VAR}-Referenz.",
+  "_woher_kommt_var": "Claude Code loest ${VAR} NUR aus der Prozessumgebung auf und liest KEINE .env - steht der Wert nur dort, meldet 'claude mcp list' Missing environment variables. Bevorzugt laesst man den Server die .env selbst einlesen (Vorspann wie dotenv-cli im command/args) - dann bleibt .env die einzige Quelle fuer Zugangsdaten. Sonst: Variablen vor dem Start von Claude Code in die Umgebung setzen. Der env-Block in .claude/settings.local.json funktioniert auch, legt die Werte aber im Klartext in den Repo-Ordner - nur fuer unkritische Werte. Siehe CLAUDE.md Abschnitt MCP-Server.",
   "mcpServers": {
     "beispiel-server": {
       "command": "npx",
