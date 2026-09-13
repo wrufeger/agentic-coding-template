@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-14 – Status: aus `.templatedev/ledger.md` des Templates übernommen
+> Datenstand: 2026-09-14 – Status: aktuell
 
 # Ledger — Template-Entwicklung
 
@@ -10,11 +10,7 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 - Älter als 1 Woche: ein Eintrag je Monat (Abschnitt „Archiv" ganz unten).
 - Commit-Hashes, Nummern, Versionen, Dateipfade und Kennzahlen werden nie weggekürzt.
 
-Die Einträge bis zum 2026-09-13 stammen aus dem früheren Ordner `.templatedev/` im Template.
-
 ---
-
-Neueste Sitzung oben, Stichpunkte mit Belegen (Commit-Hash, Testlauf, Fundstelle).
 
 ## 2026-09-14 — Ablage der Template-Entwicklung: zurück nach `.templatedev/`, versioniert
 
