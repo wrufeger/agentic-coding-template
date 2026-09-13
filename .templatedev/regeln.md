@@ -16,6 +16,27 @@ Dass der Arbeitsstand hier liegt und nicht anderswo, ist eine bewusste Entscheid
 Entwicklungs-Repo trennt Struktur von Notizen, obwohl man beim Arbeiten beides zugleich braucht. Wer die
 Ablage erneut ändern will, liest zuerst diese beiden Einträge.
 
+## Kreislauf eines Befunds
+
+```mermaid
+flowchart LR
+    T[Testprojekt<br/>z. B. bandliste] -->|Befund beim Arbeiten| D[".templatedev/<br/>bewerten, verbuchen"]
+    D -->|allgemeingültig?| P[Template]
+    P -->|Änderung + Beleg, Commit| P
+    P -->|/update-template| T
+```
+
+- Ein Befund entsteht beim Arbeiten in einem Testprojekt: Reibung, fehlende Automatisierung, unpassende
+  Regel, entgleister Worker-Lauf.
+- Er wird **hier** bewertet — allgemeingültig (gehört ins Template) oder projektspezifisch (bleibt im
+  Testprojekt). Beides ist ein Ergebnis; die Bewertung ist die Arbeit, nicht das Übernehmen.
+- Eine allgemeingültige Änderung wird im Template umgesetzt und **dort belegt**.
+- Per `/update-template` fließt sie in die abgeleiteten Projekte zurück.
+
+Die Testprojekte und ihr letzter geprüfter Stand: `README.md`. Wo es neuen Stoff gibt, sagt
+`python .templatedev/testprojekte.py --check` — er meldet je Testprojekt, wann dort `questions.md`,
+`questions_archive.md` und `ledger.md` zuletzt geändert wurden.
+
 ## Was hier anders ist als in einem Projekt
 
 - **`docs/` im Template ist Gerüst, kein Inhalt.** Was dort steht, landet in jedem abgeleiteten Projekt — auch

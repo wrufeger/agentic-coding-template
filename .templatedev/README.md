@@ -16,7 +16,6 @@ ihn mit dem, was in den Projekten tatsächlich liegt, ohne etwas zu ändern.
 | Projekt | Pfad | Weg | Letzter geprüfter Commit | Stand |
 | :--- | :--- | :--- | :--- | :--- |
 | Bandliste | `D:\dev\rufeger\bandliste` | Weg 2 — bestehendes Projekt nachrüsten | `4d348ac` (2026-09-13) | Arbeitsbaum sauber, 64 Commits ungepusht |
-| Template-Entwicklung | `D:\dev\rufeger\template-agentic-coding-project-development` | Weg 1 — neues Projekt | `887151a` (2026-09-14) | 1 Datei geaendert, 1 Commit ungepusht |
 <!-- testprojekte:end -->
 
 **Bandliste** (Nuxt 4 + Prisma, dazu rund 49.000 Dateien PHP-Altanwendung in `old-project/`) ist das

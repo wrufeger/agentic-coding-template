@@ -42,8 +42,13 @@ diesen Eintrag und den darunter.
   auf `.templatedev/README.md`, Repo-Wurzel eine Ebene höher). Neu: `INDEX.md` als Einstieg. `AGENTS.md`,
   `CLAUDE.md`, beide READMEs, Projektbäume und der SessionStart-Hook sind entsprechend zurückgedreht;
   `init.py` und die Vorlagen entfallen — bei versionierten Dateien gibt es nichts wiederherzustellen.
-- Offen: Was mit dem Repo aus Anlauf 2 geschieht (löschen oder als reines Weg-1-Testprojekt behalten), ist
-  noch nicht entschieden.
+- **Vor dem Auflösen von Anlauf 2 gerettet:** der Kreislauf eines Befunds (jetzt in `regeln.md`, angepasst
+  auf zwei Repos statt drei) und die dort angelegte offene Aufgabe „Erkenntnisse aus `bandliste` prüfen"
+  (jetzt Umbaupunkt 22). Der Rest des Repos war Doppelung des hier Vorhandenen.
+- Weg 1 hat damit weiterhin kein dauerhaftes Testprojekt. Das ist vertretbar: Der Weg wurde beim Anlegen von
+  Anlauf 2 real durchgespielt und hat dabei bestätigt, dass `create-project.py` den Ordner `.templatedev/`
+  korrekt entfernt. Ein leeres Projekt nur als Beleg vorzuhalten, kostet mehr Pflege als es einbringt —
+  für den nächsten Test genügt ein Wegwerf-Klon.
 
 ## 2026-09-14 — Template-Entwicklung wird ein eigenes Projekt (Anlauf 2, überholt)
 
