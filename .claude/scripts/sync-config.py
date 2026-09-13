@@ -37,6 +37,18 @@
 # die betroffenen Punkte. Nachgeladene Dateien werden mit den Werten aus `.claude/template.json` § `values`
 # von ihren Platzhaltern befreit; am Ende steht in keiner geschriebenen Datei mehr "{{".
 #
+# Verfolgte Schluessel (applied_config, siehe setup-lib.py:build_applied_config): Projektname, Auftraggeber,
+# Orchestrator, Sprache, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
+# Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Stack/Sprache stehen als
+# Fliesstext in Dokumentation - eine Aenderung wird nur uebernommen und mit den Fundstellen des ALTEN Werts
+# gemeldet (`find_literal_occurrences`), NIE automatisch ersetzt (Risiko falscher Treffer in Prosa); dasselbe
+# gilt fuer Commit-Verhalten (reines Orchestrator-Verhalten, keine Datei-Wirkung) - alle drei fielen vorher
+# durchs Raster, weil sie in keiner Diff-Pruefung auftauchten (Befund: Stack-Aenderung wurde als "synchron"
+# gemeldet). Bewusst NICHT verfolgt: "Globale Ablage" (eigener Schalter von install-global.py, kein
+# KEY_MAP-Eintrag in setup-lib.py, kein applied_config-Zyklus) sowie "Code-Analyse"/"Struktur-Migration"/
+# "Alter Orchestrator-Name" (einmalige Bootstrap-Werte nur fuer /apply-template Weg 2, ohne Wirkung nach dem
+# einmaligen Lauf - eine erneute "Aenderung" haette hier keine sinnvolle Handlung).
+#
 # Exit-Codes: 0 = ok, 2 = Vorbedingungsfehler (AI-CONFIG.md nicht eindeutig, Template-Remote fehlt fuer eine
 # faellige Ergaenzung), 3 = etwas offen (--check) bzw. zusagepflichtige Punkte uebersprungen (--apply ohne
 # --yes). Ein Fehler dieses Scripts darf nie mit Traceback nach aussen dringen - main() laeuft in try/except.
@@ -170,6 +182,38 @@ def fetch_paths(tu, root: Path, ref: str, rels, values: dict):
     return geholt, vorhanden, fehler, offen
 
 
+# .claude/template.json traegt den alten Wert selbst (values.STACK, applied_config.Stack) - der wird im
+# selben --apply-Lauf ohnehin ueberschrieben (siehe cmd_apply: write_template_json_values danach), eine
+# Meldung als "Aufgabe an den Menschen" waere dort irrefuehrend.
+FIND_LITERAL_EXCLUDE = {".claude/template.json"}
+
+
+def find_literal_occurrences(cp, root: Path, needle: str, limit: int = 20):
+    """Sucht `needle` woertlich (Zeile fuer Zeile) in allen Textdateien - dieselbe Datei-Auswahl wie
+    cp.replace_placeholders/plain_replace_in_repo (cp._iter_text_files), abzueglich FIND_LITERAL_EXCLUDE. Fuer
+    Werte, die als Fliesstext in Dokumentation eingebettet sind (z.B. Stack) und NICHT automatisch ersetzt
+    werden sollen - nur zum Aufzeigen, wo der alte Wert noch steht. Gibt (treffer: ["rel:zeile", ...],
+    hoechstens `limit`; gesamt: Gesamtzahl der Fundzeilen) zurueck. Leere `needle` liefert sofort ([], 0)."""
+    treffer, gesamt = [], 0
+    if not needle:
+        return treffer, gesamt
+    for fp, rel in cp._iter_text_files(root):
+        if rel in FIND_LITERAL_EXCLUDE:
+            continue
+        try:
+            content, _ = cp._read_text_preserve_newline(fp)
+        except (UnicodeDecodeError, OSError):
+            continue
+        if needle not in content:
+            continue
+        for i, line in enumerate(content.splitlines(), start=1):
+            if needle in line:
+                gesamt += 1
+                if len(treffer) < limit:
+                    treffer.append(f"{rel}:{i}")
+    return treffer, gesamt
+
+
 def plain_replace_in_repo(cp, root: Path, alt: str, neu: str):
     """Ersetzt ALT durch NEU wortwoertlich (kein Markdown-Schutz, keine Gross-/Kleinschreib-Varianten) in
     allen Textdateien (dieselbe Datei-Auswahl wie cp.replace_placeholders, zusaetzlich werden ALLE
@@ -301,6 +345,9 @@ def compute_current(cp, root: Path):
         fehler.append(f"Code-Optimierung: \"{code_opt_unbekannt}\" unbekannt (aus, ein, intensiv).")
     if code_opt_hinweis:
         hinweise.append(code_opt_hinweis)
+    commit_verhalten, commit_verhalten_unbekannt = cp.normalize_commit_verhalten(cfg)
+    if commit_verhalten_unbekannt:
+        fehler.append(f"Commit-Verhalten: \"{commit_verhalten_unbekannt}\" unbekannt (automatisch, fragen, manuell).")
     # Bewusst NICHT cp.parse_coding_guidelines() (dessen "unbekannt" nur den LOKALEN Ordner prueft) - eine
     # Kennung, die lokal fehlt, aber im Template existiert, waere sonst faelschlich "unbekannt". Die echte
     # Pruefung (lokal + Template-Katalog) macht guidelines.py --add beim Ausfuehren.
@@ -321,6 +368,7 @@ def compute_current(cp, root: Path):
     snapshot = cp.build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
+        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
     )
     return cfg, values, snapshot, fehler, hinweise
 
@@ -402,6 +450,32 @@ def compute_diffs(old: dict, current: dict) -> list:
             "new": current.get("Orchestrator-Modell"), "kategorie": "automatisch", "kind": "orch_modell",
             "marker": ["Orchestrator-Modell"],
             "wirkung": f"'model' in .claude/settings.json = '{current.get('Orchestrator-Modell')}'",
+        })
+
+    if old.get("Commit-Verhalten") != current.get("Commit-Verhalten"):
+        diffs.append({
+            "key": "Commit-Verhalten", "old": old.get("Commit-Verhalten"), "new": current.get("Commit-Verhalten"),
+            "kategorie": "automatisch", "kind": "commit_verhalten", "marker": ["Commit-Verhalten"],
+            "wirkung": "keine Datei-Aenderung (nur Verhalten des Orchestrators bei /commit)",
+        })
+
+    # Stack/Sprache stehen als Fliesstext in Dokumentation - eine Aenderung in AI-CONFIG.md ersetzt den alten
+    # Wert NIRGENDS automatisch (Risiko projektweiter Fehlersetzungen in Prosa), sondern wird nur uebernommen
+    # und als Aufgabe an den Menschen gemeldet (siehe execute_diff/find_literal_occurrences).
+    if old.get("Stack") != current.get("Stack"):
+        diffs.append({
+            "key": "Stack", "old": old.get("Stack"), "new": current.get("Stack"),
+            "kategorie": "automatisch", "kind": "stack_change", "marker": ["Stack"],
+            "wirkung": "Wert uebernehmen; alte Erwaehnungen im Repo als Aufgabe an den Menschen melden "
+                       "(keine automatische Ersetzung)",
+        })
+
+    if old.get("Sprache") != current.get("Sprache"):
+        diffs.append({
+            "key": "Sprache", "old": old.get("Sprache"), "new": current.get("Sprache"),
+            "kategorie": "automatisch", "kind": "sprache_change", "marker": ["Sprache"],
+            "wirkung": "Wert uebernehmen; vorhandene Doku ist ggf. noch in der alten Sprache "
+                       "(keine automatische Uebersetzung)",
         })
 
     if (old.get("Logging"), old.get("Logging-Tiefe")) != (current.get("Logging"), current.get("Logging-Tiefe")):
@@ -550,6 +624,35 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         status = cp.set_orchestrator_model(root, diff["new"])
         lines.append(status)
         ref_holder["executed"].add("Orchestrator-Modell")
+        return lines
+
+    if kind == "commit_verhalten":
+        lines.append("Nur Stand uebernommen - steuert nur den Orchestrator bei /commit, keine Datei geaendert.")
+        ref_holder["executed"].add("Commit-Verhalten")
+        return lines
+
+    if kind == "stack_change":
+        lines.append(f"Wert uebernommen: {diff['old']!r} -> {diff['new']!r}")
+        if diff["old"]:
+            treffer, gesamt = find_literal_occurrences(cp, root, diff["old"])
+            if treffer:
+                lines.append(
+                    f"Aufgabe an den Menschen: alter Wert steht noch an {gesamt} Stelle(n) im Repo - "
+                    "bitte inhaltlich nachziehen (keine automatische Ersetzung):"
+                )
+                for t in treffer:
+                    lines.append(f"  {t}")
+                if gesamt > len(treffer):
+                    lines.append(f"  … und {gesamt - len(treffer)} weitere")
+            else:
+                lines.append("  alter Wert im Repo nicht mehr gefunden - nichts nachzuziehen.")
+        ref_holder["executed"].add("Stack")
+        return lines
+
+    if kind == "sprache_change":
+        lines.append(f"Wert uebernommen: {diff['old']!r} -> {diff['new']!r} - vorhandene Doku ist ggf. noch "
+                     "in der alten Sprache, bitte von Hand pruefen.")
+        ref_holder["executed"].add("Sprache")
         return lines
 
     if kind == "logging":
@@ -740,6 +843,14 @@ def cmd_check(root: Path, mods: dict, quiet: bool) -> int:
     for d in diffs:
         flag = "automatisch" if d["kategorie"] == "automatisch" else "braucht --yes"
         print(f"{d['key']}: {d['old']!r} -> {d['new']!r} — {d['wirkung']} [{flag}]")
+        if d["kind"] == "stack_change" and d["old"]:
+            treffer, gesamt = find_literal_occurrences(cp, root, d["old"])
+            if treffer:
+                print(f"  alter Wert steht noch an {gesamt} Stelle(n):")
+                for t in treffer:
+                    print(f"    {t}")
+                if gesamt > len(treffer):
+                    print(f"    … und {gesamt - len(treffer)} weitere")
     auto = sum(1 for d in diffs if d["kategorie"] == "automatisch")
     print(f"\n{len(diffs)} Aenderung(en) offen ({auto} automatisch, {len(diffs) - auto} braucht --yes).")
     return 3

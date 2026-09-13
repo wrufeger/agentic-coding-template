@@ -1210,15 +1210,25 @@ def write_template_json_values(root: Path, values: dict, applied_config: dict = 
 def build_applied_config(
     values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
     wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
+    sprache: str = None, commit_verhalten: str = None,
 ) -> dict:
-    """Schnappschuss der Betrieb/Einrichtung-Schluessel mit Datei-Wirkung, wie sie soeben umgesetzt wurden -
-    Vergleichsgrundlage fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Bei
-    KI-Werkzeuge wird bewusst die RESULTIERENDE Entfernliste gespeichert (nicht die Roh-Kommaliste aus
-    AI-CONFIG.md) - "leer = alle behalten" waere sonst nicht von "alle explizit genannt" zu unterscheiden."""
+    """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
+    fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
+    Datei-Wirkung (siehe sync-config.py compute_diffs); Sprache/Commit-Verhalten haben keine (reines
+    Verhalten/Hinweis), werden aber trotzdem gefuehrt, damit eine Aenderung ueberhaupt gemeldet wird - sonst
+    faellt sie beim Abgleich durchs Raster (siehe Befund zu "Stack" unten). Bewusst NICHT gefuehrt: "Globale
+    Ablage" (eigener, direkt aus AI-CONFIG.md gelesener Schalter von install-global.py, kein KEY_MAP-Eintrag,
+    keine Wiederholungssemantik), "Code-Analyse"/"Struktur-Migration"/"Alter Orchestrator-Name" (einmalige
+    Weg-2-Bootstrap-Werte fuer /apply-template, nach dem einmaligen Lauf ohne erneute Wirkung - siehe
+    sync-config.py Kopfkommentar). Bei KI-Werkzeuge wird bewusst die RESULTIERENDE Entfernliste gespeichert
+    (nicht die Roh-Kommaliste aus AI-CONFIG.md) - "leer = alle behalten" waere sonst nicht von "alle explizit
+    genannt" zu unterscheiden."""
     return {
         "Projektname": values.get("PROJEKTNAME"),
         "Auftraggeber": values.get("AUFTRAGGEBER"),
         "Orchestrator": values.get("ORCHESTRATOR"),
+        "Sprache": sprache,
+        "Stack": values.get("STACK"),
         "KI-Werkzeuge-entfernt": sorted(entfernte_tools or []),
         "Coding-Guidelines": sorted(guidelines_gewaehlt or []),
         "Install-Befehl": values.get("INSTALL_BEFEHL"),
@@ -1228,6 +1238,7 @@ def build_applied_config(
         "Test-Befehl": values.get("TEST_BEFEHL"),
         "E2E-Befehl": values.get("E2E_BEFEHL"),
         "Orchestrator-Modell": orch_modell,
+        "Commit-Verhalten": commit_verhalten,
         "Logging": logging_val,
         "Logging-Tiefe": logging_tiefe,
         "Wartung": wartung_val,
@@ -1614,6 +1625,7 @@ def cmd_apply(root: Path) -> int:
     applied_config = build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
+        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
     )
     write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
