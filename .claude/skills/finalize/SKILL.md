@@ -57,8 +57,10 @@ unverändert laufend), `guidelines.py`, `ai-log.py` und die Alltags-Skills `/com
 
 - Kein Projektinhalt wird angefasst: nichts unter `docs/project/` (außer der Regelübernahme in Schritt 4),
   kein Anwendungscode, keine Abhängigkeit.
-- `docs/ai/checklists.md` verliert die beiden Abschnitte „Neues Projekt" und „Projekt nachrüsten", weil sie
-  im eingerichteten Projekt nur noch in die Irre führen. Alle übrigen Checklisten bleiben.
-- Das Script entfernt sich am Ende selbst. Ein zweiter Lauf ist damit weder möglich noch nötig.
+- `docs/ai/checklists.md` verliert die drei Abschnitte „Neues Projekt", „Projekt nachrüsten" und „Einrichtung
+  abschließen", weil sie im eingerichteten Projekt nur noch in die Irre führen. Alle übrigen Checklisten
+  bleiben.
+- Das Script entfernt am Ende diesen Skill und sich selbst. Ein zweiter Lauf ist damit weder möglich
+  noch nötig.
 - Im Template-Checkout selbst (Marker `is_template` in `.claude/template.json`) verweigert das Script den
   Dienst — dort werden die Einrichtungswerkzeuge gepflegt, nicht gelöscht.

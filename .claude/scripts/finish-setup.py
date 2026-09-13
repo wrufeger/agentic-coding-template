@@ -29,7 +29,8 @@
 # Entfernt (jeweils nur, wenn vorhanden - fehlende Eintraege sind kein Fehler):
 #   .claude/scripts/create-project.py, .claude/scripts/apply-template.py,
 #   .claude/scripts/migrate-project.py, .claude/scripts/install-global.py,
-#   .claude/skills/create-project/, .claude/skills/apply-template/,
+#   .claude/skills/create-project/, .claude/skills/apply-template/, .claude/skills/finalize/ (der Skill,
+#   der dieses Script aufruft - danach zeigt er ins Leere),
 #   .claude/TEMPLATE-LICENSE (nur wenn das Projekt eine eigene LICENSE/LICENSE.md/LICENSE.txt hat - sonst
 #   bleibt sie liegen und wird gemeldet), sich selbst (.claude/scripts/finish-setup.py, immer zuletzt).
 #   Getrackte Dateien/Ordner werden per "git rm" entfernt, sonst per Dateisystem (shutil/Path.unlink).
@@ -90,6 +91,8 @@ REMOVE_ITEMS = [
     (".claude/scripts/install-global.py", "file"),
     (".claude/skills/create-project", "dir"),
     (".claude/skills/apply-template", "dir"),
+    # Der Skill, der dieses Script aufruft - nach dem Abschluss zeigt er ins Leere und muss mit weg.
+    (".claude/skills/finalize", "dir"),
 ]
 TEMPLATE_LICENSE_REL = ".claude/TEMPLATE-LICENSE"
 OWN_LICENSE_NAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt")
