@@ -73,6 +73,14 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   löscht oder projektweit ersetzt — ein gestrichenes Werkzeug, ein geänderter Rufname — wird vorher gezeigt
   und braucht die Zusage von {{AUFTRAGGEBER}}. Der zuletzt umgesetzte Stand steht in `.claude/template.json`
   § `applied_config`; nur daraus weiß der Abgleich, was neu ist.
+- **`AI-CONFIG.md` gilt in beide Richtungen.** Ändert sich am Projekt etwas, das in einer der Tabellen steht
+  — ein anderer Stack oder ORM, eine neue Auth-Bibliothek, neue oder geänderte Befehle (Lint, Typecheck,
+  Test, E2E), ein zusätzlicher Regelsatz, ein anderes KI-Werkzeug —, wird die Datei **sofort mit der
+  Änderung** nachgezogen, nicht später (dieselbe Regel wie beim Journal, siehe „Laufend nachziehen, nicht
+  sammeln" unten). Ein beschlossener, aber noch nicht umgesetzter Wechsel wird als Übergang kenntlich gemacht
+  (der heutige Wert bleibt stehen, die Entscheidung samt ADR-Verweis steht daneben) — die Datei steuert den
+  **IST**-Zustand, nicht den Wunschzustand. Die Prüfung ist Teil der Checkliste „Aufgabe abschließen"
+  (`docs/ai/checklists.md`).
 - Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in
   `docs/ai/README.md`.
 - „Fertig" gilt nur mit Beleg: Testlauf, Commit-Hash oder ein Aufruf von außen, der das Ergebnis zeigt.

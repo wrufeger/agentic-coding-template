@@ -34,7 +34,9 @@ was sich angesammelt hat, und sichert das Ergebnis.
 
 1. **Beleg prüfen:** Testlauf, Commit-Hash oder ein Aufruf von außen. Pflichtläufe aus
    `docs/project/testing.md` grün. Ohne Beleg keine Abnahme — dann nur `Stand <Datum>:` in
-   `docs/ai/tasks.md` aktualisieren und die Aufgabe offen lassen.
+   `docs/ai/tasks.md` aktualisieren und die Aufgabe offen lassen. Dabei prüfen, ob die Änderung einen
+   Tabellenwert in `AI-CONFIG.md` berührt (Stack, Befehle, Regelsätze, Werkzeuge — `AGENTS.md`
+   § Grundregeln) und die Datei bei Bedarf nachziehen.
 2. **Archivieren:** als ✅ markierte Aufgaben mit Volltext nach `docs/ai/tasks_archive.md`, verbuchte Fragen
    nach `docs/ai/questions_archive.md`. Nummern (`A<n>`/`F<n>`) bleiben gültig und werden nie neu vergeben.
    Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur auf dessen Meldung hin abhaken; Antworten in deren
@@ -268,20 +270,27 @@ nachträglich bekommen soll:
 7. `docs/project/*` mit dem echten IST-Zustand befüllen (nicht raten), `.gitignore`-Vorschläge übernehmen, im
    Projekt-`README.md` einen Abschnitt „Zusammenarbeit mit KI-Assistenten" ergänzen (Verweis `AGENTS.md`,
    `docs/ai/board.md`).
-8. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `AI-CONFIG.md`
+8. **Prüf- und Testausstattung herstellen**, falls sie fehlt: die Prüfwerkzeuge des jeweiligen Stacks
+   installieren und konfigurieren (bei Nuxt: ESLint, `vue-tsc`, Vitest, Playwright — siehe
+   `docs/project/coding_rules.d/nuxt.md` § Werkzeuge). Kommen dabei Abhängigkeiten hinzu oder werden welche
+   aktualisiert, vorher {{AUFTRAGGEBER}} fragen — das verändert ein fremdes Projekt. **Erst die Werkzeuge,
+   dann größere Aufräumarbeiten:** ohne Lint, Typecheck und Tests gibt es kein Netz, das ein Paket-Update
+   absichert. Die entstandenen Befehle in `AI-CONFIG.md` § Technik **und** `docs/project/testing.md`
+   eintragen — sonst bleiben dort Platzhalter stehen und die CI prüft nichts.
+9. **Code-Analyse (optional, Entscheidung von {{AUFTRAGGEBER}}):** Entweder vorab über `AI-CONFIG.md`
    § `Code-Analyse` (`nein` | `vorschlagen` | `fragen`) oder — beim Default `fragen` — als einzelne Rückfrage
    im Gespräch, **nachdem** `docs/project/` befüllt ist. Bei „ja": den Bestand read-only prüfen (Struktur,
    Duplikate, tote Pfade, fehlende Tests, veraltete Abhängigkeiten, Sicherheitsrisiken) und das Ergebnis
    **nur** als priorisierte Vorschläge nach `docs/ai/backlog.md` schreiben (Sicherheit zuerst, je Punkt
    Befund, Fundstelle, Vorschlag, Aufwand). Kein Code wird geändert; Umsetzung erst, wenn {{AUFTRAGGEBER}}
    einen Punkt freigibt und er als Aufgabe in `tasks.md` landet.
-9. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
+10. Ersten `docs/ai/board.md`-Stand und `docs/ai/ledger.md`-Eintrag schreiben, danach
    `python .claude/scripts/create-project.py --finish` ausführen.
-10. Commit per Pathspec nach Freigabe.
-11. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
+11. Commit per Pathspec nach Freigabe.
+12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
    Voraussetzung für spätere `/update-template`-Läufe.
-12. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
+13. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
     Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
     „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"
     bleibt alles liegen, bis {{AUFTRAGGEBER}} es später auslöst.

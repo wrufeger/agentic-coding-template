@@ -36,7 +36,15 @@ Regeln für Nuxt-Projekte: Verzeichniskonvention, Datenzugriff, sichere Konfigur
 - Fehler aus `server/api`-Routen mit `createError` und passendem HTTP-Status zurückgeben.
 
 ## Werkzeuge
-- Linter/Formatter: ESLint-Konfiguration von Nuxt (`@nuxt/eslint`), Prettier für Formatierung.
+- **Pflichtausstattung, kein Merkmal einzelner Projekte:** Lint, Typecheck, Unit-Tests und E2E-Tests müssen
+  in jedem Nuxt-Projekt vorhanden sein und laufen. Fehlt eines, ist das ein Mangel, keine Projekteigenheit.
+- Linter/Formatter: ESLint mit `@nuxt/eslint`, Konfiguration `eslint.config.mjs`; Prettier für Formatierung.
+- Typecheck: `vue-tsc` als Abhängigkeit — **ohne das Paket gibt es keinen Typecheck**, `nuxt typecheck` läuft
+  sonst nicht.
+- Unit-/Komponententests: `vitest`, Konfiguration `vitest.config.ts`.
+- E2E-Tests: `@playwright/test`, Konfiguration `playwright.config.ts`.
+- Feste npm-Scripts, damit die Befehle überall gleich heißen: `lint` (`eslint .`), `typecheck`
+  (`nuxt typecheck`), `test` (`vitest run`), `test:e2e` (`playwright test`).
 
 ## Fallstricke
 - SSR-Code darf nicht auf browserspezifische Globals (`window`, `document`) ohne Guard zugreifen.
