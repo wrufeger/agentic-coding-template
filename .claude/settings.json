@@ -105,8 +105,8 @@
           {
             "type": "command",
             "shell": "bash",
-            "command": "S=\"$CLAUDE_PROJECT_DIR/.templatedev/init.py\"; if [ -f \"$S\" ]; then if command -v python3 >/dev/null 2>&1; then python3 \"$S\" --check; else python \"$S\" --check; fi; fi || true",
-            "timeout": 15
+            "command": "T=\"$CLAUDE_PROJECT_DIR/.claude/template.json\"; D=\"/d/dev/rufeger/template-agentic-coding-project-development\"; if [ -f \"$T\" ] && grep -q '\"is_template\"[[:space:]]*:[[:space:]]*true' \"$T\" && [ -d \"$D\" ]; then echo \"Hinweis: Dies ist der Template-Checkout. Board, Aufgaben, Umbauliste, Journal und die Regeln der Template-Arbeit stehen im Projekt template-agentic-coding-project-development ($D) - dort planen und verbuchen, hier aendern und committen.\"; fi || true",
+            "timeout": 10
           }
         ]
       }
