@@ -46,6 +46,11 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
+# Kanonische Adresse dieses Templates - nur Rueckfallebene: normalerweise wird die URL aus dem Remote
+# 'origin' des Template-Checkouts gelesen (ein Fork traegt so automatisch seine eigene Adresse ein). Sie
+# greift, wenn der Checkout keinen 'origin' hat. Beim Verschieben des Templates hier nachziehen.
+CANONICAL_TEMPLATE_URL = "git@github.com:wrufeger/template-agentic-coding-project.git"
+
 COPY_ITEMS = [
     "LICENSE",
     "AGENTS.md",
@@ -211,7 +216,10 @@ def write_target_template_json(template_root: Path, target_root: Path, dry_run: 
     if res_url.returncode == 0 and res_url.stdout.strip():
         cfg["template_url"] = res_url.stdout.strip()
     else:
-        cfg["template_url"] = str(template_root)
+        # Kein 'origin' im Checkout (anders benannter Remote, Kopie ohne Remotes). Dann die kanonische
+        # Adresse eintragen statt des lokalen Pfads - der waere auf einem anderen Rechner wertlos, und das
+        # Zielprojekt koennte spaeter nie 'update-template.py' nutzen.
+        cfg["template_url"] = CANONICAL_TEMPLATE_URL
 
     res_head = run_git(template_root, ["rev-parse", "HEAD"])
     cfg["base_commit"] = res_head.stdout.strip() if res_head.returncode == 0 else None
