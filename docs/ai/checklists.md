@@ -88,27 +88,31 @@ er ist — der Worker sieht sich selbst nicht von außen und neigt dazu, das End
 dem Start eine erwartete Dauer festlegen, sie dem Worker im Auftrag nennen (er hat dann eine Referenz) und
 den Lauf gegen diese Zahl messen, nicht gegen eine feste Uhrzeit.
 
-Anhaltspunkte für die Schätzung:
+Anhaltspunkte für die Schätzung — und wann daraufhin zum ersten Mal nachgesehen wird:
 
-| Auftragsart | erwartete Dauer |
+| Auftragsart | erwartete Dauer | erste Prüfung nach | abbrechen ab |
+| :--- | :--- | :--- | :--- |
+| Kurzcheck: lesen, zählen, Existenz prüfen | unter 1 Minute | 2 Minuten | 5 Minuten |
+| Recherche über mehrere Dateien, Fundstellen belegen | 2 bis 5 Minuten | 8 Minuten | 15 Minuten |
+| Umsetzung in wenigen Dateien, mit Beleg | 3 bis 8 Minuten | 12 Minuten | 20 Minuten |
+| Umsetzung mit eigenen Testläufen über mehrere Dateien | 8 bis 15 Minuten | 20 Minuten | 25 Minuten |
+| Breite Web-Recherche mit Prüfung jeder Quelle | 5 bis 15 Minuten | 20 Minuten | 25 Minuten |
+
+Die Faustregel dahinter, falls ein Auftrag in keine dieser Zeilen passt: **erste Prüfung beim Doppelten der
+geschätzten Dauer, mindestens aber nach zwei Minuten.** Je länger der Auftrag geplant war, desto knapper wird
+dieser Abstand — bei einem Lauf über zehn Minuten steht schon zu viel auf dem Spiel, um ihn erst nach zwanzig
+anzuschauen.
+
+Was auf die erste Prüfung folgt:
+
+| Stand | Was der Orchestrator tut |
 | :--- | :--- |
-| Kurzcheck: lesen, zählen, Existenz prüfen | unter 1 Minute |
-| Recherche über mehrere Dateien, Fundstellen belegen | 2 bis 5 Minuten |
-| Umsetzung in wenigen Dateien, mit Beleg | 3 bis 8 Minuten |
-| Umsetzung mit eigenen Testläufen über mehrere Dateien | 8 bis 15 Minuten |
-| Breite Web-Recherche mit Prüfung jeder Quelle | 5 bis 15 Minuten |
+| erste Prüfung | Zwischenstand anfordern: was steht, was fehlt, was kam dazwischen |
+| danach keine Besserung | Entscheiden: fertigmachen lassen, eskalieren oder abbrechen — nicht weiterlaufen lassen |
+| Abbruchmarke erreicht | Abbrechen. Die Schätzung war um eine Größenordnung daneben, also der Zuschnitt auch |
 
-Gemessen wird am Vielfachen der eigenen Schätzung, nicht an absoluten Minuten:
-
-| Stand gegenüber der Schätzung | Was der Orchestrator tut |
-| :--- | :--- |
-| doppelte Zeit | Zwischenstand anfordern: was steht, was fehlt, was kam dazwischen |
-| dreifache Zeit | Entscheiden: fertigmachen lassen, eskalieren oder abbrechen — nicht weiterlaufen lassen |
-| fünffache Zeit | Abbrechen. Die Schätzung war um eine Größenordnung daneben, also der Zuschnitt auch |
-
-Ein Auftrag von einer halben Minute wird damit nach zwei Minuten geprüft, nicht erst nach fünf. Zusätzlich
-gilt ein harter Deckel unabhängig von der Schätzung: **ab etwa 25 Minuten oder 250.000 Token wird abgebrochen**,
-auch wenn der Lauf als lang geplant war.
+Zusätzlich gilt ein harter Deckel unabhängig von jeder Schätzung: **ab etwa 25 Minuten oder 250.000 Token wird
+abgebrochen**, auch wenn der Lauf als lang geplant war.
 
 **Die Bewertung bleibt beim Orchestrator.** Der Worker liefert Fakten — was fertig ist, was aussteht, was
 unerwartet kam. Ob das noch im Rahmen liegt, entscheidet der, der den Auftrag geschnitten hat. Eine

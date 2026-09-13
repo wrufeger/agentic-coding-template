@@ -32,10 +32,12 @@ folgenden Sub-Agenten sind die Worker:
 - **Laufende Sub-Agenten beobachten** — Pflicht, nicht Kür (Richtwerte und Eskalationswege in der Checkliste
   „Delegation" § „Laufende Worker überwachen"). `ListAgents` zeigt, wer läuft und seit wann; die
   Abschlussmeldung nennt Tokenverbrauch und Dauer. Gemessen wird gegen die **eigene Schätzung vor dem
-  Start**, die auch im Auftrag steht: bei doppelter Zeit Zwischenstand per `SendMessage` anfordern, bei
-  dreifacher entscheiden, bei fünffacher mit `TaskStop` beenden. Ein Kurzcheck von 30 Sekunden wird damit
-  nach zwei Minuten geprüft, nicht erst nach fünf. Harter Deckel unabhängig davon: **25 Minuten oder
-  250.000 Token**. Die Nachfrage kostet fast nichts — der Worker antwortet und arbeitet weiter. Dass ein Agent seine Aufgabenzeile aktualisiert, belegt keinen
+  Start**, die auch im Auftrag steht; wann zum ersten Mal nachgesehen wird, sagt die Tabelle in der
+  Checkliste je Auftragsart — grob beim Doppelten der geschätzten Dauer, mindestens nach zwei Minuten. Ein
+  `quick-check` wird also nach zwei Minuten geprüft, eine Umsetzung mit Testläufen nach zwanzig. Zwischenstand
+  per `SendMessage` anfordern, bei ausbleibender Besserung entscheiden, zum Abbruch `TaskStop`. Harter Deckel
+  unabhängig davon: **25 Minuten oder 250.000 Token**. Die Nachfrage kostet fast nichts — der Worker
+  antwortet und arbeitet weiter. Dass ein Agent seine Aufgabenzeile aktualisiert, belegt keinen
   Fortschritt. Beim Eingreifen zuerst fertigmachen lassen, wenn nur Feinschliff fehlt; hängt der Worker an der
   Sache selbst, dasselbe Problem mit `model: opus` oder `expert-solver` neu ansetzen statt es zu wiederholen;
   sonst abbrechen und den Auftrag neu schneiden. Mehrfach nachgebesserte Aufträge sind ebenfalls ein
