@@ -30,3 +30,12 @@ ai.log.*
 
 # Logs allgemein
 *.log
+
+# Template-Entwicklung: laufender Arbeitsstand, bleibt lokal.
+# Struktur, Regeln, Testprojekt-Tabelle und Vorlagen bleiben versioniert; fehlende Arbeitsdateien
+# legt `python .templatedev/init.py --apply` aus .templatedev/vorlagen/ neu an.
+.templatedev/backlog.md
+.templatedev/questions.md
+.templatedev/ledger.md
+.templatedev/daten/*
+!.templatedev/daten/README.md

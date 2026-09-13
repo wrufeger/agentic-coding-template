@@ -50,15 +50,16 @@ für `docs/` abweichende Regeln:
 
 - `docs/ai/` und `docs/project/` sind **Vorlagen** und bleiben leer. Was dort steht, wandert in jedes
   abgeleitete Projekt — auch ein gut gemeinter Backlog-Eintrag.
-- Board, Aufgaben, Fragen, Journal und Umbauliste zur Weiterentwicklung des Templates stehen ausschließlich in
-  `.templatedev.md` im Repo-Root. Das ist hier die einzige Arbeitsdatei mit echtem Inhalt.
+- Board, Aufgaben, Fragen, Journal und Umbauliste zur Weiterentwicklung des Templates stehen ausschließlich im
+  Ordner `.templatedev/` im Repo-Root. Das ist hier der einzige Arbeitsbereich mit echtem Inhalt.
 - Auch das Agenten-Logging (`AGENTS.md` § Logging) beschreibt nur die Mechanik für spätere Projekte; ein
-  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal von `.templatedev.md`.
+  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal in `.templatedev/`.
 - Unverändert gültig bleibt alles andere: Rollen, Delegation an Sub-Agenten, Modellwahl, „fertig nur mit
   Beleg", Commit per Pathspec, Safeguard-Verhalten.
 
-Beim Anlegen eines Projekts (`/create-project`) entfernt `create-project.py` `.templatedev.md` **und** die so
-markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die normalen Regeln.
+Beim Anlegen eines Projekts (`/create-project`) entfernt `create-project.py` den Ordner `.templatedev/`
+**und** die so markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die
+normalen Regeln.
 <!-- template-only:end -->
 
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
@@ -221,7 +222,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
-├── .templatedev.md               # nur im Template: Umbauliste/Fragen/Journal der Entwicklung
+├── .templatedev/                 # nur im Template: Board/Backlog/Fragen/Journal/Regeln der Entwicklung
 │                                 # dieses Repos (wird von /create-project entfernt)
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
 │                                 # wird von /create-project entfernt

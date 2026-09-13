@@ -1006,11 +1006,13 @@ def write_maintenance_status(root: Path, aufgaben: dict) -> None:
     _write_json(path, data)
 
 
-# Dateien, die nur das TEMPLATE selbst betreffen und in einem abgeleiteten Projekt nichts verloren haben:
+# Pfade, die nur das TEMPLATE selbst betreffen und in einem abgeleiteten Projekt nichts verloren haben:
 # `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt) und
-# `.templatedev.md` (Umbauliste/Fragen/Journal der Template-Entwicklung - das einzige Dokument im Template
-# mit echtem Inhalt statt Platzhaltern).
-TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev.md"]
+# `.templatedev/` (Board/Backlog/Fragen/Ledger/Regeln der Template-Entwicklung - der einzige Ordner im
+# Template mit echtem Inhalt statt Platzhaltern). Bare Ordnername ohne Trailing-Slash/Wildcard: greift bei
+# Path.exists()/is_dir() (siehe remove_template_intro) direkt, und muss zu DEFAULT_TEMPLATE_ONLY in
+# update-template.py passen (kein Import zwischen den Scripten, siehe dort).
+TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev"]
 
 # Fest verdrahtete Pfadlisten, deren Eintraege nach einer Umbenennung/Verschiebung veraltet sein koennen
 # (siehe check_stale_remove_paths) - ohne Gegenprobe faellt so etwas erst auf, wenn der jeweilige
@@ -1065,15 +1067,18 @@ TEMPLATE_ONLY_BLOCK_FILES = ["AGENTS.md", "CLAUDE.md"]
 
 
 def remove_template_intro(root: Path) -> list:
-    """Entfernt die nur fuer das Template gedachten Dateien (TEMPLATE_ONLY_PATHS) und die
-    `template-only`-Bloecke aus den Regeldateien. Gibt zurueck, was entfernt wurde."""
+    """Entfernt die nur fuer das Template gedachten Pfade (TEMPLATE_ONLY_PATHS - Dateien oder Ordner, z.B.
+    `.templatedev/`) und die `template-only`-Bloecke aus den Regeldateien. Gibt zurueck, was entfernt wurde."""
     removed = []
     for rel in TEMPLATE_ONLY_PATHS:
         fp = root / rel
         if not fp.exists():
             continue
         try:
-            fp.unlink()
+            if fp.is_dir():
+                shutil.rmtree(fp)
+            else:
+                fp.unlink()
             removed.append(rel)
         except OSError:
             pass

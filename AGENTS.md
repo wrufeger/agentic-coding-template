@@ -48,15 +48,16 @@ Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das s
 - **`docs/` ist Gerüst, kein Inhalt.** `docs/project/` beschreibt ein Projekt, das es hier nicht gibt;
   `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Umbauliste) sind leere Formulare. Beides bleibt leer — alles,
   was hier hineingeschrieben wird, landet später in jedem abgeleiteten Projekt.
-- **Stattdessen `.templatedev.md`** im Repo-Root: Umbauliste, Fragen und Journal der Template-Entwicklung in
-  einer Datei. Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist.
+- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Board, Backlog, Fragen, Journal und Regeln der
+  Template-Entwicklung, aufgeteilt auf mehrere Dateien. Dorthin gehören Befunde, offene Punkte und was in
+  einer Sitzung passiert ist.
 - **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;
-  für die Arbeit am Template genügt das Journal in `.templatedev.md`.
+  für die Arbeit am Template genügt das Journal in `.templatedev/`.
 - **Alles Übrige gilt unverändert:** Rollen und Delegation an Worker, Modell-/Kostenlogik, „fertig nur mit
   Beleg", Commits per Pathspec, Tabu-Bereich, Umgang mit Safeguard-Warnungen, Zugriff auf laufende Systeme.
 
-Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in `CLAUDE.md` und
-`.templatedev.md` automatisch entfernt.
+Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in `CLAUDE.md` und der Ordner
+`.templatedev/` automatisch entfernt.
 <!-- template-only:end -->
 
 ## Grundregeln
