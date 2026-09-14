@@ -148,13 +148,87 @@ TOOL_CANON = {
     "aider": "Aider",
     "gemini cli": "Gemini CLI",
     "gemini": "Gemini CLI",
+    "cline": "Cline",
     "chatgpt/codex": "ChatGPT/Codex",
     "chatgpt": "ChatGPT/Codex",
     "codex": "ChatGPT/Codex",
     "ollama": "Ollama",
 }
 
-# Nur Werkzeuge mit eigenen Dateien im Repo koennen entfernt werden; ChatGPT/Codex und Ollama haben keine.
+# Welches KI-Werkzeug fuehrt diesen Lauf gerade aus? Die Scripte werden vom Assistenten gestartet und erben
+# dessen Prozessumgebung - daran laesst sich das Werkzeug erkennen, statt {{AUFTRAGGEBER}} im Interview
+# danach zu fragen, was er offensichtlich gerade benutzt.
+#
+# EINEN STANDARD GIBT ES NICHT (Stand 2026-09-14). Zwei konkurrierende Vorschlaege:
+#   - AGENT=<werkzeug> als Gegenstueck zu CI=true (agentsmd/agents.md#136). Umgesetzt von Goose, gelesen
+#     von Bun; fuer Claude Code offen (anthropics/claude-code#24838), fuer Codex abgelehnt
+#     (openai/codex#13416, "not planned").
+#   - AI_AGENT=<name> - wird von Dritt-Bibliotheken (Vercel detect-agent, unjs/std-env) GELESEN, aber kein
+#     Hersteller dokumentiert, dass er sie SETZT.
+# Beide werden unten als schwache Rueckfallebene ausgewertet, nicht als verlaessliche Marke.
+#
+# Fuer GitHub Copilot CLI, Aider und Windsurf gibt es KEINE Marke - dort wird gefragt statt erkannt. Das ist
+# Absicht: Eine erfundene Variable waere schlechter als keine, weil sie eine falsche Vorauswahl erzeugt.
+# (Aiders OR_APP_NAME=Aider ist ein Nebeneffekt von OpenRouter, keine Selbstauskunft.)
+#
+# Der Copilot Coding Agent in GitHub Actions ist nicht sicher erkennbar: GITHUB_ACTIONS=true sagt nichts
+# ueber Copilot, und beobachtbar bleibt nur GITHUB_ACTOR="copilot-swe-agent[bot]" - eine Beobachtung aus
+# echten Laeufen, keine zugesagte Marke. Deshalb hier bewusst nicht aufgenommen.
+#
+# Spalte "beleg": gemessen (selbst in einer laufenden Sitzung gesehen) > doku (Hersteller dokumentiert es) >
+# quelltext (im Repo des Herstellers gefunden, aber Implementierungsdetail) > schwach (Konvention oder
+# Dritt-Quelle). Eine Fehlerkennung ist nicht schlimm, weil die Auswahl im Interview bestaetigt wird -
+# geraten wird trotzdem nicht: Was nicht erkannt wird, liefert None.
+AGENT_MARKERS = [
+    # (Variable, geforderter Wert oder None = "gesetzt genuegt", Werkzeug, beleg, Quelle)
+    ("CLAUDECODE", "1", "Claude Code", "gemessen",
+     "code.claude.com/docs/en/env-vars; hier am 2026-09-14 in einer Sitzung gesehen"),
+    ("GEMINI_CLI", None, "Gemini CLI", "doku",
+     "google-gemini/gemini-cli, docs/tools/shell.md"),
+    ("CLINE_ACTIVE", None, "Cline", "doku",
+     "cline/cline Discussion #5366, vom Betreiber bestaetigt"),
+    ("CURSOR_AGENT", None, "Cursor", "doku",
+     "cursor.com/docs/agent/tools/terminal - vom Hersteller als Implementierungsdetail behandelt"),
+    ("COPILOT_AGENT", "1", "Copilot", "quelltext",
+     "microsoft/vscode PR#316267 - nur VS Code Agent Mode, sehr jung; die Copilot-CLI setzt nichts"),
+    ("CODEX_SANDBOX", None, "ChatGPT/Codex", "quelltext",
+     "codex-rs process_manager.rs - Nebeneffekt der Sandbox, keine Identitaetsmarke"),
+]
+
+# Rueckfallebene: die beiden konkurrierenden Konventionen. AGENT=<werkzeug> ist der aussichtsreichere
+# Vorschlag, AI_AGENT=<werkzeug>_<version>_<modus> wird von Dritt-Bibliotheken erwartet. Beide werden gegen
+# TOOL_CANON aufgeloest, damit kuenftige Werkzeuge ohne eigene Zeile oben erkannt werden.
+AGENT_GENERIC_VARS = ("AGENT", "AI_AGENT")
+
+
+def detect_ai_tool(env=None):
+    """Erkennt das ausfuehrende KI-Werkzeug an der Prozessumgebung.
+
+    Rueckgabe: (werkzeug, beleg_text, stark) - werkzeug ist ein kanonischer Name aus TOOL_CANON, beleg_text
+    die Fundstelle als "VARIABLE=wert" fuer die Anzeige, stark sagt, ob die Marke dokumentiert oder gemessen
+    ist (True) oder nur Quelltext-/Konventionsfund (False). (None, None, False), wenn nichts erkannt wurde -
+    dann wird gefragt statt geraten.
+    """
+    env = os.environ if env is None else env
+    for var, erwartet, werkzeug, beleg, _quelle in AGENT_MARKERS:
+        wert = env.get(var)
+        if not wert:
+            continue
+        if erwartet is not None and wert != erwartet:
+            continue
+        return werkzeug, f"{var}={wert}", beleg in ("gemessen", "doku")
+    for var in AGENT_GENERIC_VARS:
+        roh = (env.get(var) or "").strip()
+        if not roh:
+            continue
+        praefix = roh.split("_", 1)[0].replace("-", " ").lower()
+        if praefix in TOOL_CANON:
+            return TOOL_CANON[praefix], f"{var}={roh}", False
+    return None, None, False
+
+
+# Nur Werkzeuge mit eigenen Dateien im Repo koennen entfernt werden; ChatGPT/Codex, Ollama und Cline
+# haben keine (Cline liest AGENTS.md direkt).
 TOOL_FILES = {
     "Copilot": [".github/copilot-instructions.md"],
     "Cursor": [".cursor"],
@@ -1407,6 +1481,12 @@ def cmd_dry_run(root: Path) -> int:
     wartungsaufgaben, wartungsaufgaben_fehler = parse_wartungsaufgaben(wartungsaufgaben_raw)
 
     lines = ["create-project.py --dry-run", ""]
+    _werkzeug, _beleg, _geprueft = detect_ai_tool()
+    if _werkzeug:
+        _zusatz = "" if _geprueft else " (schwache Marke)"
+        lines.append(f"Ausgefuehrt von: {_werkzeug} [{_beleg}]{_zusatz}"
+                     " - im Interview als KI-Werkzeug vorauswaehlen, aber bestaetigen lassen.")
+        lines.append("")
     # Selbstpruefung der fest verdrahteten Pfadlisten (siehe check_stale_remove_paths) laeuft hier mit:
     # --check allein wuerde niemand aufrufen, der Plan-Lauf dagegen steht in jeder Checkliste.
     for _warnung in check_stale_remove_paths(root):
@@ -1444,6 +1524,16 @@ def cmd_dry_run(root: Path) -> int:
                 lines.append(f"  {tool}: {rel}")
     else:
         lines.append("Zu entfernende Werkzeug-Dateien: keine (KI-Werkzeuge leer oder nicht gesetzt).")
+
+    # Wer gerade laeuft, sollte nicht das eigene Werkzeug wegkonfigurieren: --apply wuerde die Dateien des
+    # Assistenten entfernen, der den Befehl selbst ausfuehrt. Erlaubt bleibt es (jemand richtet ein Projekt
+    # bewusst fuer ein anderes Werkzeug ein), aber ungefragt passieren darf es nicht.
+    if _werkzeug and _werkzeug in remove_list:
+        lines.append("")
+        lines.append(f"ACHTUNG: {_werkzeug} fuehrt diesen Lauf aus, steht aber nicht in 'KI-Werkzeuge' - "
+                     "--apply wuerde die eigenen Dateien entfernen.")
+        lines.append("  Ist das gewollt (Projekt fuer ein anderes Werkzeug einrichten), bestaetigen lassen; "
+                     "sonst 'KI-Werkzeuge' in AI-CONFIG.md ergaenzen.")
 
     lines.append("")
     if orch_unbekannt:
@@ -1861,6 +1951,9 @@ def build_parser():
     group.add_argument("--finish", action="store_true",
                         help="Vorbedingungen pruefen, AI-CONFIG.md fortschreiben (bleibt bestehen)")
     group.add_argument(
+        "--detect", action="store_true",
+        help="Nur melden, welches KI-Werkzeug diesen Lauf ausfuehrt (aus der Prozessumgebung), nichts aendern")
+    group.add_argument(
         "--check", action="store_true",
         help="Selbstpruefung: fest verdrahtete Pfadlisten (STALE_PATH_CHECK_LISTS) gegen das Repo pruefen, "
         "aendert nichts (Exit 0, auch bei Warnungen)",
@@ -1881,6 +1974,14 @@ def _run(argv) -> int:
         )
         return 2
 
+    if args.detect:
+        werkzeug, beleg, geprueft = detect_ai_tool()
+        if werkzeug:
+            zusatz = "" if geprueft else "  (schwache Marke - Quelltextfund oder Konvention, siehe AGENT_MARKERS)"
+            print(f"Erkanntes KI-Werkzeug: {werkzeug}   [{beleg}]{zusatz}")
+        else:
+            print("Kein KI-Werkzeug erkannt - im Interview nachfragen statt vorauswaehlen.")
+        return 0
     if args.check:
         warnungen = check_stale_remove_paths(root)
         print("\n".join(warnungen) if warnungen else "Selbstpruefung ok: alle gelisteten Pfade vorhanden.")
@@ -1909,7 +2010,7 @@ def _setup_already_complete(root: Path) -> bool:
 def main() -> int:
     try:
         root = _find_root()
-        if _setup_already_complete(root):
+        if _setup_already_complete(root) and "--detect" not in sys.argv[1:]:
             print(
                 "Fehler: Einrichtung ist abgeschlossen, Ersteinrichtung nicht mehr moeglich; fuer laufende "
                 "Aenderungen sync-config.py nutzen.",

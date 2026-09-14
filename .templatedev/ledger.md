@@ -12,6 +12,35 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Der Assistent erkennt, welches Werkzeug er ist
+
+Wolfgangs Frage: Kann der Agent erkennen, wer er ist — damit beim Anlegen gleich das richtige KI-Werkzeug
+vorausgewählt ist? Ja, aber nur teilweise, und das musste belegt werden statt geraten.
+
+- **Der Mechanismus:** Die Scripte werden vom Assistenten gestartet und erben dessen Prozessumgebung. In
+  einer laufenden Sitzung hier gemessen: `CLAUDECODE=1`, `CLAUDE_CODE_ENTRYPOINT=cli`,
+  `AI_AGENT=claude-code_2-1-270_agent`. Neu: `detect_ai_tool()` in `setup-lib.py` (bleibt nach `/finalize`),
+  Aufruf `create-project.py --detect`, Anzeige auch im `--dry-run`.
+- **Einen Standard gibt es nicht.** Zwei konkurrierende Vorschläge: `AGENT=<werkzeug>` als Gegenstück zu
+  `CI=true` (agentsmd/agents.md#136 — umgesetzt von Goose, gelesen von Bun; für Claude Code offen, für
+  Codex ausdrücklich abgelehnt) und `AI_AGENT=<name>`, das Dritt-Bibliotheken *lesen*, aber kein Hersteller
+  dokumentiert zu *setzen*. Beide nur als schwache Rückfallebene ausgewertet.
+- **Belegstärke statt Ja/Nein:** `gemessen` > `doku` > `quelltext` > `schwach`, je Marke mit Quelle im
+  Kommentar. Sicher: Claude Code, Gemini CLI (`GEMINI_CLI=1`), Cline (`CLINE_ACTIVE`, vom Betreiber
+  bestätigt), Cursor (`CURSOR_AGENT`). Schwach: Copilot im VS-Code-Agentmodus (`COPILOT_AGENT=1`, frisch
+  gemergter PR), Codex (`CODEX_SANDBOX` — ein Sandbox-Nebeneffekt, keine Selbstauskunft).
+- **Drei Werkzeuge haben gar keine Marke:** Copilot-CLI, Aider und Windsurf. Dort wird gefragt wie bisher.
+  Aiders `OR_APP_NAME=Aider` wäre ein OpenRouter-Nebeneffekt, keine Selbstauskunft — bewusst **nicht**
+  aufgenommen. Auch der Copilot Coding Agent in GitHub Actions bleibt draußen: Erkennbar wäre nur
+  `GITHUB_ACTOR="copilot-swe-agent[bot]"`, eine Beobachtung aus echten Läufen, keine zugesagte Marke.
+- **Nebenbefund, gleich mitgebaut:** Steht das laufende Werkzeug **nicht** in `KI-Werkzeuge`, warnt
+  `--dry-run` jetzt — `--apply` würde sonst die Dateien genau des Assistenten entfernen, der den Befehl
+  ausführt. Verboten ist es nicht (man richtet ein Projekt bewusst für ein anderes Werkzeug ein), aber
+  ungefragt darf es nicht passieren.
+- **Die Lehre:** Die naheliegende Antwort wäre eine Tabelle mit neun Variablennamen gewesen, von denen fünf
+  erfunden sind. Eine erfundene Marke ist schlechter als keine, weil sie eine **falsche** Vorauswahl
+  erzeugt, die niemand mehr hinterfragt. „Keine Marke gefunden" ist hier das wertvollere Ergebnis.
+
 ## 2026-09-14 — Anlegen fragt jetzt nach, statt zu raten
 
 Bisher kannte die Alltagssprache-Tabelle zwei Fälle: „neue Anwendung" (mit Interview) und „leeres Projekt"

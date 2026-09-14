@@ -225,6 +225,11 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
    anlegen." Bei „ja" geht es ohne Interview weiter; bei „nein" folgen genau vier Fragen, auf einmal gestellt:
    **Projektname**, **welche KI-Werkzeuge bleiben sollen**, **Stack** (ein Satz — daraus im selben Zug die
    passenden Regelsätze vorschlagen und bestätigen lassen) und **worum es geht** (ein bis zwei Sätze).
+   Bei den Werkzeugen ist das **gerade laufende vorausgewählt**, soweit erkennbar: Der Assistent vererbt
+   seine Prozessumgebung an Shell-Aufrufe, und einige Werkzeuge setzen dort eine Marke (Claude Code
+   `CLAUDECODE=1`, Gemini CLI, Cline, Cursor). Einen herstellerübergreifenden Standard dafür gibt es
+   nicht — für die Copilot-CLI, Aider und Windsurf existiert gar keine Marke. Wird nichts erkannt, wird
+   gefragt statt geraten; vorausgewählt heißt außerdem nicht entschieden.
    Die Antworten werden **in `AI-CONFIG.md` eingetragen**, nicht nur gemerkt: Die Datei ist die Quelle und
    bleibt dauerhaft im Projekt. Alles Übrige — Auftraggeber, Rufname des Assistenten, Logging, Wartung —
    bleibt auf Standard und ist dort jederzeit änderbar; das wird {{AUFTRAGGEBER}} in einem Satz gesagt.

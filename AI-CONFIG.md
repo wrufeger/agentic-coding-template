@@ -42,7 +42,7 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 
 | Schlüssel | Wert | Optionen | Platzhalter | Bedeutung |
 | :--- | :--- | :--- | :--- | :--- |
-| KI-Werkzeuge |  | Claude Code, Copilot, Cursor, Aider, Gemini CLI, ChatGPT/Codex, Ollama |  | Kommaliste der Werkzeuge, die **bleiben** sollen. Leer = alle behalten. |
+| KI-Werkzeuge |  | Claude Code, Copilot, Cursor, Aider, Gemini CLI, ChatGPT/Codex, Ollama, Cline |  | Kommaliste der Werkzeuge, die **bleiben** sollen. Leer = alle behalten. |
 | Orchestrator-Modell | opus | opus, sonnet, haiku, inherit |  | Modell der Hauptsession, steuert `model` in `.claude/settings.json`. |
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |

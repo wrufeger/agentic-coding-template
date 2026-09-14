@@ -31,6 +31,13 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    2. **Welche KI-Werkzeuge sollen bleiben?** (Claude Code · Copilot · Cursor · Aider · Gemini CLI ·
       ChatGPT/Codex · Ollama; leer = alle behalten) → `KI-Werkzeuge`. Die Dateien der nicht genannten
       Werkzeuge entfernt Schritt 3.
+      **Das eigene Werkzeug ist vorausgewählt**, soweit es sich erkennen lässt:
+      `python .claude/scripts/create-project.py --detect` liest aus der Prozessumgebung, wer diesen Lauf
+      ausführt. Sicher erkannt werden Claude Code (`CLAUDECODE=1`), Gemini CLI, Cline und Cursor; schwächer
+      belegt sind Copilot im VS-Code-Agentmodus und Codex. **Für die Copilot-CLI, Aider und Windsurf gibt es
+      keine Marke** — dort wird gefragt wie bisher. Wird nichts erkannt, wird gefragt, **nicht geraten**.
+      Vorausgewählt heißt außerdem nicht entschieden: {{AUFTRAGGEBER}} kann es abwählen, etwa wenn er das
+      Projekt für ein anderes Werkzeug einrichtet.
    3. **Welcher Stack?** Ein Satz genügt („Nuxt 4 + MariaDB"). → `Stack`. Daraus **im selben Zug die
       passenden Regelsätze vorschlagen** (`Coding-Guidelines`, Kennungen aus `docs/project/coding_rules.d/`)
       und bestätigen lassen — keine eigene Frage, aber auch nicht stillschweigend setzen.
