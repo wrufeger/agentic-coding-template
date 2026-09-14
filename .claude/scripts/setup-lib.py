@@ -727,9 +727,17 @@ def _iter_text_files(root: Path):
             yield fp, rel
 
 
+# Die Kopfzeile jeder Doku-Datei ("> Datenstand: ... - Status: ...") sagt im Template, dass die Datei noch
+# Vorlage ist. Nach dem Anlegen/Nachruesten stimmt das nicht mehr, der Zusatz ist aber kein {{PLATZHALTER}}
+# und blieb darum frueher stehen - in bandliste in 8 Dateien, ueber Inhalten, die laengst projektspezifisch
+# waren. Deshalb wird er hier mitersetzt. Vokabular der Statuswoerter: docs/README.md § "Konventionen".
+STATUS_VORLAGE = "Status: Vorlage, noch nicht projektspezifisch"
+STATUS_NACH_SETUP = "Status: Entwurf"
+
+
 def replace_placeholders(root: Path, values: dict):
-    """Ersetzt {{KEY}} in allen Textdateien (ausser den 3 Ausnahmen). Gibt (geaenderte_dateien,
-    verbleibende_platzhalter) zurueck - Letzteres als Liste 'Datei:Zeile' (max 20)."""
+    """Ersetzt {{KEY}} in allen Textdateien (ausser den 3 Ausnahmen) und die Vorlagen-Statuszeile. Gibt
+    (geaenderte_dateien, verbleibende_platzhalter) zurueck - Letzteres als Liste 'Datei:Zeile' (max 20)."""
     changed = []
     remaining = []
     for fp, rel in _iter_text_files(root):
@@ -742,6 +750,8 @@ def replace_placeholders(root: Path, values: dict):
             if val is None:
                 continue
             new_content = new_content.replace("{{" + key + "}}", str(val))
+        if rel.startswith("docs/"):
+            new_content = new_content.replace(STATUS_VORLAGE, STATUS_NACH_SETUP)
         if new_content != content:
             try:
                 _write_text_preserve_newline(fp, new_content, newline)

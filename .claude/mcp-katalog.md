@@ -5,7 +5,7 @@ Geprüfte MCP-Server, die ein Projekt einbinden kann. Ausgewählt wird über `AI
 
 **Eingerichtet wird derzeit von Hand** — mit den Befehlen unter „Einbindung", oder als Eintrag in
 `.mcp.json`. Die Liste in `AI-CONFIG.md` hält fest, *welche* Server zum Projekt gehören; sie richtet sie
-nicht selbst ein. Eine automatische Übernahme durch `sync-config.py` steht noch aus (Umbaupunkt 25).
+nicht selbst ein. Eine automatische Übernahme durch `sync-config.py` steht noch aus (Backlog-Punkt 25).
 
 **Stand 2026-09-14, aus Anbieter-Doku recherchiert, nicht selbst getestet.** Endpunkt-URLs und die Frage, ob
 ein Server OAuth oder ein statisches Token verlangt, ändern sich erfahrungsgemäß schnell — vor der ersten

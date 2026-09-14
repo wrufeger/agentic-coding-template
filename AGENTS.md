@@ -46,9 +46,9 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das so ist:
 
 - **`docs/` ist Gerüst, kein Inhalt.** `docs/project/` beschreibt ein Projekt, das es hier nicht gibt;
-  `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Umbauliste) sind leere Formulare. Beides bleibt leer — alles,
+  `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Backlog) sind leere Formulare. Beides bleibt leer — alles,
   was hier hineingeschrieben wird, landet später in jedem abgeleiteten Projekt.
-- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Umbauliste, Fragen, Journal, Regeln und die
+- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Backlog, Fragen, Journal, Regeln und die
   Übersicht der Testprojekte, versioniert wie jede andere Datei. Einstieg über `.templatedev/INDEX.md`.
   Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist — `docs/` bleibt tabu.
 - **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;
@@ -82,7 +82,7 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   (der heutige Wert bleibt stehen, die Entscheidung samt ADR-Verweis steht daneben) — die Datei steuert den
   **IST**-Zustand, nicht den Wunschzustand. Die Prüfung ist Teil der Checkliste „Aufgabe abschließen"
   (`docs/ai/checklists.md`).
-- Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten — Aufbau und Formregeln in
+- Arbeitsordner `docs/ai/`: Board, Aufgaben, Fragen, Ledger, Backlog, Checklisten — Aufbau und Formregeln in
   `docs/ai/README.md`.
 - „Fertig" gilt nur mit Beleg: Testlauf, Commit-Hash oder ein Aufruf von außen, der das Ergebnis zeigt.
 - **Laufend nachziehen, nicht sammeln.** Journal (`docs/ai/ledger.md`), Aufgabenstand (`Stand <Datum>:` in

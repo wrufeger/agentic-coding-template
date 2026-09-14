@@ -6,7 +6,7 @@ Gilt zusätzlich zu `AGENTS.md` und `CLAUDE.md` — und zwar nur im Template-Rep
 (`D:\dev\rufeger\template-agentic-coding-project`). Diese Regeln beschreiben, was beim Ändern der **Vorlage**
 zu beachten ist; für die Arbeit in einem abgeleiteten Projekt sind sie ohne Bedeutung.
 
-## Wo Umbauliste, Fragen und Journal liegen
+## Wo Backlog, Fragen und Journal liegen
 
 Alles in diesem Ordner `.templatedev/`, versioniert wie jede andere Datei des Repos. `docs/ai/` und
 `docs/project/` bleiben leere Vorlagen — was dort steht, wandert in jedes abgeleitete Projekt.

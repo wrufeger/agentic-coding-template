@@ -27,6 +27,8 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/project/security.md` | Secrets-Regeln, Freigaben, Risiko-Liste | {{DATUM}} | vor Sicherheits-Änderungen |
 | `docs/project/glossary.md` | Fachbegriffe des Projekts | {{DATUM}} | bei Unklarheit über Begriffe |
 | `docs/project/incidents/README.md` | Fehleranalyse als Einzeldatei (Standard) oder Unterordner ab ~5/Jahr | {{DATUM}} | vor/nach Fehleranalyse |
+| `docs/project/konzepte/README.md` | Konzepte: Optionen, Empfehlung, Aufwand — je Thema eine Datei | {{DATUM}} | vor größeren Umbauten |
+| `docs/project/stories/README.md` | Stories: abgegrenzte, prüfbare Umsetzungsschritte `S<n>` | {{DATUM}} | vor der Umsetzung |
 | `docs/ai/README.md` | Aufbau/Formregeln des Zusammenarbeits-Ordners | {{DATUM}} | vor Nutzung von `docs/ai/` |
 | `docs/ai/board.md` | Einstiegs-/Wiedereinstiegsboard | {{DATUM}} | immer zuerst |
 | `docs/ai/tasks.md` | Aufgabenliste inkl. Tabu-Abschnitt | {{DATUM}} | vor jeder neuen Aufgabe |
@@ -48,8 +50,21 @@ Ein leeres Feld ist nie zulässig: entweder ein echter Stand oder eine Fußnote,
 
 ## Konventionen für diese Doku
 
-- Datenstände immer mit **Datum** kennzeichnen (Format `YYYY-MM-DD`), Kopfzeile jeder Datei: „Datenstand: … –
-  Status: …".
+- Datenstände immer mit **Datum** kennzeichnen (Format `YYYY-MM-DD`), Kopfzeile jeder Datei:
+  `> Datenstand: JJJJ-MM-TT – Status: <wort>`. Das Datum ist der Tag, an dem der Inhalt zuletzt **gegen die
+  Wirklichkeit geprüft** wurde — nicht der Tag der letzten Textänderung. Als Status ist genau eines dieser
+  drei Wörter erlaubt, optional gefolgt von einem erläuternden Halbsatz:
+
+  | Status | Bedeutung |
+  | :--- | :--- |
+  | `aktuell` | Inhalt entspricht dem Stand am genannten Datum |
+  | `Entwurf` | wird gerade geschrieben, noch nicht verbindlich |
+  | `veraltet` | bekannt überholt; der Halbsatz sagt wodurch (z. B. „abgelöst durch ADR-<n>") |
+
+  Eigene Lebenszyklen haben nur `konzepte/` und `stories/` (`Entwurf` → `abgestimmt` → `umgesetzt`), je in
+  der README des Ordners beschrieben. Im Template steht stattdessen „Vorlage, noch nicht projektspezifisch";
+  diese Fassung ersetzt `.claude/scripts/setup-lib.py` beim Anlegen und Nachrüsten. Bleibt sie irgendwo
+  stehen, ist das ein Fehler und gehört gemeldet.
 - Jede Doku-Datei **soll** eine eigene Kopfzeile tragen. Wo das nicht geht (generierte Dateien, Fremdformate,
   sehr kurze Dateien), wird der Datenstand im Index stattdessen mit hochgestellter Ziffer und Fußnote
   gekennzeichnet — ein leeres Feld ist nie zulässig, entweder echter Stand oder Fußnote mit Herkunft.

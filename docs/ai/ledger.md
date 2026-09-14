@@ -2,15 +2,17 @@
 
 # Ledger — {{PROJEKTNAME}}
 
-Sitzungs-Journal und Kurzchronik des Orchestrators. Neueste Sitzung oben. Nur der Orchestrator schreibt hier
-(siehe `docs/ai/README.md`).
+Sitzungsjournal mit Belegen. **Neuester Eintrag oben**, Tagesüberschriften absteigend, innerhalb eines Tages
+der jüngste Lauf zuerst. Läufe tragen die Uhrzeit, keine Laufnummer:
 
-**Verdichtungsregeln:**
-- Heutiger Tag und der Vortag: detailliert, alle Läufe eines Tages unter einer Tagesüberschrift
-  (`### n. Lauf — Titel`), aber auf das Wesentliche gekürzt.
-- Älter als 2 Tage bis 1 Woche: ein Eintrag je Tag, max. 8 Stichpunkte.
-- Älter als 1 Woche: ein Eintrag je Monat (Abschnitt „Archiv" ganz unten).
-- Commit-Hashes, Nummern (Aufgaben/Fragen), Versionsnummern, Dateipfade und Kennzahlen werden nie weggekürzt.
+```text
+## 2026-02-03
+
+### 16:20 — Kysely-Umstellung, Schritt 2
+### 09:05 — Schema-Drift behoben
+```
+
+*Verdichtungsregeln (was nach Tagen und Wochen gekürzt wird): `README.md` § „Ledger".*
 
 ---
 

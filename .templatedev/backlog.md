@@ -1,6 +1,6 @@
 > Datenstand: 2026-09-14 – Status: aus dem Ordner .templatedev/ des Templates übernommen
 
-# Umbauliste — Template-Entwicklung
+# Backlog — Template-Entwicklung
 
 Priorisierte Verbesserungsvorschläge für das **Template**; Checkout unter
 `D:/dev/rufeger/template-agentic-coding-project`. Marker direkt am Punkt („-> machen", „-> später",
@@ -83,6 +83,14 @@ sie werden in Journal und Commits zitiert.
    dafür verlässlich) oder beim Anlegen einmalig übersetzt (billiger, aber jede Template-Aktualisierung
    trifft danach auf übersetzten Text und `/update-template` bekommt Konflikte in jeder Zeile)? Diese
    Entscheidung bestimmt den ganzen Rest — vorher keine Zeile übersetzen.
+
+28. -> machen: **`no_replace` steht in `AGENTS.md` anders als in `template.json`** (Priorität niedrig,
+   angelegt 2026-09-14): `AGENTS.md` § „Template-Herkunft und Updates" nennt `docs/ai/checklists.md` und
+   `.claude/skills/create-project/SKILL.md` als nie platzhalter-ersetzt; `.claude/template.json` führt unter
+   `no_replace` aber nur die drei `.py`-Dateien, und `EXCLUDED_FROM_REPLACE` in `setup-lib.py` deckt sich mit
+   der JSON-Fassung. Eine der beiden Seiten hat unrecht. Erst prüfen, welche Fassung gewollt ist (zeigen die
+   beiden Dateien Platzhalter absichtlich als Beispiel?), dann die andere angleichen — nicht blind eine Liste
+   erweitern. Gefunden beim Einbau der Statuszeilen-Ersetzung.
 
 ## Erledigt
 

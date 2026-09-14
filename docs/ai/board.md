@@ -2,13 +2,13 @@
 
 # Board — Was als Nächstes
 
-Einstiegs-/Wiedereinstiegsboard: erster Blick jeder neuen Sitzung. Nur der Orchestrator schreibt hier
-(siehe `docs/ai/README.md`).
+Erster Blick jeder Sitzung: wo das Projekt steht, was als Nächstes drankommt, worauf gewartet wird. Eine
+Bildschirmseite, nicht mehr — die Datei wird bei jeder Berührung überschrieben, nicht ergänzt. Die Historie
+führt das `ledger.md`.
 
-Stand: {{DATUM}} — Projekt noch nicht gestartet. Nach dem Anlegen aus `AI-CONFIG.md` (Checkliste „Neues Projekt",
-`docs/ai/checklists.md`) oder nach dem Nachrüsten eines bestehenden Repos (Checkliste „Projekt nachrüsten")
-hier die Kurzbilanz eintragen: was zuletzt passiert ist, was als Nächstes ansteht, welche Freigaben noch
-offen sind.
+*Was in welchen Abschnitt gehört: `README.md` § „Board".*
+
+Stand: {{DATUM}} — Projekt noch nicht gestartet.
 
 ## Kurzbilanz
 
@@ -16,8 +16,8 @@ offen sind.
 
 ## Als Nächstes
 
-*(noch offen — erste Aufgaben stehen in `docs/ai/tasks.md`)*
+*(noch offen — erste Aufgaben stehen in `tasks.md`)*
 
-## Offene Freigaben
+## Ausstehende Freigaben
 
-*(noch offen — Fragen an {{AUFTRAGGEBER}} stehen in `docs/ai/questions.md`)*
+*(keine — offene Fragen an {{AUFTRAGGEBER}} stehen in `questions.md`)*

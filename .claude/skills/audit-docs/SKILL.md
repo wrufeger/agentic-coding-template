@@ -52,7 +52,7 @@ Ohne Code-Zugriff, reine Formprüfung von `docs/ai/`:
 - **Board:** Kurzbilanz, nächster Schritt und offene Freigaben gegen den tatsächlichen Stand aus Journal und
   Aufgaben.
 - **Journal:** Einträge ohne Beleg, fehlende Verdichtung nach den Regeln im Dateikopf.
-- **Umbauliste:** Punkte, die längst umgesetzt oder abgelehnt wurden und nur noch Platz kosten.
+- **Backlog:** Punkte, die längst umgesetzt oder abgelehnt wurden und nur noch Platz kosten.
 
 Gefundene Abweichungen werden **korrigiert, nicht nur gemeldet**, solange es reine Formarbeit ist
 (archivieren, Stand nachtragen, Board aktualisieren). Alles, was eine Entscheidung von {{AUFTRAGGEBER}}
@@ -71,7 +71,7 @@ Vorschläge für `docs/ai/tasks.md`/`questions.md`.
 
 Nichts wird am Code geändert; Findings, die Code-Änderungen brauchen, werden Aufgaben in `docs/ai/tasks.md`.
 Kein Doku-Eintrag ohne Prüfung am Code — die Doku beschreibt den IST-Zustand, nicht den Wunsch. Was noch nicht
-gebaut ist, gehört auf die Umbauliste.
+gebaut ist, gehört in den Backlog.
 
 ## Fallback bei fehlendem Agent-Typ
 

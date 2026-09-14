@@ -1,11 +1,11 @@
 # Template-Entwicklung
 
-Arbeitsordner für die Weiterentwicklung **dieses Template-Repos** — hier stehen Umbauliste, Fragen, Journal,
+Arbeitsordner für die Weiterentwicklung **dieses Template-Repos** — hier stehen Backlog, Fragen, Journal,
 Regeln und die Übersicht der Testprojekte. Er gehört nicht zum Lieferumfang: Beim Anlegen eines Projekts wird
 er entfernt, beim Nachrüsten nie kopiert, und ein Template-Update trägt ihn nicht in abgeleitete Projekte
 (`template_only` in `.claude/template.json`).
 
-Warum nicht `docs/ai/`? Weil dort nur **Vorlagen** liegen: Board, Aufgaben, Fragen, Ledger und Umbauliste
+Warum nicht `docs/ai/`? Weil dort nur **Vorlagen** liegen: Board, Aufgaben, Fragen, Ledger und Backlog
 sind im Template leere Gerüste, die jedes abgeleitete Projekt mit eigenen Inhalten füllt. Stünde die
 Template-Entwicklung dort, wanderte sie in jedes Projekt mit. Dasselbe gilt für `docs/project/`.
 
@@ -18,7 +18,7 @@ Fenstern, obwohl man beim Arbeiten beides zugleich braucht.
 | :--- | :--- |
 | `INDEX.md` | diese Übersicht |
 | `README.md` | Testprojekte: welche es gibt, welchen Weg sie abdecken, ihr letzter geprüfter Stand |
-| `backlog.md` | Umbauliste: priorisierte Verbesserungsvorschläge, Nummern bleiben stabil |
+| `backlog.md` | Backlog: priorisierte Verbesserungsvorschläge, Nummern bleiben stabil |
 | `questions.md` | offene Entscheidungen zur Weiterentwicklung (`Q<n>`) |
 | `ledger.md` | Journal: was in welcher Sitzung passiert ist, mit Belegen |
 | `regeln.md` | Regeln für die Arbeit **am Template selbst** |

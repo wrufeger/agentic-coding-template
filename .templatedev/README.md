@@ -21,7 +21,7 @@ ihn mit dem, was in den Projekten tatsächlich liegt, ohne etwas zu ändern.
 **Bandliste** (Nuxt 4 + Prisma, dazu rund 49.000 Dateien PHP-Altanwendung in `old-project/`) ist das
 Referenzprojekt für das **Nachrüsten** (Weg 2). Es dient ausdrücklich auch als Prüfstand für die
 Zusammenarbeit mit der KI selbst: Was dort an Reibung auftritt — missverstandene Aufträge, unpassende Regeln,
-fehlende Automatisierung, entgleiste Worker-Läufe —, ist ein Befund über das Template und wird als Umbaupunkt
+fehlende Automatisierung, entgleiste Worker-Läufe —, ist ein Befund über das Template und wird als Backlog-Punkt
 aufgenommen, nicht nur im Projekt behoben.
 
 **Template-Entwicklung** (dieses Projekt) ist das Referenzprojekt für **Neues Projekt** (Weg 1): Es ist selbst

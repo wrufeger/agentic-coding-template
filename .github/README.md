@@ -68,7 +68,7 @@ Werte und die Projekt-Dokumentation bleiben unangetastet.
 - **Skills** als ausführbare Checklisten: Projekt anlegen, nachrüsten, Dokumentation prüfen und nachziehen,
   Aufgabe abschließen, Template-Update.
 - **Arbeitsordner** `docs/ai/`: Board, Aufgaben mit Nummern und Ständen, Fragen mit vorgegebenen
-  Antwortmöglichkeiten, Journal mit Belegen, Umbauliste.
+  Antwortmöglichkeiten, Journal mit Belegen, Backlog.
 - **Optionale Bausteine**: wiederkehrende Wartung mit Fälligkeitsprüfung und ein Mitschnitt aller
   Agentenaktionen, der sich im Terminal live mitlesen lässt.
 

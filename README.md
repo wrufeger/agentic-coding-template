@@ -150,11 +150,11 @@ ai.log                # optionaler Live-Mitschnitt aller Agentenaktionen (gitign
 docs/
   README.md           # Index aller Doku-Dateien
   project/            # Projekt-Doku (IST-Zustand): Architektur, Coding-Regeln, Tests, Features, ADRs, ...
-  ai/                 # Zusammenarbeit: Board, Aufgaben, Fragen, Ledger, Umbauliste, Checklisten
+  ai/                 # Zusammenarbeit: Board, Aufgaben, Fragen, Ledger, Backlog, Checklisten
 .github/README.md     # Beschreibung des Templates (GitHub zeigt sie statt dieser Datei); beim
                       # Anlegen eines Projekts entfernt
 .github/workflows/ci.yml   # Lint/Typecheck/Test (Platzhalter-Befehle)
-.templatedev/         # nur im Template: Umbauliste, Fragen, Journal, Regeln, Testprojekte —
+.templatedev/         # nur im Template: Backlog, Fragen, Journal, Regeln, Testprojekte —
                       # wird beim Anlegen eines Projekts entfernt
 LICENSE               # MIT (Wolfgang Rufeger) — gilt für das Template, nicht für deinen Projektcode
 .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes

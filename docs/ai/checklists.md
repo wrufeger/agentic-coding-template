@@ -38,7 +38,10 @@ was sich angesammelt hat, und sichert das Ergebnis.
    Tabellenwert in `AI-CONFIG.md` berührt (Stack, Befehle, Regelsätze, Werkzeuge — `AGENTS.md`
    § Grundregeln) und die Datei bei Bedarf nachziehen.
 2. **Archivieren:** als ✅ markierte Aufgaben mit Volltext nach `docs/ai/tasks_archive.md`, verbuchte Fragen
-   nach `docs/ai/questions_archive.md`. Nummern (`T<n>`/`Q<n>`) bleiben gültig und werden nie neu vergeben.
+   nach `docs/ai/questions_archive.md` — **alles, was seit dem letzten Lauf fertig geworden ist, in einem
+   Zug**. Daraus folgt ein einheitliches Verschiebedatum je Lauf; uneinheitliche Daten im Archiv zeigen an,
+   dass nicht laufweise archiviert wurde, sondern nachträglich aus der Erinnerung.
+   Nummern (`T<n>`/`Q<n>`) bleiben gültig und werden nie neu vergeben.
    Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur auf dessen Meldung hin abhaken; Antworten in deren
    `* Antwort:`-Zeilen genauso verbuchen — delegierte Aufgaben wandern in den oberen Abschnitt, erweiterte
    Rechte mit Datum ins Journal.
@@ -46,7 +49,11 @@ was sich angesammelt hat, und sichert das Ergebnis.
    nachtragen. Ältere Einträge nach den Regeln im Kopf von `docs/ai/ledger.md` zusammenfassen — Commit-Hashes,
    Nummern, Versionen und Pfade bleiben immer erhalten.
 4. **Doku-Index:** neue Dateien in `docs/README.md` eintragen, Datenstände der geänderten Dateien prüfen.
-5. **Board:** `docs/ai/board.md` auf den neuen Stand bringen (Kurzbilanz, nächster Schritt, offene Freigaben).
+5. **Board:** `docs/ai/board.md` **überschreiben**, nicht ergänzen — es ist eine Momentaufnahme auf einer
+   Bildschirmseite (Form: `docs/ai/README.md` § Board). Dabei ausdrücklich **entfernen**: erledigte Punkte
+   unter „Als Nächstes" (auch durchgestrichene und solche mit „erledigt am …"), beantwortete Fragen unter
+   „Ausstehende Freigaben", und alles in der Kurzbilanz, das die nächste Entscheidung nicht mehr beeinflusst.
+   Das Board schrumpft bei diesem Schritt öfter, als es wächst.
 6. **Commit per Pathspec:** `git add <pathspec …>`, nie ein catch-all; kurze Message im Repo-Stil. Committet
    wird die abgenommene Arbeit, nicht ein Zeitabschnitt. Secrets, Archive und Originalmedien bleiben draußen
    (`.gitignore` prüfen). Fremde uncommittete Änderungen anderer Sitzungen nicht stillschweigend mitnehmen —
@@ -143,14 +150,14 @@ Dann lieber abbrechen und neu schneiden, statt nachzubessern.
   Auftrag gestellt. Entweder (a) lag der Fehler am Auftrag — dann schärfen und einmal neu starten — oder (b)
   an die stärkere Denkstufe/„Experten"-Rolle eskalieren, mit vollständigem Kontext beider Fehlversuche
   (ursprünglicher Auftrag, was jeweils versucht wurde, welche Ausgabe kam zurück, betroffene Dateien, bereits
-  ausgeschlossene Ursachen). Den Befund danach verbuchen (Ledger, ggf. Coding-Regeln/Umbauliste). Eskalation
+  ausgeschlossene Ursachen). Den Befund danach verbuchen (Ledger, ggf. Coding-Regeln/Backlog). Eskalation
   ist billiger als die dritte Wiederholung.
 - Nach jeder Welle: Lint + Typecheck laufen lassen, betroffene Funktionen real ausprobieren; „fertig" nur mit
   Beleg; Journal laufend nachziehen (`AGENTS.md` § Grundregeln).
 - Nach jeder Umsetzungswelle kann eine kurze Optimierungsrunde über die neu geschriebenen Stellen laufen —
   Ziel ist Verständlichkeit und Kürze, Geschwindigkeit nur, wo sie ohne Mehrkomplexität zu haben ist;
   höchstens zwei Runden, Verhalten und Tests müssen unverändert bleiben. Ist der Aufwand größer, wird daraus
-  ein Vorschlag in der Umbauliste statt einer Änderung.
+  ein Vorschlag im Backlog statt einer Änderung.
 - Bei eingeschaltetem Logging (`AGENTS.md` § Logging): vor jeder Welle die Entscheidung als
   `[orchestrator] [decision]` schreiben, jede Delegation als `[delegate]`, Start/Ende der Worker als
   `[start]`/`[end]` — sofern das Werkzeug das nicht automatisch tut (Claude Code: Hooks, `CLAUDE.md` § 7).
@@ -170,7 +177,7 @@ Bereich `project` — nach jeder Feature-Welle, jedem produktionsrelevanten Bugf
 - Schwere Fehler (Build-/Startfehler, Produktionsausfälle, Sicherheitsrelevantes) nach
   `docs/project/incidents/README.md` dokumentieren.
 - Grundsatz: Doku beschreibt den IST-Zustand, nicht den Wunsch. Was noch nicht gebaut ist, gehört auf die
-  Umbauliste oder ins Fragen-Board. Kein Doku-Eintrag ohne Prüfung am Code.
+  Backlog oder ins Fragen-Board. Kein Doku-Eintrag ohne Prüfung am Code.
 
 Bereich `ai` — Arbeitsordner `docs/ai/` auf Ordnung prüfen, ohne Code-Zugriff:
 
@@ -183,8 +190,18 @@ Bereich `ai` — Arbeitsordner `docs/ai/` auf Ordnung prüfen, ohne Code-Zugriff
   `S<n>`, `B<n>`. Wo eine Mechanik dafür bereitsteht, wird sie genutzt statt von Hand gesucht (bei
   Claude Code: `python .claude/scripts/check-refs.py`). Verwaiste Ziele — vorhanden, aber nirgends zitiert —
   sind kein Fehler, aber ein Hinweis: entweder fehlt der Verweis, oder der Eintrag ist überflüssig geworden.
-- Journaleinträge ohne Beleg (Testlauf, Commit-Hash, Aufruf von außen).
-- Überholte Punkte in der Umbauliste (bereits umgesetzt oder nicht mehr relevant).
+- Journaleinträge ohne Beleg (Testlauf, Commit-Hash, Aufruf von außen); Einträge in falscher Reihenfolge
+  (neuester gehört nach oben) oder mit Laufnummer statt Uhrzeit in der Überschrift.
+- Überholte Punkte im Backlog (bereits umgesetzt oder nicht mehr relevant), und Anmerkungen, die sich am
+  Dateiende gesammelt haben, statt eine Frage oder Aufgabe geworden zu sein.
+- **Board-Hygiene:** erledigte Punkte unter „Als Nächstes", beantwortete Fragen unter „Ausstehende
+  Freigaben", eine Kurzbilanz, die über eine Bildschirmseite hinausgeht.
+- **Freie Dateien in `docs/ai/`:** alles außerhalb der festen Dateiliste (`docs/ai/README.md` § Dateien)
+  gehört woandershin — Konzepte und Analysen nach `docs/project/konzepte/`, abgegrenzte Vorhaben nach
+  `docs/project/stories/`, Entscheidungen nach `docs/project/decisions.md`.
+- **Vorlagenreste:** Kopfzeilen, die noch „Status: Vorlage, noch nicht projektspezifisch" tragen, obwohl die
+  Datei längst Projektinhalt hat, oder ein Statuswort außerhalb des Vokabulars in `docs/README.md`
+  § Konventionen.
 
 ## Neues Projekt
 
@@ -248,7 +265,7 @@ nachträglich bekommen soll:
    `nein` | `fragen`; beim Default `fragen` den Plan zeigen und einmal im Gespräch nachfragen, ohne Antwort
    nicht migrieren). Bei „ja":
    - Vorhandene KI-Arbeitsordner (heißen je nach Projekt `fable/`, `ai/`, `ki/`, `docs/fable/`, …) auf die
-     Template-Struktur umstellen: Board, Aufgaben, Fragen, Ledger, Umbauliste wandern unter ihren
+     Template-Struktur umstellen: Board, Aufgaben, Fragen, Ledger, Backlog wandern unter ihren
      Template-Namen nach `docs/ai/`. Verschieben statt kopieren, damit die Versionsgeschichte erhalten bleibt.
      Kollidiert eine Altdatei mit einer schon vorhandenen, wird sie danebengelegt statt überschrieben (nur
      inhaltsgleiche Dubletten entfallen). Dateien in Unterordnern (z. B. `archiv/`) werden aufgelistet, aber

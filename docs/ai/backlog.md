@@ -1,16 +1,15 @@
 > Datenstand: {{DATUM}} – Status: Vorlage, noch nicht projektspezifisch
 
-# Umbauliste — Vorschläge des Orchestrators
+# Backlog — Vorschläge des Orchestrators
 
-Priorisierte Verbesserungsvorschläge (Sicherheit zuerst). {{AUFTRAGGEBER}} entscheidet — Marker direkt am
-Punkt (z. B. „-> machen", „-> später", „-> nein, weil …").
+Priorisierte Verbesserungsvorschläge, Sicherheit zuerst. {{AUFTRAGGEBER}} entscheidet **direkt am Punkt** —
+„-> machen", „-> später", „-> nein, weil …". Zitiert werden die Punkte als `B<n>`.
 
-Grundsatz: der bestehende Codestil/die bestehenden Muster bleiben erhalten, solange sie kein echtes Problem
-verursachen. Vorschläge hier sind Angebote, keine Aufträge — Umsetzung erst nach Freigabe in `tasks.md`.
+Vorschläge sind Angebote, keine Aufträge: Umgesetzt wird erst, wenn daraus eine Aufgabe in `tasks.md`
+geworden ist. Bleibt beim Durchgehen etwas offen, wird daraus sofort eine Frage (`questions.md`) oder eine
+Aufgabe — nicht eine Anmerkung am Dateiende.
 
-Hierher schreibt der Orchestrator auch die Befunde der optionalen Code-Analyse beim Nachrüsten eines
-bestehenden Projekts (Checkliste „Projekt nachrüsten", Schritt 7) — je Punkt: Befund, Fundstelle
-`Datei:Zeile`, Vorschlag, geschätzter Aufwand.
+*Form und Regeln: `README.md` § „Backlog".*
 
 ---
 

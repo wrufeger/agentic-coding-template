@@ -12,6 +12,37 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Sechs Formbefunde aus `bandliste`, alle im Template behoben
+
+Wolfgang hat `docs/ai/` in `bandliste` durchgesehen. **Alle sechs Befunde sind Template-Befunde** — die
+Struktur dieser Dateien kommt aus der Vorlage, `bandliste` hat sie nur sichtbar gemacht. Genau der Kreislauf,
+für den `.templatedev` da ist (`regeln.md`).
+
+| Befund | Ursache im Template | Behoben durch |
+| :--- | :--- | :--- |
+| Einleitungen zu lang, KI-Anweisungen mitten im Arbeitsblatt | Formregeln standen doppelt: in `docs/ai/README.md` **und** im Kopf jeder Arbeitsdatei | Regeln nur noch in `README.md`; `tasks.md` 101 → 41, `questions.md` 73 → 25, `backlog.md`/`board.md`/`ledger.md` auf einen kurzen Kopf gestutzt |
+| Anmerkungen sammeln sich am Backlog-Ende und werden übersehen | keine Regel, was mit Rückfragen am Punkt passiert | Regel: daraus wird sofort eine Frage oder Aufgabe, am Punkt bleibt der Verweis |
+| „Umbauliste" statt „Backlog" | Erfindung des Templates, im Deutschen ist „Backlog" der gebräuchliche Name | in allen `.md` ersetzt (`.py`-Kommentare mit historischen Punktnummern blieben) |
+| Board sammelt Erledigtes und Belangloses | keine Abgrenzung je Abschnitt | drei Abschnitte mit klarer Regel; „Offene Freigaben" → **„Ausstehende Freigaben"**; Checkliste „Aufgabe abschließen" Schritt 5 sagt jetzt ausdrücklich, was **entfernt** wird |
+| Ledger: `### n. Lauf`, älteste Einträge oben | Vorlage gab die Laufnummer vor und sagte „neueste oben" nur im Fließtext | Überschriften tragen die **Uhrzeit**; Sortierregel gilt ausdrücklich auf beiden Ebenen |
+| `migration-scope.md` frei in `docs/ai/` abgelegt | für Analysen und Konzepte gab es **keinen** vorgesehenen Ort — obwohl die Querverweis-Tabelle längst auf `stories/` verwies, das es im Template gar nicht gab | neu: `docs/project/konzepte/` und `docs/project/stories/`, beide mit Format-README; `docs/ai/README.md` § „Was hier *nicht* hingehört" |
+
+- **Dazu ein siebter, ungefragter Befund:** Die Statuszeile `> Datenstand: … – Status: Vorlage, noch nicht
+  projektspezifisch` blieb in **jedem** abgeleiteten Projekt stehen — in `bandliste` in 8 Dateien. Der Zusatz
+  ist kein `{{PLATZHALTER}}`, also hat ihn nie jemand ersetzt. `setup-lib.py` ersetzt ihn jetzt unter `docs/`
+  mit; das Vokabular der Statuswörter (`aktuell` · `Entwurf` · `veraltet`) steht in `docs/README.md`
+  § Konventionen. In `bandliste` standen bis dahin elf verschiedene Statustexte nebeneinander.
+- **Die Lehre:** Die Vorlage hat jedes dieser Formate einmal beschrieben — aber an zwei Stellen zugleich, und
+  dann nur die eine gepflegt. Eine Regel gehört an genau einen Ort; die Arbeitsdatei bekommt einen Zeiger,
+  keine Kopie. Vier der sieben Befunde sind Varianten dieses einen Fehlers.
+- **Zweiter Punkt, allgemeiner:** Drei Befunde entstanden nicht aus einer falschen Regel, sondern aus einer
+  **fehlenden**. Wo das Template keinen Platz vorsieht (Konzepte, Stories), erfindet das Projekt einen — und
+  weil die Erfindung nirgends steht, prüft sie auch keine Checkliste. Deshalb kamen `konzepte/` und
+  `stories/` als leere, dokumentierte Ordner ins Template, nicht nur als Regel im Fließtext.
+- Offen geblieben: `AGENTS.md` nennt `docs/ai/checklists.md` und `.claude/skills/create-project/SKILL.md` als
+  `no_replace`, `template.json` führt dort aber nur die drei `.py`-Dateien. Einer von beiden hat unrecht —
+  als `B28` notiert.
+
 ## 2026-09-14 — Kürzel vereinheitlicht; Verlinken versucht und wieder verworfen
 
 - **Umbenannt:** `A<n>` → `T<n>` (Task), `F<n>` → `Q<n>` (Question), Backlog-Verweise bekommen `B<n>`;
