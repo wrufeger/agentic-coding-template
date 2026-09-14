@@ -12,6 +12,27 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Kürzel vereinheitlicht; Verlinken versucht und wieder verworfen
+
+- **Umbenannt:** `A<n>` → `T<n>` (Task), `F<n>` → `Q<n>` (Question), Backlog-Verweise bekommen `B<n>`;
+  `S<n>` und `ADR-<n>` bleiben. Ohne führende Null. 56 Ersetzungen in 12 Dateien, Commit `4da3c11`.
+  Grund: Die Mischung aus deutschen und englischen Anfangsbuchstaben war nicht mehr zuzuordnen — `A` stand
+  für Aufgabe, `F` für Frage, `S` aber schon für Story. Ich hatte vom Umbenennen abgeraten (Verweise in
+  alten Commits zeigen ins Leere); Wolfgang hat es entschieden, und die Zuordnung ist jetzt eindeutig.
+- **Verworfen: Kürzel als Markdown-Links.** `check-refs.py --links` konnte fehlende Links ergänzen und hat
+  im Template 10 gesetzt. Beim Ansehen fiel der Konstruktionsfehler auf: Aufgaben, Fragen und Umbaupunkte
+  sind Listen- oder Tabellenzeilen **ohne eigene Überschrift**, also ohne Anker. Jeder `B<n>`-Link landet
+  am Kopf von `backlog.md`, die Suche nach dem Eintrag beginnt dort von vorn. Ein Link, der nur den
+  Dateinamen wiederholt, kostet Lesbarkeit und bringt nichts.
+- Zurückgenommen: die 10 Links, der `--links`-Modus samt `--yes` in `check-refs.py`, die Verlink-Regel in
+  `docs/ai/README.md` § „Querverweise". Geblieben ist die **Prüfung** auf tote und verwaiste Verweise —
+  die hat Wert, sie findet Nummern ohne Ziel. Beleg: `check-refs.py` meldet 41 Dateien, 16 Zitate,
+  28 Definitionen, 0 tot.
+- Die Kürzel-Tabelle in `docs/ai/README.md` sagt jetzt ausdrücklich, dass **nicht** verlinkt wird, und
+  warum — sonst schlägt es der nächste Lauf wieder vor.
+- **Die Lehre:** Eine Verlinkung ist nur so gut wie ihr Anker. Wo das Ziel keine Überschrift hat, ist die
+  Volltextsuche nach dem Kürzel der schnellere Weg.
+
 ## 2026-09-14 — Ablage der Template-Entwicklung: zurück nach `.templatedev/`, versioniert
 
 **Das ist der Endstand nach drei Anläufen an einem Tag.** Wer die Ablage erneut ändern will, liest zuerst
@@ -40,7 +61,7 @@ diesen Eintrag und den darunter.
   `init.py` und die Vorlagen entfallen — bei versionierten Dateien gibt es nichts wiederherzustellen.
 - **Vor dem Auflösen von Anlauf 2 gerettet:** der Kreislauf eines Befunds (jetzt in `regeln.md`, angepasst
   auf zwei Repos statt drei) und die dort angelegte offene Aufgabe „Erkenntnisse aus `bandliste` prüfen"
-  (jetzt Umbaupunkt [`B22`](backlog.md)). Der Rest des Repos war Doppelung des hier Vorhandenen.
+  (jetzt Umbaupunkt `B22`). Der Rest des Repos war Doppelung des hier Vorhandenen.
 - Weg 1 hat damit weiterhin kein dauerhaftes Testprojekt. Das ist vertretbar: Der Weg wurde beim Anlegen von
   Anlauf 2 real durchgespielt und hat dabei bestätigt, dass `create-project.py` den Ordner `.templatedev/`
   korrekt entfernt. Ein leeres Projekt nur als Beleg vorzuhalten, kostet mehr Pflege als es einbringt —
@@ -57,7 +78,7 @@ diesen Eintrag und den darunter.
 - **Nebenbefund, der zählt:** `create-project.py` hat `.templatedev` beim Anlegen korrekt entfernt. Damit ist
   der `template_only`-Mechanismus vom Vortag nicht nur im Wegwerf-Repo, sondern am echten Fall belegt.
   Vorher gesichert wurden die drei gitignorierten Arbeitsdateien — ein `git clone` bringt sie nicht mit.
-- **Übernommen:** Umbauliste → `docs/ai/backlog.md` (Punkte [`B1`](backlog.md)–[`B21`](backlog.md) mit ihren Nummern), Journal →
+- **Übernommen:** Umbauliste → `docs/ai/backlog.md` (Punkte `B1`–`B21` mit ihren Nummern), Journal →
   `docs/ai/ledger.md`, Regeln → `docs/project/template-pflege.md`, Testprojekte →
   `docs/project/testprojekte.md`, `testprojekte.py` → `.claude/scripts/`.
 - **Damit hat das Template sein Weg-1-Testprojekt**, das bisher fehlte: Dieses Repo ist selbst aus dem
@@ -70,7 +91,7 @@ diesen Eintrag und den darunter.
 ## 2026-09-13 — erster echter Einsatz am Fremdprojekt, danach sieben Punkte
 - **Das Template wurde zum ersten Mal auf ein bestehendes Projekt angewendet** (`bandliste`, Nuxt 4 +
   Prisma, 107 Dateien, dazu 49.000 Dateien Alt-PHP in `old-project/`). Der Durchlauf hat mehr über das
-  Template verraten als jede Prüfung am eigenen Repo: Zwei Fehler fielen erst dort auf (Punkte [`B17`](backlog.md) und [`B18`](backlog.md)),
+  Template verraten als jede Prüfung am eigenen Repo: Zwei Fehler fielen erst dort auf (Punkte `B17` und `B18`),
   und zwei Anforderungen entstanden aus dem, was danach im Projekt liegen blieb (19 und 20).
 - **Punkt `B18` war der teuerste Fund.** `.junie/guidelines.md` enthielt 110 Zeilen projekteigener Stil- und
   Sicherheitsregeln — genau das Material, für das `docs/project/coding_rules.md` da ist. `migrate-project.py
@@ -78,7 +99,7 @@ diesen Eintrag und den darunter.
   Ohne diesen Zufall hätten zwei Regelwerke nebeneinander gegolten. Lehre: Die Kandidatenliste muss die
   Ablagen **anderer** Werkzeuge kennen, nicht nur die eigenen — nachgezogen für Junie, Cline, Windsurf, Roo,
   Copilot-Instructions und `AGENT.md`.
-- **Punkt [`B19`](backlog.md), die eigentliche Neuerung:** Nach der Einrichtung blieb das gesamte Einrichtungswerkzeug im
+- **Punkt `B19`, die eigentliche Neuerung:** Nach der Einrichtung blieb das gesamte Einrichtungswerkzeug im
   Projekt liegen. Beim Aufräumen zeigte sich, dass `create-project.py` und `migrate-project.py` längst
   zweierlei sind — Einrichtungs-CLI **und** Bibliothek: `sync-config.py` lädt 32 bzw. 2 Funktionen daraus,
   und `AI-CONFIG.md` wirkt laufend. Schlichtes Löschen hätte die Konfigurationssteuerung stillgelegt.
@@ -146,9 +167,9 @@ diesen Eintrag und den darunter.
   git gar keinen Konflikt meldet — reine Listenergänzungen mergt git klaglos, und der unbedingte
   `save_template_json`-Rewrite hätte die Template-Ergänzung danach still verworfen. Dazu muss
   `save_template_json` unbekannte Felder wie `is_template` erhalten statt sie zu verwerfen.
-- Punkt [`B11`](backlog.md) lässt Code-Blöcke und URLs beim Ersetzen des Rufnamens aus (Zeilen-/Regex-Scanner ohne Fremdpaket).
-- Punkt [`B10`](backlog.md) nimmt gitignorierte Dateien per `git check-ignore` von der Verschiebung aus und meldet sie nur.
-- Punkte [`B2`](backlog.md) und [`B7`](backlog.md) bleiben bewusst offen (keine Freigabe).
+- Punkt `B11` lässt Code-Blöcke und URLs beim Ersetzen des Rufnamens aus (Zeilen-/Regex-Scanner ohne Fremdpaket).
+- Punkt `B10` nimmt gitignorierte Dateien per `git check-ignore` von der Verschiebung aus und meldet sie nur.
+- Punkte `B2` und `B7` bleiben bewusst offen (keine Freigabe).
 - Beleg: `py_compile` über alle sieben Scripte, JSON-Prüfung von `template.json`/`settings.json`,
   End-to-End-Smoketest über alle vier Scripte in Temp-Repos.
 

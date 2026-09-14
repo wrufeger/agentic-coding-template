@@ -5,7 +5,7 @@
 #        (Entscheidung), `S03` (Story) oder eine Backlog-Nummer werden staendig zitiert, sind aber reiner
 #        Text: eine falsche Nummer, ein archiviertes Ziel oder ein Tippfehler faellt niemandem auf. Dieses
 #        Script findet zitierte Kuerzel ohne Ziel (tote Verweise) und Ziele, die nirgends zitiert werden
-#        (verwaiste Ziele), und kann fehlende Markdown-Links ergaenzen. Siehe docs/ai/README.md §
+#        (verwaiste Ziele). Siehe docs/ai/README.md §
 #        "Querverweise", docs/ai/checklists.md § "Doku pruefen und nachziehen". Reine Python-Stdlib.
 #
 # Aufruf:
@@ -15,17 +15,6 @@
 #       sowie - als kuerzere, separate Liste - verwaiste Ziele (existieren, werden aber nirgends zitiert).
 #       Schreibt nichts. Exit 0, wenn keine toten Verweise gefunden wurden (verwaiste Ziele allein sind
 #       kein Fehler, nur ein Hinweis), sonst Exit 1.
-#   python .claude/scripts/check-refs.py --links [--yes] [--root <pfad>]
-#       Ergaenzt Markdown-Links bei Verweisen, die noch keiner sind (aus `T3` wird `[T3](tasks.md)`, aus
-#       einer bereits verlinkten Stelle wird nichts). Nur Verweise mit existierendem Ziel werden verlinkt -
-#       ein toter Verweis wird gemeldet, aber nicht verlinkt (ein Link ins Leere waere kein Fortschritt).
-#       Je Datei/Kuerzel wird nur das ERSTE unverlinkte Vorkommen verlinkt (Konvention aus
-#       docs/ai/README.md: "beim ersten Vorkommen verlinkt, danach genuegt das nackte Kuerzel") - weitere
-#       Vorkommen bleiben absichtlich unangetastet. Beim Backlog-Kuerzel bleibt dabei die vorgefundene
-#       Schreibweise stehen (`#42`, "Backlog 42" oder `B42`) - umschreiben auf die bevorzugte Form ist
-#       Sache eines anderen Werkzeugs, nicht dieses Scripts. Zeigt immer zuerst die Trefferliste
-#       (Datei:Zeile, alt -> neu) und schreibt ohne --yes NICHTS (Exit 0, dieselbe Vorsicht wie bei
-#       rename-lib.py --rename-orchestrator). Erst mit --yes wird geschrieben.
 #
 # Kuerzel/Ziele (siehe docs/ai/README.md § "Querverweise"):
 #   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md
@@ -82,7 +71,7 @@
 #     das dann korrekt gemeldete tote Verweise (das Ziel existiert in DIESEM Repo nicht), auch wenn sie im
 #     Ursprungsprojekt gueltig waren.
 #
-# Exit-Codes: 0 = ok (auch "nichts gefunden", auch die Trefferliste von --links ohne --yes), 1 = --check hat
+# Exit-Codes: 0 = ok (auch "nichts gefunden"), 1 = --check hat
 #   mindestens einen toten Verweis gefunden. main() laeuft komplett in try/except, kein Traceback nach aussen.
 
 import argparse
@@ -537,107 +526,6 @@ def run_check(root: Path, files_by_rel: dict, masked_by_rel: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# --links
-# ---------------------------------------------------------------------------
-
-
-def _already_linked(text: str, start: int, end: int) -> bool:
-    i = start
-    while i > 0 and text[i - 1] in "`*":
-        i -= 1
-    if i == 0 or text[i - 1] != "[":
-        return False
-    j = end
-    while j < len(text) and text[j] in "`*":
-        j += 1
-    return text[j : j + 2] == "]("
-
-
-def _extend_wrap(text: str, start: int, end: int):
-    """Bezieht einen unmittelbar umschliessenden Backtick- oder Fett-Marker mit ein, damit aus `` `T9` ``
-    `` [`T9`](ziel) `` wird statt `` `[T9]`(ziel) ``."""
-    if start >= 2 and text[start - 2 : start] == "**" and text[end : end + 2] == "**":
-        return start - 2, end + 2
-    if start >= 1 and text[start - 1] == "`" and text[end : end + 1] == "`":
-        return start - 1, end + 1
-    return start, end
-
-
-def _rel_link(source_rel: str, target_rel: str) -> str:
-    """Relativer Pfad vom Ordner der Fundstelle zum Ziel, Posix-Trenner - kein Anker (siehe Kopfkommentar:
-    keines der Ziele ist eine echte, stabile Ueberschrift, ein erfundener Anker waere falsch)."""
-    src_dir = os.path.dirname(source_rel)
-    rel = os.path.relpath(target_rel, start=src_dir if src_dir else ".")
-    return rel.replace(os.sep, "/")
-
-
-def run_links(root: Path, files_by_rel: dict, masked_by_rel: dict, yes: bool) -> int:
-    definitions, self_spans = collect_definitions(root, files_by_rel, masked_by_rel)
-    hits = collect_citations(files_by_rel, masked_by_rel, self_spans)
-
-    seen_per_file = set()  # (rel, kategorie, nummer) - nur das erste unverlinkte Vorkommen bekommt einen Link
-    edits_by_file = {}
-    skipped_dead = 0
-    skipped_already = 0
-
-    for h in hits:
-        key, n, rel = h["kategorie"], h["nummer"], h["rel"]
-        target_rel = definitions[key].get(n)
-        if target_rel is None:
-            skipped_dead += 1
-            continue
-        if target_rel == rel:
-            # Zitat steht bereits in der Zieldatei selbst (z.B. die eigene Ueberschrift einer Story) - ein
-            # Link ohne Anker (siehe Kopfkommentar) waere dort ein Sprung ins Leere/auf sich selbst.
-            continue
-        content = files_by_rel[rel]
-        s, e = _extend_wrap(content, h["start"], h["end"])
-        if _already_linked(content, s, e):
-            skipped_already += 1
-            continue
-        if (rel, key, n) in seen_per_file:
-            continue
-        seen_per_file.add((rel, key, n))
-        link_target = _rel_link(rel, target_rel)
-        edits_by_file.setdefault(rel, []).append((s, e, content[s:e], link_target))
-
-    if not edits_by_file:
-        print("Nichts zu verlinken — keine unverlinkten Zitate mit gültigem Ziel gefunden.")
-        if skipped_dead:
-            print(f"({skipped_dead} Zitate übersprungen: totes Ziel, wird nicht verlinkt.)")
-        return 0
-
-    total = sum(len(v) for v in edits_by_file.values())
-    print(f"Trefferliste ({total} Verlinkungen in {len(edits_by_file)} Dateien):")
-    for rel in sorted(edits_by_file):
-        for s, e, old_text, target in sorted(edits_by_file[rel]):
-            print(f"  {rel}: {old_text} -> [{old_text}]({target})")
-    if skipped_dead:
-        print(f"Übersprungen (totes Ziel, nicht verlinkt): {skipped_dead}")
-
-    if not yes:
-        print("")
-        print("Nichts geschrieben — vorher committen (git diff bleibt dann prüfbar), danach zur "
-              "Bestätigung dieselbe Zeile mit --yes wiederholen.")
-        return 0
-
-    for rel, edits in edits_by_file.items():
-        fp = root / rel
-        content = files_by_rel[rel]
-        pieces = []
-        pos = 0
-        for s, e, old_text, target in sorted(edits, key=lambda x: x[0]):
-            pieces.append(content[pos:s])
-            pieces.append(f"[{old_text}]({target})")
-            pos = e
-        pieces.append(content[pos:])
-        fp.write_bytes("".join(pieces).encode("utf-8"))
-    print("")
-    print("Geschrieben — Ergebnis mit 'git diff' prüfen.")
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -645,8 +533,6 @@ def run_links(root: Path, files_by_rel: dict, masked_by_rel: dict, yes: bool) ->
 def _run(argv) -> int:
     parser = argparse.ArgumentParser(description="Prueft Querverweise (T<n>/Q<n>/ADR-<n>/S<n>/B<n>).")
     parser.add_argument("--check", action="store_true", help="Nur pruefen (Default).")
-    parser.add_argument("--links", action="store_true", help="Fehlende Markdown-Links ergaenzen.")
-    parser.add_argument("--yes", action="store_true", help="Mit --links: tatsaechlich schreiben.")
     parser.add_argument("--root", default=None, help="Repo-Wurzel (Default: CLAUDE_PROJECT_DIR o.ae.).")
     args = parser.parse_args(argv)
 
@@ -667,8 +553,6 @@ def _run(argv) -> int:
         for rel, content in files_by_rel.items()
     }
 
-    if args.links:
-        return run_links(root, files_by_rel, masked_by_rel, args.yes)
     return run_check(root, files_by_rel, masked_by_rel)
 
 

@@ -72,14 +72,15 @@ Die Kürzel werden überall im Repo zitiert. Damit sie nutzbar bleiben, gilt:
 | `S<n>` | Story | `../project/stories/S<n>-….md` |
 | `B<n>` | Umbaupunkt (Backlog) | `backlog.md` |
 
-- **Beim ersten Vorkommen in einer Datei wird verlinkt**, danach genügt das nackte Kürzel — sonst wird jeder
-  Absatz zur Linkwüste. Verlinkt wird auf die **Datei**; ein Anker nur, wenn das Ziel eine echte Überschrift
-  ist (Stories). Für Tabellenzeilen und Listeneinträge keine Anker erfinden.
+- **Kürzel bleiben nackt, es wird nicht verlinkt.** Ein Markdown-Link kann in dieser Struktur nur auf die
+  Datei zeigen, nicht auf den Eintrag — Aufgaben, Fragen und Umbaupunkte sind Listen- oder Tabellenzeilen ohne
+  eigene Überschrift, also ohne Anker. Wer `B22` anklickt, landet am Kopf von `backlog.md` und sucht von dort
+  doch wieder selbst. Die Tabelle oben sagt, in welcher Datei zu suchen ist; die Suche nach dem Kürzel findet
+  den Eintrag schneller als ein Link, der nur den Dateinamen wiederholt.
 - **Nummern werden nie neu vergeben**, auch nicht nach dem Archivieren — ein Verweis von vor einem halben Jahr
   muss weiterhin auf dasselbe zeigen.
 - `python .claude/scripts/check-refs.py` prüft alle Verweise: Was zitiert wird, aber nicht existiert (toter
   Verweis), und was existiert, aber nirgends zitiert wird. Gehört in den Lauf „Doku prüfen und nachziehen".
-  Mit `--links` ergänzt es fehlende Links, zeigt vorher die Trefferliste und schreibt erst nach Zusage.
 
 ## Tabu-Bereich
 
