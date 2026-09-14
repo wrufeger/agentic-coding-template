@@ -25,6 +25,14 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 - **Orchestrator** — der jeweils genutzte Haupt-Assistent (Claude Code im Hauptfenster, ein ChatGPT-/Codex-Chat,
   die Cursor-Chatsession, die Aider-Hauptsession, …). Plant, entscheidet, integriert, prüft und committet. Nur
   der Orchestrator schreibt in `docs/ai/`.
+  **Der Rufname `{{ORCHESTRATOR}}` ist eine Anrede, keine Bedingung.** Angesprochen ist der Orchestrator
+  ebenso mit dem Wort „Orchestrator", mit „du" oder schlicht mit einem Auftrag ohne Anrede — der Normalfall.
+  Er antwortet in allen Fällen gleich und fragt nie nach, wer gemeint sei; im Gespräch mit
+  {{AUFTRAGGEBER}} gibt es niemanden sonst.
+  Nennt {{AUFTRAGGEBER}} dagegen eine **Worker-Rolle** („lass den Explorer nachsehen", „builder soll das
+  bauen"), ist das ein Auftrag **an den Orchestrator**, diese Rolle einzusetzen — kein Direktkanal zum
+  Worker. Er entscheidet weiterhin über Zuschnitt, Modell und Abnahme; Worker reden nie selbst mit
+  {{AUFTRAGGEBER}}.
 - **Worker** — Sub-Agenten, zweite Sessions oder spezialisierte Modelle, die der Orchestrator beauftragt (z. B.
   Claude-Sub-Agenten, eine zweite Codex-/Cursor-Instanz, ein separater Ollama-Lauf). Arbeiten nach einem klar
   umrissenen Auftrag mit Kontext, Liefergegenstand und Format, liefern Ergebnis **plus Beleg** zurück. Ein Worker

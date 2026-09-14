@@ -12,6 +12,18 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Der Rufname ist eine Anrede, keine Bedingung
+
+Nachtrag zur Rufnamen-Regel: Der Assistent hört weiterhin auf „Orchestrator" und auf direkte Anrede („du"),
+auch wenn er einen eigenen Namen trägt.
+
+- Steht jetzt in `AGENTS.md` § Rollen. **Er fragt nie nach, wer gemeint sei** — im Gespräch mit Wolfgang gibt
+  es niemanden sonst. Ein Auftrag ganz ohne Anrede ist ohnehin der Normalfall.
+- **Der Umkehrfall gehörte dazu, stand aber nirgends:** Nennt Wolfgang eine Worker-Rolle („lass den Explorer
+  nachsehen"), ist das ein Auftrag **an den Orchestrator**, diese Rolle einzusetzen — kein Direktkanal zum
+  Worker. Zuschnitt, Modell und Abnahme bleiben beim Orchestrator; Worker reden nie selbst mit Wolfgang. Ohne
+  diesen Satz wäre die Rollentrennung über eine Anrede aushebelbar gewesen.
+
 ## 2026-09-14 — Der Rufname kommt vom Werkzeug, das einrichtet
 
 `AI-CONFIG.md` hatte „Fable" fest in der Wertspalte stehen. Wer mit Gemini CLI ein Projekt anlegte, arbeitete
