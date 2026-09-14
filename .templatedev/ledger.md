@@ -12,6 +12,23 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Der Rufname kommt vom Werkzeug, das einrichtet
+
+`AI-CONFIG.md` hatte „Fable" fest in der Wertspalte stehen. Wer mit Gemini CLI ein Projekt anlegte, arbeitete
+danach mit einem Assistenten namens Fable weiter — ein Name aus einer anderen Welt.
+
+- **Die Zelle ist jetzt leer**, und leer heißt: Kurzname des Werkzeugs, das die Einrichtung ausführt. Die
+  Zuordnung nutzt die heute gebaute Werkzeugerkennung: Claude Code → Fable, Gemini CLI → Gemini,
+  ChatGPT/Codex → Codex, Copilot/Cursor/Aider/Cline/Ollama jeweils ihr eigener Name.
+- **Wird nichts erkannt, bleibt es bei „Fable".** Kein Verhaltensbruch für bestehende Projekte, und keine
+  erfundene Zuordnung für Werkzeuge ohne Marke (Copilot-CLI, Aider, Windsurf).
+- Der Plan (`--dry-run`) nennt jetzt Namen **und Begründung**: „Orchestrator-Rufname: Fable (Claude Code
+  erkannt (CLAUDECODE=1); in AI-CONFIG.md eintragen, um ihn zu ändern)". Ein Standardwert, dessen Herkunft
+  man nicht sieht, wird beim ersten Stolpern zur Rätselfrage.
+- **Zweiter Nutzen der Werkzeugerkennung**, nach der Vorauswahl bei `KI-Werkzeuge`. Das war beim Bauen nicht
+  absehbar — und ein gutes Zeichen: Eine Mechanik, die sich ein zweites Mal von selbst anbietet, saß an der
+  richtigen Stelle.
+
 ## 2026-09-14 — Feedback steuerbar über `AI-CONFIG.md`, Links teilbar, private Links geschützt
 
 Dritte Runde zum Feedback. Wolfgang wollte es doch konfigurierbar — **das dreht seine eigene Antwort auf

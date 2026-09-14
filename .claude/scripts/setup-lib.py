@@ -205,6 +205,30 @@ AGENT_MARKERS = [
 # TOOL_CANON aufgeloest, damit kuenftige Werkzeuge ohne eigene Zeile oben erkannt werden.
 AGENT_GENERIC_VARS = ("AGENT", "AI_AGENT")
 
+# Rufname des Orchestrators, wenn AI-CONFIG.md keinen nennt: der Kurzname des Werkzeugs, das die Einrichtung
+# ausfuehrt. Wer mit Gemini CLI anlegt, soll nicht mit einem Assistenten namens "Fable" weiterarbeiten.
+# Wird nichts erkannt, bleibt es bei "Fable" - das war der bisherige Standard und aendert nichts an
+# bestehenden Projekten.
+ORCHESTRATOR_KURZNAME = {
+    "Claude Code": "Fable",
+    "Gemini CLI": "Gemini",
+    "Copilot": "Copilot",
+    "Cursor": "Cursor",
+    "Aider": "Aider",
+    "ChatGPT/Codex": "Codex",
+    "Cline": "Cline",
+    "Ollama": "Ollama",
+}
+ORCHESTRATOR_FALLBACK = "Fable"
+
+
+def default_orchestrator(env=None):
+    """(Rufname, Begruendung) - der Name, der gilt, wenn AI-CONFIG.md keinen nennt."""
+    werkzeug, beleg, _stark = detect_ai_tool(env)
+    if werkzeug and werkzeug in ORCHESTRATOR_KURZNAME:
+        return ORCHESTRATOR_KURZNAME[werkzeug], f"{werkzeug} erkannt ({beleg})"
+    return ORCHESTRATOR_FALLBACK, "kein Werkzeug erkannt - Standardname"
+
 
 def detect_ai_tool(env=None):
     """Erkennt das ausfuehrende KI-Werkzeug an der Prozessumgebung.
@@ -513,7 +537,7 @@ def compute_values(cfg: dict) -> dict:
     return {
         "PROJEKTNAME": cfg.get("projektname") or "MyApp",
         "AUFTRAGGEBER": cfg.get("auftraggeber") or "Entwickler",
-        "ORCHESTRATOR": cfg.get("orchestrator") or "Fable",
+        "ORCHESTRATOR": cfg.get("orchestrator") or default_orchestrator()[0],
         "STACK": cfg.get("stack"),
         "DATUM": today,
         "INSTALL_BEFEHL": cfg.get("install_befehl"),
@@ -1597,6 +1621,11 @@ def cmd_dry_run(root: Path) -> int:
 
     lines = ["create-project.py --dry-run", ""]
     _werkzeug, _beleg, _geprueft = detect_ai_tool()
+    if not cfg.get("orchestrator"):
+        _name, _grund = default_orchestrator()
+        lines.append(f"Orchestrator-Rufname: {_name}   ({_grund}; in AI-CONFIG.md eintragen, um ihn zu "
+                     "aendern)")
+        lines.append("")
     if _werkzeug:
         _zusatz = "" if _geprueft else " (schwache Marke)"
         lines.append(f"Ausgefuehrt von: {_werkzeug} [{_beleg}]{_zusatz}"
