@@ -6,15 +6,22 @@
 #        Template entstehen. Gemeldet wird NICHT das Projekt, sondern was sich an der ARBEITSWEISE bewaehrt
 #        oder gefehlt hat.
 #
-#        Drei Dinge gelten ausnahmslos und sind der Grund, warum dieses Script existiert, statt einfach
+#        Vier Dinge gelten ausnahmslos und sind der Grund, warum dieses Script existiert, statt einfach
 #        Dateien hochzuladen:
-#          1. Es wird NIE eine Datei gesendet. Die Nutzlast ist eine kurze, von Hand verfasste Zusammenfassung
-#             plus eine Handvoll Werte aus geschlossenen Wortlisten (Schalterstellungen, Werkzeugnamen).
-#             "docs/ai/" enthaelt Fragen, Antworten, Servernamen, Datenbanknamen und Zitate des Auftraggebers
-#             - das ist NICHT anonym und wird nicht verschickt.
-#          2. Es wird NIE ohne Einwilligung gesendet (consent in .claude/template.json, ausdruecklich gesetzt).
-#          3. Es wird NIE ungesehen gesendet: --plan zeigt die vollstaendige Nutzlast als Klartext, --send
-#             zeigt sie erneut und fragt, sofern nicht --yes gesetzt ist.
+#          1. Es wird NIE eine Datei gesendet. Die KI LIEST sehr wohl `.claude/`, `CLAUDE.md`, `AGENTS.md`
+#             und `docs/ai/` - aber sie schickt daraus nur das, was fuer FREMDE nuetzlich ist: welche Regel
+#             ergaenzt wurde, welcher Ablauf sich bewaehrt hat, welcher MCP-Server eingebunden wurde. Ohne
+#             Projektbezug, ohne Namen, ohne Daten. Die Dateien selbst enthalten Servernamen,
+#             Datenbanknamen, Kennzahlen und Zitate - das ist NICHT anonym und verlaesst das Projekt nie.
+#          2. Es wird NIE ohne Einwilligung gesendet (consent in .claude/template.json).
+#          3. Jede Sendung wird PROTOKOLLIERT: die vollstaendige Nutzlast landet versioniert unter
+#             docs/ai/template-feedback/. Der Assistent sendet autonom, ohne Rueckfrage und ohne die Nutzlast
+#             ins Terminal zu schreiben - wie jedes andere Programm auch. Nachvollziehbar bleibt es trotzdem,
+#             aber ueber das Protokoll im Repo: Es faellt im naechsten Diff auf, laesst sich nachlesen, wenn
+#             jemand es wissen will, und nicht erst, wenn er zufaellig hinsieht. Wer vorab sehen will, was
+#             gesendet wuerde, ruft --plan auf.
+#          4. Hoechstens EINMAL JE WOCHE, und erstmals nach dem Abschluss der Einrichtung. --force hebt die
+#             Sperre auf; das ist der manuelle Fall.
 #        Zusaetzlich laeuft jede Zeichenkette durch eine Pruefung auf Geheimnisse, Pfade, Mailadressen, IPs
 #        und fremde URLs (siehe _verdaechtig). Schlaegt sie an, wird NICHT gesendet, sondern gemeldet.
 #
@@ -32,9 +39,10 @@
 #       Pfade, kein Code.
 #   python .claude/scripts/feedback.py --plan        (Default)
 #       Zeigt die vollstaendige Nutzlast, die gesendet wuerde. Schreibt und sendet nichts.
-#   python .claude/scripts/feedback.py --send [--yes]
-#       Zeigt die Nutzlast und sendet sie nach Bestaetigung. Danach wird der Ausgang geleert und der
-#       Zeitpunkt vermerkt. Ohne Einwilligung: Abbruch mit Exit 2.
+#   python .claude/scripts/feedback.py --send [--force]
+#       Sendet, wenn Einwilligung vorliegt, der Filter nichts beanstandet und die letzte Sendung mindestens
+#       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/, leert den Ausgang und
+#       vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst.
 #   python .claude/scripts/feedback.py --clear
 #       Leert den Ausgang, ohne zu senden.
 #
@@ -70,6 +78,9 @@ FEEDBACK_ENDPOINT = "https://rufeger.de/agentic-coding-feedback"
 ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 
 OUTBOX_REL = ".claude/feedback-outbox.json"
+# Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist.
+LOG_DIR_REL = "docs/ai/template-feedback"
+SPERRE_TAGE = 7
 TEMPLATE_JSON_REL = ".claude/template.json"
 ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler")
 TITEL_MAX = 120
@@ -171,6 +182,33 @@ def _schalter(tj: dict) -> dict:
     return {k: angewandt.get(k) for k in SCHALTER_WHITELIST if angewandt.get(k)}
 
 
+def _mcp_server(root: Path) -> dict:
+    """Welche MCP-Server das Projekt nutzt - aber nur Kennungen, die im mitgelieferten Katalog stehen.
+    Alles andere (selbstgebaute oder firmeninterne Server) wird nur gezaehlt: Ein Servername wie
+    "kunde-abrechnung-db" waere ein Projektbezug, und genau den soll die Meldung nicht enthalten."""
+    katalog = root / ".claude" / "mcp-katalog.md"
+    config = root / "AI-CONFIG.md"
+    if not katalog.exists() or not config.exists():
+        return {}
+    try:
+        bekannt = set(re.findall(r"(?m)^\|\s*`([a-z0-9-]+)`\s*\|", katalog.read_text(encoding="utf-8-sig")))
+        zeile = re.search(r"(?m)^\|\s*MCP-Server\s*\|([^|]*)\|",
+                          config.read_text(encoding="utf-8-sig"))
+    except OSError:
+        return {}
+    if not zeile:
+        return {}
+    genannt = [s.strip().strip("`") for s in zeile.group(1).split(",") if s.strip()]
+    aus_katalog = sorted({s for s in genannt if s in bekannt})
+    andere = len([s for s in genannt if s not in bekannt])
+    ergebnis = {}
+    if aus_katalog:
+        ergebnis["aus_katalog"] = aus_katalog
+    if andere:
+        ergebnis["andere"] = andere
+    return ergebnis
+
+
 def _nutzlast(root: Path, tj: dict) -> dict:
     fb = _feedback_block(tj)
     angewandt = tj.get("applied_config") or {}
@@ -184,6 +222,7 @@ def _nutzlast(root: Path, tj: dict) -> dict:
         "werkzeuge_entfernt": angewandt.get("KI-Werkzeuge-entfernt") or [],
         "regelsaetze": angewandt.get("Coding-Guidelines") or [],
         "schalter": _schalter(tj),
+        "mcp_server": _mcp_server(root),
         "eintraege": _outbox(root),
     }
     if fb.get("repo_url"):
@@ -313,24 +352,46 @@ def cmd_plan(root: Path) -> int:
     return 0
 
 
-def cmd_send(root: Path, ja: bool) -> int:
+def _tage_seit(stempel) -> float:
+    """Tage seit dem Zeitstempel 'JJJJ-MM-TT HH:MM'. Sehr gross, wenn nie gesendet oder unlesbar."""
+    if not stempel:
+        return 1e9
+    try:
+        gesendet = time.mktime(time.strptime(str(stempel)[:16], "%Y-%m-%d %H:%M"))
+    except ValueError:
+        return 1e9
+    return (time.time() - gesendet) / 86400.0
+
+
+def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
+    ordner = root / LOG_DIR_REL
+    ordner.mkdir(parents=True, exist_ok=True)
+    fp = ordner / (time.strftime("%Y-%m-%d_%H%M") + ".json")
+    fp.write_text(json.dumps({"gesendet_an": endpoint, "zeit": time.strftime("%Y-%m-%d %H:%M"),
+                              "nutzlast": nutzlast}, indent=2, ensure_ascii=False) + "\n",
+                  encoding="utf-8")
+    return fp
+
+
+def cmd_send(root: Path, force: bool) -> int:
     tj = _template_json(root)
-    if _feedback_block(tj).get("consent") is not True:
+    fb = _feedback_block(tj)
+    if fb.get("consent") is not True:
         print("Abbruch: keine Einwilligung hinterlegt (feedback.py --enable).", file=sys.stderr)
         return 2
+    tage = _tage_seit(fb.get("zuletzt_gesendet"))
+    if tage < SPERRE_TAGE and not force:
+        print(f"Nichts gesendet: letzte Sendung vor {tage:.1f} Tagen, hoechstens eine je {SPERRE_TAGE} Tage. "
+              "Der Ausgang bleibt erhalten und geht beim naechsten Mal mit (--force hebt die Sperre auf).")
+        return 0
     nutzlast = _nutzlast(root, tj)
     endpoint = _endpoint()
-    _zeige(nutzlast, endpoint)
-    print("")
     fehler = _pruefen(nutzlast, endpoint)
     if fehler:
         print("Beanstandet - nicht gesendet:", file=sys.stderr)
         for f in fehler:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    if not ja:
-        print("Nichts gesendet. Zum tatsaechlichen Senden dieselbe Zeile mit --yes wiederholen.")
-        return 0
     daten = json.dumps(nutzlast, ensure_ascii=False).encode("utf-8")
     anfrage = urllib.request.Request(
         endpoint, data=daten, method="POST",
@@ -345,12 +406,14 @@ def cmd_send(root: Path, ja: bool) -> int:
     except (urllib.error.URLError, OSError) as e:
         print(f"Abbruch: nicht erreichbar ({e}). Ausgang bleibt erhalten.", file=sys.stderr)
         return 2
-    fb = _feedback_block(tj)
+    protokoll = _protokollieren(root, nutzlast, endpoint)
     fb["zuletzt_gesendet"] = time.strftime("%Y-%m-%d %H:%M")
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
     _outbox_schreiben(root, [])
-    print(f"Gesendet (HTTP {code}). Ausgang geleert.")
+    anzahl = len(nutzlast.get("eintraege") or [])
+    print(f"Rueckmeldung gesendet (HTTP {code}, {anzahl} Eintraege). "
+          f"Protokoll: {protokoll.relative_to(root).as_posix()} - gehoert in den naechsten Commit.")
     return 0
 
 
@@ -371,7 +434,8 @@ def _run(argv) -> int:
     gruppe.add_argument("--disable", action="store_true", help="Einwilligung widerrufen")
     gruppe.add_argument("--add", action="store_true", help="Verbesserungs-Eintrag in den Ausgang legen")
     gruppe.add_argument("--plan", action="store_true", help="Nutzlast zeigen, nichts senden (Default)")
-    gruppe.add_argument("--send", action="store_true", help="Nutzlast zeigen und senden")
+    gruppe.add_argument("--send", action="store_true",
+                        help="Senden, wenn Einwilligung, Filter und Wochensperre es zulassen")
     gruppe.add_argument("--clear", action="store_true", help="Ausgang leeren")
     parser.add_argument("--art", default=None, help=f"mit --add: {', '.join(ARTEN)}")
     parser.add_argument("--titel", default=None, help="mit --add: eine Zeile")
@@ -381,7 +445,8 @@ def _run(argv) -> int:
                         help="mit --enable: wie das Projekt entstanden ist")
     parser.add_argument("--ausfuellart", default=None, choices=["leer", "interview", "config"],
                         help="mit --enable: wie AI-CONFIG.md befuellt wurde")
-    parser.add_argument("--yes", action="store_true", help="mit --send: tatsaechlich senden")
+    parser.add_argument("--force", action="store_true",
+                        help="mit --send: die Wochensperre uebergehen (manueller Versand)")
     args = parser.parse_args(argv)
 
     root = _root()
@@ -400,7 +465,7 @@ def _run(argv) -> int:
     if args.add:
         return cmd_add(root, args.art, args.titel, args.text)
     if args.send:
-        return cmd_send(root, args.yes)
+        return cmd_send(root, args.force)
     if args.clear:
         return cmd_clear(root)
     return cmd_plan(root)

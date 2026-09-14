@@ -47,6 +47,7 @@ ausschließlich darunter.
 | `backlog.md` | Verbesserungsvorschläge, {{AUFTRAGGEBER}} entscheidet inline | vor größeren Umbauten |
 | `checklists.md` | Neutrale Arbeitsanweisungen (Abschluss, Delegation, Doku prüfen und nachziehen, …) | vor der jeweiligen Aktion |
 | `resources.md` | Quellen zu Agentic Coding — vom Template gepflegt | beim Einarbeiten |
+| `template-feedback/` | Protokoll der freiwilligen Rückmeldungen an den Template-Autor — je Sendung eine Datei, versioniert | wenn du wissen willst, was hinausging |
 
 ## Statuszeile über jeder Datei
 

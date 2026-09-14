@@ -12,6 +12,40 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Feedback: Regeln nachgeschärft, Client fertig und am Testempfänger belegt
+
+Wolfgang hat die Regeln in zwei Runden korrigiert. Beide Korrekturen gingen gegen meinen ersten Entwurf, und
+beide zu Recht.
+
+- **Erste Korrektur — die Dateien werden sehr wohl gelesen.** Mein Entwurf sagte „`docs/ai/` wird nicht
+  verschickt" und ließ offen, woher der Inhalt dann kommt. Richtig ist: Der Assistent **liest** `.claude/`,
+  `CLAUDE.md`, `AGENTS.md` und `docs/ai/` und **fasst zusammen**, was für Fremde nützlich ist — welche Regel
+  ergänzt wurde, welcher Ablauf sich bewährt hat, welcher MCP-Server dazukam. Verschickt wird die
+  Zusammenfassung, nie die Datei. Das ist der eigentliche Wert: Ohne das Lesen bliebe nur, was ohnehin in
+  `applied_config` steht.
+- **Zweite Korrektur — keine Rückfrage, keine Anzeige der Nutzlast.** Ich hatte `--send --yes` und einen
+  vollständigen Ausdruck vor jedem Versand gebaut. Wolfgangs Einwand: „Kein einziges mir bekanntes Programm
+  zeigt alle Daten an, die es nach Hause funkt, und keines fragt vor jedem Senden." Das stimmt, und die
+  Bestätigung hätte in der Praxis ohnehin niemand gelesen. **Der Nachweis liegt jetzt woanders und ist
+  besser:** Jede Sendung wird versioniert nach `docs/ai/template-feedback/` geschrieben — sie fällt im Diff
+  auf, ist Monate später nachlesbar und braucht keine Aufmerksamkeit im richtigen Moment.
+- **Wochensperre** (7 Tage, `--force` hebt sie auf) und Erstmeldung nach `/finalize`, beides im Script
+  durchgesetzt statt nur dokumentiert.
+- **MCP-Server als Whitelist:** Gesendet werden nur Kennungen, die im mitgelieferten Katalog stehen; alles
+  andere wird gezählt. Am Testfall belegt — aus `playwright, github, kunde-intern-db` wurde
+  `{"aus_katalog": ["github", "playwright"], "andere": 1}`. Ein Servername wie `kunde-abrechnung-db` wäre
+  genau der Projektbezug, den die Meldung nicht enthalten soll.
+- **Am echten Transport belegt:** Ein kleiner Testempfänger auf `127.0.0.1` hat die Nutzlast angenommen
+  (HTTP 202), das Protokoll wurde geschrieben, der Ausgang geleert. Bei nicht erreichbarem Empfänger bleibt
+  der Ausgang erhalten und es wird **nichts** protokolliert — sonst stünde im Repo eine Sendung, die nie
+  stattfand.
+- **Die Einwilligungsfrage nennt jetzt sechs Dinge:** wie es läuft, wohin, wie oft, was man sieht, was es an
+  Token kostet, und wie mit den Daten umgegangen wird (vertraulich, vor Verwendung im öffentlichen Template
+  persönlich durchgesehen). Weniger wäre keine Einwilligung, sondern ein Häkchen.
+- **Die Lehre:** Mein erster Entwurf hat Sichtbarkeit mit Zustimmung verwechselt. Eine Bestätigung vor jedem
+  Versand fühlt sich sicher an, nervt aber so lange, bis sie weggeklickt wird — ein versioniertes Protokoll
+  ist unbequemer zu bauen und im Ergebnis ehrlicher.
+
 ## 2026-09-14 — Vier Schalter für AI-CONFIG: drei gebaut, einer erst zur Entscheidung
 
 Wolfgang wollte vier neue Schlüssel: Ideen-Ablauf, Testtiefe, Schreibstil und Feedback.

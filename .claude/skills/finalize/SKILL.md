@@ -20,25 +20,39 @@ noch einmal einrichten lassen. Weiter funktionieren `/update-template`, `sync-co
 unverändert laufend), `guidelines.py`, `ai-log.py` und die Alltags-Skills `/commit` und `/audit-docs`.
 
 **Feedback anbieten — einmal, mit vollständiger Offenlegung.** Nach dem Aufräumen wird gefragt, ob dieses
-Projekt dem Template-Autor freiwillig zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder
-gefehlt hat. Die Frage kommt **einmal**; ohne Antwort passiert nichts.
+Projekt dem Template-Autor zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder gefehlt hat. Die
+Frage kommt **einmal**; ohne Antwort passiert nichts.
 
-Der Wortlaut muss drei Dinge nennen, sonst ist es keine Einwilligung:
+Der Wortlaut muss diese sechs Punkte nennen, sonst ist es keine Einwilligung:
 
 > Möchtest du zurückmelden, was hier an der Zusammenarbeit gut lief oder gefehlt hat? Das hilft, die
 > Standardregeln, Skripte und Skills des Templates zu verbessern.
+>
+> **Wie das läuft:** Ich lese dafür `.claude/`, `CLAUDE.md`, `AGENTS.md` und `docs/ai/` und schreibe daraus
+> eine kurze Zusammenfassung — welche Regel ergänzt wurde, welcher Ablauf sich bewährt hat, welcher
+> MCP-Server dazukam. **Verschickt werden keine Dateien**, sondern nur diese Zusammenfassung, ohne
+> Projektbezug, ohne Namen, ohne Daten. Dazu ein paar Angaben aus festen Listen: Datum, Template-Stand,
+> wie das Projekt entstand, welche Werkzeuge und Regelsätze du gewählt hast.
 > **Wohin:** `https://rufeger.de/agentic-coding-feedback`
-> **Was:** Datum, Template-Basis-Commit, wie das Projekt entstand (neu/nachgerüstet, leer/Interview/Config),
-> welche KI-Werkzeuge und Regelsätze gewählt wurden, die Schalterstellungen aus `AI-CONFIG.md` — und
-> kurze, selbst verfasste Notizen über Abläufe, Regeln oder Helfer, die sich bewährt haben.
-> **Was nicht:** keine Dateien, kein Code, keine Projektdaten, kein Projektname, keine Pfade, keine Namen,
-> keine Zugangsdaten. Vor jedem Senden wird die vollständige Nutzlast angezeigt.
+> **Wie oft:** einmal jetzt, danach höchstens einmal pro Woche — automatisch, ohne dich zu fragen.
+> **Was du siehst:** Jede Sendung liegt vollständig unter `docs/ai/template-feedback/` und ist damit
+> versioniert — du kannst jederzeit nachlesen, was hinausging, und es fällt im Diff auf.
+> **Was es kostet:** Das Zusammenfassen und Filtern verbraucht ein paar Token zusätzlich.
+> **Wie damit umgegangen wird:** Die Daten werden vertraulich behandelt und vor jeder Verwendung im
+> öffentlichen Template persönlich durchgesehen — falls doch einmal etwas durchrutscht.
 > a) ja  b) nein  c) später entscheiden
 
 Bei **a)**: `python .claude/scripts/feedback.py --enable --weg <neu|nachgeruestet> --ausfuellart
-<leer|interview|config>`, optional `--repo-url <https://…>` bei einem **öffentlichen** Repo. Danach
-`--plan` zeigen und erst nach Zusage `--send --yes`.
-Bei **b)** oder **c)**: nichts tun. `feedback.py --enable` bleibt jederzeit nachholbar, `--disable` widerruft.
+<leer|interview|config>`, optional `--repo-url <https://…>` bei einem **öffentlichen** Repo. Danach die
+Erstmeldung zusammenstellen (`--add`, siehe unten) und `--send` aufrufen.
+Bei **b)** oder **c)**: nichts tun. `--enable` bleibt jederzeit nachholbar, `--disable` widerruft.
+
+**Was in eine Meldung gehört.** Der Assistent liest die Regel- und Arbeitsdateien und macht daraus Einträge
+(`feedback.py --add --art <regel|script|skill|ablauf|doku|fehler|mcp> --titel … --text …`). Maßstab ist
+allein: **Hilft das einem Fremden, der dieses Projekt nie sehen wird?** Also „eine Regel gegen X fehlte" statt
+„wir haben X gebaut"; das Muster, nicht der Fall. Kein Projektname, keine Pfade, kein Code, keine Zahlen aus
+dem Projekt. Der Filter im Script lehnt Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ohnehin ab — er ist
+die letzte Schranke, nicht die erste.
 
 ## Ablauf
 

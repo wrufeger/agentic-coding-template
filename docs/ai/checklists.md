@@ -155,10 +155,15 @@ was sich angesammelt hat, und sichert das Ergebnis.
    Nummern — **gebündelt**. Was während der Umsetzung aufgetaucht ist, wurde unterwegs in `questions.md`
    bzw. `tasks.md` abgelegt statt sofort erfragt; hier kommt es zusammengefasst auf den Tisch, zusammen mit
    jeder Annahme, unter der weitergearbeitet wurde.
-8. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
+8. **Ist etwas entstanden, das auch anderen hilft?** Eine neue Regel, ein Script, ein Skill, ein Ablauf,
+   der sich bewährt hat — und ist die Rückmeldung eingeschaltet (`AGENTS.md` § „Freiwillige Rückmeldung"),
+   dann jetzt einen Eintrag ablegen: `python .claude/scripts/feedback.py --add …`. Maßstab: Hilft es jemandem,
+   der dieses Projekt nie sehen wird? Das **Muster**, nicht der Fall. Gesendet wird gesammelt, höchstens
+   einmal je Woche; ist die Rückmeldung aus, entfällt der Schritt ersatzlos.
+9. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
    `[orchestrator] [commit] <hash> <message>` schreiben — das Log ist Mitschnitt, kein Ersatz für Journal
    oder Beleg.
-9. **Kontext freigeben:** Der Detailkontext der erledigten Aufgabe wird nicht mehr gebraucht, der Stand liegt
+10. **Kontext freigeben:** Der Detailkontext der erledigten Aufgabe wird nicht mehr gebraucht, der Stand liegt
    vollständig in Git und `docs/ai/`. Werkzeuge mit Kontext-Komprimierung (Claude Code: `/compact`) hier
    einsetzen; steht die nächste Aufgabe schon fest, sie dabei erwähnen.
 
@@ -453,11 +458,14 @@ noch offen ist.
    Checklisten „Doku prüfen und nachziehen" und „Aufgabe abschließen".
 6. **Freiwillige Rückmeldung anbieten — einmal, mit vollständiger Offenlegung.** Gefragt wird, ob dieses
    Projekt dem Template-Autor zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder gefehlt hat.
-   Die Frage nennt **wohin** (die Adresse im Klartext), **was** (Datum, Basis-Commit, Entstehungsweg, gewählte
-   Werkzeuge und Regelsätze, Schalterstellungen, selbst verfasste Kurznotizen) und **was nicht** (keine
-   Dateien, kein Code, keine Projektdaten, kein Projektname, keine Pfade, keine Namen). Ohne Antwort passiert
-   nichts — es gibt keinen Standardwert und keinen Schlüssel in `AI-CONFIG.md`. Mechanik bei Claude Code:
-   `.claude/scripts/feedback.py`.
+   Die Frage nennt sechs Dinge, sonst ist es keine Einwilligung: **wie** es läuft (der Assistent liest die
+   Regel- und Arbeitsdateien und fasst zusammen — Dateien selbst werden nie gesendet), **wohin** (Adresse im
+   Klartext), **wie oft** (einmal jetzt, danach höchstens wöchentlich, autonom ohne Rückfrage), **was
+   {{AUFTRAGGEBER}} sieht** (jede Sendung liegt versioniert unter `docs/ai/template-feedback/`), **was es
+   kostet** (Zusammenfassen und Filtern brauchen ein paar Token zusätzlich) und **wie mit den Daten umgegangen
+   wird** (vertraulich, vor jeder Verwendung im öffentlichen Template persönlich durchgesehen). Ohne Antwort
+   passiert nichts — es gibt keinen Standardwert und keinen Schlüssel in `AI-CONFIG.md`. Mechanik bei Claude
+   Code: `.claude/scripts/feedback.py`.
 7. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
    Board-Kurzbilanz nachziehen — und per Pathspec committen (Checkliste „Aufgabe abschließen").
 
