@@ -17,11 +17,19 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 `AI-CONFIG.md` hatte „Fable" fest in der Wertspalte stehen. Wer mit Gemini CLI ein Projekt anlegte, arbeitete
 danach mit einem Assistenten namens Fable weiter — ein Name aus einer anderen Welt.
 
-- **Die Zelle ist jetzt leer**, und leer heißt: Kurzname des Werkzeugs, das die Einrichtung ausführt. Die
-  Zuordnung nutzt die heute gebaute Werkzeugerkennung: Claude Code → Fable, Gemini CLI → Gemini,
-  ChatGPT/Codex → Codex, Copilot/Cursor/Aider/Cline/Ollama jeweils ihr eigener Name.
+- **Die Zelle ist jetzt leer**, und leer heißt: Kurzname dessen, **was tatsächlich arbeitet**. Wo das
+  Werkzeug ein wählbares Modell hat (Claude Code), ist das **Modell** der Name — `Opus`, `Sonnet`, `Haiku`,
+  bei `inherit` schlicht `Claude`. Sonst der Kurzname des Werkzeugs: Gemini, Codex, Cursor, Aider, Cline,
+  Copilot, Ollama.
+- **Erster Anlauf war falsch:** Ich hatte Claude Code auf „Fable" abgebildet, weil das der bisherige
+  Standardwert war. Wolfgang meinte aber das Modell — und er hat recht: Der Assistent lief unter dem Namen
+  eines Modells, auf dem er gar nicht läuft (`Orchestrator-Modell` steht auf `opus`). Jetzt hängen Name und
+  Modell zusammen, und wer das Modell wechselt, bekommt beim nächsten Anlegen den passenden Namen.
 - **Wird nichts erkannt, bleibt es bei „Fable".** Kein Verhaltensbruch für bestehende Projekte, und keine
   erfundene Zuordnung für Werkzeuge ohne Marke (Copilot-CLI, Aider, Windsurf).
+- **Abgefragt wird der Name nicht** — er wird gesetzt und danach genannt. Damit das trägt, nennt der
+  Assistent die Standardwerte jetzt **mit ihrem konkreten Wert** („Ich heiße hier Opus, weil …") statt als
+  Stichwortliste. Einen Standardwert, den man nicht sieht, kann man nicht korrigieren.
 - Der Plan (`--dry-run`) nennt jetzt Namen **und Begründung**: „Orchestrator-Rufname: Fable (Claude Code
   erkannt (CLAUDECODE=1); in AI-CONFIG.md eintragen, um ihn zu ändern)". Ein Standardwert, dessen Herkunft
   man nicht sieht, wird beim ersten Stolpern zur Rätselfrage.

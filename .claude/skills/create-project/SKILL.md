@@ -44,8 +44,18 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    4. **Worum geht es?** Ein bis zwei Sätze, welches Problem das Projekt löst. → Abschnitt `## Ziel`
 
    Antworten **in `AI-CONFIG.md` eintragen**, nicht nur merken — die Datei ist die Quelle und bleibt im
-   Projekt. Danach in einem Satz sagen, was sonst auf Standard steht (Auftraggeber, Orchestrator-Name,
-   Logging, Wartung) und dass sich das dort jederzeit ändern lässt.
+   Projekt.
+
+   Danach die übrigen Standardwerte **mit ihrem konkreten Wert** nennen, nicht nur als Stichwort — sonst
+   kann {{AUFTRAGGEBER}} sie nicht korrigieren:
+
+   > Alles Weitere steht auf Standard und lässt sich in `AI-CONFIG.md` jederzeit ändern: Ich heiße hier
+   > **<Rufname>** (weil das Projekt mit <Werkzeug> eingerichtet wird), Auftraggeber ist **<Wert>**, Logging
+   > **aus**, Wartung **aus**, Testtiefe **alles**, Rückmeldung ans Template **aus**.
+
+   Den Rufnamen liefert `create-project.py --dry-run` in der Zeile „Orchestrator-Rufname" samt Begründung.
+   Will {{AUFTRAGGEBER}} einen anderen, wird er jetzt in `AI-CONFIG.md` § `Orchestrator` eingetragen — eine
+   eigene Frage bekommt er nicht, weil der abgeleitete Name in aller Regel passt.
 
 2. `python .claude/scripts/create-project.py --dry-run` ausführen und den Plan (Werte, zu entfernende Dateien,
    Logging-Schalter, offene Platzhalter) zeigen. Bei echten Unklarheiten (z. B. mehrdeutige

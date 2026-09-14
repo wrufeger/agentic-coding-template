@@ -17,7 +17,7 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 | :--- | :--- | :--- |
 | `{{PROJEKTNAME}}` | Name des Projekts | „Beispiel-App" |
 | `{{AUFTRAGGEBER}}` | Mensch, der das Projekt verantwortet und entscheidet | „Wolfgang" |
-| `{{ORCHESTRATOR}}` | Rufname des jeweils genutzten Haupt-Assistenten — standardmäßig der Kurzname des Werkzeugs, mit dem eingerichtet wurde | „Fable“, „Gemini“, „Codex“ |
+| `{{ORCHESTRATOR}}` | Rufname des jeweils genutzten Haupt-Assistenten — standardmäßig der Kurzname dessen, was arbeitet: das Modell, wo es wählbar ist, sonst das Werkzeug | „Opus“, „Sonnet“, „Gemini“ |
 | `{{STACK}}` | Technologie-Stack in Kurzform | „Nuxt 4 + MariaDB" |
 
 ## Rollen

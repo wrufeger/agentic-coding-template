@@ -19,7 +19,7 @@ geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 | :--- | :--- | :--- | :--- | :--- |
 | Projektname | MyApp |  | `PROJEKTNAME` | Name des Projekts. |
 | Auftraggeber | Entwickler |  | `AUFTRAGGEBER` | Der Mensch, der Ziele setzt, Fragen beantwortet und freigibt. |
-| Orchestrator |  |  | `ORCHESTRATOR` | Rufname des Haupt-Assistenten. Leer = Kurzname des Werkzeugs, das die Einrichtung ausführt (Claude Code → Fable, Gemini CLI → Gemini, …); wird keines erkannt, gilt „Fable“. |
+| Orchestrator |  |  | `ORCHESTRATOR` | Rufname des Haupt-Assistenten. Leer = Kurzname dessen, was arbeitet: bei Claude Code das gewählte Modell (Opus, Sonnet, Haiku), sonst das Werkzeug (Gemini, Codex, Cursor, …). Wird keines erkannt, gilt „Fable“. |
 | Sprache | Deutsch |  |  | Sprache der Doku. Nur Hinweis beim Befüllen, keine Marke im Repo. |
 
 ## Technik

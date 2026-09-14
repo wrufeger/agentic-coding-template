@@ -331,8 +331,10 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
    nicht — für die Copilot-CLI, Aider und Windsurf existiert gar keine Marke. Wird nichts erkannt, wird
    gefragt statt geraten; vorausgewählt heißt außerdem nicht entschieden.
    Die Antworten werden **in `AI-CONFIG.md` eingetragen**, nicht nur gemerkt: Die Datei ist die Quelle und
-   bleibt dauerhaft im Projekt. Alles Übrige — Auftraggeber, Rufname des Assistenten, Logging, Wartung —
-   bleibt auf Standard und ist dort jederzeit änderbar; das wird {{AUFTRAGGEBER}} in einem Satz gesagt.
+   Alles Übrige — Auftraggeber, Rufname des Assistenten, Logging, Wartung, Testtiefe, Rückmeldung —
+   bleibt auf Standard. Das wird {{AUFTRAGGEBER}} gesagt, und zwar **mit den konkreten Werten**, nicht als
+   Aufzählung von Stichworten: Einen Standardwert, den man nicht sieht, kann man auch nicht korrigieren.
+   Der Rufname leitet sich dabei aus dem Werkzeug ab, mit dem eingerichtet wird (`AI-CONFIG.md` § `Orchestrator`).
    Wer die Datei lieber selbst ausfüllt, tut das statt des Interviews; alles darin ist optional, leer lassen
    ist gültig (Kommentare je Zeile erklären, was bei „leer" passiert). Bei Unklarheit kurz rückfragen statt
    zu raten.

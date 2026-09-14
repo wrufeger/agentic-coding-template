@@ -205,12 +205,17 @@ AGENT_MARKERS = [
 # TOOL_CANON aufgeloest, damit kuenftige Werkzeuge ohne eigene Zeile oben erkannt werden.
 AGENT_GENERIC_VARS = ("AGENT", "AI_AGENT")
 
-# Rufname des Orchestrators, wenn AI-CONFIG.md keinen nennt: der Kurzname des Werkzeugs, das die Einrichtung
-# ausfuehrt. Wer mit Gemini CLI anlegt, soll nicht mit einem Assistenten namens "Fable" weiterarbeiten.
-# Wird nichts erkannt, bleibt es bei "Fable" - das war der bisherige Standard und aendert nichts an
-# bestehenden Projekten.
-ORCHESTRATOR_KURZNAME = {
-    "Claude Code": "Fable",
+# Rufname des Orchestrators, wenn AI-CONFIG.md keinen nennt: der Kurzname dessen, was tatsaechlich arbeitet.
+# Wo das Werkzeug ein waehlbares Modell hat (Claude Code), ist das MODELL der Name - der Assistent heisst dann
+# wie das Modell, auf dem er laeuft, statt wie ein Produkt. Sonst der Kurzname des Werkzeugs. Wer mit Gemini
+# CLI anlegt, soll nicht mit einem Assistenten namens "Opus" weiterarbeiten.
+ORCHESTRATOR_MODELL_NAME = {
+    "opus": "Opus",
+    "sonnet": "Sonnet",
+    "haiku": "Haiku",
+    "inherit": "Claude",
+}
+ORCHESTRATOR_WERKZEUG_NAME = {
     "Gemini CLI": "Gemini",
     "Copilot": "Copilot",
     "Cursor": "Cursor",
@@ -219,14 +224,23 @@ ORCHESTRATOR_KURZNAME = {
     "Cline": "Cline",
     "Ollama": "Ollama",
 }
+# Wird gar nichts erkannt, bleibt es beim historischen Standardnamen - er aendert nichts an bestehenden
+# Projekten und ist besser als ein geratener.
 ORCHESTRATOR_FALLBACK = "Fable"
 
 
-def default_orchestrator(env=None):
+def default_orchestrator(cfg=None, env=None):
     """(Rufname, Begruendung) - der Name, der gilt, wenn AI-CONFIG.md keinen nennt."""
     werkzeug, beleg, _stark = detect_ai_tool(env)
-    if werkzeug and werkzeug in ORCHESTRATOR_KURZNAME:
-        return ORCHESTRATOR_KURZNAME[werkzeug], f"{werkzeug} erkannt ({beleg})"
+    if werkzeug == "Claude Code":
+        modell = (cfg or {}).get("orchestrator_modell")
+        modell = (modell or "opus").strip().lower()
+        name = ORCHESTRATOR_MODELL_NAME.get(modell)
+        if name:
+            return name, f"Claude Code auf {modell} ({beleg})"
+        return ORCHESTRATOR_MODELL_NAME["opus"], f"Claude Code, Modell unbekannt - Standardmodell ({beleg})"
+    if werkzeug and werkzeug in ORCHESTRATOR_WERKZEUG_NAME:
+        return ORCHESTRATOR_WERKZEUG_NAME[werkzeug], f"{werkzeug} erkannt ({beleg})"
     return ORCHESTRATOR_FALLBACK, "kein Werkzeug erkannt - Standardname"
 
 
@@ -537,7 +551,7 @@ def compute_values(cfg: dict) -> dict:
     return {
         "PROJEKTNAME": cfg.get("projektname") or "MyApp",
         "AUFTRAGGEBER": cfg.get("auftraggeber") or "Entwickler",
-        "ORCHESTRATOR": cfg.get("orchestrator") or default_orchestrator()[0],
+        "ORCHESTRATOR": cfg.get("orchestrator") or default_orchestrator(cfg)[0],
         "STACK": cfg.get("stack"),
         "DATUM": today,
         "INSTALL_BEFEHL": cfg.get("install_befehl"),
@@ -1622,7 +1636,7 @@ def cmd_dry_run(root: Path) -> int:
     lines = ["create-project.py --dry-run", ""]
     _werkzeug, _beleg, _geprueft = detect_ai_tool()
     if not cfg.get("orchestrator"):
-        _name, _grund = default_orchestrator()
+        _name, _grund = default_orchestrator(cfg)
         lines.append(f"Orchestrator-Rufname: {_name}   ({_grund}; in AI-CONFIG.md eintragen, um ihn zu "
                      "aendern)")
         lines.append("")
