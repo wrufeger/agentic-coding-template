@@ -22,6 +22,7 @@ Nutzung gegen die verlinkte Quelle prüfen. Wer hier etwas korrigiert, trägt da
 | `aws-knowledge` | AWS | AWS-Doku und Codebeispiele durchsuchen | http | — | offiziell |
 | `postman` | Postman | Collections, Environments, API-Tests | stdio | `POSTMAN_API_KEY` | offiziell |
 | `snyk` | Snyk | Code- und Abhängigkeits-Sicherheitsscans | stdio | `SNYK_TOKEN` | offiziell, **experimentell** |
+| `firecrawl` | Mendable | Doku-Websites als sauberes Markdown einlesen (Crawling, JS-Rendering) | stdio, optional http/sse | `FIRECRAWL_API_KEY` | offiziell, aktiv |
 
 ## Browser und Prüfung
 
@@ -38,6 +39,7 @@ Nutzung gegen die verlinkte Quelle prüfen. Wer hier etwas korrigiert, trägt da
 | `netlify` | Netlify | Sites, Builds, Deployments | http/stdio | OAuth | offiziell |
 | `cloudflare-workers` | Cloudflare | Workers, KV, R2, D1 verwalten | http | `CLOUDFLARE_API_TOKEN` | offiziell — Cloudflare bietet rund 17 getrennte Endpunkte, hier nur „Bindings" |
 | `docker-hub` | Docker | Images und Repositories verwalten | stdio | `HUB_PAT_TOKEN` | offiziell, **sehr jung** — siehe Vorbehalte |
+| `kubernetes` | containers (Community) | Cluster inspizieren, Ressourcen anlegen und ändern — ohne `kubectl`-Umweg | stdio/http | Kubeconfig | **Community**, aktiv (Go) |
 
 ## Daten
 
@@ -179,6 +181,15 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
 - **Bitbucket** einzeln — über `atlassian` abgedeckt.
 - **Jenkins, CircleCI, GitHub Actions, npm, PyPI** — kein herstellergepflegter Server auffindbar.
 - **Bitrise, Heroku, Redis Cloud** — nur in einem Aggregator gesehen, Pflegestand nicht bestätigt.
+- **Stack Overflow** (offiziell, Beta seit 12/2025) — existiert wirklich und ist öffentlich erreichbar, aber
+  noch sehr jung (einstellige Commit-Zahl) und auf 100 Aufrufe am Tag gedeckelt. Der Mehrwert gegenüber einer
+  normalen Websuche wäre die Struktur (Frage, akzeptierte Antwort, Stimmen) — das wiegt die Unreife derzeit
+  nicht auf. **Beim nächsten Durchgang erneut ansehen**, das kann sich schnell ändern.
+- **AWS Labs Monorepo** (`awslabs/mcp`, rund 30 Einzelserver für Lambda, ECS, CDK …) — aktiv und
+  umfangreich, aber zu breit für einen Katalogeintrag. Die Doku-Seite ist als `aws-knowledge` bereits drin;
+  die Betriebsserver wählt man projektweise einzeln aus, nicht pauschal.
+- **Exa, Brave Search, Sequential Thinking, Browserbase** — Wrapper um eine API, die man auch direkt
+  aufrufen kann, bzw. Eigenwerbung der Listenbetreiber.
 
 Zur Quellenlage: `mcpservers.org` blockiert automatisierte Abrufe (HTTP 403); Angaben von dort wurden über
 Suchtreffer ermittelt und am jeweiligen Repository gegengeprüft. Exakte Commit-Zeitstempel waren teils nicht

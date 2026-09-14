@@ -124,6 +124,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/deps` | — (Mechanik ohne Checkliste) | Abhängigkeiten aktualisieren: Major einzeln, je ein Commit |
 | `/perf` | — (Mechanik ohne Checkliste) | erst messen, dann ändern, erneut messen — sonst zurücknehmen |
 | `/release` | — (Mechanik ohne Checkliste) | Version, Änderungsprotokoll, Tag; nicht bei rotem Pflichtlauf |
+| `/a11y` | — (Mechanik ohne Checkliste) | Barrierefreiheit einer Seite oder Komponente: Tastatur, Fokus, Kontrast, Struktur — Befunde nach Schwere, dann beheben |
 | `/design-ideas` | — (Mechanik ohne Checkliste) | drei bis vier Varianten als Vorschaubilder (Playwright), zur Auswahl; Wegwerf-Ordner `.design-varianten/`, kein Projektcode |
 | `/design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
 | `/design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
@@ -259,7 +260,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 ├── .claude/
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
 │   │                            # optimizer (optional), maintenance-orchestrator (optional)
-│   ├── skills/                  # apply-template, audit-docs, create-project, finalize,
+│   ├── skills/                  # a11y, apply-template, audit-docs, create-project, finalize,
 │   │                            # run-maintenance, update-template, commit
 │   │                            # (apply-template und create-project verschwinden beim Abschluss der
 │   │                            # Einrichtung — Skill finalize, s. § 2)

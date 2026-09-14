@@ -12,6 +12,31 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Fünf Quellen zu MCP-Servern und Skills ausgewertet
+
+Wolfgang hat fünf Listen genannt (totalum.app, skyvia, awesome-claude-skills, welcomedeveloper,
+Stack-Overflow-Ankündigung). Ausbeute bewusst klein gehalten — die Listen sind zu einem guten Teil Werbung.
+
+- **Aufgenommen (2 von rund 60 genannten):** `kubernetes` (containers-Org, Go, aktiv — Cluster ohne
+  `kubectl`-Umweg) und `firecrawl` (Mendable, offiziell — Doku-Websites als Markdown, kann Crawling und
+  JS-Rendering, also mehr als ein Fetch). Katalog jetzt 41 Server.
+- **Stack Overflow** gibt es wirklich (offiziell, Beta seit 12/2025), aber mit einstelliger Commit-Zahl und
+  100 Aufrufen am Tag. Der Vorteil gegenüber der Websuche wäre die Struktur (akzeptierte Antwort, Stimmen) —
+  das wiegt die Unreife heute nicht auf. Als „beim nächsten Durchgang erneut ansehen" dokumentiert, nicht
+  stillschweigend übergangen.
+- **Neuer Skill `/a11y`.** Die einzige echte Lücke unter den 17 vorhandenen: Barrierefreiheit kam bisher als
+  halber Satz in `/design-build` vor. `/design-build` prüft gegen die **Vorlage** („sieht es aus wie
+  gedacht?"), `/a11y` gegen die **Benutzbarkeit** („kommt jeder damit klar?") — eine Oberfläche kann der
+  Vorlage exakt entsprechen und trotzdem mit der Tastatur unbedienbar sein.
+- **Verworfen:** Superpowers und Spartan Toolkit (ihr Ablauf Spec→Plan→Test→Review ist genau das, was
+  `AGENTS.md` schon vorschreibt), Code Simplifier (= `optimizer`), alles Stack-Spezifische (Vercel-React,
+  shadcn, Expo, iOS-Simulator — widerspricht der Stack-Neutralität), sowie CRM-, Marketing- und
+  Vertriebsanbindungen. Reine API-Wrapper (Exa, Brave Search, Browserbase) ebenfalls nicht.
+- **Die Lehre zu solchen Listen:** Von rund sechzig genannten Einträgen blieben zwei. Die Trefferquote sinkt
+  mit jeder weiteren Liste, weil sie voneinander abschreiben — der Aufwand steckt im Aussortieren, nicht im
+  Finden. Ein Eintrag, der nur in einer Liste steht und dort auffällig beworben wird, stammt meist vom
+  Betreiber der Liste selbst.
+
 ## 2026-09-14 — Sechs Formbefunde aus `bandliste`, alle im Template behoben
 
 Wolfgang hat `docs/ai/` in `bandliste` durchgesehen. **Alle sechs Befunde sind Template-Befunde** — die
