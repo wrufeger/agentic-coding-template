@@ -12,6 +12,27 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Anlegen fragt jetzt nach, statt zu raten
+
+Bisher kannte die Alltagssprache-Tabelle zwei Fälle: „neue Anwendung" (mit Interview) und „leeres Projekt"
+(ohne). Der häufigste Satz — **„Erstelle ein neues Projekt in `<pfad>`"** — fiel durch den Rost, und der
+Assistent musste raten, was gemeint ist.
+
+- **Neu: eine Nachfrage.** „Soll ein leeres Projekt entstehen? a) nein, vier kurze Fragen b) ja, leer." Sie
+  entfällt in genau zwei Fällen: {{AUFTRAGGEBER}} hat „leer" von sich aus gesagt, oder `AI-CONFIG.md` ist
+  schon von Hand ausgefüllt — dann steht die Antwort dort und wird nicht erneut erfragt.
+- **Vier Fragen, auf einmal gestellt:** Projektname, welche KI-Werkzeuge bleiben, Stack (ein Satz), worum es
+  geht. Aus dem Stack werden die Regelsätze **vorgeschlagen und bestätigt** — keine fünfte Frage, aber auch
+  nicht stillschweigend gesetzt.
+- **Die Antworten landen in `AI-CONFIG.md`, nicht nur im Gesprächsverlauf.** Das ist der Punkt, an dem so
+  ein Interview sonst wertlos wird: Die Datei ist die Quelle und bleibt im Projekt, der Chat ist weg.
+- Eingebaut an drei Stellen, damit es nicht auseinanderläuft: Checkliste „Neues Projekt" (werkzeugneutral),
+  Skill `/create-project` Schritt 1 (Mechanik), `CLAUDE.md` § 2 (Alltagssprache). Die Folgeschritte des
+  Skills sind entsprechend umnummeriert, interne Verweise mit.
+- Nebenbefund zu `B28`: Eine **dritte** Stelle widerspricht dem Code — `docs/ai/checklists.md` behauptet wie
+  `AGENTS.md`, dass Checklisten und der create-project-Skill von der Platzhalter-Ersetzung ausgenommen
+  seien; `EXCLUDED_FROM_REPLACE` kennt nur `AI-CONFIG.md` und drei `.py`-Dateien. Im Punkt ergänzt.
+
 ## 2026-09-14 — Präsentationen: kein MCP-Server, sondern Skill `/slides`
 
 Wolfgang wollte einen PowerPoint-MCP-Server (`ykuwai/ppt-mcp`, `Ayushmaniar/powerpoint-mcp`) oder „eine

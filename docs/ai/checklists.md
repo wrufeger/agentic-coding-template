@@ -219,8 +219,18 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
    entsteht das Projekt als Branch, der Basis-Commit wird aus dem Standard-Branch abgeleitet und Updates
    laufen später per Merge von dort — ohne zusätzlichen Remote. Auf dem Standard-Branch selbst (`main`/
    `master`) verweigert der Anlege-Schritt die Arbeit, sonst würde das Template seine Platzhalter verlieren.
-1. `AI-CONFIG.md` im Repo-Root ausfüllen — alles optional, leer lassen ist gültig (Kommentare je Zeile erklären,
-   was bei „leer" passiert). Bei Unklarheit mit {{AUFTRAGGEBER}} kurz rückfragen statt zu raten.
+1. **Erst fragen, dann anlegen.** Hat {{AUFTRAGGEBER}} nicht ausdrücklich „leeres Projekt" gesagt und ist
+   `AI-CONFIG.md` noch unausgefüllt, wird **einmal** nachgefragt: „Soll ein leeres Projekt entstehen — nur
+   das Gerüst mit Standardwerten? a) nein, vier kurze Fragen jetzt beantworten (Empfehlung) b) ja, leer
+   anlegen." Bei „ja" geht es ohne Interview weiter; bei „nein" folgen genau vier Fragen, auf einmal gestellt:
+   **Projektname**, **welche KI-Werkzeuge bleiben sollen**, **Stack** (ein Satz — daraus im selben Zug die
+   passenden Regelsätze vorschlagen und bestätigen lassen) und **worum es geht** (ein bis zwei Sätze).
+   Die Antworten werden **in `AI-CONFIG.md` eingetragen**, nicht nur gemerkt: Die Datei ist die Quelle und
+   bleibt dauerhaft im Projekt. Alles Übrige — Auftraggeber, Rufname des Assistenten, Logging, Wartung —
+   bleibt auf Standard und ist dort jederzeit änderbar; das wird {{AUFTRAGGEBER}} in einem Satz gesagt.
+   Wer die Datei lieber selbst ausfüllt, tut das statt des Interviews; alles darin ist optional, leer lassen
+   ist gültig (Kommentare je Zeile erklären, was bei „leer" passiert). Bei Unklarheit kurz rückfragen statt
+   zu raten.
 2. `python .claude/scripts/create-project.py --dry-run` ausführen, Plan (Werte, zu entfernende Dateien,
    Logging-Schalter, offene Platzhalter) gegen {{AUFTRAGGEBER}} prüfen.
 3. `python .claude/scripts/create-project.py --apply` ausführen: ersetzt Platzhalter im ganzen Repo (außer

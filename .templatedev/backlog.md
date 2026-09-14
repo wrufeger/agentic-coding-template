@@ -88,7 +88,10 @@ sie werden in Journal und Commits zitiert.
    angelegt 2026-09-14): `AGENTS.md` § „Template-Herkunft und Updates" nennt `docs/ai/checklists.md` und
    `.claude/skills/create-project/SKILL.md` als nie platzhalter-ersetzt; `.claude/template.json` führt unter
    `no_replace` aber nur die drei `.py`-Dateien, und `EXCLUDED_FROM_REPLACE` in `setup-lib.py` deckt sich mit
-   der JSON-Fassung. Eine der beiden Seiten hat unrecht. Erst prüfen, welche Fassung gewollt ist (zeigen die
+   der JSON-Fassung. **Dritte Fundstelle:** `docs/ai/checklists.md` § „Neues Projekt", Schritt 3 behauptet
+   dasselbe wie `AGENTS.md` („ersetzt Platzhalter im ganzen Repo außer `AI-CONFIG.md`,
+   `docs/ai/checklists.md`, `.claude/skills/create-project/SKILL.md`"). Zwei Dokumente sagen das eine, der
+   Code das andere. Erst prüfen, welche Fassung gewollt ist (zeigen die
    beiden Dateien Platzhalter absichtlich als Beispiel?), dann die andere angleichen — nicht blind eine Liste
    erweitern. Gefunden beim Einbau der Statuszeilen-Ersetzung.
 

@@ -92,7 +92,8 @@ Satz mit einem Zielpfad statt als Skill-Aufruf. Zuordnung:
 | Was {{AUFTRAGGEBER}} sagt | Was {{ORCHESTRATOR}} tut |
 | :--- | :--- |
 | „Erstelle eine neue Anwendung in `<pfad>`" | Template dorthin klonen, Remote einrichten, `AI-CONFIG.md` im Gespräch ausfüllen, dann `/create-project` im Zielordner |
-| „Erstelle ein leeres Projekt in `<pfad>`" | dasselbe, aber **ohne Interview** — `AI-CONFIG.md` bleibt leer, es entsteht „MyApp" |
+| „Erstelle ein **leeres** Projekt in `<pfad>`" | dasselbe, aber **ohne Interview** — `AI-CONFIG.md` bleibt leer, es entsteht „MyApp" |
+| „Erstelle ein **neues Projekt** in `<pfad>`" (weder das eine noch das andere gesagt) | **nicht raten:** einmal fragen, ob es leer werden soll; bei „nein" die vier Fragen aus `/create-project` Schritt 1 stellen |
 | „Nutze das Template in `<pfad>`" (bestehendes Repo) | `apply-template.py --target <pfad>`, dann `/apply-template` im Zielordner |
 | … „und mache ein Code Review" | zusätzlich `Code-Analyse: vorschlagen` setzen, statt im Chat nachzufragen |
 | „Projekterstellung abschließen" / „Nachrüsten abschließen" / „Einrichtung fertig" | `/finalize` im Zielprojekt ausführen |
