@@ -39,6 +39,14 @@ für den `.templatedev` da ist (`regeln.md`).
   **fehlenden**. Wo das Template keinen Platz vorsieht (Konzepte, Stories), erfindet das Projekt einen — und
   weil die Erfindung nirgends steht, prüft sie auch keine Checkliste. Deshalb kamen `konzepte/` und
   `stories/` als leere, dokumentierte Ordner ins Template, nicht nur als Regel im Fließtext.
+- **Rückweg aus `bandliste`, zweiter Teil (Abgleich am 2026-09-14):** Der Bestand beider Repos verglichen.
+  Übernommen war bereits `legacy-inventory.py` → `code-inventory.py` (verallgemeinert), die Formate von
+  `konzepte/` und `stories/`, die Nuxt-Regeln, die MCP-`${VAR}`-Erkenntnis und die README-Regel. **Zwei
+  Lücken blieben:** die Backlog-**Tabelle** (dort seit 55 Punkten im Einsatz, im Template gab es kein Format
+  über die nummerierte Liste hinaus — jetzt mit Schwelle „ab etwa fünfzehn Punkten" und dem bewährten
+  Spaltensatz beschrieben) und die Form des Fragen-Archivs (die Vorlage sagte „chronologisch, älteste
+  zuerst", die neue Regel gruppiert nach Verschiebelauf mit neuester Gruppe oben — die Vorlage widersprach
+  also der Regel, die im selben Ordner steht).
 - **Rückweg aus `bandliste`:** Dort war eine Regel entstanden, die das Template nicht hatte — jede Antwort
   von Wolfgang wird **an Ort und Stelle** quittiert (`✅ **<Datum Uhrzeit>** — <Folge>`), nie gesammelt am
   Dateiende. Sie ist jetzt in `docs/ai/README.md` § „Antworten quittieren". Das ist die Richtung, für die

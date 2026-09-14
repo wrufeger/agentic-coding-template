@@ -2,8 +2,10 @@
 
 # Fragen-Archiv — {{PROJEKTNAME}}
 
-Beantwortete und abgeschlossene Fragen aus `docs/ai/questions.md`, chronologisch (älteste zuerst oder nach
-Themenblock — im Projekt konsistent halten). Nummerierung wird aus `questions.md` fortgeführt, nie neu vergeben.
+Beantwortete und abgeschlossene Fragen aus `questions.md`, **neueste Gruppe oben**. Gruppiert wird nach dem
+Lauf, in dem verschoben wurde (`## Verschoben am JJJJ-MM-TT — Q<n> bis Q<m>`) — deshalb tragen alle Fragen
+einer Gruppe dasselbe Verschiebedatum; das Datum der Antwort steht in der Quittung an der Frage selbst.
+Nummern werden aus `questions.md` fortgeführt und nie neu vergeben.
 
 ---
 

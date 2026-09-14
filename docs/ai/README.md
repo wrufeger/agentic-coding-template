@@ -173,6 +173,25 @@ kein echtes Problem verursacht.
 - Hierher schreibt der Orchestrator auch die Befunde der optionalen Code-Analyse beim Nachrüsten (Checkliste
   „Projekt nachrüsten"): je Punkt Befund, Fundstelle `Datei:Zeile`, Vorschlag, geschätzter Aufwand.
 
+**Liste oder Tabelle?** Bis etwa fünfzehn Punkte genügt eine nummerierte Liste. Darüber wird sie
+unübersichtlich — dann in eine Tabelle überführen, ohne die Nummern anzufassen. Dieser Spaltensatz hat sich
+im Testprojekt bewährt:
+
+| Spalte | Inhalt |
+| :--- | :--- |
+| `ID` | die Nummer, für immer stabil |
+| Titel | eine Zeile, worum es geht |
+| Anweisung | `machen` · `nicht machen` · `offen` — hier entscheidet {{AUFTRAGGEBER}} |
+| Prio | `kritisch` (Sicherheit/Datenverlust) · `wichtig` · `normal` · `niedrig` |
+| Aufwand | `S`/`M`/`L` |
+| Bezug | `T<n>`, `Q<n>`, ADR, Feature, Story |
+| Status | `offen` · `erledigt` |
+| Fundstelle | `Datei:Zeile` plus Stichwort — der Beleg, ohne den ein Punkt in sechs Monaten nicht mehr nachvollziehbar ist |
+
+Die letzte Spalte ist die wichtigste und wird am ehesten weggelassen: Ohne sie steht in der Zeile eine
+Behauptung ohne Nachweis. Erledigte Punkte bleiben mit Status `erledigt` stehen, damit Nummerierung und
+Historie erhalten bleiben — gelöscht wird nichts.
+
 ## Ledger (`ledger.md`)
 
 Sitzungsjournal mit Belegen. **Neuester Eintrag oben** — wer die Datei öffnet, sieht zuerst, was zuletzt
