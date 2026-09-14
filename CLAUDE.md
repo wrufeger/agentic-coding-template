@@ -118,6 +118,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/audit-docs [project\|ai\|alle]` | „Doku prüfen und nachziehen" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer`; Bereich `project` (Code-Abgleich) und/oder `ai` (Formprüfung Arbeitsordner), bewusst unabhängig von der optionalen Wartung |
 | `/run-maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `AI-CONFIG.md` `Wartung: aus`, entfernt `/create-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
 | `/update-template` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/update-template.py` |
+| `/prepare` | „Block vorbereiten" | vor einem größeren Vorhaben: Bestand parallel per `explorer` recherchieren, in Aufgaben schneiden, Startklar prüfen, **einen** Fragenblock vorlegen — damit der Block danach ohne Rückfragen durchläuft |
 | `/onboard` | — (Mechanik ohne Checkliste) | ein fremdes Projekt verstehen; Ergebnis nach `docs/project/`, nicht in eine Chat-Antwort |
 | `/bug` | — (Mechanik ohne Checkliste) | Fehler beheben: reproduzieren, eingrenzen, **erst roter Test**, dann Fix |
 | `/refactor` | — (Mechanik ohne Checkliste) | umbauen ohne Verhaltensänderung; ohne Testnetz zuerst `/test-gap` |
@@ -263,7 +264,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
 │   │                            # optimizer (optional), maintenance-orchestrator (optional)
 │   ├── skills/                  # a11y, apply-template, audit-docs, create-project, finalize,
-│   │                            # slides,
+│   │                            # prepare, slides,
 │   │                            # run-maintenance, update-template, commit
 │   │                            # (apply-template und create-project verschwinden beim Abschluss der
 │   │                            # Einrichtung — Skill finalize, s. § 2)

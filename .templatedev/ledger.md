@@ -12,6 +12,33 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — „Rasen mähen": der Block soll ohne Rückfragen durchlaufen
+
+Wolfgang hat das eigentliche Ziel hinter der Rückfrage-Regel nachgereicht: Er will einen größeren Block
+abarbeiten lassen, **während er den Rasen mäht** — ohne alle paar Minuten eine Entscheidung treffen zu
+müssen. Idealerweise ist vorher alles geklärt, Stories und Aufgaben sauber geplant und recherchiert.
+
+- **Meine Regel von vorhin deckte nur die zweite Hälfte ab.** Sie sagt, was mitten im Lauf mit einer Frage
+  passiert (notieren, weitermachen, am Ende bündeln). Sie sorgt aber nicht dafür, dass der Lauf überhaupt
+  startklar beginnt — und genau das ist der Hebel. Wer mittendrin gut damit umgeht, hat schon verloren.
+- **Neu: Checkliste „Block vorbereiten"** mit fünf Startklar-Kriterien (Ziel eindeutig · Abnahme prüfbar ·
+  Entscheidungen getroffen · Vorbedingungen erfüllt · Unbekanntes recherchiert). **Eine Aufgabe mit nicht
+  leerer `Offen:`-Zeile wird nicht begonnen** — das ist der harte Teil der Regel, und er nutzt ein Feld, das
+  das Aufgabenformat längst hat.
+- **Neu: Skill `/prepare`.** Recherche parallel per `explorer`, dann schneiden, dann **ein einziger
+  Fragenblock** — nummeriert, mit Antwortmöglichkeiten, Empfehlung und je Frage einer Zeile „was passiert,
+  wenn sie offen bleibt". Sortiert danach, wie viel sie blockieren.
+- **Die schärfste Regel darin:** Eine Frage, die eine Recherche beantwortet, wird **nicht gestellt**. Wer
+  fragen kann, ob eine Funktion schon existiert, kann auch nachsehen. Gefragt wird nur, was von Wolfgangs
+  Willen abhängt. Das ist der Unterschied zwischen „einmal zehn Fragen" und „zehnmal nerven".
+- **Abschnitt „Unbeaufsichtigter Lauf"** in Checkliste und Skill: vorbereitete Reihenfolge abarbeiten, keine
+  Arbeit erfinden, Unvorhergesehenes überspringen statt abzuwarten, bei blockiertem Rest **anhalten** statt
+  auf Verdacht weiterzubauen. Und ausdrücklich: **Abwesenheit ist keine Freigabe** — Unumkehrbares bleibt
+  liegen, auch wenn es den Block aufhält.
+- **Die Lehre:** „Der Assistent soll seltener fragen" ist die falsche Formulierung des Problems. Richtig ist:
+  Die Fragen sollen **früher** kommen, gebündelt und entscheidbar. Die Zahl der Fragen sinkt dabei sogar —
+  weil die Recherche vor der Fragerunde die Hälfte davon erledigt.
+
 ## 2026-09-14 — Der Assistent erkennt, welches Werkzeug er ist
 
 Wolfgangs Frage: Kann der Agent erkennen, wer er ist — damit beim Anlegen gleich das richtige KI-Werkzeug

@@ -8,6 +8,56 @@ wörtlich als Anweisung geben, z. B. „Führe die Checkliste Aufgabe abschließ
 Aufruf, Ablauf in einer separaten Session o. Ä.), steht in der jeweiligen werkzeugspezifischen Ergänzungsdatei
 (siehe `AGENTS.md` § „Werkzeugspezifische Ergänzungsdateien"), nicht in dieser Checkliste.
 
+## Block vorbereiten
+
+Läuft **vor** einem größeren Vorhaben — einem Feature, einem Umbau, einer Welle von Aufgaben. Zweck: Der
+Block soll danach **ohne Rückfragen durchlaufen**. {{AUFTRAGGEBER}} beantwortet alles **einmal**, in einem
+Zug, und ist danach nicht mehr gebunden.
+
+Die Vorbereitung kostet Zeit und spart mehr, als sie kostet: Eine Frage, die vorher geklärt ist, kostet
+Sekunden. Dieselbe Frage mitten in der Umsetzung kostet den Faden — und wenn niemand da ist, der sie
+beantwortet, kostet sie den ganzen Lauf.
+
+1. **Umfang abstecken.** Was gehört zum Block, was ausdrücklich nicht. Das „nicht" wird aufgeschrieben, sonst
+   wächst der Block während der Arbeit.
+2. **Bestand recherchieren, bevor geplant wird.** Was existiert schon, welche Dateien werden angefasst,
+   welche Entscheidungen sind bereits getroffen (`docs/project/decisions.md`) und welche davon widersprechen
+   dem Vorhaben. Unabhängige Recherchen parallel. **Ohne diesen Schritt entstehen Fragen, die der Code
+   längst beantwortet** — und genau die nerven {{AUFTRAGGEBER}} zu Recht.
+3. **In Aufgaben oder Stories schneiden**, je mit Ziel in einem Satz und einer prüfbaren Abnahmebedingung
+   („Fertig wenn"). Eine Aufgabe = ein Ergebnis. Was mehr als etwa fünf Schritte braucht, wird geteilt.
+4. **Startklar-Prüfung je Aufgabe.** Startklar ist eine Aufgabe erst, wenn **alle fünf** zutreffen:
+
+   | Kriterium | Woran man es erkennt |
+   | :--- | :--- |
+   | Ziel eindeutig | Ein Satz, der sagt, was danach anders ist — ohne „und ggf." |
+   | Abnahme prüfbar | Man kann hinterher zeigen, dass es erfüllt ist (Testlauf, Aufruf, Datei) |
+   | Entscheidungen getroffen | Keine offene Frage, von der das Vorgehen abhängt |
+   | Vorbedingungen erfüllt | Zugänge, Daten, vorangehende Aufgaben vorhanden |
+   | Unbekanntes recherchiert | Keine Stelle, an der erst beim Anfassen klar wird, wie es geht |
+
+   Fehlt eines, ist die Aufgabe **nicht startklar** — sie bekommt eine `Offen:`-Zeile und wird nicht begonnen.
+5. **Alle offenen Punkte in einem Block fragen.** Nicht nacheinander, nicht verteilt über die Sitzung: eine
+   nummerierte Liste, je Frage vorgegebene Antwortmöglichkeiten und, wo es eine gibt, eine gekennzeichnete
+   Empfehlung. Sortiert danach, **wie viel sie blockieren** — was den ganzen Block aufhält, steht oben.
+   Fragen, die sich durch eine Recherche beantworten lassen, werden **nicht gestellt**, sondern recherchiert.
+6. **Antworten verbuchen:** Entscheidungen als ADR in `docs/project/decisions.md`, die `Offen:`-Zeilen der
+   betroffenen Aufgaben leeren, Stories von `Entwurf` auf `abgestimmt` setzen.
+7. **Reihenfolge festlegen und vorlegen:** welche Aufgabe wann, was parallel laufen kann, wo ein Zwischenstand
+   sinnvoll ist. Damit weiß {{AUFTRAGGEBER}}, was in seiner Abwesenheit passiert.
+
+**Unbeaufsichtigter Lauf.** Sagt {{AUFTRAGGEBER}}, dass er weg ist, gilt zusätzlich:
+
+- Es wird **die vorbereitete Reihenfolge abgearbeitet**, keine neue Arbeit erfunden und kein Umfang erweitert.
+- Taucht doch etwas Unvorhergesehenes auf, wird es notiert (`questions.md`/`tasks.md`) und **mit der nächsten
+  Aufgabe weitergemacht** — nicht gewartet.
+- Ist alles Verbleibende blockiert, wird **angehalten** und der Fragenblock hinterlegt. Nicht auf Verdacht
+  weiterbauen, nur um beschäftigt zu wirken.
+- **Unumkehrbares bleibt liegen** (Tabu-Bereich, Produktionszugriff, Löschen, Rechteänderungen) — auch dann,
+  wenn es den Block aufhält. Abwesenheit ist keine Freigabe.
+- Beim Zurückkommen steht **eine** Bilanz bereit: was fertig ist mit Belegen, was liegt und warum, und der
+  gebündelte Fragenblock.
+
 ## Aufgabe beginnen
 
 Läuft **vor jeder Aufgabe** im Hauptkontext, dauert im Normalfall Sekunden.

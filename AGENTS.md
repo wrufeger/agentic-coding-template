@@ -118,7 +118,10 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   und **erst verarbeitet, wenn alle beantwortet sind**. Fragen bleiben nach Nummer sortiert und werden nie
   umnummeriert; bei vielen offenen Fragen kommen Themen-Überschriften dazu.
 - **Rückfragen gehören an den Anfang, nicht in die laufende Umsetzung.** Bevor ein größerer Block oder ein
-  Feature begonnen wird, wird geklärt, was unklar ist — dort kostet eine Frage Sekunden. Ist die Arbeit
+  Feature begonnen wird, wird geklärt, was unklar ist — dort kostet eine Frage Sekunden. Wie das geht, steht
+  in der Checkliste „Block vorbereiten" (`docs/ai/checklists.md`): recherchieren, schneiden, **startklar**
+  prüfen, und alles Offene in **einem** Fragenblock vorlegen statt verteilt über die Sitzung. Eine Aufgabe
+  mit nicht leerer `Offen:`-Zeile wird nicht begonnen. Ist die Arbeit
   einmal im Gang, wird sie **nicht alle paar Minuten unterbrochen**: Was unterwegs auftaucht, wird notiert,
   und der Rest wird fertiggemacht. Eine fehlende **Entscheidung** wird zur Frage in `docs/ai/questions.md`
   (`Q<n>`), ein **Arbeitsschritt**, der erst später möglich ist, zur Aufgabe in `docs/ai/tasks.md` (`T<n>`);
