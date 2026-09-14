@@ -19,6 +19,27 @@ anschließend nicht mehr aufrufbar. Das ist beabsichtigt: Ein eingerichtetes Pro
 noch einmal einrichten lassen. Weiter funktionieren `/update-template`, `sync-config.py` (`AI-CONFIG.md` wirkt
 unverändert laufend), `guidelines.py`, `ai-log.py` und die Alltags-Skills `/commit` und `/audit-docs`.
 
+**Feedback anbieten — einmal, mit vollständiger Offenlegung.** Nach dem Aufräumen wird gefragt, ob dieses
+Projekt dem Template-Autor freiwillig zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder
+gefehlt hat. Die Frage kommt **einmal**; ohne Antwort passiert nichts.
+
+Der Wortlaut muss drei Dinge nennen, sonst ist es keine Einwilligung:
+
+> Möchtest du zurückmelden, was hier an der Zusammenarbeit gut lief oder gefehlt hat? Das hilft, die
+> Standardregeln, Skripte und Skills des Templates zu verbessern.
+> **Wohin:** `https://rufeger.de/agentic-coding-feedback`
+> **Was:** Datum, Template-Basis-Commit, wie das Projekt entstand (neu/nachgerüstet, leer/Interview/Config),
+> welche KI-Werkzeuge und Regelsätze gewählt wurden, die Schalterstellungen aus `AI-CONFIG.md` — und
+> kurze, selbst verfasste Notizen über Abläufe, Regeln oder Helfer, die sich bewährt haben.
+> **Was nicht:** keine Dateien, kein Code, keine Projektdaten, kein Projektname, keine Pfade, keine Namen,
+> keine Zugangsdaten. Vor jedem Senden wird die vollständige Nutzlast angezeigt.
+> a) ja  b) nein  c) später entscheiden
+
+Bei **a)**: `python .claude/scripts/feedback.py --enable --weg <neu|nachgeruestet> --ausfuellart
+<leer|interview|config>`, optional `--repo-url <https://…>` bei einem **öffentlichen** Repo. Danach
+`--plan` zeigen und erst nach Zusage `--send --yes`.
+Bei **b)** oder **c)**: nichts tun. `feedback.py --enable` bleibt jederzeit nachholbar, `--disable` widerruft.
+
 ## Ablauf
 
 1. **Vorbedingungen prüfen.** `git status` — der Arbeitsbaum muss sauber sein. Ist er es nicht, zuerst die

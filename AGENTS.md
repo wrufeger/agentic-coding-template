@@ -312,6 +312,29 @@ Für den Vortrag: zweites Terminal neben der Assistenten-Konsole mit `--tail` ö
 zum Leeren vor einer Demo `python .claude/scripts/ai-log.py --reset` (legt die alte Datei als
 `ai.log.<zeitstempel>.bak` ab, ebenfalls gitignored).
 
+## Freiwillige Rückmeldung an den Template-Autor (optional, standardmäßig aus)
+
+Ein Projekt aus diesem Template kann zurückmelden, was sich an der **Arbeitsweise** bewährt oder gefehlt hat —
+damit Standardregeln, Skripte, Skills und die Mensch/KI-Kommunikation im Template besser werden. Das ist
+**freiwillig, standardmäßig aus** und wird genau einmal angeboten (Checkliste „Einrichtung abschließen").
+Es gibt dafür bewusst **keinen Schlüssel in `AI-CONFIG.md`**: Der Schalter wirkt einmalig, alle Schlüssel
+dort wirken laufend.
+
+Vier Regeln, die nicht verhandelbar sind:
+
+- **Es werden nie Dateien gesendet.** Nicht `docs/ai/`, nicht `CLAUDE.md`, nicht `AGENTS.md`. Diese Dateien
+  enthalten Fragen und Antworten von {{AUFTRAGGEBER}}, Servernamen, Datenbanknamen und Zitate — das ist
+  **nicht** anonym, auch wenn kein Name daransteht. Gesendet wird eine kurze, eigens verfasste
+  Zusammenfassung plus Werte aus geschlossenen Wortlisten (Schalterstellungen, Werkzeug- und
+  Regelsatz-Kennungen).
+- **Nie ohne ausdrückliche Einwilligung**, und ein Widerruf ist jederzeit möglich.
+- **Nie ungesehen:** Vor jedem Senden wird die vollständige Nutzlast im Klartext angezeigt.
+- **Nie das Projekt selbst.** Kein Projektname, kein Code, keine Pfade, keine Personen, keine Zugangsdaten.
+  Beschrieben wird das **Muster** („ein Ablauf für X fehlte"), nicht der Fall.
+
+Claude-Code-Mechanik: `.claude/scripts/feedback.py` (`--status`, `--enable`/`--disable`, `--add`, `--plan`,
+`--send`). Der Ausgang liegt lokal und gitignored; gesendet wird nur auf ausdrücklichen Aufruf.
+
 ## Template-Herkunft und Updates
 
 Ist dieses Projekt aus dem Template entstanden — per `git clone` (Checkliste „Neues Projekt",

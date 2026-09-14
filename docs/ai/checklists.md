@@ -451,7 +451,14 @@ noch offen ist.
    selbst verschwinden aus dem Projekt, dazu die beiden Checklisten-Abschnitte „Neues Projekt" und „Projekt
    nachrüsten". Erhalten bleiben: Template-Update, die laufend wirkende `AI-CONFIG.md`, Logging sowie die
    Checklisten „Doku prüfen und nachziehen" und „Aufgabe abschließen".
-6. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
+6. **Freiwillige Rückmeldung anbieten — einmal, mit vollständiger Offenlegung.** Gefragt wird, ob dieses
+   Projekt dem Template-Autor zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder gefehlt hat.
+   Die Frage nennt **wohin** (die Adresse im Klartext), **was** (Datum, Basis-Commit, Entstehungsweg, gewählte
+   Werkzeuge und Regelsätze, Schalterstellungen, selbst verfasste Kurznotizen) und **was nicht** (keine
+   Dateien, kein Code, keine Projektdaten, kein Projektname, keine Pfade, keine Namen). Ohne Antwort passiert
+   nichts — es gibt keinen Standardwert und keinen Schlüssel in `AI-CONFIG.md`. Mechanik bei Claude Code:
+   `.claude/scripts/feedback.py`.
+7. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
    Board-Kurzbilanz nachziehen — und per Pathspec committen (Checkliste „Aufgabe abschließen").
 
 ## Template-Update

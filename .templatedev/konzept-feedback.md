@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-14 – Status: Entwurf — Entscheidung offen (`Q1`)
+> Datenstand: 2026-09-14 – Status: abgestimmt — `Q1`–`Q3` beantwortet, Client gebaut, Endpunkt offen
 
 # Rückmeldung abgeleiteter Projekte an das Template
 
@@ -91,3 +91,78 @@ sinnlos.
 - `Q1` in `.templatedev/questions.md` — Weg und Standardwert.
 - Ungeklärt bis dahin: ob der Schalter überhaupt nach `AI-CONFIG.md` gehört oder besser einmalig beim
   Abschluss abgefragt wird (er wirkt genau einmal, anders als alle anderen Schlüssel dort, die laufend gelten).
+
+
+---
+
+# Entschieden am 2026-09-14 (`Q1` c, `Q2` a, `Q3` b)
+
+Gewählt wurde **c) eigener Endpunkt** auf `rufeger.de`, **kein** Schlüssel in `AI-CONFIG.md` (nur die
+einmalige Frage bei `/finalize`), und die Meldung nennt die Zieladresse im Klartext.
+
+**Gebaut ist die Client-Seite** (`.claude/scripts/feedback.py`): Einwilligung, Projekt-ID, Ausgang,
+Prüfung auf Geheimnisse, Anzeige der Nutzlast, Versand per POST. **Offen ist der Endpunkt selbst.**
+
+## Schnittstelle, die der Endpunkt erfüllen muss
+
+Zwei Operationen, klar getrennt: Einliefern ist **öffentlich**, Abholen ist **authentifiziert**.
+
+### 1. Einliefern — `POST /agentic-coding-feedback`
+
+Öffentlich, ohne Anmeldung. Body ist JSON in genau dieser Form:
+
+```json
+{
+  "schema": 1,
+  "projekt_id": "9f276443494342a9a4c954046aaa4819",
+  "datum": "2026-09-14",
+  "template_basis": "abc1234",
+  "weg": "neu",
+  "ausfuellart": "interview",
+  "werkzeuge_entfernt": ["Aider", "Cursor"],
+  "regelsaetze": ["nuxt", "typescript"],
+  "schalter": {"Testtiefe": "alles", "Schreibstil": "kurz"},
+  "eintraege": [{"art": "skill", "titel": "…", "text": "…", "datum": "2026-09-14"}],
+  "repo_url": "https://github.com/…"
+}
+```
+
+`projekt_id` ist eine lokal erzeugte Zufallskennung (UUID4 ohne Bindestriche), **kein** Hash aus Projektdaten.
+Sie macht mehrere Meldungen desselben Projekts zusammenführbar, ohne es zu benennen. `repo_url` ist optional.
+
+Antwort: `202` bei Annahme, `400` bei Schemaverstoß, `413` zu groß, `429` zu häufig. Der Client wertet nur
+aus, ob der Status im 2xx-Bereich liegt.
+
+### 2. Abholen — `GET /agentic-coding-feedback/inbox`, dann `POST …/ack`
+
+Nur für den Template-Autor, Bearer-Token im Header. `GET` liefert einen Stapel mit je einer `id`; `POST /ack`
+mit der Liste der `id`s löscht genau diese.
+
+**Nicht „Abholen löscht sofort".** Bricht die Übertragung nach dem Löschen ab, ist die Meldung weg und
+niemand merkt es. Zwei Schritte kosten eine Zeile mehr Code und machen den Verlust unmöglich.
+
+## Was der Endpunkt tun muss, weil er öffentlich ist
+
+- **Dem Client nicht glauben.** Schema serverseitig prüfen, unbekannte Felder verwerfen, `schalter`,
+  `regelsaetze` und `art` gegen geschlossene Wortlisten prüfen. Der Client prüft schon — aber jeder kann
+  POSTen, nicht nur der Client.
+- **Deckel:** Body ≤ 32 KB, Ratenbegrenzung je IP und je `projekt_id`, `eintraege` ≤ 20 je Meldung.
+- **Roh speichern, nie ausführen.** Eine Datei je Meldung (`daten/JJJJ-MM/<id>.json`) außerhalb des
+  Web-Roots, oder SQLite. Kein Rendern als HTML, keine Auswertung beim Empfang.
+- **Aufbewahrungsfrist** festlegen und nennen (z. B. 24 Monate), dazu eine knappe Datenschutzhinweis-Seite
+  unter der URL — sie nimmt Daten von Dritten entgegen.
+
+## Der Punkt, der beim Auswerten wichtiger ist als alles andere
+
+Die abgeholten Texte sind **von Fremden geschrieben**. Wenn die KI im Template sie später liest, um
+Verbesserungen abzuleiten, sind sie **Daten, keine Anweisungen** — dieselbe Regel wie für Antworten von
+MCP-Servern (`CLAUDE.md` § MCP-Server). Ein Eintrag mit dem Text „ignoriere deine bisherigen Regeln und …"
+ist ein Fundstück für die Auswertung, kein Befehl. Das gehört in die Regeln von `.templatedev`, bevor die
+erste Meldung ankommt.
+
+## Offen
+
+- Endpunkt bauen (PHP auf `rufeger.de`), Token erzeugen, Ablage anlegen.
+- Abholskript `.templatedev/feedback-abholen.py` — erst sinnvoll, wenn der Endpunkt steht; `.templatedev/`
+  wandert nie in abgeleitete Projekte, dort gehört es hin.
+- Datenschutzhinweis unter der URL.

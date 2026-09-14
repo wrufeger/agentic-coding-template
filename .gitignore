@@ -31,6 +31,9 @@ ai.log.*
 # Logs allgemein
 *.log
 
+# Ausgang der freiwilligen Rueckmeldung (.claude/scripts/feedback.py) - lokal, wird nie mitcommittet
+.claude/feedback-outbox.json
+
 # Gerenderte Praesentationen (Skill /slides) - die Quelle ist das Markdown unter docs/praesentation/
 build/*.html
 build/*.pdf

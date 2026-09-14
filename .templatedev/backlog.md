@@ -95,12 +95,16 @@ sie werden in Journal und Commits zitiert.
    beiden Dateien Platzhalter absichtlich als Beispiel?), dann die andere angleichen — nicht blind eine Liste
    erweitern. Gefunden beim Einbau der Statuszeilen-Ersetzung.
 
-29. -> offen: **Rückmeldung abgeleiteter Projekte** (Priorität offen, angelegt 2026-09-14): Projekte, die aus
+29. -> in Arbeit: **Rückmeldung abgeleiteter Projekte** (Priorität offen, angelegt 2026-09-14): Projekte, die aus
    dem Template entstehen, sollen sich freiwillig als Testkandidat melden (Datum, öffentliche Repo-URL, Weg
    neu/nachgerüstet, Ausfüllart leer/Interview/Config), damit `.templatedev` ihre Weiterentwicklung auswerten
    kann. Konzept mit vier Optionen und Aufwand: `konzept-feedback.md`. **Erst entscheiden** (`Q1`–`Q3`),
    dann bauen — es geht um fremde Daten, und eine Gegenstelle gibt es heute nicht.
-   Der Schalter `Feedback` in `AI-CONFIG.md` ist deshalb **noch nicht angelegt**.
+   **Stand 2026-09-14:** `Q1`–`Q3` beantwortet (eigener Endpunkt, kein `AI-CONFIG.md`-Schlüssel, Frage
+   einmalig bei `/finalize`). **Client-Seite gebaut** (`.claude/scripts/feedback.py`), Schnittstellenvertrag
+   im Konzept. **Offen:** der Endpunkt auf `rufeger.de` (PHP, öffentliches `POST`, authentifiziertes
+   `GET`+`ack`), ein Token, die Ablage, ein Datenschutzhinweis unter der URL — und danach das Abholskript
+   `.templatedev/feedback-abholen.py`.
 
 ## Erledigt
 
