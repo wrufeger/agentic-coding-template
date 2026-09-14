@@ -316,9 +316,17 @@ zum Leeren vor einer Demo `python .claude/scripts/ai-log.py --reset` (legt die a
 
 Ein Projekt aus diesem Template kann zurückmelden, was sich an der **Arbeitsweise** bewährt oder gefehlt hat —
 damit Standardregeln, Skripte, Skills und die Mensch/KI-Kommunikation im Template besser werden. Das ist
-**freiwillig, standardmäßig aus** und wird genau einmal angeboten (Checkliste „Einrichtung abschließen").
-Es gibt dafür bewusst **keinen Schlüssel in `AI-CONFIG.md`**: Der Schalter wirkt einmalig, alle Schlüssel
-dort wirken laufend.
+**freiwillig und standardmäßig aus**. Angeboten wird es einmal beim Abschluss der Einrichtung; gesteuert
+wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
+
+| Schlüssel | Werte | Bedeutung |
+| :--- | :--- | :--- |
+| `Feedback` | `aus` (Default) · `bestaetigen` · `automatisch` · `manuell` | ob und wie gesendet wird |
+| `Feedback-Takt` | `manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Default) · `automatisch` | Obergrenze, wie oft |
+
+`bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
+Rückfrage, `manuell` nur auf Aufruf von `/feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
+gibt es nichts zu melden, wird nichts gesendet.
 
 So funktioniert es, wenn {{AUFTRAGGEBER}} zustimmt:
 
@@ -329,10 +337,15 @@ So funktioniert es, wenn {{AUFTRAGGEBER}} zustimmt:
   Wortlisten (Schalterstellungen, Werkzeug- und Regelsatz-Kennungen, Katalog-Kennungen der MCP-Server). Die
   Dateien selbst enthalten Servernamen, Datenbanknamen, Kennzahlen und Zitate — das ist **nicht** anonym und
   verlässt das Projekt nie.
+- **Nützliche Links werden mitgeteilt:** Was in `docs/ai/resources.md` unter „Eigene Quellen dieses
+  Projekts" steht, geht als Adresse plus einem Satz mit — der Abschnitt **„Private Links"** ganz unten
+  dagegen **nie**. Interne Adressen lehnt die Prüfung zusätzlich ab (localhost, private IP-Bereiche,
+  `*.intern`, `*.local`, Zugangsdaten in der URL).
 - **Maßstab für jeden Eintrag:** Hilft das jemandem, der dieses Projekt nie sehen wird? Also das **Muster**,
   nicht der Fall — kein Projektname, keine Pfade, kein Code, keine Zahlen aus dem Projekt.
-- **Der Assistent sendet autonom**, ohne Rückfrage und ohne die Nutzlast ins Gespräch zu schreiben: einmal
-  nach dem Abschluss der Einrichtung, danach höchstens **einmal je Woche**.
+- **Wie autonom gesendet wird, steht in `AI-CONFIG.md`** (siehe Tabelle oben). Bei `automatisch` schreibt der
+  Assistent die Nutzlast nicht ins Gespräch — kein anderes Programm zeigt an, was es sendet; der Nachweis ist
+  das Protokoll, nicht eine Zeile im Terminal, die niemand liest.
 - **Jede Sendung wird protokolliert** — die vollständige Nutzlast liegt versioniert unter
   `docs/ai/template-feedback/`. Das ist der Nachweis: Nichts geschieht unsichtbar, es fällt im Diff auf und
   ist jederzeit nachlesbar, auch Monate später.

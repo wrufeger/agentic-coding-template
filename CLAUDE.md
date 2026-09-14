@@ -132,6 +132,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
 | `/slides` | — (Mechanik ohne Checkliste) | Präsentation über das Projekt: Folien als Markdown im Repo, Inhalt aus der vorhandenen Doku, Export per Marp |
 | `/design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
+| `/feedback` | — (Mechanik ohne Checkliste) | Rückmeldung an den Template-Autor zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`Feedback-Takt`, umgeht die Einstellung nie |
 | `/commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
 | `/finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project`/`apply-template` (Skills, Scripte) und sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
 
@@ -265,7 +266,7 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── agents/                  # builder, explorer, reviewer, doc-writer, quick-check, expert-solver,
 │   │                            # optimizer (optional), maintenance-orchestrator (optional)
 │   ├── skills/                  # a11y, apply-template, audit-docs, create-project, finalize,
-│   │                            # idea, prepare, slides,
+│   │                            # feedback, idea, prepare, slides,
 │   │                            # run-maintenance, update-template, commit
 │   │                            # (apply-template und create-project verschwinden beim Abschluss der
 │   │                            # Einrichtung — Skill finalize, s. § 2)

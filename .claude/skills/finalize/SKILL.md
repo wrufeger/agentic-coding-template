@@ -34,7 +34,9 @@ Der Wortlaut muss diese sechs Punkte nennen, sonst ist es keine Einwilligung:
 > Projektbezug, ohne Namen, ohne Daten. Dazu ein paar Angaben aus festen Listen: Datum, Template-Stand,
 > wie das Projekt entstand, welche Werkzeuge und Regelsätze du gewählt hast.
 > **Wohin:** `https://rufeger.de/agentic-coding-feedback`
-> **Wie oft:** einmal jetzt, danach höchstens einmal pro Woche — automatisch, ohne dich zu fragen.
+> **Wie oft und wie:** Das bestimmst du — ohne Rückfrage, mit Bestätigung vor jedem Versand, oder
+> nur auf Zuruf. Ebenso den Takt (Vorschlag: höchstens einmal pro Woche). Beides steht danach in
+> `AI-CONFIG.md` und lässt sich jederzeit ändern.
 > **Was du siehst:** Jede Sendung liegt vollständig unter `docs/ai/template-feedback/` und ist damit
 > versioniert — du kannst jederzeit nachlesen, was hinausging, und es fällt im Diff auf.
 > **Was es kostet:** Das Zusammenfassen und Filtern verbraucht ein paar Token zusätzlich.
@@ -42,13 +44,21 @@ Der Wortlaut muss diese sechs Punkte nennen, sonst ist es keine Einwilligung:
 > öffentlichen Template persönlich durchgesehen — falls doch einmal etwas durchrutscht.
 > a) ja  b) nein  c) später entscheiden
 
-Bei **a)**: `python .claude/scripts/feedback.py --enable --weg <neu|nachgeruestet> --ausfuellart
-<leer|interview|config>`, optional `--repo-url <https://…>` bei einem **öffentlichen** Repo. Danach die
-Erstmeldung zusammenstellen (`--add`, siehe unten) und `--send` aufrufen.
-Bei **b)** oder **c)**: nichts tun. `--enable` bleibt jederzeit nachholbar, `--disable` widerruft.
+Bei **a)** zusätzlich fragen, **wie** gesendet werden soll — die Antwort landet in `AI-CONFIG.md` und gilt
+ab dann laufend: „ohne Rückfrage (`automatisch`), mit Anzeige und Bestätigung vor jedem Versand
+(`bestaetigen`), oder nur wenn du `/feedback` aufrufst (`manuell`)?" Dazu den Takt, falls nicht
+`manuell`: `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Vorschlag) · `automatisch`.
+
+Dann: `python .claude/scripts/feedback.py --enable --modus <automatisch|bestaetigen|manuell>
+--weg <neu|nachgeruestet> --ausfuellart <leer|interview|config>`, optional `--repo-url <https://…>` bei
+einem **öffentlichen** Repo; den Takt in `AI-CONFIG.md` § `Feedback-Takt` setzen. Danach die Erstmeldung
+zusammenstellen (`--add`, siehe unten) und `--send --force` aufrufen.
+
+Bei **b)** oder **c)**: nichts tun, `Feedback` bleibt auf `aus`. Einschalten ist jederzeit nachholbar
+(`--enable` oder die Zeile in `AI-CONFIG.md`), `--disable` widerruft.
 
 **Was in eine Meldung gehört.** Der Assistent liest die Regel- und Arbeitsdateien und macht daraus Einträge
-(`feedback.py --add --art <regel|script|skill|ablauf|doku|fehler|mcp> --titel … --text …`). Maßstab ist
+(`feedback.py --add --art <regel|script|skill|ablauf|doku|fehler|mcp|link> --titel … --text …`). Maßstab ist
 allein: **Hilft das einem Fremden, der dieses Projekt nie sehen wird?** Also „eine Regel gegen X fehlte" statt
 „wir haben X gebaut"; das Muster, nicht der Fall. Kein Projektname, keine Pfade, kein Code, keine Zahlen aus
 dem Projekt. Der Filter im Script lehnt Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ohnehin ab — er ist

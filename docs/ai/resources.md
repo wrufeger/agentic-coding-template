@@ -98,3 +98,17 @@ Was daraus für dieses Projekt folgt, steht in `AGENTS.md` § „Umgang mit Sich
 ## Eigene Quellen dieses Projekts
 
 *(hier eigene Fundstellen ergänzen — bleibt bei `/update-template` unberührt)*
+
+> **Links aus diesem Abschnitt werden mitgeteilt**, wenn die freiwillige Rückmeldung eingeschaltet ist
+> (`AI-CONFIG.md` § `Feedback`, standardmäßig **aus**). Gesendet werden nur Adresse, Titel und ein Satz,
+> warum der Link nützlich ist — nichts sonst. Interne Adressen lehnt die Prüfung ohnehin ab: localhost,
+> private IP-Bereiche, `*.intern`, `*.local` und alles mit Zugangsdaten in der URL.
+> **Was hier nicht landen soll, gehört nach „Private Links" ganz unten.**
+
+## Private Links
+
+*(bleibt immer im Projekt — von hier wird **nie** etwas gesendet, auch bei eingeschalteter Rückmeldung nicht)*
+
+Für alles, was nur hier nützlich ist oder niemanden etwas angeht: internes Wiki, Ticketsystem, Zugänge,
+Kundendokumentation, Notizen. Der Assistent liest diesen Abschnitt wie jeden anderen — er nimmt daraus nur
+nichts in eine Rückmeldung auf.

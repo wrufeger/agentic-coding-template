@@ -80,9 +80,17 @@ ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 OUTBOX_REL = ".claude/feedback-outbox.json"
 # Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist.
 LOG_DIR_REL = "docs/ai/template-feedback"
-SPERRE_TAGE = 7
+CONFIG_REL = "AI-CONFIG.md"
+# Mindestabstand je Takt in Stunden (None = kein automatischer Versand). Gleiche Tabelle wie in setup-lib.py;
+# hier noch einmal, weil feedback.py bewusst ohne Abhaengigkeit zu setup-lib.py auskommt - es laeuft auch,
+# wenn die Einrichtungswerkzeuge laengst entfernt sind.
+TAKT_STUNDEN = {
+    "manuell": None, "sofort": 0, "stuendlich": 1, "taeglich": 24, "woechentlich": 168, "automatisch": 1,
+}
+MODUS_ALIAS = {"nein": "aus", "ja": "automatisch", "bestätigen": "bestaetigen", "fragen": "bestaetigen"}
+TAKT_ALIAS = {"stündlich": "stuendlich", "täglich": "taeglich", "wöchentlich": "woechentlich"}
 TEMPLATE_JSON_REL = ".claude/template.json"
-ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler")
+ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler", "mcp", "link")
 TITEL_MAX = 120
 TEXT_MAX = 1200
 TIMEOUT_S = 15
@@ -100,10 +108,35 @@ _SECRET_WOERTER = re.compile(
     r"(?i)\b(pass(wort|word)|secret|token|api[_-]?key|credential|zugangsdaten|private[_-]?key)\b")
 _MAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
 _IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-_WIN_PFAD = re.compile(r"[A-Za-z]:[\\/]")
+_WIN_PFAD = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]")
 _UNIX_PFAD = re.compile(r"(?<![\w.])/(?:home|Users|var|etc|opt|srv)/")
 _URL = re.compile(r"https?://[^\s)]+")
 _LANGE_HEX = re.compile(r"\b[0-9a-f]{32,}\b")
+
+# Hosts, die nie in einem geteilten Link stehen duerfen: Ein Verweis auf ein Intranet oder eine lokale
+# Instanz ist fuer Fremde wertlos und verraet zugleich, wie es dort drinnen heisst.
+_HOST_TABU = re.compile(
+    r"^(?:localhost$|127\.|10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|\[?::1)"
+    r"|\.(?:local|internal|intern|lan|home|test|invalid|example)$", re.I)
+
+
+def _link_pruefen(url: str):
+    """Gibt eine Liste von Beanstandungen zurueck - leer heisst: der Link darf mitgesendet werden."""
+    treffer = []
+    if not re.match(r"(?i)^https?://", url or ""):
+        return ["keine http(s)-Adresse"]
+    rest = re.sub(r"(?i)^https?://", "", url)
+    host = rest.split("/", 1)[0].split("?", 1)[0]
+    if "@" in host:
+        treffer.append("Zugangsdaten in der Adresse")
+        host = host.split("@", 1)[1]
+    host = host.split(":", 1)[0]
+    if _HOST_TABU.search(host):
+        treffer.append(f"nicht oeffentlich erreichbar ({host})")
+    if len(url) > 300:
+        treffer.append("Adresse laenger als 300 Zeichen")
+    return treffer
+
 
 
 def _verdaechtig(text: str, endpoint: str):
@@ -123,6 +156,53 @@ def _verdaechtig(text: str, endpoint: str):
         if not url.startswith(endpoint) and "github.com" not in url:
             treffer.append(f"fremde URL ({url[:40]})")
     return treffer
+
+
+def _config_wert(root: Path, schluessel: str, default: str, alias: dict) -> str:
+    """Liest die Spalte "Wert" einer Zeile aus AI-CONFIG.md. AI-CONFIG.md ist die Steuerung - nicht
+    template.json, dort stehen nur Projekt-ID und Zeitstempel."""
+    fp = root / CONFIG_REL
+    if not fp.exists():
+        return default
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return default
+    m = re.search(r"(?m)^\|\s*" + re.escape(schluessel) + r"\s*\|([^|]*)\|", text)
+    if not m:
+        return default
+    wert = m.group(1).strip().lower()
+    if not wert:
+        return default
+    return alias.get(wert, wert)
+
+
+def _config_setzen(root: Path, schluessel: str, wert: str) -> bool:
+    """Schreibt die Spalte "Wert" genau einer Zeile in AI-CONFIG.md. Nur diese Zelle, nichts sonst."""
+    fp = root / CONFIG_REL
+    if not fp.exists():
+        return False
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+    muster = re.compile(r"(?m)^(\|\s*" + re.escape(schluessel) + r"\s*\|)([^|]*)(\|)")
+    if not muster.search(text):
+        return False
+    neu = muster.sub(lambda m: m.group(1) + " " + wert + " " + m.group(3), text, count=1)
+    try:
+        fp.write_text(neu, encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
+def _modus(root: Path) -> str:
+    return _config_wert(root, "Feedback", "aus", MODUS_ALIAS)
+
+
+def _takt(root: Path) -> str:
+    return _config_wert(root, "Feedback-Takt", "woechentlich", TAKT_ALIAS)
 
 
 def _root() -> Path:
@@ -240,6 +320,8 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
                 fehler.append(f"{pfad}: {grund}")
         elif isinstance(wert, dict):
             for k, v in wert.items():
+                if k == "url" and wert.get("art") == "link":
+                    continue  # bewusst gesetzt und eigens geprueft, siehe _link_pruefen
                 lauf(v, f"{pfad}.{k}")
         elif isinstance(wert, list):
             for i, v in enumerate(wert):
@@ -264,23 +346,31 @@ def _zeige(nutzlast: dict, endpoint: str) -> None:
 def cmd_status(root: Path) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
-    zustand = "eingeschaltet" if fb.get("consent") is True else "aus"
-    print(f"Feedback:  {zustand}")
+    modus, takt = _modus(root), _takt(root)
+    print(f"Feedback:  {modus}   (Takt: {takt}, aus {CONFIG_REL})")
     print(f"Ziel:      {_endpoint()}")
     print(f"Projekt-ID: {fb.get('projekt_id') or '- (entsteht bei --enable)'}")
     print(f"Ausgang:   {len(_outbox(root))} Eintraege ({OUTBOX_REL}, gitignored)")
     print(f"Zuletzt gesendet: {fb.get('zuletzt_gesendet') or 'nie'}")
     if fb.get("repo_url"):
         print(f"Repo-URL:  {fb['repo_url']}")
-    if fb.get("consent") is not True:
+    if modus == "aus":
         print("")
-        print("Nichts wird gesendet. Einschalten: feedback.py --enable")
+        print("Nichts wird gesendet. Einschalten: feedback.py --enable [--modus bestaetigen|automatisch|manuell]")
     return 0
 
 
-def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None) -> int:
+def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus=None) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
+    ziel = (modus or "automatisch") if an else "aus"
+    if ziel not in ("aus", "bestaetigen", "automatisch", "manuell"):
+        print("Fehler: --modus muss aus, bestaetigen, automatisch oder manuell sein.", file=sys.stderr)
+        return 2
+    if not _config_setzen(root, "Feedback", ziel):
+        print(f"Fehler: Zeile 'Feedback' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
+              file=sys.stderr)
+        return 2
     fb["consent"] = bool(an)
     fb["datum"] = time.strftime("%Y-%m-%d")
     # Eine zufaellige, hier erzeugte Kennung - kein Name, kein Pfad, kein Hash aus Projektdaten. Sie macht
@@ -300,13 +390,13 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None) -> in
         fb["repo_url"] = repo_url
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
-    print("Feedback " + ("eingeschaltet" if an else "ausgeschaltet") + f" (vermerkt in {TEMPLATE_JSON_REL}).")
+    print(f"{CONFIG_REL}: Feedback = {ziel}   (Takt: {_takt(root)})")
     if an:
-        print(f"Ziel: {_endpoint()} - gesendet wird erst auf ausdruecklichen Aufruf von --send.")
+        print(f"Ziel: {_endpoint()} - Protokoll jeder Sendung unter {LOG_DIR_REL}/")
     return 0
 
 
-def cmd_add(root: Path, art: str, titel: str, text: str) -> int:
+def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
     if art not in ARTEN:
         print(f"Fehler: --art muss eines von {', '.join(ARTEN)} sein.", file=sys.stderr)
         return 2
@@ -318,6 +408,19 @@ def cmd_add(root: Path, art: str, titel: str, text: str) -> int:
     if len(titel) > TITEL_MAX or len(text) > TEXT_MAX:
         print(f"Fehler: Titel max. {TITEL_MAX}, Text max. {TEXT_MAX} Zeichen.", file=sys.stderr)
         return 2
+    if art == "link":
+        if not url:
+            print("Fehler: --art link braucht --url.", file=sys.stderr)
+            return 2
+        schlecht = _link_pruefen(url)
+        if schlecht:
+            print("Nicht uebernommen - die Adresse ist ungeeignet:", file=sys.stderr)
+            for grund in schlecht:
+                print(f"  - {grund}", file=sys.stderr)
+            return 1
+    elif url:
+        print("Fehler: --url gibt es nur mit --art link.", file=sys.stderr)
+        return 2
     beanstandet = _verdaechtig(titel, _endpoint()) + _verdaechtig(text, _endpoint())
     if beanstandet:
         print("Nicht uebernommen - der Text enthaelt:", file=sys.stderr)
@@ -327,7 +430,10 @@ def cmd_add(root: Path, art: str, titel: str, text: str) -> int:
               file=sys.stderr)
         return 1
     eintraege = _outbox(root)
-    eintraege.append({"art": art, "titel": titel, "text": text, "datum": time.strftime("%Y-%m-%d")})
+    eintrag = {"art": art, "titel": titel, "text": text, "datum": time.strftime("%Y-%m-%d")}
+    if url:
+        eintrag["url"] = url
+    eintraege.append(eintrag)
     _outbox_schreiben(root, eintraege)
     print(f"Uebernommen ({len(eintraege)} im Ausgang). Ansehen: feedback.py --plan")
     return 0
@@ -345,7 +451,7 @@ def cmd_plan(root: Path) -> int:
         for f in fehler:
             print(f"  - {f}")
         return 1
-    if _feedback_block(tj).get("consent") is not True:
+    if _modus(root) == "aus":
         print("Feedback ist aus - es wuerde nichts gesendet (einschalten: --enable).")
         return 0
     print("Unbedenklich. Senden: feedback.py --send")
@@ -373,16 +479,24 @@ def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
     return fp
 
 
-def cmd_send(root: Path, force: bool) -> int:
+def cmd_send(root: Path, force: bool, ja: bool) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
-    if fb.get("consent") is not True:
-        print("Abbruch: keine Einwilligung hinterlegt (feedback.py --enable).", file=sys.stderr)
+    modus, takt = _modus(root), _takt(root)
+    if modus == "aus":
+        print(f"Abbruch: Feedback ist aus ({CONFIG_REL}).", file=sys.stderr)
         return 2
-    tage = _tage_seit(fb.get("zuletzt_gesendet"))
-    if tage < SPERRE_TAGE and not force:
-        print(f"Nichts gesendet: letzte Sendung vor {tage:.1f} Tagen, hoechstens eine je {SPERRE_TAGE} Tage. "
-              "Der Ausgang bleibt erhalten und geht beim naechsten Mal mit (--force hebt die Sperre auf).")
+    if modus == "manuell" and not force:
+        print("Nichts gesendet: Feedback steht auf 'manuell' - Versand nur ueber /feedback (--force).")
+        return 0
+    stunden_min = TAKT_STUNDEN.get(takt)
+    if stunden_min is None and not force:
+        print("Nichts gesendet: Takt steht auf 'manuell' - Versand nur ueber /feedback (--force).")
+        return 0
+    stunden = _tage_seit(fb.get("zuletzt_gesendet")) * 24.0
+    if stunden_min is not None and stunden < stunden_min and not force:
+        print(f"Nichts gesendet: letzte Sendung vor {stunden:.1f} h, Takt '{takt}' erlaubt fruehestens nach "
+              f"{stunden_min} h. Der Ausgang bleibt erhalten und geht beim naechsten Mal mit.")
         return 0
     nutzlast = _nutzlast(root, tj)
     endpoint = _endpoint()
@@ -392,6 +506,11 @@ def cmd_send(root: Path, force: bool) -> int:
         for f in fehler:
             print(f"  - {f}", file=sys.stderr)
         return 1
+    if modus == "bestaetigen" and not ja:
+        _zeige(nutzlast, endpoint)
+        print("")
+        print("Modus 'bestaetigen': nichts gesendet. Zum Senden dieselbe Zeile mit --yes wiederholen.")
+        return 0
     daten = json.dumps(nutzlast, ensure_ascii=False).encode("utf-8")
     anfrage = urllib.request.Request(
         endpoint, data=daten, method="POST",
@@ -440,13 +559,19 @@ def _run(argv) -> int:
     parser.add_argument("--art", default=None, help=f"mit --add: {', '.join(ARTEN)}")
     parser.add_argument("--titel", default=None, help="mit --add: eine Zeile")
     parser.add_argument("--text", default=None, help="mit --add: zwei bis sechs Saetze")
+    parser.add_argument("--url", default=None,
+                        help="mit --add --art link: die oeffentliche Adresse aus docs/ai/resources.md")
     parser.add_argument("--repo-url", default=None, help="mit --enable: oeffentliche Repo-URL (optional)")
     parser.add_argument("--weg", default=None, choices=["neu", "nachgeruestet"],
                         help="mit --enable: wie das Projekt entstanden ist")
     parser.add_argument("--ausfuellart", default=None, choices=["leer", "interview", "config"],
                         help="mit --enable: wie AI-CONFIG.md befuellt wurde")
     parser.add_argument("--force", action="store_true",
-                        help="mit --send: die Wochensperre uebergehen (manueller Versand)")
+                        help="mit --send: Takt- und Modus-Sperre uebergehen (das tut /feedback)")
+    parser.add_argument("--yes", action="store_true",
+                        help="mit --send und Modus 'bestaetigen': nach Ansicht tatsaechlich senden")
+    parser.add_argument("--modus", default=None,
+                        help="mit --enable: aus, bestaetigen, automatisch (Default), manuell")
     args = parser.parse_args(argv)
 
     root = _root()
@@ -459,13 +584,13 @@ def _run(argv) -> int:
     if args.status:
         return cmd_status(root)
     if args.enable:
-        return cmd_enable(root, args.repo_url, True, args.weg, args.ausfuellart)
+        return cmd_enable(root, args.repo_url, True, args.weg, args.ausfuellart, args.modus)
     if args.disable:
         return cmd_enable(root, None, False)
     if args.add:
-        return cmd_add(root, args.art, args.titel, args.text)
+        return cmd_add(root, args.art, args.titel, args.text, args.url)
     if args.send:
-        return cmd_send(root, args.force)
+        return cmd_send(root, args.force, args.yes)
     if args.clear:
         return cmd_clear(root)
     return cmd_plan(root)

@@ -121,6 +121,8 @@ KEY_MAP = {
     "Ideen-Ablauf": "ideen_ablauf",
     "Testtiefe": "testtiefe",
     "Schreibstil": "schreibstil",
+    "Feedback": "feedback",
+    "Feedback-Takt": "feedback_takt",
     "Logging": "logging",
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
@@ -262,6 +264,18 @@ TESTTIEFE_WERTE = {"alles", "e2e", "integration", "unit", "ohne"}
 TESTTIEFE_REIHE = ["alles", "e2e", "integration", "unit", "ohne"]
 SCHREIBSTIL_WERTE = {"kurz", "normal", "ausfuehrlich"}
 SCHREIBSTIL_ALIAS = {"ausführlich": "ausfuehrlich", "stichpunkte": "kurz", "stichpunktartig": "kurz"}
+
+# Freiwillige Rueckmeldung an den Template-Autor (AGENTS.md, .claude/scripts/feedback.py). Zwei Schalter:
+# WIE gesendet wird und WIE OFT. Default ist "aus" - ohne ausdrueckliche Entscheidung verlaesst nichts das
+# Projekt, auch nicht versehentlich durch eine uebersehene Zeile.
+FEEDBACK_WERTE = {"aus", "bestaetigen", "automatisch", "manuell"}
+FEEDBACK_ALIAS = {"nein": "aus", "ja": "automatisch", "bestätigen": "bestaetigen", "fragen": "bestaetigen"}
+FEEDBACK_TAKT_WERTE = {"manuell", "sofort", "stuendlich", "taeglich", "woechentlich", "automatisch"}
+FEEDBACK_TAKT_ALIAS = {"stündlich": "stuendlich", "täglich": "taeglich", "wöchentlich": "woechentlich"}
+# Mindestabstand je Takt in Stunden - im Script durchgesetzt, nicht nur dokumentiert.
+FEEDBACK_TAKT_STUNDEN = {
+    "manuell": None, "sofort": 0, "stuendlich": 1, "taeglich": 24, "woechentlich": 168, "automatisch": 1,
+}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
 # Ablageort der Wartungsberichte (.claude/maintenance/reports/YYYY-MM-DD.md) - "docs" legt zusaetzlich
@@ -576,6 +590,16 @@ def normalize_testtiefe(cfg: dict):
     return _normalize_einfach(cfg, "testtiefe", TESTTIEFE_WERTE, "alles")
 
 
+def normalize_feedback(cfg: dict):
+    """Wie die freiwillige Rueckmeldung gesendet wird. Default "aus"."""
+    return _normalize_einfach(cfg, "feedback", FEEDBACK_WERTE, "aus", FEEDBACK_ALIAS)
+
+
+def normalize_feedback_takt(cfg: dict):
+    """Wie oft gesendet wird. Default "woechentlich" - wirkt nur, wenn Feedback nicht "aus"/"manuell" ist."""
+    return _normalize_einfach(cfg, "feedback_takt", FEEDBACK_TAKT_WERTE, "woechentlich", FEEDBACK_TAKT_ALIAS)
+
+
 def normalize_schreibstil(cfg: dict):
     """Wie ausfuehrlich Fragen, Aufgaben und Antworten formuliert werden. Default "kurz"."""
     return _normalize_einfach(cfg, "schreibstil", SCHREIBSTIL_WERTE, "kurz", SCHREIBSTIL_ALIAS)
@@ -600,6 +624,22 @@ SCHREIBSTIL_TEXT = {
     "kurz": "kurz - auf den Punkt, stichpunktartig (Default)",
     "normal": "normal - ein Satz Begruendung, wo er traegt",
     "ausfuehrlich": "ausfuehrlich - Fragen, Texte und Aufgaben vollstaendig und nachvollziehbar begruendet",
+}
+
+FEEDBACK_TEXT = {
+    "aus": "aus - es wird nichts an den Template-Autor gesendet (Default)",
+    "bestaetigen": "bestaetigen - vor jedem Versand wird die Nutzlast gezeigt und gefragt",
+    "automatisch": "automatisch - der Assistent sendet ohne Rueckfrage, protokolliert in docs/ai/template-feedback/",
+    "manuell": "manuell - nur auf Aufruf von /feedback, sonst nie",
+}
+
+FEEDBACK_TAKT_TEXT = {
+    "manuell": "manuell - kein automatischer Versand",
+    "sofort": "sofort - nach jedem brauchbaren Vorschlag",
+    "stuendlich": "stuendlich - hoechstens einmal je Stunde",
+    "taeglich": "taeglich - hoechstens einmal am Tag",
+    "woechentlich": "woechentlich - hoechstens einmal je Woche (Default)",
+    "automatisch": "automatisch - der Assistent entscheidet, fruehestens eine Stunde nach der letzten Sendung",
 }
 
 COMMIT_VERHALTEN_TEXT = {
@@ -1364,7 +1404,8 @@ def build_applied_config(
     values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
     wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
     sprache: str = None, commit_verhalten: str = None, ideen_ablauf: str = None,
-    testtiefe: str = None, schreibstil: str = None,
+    testtiefe: str = None, schreibstil: str = None, feedback: str = None,
+    feedback_takt: str = None,
 ) -> dict:
     """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
     fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
@@ -1396,6 +1437,8 @@ def build_applied_config(
         "Ideen-Ablauf": ideen_ablauf,
         "Testtiefe": testtiefe,
         "Schreibstil": schreibstil,
+        "Feedback": feedback,
+        "Feedback-Takt": feedback_takt,
         "Logging": logging_val,
         "Logging-Tiefe": logging_tiefe,
         "Wartung": wartung_val,
@@ -1541,6 +1584,8 @@ def cmd_dry_run(root: Path) -> int:
     ideen_ablauf, ideen_ablauf_unbekannt = normalize_ideen_ablauf(cfg)
     testtiefe, testtiefe_unbekannt = normalize_testtiefe(cfg)
     schreibstil, schreibstil_unbekannt = normalize_schreibstil(cfg)
+    feedback, feedback_unbekannt = normalize_feedback(cfg)
+    feedback_takt, feedback_takt_unbekannt = normalize_feedback_takt(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -1623,6 +1668,8 @@ def cmd_dry_run(root: Path) -> int:
         (ideen_ablauf, ideen_ablauf_unbekannt, "Ideen-Ablauf", IDEEN_ABLAUF_TEXT, IDEEN_ABLAUF_WERTE),
         (testtiefe, testtiefe_unbekannt, "Testtiefe", TESTTIEFE_TEXT, TESTTIEFE_WERTE),
         (schreibstil, schreibstil_unbekannt, "Schreibstil", SCHREIBSTIL_TEXT, SCHREIBSTIL_WERTE),
+        (feedback, feedback_unbekannt, "Feedback", FEEDBACK_TEXT, FEEDBACK_WERTE),
+        (feedback_takt, feedback_takt_unbekannt, "Feedback-Takt", FEEDBACK_TAKT_TEXT, FEEDBACK_TAKT_WERTE),
     ):
         if _unbek:
             lines.append(f"{_label}: \"{_unbek}\" ist kein bekannter Wert - --apply bricht damit ab. "
@@ -1739,6 +1786,8 @@ def cmd_apply(root: Path) -> int:
     ideen_ablauf, ideen_ablauf_unbekannt = normalize_ideen_ablauf(cfg)
     testtiefe, testtiefe_unbekannt = normalize_testtiefe(cfg)
     schreibstil, schreibstil_unbekannt = normalize_schreibstil(cfg)
+    feedback, feedback_unbekannt = normalize_feedback(cfg)
+    feedback_takt, feedback_takt_unbekannt = normalize_feedback_takt(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -1764,6 +1813,8 @@ def cmd_apply(root: Path) -> int:
         (ideen_ablauf_unbekannt, "Ideen-Ablauf", IDEEN_ABLAUF_WERTE),
         (testtiefe_unbekannt, "Testtiefe", TESTTIEFE_WERTE),
         (schreibstil_unbekannt, "Schreibstil", SCHREIBSTIL_WERTE),
+        (feedback_unbekannt, "Feedback", FEEDBACK_WERTE),
+        (feedback_takt_unbekannt, "Feedback-Takt", FEEDBACK_TAKT_WERTE),
     ):
         if _unbek:
             print(f"Fehler: AI-CONFIG.md {_label}: unbekannter Wert \"{_unbek}\" - erlaubt sind "
@@ -1825,6 +1876,7 @@ def cmd_apply(root: Path) -> int:
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
         sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
         ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
+        feedback=feedback, feedback_takt=feedback_takt,
     )
     write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
@@ -1891,6 +1943,8 @@ def cmd_apply(root: Path) -> int:
     lines.append("Ideen-Ablauf: " + IDEEN_ABLAUF_TEXT[ideen_ablauf])
     lines.append("Testtiefe: " + TESTTIEFE_TEXT[testtiefe])
     lines.append("Schreibstil: " + SCHREIBSTIL_TEXT[schreibstil])
+    lines.append("Feedback: " + FEEDBACK_TEXT[feedback])
+    lines.append("Feedback-Takt: " + FEEDBACK_TAKT_TEXT[feedback_takt])
     lines.append(f"Wartung: {wartung_status}")
     lines.append(f"Wartungsberichte: {wartungsberichte_status}")
     if wartungsberichte == "docs":

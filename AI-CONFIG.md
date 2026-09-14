@@ -53,6 +53,8 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Ideen-Ablauf | automatisch | automatisch, konzept, direkt |  | Was mit einer Idee oder einem Änderungswunsch passiert, bevor gebaut wird. |
 | Schreibstil | kurz | kurz, normal, ausführlich |  | Wie ausführlich Fragen, Aufgaben, Journal und Antworten formuliert werden. |
+| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie gesendet wird. |
+| Feedback-Takt | woechentlich | manuell, sofort, stuendlich, taeglich, woechentlich, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
 | MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, ha-mcp, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
@@ -68,6 +70,15 @@ Zum Schreibstil: Er gilt für Fragen, Aufgaben, Journal und die Antworten im Cha
 Code-Kommentare (die regelt `docs/project/coding_rules.md`). `kurz` heißt stichpunktartig und auf den
 Punkt, `normal` ergänzt einen Satz Begründung dort, wo er trägt, `ausführlich` begründet vollständig und
 nachvollziehbar — sinnvoll, wenn jemand mitliest, der das Projekt nicht kennt.
+Zum Feedback: `aus` ist der Standard — ohne ausdrückliche Entscheidung verlässt nichts das Projekt.
+`bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt; `automatisch` sendet ohne
+Rückfrage und protokolliert jede Sendung versioniert unter `docs/ai/template-feedback/`; `manuell`
+sendet nur auf Aufruf von `/feedback`. Was gesendet wird und was nicht, steht in `AGENTS.md`
+§ „Freiwillige Rückmeldung an den Template-Autor“ — nie Dateien, nie Projektbezug, nie Namen oder
+Zahlen aus dem Projekt. Das Zusammenfassen und Filtern kostet ein paar Token zusätzlich.
+Zum Takt: Der Wert ist eine **Obergrenze**, keine Verpflichtung — gibt es nichts zu melden, wird auch
+nichts gesendet. `sofort` meldet nach jedem brauchbaren Vorschlag, `automatisch` überlässt dem
+Assistenten die Wahl des Zeitpunkts (frühestens eine Stunde nach der letzten Sendung).
 Zur Code-Optimierung: `ein` ist eine Runde, `intensiv` bis zu zwei und nimmt Geschwindigkeit und Speicher
 dazu, `aus` entfernt den Agenten `optimizer`. Der ältere Wert `streng` gilt weiter und bedeutet `intensiv`.
 Zu den MCP-Servern: Die Kennungen stehen mit Anbieter, Zweck, Reifegrad und benötigten Umgebungsvariablen

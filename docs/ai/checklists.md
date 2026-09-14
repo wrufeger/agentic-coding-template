@@ -460,8 +460,9 @@ noch offen ist.
    Projekt dem Template-Autor zurückmelden soll, was sich an der **Arbeitsweise** bewährt oder gefehlt hat.
    Die Frage nennt sechs Dinge, sonst ist es keine Einwilligung: **wie** es läuft (der Assistent liest die
    Regel- und Arbeitsdateien und fasst zusammen — Dateien selbst werden nie gesendet), **wohin** (Adresse im
-   Klartext), **wie oft** (einmal jetzt, danach höchstens wöchentlich, autonom ohne Rückfrage), **was
-   {{AUFTRAGGEBER}} sieht** (jede Sendung liegt versioniert unter `docs/ai/template-feedback/`), **was es
+   Klartext), **wie und wie oft** ({{AUFTRAGGEBER}} wählt: ohne Rückfrage, mit Bestätigung vor jedem
+   Versand, oder nur auf Zuruf — dazu den Takt; beides steht danach in `AI-CONFIG.md` § `Feedback` und
+   `Feedback-Takt`), **was {{AUFTRAGGEBER}} sieht** (jede Sendung liegt versioniert unter `docs/ai/template-feedback/`), **was es
    kostet** (Zusammenfassen und Filtern brauchen ein paar Token zusätzlich) und **wie mit den Daten umgegangen
    wird** (vertraulich, vor jeder Verwendung im öffentlichen Template persönlich durchgesehen). Ohne Antwort
    passiert nichts — es gibt keinen Standardwert und keinen Schlüssel in `AI-CONFIG.md`. Mechanik bei Claude

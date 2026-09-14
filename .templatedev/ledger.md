@@ -12,6 +12,34 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Feedback steuerbar über `AI-CONFIG.md`, Links teilbar, private Links geschützt
+
+Dritte Runde zum Feedback. Wolfgang wollte es doch konfigurierbar — **das dreht seine eigene Antwort auf
+`Q3` um** (dort „kein Schlüssel in `AI-CONFIG.md`"). Vermerkt, weil sonst in einem halben Jahr niemand
+versteht, warum die Datei etwas anderes sagt als die Frage.
+
+- **Zwei Schlüssel:** `Feedback` (`aus` (Default) · `bestaetigen` · `automatisch` · `manuell`) und
+  `Feedback-Takt` (`manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Default) ·
+  `automatisch`). Beides wird **im Script durchgesetzt**, nicht nur dokumentiert: Bei `bestaetigen` sendet
+  `--send` erst mit `--yes` und zeigt vorher die Nutzlast; bei `manuell` nur mit `--force`, was `/feedback`
+  tut; der Takt ist ein Mindestabstand in Stunden.
+- **`AI-CONFIG.md` ist jetzt die einzige Steuerquelle**, `template.json` hält nur noch Projekt-ID und
+  Zeitstempel. `--enable`/`--disable` schreiben die Tabellenzeile direkt. Zwei Wahrheiten über denselben
+  Schalter wären sonst genau die Art Drift, die wir heute früh an drei anderen Stellen aufgeräumt haben.
+- **Neuer Skill `/feedback`** (22 insgesamt) — der manuelle Weg, der Takt und `manuell` übergeht, den Modus
+  `bestaetigen` aber respektiert. Er umgeht die Einstellung nie: Steht `Feedback` auf `aus`, sagt er das und
+  schaltet nichts.
+- **Links aus `resources.md` werden mitgeteilt** — eigenes Feld `--art link --url …`, weil der allgemeine
+  Filter jede fremde URL im Fließtext ablehnt. Die Adresse wird eigens geprüft: nur `http(s)`, keine
+  Zugangsdaten in der URL, kein localhost, keine privaten IP-Bereiche, kein `*.intern`/`*.local`. Sechs
+  Fälle durchgetestet, alle korrekt.
+- **Wolfgangs beste Idee dieser Runde:** ein Abschnitt **„Private Links"** am Ende von `resources.md`. Von
+  dort wird nie etwas gesendet, ausnahmslos. Das ist die einfachste denkbare Abgrenzung — kein Schalter, kein
+  Attribut, eine Überschrift. Wer etwas nicht teilen will, schiebt es nach unten.
+- **Nebenbefund:** Der Filter hielt jedes `https://` für einen Windows-Pfad (`s:/` passte auf
+  `[A-Za-z]:[\/]`). Behoben mit einem Lookbehind. Die Meldung war falsch, die Ablehnung zufällig richtig —
+  genau die Sorte Fehler, die man nur beim Durchtesten sieht.
+
 ## 2026-09-14 — Feedback: Regeln nachgeschärft, Client fertig und am Testempfänger belegt
 
 Wolfgang hat die Regeln in zwei Runden korrigiert. Beide Korrekturen gingen gegen meinen ersten Entwurf, und
