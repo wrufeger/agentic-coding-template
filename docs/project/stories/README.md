@@ -37,7 +37,8 @@ Was noch entschieden werden muss — als Frage in `../../ai/questions.md`, hier 
 ```
 
 Der Status im Kopf läuft `Entwurf` → `abgestimmt` ({{AUFTRAGGEBER}} hat zugestimmt) → `umgesetzt` (Beleg
-vorhanden, siehe `ledger.md`).
+vorhanden, siehe `ledger.md`). Eine durch eine spätere Entscheidung überholte Story wird
+`veraltet — überholt durch ADR-<n>` und bleibt liegen, statt gelöscht zu werden.
 
 ## Vorhandene Stories
 

@@ -27,8 +27,8 @@ als Begründung liegen und bekommt im Kopf den Verweis darauf.
 ## Format
 
 Dateiname `<thema>.md`, Kleinbuchstaben mit Bindestrich. Kopfzeile wie überall in `docs/`
-(`> Datenstand: … – Status: …`), als Status hier `Entwurf` → `abgestimmt` → `umgesetzt` bzw. `überholt
-(ADR-<n>)`. Aufbau:
+(`> Datenstand: … – Status: …`), als Status hier `Entwurf` → `abgestimmt` → `umgesetzt`; ein durch eine
+spätere Entscheidung überholtes Konzept wird `veraltet — abgelöst durch ADR-<n>`. Aufbau:
 
 ```text
 # <Thema>
