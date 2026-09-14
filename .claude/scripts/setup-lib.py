@@ -118,6 +118,9 @@ KEY_MAP = {
     "Stack": "stack",
     "Orchestrator-Modell": "orchestrator_modell",
     "Commit-Verhalten": "commit_verhalten",
+    "Ideen-Ablauf": "ideen_ablauf",
+    "Testtiefe": "testtiefe",
+    "Schreibstil": "schreibstil",
     "Logging": "logging",
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
@@ -250,6 +253,15 @@ ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
 # Steuert nur den Orchestrator (Checkliste "Aufgabe abschliessen"/Skill /commit), keine Datei -
 # analog zu Code-Analyse/Code-Optimierung.
 COMMIT_VERHALTEN_WERTE = {"automatisch", "fragen", "manuell"}
+
+# Rein verhaltenssteuernde Schalter: Sie aendern keine Datei, sondern wie der Orchestrator arbeitet. Trotzdem
+# gefuehrt und in applied_config gespeichert, damit sync-config.py eine Aenderung ueberhaupt meldet.
+IDEEN_ABLAUF_WERTE = {"automatisch", "konzept", "direkt"}
+TESTTIEFE_WERTE = {"alles", "e2e", "integration", "unit", "ohne"}
+# Reihenfolge = Umfang, von "am meisten" nach "am wenigsten". Jede Stufe schliesst die folgenden ein.
+TESTTIEFE_REIHE = ["alles", "e2e", "integration", "unit", "ohne"]
+SCHREIBSTIL_WERTE = {"kurz", "normal", "ausfuehrlich"}
+SCHREIBSTIL_ALIAS = {"ausführlich": "ausfuehrlich", "stichpunkte": "kurz", "stichpunktartig": "kurz"}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
 # Ablageort der Wartungsberichte (.claude/maintenance/reports/YYYY-MM-DD.md) - "docs" legt zusaetzlich
@@ -538,6 +550,57 @@ def normalize_commit_verhalten(cfg: dict):
         return None, raw
     return val, None
 
+
+def _normalize_einfach(cfg: dict, key: str, erlaubt: set, default: str, alias: dict = None):
+    """Gemeinsame Normalisierung der reinen Verhaltensschalter. Gibt (wert, unbekannter_rohwert) zurueck -
+    genau einer der beiden ist None."""
+    raw = cfg.get(key)
+    if not raw:
+        return default, None
+    val = raw.strip().lower()
+    if alias:
+        val = alias.get(val, val)
+    if val not in erlaubt:
+        return None, raw
+    return val, None
+
+
+def normalize_ideen_ablauf(cfg: dict):
+    """Wie mit einer Idee/einem Aenderungswunsch umgegangen wird (Checkliste "Idee oder Aenderungswunsch
+    aufnehmen"). Default "automatisch"."""
+    return _normalize_einfach(cfg, "ideen_ablauf", IDEEN_ABLAUF_WERTE, "automatisch")
+
+
+def normalize_testtiefe(cfg: dict):
+    """Wie weit getestet wird. Default "alles"."""
+    return _normalize_einfach(cfg, "testtiefe", TESTTIEFE_WERTE, "alles")
+
+
+def normalize_schreibstil(cfg: dict):
+    """Wie ausfuehrlich Fragen, Aufgaben und Antworten formuliert werden. Default "kurz"."""
+    return _normalize_einfach(cfg, "schreibstil", SCHREIBSTIL_WERTE, "kurz", SCHREIBSTIL_ALIAS)
+
+
+IDEEN_ABLAUF_TEXT = {
+    "automatisch": "automatisch - Konzept bei allem, was eine Entscheidung braucht; Kleinigkeiten direkt "
+                   "als Aufgabe, die Abkuerzung wird ausgesprochen (Default)",
+    "konzept": "konzept - immer erst Konzept, Optionen und Entscheidung, auch bei Kleinigkeiten",
+    "direkt": "direkt - kein Konzept, jeder Wunsch wird sofort Aufgabe oder Backlog-Punkt",
+}
+
+TESTTIEFE_TEXT = {
+    "alles": "alles - Unit, Integration und E2E (Default)",
+    "e2e": "e2e - Unit, Integration und E2E fuer die Hauptwege, ohne Randfaelle im Browser",
+    "integration": "integration - Unit- und Integrationstests, keine E2E",
+    "unit": "unit - nur Unit-Tests",
+    "ohne": "ohne - keine Tests; 'fertig' braucht dann einen anderen Beleg (Aufruf von aussen, Screenshot)",
+}
+
+SCHREIBSTIL_TEXT = {
+    "kurz": "kurz - auf den Punkt, stichpunktartig (Default)",
+    "normal": "normal - ein Satz Begruendung, wo er traegt",
+    "ausfuehrlich": "ausfuehrlich - Fragen, Texte und Aufgaben vollstaendig und nachvollziehbar begruendet",
+}
 
 COMMIT_VERHALTEN_TEXT = {
     "automatisch": "automatisch - committet abgenommene Arbeit selbst (Default)",
@@ -1300,7 +1363,8 @@ def write_template_json_values(root: Path, values: dict, applied_config: dict = 
 def build_applied_config(
     values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
     wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
-    sprache: str = None, commit_verhalten: str = None,
+    sprache: str = None, commit_verhalten: str = None, ideen_ablauf: str = None,
+    testtiefe: str = None, schreibstil: str = None,
 ) -> dict:
     """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
     fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
@@ -1329,6 +1393,9 @@ def build_applied_config(
         "E2E-Befehl": values.get("E2E_BEFEHL"),
         "Orchestrator-Modell": orch_modell,
         "Commit-Verhalten": commit_verhalten,
+        "Ideen-Ablauf": ideen_ablauf,
+        "Testtiefe": testtiefe,
+        "Schreibstil": schreibstil,
         "Logging": logging_val,
         "Logging-Tiefe": logging_tiefe,
         "Wartung": wartung_val,
@@ -1471,6 +1538,9 @@ def cmd_dry_run(root: Path) -> int:
     remove_list = tools_to_remove(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
+    ideen_ablauf, ideen_ablauf_unbekannt = normalize_ideen_ablauf(cfg)
+    testtiefe, testtiefe_unbekannt = normalize_testtiefe(cfg)
+    schreibstil, schreibstil_unbekannt = normalize_schreibstil(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -1549,6 +1619,16 @@ def cmd_dry_run(root: Path) -> int:
                       "bricht damit ab. Erlaubt: automatisch, fragen, manuell.")
     else:
         lines.append("Commit-Verhalten: " + COMMIT_VERHALTEN_TEXT[commit_verhalten])
+    for _wert, _unbek, _label, _texte, _erlaubt in (
+        (ideen_ablauf, ideen_ablauf_unbekannt, "Ideen-Ablauf", IDEEN_ABLAUF_TEXT, IDEEN_ABLAUF_WERTE),
+        (testtiefe, testtiefe_unbekannt, "Testtiefe", TESTTIEFE_TEXT, TESTTIEFE_WERTE),
+        (schreibstil, schreibstil_unbekannt, "Schreibstil", SCHREIBSTIL_TEXT, SCHREIBSTIL_WERTE),
+    ):
+        if _unbek:
+            lines.append(f"{_label}: \"{_unbek}\" ist kein bekannter Wert - --apply bricht damit ab. "
+                         f"Erlaubt: {', '.join(sorted(_erlaubt))}.")
+        else:
+            lines.append(f"{_label}: " + _texte[_wert])
 
     lines.append("")
     if wartung_unbekannt:
@@ -1656,6 +1736,9 @@ def cmd_apply(root: Path) -> int:
     unbekannt = unbekannte_werkzeuge(cfg)
     orch_modell, orch_unbekannt = normalize_orchestrator_modell(cfg)
     commit_verhalten, commit_verhalten_unbekannt = normalize_commit_verhalten(cfg)
+    ideen_ablauf, ideen_ablauf_unbekannt = normalize_ideen_ablauf(cfg)
+    testtiefe, testtiefe_unbekannt = normalize_testtiefe(cfg)
+    schreibstil, schreibstil_unbekannt = normalize_schreibstil(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -1677,6 +1760,15 @@ def cmd_apply(root: Path) -> int:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Orchestrator-Modell nicht eindeutig: "
               f"\"{orch_unbekannt}\" - erlaubt sind opus, sonnet, haiku, inherit.", file=sys.stderr)
         fehler = True
+    for _unbek, _label, _erlaubt in (
+        (ideen_ablauf_unbekannt, "Ideen-Ablauf", IDEEN_ABLAUF_WERTE),
+        (testtiefe_unbekannt, "Testtiefe", TESTTIEFE_WERTE),
+        (schreibstil_unbekannt, "Schreibstil", SCHREIBSTIL_WERTE),
+    ):
+        if _unbek:
+            print(f"Fehler: AI-CONFIG.md {_label}: unbekannter Wert \"{_unbek}\" - erlaubt sind "
+                  f"{', '.join(sorted(_erlaubt))}.", file=sys.stderr)
+            return 2
     if commit_verhalten_unbekannt:
         print(f"Fehler: --apply abgebrochen, AI-CONFIG.md § Commit-Verhalten nicht eindeutig: "
               f"\"{commit_verhalten_unbekannt}\" - erlaubt sind automatisch, fragen, manuell.", file=sys.stderr)
@@ -1732,6 +1824,7 @@ def cmd_apply(root: Path) -> int:
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
         sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
+        ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
     )
     write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
@@ -1795,6 +1888,9 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Logging: AI_LOG={logging_val}, AI_LOG_LEVEL={logging_tiefe}" + (" (geschrieben)" if logging_changed else " (unveraendert)"))
     lines.append(f"Orchestrator-Modell: {orch_modell} - {model_status}")
     lines.append("Commit-Verhalten: " + COMMIT_VERHALTEN_TEXT[commit_verhalten])
+    lines.append("Ideen-Ablauf: " + IDEEN_ABLAUF_TEXT[ideen_ablauf])
+    lines.append("Testtiefe: " + TESTTIEFE_TEXT[testtiefe])
+    lines.append("Schreibstil: " + SCHREIBSTIL_TEXT[schreibstil])
     lines.append(f"Wartung: {wartung_status}")
     lines.append(f"Wartungsberichte: {wartungsberichte_status}")
     if wartungsberichte == "docs":

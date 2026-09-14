@@ -12,6 +12,36 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Vier Schalter für AI-CONFIG: drei gebaut, einer erst zur Entscheidung
+
+Wolfgang wollte vier neue Schlüssel: Ideen-Ablauf, Testtiefe, Schreibstil und Feedback.
+
+- **Gebaut (drei):** `Ideen-Ablauf` (automatisch · konzept · direkt, Default automatisch), `Testtiefe`
+  (ohne · unit · integration · e2e · alles, Default alles), `Schreibstil` (kurz · normal · ausführlich,
+  Default kurz). Alle drei sind reine Verhaltensschalter — sie ändern keine Datei, werden aber in
+  `applied_config` geführt, damit `sync-config.py` eine Änderung überhaupt meldet (dieselbe Behandlung wie
+  `Sprache` und `Commit-Verhalten`). Unbekannte Werte: `--dry-run` warnt, `--apply` bricht ab; am Fehlerpfad
+  geprüft.
+- **Eine Formulierung, die ich geschärft habe:** `Testtiefe: ohne` schafft nicht den Beleg ab, nur die Tests.
+  „Fertig" braucht dann einen anderen Nachweis — Aufruf von außen, Screenshot, Datenstand. Ohne diesen Satz
+  wäre `ohne` ein Schlupfloch aus der Grundregel „fertig nur mit Beleg" geworden.
+- **Nicht gebaut: `Feedback`.** Der Wunsch war, dass abgeleitete Projekte sich beim Template zurückmelden
+  (Datum, öffentliche Repo-URL, Weg), Default `ja`. Stattdessen Konzept `konzept-feedback.md` mit vier
+  Optionen plus `Q1`–`Q3` und Backlog-Punkt `B29` — also genau der Weg, den die heute gebaute Checkliste
+  „Idee oder Änderungswunsch aufnehmen" vorschreibt. Erster echter Einsatz dieser Regel, und zwar am Template
+  selbst.
+- **Warum nicht einfach bauen:** Drei Gründe, jeder für sich hinreichend. Es sind **fremde Daten** — eine
+  Repo-URL identifiziert oft eine Person oder Firma, und ein Default `ja` wäre eine Einwilligung, die niemand
+  erteilt hat; das trifft nicht Wolfgang, sondern fremde Entwickler, die das Template klonen. Es gibt
+  **keine Gegenstelle** — das Template ist ein Repo, kein Dienst. Und **private Repos bringen nichts**: eine
+  URL ohne Zugriff ist ein Datensatz ohne Nutzen, aber mit allen Nachteilen.
+- **Empfehlung im Konzept:** GitHub-Issue per `gh` nach ausdrücklicher Zustimmung (~0,5 PT, kein Dienst
+  nötig, der Entwickler sieht vorher genau, was gepostet wird, und kann abbrechen), Default `fragen` statt
+  `ja`, fester kleiner Feldsatz ohne Projektname, Stack, Pfade oder Personenangaben, und ein dokumentierter
+  Widerruf.
+- **Als Idee vermerkt, nicht gebaut:** automatische Anpassung des Schreibstils an den Stil des Entwicklers.
+  Das setzt eine Stilanalyse voraus und ist ein eigenes Vorhaben.
+
 ## 2026-09-14 — Von der Idee zum Backlog-Punkt: Skill `/idea`, Prio von beiden Seiten
 
 Wolfgangs Vorgabe: Neue Ideen und Änderungswünsche werden erst in `docs/project/` dokumentiert, analysiert

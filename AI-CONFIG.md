@@ -34,6 +34,12 @@ geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 | Typecheck-Befehl |  |  | `TYPECHECK_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | Test-Befehl |  |  | `TEST_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | E2E-Befehl |  |  | `E2E_BEFEHL` | Steht in `testing.md` und `setup.md`. |
+| Testtiefe | alles | ohne, unit, integration, e2e, alles |  | Wie weit getestet wird. Jede Stufe schließt die kleineren ein. |
+
+Zur Testtiefe: Sie sagt, was zu einer fertigen Aufgabe dazugehört — nicht, ob getestet werden *darf*.
+`alles` ist der Standard; `ohne` ist eine bewusste Entscheidung, die den Beleg nicht abschafft: „Fertig“
+braucht dann einen anderen Nachweis (ein Aufruf von außen, ein Screenshot, ein Datenstand). Details je
+Stufe: `docs/project/testing.md`.
 
 Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 `python .claude/scripts/guidelines.py --add <kennung>`.
@@ -45,6 +51,8 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | KI-Werkzeuge |  | Claude Code, Copilot, Cursor, Aider, Gemini CLI, ChatGPT/Codex, Ollama, Cline |  | Kommaliste der Werkzeuge, die **bleiben** sollen. Leer = alle behalten. |
 | Orchestrator-Modell | opus | opus, sonnet, haiku, inherit |  | Modell der Hauptsession, steuert `model` in `.claude/settings.json`. |
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
+| Ideen-Ablauf | automatisch | automatisch, konzept, direkt |  | Was mit einer Idee oder einem Änderungswunsch passiert, bevor gebaut wird. |
+| Schreibstil | kurz | kurz, normal, ausführlich |  | Wie ausführlich Fragen, Aufgaben, Journal und Antworten formuliert werden. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
 | MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, ha-mcp, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
@@ -52,6 +60,14 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 Zum Modell: Der Orchestrator plant, prüft und entscheidet — gespart wird bei den Workern, nicht hier.
 Zum Commit-Verhalten: `automatisch` committet abgenommene Arbeit selbst, `fragen` schlägt sie vor und wartet,
 `manuell` wartet auf eine ausdrückliche Anweisung.
+Zum Ideen-Ablauf: `automatisch` schreibt ein Konzept für alles, was eine Entscheidung braucht, und macht
+aus Kleinigkeiten direkt eine Aufgabe — die Abkürzung wird dabei ausgesprochen. `konzept` erzwingt den
+vollen Weg (Konzept, Optionen, Entscheidung) auch bei Kleinigkeiten, `direkt` überspringt ihn immer. Ablauf:
+`docs/ai/checklists.md` § „Idee oder Änderungswunsch aufnehmen“.
+Zum Schreibstil: Er gilt für Fragen, Aufgaben, Journal und die Antworten im Chat, nicht für
+Code-Kommentare (die regelt `docs/project/coding_rules.md`). `kurz` heißt stichpunktartig und auf den
+Punkt, `normal` ergänzt einen Satz Begründung dort, wo er trägt, `ausführlich` begründet vollständig und
+nachvollziehbar — sinnvoll, wenn jemand mitliest, der das Projekt nicht kennt.
 Zur Code-Optimierung: `ein` ist eine Runde, `intensiv` bis zu zwei und nimmt Geschwindigkeit und Speicher
 dazu, `aus` entfernt den Agenten `optimizer`. Der ältere Wert `streng` gilt weiter und bedeutet `intensiv`.
 Zu den MCP-Servern: Die Kennungen stehen mit Anbieter, Zweck, Reifegrad und benötigten Umgebungsvariablen
