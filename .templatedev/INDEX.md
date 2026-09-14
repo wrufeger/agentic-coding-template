@@ -19,7 +19,7 @@ Fenstern, obwohl man beim Arbeiten beides zugleich braucht.
 | `INDEX.md` | diese Übersicht |
 | `README.md` | Testprojekte: welche es gibt, welchen Weg sie abdecken, ihr letzter geprüfter Stand |
 | `backlog.md` | Umbauliste: priorisierte Verbesserungsvorschläge, Nummern bleiben stabil |
-| `questions.md` | offene Entscheidungen zur Weiterentwicklung (`T<n>`) |
+| `questions.md` | offene Entscheidungen zur Weiterentwicklung (`Q<n>`) |
 | `ledger.md` | Journal: was in welcher Sitzung passiert ist, mit Belegen |
 | `regeln.md` | Regeln für die Arbeit **am Template selbst** |
 | `testprojekte.py` | gleicht die Tabelle in `README.md` mit dem echten Stand der Testprojekte ab |

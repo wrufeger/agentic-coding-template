@@ -10,8 +10,8 @@ wird mit 🔴 markiert, nicht vorgezogen. {{AUFTRAGGEBER}}s Zeilen bleiben unver
 Beantwortete Fragen wandern nach dem Verbuchen ins Archiv `docs/ai/questions_archive.md`.
 
 Formregeln: keine Markdown-Tabellen, Zeilen bei ca. 72 Zeichen umbrechen, je Frage eine eigene `* Antwort:`-Zeile,
-Dringendes mit 🔴 markieren. Jede Frage bekommt eine fortlaufende Nummer mit Präfix `F<n>` (Aufgaben laufen unter
-`A<n>`, siehe `tasks.md`) — die Nummer wird in Ledger und Aufgaben zitiert und nach dem Archivieren nie neu
+Dringendes mit 🔴 markieren. Jede Frage bekommt eine fortlaufende Nummer mit Präfix `Q<n>` (Aufgaben laufen unter
+`T<n>`, siehe `tasks.md`) — die Nummer wird in Ledger und Aufgaben zitiert und nach dem Archivieren nie neu
 vergeben.
 
 **Antworten so leicht wie möglich machen.** {{AUFTRAGGEBER}} soll mit einem Wort antworten können:
@@ -31,30 +31,31 @@ vergeben.
 Beispiel:
 
 ```
-F3. Soll der Import fehlende Pflichtfelder überspringen oder abbrechen? 🔴
+Q3. Soll der Import fehlende Pflichtfelder überspringen oder abbrechen? 🔴
    a) überspringen, Fehler ins Log — Import läuft durch (Empfehlung)
    b) abbrechen — nichts wird importiert, Ursache zuerst klären
-   Blockiert A12, solange offen.
+   Blockiert T12, solange offen.
    * Antwort:
 ```
 
-**Teilfragen (`F5a`, `F5b`, …).** Hängen mehrere Einzelentscheidungen so zusammen, dass die Umsetzung erst
+**Teilfragen (`Q5a`, `Q5b`, …).** Hängen mehrere Einzelentscheidungen so zusammen, dass die Umsetzung erst
 beginnen kann, wenn **alle** beantwortet sind, bekommen sie dieselbe Nummer mit Buchstaben-Suffix und stehen
 als Block untereinander. Der Assistent verarbeitet einen solchen Block **erst, wenn jede Teilfrage beantwortet
 ist** — einzelne Antworten werden bis dahin nur stehen gelassen, nicht umgesetzt. Teilweise beantwortete
 Blöcke bleiben offen und werden im Board als offene Freigabe geführt.
 
 ```
-F5 · Benachrichtigungen (alle drei nötig, bevor umgesetzt wird)
-F5a. Über welchen Kanal? a) E-Mail  b) Messenger  c) beides
+Q5 · Benachrichtigungen (alle drei nötig, bevor umgesetzt wird)
+Q5a. Über welchen Kanal? a) E-Mail  b) Messenger  c) beides
    * Antwort:
-F5b. Wie oft? a) sofort  b) stündliche Sammelmeldung  c) täglich
+Q5b. Wie oft? a) sofort  b) stündliche Sammelmeldung  c) täglich
    * Antwort:
-F5c. Auch bei Warnungen oder nur bei Fehlern? a) beides  b) nur Fehler
+Q5c. Auch bei Warnungen oder nur bei Fehlern? a) beides  b) nur Fehler
    * Antwort:
 ```
 
-**Reihenfolge und Gruppierung.** Fragen stehen immer nach Nummer sortiert (`F1`, `F2`, `F3a`, `F3b`, `F4`, …),
+<!-- check-refs:ignore -->
+**Reihenfolge und Gruppierung.** Fragen stehen immer nach Nummer sortiert (`Q1`, `Q2`, `Q3a`, `Q3b`, `Q4`, …),
 auch nach dem Archivieren einzelner Fragen — Lücken bleiben, es wird nie umnummeriert. Werden es viele offene
 Fragen (mehr als etwa zehn), kommen Themen-Überschriften (`### Datenbank`, `### Oberfläche`) dazu; innerhalb
 jedes Themas bleibt die Sortierung nach Nummer. Dringendes wird mit 🔴 markiert, nicht nach vorne sortiert.

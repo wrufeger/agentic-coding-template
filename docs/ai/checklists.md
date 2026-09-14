@@ -38,7 +38,7 @@ was sich angesammelt hat, und sichert das Ergebnis.
    Tabellenwert in `AI-CONFIG.md` berührt (Stack, Befehle, Regelsätze, Werkzeuge — `AGENTS.md`
    § Grundregeln) und die Datei bei Bedarf nachziehen.
 2. **Archivieren:** als ✅ markierte Aufgaben mit Volltext nach `docs/ai/tasks_archive.md`, verbuchte Fragen
-   nach `docs/ai/questions_archive.md`. Nummern (`A<n>`/`F<n>`) bleiben gültig und werden nie neu vergeben.
+   nach `docs/ai/questions_archive.md`. Nummern (`T<n>`/`Q<n>`) bleiben gültig und werden nie neu vergeben.
    Aufgaben unter „nur für {{AUFTRAGGEBER}}" nur auf dessen Meldung hin abhaken; Antworten in deren
    `* Antwort:`-Zeilen genauso verbuchen — delegierte Aufgaben wandern in den oberen Abschnitt, erweiterte
    Rechte mit Datum ins Journal.
@@ -179,6 +179,10 @@ Bereich `ai` — Arbeitsordner `docs/ai/` auf Ordnung prüfen, ohne Code-Zugriff
   Nummern.
 - Beantwortete Fragen ohne Bestätigungszeile darunter; verbuchte Fragen, die noch nicht im Archiv sind.
 - Veraltetes Board (Stand, der nicht mehr zum letzten Journaleintrag passt).
+- **Tote Querverweise:** zitierte Kürzel, deren Ziel es nicht (mehr) gibt — `T<n>`, `Q<n>`, `ADR-<n>`,
+  `S<n>`, `B<n>`. Wo eine Mechanik dafür bereitsteht, wird sie genutzt statt von Hand gesucht (bei
+  Claude Code: `python .claude/scripts/check-refs.py`). Verwaiste Ziele — vorhanden, aber nirgends zitiert —
+  sind kein Fehler, aber ein Hinweis: entweder fehlt der Verweis, oder der Eintrag ist überflüssig geworden.
 - Journaleinträge ohne Beleg (Testlauf, Commit-Hash, Aufruf von außen).
 - Überholte Punkte in der Umbauliste (bereits umgesetzt oder nicht mehr relevant).
 

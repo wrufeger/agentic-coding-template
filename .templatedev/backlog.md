@@ -7,21 +7,23 @@ Priorisierte Verbesserungsvorschläge für das **Template**; Checkout unter
 „-> nein, weil …"). Nummern werden nie neu vergeben; umgesetzte Punkte wandern als Einzeiler nach
 „Erledigt".
 
-Die Punkte 1–21 stammen aus dem früheren Ordner `.templatedev/` im Template und behalten ihre Nummern —
+Die Punkte `B1`–`B21` stammen aus dem früheren Ordner `.templatedev/` im Template und behalten ihre Nummern —
 sie werden in Journal und Commits zitiert.
 
 ---
 
 22. -> machen: **Erkenntnisse aus `bandliste` auf Template-Relevanz prüfen** (Priorität hoch, angelegt
    2026-09-14): Der Kernzweck dieser Ablage — bisher nie systematisch gelaufen. Im Weg-2-Testprojekt sind an
+<!-- check-refs:ignore -->
    einem Tag 26 beantwortete Fragen und ADR-7 bis ADR-32 entstanden, dazu ein Backlog mit über 50 Punkten.
+   (Die genannten Nummern gehören zum Testprojekt, nicht zu diesem Repo — daher oben der Ignorier-Marker.)
    Vorgehen: `docs/ai/questions_archive.md`, `questions.md` und `ledger.md` in `D:\dev\rufeger\bandliste`
    durchgehen und je Punkt entscheiden — Template-Regel, Baustein unter `docs/project/coding_rules.d/`, neuer
    Agent oder Skill, oder nichts. Was ins Template gehört, bekommt hier eine eigene Nummer; umgesetzt wird im
    Template, nicht in der Notiz. **Umfang unbekannt:** Erst nach dem Durchgang lässt sich sagen, ob das eine
    Sitzung wird oder mehrere; bei mehr als etwa zehn Kandidaten in Teilaufgaben je Themenbereich schneiden.
 
-23. -> erledigt (2026-09-14), teils überholt durch Punkt 24: **Design-Wege über `/design` hinaus.** Recherchiert und in `CLAUDE.md` § 5
+23. -> erledigt (2026-09-14), teils überholt durch Punkt `B24`: **Design-Wege über `/design` hinaus.** Recherchiert und in `CLAUDE.md` § 5
    als Tabelle aufgenommen: Screenshot direkt einfügen (Grenzen: 8000 × 8000 px, 10 MB, unter 200 px
    unzuverlässig), Webseite über einen Chrome-Screenshot statt `WebFetch` (das liefert nur HTML als Text),
    Figma über den offiziellen MCP-Server (remote per Plugin oder Desktop über `127.0.0.1:3845/mcp`, als
@@ -66,6 +68,21 @@ sie werden in Journal und Commits zitiert.
    Die Lehre dahinter, zweimal dieselbe: **„ergänzen" und „erwähnen" sind schwache Anweisungen.** Wo die
    Position und die Lesart zählen, muss die Regel beides vorgeben — sonst landet der wichtigste Teil unten
    und liest sich wie eine Dateiliste.
+
+27. -> machen: **Sprache aus `AI-CONFIG.md` wirkt nicht** (Priorität hoch, angelegt 2026-09-14): Der
+   Schlüssel `Sprache` steht in der Konfiguration, hat aber keine Wirkung — das Template ist durchgehend
+   deutsch, und ein angelegtes Projekt bleibt es auch. Zwei Teile:
+   **(a) Template auf Englisch umstellen.** Für die Veröffentlichung auf GitHub ist Deutsch die falsche
+   Ausgangssprache. Betrifft `AGENTS.md`, `CLAUDE.md`, `README.md`, alle Checklisten, Skills, Agenten-Rollen,
+   Regelbausteine, Doku-Skelette und die Ausgaben der Scripte — der größte Einzelposten dieser Liste.
+   **(b) Sprache beim Anlegen und Nachrüsten anwenden.** Steht in `AI-CONFIG.md` § `Sprache` etwas anderes
+   als die Ausgangssprache, wird das Zielprojekt darin geführt: Doku, Kommentare, Commit-Messages **und die
+   Kommunikation des Assistenten** im Projekt. Das ist keine reine Textersetzung — die Vorlagen müssten
+   entweder zweisprachig vorliegen oder beim Anlegen übersetzt werden.
+   **Zu klären, bevor jemand anfängt:** Werden die Vorlagen zweisprachig gepflegt (doppelter Pflegeaufwand,
+   dafür verlässlich) oder beim Anlegen einmalig übersetzt (billiger, aber jede Template-Aktualisierung
+   trifft danach auf übersetzten Text und `/update-template` bekommt Konflikte in jeder Zeile)? Diese
+   Entscheidung bestimmt den ganzen Rest — vorher keine Zeile übersetzen.
 
 ## Erledigt
 

@@ -114,7 +114,7 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   tatsächlich geantwortet hat. Offene Fragen werden nicht stillschweigend nach eigener Einschätzung
   entschieden — eine naheliegende Option darf als Empfehlung markiert werden, mehr nicht. Blockiert eine
   offene Frage, wird sie markiert und im Board als offene Freigabe geführt; die Arbeit läuft an anderer Stelle
-  weiter. Entscheidungen, die nur gemeinsam umsetzbar sind, werden als Teilfragen (`F5a`, `F5b`, …) gestellt
+  weiter. Entscheidungen, die nur gemeinsam umsetzbar sind, werden als Teilfragen (`Q5a`, `Q5b`, …) gestellt
   und **erst verarbeitet, wenn alle beantwortet sind**. Fragen bleiben nach Nummer sortiert und werden nie
   umnummeriert; bei vielen offenen Fragen kommen Themen-Überschriften dazu.
 

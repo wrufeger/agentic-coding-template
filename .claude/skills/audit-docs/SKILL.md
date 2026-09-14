@@ -47,7 +47,7 @@ Ohne Code-Zugriff, reine Formprüfung von `docs/ai/`:
   `Stand <Datum>:` oder mit einem Stand, der älter ist als der letzte Journaleintrag dazu. Doppelt vergebene
   oder übersprungene Nummern.
 - **Fragen:** beantwortete Fragen ohne Bestätigungszeile darunter, verbuchte Fragen, die noch nicht im Archiv
-  sind, Teilfragen-Blöcke (`F5a`/`F5b`) mit nur teilweisen Antworten, Fragen ohne vorgegebene
+  sind, Teilfragen-Blöcke (`Q5a`/`Q5b`) mit nur teilweisen Antworten, Fragen ohne vorgegebene
   Antwortmöglichkeiten.
 - **Board:** Kurzbilanz, nächster Schritt und offene Freigaben gegen den tatsächlichen Stand aus Journal und
   Aufgaben.

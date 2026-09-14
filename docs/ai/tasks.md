@@ -8,29 +8,30 @@ kurze, einfache Rückfragen direkt im Gespräch.
 
 Status-Marker (vom Orchestrator gesetzt): ✅ erledigt · 🔄 teilweise/wartet · ❓ Rückfrage in `questions.md`.
 
-Jede Aufgabe bekommt eine fortlaufende Nummer mit Präfix `A<n>` (z. B. `A7`) — projektweite Referenz-ID, die in
+<!-- check-refs:ignore -->
+Jede Aufgabe bekommt eine fortlaufende Nummer mit Präfix `T<n>` (z. B. `T7`) — projektweite Referenz-ID, die in
 Ledger und Commits zitiert wird und **nie neu vergeben** wird, auch nach dem Archivieren nicht. Fragen in
-`questions.md` laufen analog unter `F<n>`. Format je Aufgabe:
+`questions.md` laufen analog unter `Q<n>`. Format je Aufgabe:
 
 **Offene Aufgabe:**
 
 ```
-- [ ] **A7 · Kurztitel der Aufgabe** 🔄
+- [ ] **T7 · Kurztitel der Aufgabe** 🔄
   Ziel: ein Satz, woran man erkennt, dass die Aufgabe erledigt ist.
   Schritte:
   1. …
   2. …
   Offen: was noch fehlt, um anfangen oder fertig werden zu können — fehlende Vorgaben, Zugänge,
-    unbeantwortete Fragen (`F<n>`), abhängige Aufgaben (`A<n>`). Entfällt, wenn nichts offen ist.
+    unbeantwortete Fragen (`Q<n>`), abhängige Aufgaben (`T<n>`). Entfällt, wenn nichts offen ist.
   Entschieden: was bereits feststeht und nicht neu verhandelt wird, je Punkt eine Zeile mit Verweis
-    (`ADR-<n>`, `F<n>`). Entfällt, wenn nichts entschieden wurde.
+    (`ADR-<n>`, `Q<n>`). Entfällt, wenn nichts entschieden wurde.
   Stand 2026-01-31: eine Zeile — wo die Aufgabe gerade steht.
 ```
 
 **Erledigte Aufgabe** — Haken gesetzt, Marker ✅, und statt Schritten das Ergebnis:
 
 ```
-- [x] **A7 · Kurztitel der Aufgabe** ✅
+- [x] **T7 · Kurztitel der Aufgabe** ✅
   Ziel: unverändert stehen lassen.
   Ergebnis: was tatsächlich getan wurde, in ein bis drei Zeilen, mit Beleg (Commit-Hash, Datei, Testlauf).
   Stand 2026-02-03: erledigt.
@@ -70,11 +71,11 @@ werden ersetzt, nicht gestapelt. Erledigte Aufgaben (✅) werden **mit Volltext*
 
 **Tabu-Bereich — siehe `AGENTS.md`:** Kein Assistent (Orchestrator oder Worker) führt Einträge in diesem
 Abschnitt aus. Der Orchestrator darf Einträge hier nur ergänzen, präzisieren oder als erledigt markieren, wenn
-{{AUFTRAGGEBER}} es meldet. Dasselbe Aufgabenschema (Nummer `A<n>`, Ziel, Schritte, `Stand <Datum>:`) gilt auch
+{{AUFTRAGGEBER}} es meldet. Dasselbe Aufgabenschema (Nummer `T<n>`, Ziel, Schritte, `Stand <Datum>:`) gilt auch
 hier, **plus eine eigene `* Antwort:`-Zeile** je Aufgabe:
 
 ```
-- [ ] **A12 · Zugang zum Monitoring anlegen** ❓
+- [ ] **T12 · Zugang zum Monitoring anlegen** ❓
   Ziel: Assistent kann die Dashboards lesen.
   Schritte:
   1. Nur-Lese-Konto anlegen.

@@ -40,7 +40,7 @@ diesen Eintrag und den darunter.
   `init.py` und die Vorlagen entfallen — bei versionierten Dateien gibt es nichts wiederherzustellen.
 - **Vor dem Auflösen von Anlauf 2 gerettet:** der Kreislauf eines Befunds (jetzt in `regeln.md`, angepasst
   auf zwei Repos statt drei) und die dort angelegte offene Aufgabe „Erkenntnisse aus `bandliste` prüfen"
-  (jetzt Umbaupunkt 22). Der Rest des Repos war Doppelung des hier Vorhandenen.
+  (jetzt Umbaupunkt [`B22`](backlog.md)). Der Rest des Repos war Doppelung des hier Vorhandenen.
 - Weg 1 hat damit weiterhin kein dauerhaftes Testprojekt. Das ist vertretbar: Der Weg wurde beim Anlegen von
   Anlauf 2 real durchgespielt und hat dabei bestätigt, dass `create-project.py` den Ordner `.templatedev/`
   korrekt entfernt. Ein leeres Projekt nur als Beleg vorzuhalten, kostet mehr Pflege als es einbringt —
@@ -57,28 +57,28 @@ diesen Eintrag und den darunter.
 - **Nebenbefund, der zählt:** `create-project.py` hat `.templatedev` beim Anlegen korrekt entfernt. Damit ist
   der `template_only`-Mechanismus vom Vortag nicht nur im Wegwerf-Repo, sondern am echten Fall belegt.
   Vorher gesichert wurden die drei gitignorierten Arbeitsdateien — ein `git clone` bringt sie nicht mit.
-- **Übernommen:** Umbauliste → `docs/ai/backlog.md` (Punkte 1–21 mit ihren Nummern), Journal →
+- **Übernommen:** Umbauliste → `docs/ai/backlog.md` (Punkte [`B1`](backlog.md)–[`B21`](backlog.md) mit ihren Nummern), Journal →
   `docs/ai/ledger.md`, Regeln → `docs/project/template-pflege.md`, Testprojekte →
   `docs/project/testprojekte.md`, `testprojekte.py` → `.claude/scripts/`.
 - **Damit hat das Template sein Weg-1-Testprojekt**, das bisher fehlte: Dieses Repo ist selbst aus dem
   Template entstanden und zieht Änderungen per `/update-template` nach.
 - **Wartung eingeschaltet** (`testprojekte=7, docs=30, kurz=14`) — der Abgleich der Test-Installationen ist
   der wiederkehrende Zweck dieses Projekts, keine Nebensache.
-- Offen: **A2** — im Template den Verweis setzen und die gitignore-Sonderregel zurücknehmen. Bis dahin gibt
-  es die Template-Entwicklung an zwei Orten.
+- Offen war damals: im Template den Verweis setzen und die gitignore-Sonderregel zurücknehmen (im
+  aufgelösten Repo als eigene Aufgabe geführt; erledigt mit dem Rückbau am selben Tag).
 
 ## 2026-09-13 — erster echter Einsatz am Fremdprojekt, danach sieben Punkte
 - **Das Template wurde zum ersten Mal auf ein bestehendes Projekt angewendet** (`bandliste`, Nuxt 4 +
   Prisma, 107 Dateien, dazu 49.000 Dateien Alt-PHP in `old-project/`). Der Durchlauf hat mehr über das
-  Template verraten als jede Prüfung am eigenen Repo: Zwei Fehler fielen erst dort auf (Punkte 17 und 18),
+  Template verraten als jede Prüfung am eigenen Repo: Zwei Fehler fielen erst dort auf (Punkte [`B17`](backlog.md) und [`B18`](backlog.md)),
   und zwei Anforderungen entstanden aus dem, was danach im Projekt liegen blieb (19 und 20).
-- **Punkt 18 war der teuerste Fund.** `.junie/guidelines.md` enthielt 110 Zeilen projekteigener Stil- und
+- **Punkt `B18` war der teuerste Fund.** `.junie/guidelines.md` enthielt 110 Zeilen projekteigener Stil- und
   Sicherheitsregeln — genau das Material, für das `docs/project/coding_rules.md` da ist. `migrate-project.py
   --plan` meldete „keine Kandidaten". Aufgefallen ist es nur, weil ein `explorer` die Datei nebenbei erwähnte.
   Ohne diesen Zufall hätten zwei Regelwerke nebeneinander gegolten. Lehre: Die Kandidatenliste muss die
   Ablagen **anderer** Werkzeuge kennen, nicht nur die eigenen — nachgezogen für Junie, Cline, Windsurf, Roo,
   Copilot-Instructions und `AGENT.md`.
-- **Punkt 19, die eigentliche Neuerung:** Nach der Einrichtung blieb das gesamte Einrichtungswerkzeug im
+- **Punkt [`B19`](backlog.md), die eigentliche Neuerung:** Nach der Einrichtung blieb das gesamte Einrichtungswerkzeug im
   Projekt liegen. Beim Aufräumen zeigte sich, dass `create-project.py` und `migrate-project.py` längst
   zweierlei sind — Einrichtungs-CLI **und** Bibliothek: `sync-config.py` lädt 32 bzw. 2 Funktionen daraus,
   und `AI-CONFIG.md` wirkt laufend. Schlichtes Löschen hätte die Konfigurationssteuerung stillgelegt.
@@ -142,13 +142,13 @@ diesen Eintrag und den darunter.
 ## 2026-09-13 — dreizehn Punkte der Umbauliste abgearbeitet
 - Vier parallele Läufe, je ein Script: `update-template.py` (1, 3, 12, 13, 14), `create-project.py` und
   `maintenance-check.py` (4, 8, 9), `migrate-project.py` (10, 11, 15), Doku (5, 6).
-- Punkt 1 größer als geplant: Der feldweise Merge von `.claude/template.json` läuft jetzt auch dann, wenn
+- Punkt `B1` größer als geplant: Der feldweise Merge von `.claude/template.json` läuft jetzt auch dann, wenn
   git gar keinen Konflikt meldet — reine Listenergänzungen mergt git klaglos, und der unbedingte
   `save_template_json`-Rewrite hätte die Template-Ergänzung danach still verworfen. Dazu muss
   `save_template_json` unbekannte Felder wie `is_template` erhalten statt sie zu verwerfen.
-- Punkt 11 lässt Code-Blöcke und URLs beim Ersetzen des Rufnamens aus (Zeilen-/Regex-Scanner ohne Fremdpaket).
-- Punkt 10 nimmt gitignorierte Dateien per `git check-ignore` von der Verschiebung aus und meldet sie nur.
-- Punkte 2 und 7 bleiben bewusst offen (keine Freigabe).
+- Punkt [`B11`](backlog.md) lässt Code-Blöcke und URLs beim Ersetzen des Rufnamens aus (Zeilen-/Regex-Scanner ohne Fremdpaket).
+- Punkt [`B10`](backlog.md) nimmt gitignorierte Dateien per `git check-ignore` von der Verschiebung aus und meldet sie nur.
+- Punkte [`B2`](backlog.md) und [`B7`](backlog.md) bleiben bewusst offen (keine Freigabe).
 - Beleg: `py_compile` über alle sieben Scripte, JSON-Prüfung von `template.json`/`settings.json`,
   End-to-End-Smoketest über alle vier Scripte in Temp-Repos.
 

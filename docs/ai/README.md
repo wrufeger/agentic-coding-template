@@ -40,7 +40,7 @@ IST-Zustand des Projekts selbst.
   Absatz gepackt. Höchstens drei bis vier Zeilen Kontext, kein Fließtext.
 - **Keine Standardantwort annehmen:** Eine unbeantwortete Frage bleibt offen und wird nie stillschweigend nach
   Einschätzung des Assistenten entschieden. Eine naheliegende Option darf als „(Empfehlung)" markiert werden.
-- **Teilfragen** (`F5a`, `F5b`, …) für Entscheidungen, die nur gemeinsam umsetzbar sind: als Block
+- **Teilfragen** (`Q5a`, `Q5b`, …) für Entscheidungen, die nur gemeinsam umsetzbar sind: als Block
   untereinander, Verarbeitung erst, wenn **alle** beantwortet sind.
 - Offene Fragen stehen oben, **nach Nummer sortiert** (nie umnummerieren, Lücken bleiben); Dringendes wird mit
   🔴 markiert statt vorgezogen. Ab etwa zehn offenen Fragen nach Themen gruppieren, innerhalb des Themas
@@ -50,7 +50,7 @@ IST-Zustand des Projekts selbst.
 
 ## Nummern- und Aufgabenschema (`tasks.md`/`tasks_archive.md`)
 
-Aufgaben laufen unter `A<n>`, Fragen unter `F<n>` — fortlaufende, projektweite Referenz-IDs, die in Ledger und
+Aufgaben laufen unter `T<n>`, Fragen unter `Q<n>` — fortlaufende, projektweite Referenz-IDs, die in Ledger und
 Commits zitiert werden und nie neu vergeben werden. Jede Aufgabe folgt dem festen Format (Nummer/Titel/Marker,
 Ziel, Schritte, `Stand <Datum>:`) aus `tasks.md`; erledigte Aufgaben wandern mit Volltext nach
 `tasks_archive.md`. Details dort, nicht hier wiederholt.
@@ -59,6 +59,27 @@ Auch Aufgaben sind **Stichpunkte, kein Fließtext**: Ziel ein Satz, Schritte je 
 Ergebnis (sonst teilen). Aufgaben im Tabu-Abschnitt „nur für {{AUFTRAGGEBER}}" tragen zusätzlich eine
 `* Antwort:`-Zeile — dort meldet {{AUFTRAGGEBER}} Erledigung, delegiert die Aufgabe an den Assistenten oder
 stellt eine Rückfrage.
+
+### Querverweise
+
+Die Kürzel werden überall im Repo zitiert. Damit sie nutzbar bleiben, gilt:
+
+| Kürzel | Bedeutung | Ziel |
+| :--- | :--- | :--- |
+| `T<n>` | Aufgabe | `tasks.md`, nach dem Erledigen `tasks_archive.md` |
+| `Q<n>` | Frage | `questions.md`, nach der Antwort `questions_archive.md` |
+| `ADR-<n>` | Architekturentscheidung | `../project/decisions.md` |
+| `S<n>` | Story | `../project/stories/S<n>-….md` |
+| `B<n>` | Umbaupunkt (Backlog) | `backlog.md` |
+
+- **Beim ersten Vorkommen in einer Datei wird verlinkt**, danach genügt das nackte Kürzel — sonst wird jeder
+  Absatz zur Linkwüste. Verlinkt wird auf die **Datei**; ein Anker nur, wenn das Ziel eine echte Überschrift
+  ist (Stories). Für Tabellenzeilen und Listeneinträge keine Anker erfinden.
+- **Nummern werden nie neu vergeben**, auch nicht nach dem Archivieren — ein Verweis von vor einem halben Jahr
+  muss weiterhin auf dasselbe zeigen.
+- `python .claude/scripts/check-refs.py` prüft alle Verweise: Was zitiert wird, aber nicht existiert (toter
+  Verweis), und was existiert, aber nirgends zitiert wird. Gehört in den Lauf „Doku prüfen und nachziehen".
+  Mit `--links` ergänzt es fehlende Links, zeigt vorher die Trefferliste und schreibt erst nach Zusage.
 
 ## Tabu-Bereich
 

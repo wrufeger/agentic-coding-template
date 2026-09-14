@@ -18,7 +18,7 @@ angesammelt hat, und sichert das Ergebnis.
 1. **Beleg prüfen.** Testlauf, Aufruf von außen oder Commit-Hash — ohne Beleg wird nicht abgenommen. Die
    Pflichtläufe aus `docs/project/testing.md` müssen grün sein.
 2. **Archivieren.** Als ✅ markierte Aufgaben mit Volltext nach `docs/ai/tasks_archive.md`, beantwortete und
-   verbuchte Fragen nach `docs/ai/questions_archive.md`. Nummern (`A<n>`/`F<n>`) bleiben gültig.
+   verbuchte Fragen nach `docs/ai/questions_archive.md`. Nummern (`T<n>`/`Q<n>`) bleiben gültig.
 3. **Journal ergänzen oder verdichten.** Fehlt noch ein Eintrag zur gerade abgeschlossenen Aufgabe, jetzt
    nachtragen. Ältere Einträge nach den Regeln im Kopf von `docs/ai/ledger.md` zusammenfassen —
    Commit-Hashes, Nummern, Versionen und Pfade bleiben dabei immer erhalten.
