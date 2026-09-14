@@ -31,5 +31,10 @@ ai.log.*
 # Logs allgemein
 *.log
 
+# Gerenderte Praesentationen (Skill /slides) - die Quelle ist das Markdown unter docs/praesentation/
+build/*.html
+build/*.pdf
+build/*.pptx
+
 # Design-Varianten und Pruef-Screenshots (Wegwerfware der Skills /design-ideas und /design-build)
 .design-varianten/

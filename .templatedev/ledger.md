@@ -12,6 +12,32 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Präsentationen: kein MCP-Server, sondern Skill `/slides`
+
+Wolfgang wollte einen PowerPoint-MCP-Server (`ykuwai/ppt-mcp`, `Ayushmaniar/powerpoint-mcp`) oder „eine
+andere Möglichkeit, eine Präsentation für sein Projekt zu erstellen".
+
+- **Beide genannten Server steuern ein laufendes, installiertes PowerPoint über COM.** Das verlangt Windows
+  *und* eine Office-Lizenz — Ausschluss für ein plattformneutrales Template. Der einzige Server ohne
+  Office-Zwang (`GongRzhe/Office-PowerPoint-MCP-Server`, 1.900 Sterne) ist seit dem 2026-03-03 **archiviert**
+  und war ohnehin nur ein dünner Wrapper um `python-pptx`. Einen offiziellen Server von Microsoft oder Google
+  gibt es nicht.
+- **Hier lohnt überhaupt kein MCP-Server.** Alle brauchbaren Folienwerkzeuge sind Kommandozeilenprogramme —
+  ein Server brächte nur dann etwas, was ein Script nicht kann, wenn eine bereits geöffnete fremde
+  Präsentation live weiterbearbeitet werden soll. Das ist der Fall nicht.
+- **Neuer Skill `/slides`** mit **Marp** (offiziell gepflegt, 3.800 Sterne): Folien sind eine Markdown-Datei
+  im Repo, versioniert und diffbar; Export per `npx`, nur Node und ein Browser nötig. Am Beleg geprüft:
+  `npx @marp-team/marp-cli` erzeugt hier eine HTML-Datei aus einer zweiseitigen Probe.
+- **Die eine Einschränkung ehrlich benannt:** Marps PPTX-Export sind **Bildfolien**, nicht nachbearbeitbarer
+  Text. Wer wirklich eine editierbare `.pptx` braucht, nimmt **Quarto** (über Pandoc, echte Textfolien,
+  dafür eigene CLI-Installation). Der Skill sagt das und lässt {{AUFTRAGGEBER}} entscheiden, statt Marp als
+  PowerPoint-Ersatz zu verkaufen.
+- **Abgegrenzt:** Ins Template gehört die **Fähigkeit**, nicht der Inhalt. Ein konkreter Foliensatz über
+  dieses Template wäre projekteigener Inhalt und würde über `create-project` in jedes abgeleitete Projekt
+  wandern — derselbe Fehler wie seinerzeit die Notizen in `docs/ai/`. Wolfgang hat das klargestellt, als ich
+  ihm eine Schulungsgliederung als Zwischenstand vorlegte; sie lag nur im Scratchpad, aber das Vorlegen
+  allein hat schon den falschen Eindruck erzeugt.
+
 ## 2026-09-14 — Fünf Quellen zu MCP-Servern und Skills ausgewertet
 
 Wolfgang hat fünf Listen genannt (totalum.app, skyvia, awesome-claude-skills, welcomedeveloper,

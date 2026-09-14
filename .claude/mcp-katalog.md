@@ -190,6 +190,14 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
   die Betriebsserver wählt man projektweise einzeln aus, nicht pauschal.
 - **Exa, Brave Search, Sequential Thinking, Browserbase** — Wrapper um eine API, die man auch direkt
   aufrufen kann, bzw. Eigenwerbung der Listenbetreiber.
+- **PowerPoint-Server** (`ykuwai/ppt-mcp`, `Ayushmaniar/powerpoint-mcp`) — beide steuern ein **laufendes,
+  installiertes PowerPoint** über die COM-Schnittstelle. Das setzt Windows *und* eine Office-Lizenz voraus
+  und fällt damit für ein plattformneutrales Template aus. `GongRzhe/Office-PowerPoint-MCP-Server` käme ohne
+  Office aus, ist aber seit dem 2026-03-03 archiviert und obendrein nur ein dünner Wrapper um `python-pptx`.
+  Einen offiziellen Server von Microsoft oder Google gibt es nicht. **Für Folien braucht es hier keinen
+  Server:** Die Werkzeuge sind Kommandozeilenprogramme — siehe Skill `/slides`, der Marp nutzt (Markdown im
+  Repo, Export per `npx`). Ein MCP-Server lohnte nur, um eine bereits geöffnete fremde Präsentation live
+  weiterzubearbeiten.
 
 Zur Quellenlage: `mcpservers.org` blockiert automatisierte Abrufe (HTTP 403); Angaben von dort wurden über
 Suchtreffer ermittelt und am jeweiligen Repository gegengeprüft. Exakte Commit-Zeitstempel waren teils nicht
