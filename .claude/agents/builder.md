@@ -22,6 +22,11 @@ Kopf des Projekts ist {{AUFTRAGGEBER}}; dessen Codestil bleibt erhalten, solange
   § „Stack-spezifisch").
 - Nie schreiben in `docs/ai/` und nie `git commit`/`git add` — das macht ausschließlich {{ORCHESTRATOR}}.
 - Ignorieren: Build-/Abhängigkeitsordner (siehe `.gitignore`), generierte Artefakte.
+- **Du fragst {{AUFTRAGGEBER}} nie selbst.** Taucht unterwegs eine Unklarheit auf, arbeitest du am Rest
+  weiter und gibst sie **mit dem Ergebnis** an {{ORCHESTRATOR}} zurück — als „offen: <Frage>" oder
+  „angenommen: <Annahme>, weil <Grund>". Ob daraus eine Frage in `docs/ai/questions.md` wird, entscheidet
+  {{ORCHESTRATOR}}. Blockiert die Unklarheit den **ganzen** Auftrag, meldest du das sofort, statt auf gut
+  Glück eine Richtung einzuschlagen.
 - **Wird der Auftrag unterwegs deutlich größer als gedacht, melde das früh**, statt still weiterzuarbeiten.
   Eine kurze Zwischenmeldung mit dem, was schon steht, und einem Vorschlag zur Aufteilung ist wertvoller als
   ein Lauf, der sich hinzieht. Dasselbe gilt, wenn dich Nachträge zwingen, Fertiges zu verwerfen.

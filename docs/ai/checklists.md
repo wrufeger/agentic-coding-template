@@ -19,6 +19,10 @@ Läuft **vor jeder Aufgabe** im Hauptkontext, dauert im Normalfall Sekunden.
    vorgelegt und erst nach der Zusage von {{AUFTRAGGEBER}} ausgeführt (`--apply --yes`). **Keine
    Standardantwort annehmen** — ohne Zusage bleibt es offen, und die Aufgabe läuft mit dem alten Stand.
 4. `docs/ai/board.md` lesen: Stand, nächster Schritt, offene Freigaben.
+5. **Jetzt fragen, was unklar ist** — und nur jetzt. Steht ein größerer Block oder ein Feature an, werden die
+   offenen Punkte **vor** dem ersten Handgriff geklärt: Hier kostet eine Frage Sekunden, mitten in der
+   Umsetzung kostet sie den Faden. Was danach auftaucht, wird notiert statt erfragt (`AGENTS.md`
+   § Grundregeln, „Rückfragen gehören an den Anfang").
 
 Wer das überspringt, arbeitet unter Umständen mit Einstellungen, die längst geändert wurden — etwa mit
 einem Werkzeug, dessen Dateien noch fehlen, oder unter einem Rufnamen, den es nicht mehr gibt.
@@ -59,7 +63,9 @@ was sich angesammelt hat, und sichert das Ergebnis.
    (`.gitignore` prüfen). Fremde uncommittete Änderungen anderer Sitzungen nicht stillschweigend mitnehmen —
    sichten, dann entscheiden.
 7. **Bilanz an {{AUFTRAGGEBER}}:** Ergebnis zuerst, Belege (Hash, Zahlen), offene Punkte und Fragen mit
-   Nummern.
+   Nummern — **gebündelt**. Was während der Umsetzung aufgetaucht ist, wurde unterwegs in `questions.md`
+   bzw. `tasks.md` abgelegt statt sofort erfragt; hier kommt es zusammengefasst auf den Tisch, zusammen mit
+   jeder Annahme, unter der weitergearbeitet wurde.
 8. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
    `[orchestrator] [commit] <hash> <message>` schreiben — das Log ist Mitschnitt, kein Ersatz für Journal
    oder Beleg.
