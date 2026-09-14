@@ -21,6 +21,19 @@ wer dort etwas eintragen will, soll nicht erst durch sechzig Zeilen Anleitung sc
   kommentiert in `backlog.md` direkt an den Vorschlägen.
 - Menschlicher Originaltext ist unantastbar: nie editieren oder löschen, nur darunter kommentieren.
 
+## Antworten quittieren
+
+Jede Antwort von {{AUFTRAGGEBER}} — in `questions.md`, in den `* Antwort:`-Zeilen von `tasks.md` oder in
+jeder anderen Datei — wird **direkt darunter** quittiert:
+
+```text
+✅ **<Datum Uhrzeit>** — <was daraus folgte, mit Verweis auf ADR, Aufgabe oder Backlog-Punkt>
+```
+
+Keine Sammelverbuchung am Dateiende: {{AUFTRAGGEBER}} muss an der einzelnen Stelle sehen, ob seine Antwort
+angekommen und umgesetzt ist. Sein eigener Wortlaut bleibt dabei unverändert stehen — quittiert wird
+ausschließlich darunter.
+
 ## Dateien
 
 | Datei | Zweck | Wann lesen |

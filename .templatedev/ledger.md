@@ -39,6 +39,10 @@ für den `.templatedev` da ist (`regeln.md`).
   **fehlenden**. Wo das Template keinen Platz vorsieht (Konzepte, Stories), erfindet das Projekt einen — und
   weil die Erfindung nirgends steht, prüft sie auch keine Checkliste. Deshalb kamen `konzepte/` und
   `stories/` als leere, dokumentierte Ordner ins Template, nicht nur als Regel im Fließtext.
+- **Rückweg aus `bandliste`:** Dort war eine Regel entstanden, die das Template nicht hatte — jede Antwort
+  von Wolfgang wird **an Ort und Stelle** quittiert (`✅ **<Datum Uhrzeit>** — <Folge>`), nie gesammelt am
+  Dateiende. Sie ist jetzt in `docs/ai/README.md` § „Antworten quittieren". Das ist die Richtung, für die
+  `.templatedev` eigentlich da ist: Das Testprojekt liefert nicht nur Fehler, sondern auch Lösungen.
 - Offen geblieben: `AGENTS.md` nennt `docs/ai/checklists.md` und `.claude/skills/create-project/SKILL.md` als
   `no_replace`, `template.json` führt dort aber nur die drei `.py`-Dateien. Einer von beiden hat unrecht —
   als `B28` notiert.
