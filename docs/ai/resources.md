@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-13 – Status: vom Template gepflegt
+> Datenstand: 2026-09-13 – Status: aktuell — vom Template gepflegt
 
 # Agentic Coding — Quellen und Einstieg
 
