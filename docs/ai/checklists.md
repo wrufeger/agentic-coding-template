@@ -8,6 +8,45 @@ wörtlich als Anweisung geben, z. B. „Führe die Checkliste Aufgabe abschließ
 Aufruf, Ablauf in einer separaten Session o. Ä.), steht in der jeweiligen werkzeugspezifischen Ergänzungsdatei
 (siehe `AGENTS.md` § „Werkzeugspezifische Ergänzungsdateien"), nicht in dieser Checkliste.
 
+## Idee oder Änderungswunsch aufnehmen
+
+Läuft, sobald {{AUFTRAGGEBER}} ein neues Feature, eine Idee oder einen Änderungswunsch äußert — auch
+nebenbei im Gespräch. **Nicht sofort bauen.** Zwischen „das wäre gut" und der ersten Zeile Code liegen eine
+Analyse und eine Entscheidung; sonst entsteht etwas, das niemand so bestellt hat.
+
+1. **Wortlaut festhalten.** Der Wunsch in {{AUFTRAGGEBER}}s eigenen Worten, unverändert — er ist die
+   Messlatte für alles Weitere. Nachfragen nur, wenn ohne die Antwort nicht einmal klar ist, worum es geht.
+2. **Analysieren, nicht schätzen.** Ein Konzept in `docs/project/konzepte/<thema>.md` (Format siehe README
+   dort): Ausgangslage mit Fundstellen `Datei:Zeile`, dann **Optionen** — je Option Beschreibung, Vorteile,
+   Nachteile, Aufwand. Dazu gehört immer auch die Option „nichts tun" mit ihren Folgen. Was schon entschieden
+   ist (`docs/project/decisions.md`), wird geprüft: Widerspricht der Wunsch einer bestehenden Entscheidung,
+   steht das **oben** im Konzept, nicht als Fußnote.
+3. **Empfehlung aussprechen** — eine Option, begründet in wenigen Sätzen. Eine Empfehlung ohne Alternativen
+   ist keine; es müssen mindestens zwei echte Wege dastehen, zwischen denen man wählen kann.
+4. **Zur Entscheidung vorlegen** als Frage in `docs/ai/questions.md` (`Q<n>`), Optionen `a)`/`b)`/`c)`, die
+   Empfehlung gekennzeichnet. Bis zur Antwort wird nichts gebaut.
+5. **Nach der Entscheidung:** ADR in `docs/project/decisions.md` — was entschieden wurde, was verworfen, mit
+   welcher Folge. Dann abschätzen:
+   - **Umfang** in der Einheit des Projekts (Personentage, S/M/L) — für die empfohlene Option, nicht für alle.
+   - **Was dafür gebraucht wird:** Bibliotheken, ein MCP-Server aus `.claude/mcp-katalog.md`, ein Regelsatz
+     aus `docs/project/coding_rules.d/`, ein Skill, der noch fehlt. Fehlendes Werkzeug ist ein eigener
+     Arbeitsschritt, kein Nebenbei.
+   - **Grobe Aufteilung:** Stories in `docs/project/stories/` für Abschnitte mit eigener Begründung, sonst
+     Aufgaben. Noch nicht startklar machen — das ist die Checkliste „Block vorbereiten".
+6. **Priorität und Zeitpunkt festlegen.** {{AUFTRAGGEBER}} nennt beides; {{ORCHESTRATOR}} setzt **seine
+   eigene** Einschätzung daneben, statt zuzustimmen. In den Backlog kommt der Mittelwert (siehe
+   `docs/ai/README.md` § Backlog). **Weichen beide um mehr als eine Stufe ab, steht der Grund dafür in einer
+   Zeile am Punkt** — genau dort steckt meistens eine Information, die der andere nicht hatte.
+7. **Verbuchen:** Backlog-Punkt(e) mit Thema, Prioritäten, Zeitpunkt, Aufwand und Verweis auf Konzept und
+   ADR. Aufgaben in `docs/ai/tasks.md` entstehen **nur für das, was jetzt gemacht wird** — der Rest bleibt
+   im Backlog, bis sein Zeitpunkt kommt.
+
+**Abkürzung erlaubt, aber benannt:** Ist der Wunsch klein und eindeutig (ein Tippfehler, ein Feldname, eine
+Zeile Konfiguration), entfallen Konzept und ADR — er wird direkt Aufgabe oder Backlog-Punkt. Die Abkürzung
+wird ausgesprochen („mache ich direkt als Aufgabe, kein Konzept"), damit {{AUFTRAGGEBER}} widersprechen kann.
+Im Zweifel für die Analyse: Ein überflüssiges Konzept kostet eine halbe Stunde, ein übersehener Widerspruch
+zu einer Entscheidung kostet den Umbau.
+
 ## Block vorbereiten
 
 Läuft **vor** einem größeren Vorhaben — einem Feature, einem Umbau, einer Welle von Aufgaben. Zweck: Der

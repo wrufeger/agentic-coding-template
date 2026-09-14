@@ -174,23 +174,46 @@ kein echtes Problem verursacht.
   „Projekt nachrüsten"): je Punkt Befund, Fundstelle `Datei:Zeile`, Vorschlag, geschätzter Aufwand.
 
 **Liste oder Tabelle?** Bis etwa fünfzehn Punkte genügt eine nummerierte Liste. Darüber wird sie
-unübersichtlich — dann in eine Tabelle überführen, ohne die Nummern anzufassen. Dieser Spaltensatz hat sich
-im Testprojekt bewährt:
+unübersichtlich — dann in eine Tabelle überführen, ohne die Nummern anzufassen:
 
 | Spalte | Inhalt |
 | :--- | :--- |
 | `ID` | die Nummer, für immer stabil |
 | Titel | eine Zeile, worum es geht |
 | Anweisung | `machen` · `nicht machen` · `offen` — hier entscheidet {{AUFTRAGGEBER}} |
-| Prio | `kritisch` (Sicherheit/Datenverlust) · `wichtig` · `normal` · `niedrig` |
-| Aufwand | `S`/`M`/`L` |
-| Bezug | `T<n>`, `Q<n>`, ADR, Feature, Story |
+| Prio | `⌀ x,y (u/o)` — Mittelwert, dahinter die beiden Einzelwerte (siehe unten) |
+| Zeitpunkt | wann es dran ist: `sofort` · `nächste Welle` · `vor Release` · `später` · `offen`, oder ein Datum |
+| Aufwand | `S`/`M`/`L` oder die Einheit des Projekts |
+| Bezug | `T<n>`, `Q<n>`, ADR, Feature, Story, Konzept |
 | Status | `offen` · `erledigt` |
 | Fundstelle | `Datei:Zeile` plus Stichwort — der Beleg, ohne den ein Punkt in sechs Monaten nicht mehr nachvollziehbar ist |
 
 Die letzte Spalte ist die wichtigste und wird am ehesten weggelassen: Ohne sie steht in der Zeile eine
 Behauptung ohne Nachweis. Erledigte Punkte bleiben mit Status `erledigt` stehen, damit Nummerierung und
 Historie erhalten bleiben — gelöscht wird nichts.
+
+**Priorität wird von beiden Seiten vergeben.** {{AUFTRAGGEBER}} kennt den Geschäftswert, {{ORCHESTRATOR}} den
+technischen Druck — beide Zahlen stehen nebeneinander, und sortiert wird nach ihrem Mittelwert:
+
+| Stufe | Zahl | Wann |
+| :--- | ---: | :--- |
+| kritisch | 4 | Sicherheit, Datenverlust, Rechtsverstoß — duldet keinen Aufschub |
+| wichtig | 3 | blockiert anderes oder wächst mit der Zeit |
+| normal | 2 | soll gemacht werden, wenn Platz ist |
+| niedrig | 1 | schön, aber verzichtbar |
+
+Schreibweise in der Spalte: `⌀ 3,5 (4/3)` — Mittelwert, dahinter {{AUFTRAGGEBER}}s und {{ORCHESTRATOR}}s
+Wert in dieser Reihenfolge. Fehlt eine der beiden Einschätzungen, steht dort `-` und der Mittelwert ist der
+vorhandene Wert; er wird **nicht** geraten.
+
+**Weichen die beiden um mehr als eine Stufe ab, steht der Grund in einer Zeile am Punkt.** Das ist keine
+Förmlichkeit: Eine Lücke von zwei Stufen heißt fast immer, dass eine Seite etwas weiß, das die andere nicht
+hat — eine Frist, ein Risiko im Code, eine geplante Änderung. Diese Information geht verloren, wenn nur der
+Mittelwert überlebt.
+
+**Sortierung:** zuerst nach **Thema** (Abschnittsüberschriften wie `## Sicherheit`, `## Datenmodell`), innerhalb
+des Themas absteigend nach Mittelwert. Die Themen ordnen den Blick, die Priorität ordnet die Arbeit. Bei
+gleichem Mittelwert entscheidet der Zeitpunkt, dann die kleinere Nummer.
 
 ## Ledger (`ledger.md`)
 

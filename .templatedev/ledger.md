@@ -12,6 +12,40 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-14 — Von der Idee zum Backlog-Punkt: Skill `/idea`, Prio von beiden Seiten
+
+Wolfgangs Vorgabe: Neue Ideen und Änderungswünsche werden erst in `docs/project/` dokumentiert, analysiert
+und bewertet — empfohlene Umsetzung mit Alternativen zur Auswahl. Nach der Entscheidung Abschätzung von
+Umfang, nötigen Werkzeugen und grober Aufteilung. Priorität und Zeitpunkt gibt er vor; im Backlog sollen die
+Angaben tabellarisch erscheinen, sortiert nach Thema, dann nach Priorität als **Mittelwert aus seiner und
+meiner Einschätzung**.
+
+- **Der Analyse-Teil brauchte nichts Neues:** `docs/project/konzepte/` (heute früh aus `bandliste`
+  übernommen) ist genau dafür gemacht — Ausgangslage, Optionen, Empfehlung, Aufwand. Neu ist der Weg dorthin
+  (Checkliste „Idee oder Änderungswunsch aufnehmen", Skill `/idea`) und was danach passiert.
+- **Die Prio-Mechanik, ausformuliert:** Stufen als Zahlen (kritisch 4 · wichtig 3 · normal 2 · niedrig 1),
+  Schreibweise `⌀ 3,5 (4/3)` — Mittelwert, dahinter beide Einzelwerte. Fehlt eine Einschätzung, steht `-`
+  und der Mittelwert ist der vorhandene Wert; geraten wird nicht.
+- **Der Punkt, an dem die Regel mehr ist als Buchhaltung:** Weichen beide Einschätzungen um **mehr als eine
+  Stufe** ab, steht der Grund in einer Zeile am Punkt. Eine Lücke von zwei Stufen heißt fast immer, dass eine
+  Seite etwas weiß, das die andere nicht hat — eine Frist, ein Risiko im Code, eine geplante Änderung. Genau
+  diese Information verschwindet, wenn nur der Mittelwert überlebt. Deshalb steht im Skill auch ausdrücklich:
+  **Die Prioritäten werden nicht angeglichen**, der Assistent übernimmt nicht Wolfgangs Zahl, damit es
+  ordentlich aussieht.
+- **Backlog-Tabelle** um `Zeitpunkt` erweitert (`sofort` · `nächste Welle` · `vor Release` · `später` ·
+  `offen` oder ein Datum), Sortierung festgelegt: erst Thema (Abschnittsüberschriften), darin absteigend nach
+  Mittelwert, bei Gleichstand Zeitpunkt, dann kleinere Nummer.
+- **Abkürzung für Kleinigkeiten ist erlaubt** — ein Tippfehler braucht kein Konzept. Aber sie wird
+  **ausgesprochen** („mache ich direkt als Aufgabe, kein Konzept"), damit Wolfgang widersprechen kann. Ohne
+  diese Klausel hätte die Regel entweder jeden Einzeiler bürokratisiert oder wäre stillschweigend umgangen
+  worden.
+- **Wichtigster Prüfschritt im Skill, der nicht in der Vorgabe stand:** Bevor analysiert wird, wird geprüft,
+  ob der Wunsch einer **bereits getroffenen Entscheidung widerspricht**. Wenn ja, geht es nicht um ein
+  Feature, sondern um die Revision eines ADR — eine andere Frage mit anderen Folgen. Das gehört an die erste
+  Stelle des Konzepts, nicht in eine Fußnote.
+- Skills jetzt 21. `/idea` endet am Backlog-Punkt, `/prepare` macht daraus einen startklaren Block — die
+  beiden greifen ineinander.
+
 ## 2026-09-14 — „Rasen mähen": der Block soll ohne Rückfragen durchlaufen
 
 Wolfgang hat das eigentliche Ziel hinter der Rückfrage-Regel nachgereicht: Er will einen größeren Block

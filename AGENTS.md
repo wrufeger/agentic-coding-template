@@ -117,6 +117,12 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   weiter. Entscheidungen, die nur gemeinsam umsetzbar sind, werden als Teilfragen (`Q5a`, `Q5b`, …) gestellt
   und **erst verarbeitet, wenn alle beantwortet sind**. Fragen bleiben nach Nummer sortiert und werden nie
   umnummeriert; bei vielen offenen Fragen kommen Themen-Überschriften dazu.
+- **Eine Idee wird erst analysiert, dann gebaut.** Äußert {{AUFTRAGGEBER}} ein Feature, eine Idee oder einen
+  Änderungswunsch, entsteht daraus zuerst ein Konzept in `docs/project/konzepte/` — Ausgangslage, Optionen,
+  Empfehlung — und eine Entscheidung, nicht sofort Code. Erst danach werden Aufwand, fehlende Werkzeuge und
+  die Aufteilung geschätzt und in Backlog und Aufgaben verbucht. Ablauf: Checkliste „Idee oder
+  Änderungswunsch aufnehmen" (`docs/ai/checklists.md`). Für Kleinigkeiten darf abgekürzt werden — die
+  Abkürzung wird aber ausgesprochen, damit {{AUFTRAGGEBER}} widersprechen kann.
 - **Rückfragen gehören an den Anfang, nicht in die laufende Umsetzung.** Bevor ein größerer Block oder ein
   Feature begonnen wird, wird geklärt, was unklar ist — dort kostet eine Frage Sekunden. Wie das geht, steht
   in der Checkliste „Block vorbereiten" (`docs/ai/checklists.md`): recherchieren, schneiden, **startklar**
