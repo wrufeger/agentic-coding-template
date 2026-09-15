@@ -39,7 +39,11 @@
 #
 # Verfolgte Schluessel (applied_config, siehe setup-lib.py:build_applied_config): Projektname, Auftraggeber,
 # Orchestrator, Sprache, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
-# Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Stack/Sprache stehen als
+# Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Reine Verhaltens-
+# Schluessel (Ideen-Ablauf, Testtiefe, Schreibstil, Feedback/-Takt/-Umfang) werden MITGESCHRIEBEN, aber nicht
+# auf Aenderungen geprueft: Sie aendern keine Datei, muessen aber in applied_config stehen bleiben - sonst
+# leert ein --apply, was create-project.py gesetzt hat (feedback.py liest die Schalterstellungen von dort).
+# Stack/Sprache stehen als
 # Fliesstext in Dokumentation - eine Aenderung wird nur uebernommen und mit den Fundstellen des ALTEN Werts
 # gemeldet (`find_literal_occurrences`), NIE automatisch ersetzt (Risiko falscher Treffer in Prosa); dasselbe
 # gilt fuer Commit-Verhalten (reines Orchestrator-Verhalten, keine Datei-Wirkung) - alle drei fielen vorher
@@ -364,11 +368,32 @@ def compute_current(cp, root: Path):
     if unbekannte_tools:
         fehler.append("KI-Werkzeuge unbekannt: " + ", ".join(unbekannte_tools))
 
+    # Die reinen Verhaltens-Schluessel werden hier NICHT auf Aenderungen geprueft (sie aendern keine Datei),
+    # aber sehr wohl mitgeschrieben: Sonst leert ein spaeteres --apply die Felder, die create-project.py
+    # einmal gefuellt hat, und feedback.py faende in applied_config nur noch None (es liest daraus die
+    # Schalterstellungen fuer die Rueckmeldung).
+    ideen_ablauf, _ = cp.normalize_ideen_ablauf(cfg)
+    testtiefe, _ = cp.normalize_testtiefe(cfg)
+    schreibstil, _ = cp.normalize_schreibstil(cfg)
+    feedback_val, feedback_unbekannt = cp.normalize_feedback(cfg)
+    if feedback_unbekannt:
+        fehler.append(f"Feedback: \"{feedback_unbekannt}\" unbekannt (aus, bestaetigen, automatisch, manuell).")
+    feedback_takt, feedback_takt_unbekannt = cp.normalize_feedback_takt(cfg)
+    if feedback_takt_unbekannt:
+        fehler.append(f"Feedback-Takt: \"{feedback_takt_unbekannt}\" unbekannt "
+                      f"({', '.join(sorted(cp.FEEDBACK_TAKT_WERTE))}).")
+    feedback_umfang, feedback_umfang_unbekannt = cp.normalize_feedback_umfang(cfg)
+    if feedback_umfang_unbekannt:
+        fehler.append(f"Feedback-Umfang: \"{feedback_umfang_unbekannt}\" unbekannt "
+                      f"({', '.join(sorted(cp.FEEDBACK_UMFANG_WERTE))}, Kommaliste).")
+
     remove_list = cp.tools_to_remove(cfg)
     snapshot = cp.build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
         sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
+        ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
+        feedback=feedback_val, feedback_takt=feedback_takt, feedback_umfang=feedback_umfang,
     )
     return cfg, values, snapshot, fehler, hinweise
 
@@ -584,8 +609,10 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         if not yes:
             lines.append(f"(Vorschau) wuerde entfernen: {diff['werkzeuge']}")
             return lines
-        removed = cp.remove_tool_files(root, diff["werkzeuge"])
+        removed, behalten = cp.remove_tool_files(root, diff["werkzeuge"], schutz=True)
         lines.append(f"Entfernt: {removed or '(nichts gefunden)'}")
+        for rel, grund in sorted(behalten.items()):
+            lines.append(f"  behalten ({grund}, nicht wiederherstellbar): {rel} - bei Bedarf selbst loeschen")
         _set_partial(ref_holder, "KI-Werkzeuge-entfernt",
                      _get_partial(ref_holder, "KI-Werkzeuge-entfernt", diff["old"]) | set(diff["werkzeuge"]))
         ref_holder["executed"].add("KI-Werkzeuge-entfernt")
@@ -679,6 +706,20 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         if offen:
             lines.append(f"  Achtung, noch Platzhalter offen: {offen}")
         lines.append(add_maintenance_hook(cp, tu, root, ref))
+        claude_md_res = tu.run_git(root, ["show", f"{ref}:CLAUDE.md"])
+        if claude_md_res.returncode == 0:
+            vorlage_text = claude_md_res.stdout
+            for key, val in (values or {}).items():
+                if val is not None:
+                    vorlage_text = vorlage_text.replace("{{" + key + "}}", str(val))
+            refs = cp.add_maintenance_references(root, vorlage_text)
+            lines.append(
+                "CLAUDE.md-Verweise: wiederhergestellt "
+                f"(agent={refs['agent_zeile']}, skill={refs['skill_zeile']}, "
+                f"modell={refs['modell_zeile']}, baum={refs['baum_zeile']})"
+            )
+        else:
+            lines.append("CLAUDE.md-Verweise: Vorlage nicht ladbar (git show CLAUDE.md fehlgeschlagen) - von Hand pruefen.")
         cp.write_maintenance_status(root, current.get("Wartungsaufgaben") or {})
         lines.append("status.json geschrieben aus AI-CONFIG.md § Wartungsaufgaben.")
         ref_holder["executed"].add("Wartung")
@@ -689,10 +730,12 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         if not yes:
             lines.append("(Vorschau) wuerde Wartungsdateien + Hook entfernen.")
             return lines
-        removed = cp.remove_maintenance_files(root)
+        removed, behalten = cp.remove_maintenance_files(root, schutz=True)
         hook_removed, hooks_fremde = cp.remove_maintenance_hook(root)
         claude_refs = cp.remove_maintenance_references(root)
         lines.append(f"Entfernt: {removed or '(keine)'}; Hook " + ("entfernt" if hook_removed else "(nicht vorhanden)"))
+        for rel, grund in sorted(behalten.items()):
+            lines.append(f"  behalten ({grund}, nicht wiederherstellbar): {rel} - bei Bedarf selbst loeschen")
         for f in hooks_fremde:
             lines.append(f"  fremder Hook belassen (zeigt jetzt ins Leere): {f}")
         if claude_refs["agent_zeile"] != claude_refs["skill_zeile"]:
@@ -750,8 +793,10 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         if not yes:
             lines.append("(Vorschau) wuerde optimizer.md entfernen.")
             return lines
-        removed = cp.remove_optimizer_files(root)
+        removed, behalten = cp.remove_optimizer_files(root, schutz=True)
         lines.append(f"Entfernt: {removed or '(nichts gefunden)'}")
+        for rel, grund in sorted(behalten.items()):
+            lines.append(f"  behalten ({grund}, nicht wiederherstellbar): {rel} - bei Bedarf selbst loeschen")
         ref_holder["executed"].add("Code-Optimierung")
         return lines
 

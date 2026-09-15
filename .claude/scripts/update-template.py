@@ -43,7 +43,10 @@
 #       Projektfassung geloest; alle uebrigen (inkl. offen gelassener DU-Faelle) muessen von Hand geloest
 #       werden (Analyse siehe --conflicts, danach --continue). Ohne Konflikte bzw. nach deren Aufloesung:
 #       template_only-Pfade werden aus dem Arbeitsbaum entfernt, falls sie doch hereingekommen sind (siehe
-#       _remove_template_only, greift NIE im Template-Checkout selbst); Platzhalter in den vom Merge
+#       _remove_template_only, greift NIE im Template-Checkout selbst); ABGEWAEHLTE Pfade ebenso (siehe
+#       abgewaehlte_pfade(): was AI-CONFIG.md auf "aus" stehen hat, bleibt draussen - ein "DU"-Konflikt darauf
+#       wird ohne Rueckfrage als "geloescht belassen" entschieden, und eine im Template neu angelegte Datei
+#       darunter wird nach dem Merge wieder entfernt, weil sie gar keinen Konflikt ausloest); Platzhalter in den vom Merge
 #       beruehrten Textdateien (ausser keep_local und no_replace) ersetzen, base_commit/updates fortschreiben,
 #       git add.
 #   python .claude/scripts/update-template.py --continue [--commit]
@@ -174,6 +177,59 @@ DEFAULT_TEMPLATE_ONLY = [
     ".github/README.md",
     ".templatedev",
 ]
+
+# Pfade, die ein abgewaehlter Schalter aus dem Projekt entfernt hat. Quelle ist `applied_config` in
+# template.json (der zuletzt umgesetzte Stand von AI-CONFIG.md) - bewusst KEINE eigene Liste in
+# template.json: die waere eine zweite Wahrheit neben AI-CONFIG.md und wuerde veralten, sobald jemand
+# zurueckschaltet. Die Pfade muessen zu MAINTENANCE_REMOVE_PATHS/OPTIMIZER_REMOVE_PATHS/TOOL_FILES in
+# setup-lib.py passen - dupliziert statt importiert, wie DEFAULT_TEMPLATE_ONLY oben (jedes Script bleibt
+# fuer sich Stdlib-eigenstaendig, siehe DEFAULT_NO_REPLACE).
+ABGEWAEHLT_SCHALTER_PATHS = {
+    "Wartung": [
+        ".claude/maintenance",
+        ".claude/skills/run-maintenance",
+        ".claude/agents/maintenance-orchestrator.md",
+        ".claude/scripts/maintenance-check.py",
+    ],
+    "Code-Optimierung": [".claude/agents/optimizer.md"],
+}
+ABGEWAEHLT_TOOL_PATHS = {
+    "Copilot": [".github/copilot-instructions.md"],
+    "Cursor": [".cursor"],
+    "Aider": [".aider.conf.yml"],
+    "Gemini CLI": ["GEMINI.md"],
+    "Claude Code": [
+        "CLAUDE.md",
+        ".claude/agents",
+        ".claude/skills",
+        ".claude/settings.json",
+        ".claude/settings.local.json.example",
+        ".claude/maintenance",
+    ],
+}
+
+
+def abgewaehlte_pfade(cfg: dict) -> list:
+    """Pfade, die dieses Projekt per AI-CONFIG.md abgewaehlt hat (Wartung/Code-Optimierung aus, KI-Werkzeug
+    gestrichen). Ein Merge darf sie nicht wieder hereintragen: Ohne das faengt jede Template-Aenderung an so
+    einer Datei einen "DU"-Konflikt zur Entscheidung, und eine im Template NEU angelegte Datei darunter kaeme
+    voellig konfliktfrei zurueck - beides ist nicht, was "aus" bedeutet.
+    Leere Liste, wenn `applied_config` fehlt (Projekt aelter als sync-config.py): Dann ist nicht bekannt, was
+    bewusst abgewaehlt wurde, und Raten waere schlimmer als Einspielen."""
+    if cfg.get("is_template"):
+        return []
+    angewandt = cfg.get("applied_config")
+    if not isinstance(angewandt, dict):
+        return []
+    pfade = []
+    for schluessel, liste in ABGEWAEHLT_SCHALTER_PATHS.items():
+        if str(angewandt.get(schluessel) or "").strip().lower() == "aus":
+            pfade.extend(liste)
+    werkzeuge = angewandt.get("KI-Werkzeuge-entfernt")
+    if isinstance(werkzeuge, list):
+        for werkzeug in werkzeuge:
+            pfade.extend(ABGEWAEHLT_TOOL_PATHS.get(str(werkzeug), []))
+    return sorted(dict.fromkeys(pfade))
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
 # rename-lib.py - dort nachsehen/nachziehen, falls sich die Regeln je aendern - z.B. die
@@ -544,12 +600,16 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
     # template_only-Pfade (siehe DEFAULT_TEMPLATE_ONLY) NIE als einzuspielende Aenderung zeigen - sie werden
     # nie ins Projekt gemergt (--apply raeumt sie danach ohnehin wieder weg). Greift nie im Template-Checkout
     # selbst (is_template): dort sind es normale, gepflegte Dateien.
-    normal_lines, template_only_lines = [], []
+    abgewaehlt = abgewaehlte_pfade(cfg)
+    normal_lines, template_only_lines, abgewaehlt_lines = [], [], []
     for raw_line in diff_lines_raw:
         parts = raw_line.split("\t")
         rel_path = parts[-1] if parts else raw_line
         if not is_template and matches_keep_local(rel_path, template_only):
             template_only_lines.append(rel_path)
+        elif not is_template and matches_keep_local(rel_path, abgewaehlt):
+            # Die Vorschau darf nichts ankuendigen, was --apply anschliessend wieder wegraeumt.
+            abgewaehlt_lines.append(rel_path)
         else:
             normal_lines.append(raw_line)
 
@@ -565,6 +625,12 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         lines.append("")
         lines.append("Nur im Template, wird nicht eingespielt:")
         for rel_path in template_only_lines[:30]:
+            lines.append(f"  {rel_path}")
+
+    if abgewaehlt_lines:
+        lines.append("")
+        lines.append("Abgewaehlt (AI-CONFIG.md), wird nicht eingespielt:")
+        for rel_path in abgewaehlt_lines[:30]:
             lines.append(f"  {rel_path}")
 
     lines.append("")
@@ -1019,10 +1085,12 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
 
             keep_local = cfg.get("keep_local") or []
             template_only = cfg.get("template_only") or []
+            abgewaehlt = abgewaehlte_pfade(cfg)
             is_template = bool(cfg.get("is_template"))
             merge_head = _merge_head(root)
             rename_map = _find_renames(root, cfg.get("base_commit"), "HEAD")
             auto_resolved, deleted_kept, dd_removed, du_decision, template_only_removed = [], [], [], [], []
+            abgewaehlt_removed = []
             for rel_path, code in conflicts.items():
                 if code == "DD":
                     # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
@@ -1039,6 +1107,15 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     if res_rm.returncode != 0:
                         run_git(root, ["rm", "--cached", "--", rel_path])
                     template_only_removed.append(rel_path)
+                elif code == "DU" and not is_template and matches_keep_local(rel_path, abgewaehlt):
+                    # Projekt hat den Schalter in AI-CONFIG.md auf "aus" gestellt, das Template hat die Datei
+                    # geaendert. Auch das ist keine Entscheidung fuer {{AUFTRAGGEBER}}: Er hat sie schon
+                    # getroffen, sonst stuende der Schalter nicht auf "aus". Keine Rename-Pruefung noetig -
+                    # abgewaehlte Pfade werden entfernt, nicht verschoben.
+                    res_rm = run_git(root, ["rm", "--", rel_path])
+                    if res_rm.returncode != 0:
+                        run_git(root, ["rm", "--cached", "--", rel_path])
+                    abgewaehlt_removed.append(rel_path)
                 elif code == "DU":
                     # Vom Projekt geloescht, vom Template geaendert. Das Script darf das NICHT allein
                     # entscheiden, wenn die "Loeschung" in Wahrheit nur eine Umbenennung/Verschiebung ist
@@ -1064,6 +1141,8 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                 print("keep_local automatisch uebernommen (Projektfassung gewinnt): " + ", ".join(sorted(auto_resolved)))
             if template_only_removed:
                 print("Nur im Template, wird nicht eingespielt: " + ", ".join(sorted(template_only_removed)))
+            if abgewaehlt_removed:
+                print("Abgewaehlt (AI-CONFIG.md), bleibt draussen: " + ", ".join(sorted(abgewaehlt_removed)))
             if dd_removed:
                 print("Von beiden geloescht (unstrittig) -> entfernt: " + ", ".join(sorted(dd_removed)))
             if deleted_kept:
@@ -1100,8 +1179,16 @@ def _remove_template_only(root: Path, cfg: dict) -> list:
     if cfg.get("is_template"):
         return []
     template_only = cfg.get("template_only") if isinstance(cfg.get("template_only"), list) else list(DEFAULT_TEMPLATE_ONLY)
+    return _remove_paths(root, template_only)
+
+
+def _remove_paths(root: Path, pfade) -> list:
+    """Gemeinsame Mechanik fuer _remove_template_only() und das Aufraeumen abgewaehlter Pfade: 'git rm -r -f
+    --ignore-unmatch' raeumt Index UND Arbeitsbaum in einem Schritt und meldet keinen Fehler, wenn der Pfad
+    gar nicht existiert; was danach noch daliegt (von git nicht erfasste Dateien), wird direkt vom
+    Dateisystem geloescht, damit keine Karteileiche zurueckbleibt."""
     removed = []
-    for rel_path in template_only:
+    for rel_path in pfade:
         fp = root / rel_path
         existed = fp.exists()
         run_git(root, ["rm", "-r", "-f", "--ignore-unmatch", "--", rel_path])
@@ -1122,6 +1209,12 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
     removed_template_only = _remove_template_only(root, cfg)
     if removed_template_only:
         print("Nur im Template, aus dem Projekt entfernt: " + ", ".join(removed_template_only))
+
+    # Abgewaehlte Pfade: Der Merge kann dort auch DATEIEN NEU angelegt haben, die es im Projekt noch nie gab -
+    # die erzeugen keinen Konflikt und kaemen sonst unbemerkt zurueck (Backlog 31).
+    removed_abgewaehlt = _remove_paths(root, abgewaehlte_pfade(cfg))
+    if removed_abgewaehlt:
+        print("Abgewaehlt (AI-CONFIG.md), aus dem Projekt entfernt: " + ", ".join(removed_abgewaehlt))
 
     res_cached = run_git(root, ["diff", "--cached", "--name-only"])
     res_unstaged = run_git(root, ["diff", "--name-only"])
