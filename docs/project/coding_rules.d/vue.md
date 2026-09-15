@@ -4,7 +4,7 @@ Regeln für Vue-3-Komponenten mit Composition API und `<script setup>`.
 
 ## Sprache und Stil
 - `<script setup lang="ts">` in jeder Komponente, keine Options-API in neuem Code.
-- Reihenfolge im SFC: `<script setup>`, `<template>`, `<style>`.
+- Reihenfolge im SFC: `<template>`, `<script setup>`, `<style>`.
 - `ref` für primitive/atomare Werte, `reactive` nur für zusammenhängende Objektzustände.
 - Composables als eigene Funktion mit `useX`-Namenskonvention, wiederverwendbar über Komponenten hinweg.
 
