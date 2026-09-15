@@ -29,9 +29,12 @@
 #   python .claude/scripts/feedback.py --status
 #       Zeigt: Einwilligung ja/nein, Ziel-URL, wie viele Eintraege im Ausgang liegen, wann zuletzt gesendet
 #       wurde. Schreibt nichts.
-#   python .claude/scripts/feedback.py --enable [--repo-url <url>] | --disable
+#   python .claude/scripts/feedback.py --enable [--repo-url <url>] [--protokoll versionieren|lokal] | --disable
 #       Setzt bzw. widerruft die Einwilligung in .claude/template.json. --repo-url ist optional und wird nur
 #       mitgesendet, wenn sie oeffentlich erreichbar ist; ohne sie bleibt die Meldung ohne Projektbezug.
+#       --protokoll lokal traegt die Nutzlast-Dateien in .gitignore ein - fuer Projekte, deren Repo
+#       oeffentlich ist oder die das Protokoll schlicht nicht im Verlauf haben wollen. Default:
+#       versionieren (Nachweis im Diff).
 #   python .claude/scripts/feedback.py --add --art <regel|script|skill|ablauf|doku|fehler>
 #                                      --titel "<eine Zeile>" --text "<2-6 Saetze>"
 #       Legt einen Verbesserungs-Eintrag in den lokalen Ausgang (.claude/feedback-outbox.json, gitignored).
@@ -43,6 +46,13 @@
 #       Sendet, wenn Einwilligung vorliegt, der Filter nichts beanstandet und die letzte Sendung mindestens
 #       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/, leert den Ausgang und
 #       vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst.
+#   python .claude/scripts/feedback.py --direkt "<Text>"
+#       Sendet eine von Hand geschriebene Nachricht SOFORT - unabhaengig von Einwilligung, Modus und Takt.
+#       Begruendung: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan,
+#       wofuer die Einwilligung sonst da ist. Steht Feedback auf "aus", geht ausschliesslich der Text hinaus
+#       (keine Projekt-Kennung, kein Kontext); sonst gehen Projekt-Kennung, Template-Stand, Weg und
+#       Ausfuellart mit, damit sich mehrere Meldungen desselben Projekts zusammenfuehren lassen. Der Filter
+#       laeuft auch hier: ein versehentlich mitkopierter Pfad oder ein Token wird gemeldet statt gesendet.
 #   python .claude/scripts/feedback.py --clear
 #       Leert den Ausgang, ohne zu senden.
 #
@@ -56,6 +66,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -77,9 +88,31 @@ for _stream in (sys.stdout, sys.stderr):
 FEEDBACK_ENDPOINT = "https://rufeger.de/agentic-coding-feedback"
 ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 
-OUTBOX_REL = ".claude/feedback-outbox.json"
+# Schema der von Hand geschriebenen Nachricht (--direkt). Eigene Nummer, weil sie anders aufgebaut ist als
+# die gesammelte Meldung: Pflicht ist nur `text`, alles Uebrige ist optionaler Kontext.
+SCHEMA_DIREKT = 2
+
+# Herkunftskennung, die jede Meldung mitfuehrt. BEWUSST OEFFENTLICH und eingecheckt - sie ist kein Geheimnis
+# und soll auch keines sein: Sie sagt dem Endpunkt nur, dass die Meldung aus einem Projekt kommt, das dieses
+# Template benutzt, und haelt zufaelligen Muell drauusen. Wer sie faelschen will, liest sie hier ab; dagegen
+# hilft sie nicht und soll sie nicht helfen.
+# Der Name ist mit Absicht NICHT "secret"/"token"/"key": Solche Woerter werden in genau dieser Kette
+# herausgefiltert - vom Geheimnis-Filter unten, von Log-Filtern, von Sicherheitsscannern. Eine Kennung, die
+# unterwegs weggeputzt wird, waere schlimmer als keine. Aus demselben Grund ist der Wert lesbarer Text und
+# keine lange Hex-Kette (die faengt _LANGE_HEX ab).
+HERKUNFT = "agentic-coding-template/1"
+
+# Der fruehere Ausgang (.claude/feedback-outbox.json) ist entfallen: Eintraege liegen jetzt als Paar
+# <name>.md + <name>.json direkt unter docs/ai/template-feedback/ und wandern beim Senden nach sent/.
+# Damit steht schon VOR dem Versand im Repo, was hinausgehen soll - sichtbar im Diff, nicht in einer
+# versteckten Datei.
 # Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist.
 LOG_DIR_REL = "docs/ai/template-feedback"
+# ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protokoll lokal). Dann
+# nimmt .gitignore genau die Nutzlast-Dateien aus; die README des Ordners bleibt versioniert, damit im Repo
+# nachlesbar bleibt, DASS gesendet wird - nur nicht mehr, WAS.
+GITIGNORE_GLOB = "docs/ai/template-feedback/*.json"
+GITIGNORE_KOPF = "# Protokoll der Rueckmeldungen (feedback.py) - auf Wunsch lokal, nicht versioniert"
 CONFIG_REL = "AI-CONFIG.md"
 # Mindestabstand je Takt in Stunden (None = kein automatischer Versand). Gleiche Tabelle wie in setup-lib.py;
 # hier noch einmal, weil feedback.py bewusst ohne Abhaengigkeit zu setup-lib.py auskommt - es laeuft auch,
@@ -232,23 +265,144 @@ def _template_json_schreiben(root: Path, daten: dict) -> None:
 
 
 def _endpoint() -> str:
-    return (os.environ.get(ENDPOINT_ENV) or FEEDBACK_ENDPOINT).rstrip("/")
+    """Zieladresse, IMMER mit abschliessendem Schraegstrich.
+
+    Belegt am 2026-09-15 am echten Endpunkt: Ohne den Schraegstrich antwortet der Webserver mit 301 auf die
+    Variante MIT Schraegstrich - und urllib macht bei einer Weiterleitung aus dem POST ein GET. Die Meldung
+    kaeme also nie an, und der Client saehe nur ein unverstaendliches "405". Eine Zeile Vorsorge ist billiger
+    als diese Fehlersuche im fremden Projekt."""
+    roh = (os.environ.get(ENDPOINT_ENV) or FEEDBACK_ENDPOINT).rstrip("/")
+    return roh + "/"
 
 
-def _outbox(root: Path) -> list:
-    fp = root / OUTBOX_REL
-    if not fp.exists():
-        return []
+def _ist_eintrag(fp: Path) -> bool:
+    """Trennt Eintraege von Sendeprotokollen - beide liegen als .json im selben Ordner. Ein Eintrag hat
+    eine gleichnamige .md daneben UND die Felder art/titel/text. Ohne diese Pruefung wanderte ein
+    Protokoll der letzten Sendung als "Eintrag" in die naechste Nutzlast (im Test genau so passiert)."""
+    if not fp.with_suffix(".md").exists():
+        return False
     try:
         daten = json.loads(fp.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
+        return False
+    return isinstance(daten, dict) and {"art", "titel", "text"} <= set(daten)
+
+
+def _wartende_dateien(root: Path) -> list:
+    """Die noch nicht gesendeten Eintraege: je Eintrag eine <name>.json (Daten) neben einer <name>.md
+    (Zusammenfassung zum Lesen). Gesendetes liegt in sent/ und zaehlt hier nicht mehr mit; die
+    Sendeprotokolle bleiben, wo sie sind - sie sind der Nachweis, kein Eintrag."""
+    ordner = root / LOG_DIR_REL
+    if not ordner.is_dir():
         return []
-    return daten if isinstance(daten, list) else []
+    return sorted(fp for fp in ordner.glob("*.json") if _ist_eintrag(fp))
 
 
-def _outbox_schreiben(root: Path, eintraege: list) -> None:
-    (root / OUTBOX_REL).write_text(
-        json.dumps(eintraege, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def _outbox(root: Path) -> list:
+    """Die wartenden Eintraege als Liste von dicts - das Format, das in die Nutzlast geht."""
+    eintraege = []
+    for fp in _wartende_dateien(root):
+        try:
+            daten = json.loads(fp.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(daten, dict):
+            eintraege.append(daten)
+    return eintraege
+
+
+_UMLAUTE = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}
+
+
+def _slug(titel: str) -> str:
+    roh = (titel or "eintrag").lower()
+    for zeichen, ersatz in _UMLAUTE.items():
+        roh = roh.replace(zeichen, ersatz)
+    roh = "".join(c if c.isalnum() else "-" for c in roh)
+    roh = "-".join(t for t in roh.split("-") if t)[:50]
+    return roh or "eintrag"
+
+
+def _eintrag_schreiben(root: Path, eintrag: dict) -> Path:
+    """Legt das Paar <name>.json / <name>.md an. Die .md ist fuer Menschen (auch fuer den, der das Projekt
+    fuehrt und im Diff sehen soll, was hinausgehen wuerde), die .json fuer den Empfaenger."""
+    ordner = root / LOG_DIR_REL
+    ordner.mkdir(parents=True, exist_ok=True)
+    basis = f"{eintrag.get('datum', time.strftime('%Y-%m-%d'))}-{_slug(eintrag.get('titel', ''))}"
+    name, nummer = basis, 2
+    while (ordner / f"{name}.json").exists():
+        name, nummer = f"{basis}-{nummer}", nummer + 1
+    (ordner / f"{name}.json").write_text(
+        json.dumps(eintrag, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    zeilen = [f"# {eintrag.get('titel') or '(ohne Titel)'}", "",
+              f"- Art: `{eintrag.get('art')}`", f"- Datum: {eintrag.get('datum')}"]
+    if eintrag.get("url"):
+        zeilen.append(f"- Link: {eintrag['url']}")
+    zeilen += ["- Status: wartet auf Versand", "", eintrag.get("text") or "", ""]
+    (ordner / f"{name}.md").write_text("\n".join(zeilen), encoding="utf-8")
+    return ordner / f"{name}.json"
+
+
+FRAGEBOGEN_REL = "docs/ai/template-feedback/feedback.md"
+_ANTWORT = re.compile(r"(?m)^##\s+(?P<frage>.+?)\s*$\n(?P<rumpf>(?:(?!^##\s).*\n?)*)")
+
+
+def _fragebogen_lesen(root: Path) -> list:
+    """Die vom Menschen geschriebenen Antworten aus feedback.md - je Abschnitt die Zeilen unter '> '.
+    Leer gebliebene Fragen fallen weg; der Abschnitt 'Bereits gesendet' ist Archiv und wird nie erneut
+    gesendet."""
+    fp = root / FRAGEBOGEN_REL
+    if not fp.exists():
+        return []
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return []
+    raus = []
+    for treffer in _ANTWORT.finditer(text.split("\n---\n")[0]):
+        frage = treffer.group("frage").strip()
+        antwort = " ".join(
+            zeile.lstrip("> ").strip()
+            for zeile in treffer.group("rumpf").splitlines()
+            if zeile.strip().startswith(">") and zeile.strip(" >")
+        ).strip()
+        if antwort:
+            raus.append({"frage": frage, "antwort": antwort})
+    return raus
+
+
+def _fragebogen_zuruecksetzen(root: Path, antworten: list) -> None:
+    """Nach dem Versand: Antworten als Kurzfassung ans Ende haengen, die '> '-Zeilen wieder leeren.
+    Die Fragen und Ueberschriften bleiben stehen - die Datei ist danach wieder benutzbar."""
+    fp = root / FRAGEBOGEN_REL
+    if not fp.exists() or not antworten:
+        return
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    kopf, trenner, archiv = text.partition("\n---\n")
+    neu_kopf = re.sub(r"(?m)^>[ \t]*\S.*$", "> ", kopf)
+    block = [f"\n### Gesendet am {time.strftime('%Y-%m-%d')}", ""]
+    for eintrag in antworten:
+        block.append(f"- **{eintrag['frage']}:** {eintrag['antwort']}")
+    block.append("")
+    fp.write_text(neu_kopf + (trenner or "\n---\n") + archiv + "\n".join(block), encoding="utf-8")
+
+
+def _nach_sent(root: Path) -> int:
+    """Nach erfolgreichem Versand: Paare nach sent/ verschieben. Sie bleiben damit nachlesbar - der Nachweis
+    ist der ganze Zweck des Ordners -, zaehlen aber nicht mehr als wartend."""
+    ziel = root / LOG_DIR_REL / "sent"
+    ziel.mkdir(parents=True, exist_ok=True)
+    bewegt = 0
+    for fp in _wartende_dateien(root):
+        for endung in (".json", ".md"):
+            quelle = fp.with_suffix(endung)
+            if quelle.exists():
+                quelle.replace(ziel / quelle.name)
+        bewegt += 1
+    return bewegt
 
 
 def _feedback_block(tj: dict) -> dict:
@@ -289,22 +443,123 @@ def _mcp_server(root: Path) -> dict:
     return ergebnis
 
 
+def _umfang(root: Path) -> set:
+    """Welche Kennungen aus AI-CONFIG.md § Feedback-Umfang gelten. Unbekanntes wird ignoriert - im Zweifel
+    wird WENIGER gesammelt, nicht mehr."""
+    roh = _config_wert(root, "Feedback-Umfang", "a,b,c", {})
+    return {t.strip().lower() for t in roh.split(",") if t.strip().lower() in {"a", "b", "c"}}
+
+
+def _git(root: Path, *args) -> str:
+    """git-Aufruf, der nie stoert: Faellt er aus (kein Repo, kein git, Timeout), gibt es eben keine Zahlen."""
+    try:
+        res = subprocess.run(["git", "-C", str(root)] + list(args), capture_output=True, text=True,
+                             timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return res.stdout if res.returncode == 0 else ""
+
+
+def _kennzahlen(root: Path) -> dict:
+    """Umfang a: Zahlen aus `git log` und Dateisystem - NUR Zahlen, nie Namen, nie Pfade, nie Texte.
+    Was sich nicht ermitteln laesst, faellt weg statt geschaetzt zu werden (Entscheidung 2026-09-15)."""
+    zahlen = {}
+    protokoll = _git(root, "log", "--format=%ad", "--date=short").split()
+    if protokoll:
+        zahlen["commits"] = len(protokoll)
+        zahlen["tage_aktiv"] = len(set(protokoll))
+        zahlen["erster_commit"] = protokoll[-1]
+        zahlen["letzter_commit"] = protokoll[0]
+        seit = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
+        zahlen["commits_30_tage"] = sum(1 for d in protokoll if d >= seit)
+    ki_doku = _git(root, "log", "--format=%h", "--", "docs/ai").split()
+    if ki_doku:
+        zahlen["commits_docs_ai"] = len(ki_doku)
+    dateien, bytes_gesamt = 0, 0
+    for pfad in root.rglob("*"):
+        teile = pfad.relative_to(root).parts
+        if any(t in (".git", "node_modules", ".venv", "dist", "build", ".output", ".nuxt") for t in teile):
+            continue
+        if pfad.is_file():
+            dateien += 1
+            try:
+                bytes_gesamt += pfad.stat().st_size
+            except OSError:
+                pass
+    zahlen["dateien"] = dateien
+    zahlen["groesse_mb"] = round(bytes_gesamt / 1_048_576, 1)
+    log = root / "ai.log"
+    if log.exists():  # nur, wenn das Logging ueberhaupt laeuft - es ist standardmaessig aus
+        try:
+            zeilen = log.read_text(encoding="utf-8", errors="ignore").splitlines()
+            zahlen["log_zeilen"] = len(zeilen)
+            zahlen["log_sitzungen"] = sum(1 for z in zeilen if "[session]" in z and " start" in z)
+        except OSError:
+            pass
+    return zahlen
+
+
+def _regel_aenderungen(root: Path) -> dict:
+    """Umfang b: Wie oft an den KI-Regeln und an der Doku-Struktur gearbeitet wurde - als ZAHL je Bereich,
+    nie als Inhalt. Ob jemand eine Regel ergaenzt hat, ist fuers Template interessant; WAS darin steht,
+    beschreibt der Assistent in einem eigenen Eintrag (--add), wenn es fuer Fremde taugt."""
+    bereiche = {
+        "agents_md": "AGENTS.md", "claude_md": "CLAUDE.md",
+        "agenten": ".claude/agents", "skills": ".claude/skills", "scripte": ".claude/scripts",
+        "checklisten": "docs/ai/checklists.md",
+    }
+    raus = {}
+    for name, pfad in bereiche.items():
+        treffer = _git(root, "log", "--format=%h", "--", pfad).split()
+        if treffer:
+            raus[name] = len(treffer)
+    return raus
+
+
+def _werkzeug_nutzung(root: Path) -> dict:
+    """Umfang c: Wie viele Agenten, Skills und Scripte es gibt und wie viele davon NICHT aus dem Template
+    stammen. Namen selbstgebauter Dateien bleiben drauusen - sie verraten oft das Projekt."""
+    raus = {}
+    for name, ordner, muster in (("agenten", ".claude/agents", "*.md"),
+                                 ("skills", ".claude/skills", "*"),
+                                 ("scripte", ".claude/scripts", "*.py")):
+        d = root / ordner
+        if d.is_dir():
+            raus[name] = len([p for p in d.glob(muster) if p.name != "README.md"])
+    return raus
+
+
 def _nutzlast(root: Path, tj: dict) -> dict:
     fb = _feedback_block(tj)
     angewandt = tj.get("applied_config") or {}
+    umfang = _umfang(root)
     nutzlast = {
         "schema": 1,
+        "herkunft": HERKUNFT,
         "projekt_id": fb.get("projekt_id"),
         "datum": time.strftime("%Y-%m-%d"),
         "template_basis": tj.get("base_commit"),
         "weg": fb.get("weg"),
         "ausfuellart": fb.get("ausfuellart"),
+        "umfang": ",".join(sorted(umfang)),
         "werkzeuge_entfernt": angewandt.get("KI-Werkzeuge-entfernt") or [],
         "regelsaetze": angewandt.get("Coding-Guidelines") or [],
         "schalter": _schalter(tj),
-        "mcp_server": _mcp_server(root),
         "eintraege": _outbox(root),
     }
+    # Was der Mensch selbst geschrieben hat, geht immer mit - unabhaengig vom gewaehlten Umfang. Der Umfang
+    # steuert, was der ASSISTENT von sich aus sammelt, nicht was {{AUFTRAGGEBER}} sagen will.
+    antworten = _fragebogen_lesen(root)
+    if antworten:
+        nutzlast["fragebogen"] = antworten
+    # Die drei Umfaenge sind einzeln abwaehlbar - was nicht gewaehlt ist, wird gar nicht erst erhoben.
+    if "a" in umfang:
+        nutzlast["kennzahlen"] = _kennzahlen(root)
+    if "b" in umfang:
+        nutzlast["regel_aenderungen"] = _regel_aenderungen(root)
+    if "c" in umfang:
+        nutzlast["mcp_server"] = _mcp_server(root)
+        nutzlast["werkzeuge"] = _werkzeug_nutzung(root)
     if fb.get("repo_url"):
         nutzlast["repo_url"] = fb["repo_url"]
     return nutzlast
@@ -336,11 +591,52 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
 
 def _zeige(nutzlast: dict, endpoint: str) -> None:
     print(f"Ziel:     {endpoint}")
-    print(f"Eintraege: {len(nutzlast.get('eintraege') or [])}")
+    if nutzlast.get("art") == "direkt":
+        print("Inhalt:   eine von Hand geschriebene Nachricht")
+    else:
+        print(f"Eintraege: {len(nutzlast.get('eintraege') or [])}")
     print("")
     print("Vollstaendige Nutzlast:")
     for zeile in json.dumps(nutzlast, indent=2, ensure_ascii=False).split("\n"):
         print("  " + zeile)
+
+
+def _protokoll_lokal(root: Path) -> bool:
+    """True, wenn .gitignore die Nutzlast-Dateien des Protokolls ausnimmt."""
+    gi = root / ".gitignore"
+    if not gi.exists():
+        return False
+    return any(z.strip() == GITIGNORE_GLOB for z in gi.read_text(encoding="utf-8").splitlines())
+
+
+def _protokoll_lokal_setzen(root: Path, lokal: bool) -> str:
+    """Traegt die Nutzlast-Dateien in .gitignore ein bzw. nimmt den Eintrag wieder heraus.
+
+    Rueckgabe: kurze Meldung fuer die Ausgabe. Angefasst wird nur die eigene Zeile samt Kopfkommentar -
+    alles andere in .gitignore bleibt unberuehrt.
+    """
+    gi = root / ".gitignore"
+    vorhanden = _protokoll_lokal(root)
+    if lokal == vorhanden:
+        return f"Protokoll: {'lokal (bereits in .gitignore)' if lokal else 'versioniert (unveraendert)'}"
+    zeilen = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
+    if lokal:
+        if zeilen and zeilen[-1].strip():
+            zeilen.append("")
+        zeilen += [GITIGNORE_KOPF, GITIGNORE_GLOB]
+        gi.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+        return f"Protokoll: lokal - {GITIGNORE_GLOB} in .gitignore eingetragen"
+    behalten, i = [], 0
+    while i < len(zeilen):
+        if zeilen[i].strip() == GITIGNORE_GLOB:
+            if behalten and behalten[-1].strip() == GITIGNORE_KOPF:
+                behalten.pop()
+            i += 1
+            continue
+        behalten.append(zeilen[i])
+        i += 1
+    gi.write_text("\n".join(behalten).rstrip("\n") + "\n", encoding="utf-8")
+    return f"Protokoll: versioniert - {GITIGNORE_GLOB} aus .gitignore entfernt"
 
 
 def cmd_status(root: Path) -> int:
@@ -350,7 +646,11 @@ def cmd_status(root: Path) -> int:
     print(f"Feedback:  {modus}   (Takt: {takt}, aus {CONFIG_REL})")
     print(f"Ziel:      {_endpoint()}")
     print(f"Projekt-ID: {fb.get('projekt_id') or '- (entsteht bei --enable)'}")
-    print(f"Ausgang:   {len(_outbox(root))} Eintraege ({OUTBOX_REL}, gitignored)")
+    print(f"Wartend:   {len(_outbox(root))} Eintraege ({LOG_DIR_REL}/, je .md + .json)")
+    gesendet = list((root / LOG_DIR_REL / "sent").glob("*.json")) if (root / LOG_DIR_REL / "sent").is_dir() else []
+    print(f"Gesendet:  {len(gesendet)} Eintraege ({LOG_DIR_REL}/sent/)")
+    print(f"Protokoll: {LOG_DIR_REL}/ - "
+          f"{'lokal, per .gitignore ausgenommen' if _protokoll_lokal(root) else 'versioniert (im Diff sichtbar)'}")
     print(f"Zuletzt gesendet: {fb.get('zuletzt_gesendet') or 'nie'}")
     if fb.get("repo_url"):
         print(f"Repo-URL:  {fb['repo_url']}")
@@ -360,12 +660,15 @@ def cmd_status(root: Path) -> int:
     return 0
 
 
-def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus=None) -> int:
+def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus=None, protokoll=None) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
     ziel = (modus or "automatisch") if an else "aus"
     if ziel not in ("aus", "bestaetigen", "automatisch", "manuell"):
         print("Fehler: --modus muss aus, bestaetigen, automatisch oder manuell sein.", file=sys.stderr)
+        return 2
+    if protokoll not in (None, "versionieren", "lokal"):
+        print("Fehler: --protokoll muss versionieren oder lokal sein.", file=sys.stderr)
         return 2
     if not _config_setzen(root, "Feedback", ziel):
         print(f"Fehler: Zeile 'Feedback' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
@@ -391,8 +694,11 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
     print(f"{CONFIG_REL}: Feedback = {ziel}   (Takt: {_takt(root)})")
+    if protokoll is not None:
+        print(_protokoll_lokal_setzen(root, protokoll == "lokal"))
     if an:
-        print(f"Ziel: {_endpoint()} - Protokoll jeder Sendung unter {LOG_DIR_REL}/")
+        wo = "lokal, per .gitignore ausgenommen" if _protokoll_lokal(root) else "versioniert"
+        print(f"Ziel: {_endpoint()} - Protokoll jeder Sendung unter {LOG_DIR_REL}/ ({wo})")
     return 0
 
 
@@ -429,13 +735,12 @@ def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
         print("Beschreibe das Muster, nicht das Projekt: keine Pfade, keine Namen, kein Code.",
               file=sys.stderr)
         return 1
-    eintraege = _outbox(root)
     eintrag = {"art": art, "titel": titel, "text": text, "datum": time.strftime("%Y-%m-%d")}
     if url:
         eintrag["url"] = url
-    eintraege.append(eintrag)
-    _outbox_schreiben(root, eintraege)
-    print(f"Uebernommen ({len(eintraege)} im Ausgang). Ansehen: feedback.py --plan")
+    ziel = _eintrag_schreiben(root, eintrag)
+    print(f"Uebernommen: {ziel.relative_to(root).as_posix()} (+ gleichnamige .md zum Lesen). "
+          f"{len(_outbox(root))} Eintrag/Eintraege warten. Ansehen: feedback.py --plan")
     return 0
 
 
@@ -511,35 +816,127 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
         print("")
         print("Modus 'bestaetigen': nichts gesendet. Zum Senden dieselbe Zeile mit --yes wiederholen.")
         return 0
+    code, fehlertext = _posten(endpoint, nutzlast)
+    if fehlertext:
+        print(f"Abbruch: {fehlertext} Ausgang bleibt erhalten.", file=sys.stderr)
+        return 2
+    protokoll = _protokollieren(root, nutzlast, endpoint)
+    fb["zuletzt_gesendet"] = time.strftime("%Y-%m-%d %H:%M")
+    tj["feedback"] = fb
+    _template_json_schreiben(root, tj)
+    _fragebogen_zuruecksetzen(root, nutzlast.get("fragebogen") or [])
+    bewegt = _nach_sent(root)
+    anzahl = len(nutzlast.get("eintraege") or [])
+    nachsatz = ("liegt nur lokal (.gitignore)" if _protokoll_lokal(root)
+                else "gehoert in den naechsten Commit")
+    print(f"Rueckmeldung gesendet (HTTP {code}, {anzahl} Eintraege). "
+          f"Protokoll: {protokoll.relative_to(root).as_posix()} - {nachsatz}.")
+    if bewegt:
+        print(f"{bewegt} Eintrag/Eintraege nach {LOG_DIR_REL}/sent/ verschoben.")
+    return 0
+
+
+class _KeineWeiterleitung(urllib.request.HTTPRedirectHandler):
+    """Weiterleitungen werden NICHT gefolgt. Grund: urllib macht aus einem umgeleiteten POST ein GET - die
+    Nutzlast waere weg, und der Empfaenger antwortete mit einem irrefuehrenden 405. Lieber ein klarer
+    Fehler mit der Zieladresse, die in AI-CONFIG/Script gehoert."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_SENDER = urllib.request.build_opener(_KeineWeiterleitung)
+
+
+def _posten(endpoint: str, nutzlast: dict):
+    """(code, fehlertext). Genau ein POST, ohne Weiterleitung, mit lesbarer Diagnose."""
     daten = json.dumps(nutzlast, ensure_ascii=False).encode("utf-8")
     anfrage = urllib.request.Request(
         endpoint, data=daten, method="POST",
         headers={"Content-Type": "application/json; charset=utf-8",
                  "User-Agent": "agentic-coding-template-feedback/1"})
     try:
-        with urllib.request.urlopen(anfrage, timeout=TIMEOUT_S) as antwort:
-            code = antwort.status
+        with _SENDER.open(anfrage, timeout=TIMEOUT_S) as antwort:
+            return antwort.status, None
     except urllib.error.HTTPError as e:
-        print(f"Abbruch: Empfaenger antwortet mit HTTP {e.code}. Ausgang bleibt erhalten.", file=sys.stderr)
-        return 2
+        if e.code in (301, 302, 303, 307, 308):
+            ziel = e.headers.get("Location", "(ohne Ziel)")
+            return None, (f"Der Empfaenger leitet weiter auf {ziel} - eine Weiterleitung frisst den Inhalt "
+                          f"des POST. Trage genau diese Adresse als Ziel ein.")
+        return None, f"Empfaenger antwortet mit HTTP {e.code}."
     except (urllib.error.URLError, OSError) as e:
-        print(f"Abbruch: nicht erreichbar ({e}). Ausgang bleibt erhalten.", file=sys.stderr)
+        return None, f"nicht erreichbar ({e})."
+
+
+DIREKT_MAX = 4000
+
+
+def cmd_direkt(root: Path, text: str, ja: bool) -> int:
+    """Eine von Hand geschriebene Nachricht senden. Dieser Weg ist bewusst NICHT an die Einwilligung
+    gebunden: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan, wofuer
+    die Einwilligung sonst da ist. Steht Feedback auf "aus", geht ausschliesslich der Text hinaus - keine
+    Projekt-Kennung, kein Kontext, nichts, was das Projekt wiedererkennbar macht. Sonst darf der Kontext
+    mit, damit sich mehrere Meldungen desselben Projekts zusammenfuehren lassen."""
+    text = (text or "").strip()
+    if not text:
+        print("Abbruch: kein Text angegeben.", file=sys.stderr)
         return 2
+    if len(text) > DIREKT_MAX:
+        print(f"Abbruch: Text laenger als {DIREKT_MAX} Zeichen - bitte kuerzen.", file=sys.stderr)
+        return 2
+
+    endpoint = _endpoint()
+    # Auch ein selbst geschriebener Satz laeuft durch den Filter: Ein versehentlich mitkopierter Pfad oder
+    # ein Token ist genauso heraus, wie wenn der Assistent ihn geschrieben haette. Abgelehnt wird hier aber
+    # nicht endgueltig - der Grund wird genannt, damit {{AUFTRAGGEBER}} umformulieren kann.
+    beanstandet = _verdaechtig(text, endpoint)
+    if beanstandet:
+        print("Nicht gesendet - der Text enthaelt etwas, das das Projekt verraten koennte:", file=sys.stderr)
+        for grund in beanstandet:
+            print(f"  - {grund}", file=sys.stderr)
+        print("  Bitte ohne diese Stelle neu formulieren.", file=sys.stderr)
+        return 1
+
+    tj = _template_json(root)
+    fb = _feedback_block(tj)
+    modus = _modus(root)
+    nutzlast = {"schema": SCHEMA_DIREKT, "herkunft": HERKUNFT, "art": "direkt",
+                "datum": time.strftime("%Y-%m-%d"), "text": text}
+    if modus != "aus":
+        nutzlast["projekt_id"] = fb.get("projekt_id")
+        nutzlast["template_basis"] = tj.get("base_commit")
+        for schluessel in ("weg", "ausfuellart"):
+            if fb.get(schluessel):
+                nutzlast[schluessel] = fb[schluessel]
+        nutzlast = {k: v for k, v in nutzlast.items() if v is not None}
+
+    _zeige(nutzlast, endpoint)
+    print("")
+    if modus == "aus":
+        print("Feedback steht auf 'aus' - es geht ausschliesslich dieser Text hinaus, ohne Projekt-Kennung.")
+
+    code, fehlertext = _posten(endpoint, nutzlast)
+    if fehlertext:
+        print(f"Abbruch: {fehlertext}", file=sys.stderr)
+        return 2
+
     protokoll = _protokollieren(root, nutzlast, endpoint)
-    fb["zuletzt_gesendet"] = time.strftime("%Y-%m-%d %H:%M")
-    tj["feedback"] = fb
-    _template_json_schreiben(root, tj)
-    _outbox_schreiben(root, [])
-    anzahl = len(nutzlast.get("eintraege") or [])
-    print(f"Rueckmeldung gesendet (HTTP {code}, {anzahl} Eintraege). "
-          f"Protokoll: {protokoll.relative_to(root).as_posix()} - gehoert in den naechsten Commit.")
+    nachsatz = "liegt nur lokal (.gitignore)" if _protokoll_lokal(root) else "gehoert in den naechsten Commit"
+    print(f"Nachricht gesendet (HTTP {code}). Protokoll: {protokoll.relative_to(root).as_posix()} - {nachsatz}.")
     return 0
 
 
 def cmd_clear(root: Path) -> int:
-    anzahl = len(_outbox(root))
-    _outbox_schreiben(root, [])
-    print(f"Ausgang geleert ({anzahl} Eintraege verworfen).")
+    """Verwirft die wartenden Eintraege. Was bereits gesendet wurde, liegt in sent/ und bleibt dort -
+    das Protokoll ist der Nachweis und wird nie geleert."""
+    anzahl = 0
+    for fp in _wartende_dateien(root):
+        for endung in (".json", ".md"):
+            kandidat = fp.with_suffix(endung)
+            if kandidat.exists():
+                kandidat.unlink()
+        anzahl += 1
+    print(f"Ausgang geleert ({anzahl} Eintraege verworfen). Gesendetes in sent/ bleibt unangetastet.")
     return 0
 
 
@@ -556,12 +953,18 @@ def _run(argv) -> int:
     gruppe.add_argument("--send", action="store_true",
                         help="Senden, wenn Einwilligung, Filter und Wochensperre es zulassen")
     gruppe.add_argument("--clear", action="store_true", help="Ausgang leeren")
+    gruppe.add_argument("--direkt", default=None, metavar="TEXT",
+                        help="Eine von Hand geschriebene Nachricht sofort senden - geht IMMER, auch bei "
+                             "Feedback: aus (dann ohne Projekt-Kennung und ohne Kontext)")
     parser.add_argument("--art", default=None, help=f"mit --add: {', '.join(ARTEN)}")
     parser.add_argument("--titel", default=None, help="mit --add: eine Zeile")
     parser.add_argument("--text", default=None, help="mit --add: zwei bis sechs Saetze")
     parser.add_argument("--url", default=None,
                         help="mit --add --art link: die oeffentliche Adresse aus docs/ai/resources.md")
     parser.add_argument("--repo-url", default=None, help="mit --enable: oeffentliche Repo-URL (optional)")
+    parser.add_argument("--protokoll", default=None, choices=["versionieren", "lokal"],
+                        help="mit --enable: Sendeprotokoll versionieren (Default) oder per .gitignore "
+                             "lokal halten")
     parser.add_argument("--weg", default=None, choices=["neu", "nachgeruestet"],
                         help="mit --enable: wie das Projekt entstanden ist")
     parser.add_argument("--ausfuellart", default=None, choices=["leer", "interview", "config"],
@@ -584,11 +987,14 @@ def _run(argv) -> int:
     if args.status:
         return cmd_status(root)
     if args.enable:
-        return cmd_enable(root, args.repo_url, True, args.weg, args.ausfuellart, args.modus)
+        return cmd_enable(root, args.repo_url, True, args.weg, args.ausfuellart, args.modus,
+                          args.protokoll)
     if args.disable:
         return cmd_enable(root, None, False)
     if args.add:
         return cmd_add(root, args.art, args.titel, args.text, args.url)
+    if args.direkt is not None:
+        return cmd_direkt(root, args.direkt, args.yes)
     if args.send:
         return cmd_send(root, args.force, args.yes)
     if args.clear:

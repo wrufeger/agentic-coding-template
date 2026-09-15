@@ -159,11 +159,45 @@ Berechtigungs-Eskalation). Regel für jeden Assistenten:
 1. Nicht grundlos abbrechen. Zuerst prüfen, ob die Warnung ein Fehlalarm bezüglich dieses konkreten Projekt-
    Kontexts ist.
 2. Ist sie berechtigt: prüfen, ob eine genauer begründete, kleinteiligere oder „harmlosere" Formulierung den
-   eigentlichen Arbeitskern erreicht, ohne den Auslöser zu berühren.
+   eigentlichen Arbeitskern erreicht, ohne den Auslöser zu berühren — gilt nur für den ersten der beiden
+   Fälle unten.
 3. Bleibt die Aufgabe wichtig und geflaggt: an ein stärkeres/anders eingestuftes Modell delegieren (Rolle
    „Review"), statt den ganzen Orchestrator-Kontext dauerhaft umzustellen.
 4. Bleibt sie geflaggt und betrifft sie den Tabu-Bereich (siehe oben): als Aufgabe mit Rezept (Kontext + genauer
    Schritt) unter „Aufgaben nur für {{AUFTRAGGEBER}}" ablegen statt zu erzwingen.
+
+**Zwei verschiedene Fälle, nicht verwechseln.** Die vier Schritte oben gelten für eine Warnung, die sich an der
+**Anfrage** festmacht — dort ist eine genauere, kleinteiligere Formulierung legitim und führt meist zum Ziel.
+Meldet das Werkzeug dagegen, die Prüfung reagiere auf den **bisherigen Gesprächsverlauf** und ein erneuter
+Versuch greife nicht, ist Umformulieren zwecklos und sieht nach Umgehung aus: Dann wird die Blockade
+{{AUFTRAGGEBER}} gemeldet, mit dem, was sie verhindert hat. Er entscheidet über Berechtigungsmodus oder ein
+neues Gespräch (ein bloßer Neustart mit geladenem Verlauf hilft nicht — der Verlauf ist der Auslöser). Die
+begonnene Arbeit bleibt liegen, wo sie ist; nichts wird halb erzwungen.
+
+**Ein anderes Werkzeug ist keine Umgehung.** „Nicht umformulieren und erneut versuchen" meint dieselbe Aktion
+in neuer Verpackung. Dieselbe Änderung über einen **anderen Mechanismus** zu versuchen — die dateibezogenen
+Werkzeuge des Assistenten statt eines Shell-Befehls — ist dagegen der naheliegende nächste Schritt und oft
+schon die Lösung. Einmal probieren, dann melden.
+
+**Vorbeugen ist billiger als jede dieser Schleifen:**
+
+- **Nie ein Geheimnis auf die Kommandozeile** — auch keinen Wegwerf- oder Testwert, auch nicht „nur kurz".
+  Einem Aufruf sieht niemand an, dass das Token erfunden war. Zugangsdaten kommen aus einer Datei oder aus der
+  Prozessumgebung (siehe § „Zugriff auf laufende Systeme"), nie als Argument oder Zuweisung im Befehl.
+- **Kein `rm -rf` aus der Shell.** Aufräumen mit den Mitteln der Sprache (`shutil.rmtree` in Python) oder
+  gezielt Datei für Datei. Rekursives Löschen per Shell-Befehl ist der klassische Auslöser — und im Zweifel
+  auch der klassische Unfall.
+- **Aufträge mechanisch formulieren.** Beschreibe, was passiert („nicht einspielen", „ausgenommen", „bleibt
+  gelöscht"), nicht in Kampfbildern („aussperren", „abwürgen", „killen"). Kostet nichts und nimmt einer
+  Prüfung den Anlass.
+- **Häufung vermeiden.** Jedes Stück für sich harmlos heißt nicht harmlos in Summe — autonomer Versand nach
+  außen, Token-Erzeugung und Lösch-Mechanik im selben Arbeitsblock wirken zusammen anders als einzeln. Wo es
+  geht: nacheinander, in getrennten Blöcken, jeweils mit Beleg.
+
+**Jede Blockade wird protokolliert**, auch eine folgenlose: Datum, was blockiert wurde, der Wortlaut der
+Meldung, die Hypothese zur Ursache und die Regel, die daraus folgt — ins Journal (`docs/ai/ledger.md`), bei
+wiederholtem Auftreten zusätzlich als Fehleranalyse nach `docs/project/incidents/README.md`. Eine Blockade
+ohne Eintrag wiederholt sich, weil niemand mehr weiß, was sie ausgelöst hat.
 
 ## Zugriff auf laufende Systeme
 
@@ -329,12 +363,21 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 
 | Schlüssel | Werte | Bedeutung |
 | :--- | :--- | :--- |
-| `Feedback` | `aus` (Default) · `bestaetigen` · `automatisch` · `manuell` | ob und wie gesendet wird |
-| `Feedback-Takt` | `manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Default) · `automatisch` | Obergrenze, wie oft |
+| `Feedback` | `aus` (Default) · `bestaetigen` · `automatisch` · `manuell` | ob und wie **von selbst** gesendet wird |
+| `Feedback-Takt` | `manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Default) · `adaptiv` · `automatisch` | Obergrenze, wie oft |
+| `Feedback-Umfang` | Kommaliste aus `a` (Kennzahlen) · `b` (Regel-/Strukturänderungen) · `c` (Werkzeug-Nutzung), Default `a,b,c` | was der Assistent **von sich aus** sammeln darf |
 
 `bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
 Rückfrage, `manuell` nur auf Aufruf von `/feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
+
+**Eine von Hand geschriebene Nachricht geht immer** — `/feedback <Text>`, auch bei `Feedback: aus`. Sie ist
+kein Sonderfall der Automatik, sondern das Gegenteil davon: {{AUFTRAGGEBER}} formuliert selbst und löst
+selbst aus. Bei `aus` verlässt **ausschließlich dieser Text** das Projekt, ohne Projekt-Kennung und ohne
+Kontext; ist die Rückmeldung eingeschaltet, gehen Kennung, Template-Stand, Weg und Ausfüllart mit, damit
+sich mehrere Nachrichten desselben Projekts zusammenführen lassen. Der Text wird nicht umformuliert und
+nicht ergänzt. Die Prüfung auf Zugangsdaten und Pfade läuft trotzdem: Schlägt sie an, wird nicht gesendet,
+sondern der Grund genannt.
 
 So funktioniert es, wenn {{AUFTRAGGEBER}} zustimmt:
 
@@ -354,14 +397,19 @@ So funktioniert es, wenn {{AUFTRAGGEBER}} zustimmt:
 - **Wie autonom gesendet wird, steht in `AI-CONFIG.md`** (siehe Tabelle oben). Bei `automatisch` schreibt der
   Assistent die Nutzlast nicht ins Gespräch — kein anderes Programm zeigt an, was es sendet; der Nachweis ist
   das Protokoll, nicht eine Zeile im Terminal, die niemand liest.
-- **Jede Sendung wird protokolliert** — die vollständige Nutzlast liegt versioniert unter
-  `docs/ai/template-feedback/`. Das ist der Nachweis: Nichts geschieht unsichtbar, es fällt im Diff auf und
-  ist jederzeit nachlesbar, auch Monate später.
+- **Jede Sendung wird protokolliert** — die vollständige Nutzlast liegt unter
+  `docs/ai/template-feedback/`, standardmäßig **versioniert**. Das ist der Nachweis: Nichts geschieht
+  unsichtbar, es fällt im Diff auf und ist jederzeit nachlesbar, auch Monate später.
+- **Wo dieses Protokoll liegt, wird mitgefragt.** Ein versioniertes Protokoll ist in einem öffentlichen Repo
+  für jeden lesbar. Deshalb gehört zur Einwilligung eine zweite Frage: mitversionieren (Vorschlag) oder per
+  `.gitignore` lokal halten (`feedback.py --enable --protokoll versionieren|lokal`, jederzeit umstellbar).
+  Lokal heißt: nach einem frischen Klon ist das Protokoll weg — der Nachweis bleibt dann nur auf dem
+  Rechner, auf dem gesendet wurde.
 - **Widerruf jederzeit**, und das Zusammenfassen kostet ein paar Token zusätzlich — beides gehört in die
   Frage, mit der die Einwilligung eingeholt wird.
 
-Claude-Code-Mechanik: `.claude/scripts/feedback.py` (`--status`, `--enable`/`--disable`, `--add`, `--plan`,
-`--send [--force]`). Vor jedem Versand prüft das Script jede Zeichenkette auf Zugangsdaten, Pfade,
+Claude-Code-Mechanik: `.claude/scripts/feedback.py` (`--status`, `--enable`/`--disable` mit `--protokoll`,
+`--add`, `--plan`, `--send [--force]`). Vor jedem Versand prüft das Script jede Zeichenkette auf Zugangsdaten, Pfade,
 Mailadressen, IPs und fremde URLs und **sendet im Zweifel nicht**. Diese Prüfung ist die letzte Schranke,
 nicht die erste: Was gar nicht erst in einen Eintrag geschrieben wird, kann auch nicht durchrutschen.
 

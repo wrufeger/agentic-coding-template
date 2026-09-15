@@ -4,7 +4,9 @@ Abgleich geändert hat — sie ist Steuerung, kein Protokoll.
 
 **Bearbeitet wird nur die Spalte „Wert".** Dort steht bereits der Standard; wer ihn behalten will, lässt die
 Zelle stehen. Eine geleerte Zelle bedeutet dasselbe wie der Standard. Die Spalte „Optionen" ist nur bei
-Feldern mit fester Auswahl gefüllt, bei Freitext bleibt sie leer. „Platzhalter" nennt die Marke, die der
+Feldern mit fester Auswahl gefüllt, bei Freitext bleibt sie leer. Stehen die Optionen mit **Komma**, sind sie
+gleichrangig — eine davon gilt. Stehen sie mit **`<`**, sind es Stufen: jede schließt die links davon ein,
+`unit < integration` heißt also „Integration bringt die Unit-Tests mit". „Platzhalter" nennt die Marke, die der
 Wert im ganzen Repo ersetzt; im Repo steht sie in doppelten geschweiften Klammern, hier ohne, damit sie beim
 Anlegen nicht selbst ersetzt wird. Bleibt die Wert-Zelle leer, bleibt auch die Marke stehen.
 
@@ -34,7 +36,7 @@ geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 | Typecheck-Befehl |  |  | `TYPECHECK_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | Test-Befehl |  |  | `TEST_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | E2E-Befehl |  |  | `E2E_BEFEHL` | Steht in `testing.md` und `setup.md`. |
-| Testtiefe | alles | ohne, unit, integration, e2e, alles |  | Wie weit getestet wird. Jede Stufe schließt die kleineren ein. |
+| Testtiefe | alles | ohne < unit < integration < e2e < alles |  | Wie weit getestet wird. Jede Stufe schließt die kleineren ein. |
 
 Zur Testtiefe: Sie sagt, was zu einer fertigen Aufgabe dazugehört — nicht, ob getestet werden *darf*.
 `alles` ist der Standard; `ohne` ist eine bewusste Entscheidung, die den Beleg nicht abschafft: „Fertig“
@@ -53,8 +55,9 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Ideen-Ablauf | automatisch | automatisch, konzept, direkt |  | Was mit einer Idee oder einem Änderungswunsch passiert, bevor gebaut wird. |
 | Schreibstil | kurz | kurz, normal, ausführlich |  | Wie ausführlich Fragen, Aufgaben, Journal und Antworten formuliert werden. |
-| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie gesendet wird. |
-| Feedback-Takt | woechentlich | manuell, sofort, stuendlich, taeglich, woechentlich, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. |
+| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie **von selbst** gesendet wird. Eine von Hand geschriebene Nachricht (`/feedback <Text>`) geht immer, auch bei `aus`. |
+| Feedback-Takt | woechentlich | manuell, sofort, stuendlich, taeglich, woechentlich, adaptiv, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. `adaptiv` richtet sich danach, wie oft am Projekt gearbeitet wird. |
+| Feedback-Umfang | a,b,c | a, b, c (Kommaliste) |  | Was der Assistent **von sich aus** sammeln darf: `a` Kennzahlen aus `git log`/Dateisystem, `b` Änderungen an KI-Regeln und Doku-Struktur (als Beschreibung), `c` Werkzeug-Nutzung. Leer = nur Registrierung und selbst geschriebenes Feedback. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
 | MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, ha-mcp, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
@@ -72,10 +75,15 @@ Punkt, `normal` ergänzt einen Satz Begründung dort, wo er trägt, `ausführlic
 nachvollziehbar — sinnvoll, wenn jemand mitliest, der das Projekt nicht kennt.
 Zum Feedback: `aus` ist der Standard — ohne ausdrückliche Entscheidung verlässt nichts das Projekt.
 `bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt; `automatisch` sendet ohne
-Rückfrage und protokolliert jede Sendung versioniert unter `docs/ai/template-feedback/`; `manuell`
-sendet nur auf Aufruf von `/feedback`. Was gesendet wird und was nicht, steht in `AGENTS.md`
+Rückfrage; `manuell` sendet nur auf Aufruf von `/feedback`. Protokolliert wird in jedem Fall unter
+`docs/ai/template-feedback/` — standardmäßig versioniert, auf Wunsch per `.gitignore` lokal
+(`feedback.py --enable --protokoll lokal`). Was gesendet wird und was nicht, steht in `AGENTS.md`
 § „Freiwillige Rückmeldung an den Template-Autor“ — nie Dateien, nie Projektbezug, nie Namen oder
 Zahlen aus dem Projekt. Das Zusammenfassen und Filtern kostet ein paar Token zusätzlich.
+Zum Umfang: Er steuert nur, was der Assistent **selbst zusammenträgt**. Was du mit `/feedback <Text>` von
+Hand schickst, geht unabhängig davon — dieser Kanal ist immer offen, auch bei `Feedback: aus`; dann enthält
+die Nachricht ausschließlich deinen Text, ohne Projekt-Kennung und ohne Kontext. Echte Dateien aus `docs/`
+sind bewusst nicht wählbar: Das widerspräche der Zusage „nie Dateien, nie Projektbezug".
 Zum Takt: Der Wert ist eine **Obergrenze**, keine Verpflichtung — gibt es nichts zu melden, wird auch
 nichts gesendet. `sofort` meldet nach jedem brauchbaren Vorschlag, `automatisch` überlässt dem
 Assistenten die Wahl des Zeitpunkts (frühestens eine Stunde nach der letzten Sendung).
@@ -94,8 +102,8 @@ gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
 | Schlüssel | Wert | Optionen | Platzhalter | Bedeutung |
 | :--- | :--- | :--- | :--- | :--- |
 | Logging | aus | aus, ein |  | Mitschnitt aller Agentenaktionen in `ai.log`; steuert `AI_LOG` in `AGENTS.md`. |
-| Logging-Tiefe | INFO | DEBUG, INFO, WARN, ERROR |  | Steuert `AI_LOG_LEVEL` in `AGENTS.md`. |
-| Wartung | aus | aus, ein |  | Wiederkehrende Wartung. `aus` entfernt Ordner, Skill, Agent und Fälligkeits-Hook. |
+| Logging-Tiefe | INFO | ERROR < WARN < INFO < DEBUG |  | Steuert `AI_LOG_LEVEL` in `AGENTS.md`: geschrieben wird alles ab dieser Stufe. |
+| Wartung | aus | aus, ein |  | Wiederkehrende Wartung. `aus` entfernt Ordner, Skill, Agent und Fälligkeits-Hook — **umkehrbar**: `ein` holt sie aus dem Template-Remote zurück (siehe unten). |
 | Wartungsaufgaben | kurz=14, docs=30, deps=90 |  |  | Aufgabe=Intervall in Tagen; weggelassene Aufgabe wird abgeschaltet. Nur bei „Wartung: ein". |
 | Wartungsberichte | docs | docs, intern |  | `docs` = `docs/maintenance/`, versioniert und im Doku-Index; `intern` = `.claude/maintenance/reports/`, gitignored. |
 
@@ -106,6 +114,14 @@ gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
 | Code-Analyse | fragen | nein, vorschlagen, fragen |  | Nach der Doku zusätzlich den Bestand prüfen und Verbesserungen sammeln. |
 | Struktur-Migration | fragen | ja, nein, fragen |  | Vorhandene KI-Arbeitsordner und Regeldateien auf die Template-Struktur umstellen. |
 | Alter Orchestrator-Name |  |  |  | Bisheriger Rufname im Projekt; wird durch den Wert von `Orchestrator` ersetzt. Leer = das Script schlägt Kandidaten vor. |
+
+Zur Wartung: `aus` ist kein Einbahnweg. Wer später wieder `ein` einträgt, bekommt mit
+`python .claude/scripts/sync-config.py --apply` Ordner, Skill, Agent, Hook und `status.json` zurück — die
+Dateien holt das Script per `git show` aus dem Remote `template`. Das setzt voraus, dass dieser Remote
+existiert; fehlt er (etwa weil das Projekt kopiert statt geklont wurde), richtet
+`python .claude/scripts/update-template.py --init` ihn ein, und `--graft` stellt die gemeinsame Historie her.
+Dasselbe gilt für ein abgewähltes KI-Werkzeug, einen nachgetragenen Regelsatz und den `optimizer`
+(`Code-Optimierung`).
 
 Nicht in der Tabelle, weil niemand ihn setzt: `DATUM` wird beim Anlegen und bei jedem Doku-Lauf mit dem
 Tagesdatum gefüllt.

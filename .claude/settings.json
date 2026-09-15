@@ -85,6 +85,16 @@
           {
             "type": "command",
             "shell": "bash",
+            "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/feedback-check.py\"; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/feedback-check.py\"; fi || true",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
             "command": "if command -v python3 >/dev/null 2>&1; then python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/maintenance-check.py\" --check --quiet; else python \"$CLAUDE_PROJECT_DIR/.claude/scripts/maintenance-check.py\" --check --quiet; fi || true",
             "timeout": 15
           }

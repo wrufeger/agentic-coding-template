@@ -1,0 +1,8 @@
+# Gilt nur fuer die Template-Entwicklung - der ganze Ordner wird beim Anlegen eines Projekts entfernt.
+
+# Abgeholte Rueckmeldungen fremder Projekte (feedback-abholen.py). Fremde Daten gehoeren nicht in ein
+# oeffentliches Repo - ausgewertet wird lokal, ins Journal kommt nur das Muster.
+daten/feedback/
+
+# Konfiguration des Endpunkts - enthaelt das gemeinsame Geheimnis.
+scripts/feedback-endpunkt.config.php

@@ -37,8 +37,10 @@ Der Wortlaut muss diese sechs Punkte nennen, sonst ist es keine Einwilligung:
 > **Wie oft und wie:** Das bestimmst du — ohne Rückfrage, mit Bestätigung vor jedem Versand, oder
 > nur auf Zuruf. Ebenso den Takt (Vorschlag: höchstens einmal pro Woche). Beides steht danach in
 > `AI-CONFIG.md` und lässt sich jederzeit ändern.
-> **Was du siehst:** Jede Sendung liegt vollständig unter `docs/ai/template-feedback/` und ist damit
-> versioniert — du kannst jederzeit nachlesen, was hinausging, und es fällt im Diff auf.
+> **Was du siehst:** Jede Sendung liegt vollständig unter `docs/ai/template-feedback/` — standardmäßig
+> **versioniert**, du kannst also jederzeit nachlesen, was hinausging, und es fällt im Diff auf. Ist dein
+> Repo öffentlich, wäre damit auch die Rückmeldung öffentlich lesbar; das Protokoll lässt sich deshalb auf
+> Wunsch per `.gitignore` lokal halten (gleich die nächste Frage).
 > **Was es kostet:** Das Zusammenfassen und Filtern verbraucht ein paar Token zusätzlich.
 > **Wie damit umgegangen wird:** Die Daten werden vertraulich behandelt und vor jeder Verwendung im
 > öffentlichen Template persönlich durchgesehen — falls doch einmal etwas durchrutscht.
@@ -49,7 +51,16 @@ ab dann laufend: „ohne Rückfrage (`automatisch`), mit Anzeige und Bestätigun
 (`bestaetigen`), oder nur wenn du `/feedback` aufrufst (`manuell`)?" Dazu den Takt, falls nicht
 `manuell`: `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Vorschlag) · `automatisch`.
 
+Ebenfalls bei **a)** fragen, **wo das Sendeprotokoll liegen soll** — die Frage wird gestellt, nicht
+angenommen:
+
+> Jede Sendung wird unter `docs/ai/template-feedback/` abgelegt. Soll dieses Protokoll
+> a) **mitversioniert** werden (Vorschlag — der Nachweis steht im Verlauf, und im Diff fällt jede Sendung auf)
+> oder b) **nur lokal** liegen (Eintrag in `.gitignore`; sinnvoll, wenn das Repo öffentlich ist oder andere
+> es nicht lesen sollen — dann ist es nach einem frischen Klon allerdings weg)?
+
 Dann: `python .claude/scripts/feedback.py --enable --modus <automatisch|bestaetigen|manuell>
+--protokoll <versionieren|lokal>
 --weg <neu|nachgeruestet> --ausfuellart <leer|interview|config>`, optional `--repo-url <https://…>` bei
 einem **öffentlichen** Repo; den Takt in `AI-CONFIG.md` § `Feedback-Takt` setzen. Danach die Erstmeldung
 zusammenstellen (`--add`, siehe unten) und `--send --force` aufrufen.

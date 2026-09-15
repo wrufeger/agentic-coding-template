@@ -8,6 +8,10 @@ einen Arbeitsordner für die tägliche Zusammenarbeit (Board, Aufgaben, Fragen, 
 Projekt-Dokumentation. Die Grundidee: **ein starker Assistent plant**, prüft und committet, **günstigere Modelle
 arbeiten** die klar umrissenen Teilaufgaben parallel ab — und „fertig" gilt nur mit Beleg.
 
+Und es bleibt nicht stehen: Projekte, die es einsetzen, können **freiwillig zurückmelden**, was an der
+Arbeitsweise geholfen oder gefehlt hat. Was zwei Projekte unabhängig voneinander melden, wird zur Regel für
+alle — siehe „Lernt mit" weiter unten.
+
 Schon bei der Einrichtung passt sich das Template an: Ein Formular wird ausgefüllt, dann ersetzt der Assistent
 die Platzhalter, entfernt die Dateien nicht genutzter Werkzeuge und befüllt die Dokumentation — bei einem
 bestehenden Projekt aus dem echten Code, nicht aus Vermutungen. Spätere Verbesserungen am Template lassen sich
@@ -58,6 +62,42 @@ Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den entsp
 Jedes abgeleitete Projekt behält die Verbindung zum Template. Ein Update wird gemeldet, sobald es eines gibt,
 und über die Checkliste „Template-Update" eingespielt: neue Agenten, Skills und Regeln kommen an, die eigenen
 Werte und die Projekt-Dokumentation bleiben unangetastet.
+
+## Lernt mit — aus echten Projekten, nicht aus Vermutungen
+
+Die meisten Vorlagen altern ab dem Tag, an dem sie veröffentlicht werden: Was sich in der Praxis als
+umständlich erweist, erfährt der Autor nie. Dieses Template hat dafür einen Rückkanal — **freiwillig,
+standardmäßig aus** und mit einer Zusage, die im Code durchgesetzt wird.
+
+Wer ihn einschaltet, meldet zurück, was an der **Arbeitsweise** geholfen oder gefehlt hat: eine Regel, die
+nachgetragen werden musste, ein Ablauf, der regelmäßig scheiterte, ein Script, das allgemein taugt. Der
+Assistent liest dafür die Regel- und Arbeitsdateien und schreibt daraus eine Zusammenfassung — **nie werden
+Dateien gesendet**, kein Projektname, keine Pfade, kein Code, keine Zahlen aus dem Projekt. Maßstab für jeden
+Eintrag ist eine einzige Frage: *Hilft das jemandem, der dieses Projekt nie sehen wird?*
+
+**Mitarbeiten, ohne eine Zeile zu schreiben.** Das Template ist kostenlos und für jeden da — und wer etwas
+zurückgeben will, muss dafür keinen Pull Request öffnen, kein Issue formulieren und nicht einmal einen Satz
+tippen. Die Ideen und Kniffe, die ohnehin beim Entwickeln entstehen, sammelt der Assistent nebenbei ein und
+schickt sie auf Wunsch weg. Aus zehn Projekten, die still ihre Erkenntnisse teilen, wird eine Vorlage, die
+besser ist als alles, was ein Einzelner sich ausdenken könnte — und jedes dieser Projekte bekommt das Ergebnis
+per `/update-template` zurück.
+
+Was daraus entsteht, ist der eigentliche Punkt: **Meldet dasselbe Anliegen aus zwei unabhängigen Projekten,
+wandert es in der Priorität nach oben** — auch wenn beide es völlig anders formuliert haben. Aus einem Fehler,
+über den jemand gestolpert ist, wird eine Regel, die alle anderen nicht mehr stolpern lässt. Die Vorlage wird
+dadurch besser, während sie benutzt wird.
+
+Und weil ein Rückkanal nur so viel wert ist wie sein Vertrauen:
+
+- **Aus bleibt aus.** Ohne ausdrückliche Zustimmung verlässt nichts das Projekt. Gefragt wird genau einmal,
+  beim Abschluss der Einrichtung; ohne Antwort passiert nichts.
+- **Alles ist nachlesbar.** Jede Sendung liegt vollständig im Repo (`docs/ai/template-feedback/`) und fällt
+  im nächsten Diff auf. Wer sie lieber nicht versioniert, hält sie mit einer Frage mehr lokal.
+- **Ein Satz geht immer.** `/feedback <Text>` schickt genau diesen Text — auch bei ausgeschalteter
+  Rückmeldung, und dann **anonym**: ohne Projekt-Kennung, ohne Kontext, ohne Zuordnung beim Empfänger.
+- **Eine letzte Schranke.** Vor jedem Versand prüft ein Filter jede Zeichenkette auf Zugangsdaten, Pfade,
+  Mailadressen und interne Adressen — im Zweifel wird nicht gesendet, sondern nachgefragt.
+- **Widerruf jederzeit**, mit einem Wort in `AI-CONFIG.md`.
 
 ## Was drin ist
 

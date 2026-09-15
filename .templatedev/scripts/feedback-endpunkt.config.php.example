@@ -1,0 +1,23 @@
+<?php
+/*
+ * Vorlage fuer die Konfiguration des Endpunkts. Auf dem Server neben feedback-endpunkt.php ablegen als
+ * feedback-endpunkt.config.php - diese Datei bleibt die Vorlage und wird nie mit echten Werten gefuellt.
+ * Die fertige Datei ist in .templatedev/.gitignore ausgenommen; sie enthaelt das gemeinsame Geheimnis.
+ *
+ * Alternative ohne Datei: dieselben Namen als Umgebungsvariablen setzen (SetEnv, fastcgi_param, systemd).
+ * Das ist der sauberere Weg, wenn der Server es hergibt - dann liegt das Geheimnis nicht im Web-Verzeichnis.
+ */
+
+return [
+    // Absoluter Pfad AUSSERHALB des Web-Roots. Hier entstehen daten/JJJJ-MM/*.json und limits/.
+    'AGENTIC_FEEDBACK_DIR' => '/var/lib/agentic-coding-feedback',
+
+    // Gemeinsames Geheimnis fuer die Token-Pruefung (HS256), mindestens 32 Zeichen. Dasselbe steht auf dem
+    // Rechner des Template-Autors in AGENTIC_FEEDBACK_JWT_SECRET. Erzeugen z. B. mit:
+    //   python -c "import secrets; print(secrets.token_urlsafe(48))"
+    'AGENTIC_FEEDBACK_JWT_SECRET' => 'HIER-EIN-LANGES-ZUFALLSGEHEIMNIS-EINSETZEN',
+
+    // Nur aendern, wenn feedback-abholen.py entsprechend angepasst wird.
+    'AGENTIC_FEEDBACK_JWT_ISS' => 'templatedev',
+    'AGENTIC_FEEDBACK_JWT_AUD' => 'agentic-coding-feedback',
+];

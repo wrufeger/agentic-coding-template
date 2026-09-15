@@ -1,4 +1,8 @@
-> Datenstand: 2026-09-14 – Status: abgestimmt — `Q1`–`Q3` beantwortet, Client gebaut, Endpunkt offen
+> Datenstand: 2026-09-15 – Status: abgestimmt — `Q1`–`Q3` beantwortet, Client und Endpunkt gebaut, Betrieb offen
+
+> **Achtung beim Lesen:** Alles bis zur Trennlinie ist der Stand **vor** der Entscheidung — die dortige
+> Empfehlung (GitHub-Issue) wurde **verworfen**, weil Issues in einem öffentlichen Repo für jeden lesbar
+> sind. Was gilt, steht im Block „Entschieden am 2026-09-14" am Ende.
 
 # Rückmeldung abgeleiteter Projekte an das Template
 
@@ -33,7 +37,7 @@ Keiner dieser Punkte spricht gegen das Vorhaben, alle drei aber gegen die naheli
 
 ## Optionen
 
-### a) GitHub-Issue im Template-Repo (Empfehlung)
+### a) GitHub-Issue im Template-Repo ~~(Empfehlung)~~ — **verworfen am 2026-09-14**
 
 Das Projekt legt beim Abschluss der Einrichtung — **nach ausdrücklicher Zustimmung** — ein Issue im
 Template-Repo an, per `gh issue create` mit einer festen Vorlage.
@@ -71,7 +75,7 @@ schick mir die URL." — ohne Mechanik.
 - **Dafür:** null Aufwand, null Datenschutzfragen.
 - **Dagegen:** passiert in der Praxis fast nie.
 
-## Empfehlung
+## Empfehlung (überholt — Stand vor dem 2026-09-14)
 
 **a) GitHub-Issue**, mit drei Bedingungen:
 
@@ -86,7 +90,7 @@ schick mir die URL." — ohne Mechanik.
 Die Auswertung in `.templatedev` kommt danach als eigener Schritt — sie ist ohne Datenbestand ohnehin
 sinnlos.
 
-## Offene Punkte
+## Offene Punkte (erledigt, siehe Entscheidung unten)
 
 - `Q1` in `.templatedev/questions.md` — Weg und Standardwert.
 - Ungeklärt bis dahin: ob der Schalter überhaupt nach `AI-CONFIG.md` gehört oder besser einmalig beim
@@ -99,6 +103,11 @@ sinnlos.
 
 Gewählt wurde **c) eigener Endpunkt** auf `rufeger.de`, **kein** Schlüssel in `AI-CONFIG.md` (nur die
 einmalige Frage bei `/finalize`), und die Meldung nennt die Zieladresse im Klartext.
+
+**Warum nicht a)**, obwohl es oben empfohlen war: Ein Issue in einem öffentlichen Repo ist für jeden lesbar,
+auch für Suchmaschinen und über die API. Eine Rückmeldung darüber, was in einem Projekt an der
+Zusammenarbeit hakte, soll niemand außer dem Template-Autor sehen können. Beim Endpunkt ist das Einliefern
+öffentlich erreichbar, das **Lesen** aber nur mit Token (§ „Abholen").
 
 **Gebaut ist die Client-Seite** (`.claude/scripts/feedback.py`): Einwilligung, Projekt-ID, Ausgang,
 Prüfung auf Geheimnisse, Anzeige der Nutzlast, Versand per POST. **Offen ist der Endpunkt selbst.**
@@ -162,7 +171,30 @@ erste Meldung ankommt.
 
 ## Offen
 
-- Endpunkt bauen (PHP auf `rufeger.de`), Token erzeugen, Ablage anlegen.
-- Abholskript `.templatedev/feedback-abholen.py` — erst sinnvoll, wenn der Endpunkt steht; `.templatedev/`
-  wandert nie in abgeleitete Projekte, dort gehört es hin.
+- **Gebaut am 2026-09-15:** `.templatedev/scripts/feedback-endpunkt.php` (PHP, Stdlib, keine Abhängigkeit)
+  und `.templatedev/scripts/feedback-abholen.py` (abholen, ablegen, quittieren, auswerten). Authentifiziert
+  wird per **JWT** (HS256, gemeinsames Geheimnis) statt mit einem festen Bearer-Token — ein abgelaufenes
+  Token ist von selbst wertlos. Einrichtung: `.templatedev/scripts/README.md`.
+- **Offen bleibt der Betrieb:** Datei auf `rufeger.de` ausrollen, Geheimnis erzeugen, Ablage außerhalb des
+  Web-Roots anlegen, prüfen, dass sie nicht per URL erreichbar ist.
 - Datenschutzhinweis unter der URL.
+- Abgeholtes ist gitignored (`.templatedev/.gitignore`) — fremde Meldungen gehören nicht in ein öffentliches
+  Repo. Ins Journal kommt nur das Muster.
+
+---
+
+# Nachtrag 2026-09-15 — zwei Stellen, an denen sich die Umsetzung von der Entscheidung entfernt hat
+
+1. **Schalter in `AI-CONFIG.md`.** Die Entscheidung oben sagt „kein Schlüssel in `AI-CONFIG.md`". Inzwischen
+   stehen dort zwei — `Feedback` (`aus`/`bestaetigen`/`automatisch`/`manuell`) und `Feedback-Takt` —, weil
+   „ob und wie oft gesendet wird" laufend gilt und nicht nur einmal beim Abschluss. Die einmalige Frage bei
+   `/finalize` bleibt daneben bestehen; sie setzt die Schlüssel, ersetzt sie aber nicht.
+2. **Wo das Sendeprotokoll liegt, ist jetzt eine eigene Frage.** Das Protokoll unter
+   `docs/ai/template-feedback/` ist der Nachweis — in einem **öffentlichen** Projekt-Repo wäre damit
+   allerdings auch die Rückmeldung öffentlich lesbar. Also wird bei der Einwilligung mitgefragt:
+   mitversionieren (Vorschlag) oder per `.gitignore` lokal halten. Mechanik:
+   `feedback.py --enable --protokoll versionieren|lokal`, ausgenommen wird nur
+   `docs/ai/template-feedback/*.json` — die README des Ordners bleibt versioniert, damit nachlesbar bleibt,
+   **dass** gesendet wird. `--status` und die Ausgabe von `--send` sagen, welcher Fall gilt.
+
+   Dass die Empfängerseite nichts öffentlich macht, bleibt davon unberührt (§ „Abholen" — Token).
