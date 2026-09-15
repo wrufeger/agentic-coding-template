@@ -42,6 +42,14 @@ folgenden Sub-Agenten sind die Worker:
   Sache selbst, dasselbe Problem mit `model: opus` oder `expert-solver` neu ansetzen statt es zu wiederholen;
   sonst abbrechen und den Auftrag neu schneiden. Mehrfach nachgebesserte Aufträge sind ebenfalls ein
   Zuschnittsproblem: teilen statt nachbessern.
+- **Dieselbe Datei nicht zweimal gleichzeitig zum Schreiben vergeben.** **Lesen ist ausgenommen:** Beliebig
+  viele `explorer`/`quick-check`-Läufe dürfen dieselbe Datei gleichzeitig lesen — parallele Recherche auf
+  denselben Dateien ist der Normalfall und kollidiert nie. Zwei Sub-Agenten, die dieselbe Datei **schreiben**,
+  liefern dagegen zwei Fassungen statt doppelter Geschwindigkeit; der Zuschnitt geht nach Datei, nicht nach
+  Thema (Checkliste „Delegation" § „Wenn zwei Aufträge dieselbe Datei ändern" — dort steht auch, wann daraus
+  eine Frage und ein Backlog-Punkt wird). `isolation: "worktree"` im `Agent`-Aufruf gibt einem Lauf einen eigenen
+  Arbeitsbaum; das ist für riskante Umbauten, Testläufe und gleichzeitige Git-Operationen gedacht, **nicht**
+  als Abkürzung um einen schlechten Zuschnitt — und der Baum kommt ohne installierte Abhängigkeiten.
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
 <!-- template-only:start -->
@@ -132,7 +140,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
 | `/slides` | — (Mechanik ohne Checkliste) | Präsentation über das Projekt: Folien als Markdown im Repo, Inhalt aus der vorhandenen Doku, Export per Marp |
 | `/design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
-| `/feedback` | — (Mechanik ohne Checkliste) | Rückmeldung an den Template-Autor zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`Feedback-Takt`, umgeht die Einstellung nie |
+| `/feedback [Text]` | — (Mechanik ohne Checkliste) | **Mit Text:** genau dieser Satz geht sofort raus (`--direkt`) — auch bei `Feedback: aus`, dann anonym ohne Projekt-Kennung. **Ohne Text:** gesammelte Rückmeldung zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`-Takt`/`-Umfang`, umgeht die Einstellung nie |
 | `/commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
 | `/finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project`/`apply-template` (Skills, Scripte) und sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
 
@@ -279,7 +287,9 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   │                            # (Bibliothek Weg 2 Struktur-Migration: KI-Ordner umstellen,
 │   │                            # Orchestrator-Name ersetzen — läuft im Zielrepo; migrate-project.py davor
 │   │                            # nur noch dünner CLI-Wrapper), maintenance-check.py (Fälligkeit der
-│   │                            # Wartung, SessionStart-Hook), sync-config.py (Änderungen an AI-CONFIG.md
+│   │                            # Wartung, SessionStart-Hook), feedback.py (freiwillige Rückmeldung),
+│   │                            # feedback-check.py (Fälligkeit bei Takt „adaptiv", SessionStart-Hook),
+│   │                            # sync-config.py (Änderungen an AI-CONFIG.md
 │   │                            # laufend umsetzen, SessionStart-Hook), install-global.py (Rollen/Skills
 │   │                            # nach ~/.claude/ legen), finish-setup.py (Skill finalize: entfernt
 │   │                            # create-project.py, apply-template.py, migrate-project.py,

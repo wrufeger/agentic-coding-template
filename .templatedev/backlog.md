@@ -100,11 +100,91 @@ sie werden in Journal und Commits zitiert.
    neu/nachgerüstet, Ausfüllart leer/Interview/Config), damit `.templatedev` ihre Weiterentwicklung auswerten
    kann. Konzept mit vier Optionen und Aufwand: `konzept-feedback.md`. **Erst entscheiden** (`Q1`–`Q3`),
    dann bauen — es geht um fremde Daten, und eine Gegenstelle gibt es heute nicht.
-   **Stand 2026-09-14:** `Q1`–`Q3` beantwortet (eigener Endpunkt, kein `AI-CONFIG.md`-Schlüssel, Frage
-   einmalig bei `/finalize`). **Client-Seite gebaut** (`.claude/scripts/feedback.py`), Schnittstellenvertrag
-   im Konzept. **Offen:** der Endpunkt auf `rufeger.de` (PHP, öffentliches `POST`, authentifiziertes
-   `GET`+`ack`), ein Token, die Ablage, ein Datenschutzhinweis unter der URL — und danach das Abholskript
-   `.templatedev/feedback-abholen.py`.
+   **Stand 2026-09-14:** `Q1`–`Q3` beantwortet (eigener Endpunkt, Frage einmalig bei `/finalize`; die
+   Steuerung ist inzwischen doch in `AI-CONFIG.md` gelandet, siehe Nachtrag im Konzept). **Client-Seite
+   gebaut** (`.claude/scripts/feedback.py`), Schnittstellenvertrag im Konzept.
+   **Stand 2026-09-15:** **beide Gegenstellen gebaut** — `.templatedev/scripts/feedback-endpunkt.php`
+   (öffentliches `POST`, JWT-geschütztes `GET /inbox` + `POST /ack`) und
+   `.templatedev/scripts/feedback-abholen.py`; belegt gegen einen laufenden `php -S`. Dazu: das
+   Sendeprotokoll im Projekt ist auf Wunsch gitignorierbar (`feedback.py --enable --protokoll lokal`), und
+   Abgeholtes ist hier grundsätzlich gitignored.
+   **Offen:** Ausrollen auf `rufeger.de` (Datei, Geheimnis, Ablage außerhalb des Web-Roots), Datenschutz-
+   hinweis unter der URL, danach die eigentliche Auswertung.
+
+30. -> **erledigt 2026-09-15** (Beleg im Ledger): **Löschen trifft nie ungesicherte Dateien** (angelegt und
+   entschieden 2026-09-15): `remove_maintenance_files`, `remove_optimizer_files` und `remove_tool_files` (setup-lib.py)
+   löschen Pfade, ohne zu prüfen, ob sie überhaupt anderswo liegen. `.claude/maintenance/reports/` ist
+   gitignored — beim Abschalten der Wartung sind die Berichte unwiederbringlich weg. Umsetzung: gemeinsamer
+   Helfer, der vor dem Löschen `git status --porcelain --ignored -z -- <pfad>` fragt; gitignorierte,
+   ungetrackte und lokal geänderte Pfade bleiben liegen und werden zurückgemeldet (Muster: `rename-lib.py`
+   B10, `git check-ignore`). Kein Git-Repo = nicht prüfbar = liegen lassen und melden. Verworfene Alternative
+   (`.bak`/`.disabled` statt Löschen): veraltet gegenüber dem Template, verschmutzt Diffs, spart die
+   CLAUDE.md-Arbeit nicht.
+
+31. -> **erledigt 2026-09-15** (Beleg im Ledger): **Abgewählte Pfade bleiben beim Template-Update draußen**
+   (angelegt 2026-09-15): Wer
+   `Wartung: aus`, `Code-Optimierung: aus` oder ein KI-Werkzeug abwählt, bekommt die Dateien beim nächsten
+   `update-template.py --apply` teilweise zurück. Belegt an `update-template.py:1025-1070`: (a) ändert das
+   Template eine gelöschte Datei, entsteht ein `DU`-Konflikt, der nur für `keep_local`-Pfade automatisch
+   „gelöscht belassen" wird — `optimizer.md` und `.claude/maintenance/**` stehen dort nicht, also kommt bei
+   jedem Update eine Rückfrage; (b) legt das Template eine **neue** Datei in dem Bereich an, wird sie
+   konfliktfrei hinzugefügt, ohne dass jemand gefragt wird.
+   Umsetzung: `update-template.py` leitet die abgewählten Pfade zur Merge-Zeit aus
+   `.claude/template.json` § `applied_config` ab (`Wartung`, `Code-Optimierung`, `KI-Werkzeuge` gegen
+   `MAINTENANCE_REMOVE_PATHS`/`OPTIMIZER_REMOVE_PATHS`/Werkzeugpfade in `setup-lib.py`) und behandelt sie für
+   diesen Lauf wie `template_only`: `DU` ohne Rückfrage gelöscht belassen, neu hinzugekommene Dateien
+   darunter nach dem Merge entfernen (`_remove_template_only()` als Muster). Keine neue Liste in
+   `template.json` — sie würde gegenüber `AI-CONFIG.md` veralten; schaltet jemand auf `ein`, fällt der
+   Ausschluss von selbst weg. 
+32. -> **umgesetzt 2026-09-15** bis auf die Endpunkt-Inbetriebnahme (Beleg im Ledger; offen bleiben das
+   Ausrollen auf `rufeger.de` samt Datenschutzhinweis und die Frage, ob `Feedback` beim Abschluss der
+   Einrichtung aktiv angeboten statt nur erwähnt wird): **Feedback muß nochmal neu bearbeitet werden**:
+     Frage nach Erstellung oder Anbindung einer App nach Feedback: ja (empfohlen) oder nein
+     bei ja:
+       - Umfang: nur einmalige Registrierung(Art,Datum,KI-Tools,Stack) und manuelles Feedback direkt als Antwort, alles (ohne (d) also ohne echte Projektdaten, empfohlen), wirklich alles oder
+        (mehrere auswählbar)
+        a) statistische Daten (Art der Erstellung, Datum, Häufigkeit der Nutzung, Anteil KI-generierter Code, Häufigkeit von Änderungen an docs/ai, Anzahl
+        Dateien im Repo, Größe des Repo, öffentliche Repo URL des Projekts ?, ...)
+        b) Änderungen an Dateien und Daten die KI betreffend (AGENTS.md, CLAUDE.md, .claude/agents, .claude/skills, ...) oder wenn Änderungen an der Struktur von Dateien in docs besprochen werden (xy als Tabelle, Abschnitt xy mit mehreren Zeilen und Einrückung darstellen, backlog um Spalte xy erweitern, ... was auch immer eine Optimierung und kein "Inhalt" ist, also OHNE echte Dateien aus docs/ai)
+        c) Tool-Nutzung (MCP server zugefügt, skill aktualisiert oder erstellt, agent definiert oder geändert, neues script oder aktualisiert, ...)
+        d) Änderung auch an docs/ai und docs/project (hier zwar nur wirklich relevante Änderungen, aber auch echte Dateien mit Inhalt)
+     - Häufigkeit: autom. (empfohlen, wöchentlich macht keinen Sinn bei Entwicklern, die nur 1x die Woche coden, also autom. an das Nutzerverhalten angepasst, User wird je nach Feedback-Anzahl, Dringlichkeit (z.B. krit. Fixes), Datum des letzten Sendes, Häufigkeit der Arbeit am Projekt, ... autom. an Feedback erinnert oder der Prozess autom. angestossen), max. tägl., max. wöchentlich, manuell mit "/send-feedback" oder "schicke Feedback"
+     - Bestätigung: Diskrete Nachfrage im Chat, ob das gesammelte Feedback in docs/ai/template-feedback gesendet werden darf (empfohlen), autom. im Hintergrund
+     - Ordner template-feedback in .gitignore zufügen? nein (empfohlen), ja
+
+     docs/ai/template-feedback/
+        - hier wird von der lokalen AI des Projektes gesammeltes Feedback in Dateien hinterlegt. Gesammelt werden soll nur der freigegebene Umfang und auch nur dann,
+          wenn die Daten sinnvolle Ergänzungen im Template Project darstellen könnten (Optimierungen, v.a. am Arbeitsablauf, Kommunikation KI/Mensch, Texten im Template Project, Scripten, ...)
+          Gespeichert wird eine [name|title|subject].md mit einer textuellen Zusammenfassung, sowie eine [name|title|subject].json mit den Daten, die besser im Template Projekt verarbeitet werden können.
+          Beim Senden Dateien in den Unterordner sent/ verschieben.
+        - feedback.md (hier kann der Entwickler selbst Feedback senden. Ein paar vorgefertigte Fragen beantworten, Feedback in Textform, Vorschläge und Ideen, Programmiererfahrung, Erfahrung mit KI, ...).
+          Beim Senden beantwortete Fragen und Textantworten zusammenfassen und ans Ende der Datei anfügen, dann Fragen und Abschnitts-Überschriften wiederherstellen für ein weiteres oder späteres Feedback
+
+    Werden alle Fragen mit ok bestätigt, also die Empfehlungen angenommen, so wird Feedback wahrscheinlich wöchentlich nach kurzer Rückfrage gesendet und dabei auf den Ordner docs/ai/template-feedback/ verwiesen, um ggf. feedback.md manuell zu ergänzen.
+    Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang soll der User ja jederzeit über die AI-CONFIG umstellen können.
+
+    **Entschieden am 2026-09-15 (Wolfgang), drei Punkte, die den Bau bestimmen:**
+    - **Umfang `d` entfällt.** Echte Dateien aus `docs/ai`/`docs/project` widersprechen der Zusage in
+      `AGENTS.md` („nie Dateien, nie Projektbezug") und dem Filter in `feedback.py`, der Pfade, Mailadressen
+      und IPs pauschal ablehnt. `b` meldet Strukturänderungen weiterhin — aber als **Beschreibung**
+      („Backlog um Spalte X erweitert"), nicht als Datei.
+    - **Statistiken (`a`) kommen aus `git log` und dem Dateisystem**, `ai.log` nur, wenn es vorhanden ist.
+      Was sich daraus nicht ermitteln lässt, wird **weggelassen statt geschätzt**.
+    - **Der adaptive Takt bekommt einen eigenen `SessionStart`-Hook**, unabhängig von der Wartung — die ist
+      abwählbar, der Hook dort wäre bei `Wartung: aus` verschwunden.
+
+    **Schnitt in Aufgaben** (in dieser Reihenfolge, jede mit eigenem Beleg):
+    1. `AI-CONFIG.md`: neuer Schlüssel `Feedback-Umfang` (Mehrfachauswahl `a,b,c`, Default `a,b,c`),
+       `Feedback-Takt` um `adaptiv` erweitern; `sync-config.py` erkennt und setzt beides um.
+    2. Erhebung je Umfang in `feedback.py` (git log, Dateisystem, `ai.log` falls vorhanden).
+    3. Ablage umbauen: `<subject>.md` + `<subject>.json` unter `docs/ai/template-feedback/`, beim Senden
+       nach `sent/` verschieben; der bisherige Ausgang `.claude/feedback-outbox.json` entfällt.
+    4. `feedback.md` als Fragebogen anlegen (Fragen, Freitext; beim Senden Antworten zusammenfassen, ans
+       Dateiende anfügen, Fragen und Überschriften wiederherstellen).
+    5. Eigener `SessionStart`-Hook für die Erinnerung beim Takt `adaptiv`.
+    6. Endpunkt auf Schema 2 (`.templatedev/scripts/feedback-endpunkt.php`): neue Felder, Wortlisten,
+       32-KB-Deckel prüfen.
+    7. Zusagetexte nachziehen: `AGENTS.md`, `/finalize`, `/feedback`, `docs/ai/template-feedback/README.md`.
 
 ## Erledigt
 

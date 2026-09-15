@@ -36,4 +36,24 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    b) nur als einmalige Frage in `/finalize`, gar kein Schlüssel
    * Antwort: b)
 
+
+**Q4 · `setup-lib.py` (2461 Zeilen) — aufteilen, kürzen oder so lassen?**
+
+   Auslöser ist die neue Regel in `docs/project/coding_rules.md` § Dateigröße: Die Datei hat
+   heute zum zweiten Mal parallele Arbeit blockiert — zwei `builder`-Aufträge mussten
+   nacheinander laufen, weil beide sie anfassen. Sie enthält Platzhalter-Ersetzung,
+   Werkzeug-/Wartungs-/Optimizer-Entfernung, CLAUDE.md-Textchirurgie, Hook-Pflege und die
+   Wortlisten für `AI-CONFIG.md`. `sync-config.py` (1025) und `update-template.py` (1500)
+   hängen als Importeure daran.
+   a) aufteilen nach Zuständigkeit (Config-Parser · Datei-/Pfadoperationen · CLAUDE.md-Textchirurgie),
+      `setup-lib.py` bleibt als dünne Fassade, damit die Importeure unverändert laufen (Empfehlung)
+   b) nur die CLAUDE.md-Textchirurgie herauslösen — der kleinste Schnitt, der den heutigen
+      Engpass entschärft
+   c) so lassen — die Datei ist geordnet, das Problem ist die Delegation, nicht die Datei
+   * Antwort: ja aufteilen (2026-09-16) — also a): nach Zuständigkeit schneiden, `setup-lib.py` bleibt als
+     dünne Fassade stehen, damit `sync-config.py`, `update-template.py` und `install-global.py` unverändert
+     weiterlaufen.
+   * Erledigt am 2026-09-16: `config-lib.py` (761) · `files-lib.py` (642) · `claudemd-lib.py` (208) ·
+     `setup-lib.py` (1047, Ablauf + Fassade). Beleg im Ledger. a)
+
 ---

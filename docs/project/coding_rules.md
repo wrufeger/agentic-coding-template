@@ -27,6 +27,13 @@ Generische Regeln gelten sofort; der Abschnitt „Stack-spezifisch" wird beim An
   Einrückung siehe dort); ein projektweiter Formatter/Linter wird unten unter „Stack-spezifisch" eingetragen.
 - **Abhängigkeiten:** Versions-Updates laufen über die konfigurierte Abhängigkeits-Automatisierung
   (`renovate.json`), keine manuellen Ad-hoc-Bumps ohne Grund.
+- **Dateigröße:** Eine Datei, die immer wieder im Weg steht, wird gemeldet statt still weiter aufgebläht.
+  Auslöser sind die Symptome, nicht eine Zeilenzahl: Sie blockiert zum zweiten Mal eine parallele Aufgabe,
+  niemand findet darin die richtige Stelle, oder jede Änderung berührt Unbeteiligtes. Dann legt der
+  Orchestrator eine **Frage** in `docs/ai/questions.md` an (aufteilen, kürzen oder so lassen? — mit
+  Empfehlung) und nach der Entscheidung eine **Aufgabe im Backlog** (`docs/ai/backlog.md`): entflechten,
+  kürzen oder in mehrere Dateien teilen. Nicht im laufenden Auftrag nebenbei umbauen — das ist ein eigener
+  Umbau mit eigenem Testnetz (Skill `/refactor`).
 
 ## Vorgefertigte Regelsätze
 

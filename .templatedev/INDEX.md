@@ -22,6 +22,7 @@ Fenstern, obwohl man beim Arbeiten beides zugleich braucht.
 | `questions.md` | offene Entscheidungen zur Weiterentwicklung (`Q<n>`) |
 | `ledger.md` | Journal: was in welcher Sitzung passiert ist, mit Belegen |
 | `regeln.md` | Regeln für die Arbeit **am Template selbst** |
+| `scripts/` | Werkzeuge nur für die Template-Entwicklung — u. a. die beiden Seiten der freiwilligen Rückmeldung (Endpunkt und Abholung), siehe `scripts/README.md` |
 | `testprojekte.py` | gleicht die Tabelle in `README.md` mit dem echten Stand der Testprojekte ab |
 | `daten/` | Messwerte, Testprotokolle, Auswertungen — zu lang für den Fließtext |
 

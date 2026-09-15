@@ -63,8 +63,17 @@ Die Testprojekte und ihr letzter geprüfter Stand: `README.md`. Wo es neuen Stof
   | `DEFAULT_TEMPLATE_ONLY` | `update-template.py` | was nie ins Projekt gemergt wird |
   | `template_only`, `keep_local`, `no_replace` | `.claude/template.json` | dasselbe zur Laufzeit |
   | `REMOVE_ITEMS` | `finish-setup.py` | was beim Abschluss der Einrichtung verschwindet |
+  | `MAINTENANCE_REMOVE_PATHS`, `OPTIMIZER_REMOVE_PATHS` | `files-lib.py` (Fassade `setup-lib.py`) | was ein abgewählter Schalter entfernt |
+  | `TOOL_FILES` | `config-lib.py` (Fassade `setup-lib.py`) | welche Dateien zu welchem KI-Werkzeug gehören |
+  | `ABGEWAEHLT_SCHALTER_PATHS`, `ABGEWAEHLT_TOOL_PATHS` | `update-template.py` | dieselben Pfade, damit ein Update sie nicht zurückholt |
 
-  Eine vergessene Liste fällt oft erst Wochen später auf, im falschen Projekt.
+  Seit der Aufteilung von `setup-lib.py` (Backlog/.templatedev/questions.md Q4, 2026-09-16) liegen die
+  Konstanten in `config-lib.py`/`files-lib.py`/`claudemd-lib.py`; `setup-lib.py` bleibt als Fassade
+  erreichbar (`cp.<name>`), ist aber nicht mehr die Datei, in der man sie tatsächlich ändert.
+
+  Eine vergessene Liste fällt oft erst Wochen später auf, im falschen Projekt. Die beiden letzten Zeilen sind
+  bewusste Dubletten (jedes Script bleibt für sich Stdlib-eigenständig) — sie müssen zusammen geändert
+  werden.
 - **Beide Wege prüfen.** Eine Änderung, die Weg 2 (Nachrüsten) betrifft, betrifft meist auch Weg 1 (Anlegen)
   — und umgekehrt. Der Smoketest über beide Wege gehört ins Journal dieses Projekts (`docs/ai/ledger.md`).
 

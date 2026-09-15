@@ -187,6 +187,35 @@ Arbeit bezahlbar (siehe `AGENTS.md` § Modell-/Kostenlogik).
 - Ein Worker, der sich festgefressen hat, wird nicht endlos weitergefüttert — Auftrag schärfen und neu starten
   ist günstiger.
 
+### Wenn zwei Aufträge dieselbe Datei ändern
+
+**Nur-lesende Aufträge sind nicht gemeint** — Recherche auf denselben Dateien läuft beliebig parallel und ist
+der Normalfall. Es geht ums Schreiben.
+
+Zwei Worker, die gleichzeitig dieselbe Datei schreiben, sind kein Zeitgewinn: Man tauscht Wartezeit gegen zwei
+auseinanderlaufende Fassungen, die danach jemand zusammenführen muss — und das Zusammenführen kostet wieder
+den Orchestrator. **Ein getrennter Arbeitsbaum (`git worktree`) hilft hier nicht**, er trennt nur die Platte,
+nicht die Absicht.
+
+In dieser Reihenfolge lösen:
+
+1. **Aufträge nach Datei schneiden, nicht nach Thema.** Zwei Worker am selben Thema landen zwangsläufig in
+   derselben Datei; zwei Worker mit je eigenen Dateien nie.
+2. **Was in derselben Datei zusammengehört, ist ein Auftrag**, nicht zwei.
+3. **Reihenfolge statt Gleichzeitigkeit:** erst ein kurzer Lauf, der Schnittstelle oder Signatur festlegt,
+   danach parallel die Aufrufer in verschiedenen Dateien.
+4. **Wird dieselbe Datei zum zweiten Mal zum Engpass, ist nicht die Delegation das Problem, sondern die
+   Datei.** Dann wird sie nicht still weiter umgangen: Der Orchestrator legt eine **Frage** in
+   `docs/ai/questions.md` an (aufteilen, kürzen oder so lassen? mit Empfehlung) und — sobald entschieden —
+   eine **Aufgabe im Backlog** (`docs/ai/backlog.md`), die Datei zu entflechten. Beleg für die Dringlichkeit
+   sind die Fälle, in denen sie den Weg versperrt hat, nicht ihre Zeilenzahl allein.
+
+**Ein eigener Arbeitsbaum lohnt trotzdem** — nur aus anderen Gründen: ein langer, riskanter Umbau, der den
+Hauptbaum lauffähig lassen soll; ein Testlauf, der keine halbfertigen Dateien sehen darf; gleichzeitige
+Git-Operationen, die sich sonst am Index blockieren. Der Preis ist ein vollständiger Checkout **ohne**
+Abhängigkeiten (`node_modules`, `.venv`, Build-Cache fehlen) — bei kurzen Aufträgen frisst das Einrichten den
+Gewinn auf. Mechanik in Claude Code: `CLAUDE.md` § 1.
+
 ### Laufende Worker überwachen
 
 **Wer delegiert, wartet nicht blind.** Ein Worker, der läuft, kostet Zeit und Geld, auch wenn er beschäftigt
@@ -464,11 +493,15 @@ noch offen ist.
    Regel- und Arbeitsdateien und fasst zusammen — Dateien selbst werden nie gesendet), **wohin** (Adresse im
    Klartext), **wie und wie oft** ({{AUFTRAGGEBER}} wählt: ohne Rückfrage, mit Bestätigung vor jedem
    Versand, oder nur auf Zuruf — dazu den Takt; beides steht danach in `AI-CONFIG.md` § `Feedback` und
-   `Feedback-Takt`), **was {{AUFTRAGGEBER}} sieht** (jede Sendung liegt versioniert unter `docs/ai/template-feedback/`), **was es
+   `Feedback-Takt`), **was {{AUFTRAGGEBER}} sieht** (jede Sendung liegt vollständig unter
+   `docs/ai/template-feedback/`), **was es
    kostet** (Zusammenfassen und Filtern brauchen ein paar Token zusätzlich) und **wie mit den Daten umgegangen
    wird** (vertraulich, vor jeder Verwendung im öffentlichen Template persönlich durchgesehen). Ohne Antwort
-   passiert nichts — es gibt keinen Standardwert und keinen Schlüssel in `AI-CONFIG.md`. Mechanik bei Claude
-   Code: `.claude/scripts/feedback.py`.
+   passiert nichts — es gibt keinen Standardwert. Sagt {{AUFTRAGGEBER}} zu, kommt **eine zweite Frage**: ob
+   dieses Sendeprotokoll **mitversioniert** wird (Vorschlag — der Nachweis steht im Verlauf) oder per
+   `.gitignore` **lokal** bleibt. Letzteres ist die Antwort auf ein öffentliches Projekt-Repo, in dem sonst
+   auch die Rückmeldung öffentlich lesbar wäre. Mechanik bei Claude Code: `.claude/scripts/feedback.py`
+   (`--enable --protokoll versionieren|lokal`).
 7. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
    Board-Kurzbilanz nachziehen — und per Pathspec committen (Checkliste „Aufgabe abschließen").
 
