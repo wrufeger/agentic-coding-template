@@ -155,9 +155,49 @@ def _ruf(aktion: str, methode: str = "GET", body=None, **parameter) -> dict:
         sys.exit(2)
 
 
+def _fassung_vergleich() -> str:
+    """Laeuft auf dem Server die Datei, die hier im Repo liegt? Verglichen wird die Pruefsumme, die
+    ?op=fassung zurueckgibt, mit der des lokalen Scripts - Zeilenenden auf beiden Seiten vereinheitlicht,
+    sonst meldet ein FTP-Upload im Textmodus einen Unterschied, den es inhaltlich nicht gibt.
+
+    Warum das hier steht: "Ist der Upload angekommen?" war dreimal die Frage, und dreimal wurde geraten.
+    Ein 202 beweist nur, dass IRGENDEINE Fassung laeuft."""
+    import hashlib
+    lokal = _root() / ".templatedev" / "scripts" / "feedback-endpunkt.php"
+    if not lokal.exists():
+        return "lokales Script nicht gefunden"
+    eigen = hashlib.sha1(lokal.read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:12]
+    anfrage = urllib.request.Request(_url("fassung"))
+    anfrage.add_header("User-Agent", "agentic-coding-template-abholen/1")
+    try:
+        with urllib.request.urlopen(anfrage, timeout=TIMEOUT_S) as antwort:
+            daten = json.loads(antwort.read().decode("utf-8") or "{}") or {}
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, ValueError):
+        return "unbekannt (aeltere Fassung ohne ?op=fassung - bitte hochladen)"
+    fremd, marke = daten.get("datei"), daten.get("fassung") or "ohne Fassungsangabe"
+    geaendert = (daten.get("geaendert") or "")[:16].replace("T", " ")
+    hier = _eigene_fassung(lokal)
+    if fremd == eigen:
+        return f"aktuell - {marke} ({eigen})" + (f", hochgeladen {geaendert}" if geaendert else "")
+    return (f"WEICHT AB - Server hat {marke} ({fremd}), hier liegt {hier} ({eigen})"
+            + (f"; Server-Datei vom {geaendert}" if geaendert else "")
+            + " - der Upload ist nicht angekommen")
+
+
+def _eigene_fassung(lokal: Path) -> str:
+    """Die Fassungsangabe aus der lokalen Datei - damit die Meldung beide Seiten benennt statt nur Pruefsummen."""
+    import re
+    try:
+        treffer = re.search(r"(?m)^const FASSUNG = '([^']+)';", lokal.read_text(encoding="utf-8", errors="ignore"))
+    except OSError:
+        return "?"
+    return treffer.group(1) if treffer else "ohne Fassungsangabe"
+
+
 def cmd_status() -> int:
     antwort = _ruf("status")
     print(f"Endpunkt: {_endpunkt()}")
+    print(f"Fassung:  {_fassung_vergleich()}")
     print(f"Wartend:  {antwort.get('wartend_gesamt', '?')} Meldungen")
     print(f"Aufbewahrung: {antwort.get('aufbewahrung_tage', '?')} Tage")
     return 0

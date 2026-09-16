@@ -12,6 +12,57 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-16 — Freigabe für Schreibzugriff auf `rufeger.de` (über die Sitzung `homeassistant`)
+
+**Datierte Freigabe nach `AGENTS.md` § „Zugriff auf laufende Systeme":** Wolfgang hat am 2026-09-16
+zugestimmt, dass die Claude-Code-Sitzung in `D:\dev\rufeger\homeassistant` — sie hat die Zugangsdaten und
+SSH-Leserechte — den Feedback-Endpunkt auf `rufeger.de` **liest** und nach seiner ausdrücklichen Freigabe
+in ihrer eigenen Shell auch **schreibt** (die Datei vor Ort aktualisieren, php-fpm neu laden). Die Freigabe
+gilt für genau diesen Zweck und nicht für den nächsten ähnlichen Fall.
+
+- Der Auftrag ist in drei Schritte geteilt: erst **nur lesen** und zurückmelden (wo liegt das ausgelieferte
+  Verzeichnis wirklich, wie alt ist die `index.php`, wie steht OPcache), dann erst — nach Freigabe und nur
+  wenn die Ursache feststeht — schreiben, mit Kopie der alten Datei als Rückweg.
+- Beleg für „Upload angekommen" ist die Prüfsumme aus `?op=fassung`, nicht ein `202`.
+- Ausdrücklich mitgegeben: **keine Geheimnisse in der Antwort** — der Inhalt der `feedback-endpunkt.config.php`
+  wird weder ausgegeben noch zitiert, es genügt, ob und wo sie liegt.
+- Zusätzlich angeregt (Wolfgang): einmal `fail2ban` ansehen. Anlass ist konkret — ich habe in der letzten
+  Stunde rund 20 Anfragen an den Endpunkt geschickt, mehrere davon mit 403/401/400.
+
+**Was daraufhin am Server geschah** (die Sitzung `homeassistant` hat gelesen und nach Wolfgangs Freigabe in
+ihrer eigenen Shell geschrieben; alle Befunde von dort, keine Geheimnisse ausgetauscht):
+
+- **Die Diagnose hat meinen Verdacht widerlegt.** Server, Pfad und OPcache waren in Ordnung
+  (`validate_timestamps=On`, `revalidate_freq=2`, kein Symlink, kein Alias) — hochgeladen wurde schlicht
+  dreimal eine ältere Kopie. Der Server-Stand (641 Zeilen) passte zu keiner Fassung im Repo, weder zum
+  Commit (643) noch zum Arbeitsbaum (707). Lehre: Bevor man Serverkonfiguration verdächtigt, prüft man, ob
+  das Hochgeladene überhaupt das ist, was man meint — genau dafür gibt es jetzt `?op=fassung`.
+- **`.htaccess` im Endpunkt-Ordner angelegt:** `Require all denied` per Präfix-Muster auf
+  `feedback-endpunkt.config.php` (deckt `.example`, `.bak`, `~`, `.save` mit ab) — die Datei liefert seitdem
+  403 statt 200. Die andere Sitzung hat dabei die **bessere** Lösung gewählt als meine: 403 aus der
+  Server-Regel gilt unabhängig davon, welche Fassung läuft, und hält auch dann, wenn PHP die Datei einmal
+  nicht ausführt. Meine 404-Notbremse in der Vorlage bleibt als zweite Schicht, ersetzt sie aber nicht.
+- **`Cache-Control` nachgezogen:** Die `.htaccess` der Domain setzte pauschal `public, max-age=86400` — das
+  galt auch für `?op=inbox`, und darüber gehen die abgeholten Rückmeldungen im Klartext. Jetzt
+  `Header always unset` + `set "no-store"` im Endpunkt-Ordner. Ein realer Fund der anderen Sitzung, den ich
+  von außen nie gesehen hätte.
+- **fail2ban wertet diese Domain nicht aus:** 19 Jails, aber keine für den Access-Log — rund 20 Sonden mit
+  401/403/400/404, darunter `.env`, `*.bak` und ein Pfad-Traversal-Versuch, lösten nichts aus. Die 403 auf
+  `.env`/`.bak` kamen von ModSecurity, nicht von einer eigenen Regel (Korrektur meiner früheren Aussage).
+- **Kein Fehler, sondern Absicht:** Das Datenverzeichnis liegt eine Ebene über dem App-Ordner im
+  Abo-Wurzelverzeichnis. Das sieht bei einer Inventur nach falschem relativem Pfad aus, ist aber der Zweck —
+  außerhalb jedes Web-Roots. Von außen mit einer echten Meldungs-ID gegengeprüft: nicht erreichbar. Steht
+  jetzt als Warnung in der Betriebsdoku, damit es niemand „aufräumt".
+- **Endstand des Servers am 2026-09-16:** Fassung `2026-09-16.2` läuft (per `?op=fassung` bestätigt, nachdem
+  vier Anläufe im Dunkeln getappt hatten), Konfigurationsdatei `403`, Endpunkt-Antworten `no-store`. Die
+  Domain hat als globalen Standard `private, no-cache, must-revalidate` statt des früheren
+  `public, max-age=86400` — für eine ganze Website die richtige Wahl, für diesen Ordner gilt zusätzlich die
+  strengere Regel.
+- **Versionsnummer nachgerüstet** (Kritik von Wolfgang, berechtigt): Die Datei war ausführlich kommentiert,
+  aber man konnte ihr nicht ansehen, welcher Stand sie ist. `const FASSUNG` plus Kopfzeile, ausgegeben von
+  `?op=fassung` neben Prüfsumme und Änderungszeit. Prüfsumme und Fassung ersetzen einander nicht: Die eine
+  beweist, die andere sagt einem Menschen etwas.
+
 ## 2026-09-16 — Der echte Endpunkt zeigt zwei Fehler, die kein Wegwerf-Test gefunden hätte
 
 Wolfgang hat den Endpunkt ausgerollt. Der erste Lauf des echten Clients gegen `rufeger.de` förderte sofort

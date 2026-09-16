@@ -1,12 +1,25 @@
 <?php
 /*
- * Vorlage fuer die Konfiguration des Endpunkts. Auf dem Server neben feedback-endpunkt.php ablegen als
- * feedback-endpunkt.config.php - diese Datei bleibt die Vorlage und wird nie mit echten Werten gefuellt.
- * Die fertige Datei ist in .templatedev/.gitignore ausgenommen; sie enthaelt das gemeinsame Geheimnis.
+ * Vorlage fuer die Konfiguration des Endpunkts. Auf dem Server als feedback-endpunkt.config.php ablegen -
+ * diese Datei bleibt die Vorlage und wird nie mit echten Werten gefuellt. Die fertige Datei ist in
+ * .templatedev/.gitignore ausgenommen; sie enthaelt das gemeinsame Geheimnis.
+ *
+ * WOHIN: am besten OBERHALB des Dokumentwurzelverzeichnisses - das Script sucht sich von seinem Ordner aus
+ * bis zu fuenf Ebenen nach oben (oder nimmt den Pfad aus der Umgebungsvariablen AGENTIC_FEEDBACK_CONFIG).
+ * "Eine Ebene ueber dem Script" reicht NICHT, wenn der Endpunkt in einem Unterordner der Hauptseite liegt -
+ * dann ist das die Dokumentwurzel und per URL abrufbar.
  *
  * Alternative ohne Datei: dieselben Namen als Umgebungsvariablen setzen (SetEnv, fastcgi_param, systemd).
- * Das ist der sauberere Weg, wenn der Server es hergibt - dann liegt das Geheimnis nicht im Web-Verzeichnis.
+ * Das ist der sauberste Weg - dann gibt es keine Datei, die man schuetzen muesste.
  */
+
+// Notbremse fuer den Fall, dass die Datei doch im Web-Root landet: Ein direkter Aufruf liefert 404 statt
+// einer weissen Seite. Schuetzt NICHT davor, dass der Server sie als Klartext ausliefert, falls PHP sie
+// einmal nicht ausfuehrt - dagegen hilft nur der Ort oder eine Server-Regel (siehe README).
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === realpath(__FILE__)) {
+    http_response_code(404);
+    exit;
+}
 
 return [
     // Absoluter Pfad AUSSERHALB des Web-Roots. Hier entstehen daten/JJJJ-MM/*.json und limits/.

@@ -371,7 +371,11 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 Rückfrage, `manuell` nur auf Aufruf von `/feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
 
-**Eine von Hand geschriebene Nachricht geht immer** — `/feedback <Text>`, auch bei `Feedback: aus`. Sie ist
+**Eine von Hand geschriebene Nachricht geht immer** — „Feedback: <Text>", „Schicke Feedback <Text>" oder, wo
+das Werkzeug Slash-Befehle kennt, `/feedback <Text>`; auch bei `Feedback: aus`. Der Auslöser ist bewusst ein
+**Satz**, kein Befehl: Diese Datei gilt für jeden Assistenten, und die wenigsten kennen Skills. Steht hinter
+dem Wort noch ein Satz, **ist** er die Nachricht und geht unverändert hinaus; steht nichts dahinter, ist die
+gesammelte Rückmeldung gemeint. Sie ist
 kein Sonderfall der Automatik, sondern das Gegenteil davon: {{AUFTRAGGEBER}} formuliert selbst und löst
 selbst aus. Bei `aus` verlässt **ausschließlich dieser Text** das Projekt, ohne Projekt-Kennung und ohne
 Kontext; ist die Rückmeldung eingeschaltet, gehen Kennung, Template-Stand, Weg und Ausfüllart mit, damit

@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 /*
+ * Fassung: 2026-09-16.2   (siehe const FASSUNG unten - bei jeder ausgerollten Aenderung erhoehen)
+ *
  * Zweck: Gegenstelle zu .claude/scripts/feedback.py - nimmt die freiwilligen Rueckmeldungen aller Projekte
  *        entgegen, die "Feedback" eingeschaltet haben, legt sie als JSON-Dateien ab und gibt sie gebuendelt
  *        an EINE authentifizierte Anfrage der Template-Seite heraus, die sie danach quittiert und damit
@@ -27,7 +29,8 @@ declare(strict_types=1);
  *       liefert er die Startseite der Domain aus. Deshalb ist ?op=inbox der Normalweg, nicht der Ausweg.
  *
  *   Konfiguration per Umgebungsvariable (SetEnv/fastcgi_param) oder per Datei
- *   feedback-endpunkt.config.php daneben, die ein Array zurueckgibt:
+ *   feedback-endpunkt.config.php. Gesucht wird ZUERST eine Ebene UEBER dem Script (ausserhalb des
+ *   Web-Roots, dort ist sie per URL nicht erreichbar), danach daneben. Sie gibt ein Array zurueck:
  *     AGENTIC_FEEDBACK_DIR         Ablage, absoluter Pfad ausserhalb des Web-Roots (Pflicht)
  *     AGENTIC_FEEDBACK_JWT_SECRET  gemeinsames Geheimnis, >= 32 Zeichen (Pflicht)
  *     AGENTIC_FEEDBACK_JWT_ISS     erwarteter Aussteller, Default "templatedev"
@@ -40,11 +43,21 @@ declare(strict_types=1);
  *   GET  /inbox       Stapel abholen (JWT). ?max=<1..500> begrenzt. -> 200 | 401
  *   POST /ack         Quittieren und loeschen (JWT). Body: {"ids":["..."]} -> 200 | 400 | 401
  *   GET  /status      Lebenszeichen und Anzahl wartender Meldungen (JWT). -> 200 | 401
+ *   GET  /fassung     Fassung, Pruefsumme und Aenderungszeit dieser Datei - oeffentlich, ohne Token.
+ *                     Beantwortet "was laeuft hier und ist der Upload angekommen?", ohne dass jemand
+ *                     raten muss. -> 200
  *
  * Ausgabeformat: immer JSON, nie HTML - die Meldungen sind Fremdtext und werden nie gerendert.
  */
 
 // ---------------------------------------------------------------- Konfiguration
+
+// Fassung dieser Datei - bei JEDER Aenderung erhoehen, die ausgerollt wird. Sie steht in der Antwort von
+// ?op=fassung neben der Pruefsumme, und beide beantworten verschiedene Fragen: Die Pruefsumme BEWEIST, ob
+// auf dem Server genau diese Datei liegt (sie kann nicht luegen, weil sie aus dem Inhalt entsteht). Die
+// Fassung SAGT einem Menschen, was darin steckt - "2026-09-16.2" ordnet man einem Stand zu, "ce44f3ed38b2"
+// niemandem. Eine Pruefsumme ohne Fassung war der Fehler der ersten Runde.
+const FASSUNG = '2026-09-16.2';
 
 const SCHEMA = 1;                // gesammelte Meldung des Assistenten
 const SCHEMA_DIREKT = 2;         // von Hand geschriebene Nachricht (art: "direkt"), nur `text` ist Pflicht
@@ -55,6 +68,7 @@ const AUFBEWAHRUNG_TAGE = 730;   // 24 Monate, danach wird beim naechsten Zugrif
 const LIMIT_IP_STUNDE = 30;
 const LIMIT_PROJEKT_TAG = 24;
 const UHR_TOLERANZ = 60;         // Sekunden Spielraum bei exp/nbf
+const KONFIG_SUCHTIEFE = 5;      // wie viele Elternverzeichnisse nach der Konfiguration abgesucht werden
 
 // Herkunftskennung, die jedes Projekt aus dem Template mitfuehrt (siehe HERKUNFT in feedback.py). BEWUSST
 // OEFFENTLICH: Sie steht im Template, ist eingecheckt und wird an jedes Projekt vererbt. Sie ist kein
@@ -80,12 +94,54 @@ const KENNZAHLEN_DATUM = ['erster_commit', 'letzter_commit'];
 const REGEL_BEREICHE = ['agents_md', 'claude_md', 'agenten', 'skills', 'scripte', 'checklisten'];
 const WERKZEUG_GRUPPEN = ['agenten', 'skills', 'scripte'];
 
+/**
+ * Wo die Konfigurationsdatei gesucht wird, in dieser Reihenfolge:
+ *   1. Der Pfad aus der Umgebungsvariablen AGENTIC_FEEDBACK_CONFIG (wenn gesetzt, gilt nur dieser).
+ *   2. Neben dem Script.
+ *   3. Aufwaerts durch die Elternverzeichnisse, bis zu KONFIG_SUCHTIEFE Ebenen.
+ *
+ * Punkt 3 ist der eigentliche Zweck: Die Datei gehoert OBERHALB des Dokumentwurzelverzeichnisses, denn dort
+ * kann keine Anfrage sie erreichen. "Eine Ebene ueber dem Script" genuegt dafuer NICHT - liegt der Endpunkt
+ * in einem Unterordner der Hauptseite, ist diese Ebene die Dokumentwurzel selbst und damit sehr wohl
+ * abrufbar (genau dieser Irrtum ist am 2026-09-16 aufgefallen). Wie viele Ebenen es bis dorthin sind, weiss
+ * nur der Betreiber - deshalb wird gesucht statt geraten.
+ *
+ * Warum das ueberhaupt zaehlt: Liegt die Datei im Web-Root, bleibt ihr Inhalt nur deshalb geheim, weil PHP
+ * sie ausfuehrt und ein `return [...]` nichts ausgibt (der Aufruf liefert eine weisse Seite). Faellt die
+ * PHP-Behandlung je aus - Modul deaktiviert, Konfigurationsfehler, eine Umbenennung -, liefert der Server
+ * das Geheimnis als Klartext aus. Am sichersten ist deshalb, es gar nicht erst in eine Datei zu schreiben,
+ * sondern als Umgebungsvariable zu setzen.
+ */
+function konfig_kandidaten(): array
+{
+    $ausUmgebung = getenv('AGENTIC_FEEDBACK_CONFIG');
+    if (is_string($ausUmgebung) && $ausUmgebung !== '') {
+        return [$ausUmgebung];
+    }
+    $kandidaten = [];
+    $ordner = __DIR__;
+    for ($tiefe = 0; $tiefe <= KONFIG_SUCHTIEFE; $tiefe++) {
+        $kandidaten[] = $ordner . '/feedback-endpunkt.config.php';
+        $eltern = dirname($ordner);
+        if ($eltern === $ordner) {
+            break;  // Dateisystemwurzel erreicht
+        }
+        $ordner = $eltern;
+    }
+    return $kandidaten;
+}
+
 function konfig(string $schluessel, ?string $default = null): ?string
 {
     static $datei = null;
     if ($datei === null) {
-        $pfad = __DIR__ . '/feedback-endpunkt.config.php';
-        $datei = is_readable($pfad) ? (array) require $pfad : [];
+        $datei = [];
+        foreach (konfig_kandidaten() as $pfad) {
+            if (is_readable($pfad)) {
+                $datei = (array) require $pfad;
+                break;
+            }
+        }
     }
     $wert = $datei[$schluessel] ?? (getenv($schluessel) ?: null);
     return $wert !== null && $wert !== '' ? (string) $wert : $default;
@@ -586,6 +642,25 @@ function ack(): never
     ]);
 }
 
+/**
+ * Welche Fassung laeuft hier? Oeffentlich und ohne Token - die Antwort verraet nichts, was nicht ohnehin
+ * im Repo steht, und beantwortet die Frage, die sonst jedes Mal zu Rateversuchen fuehrt: "Ist der Upload
+ * angekommen?" Statt einer gepflegten Versionsnummer (die man zu erhoehen vergisst) die Pruefsumme der
+ * Datei selbst. Zeilenenden werden vorher vereinheitlicht, sonst meldet ein Upload per FTP im Textmodus
+ * einen Unterschied, den es inhaltlich nicht gibt.
+ */
+function fassung(): never
+{
+    $roh = @file_get_contents(__FILE__);
+    antwort(200, [
+        'ok' => true,
+        'fassung' => FASSUNG,
+        'datei' => $roh === false ? null : substr(sha1(str_replace("\r\n", "\n", $roh)), 0, 12),
+        'geaendert' => @filemtime(__FILE__) ? gmdate('c', filemtime(__FILE__)) : null,
+        'zeit' => gmdate('c'),
+    ]);
+}
+
 function status(): never
 {
     jwt_pruefen();
@@ -638,6 +713,7 @@ match (true) {
     $route === 'inbox' && $methode === 'GET' => inbox(),
     $route === 'ack' && $methode === 'POST' => ack(),
     $route === 'status' && $methode === 'GET' => status(),
-    in_array($route, ['', 'inbox', 'ack', 'status'], true) => fehler(405, 'Methode passt nicht zum Endpunkt'),
+    $route === 'fassung' && $methode === 'GET' => fassung(),
+    in_array($route, ['', 'inbox', 'ack', 'status', 'fassung'], true) => fehler(405, 'Methode passt nicht zum Endpunkt'),
     default => fehler(404, 'unbekannter Endpunkt'),
 };

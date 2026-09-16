@@ -160,6 +160,9 @@ was sich angesammelt hat, und sichert das Ergebnis.
    dann jetzt einen Eintrag ablegen: `python .claude/scripts/feedback.py --add …`. Maßstab: Hilft es jemandem,
    der dieses Projekt nie sehen wird? Das **Muster**, nicht der Fall. Gesendet wird gesammelt, höchstens
    einmal je Woche; ist die Rückmeldung aus, entfällt der Schritt ersatzlos.
+   Davon unberührt: {{AUFTRAGGEBER}} kann jederzeit selbst einen Satz schicken — „Feedback: <Text>",
+   „Schicke Feedback <Text>" oder `/feedback <Text>`. Das geht auch bei ausgeschalteter Rückmeldung und
+   dann anonym, ohne Projekt-Kennung.
 9. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
    `[orchestrator] [commit] <hash> <message>` schreiben — das Log ist Mitschnitt, kein Ersatz für Journal
    oder Beleg.

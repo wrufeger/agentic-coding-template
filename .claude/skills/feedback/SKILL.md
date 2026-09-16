@@ -1,12 +1,24 @@
 ---
 name: feedback
-description: Rückmeldung an den Template-Autor zusammenstellen und senden - was sich an der Arbeitsweise bewährt oder gefehlt hat, ohne Projektbezug. Auslöser - "/feedback", "Feedback senden", "ans Template melden", "Rückmeldung geben".
+description: Rückmeldung an den Template-Autor zusammenstellen und senden - was sich an der Arbeitsweise bewährt oder gefehlt hat, ohne Projektbezug. Auslöser - "/feedback", "/feedback <Text>", "Feedback: <Text>", "Schicke Feedback <Text>", "Feedback senden", "ans Template melden", "Rückmeldung geben".
 ---
 
 # Rückmeldung an den Template-Autor
 
 Stellt zusammen, was in diesem Projekt an der **Arbeitsweise** gelernt wurde, und sendet es — freiwillig,
 gefiltert, protokolliert. Mechanik: `.claude/scripts/feedback.py`.
+
+**Der Auslöser ist nicht an einen Slash-Befehl gebunden.** Wo es keine Skills gibt — ChatGPT, Cursor, Aider,
+Gemini CLI, ein lokales Modell —, wirkt derselbe Satz in Alltagssprache. Alle diese Formen meinen dasselbe:
+
+| Was {{AUFTRAGGEBER}} schreibt | Was gemeint ist |
+| :--- | :--- |
+| `/feedback <Text>` · „Feedback: <Text>" · „Schicke Feedback <Text>" · „Melde ans Template: <Text>" | genau dieser Text geht sofort raus (Weg 1) |
+| `/feedback` · „Feedback senden" · „Rückmeldung geben" · „ans Template melden" (ohne weiteren Text) | die gesammelte Rückmeldung zusammenstellen (Weg 2) |
+
+Faustregel: **Steht hinter dem Wort noch ein Satz, ist er die Nachricht** — er wird weder umformuliert noch
+ergänzt. Steht nichts dahinter, ist der gesammelte Weg gemeint. Im Zweifel einmal nachfragen, welches von
+beiden — das ist billiger als eine Nachricht, die so nie gemeint war.
 
 **Zwei Wege, die nicht verwechselt werden dürfen:**
 

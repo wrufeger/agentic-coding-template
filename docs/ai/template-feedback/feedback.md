@@ -16,16 +16,9 @@ es steht gar nicht erst drin.
 Eine Regel, eine Checkliste, ein Agent, ein Script — etwas, das du erwartet hättest und selbst nachbauen
 musstest.
 
-> 
+>
 
-## Was hat sich bewährt?
-
-Ein Ablauf, der besser lief als erwartet. Auch „die Fragen mit a/b/c-Antworten haben Zeit gespart" hilft —
-daran erkennt der Autor, was er nicht kaputtoptimieren darf.
-
-> 
-
-## Wo hat die Zusammenarbeit gehakt?
+## Wo hat die Zusammenarbeit Mensch <-> KI gehakt?
 
 Missverständliche Formulierung, doppelte Regel, ein Schritt, den du jedes Mal erklären musstest.
 
@@ -33,18 +26,20 @@ Missverständliche Formulierung, doppelte Regel, ein Schritt, den du jedes Mal e
 
 ## Womit arbeitest du?
 
-Grober Rahmen, freiwillig: Erfahrung mit Programmierung, Erfahrung mit KI-Assistenten, Art des Projekts
+Erfahrung mit Programmierung, Erfahrung mit KI-Assistenten, Art des Projekts
 (Hobby, Beruf, Lehre), Teamgröße. Hilft dem Autor einzuordnen, für wen eine Regel gerade zu knapp oder zu
 ausführlich ist.
 
 > 
 
-## Sonst noch etwas
-
-Ideen, Wünsche, Kritik, Lob — was hier nicht in die Fragen passt.
+## Ideen, Wünsche
 
 > 
 
+## Kritik, Lob — und alles was Du sonst noch loswerden willst
+
+>
+> 
 ---
 
 ## Bereits gesendet
