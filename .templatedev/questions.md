@@ -95,7 +95,7 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    c) Zwei Nachbarordner `template-src/` und `template-management/` im selben Repo: saubere Trennung, aber
       Split plus Unterordner-Modus für `update-template.py` (~3 PT)
    * Antwort: a)
-   * Verarbeitet 2026-09-16: T5 auf Variante a) ausgerichtet, Konzept `.templatedev/konzept-projektstruktur.md` folgt.
+   * Verarbeitet 2026-09-16: T5 auf Variante a) ausgerichtet, Konzept `.templatedev/concept-project-structure.md` (englischer Dateiname, siehe Q9).
 
 ---
 
@@ -155,5 +155,47 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    * Antwort: GitLab und GitHub, Rest später
    * Verarbeitet 2026-09-16: GitLab und GitHub in T1–T3; Jira, YouTrack, Linear als Backlog-Punkt 34.
+
+---
+
+**Q12 · Wie erbt `.templatedev/` die Regeln aus `AGENTS.md` und `CLAUDE.md`?**
+
+   Konzept: `concept-project-structure.md` § Umsetzung, Schritt 3.
+
+   a) gerenderte Kopie per Script (Platzhalter ersetzt, Template-Block entfernt), `--check` beim
+      Sitzungsstart meldet Abweichungen — **Empfehlung**
+
+   b) eigene kurze Dateien mit Verweis auf `../AGENTS.md` — Platzhalter und Template-Block bleiben sichtbar
+
+   c) Import per `@../AGENTS.md` — lädt dieselben Platzhalter mit, kein Script nötig
+
+   * Antwort:
+
+---
+
+**Q13 · Wohin mit den Dateien ohne Gegenstück in der Standardstruktur?**
+
+   a) `regeln.md` → `docs/project/coding_rules.md` · `README.md` (Testprojekte) → `docs/project/test-projects.md` ·
+      `konzept-*.md` → `docs/project/konzepte/` · `daten/` → `docs/project/data/` ·
+      `testprojekte.py` und `scripts/` → `scripts/` mit englischen Namen — **Empfehlung**
+
+   b) wie a), zusätzlich `docs/project/konzepte/` im Template selbst in `concepts/` umbenennen
+
+   c) Dateien ohne Gegenstück bleiben, wo sie sind; nur die `docs/ai/`-Dateien ziehen um
+
+   * Antwort:
+
+---
+
+**Q14 · Was bleibt im Root von den Template-Blöcken in `AGENTS.md` und `CLAUDE.md`?**
+
+   a) drei Zeilen: „Template-Checkout — Pflege in einer Sitzung in `.templatedev/`, hier nur Projekte
+      anlegen oder nachrüsten" — **Empfehlung**
+
+   b) nichts; der Hinweis steht nur in `.github/README.md`
+
+   c) die heutigen Blöcke bleiben unverändert
+
+   * Antwort:
 
 ---

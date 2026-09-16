@@ -23,7 +23,7 @@ Fenstern, obwohl man beim Arbeiten beides zugleich braucht.
 | `backlog.md` | Backlog: priorisierte Verbesserungsvorschläge, Nummern bleiben stabil |
 | `questions.md` | offene Entscheidungen zur Weiterentwicklung (`Q<n>`) |
 | `ledger.md` | Journal: was in welcher Sitzung passiert ist, mit Belegen |
-| `konzept-*.md` | Konzepte vor einer Entscheidung — `konzept-feedback.md` (Rückmeldung), `konzept-repo-issues.md` (T1–T3) |
+| `konzept-*.md` | Konzepte vor einer Entscheidung — `konzept-feedback.md` (Rückmeldung), `konzept-repo-issues.md` (T1–T3), `concept-project-structure.md` (T5) |
 | `regeln.md` | Regeln für die Arbeit **am Template selbst** |
 | `scripts/` | Werkzeuge nur für die Template-Entwicklung — u. a. die beiden Seiten der freiwilligen Rückmeldung (Endpunkt und Abholung), siehe `scripts/README.md` |
 | `testprojekte.py` | gleicht die Tabelle in `README.md` mit dem echten Stand der Testprojekte ab |

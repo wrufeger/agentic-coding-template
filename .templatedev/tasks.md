@@ -63,13 +63,13 @@ wenn T1–T3 committet und gepusht sind:
     `/create-project` angelegtes Projekt (u. a. Formregeln für Fragen und Aufgaben) und lässt sich per
     `/update-template` aktualisieren; die Sonderfälle „noch nicht initialisiert" entfallen möglichst ganz.
   Schritte:
-  1. Konzept `.templatedev/konzept-projektstruktur.md` zur Variante aus Q7: welche Sonderfälle entfallen
+  1. Konzept `.templatedev/concept-project-structure.md` zur Variante aus Q7: welche Sonderfälle entfallen
      (103 Stellen in `.claude/scripts/`), welche geerbten Root-Skills in `.templatedev/` überschrieben oder
      gesperrt werden müssen (z. B. `/finalize`, `/create-project`), wie der Abgleich der Struktur läuft.
   2. Nach Entscheidung in Teilaufgaben schneiden; Inhalte übernehmen (Backlog, Fragen, Journal, Regeln) und
      `questions.md`/`tasks.md` auf die Formregeln aus `docs/ai/README.md` bringen.
   3. Beleg: `/update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
-  Offen: Konzept (Q7 = a).
+  Offen: Q12, Q13, Q14 (Konzept `concept-project-structure.md`).
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 
