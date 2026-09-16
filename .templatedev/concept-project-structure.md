@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-16 – Status: Entwurf — wartet auf `Q12`–`Q14`
+> Datenstand: 2026-09-16 – Status: Entwurf — wartet auf `Q12`–`Q15`
 
 # Template-Pflege als eigenes Projekt in `.templatedev/`
 
@@ -72,6 +72,31 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
 **Stolperstein `/commit`:** Die Sitzung liegt nicht im Git-Root — Pathspecs sind relativ zu `.templatedev/`.
 Änderungen am Template (`../.claude/…`) müssen mit `../` angegeben werden; Schritt 5 prüft genau das.
 
+## Pflege-Modus im Root (Wunsch 2026-09-17)
+
+Schalter in `.env`, z. B. `TEMPLATEDEV_MODE=ein`: Eine Sitzung im Root verhält sich, als liefe sie in
+`.templatedev/` — praktisch, wenn IDE und Terminal ohnehin im Root geöffnet sind.
+
+**Was geht:**
+
+- **Regeln umlenken:** Der SessionStart-Hook von `finish-setup.py --check` meldet im Template-Checkout heute
+  „hier nichts zu tun". Er liest zusätzlich den Schalter aus `.env` und gibt dann den Pflege-Kontext aus:
+  `.templatedev/AGENTS.md` und `CLAUDE.md` gelten, Arbeitsordner ist `.templatedev/docs/ai/`, Pathspecs mit
+  `.templatedev/` davor. Kein neuer Hook, also nichts, was in abgeleitete Projekte wandert.
+- **Scripte umlenken:** Scripte, die Projektdateien lesen (`check-refs.py`, `sync-config.py`, `ai-log.py` …),
+  nehmen bei gesetztem Schalter `.templatedev/` als Projektordner — nur im Template-Checkout (`is_template`).
+- **Sperren:** `create-project`, `apply-template`, `finalize` lehnen im Pflege-Modus ab (Script-Ebene).
+
+**Was nicht geht — das ist der Unterschied zu einer Sitzung in `.templatedev/`:**
+
+- Claude Code liest `.env` nicht; der Schalter wirkt nur über Hook-Ausgabe und Scripte.
+- Die Root-`CLAUDE.md` mit Platzhaltern bleibt geladen, `.templatedev/.claude/settings.json` (Ausschlüsse,
+  Hooks) und die Sperr-Skills gelten nicht. Zwei Regelsätze stehen im Kontext; der Hook sagt, welcher gilt —
+  das ist eine Anweisung, keine technische Trennung.
+- Ein Umschalten wirkt erst mit der nächsten Sitzung.
+
+**Aufwand:** ~0,5 PT zusätzlich (Schalter lesen in einer gemeinsamen Hilfsfunktion, Hook-Text, drei Sperren).
+
 ## Empfehlung
 
 - `Q12` a — gerenderte Kopie: Regeln gelten wörtlich wie in jedem Projekt, ohne Platzhalter und ohne den
@@ -79,7 +104,8 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
 - `Q13` a — alles in die Standardorte, englische Namen; `docs/project/konzepte/` bleibt so, solange das
   Template selbst den Ordner so nennt.
 - `Q14` a — drei Zeilen im Root statt ~30.
+- `Q15` a — Schalter in `.env` wie gewünscht; die Grenzen oben stehen dann im Hook-Text selbst.
 
 ## Offen
 
-`Q12`–`Q14` in `questions.md`.
+`Q12`–`Q15` in `questions.md`.

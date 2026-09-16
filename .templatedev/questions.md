@@ -199,3 +199,21 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    * Antwort:
 
 ---
+
+**Q15 · Wie wird der Pflege-Modus im Root eingeschaltet?**
+
+   Wunsch: Sitzung im Root arbeitet wie in `.templatedev/`. Konzept: `concept-project-structure.md`
+   § „Pflege-Modus im Root" — technisch nur über Hook-Ausgabe und Scripte, die Root-`CLAUDE.md` und die
+   Root-Skills bleiben geladen.
+
+   a) `TEMPLATEDEV_MODE=ein` in `.env`; Hook nennt die geltenden Regeln, Scripte nehmen `.templatedev/` als
+      Projektordner, `create-project`/`apply-template`/`finalize` lehnen ab (~0,5 PT) — **Empfehlung**
+
+   b) `CLAUDE.local.md` im Root (gitignored) mit dem Hinweis auf `.templatedev/` — kein Code, aber auch
+      keine Umlenkung der Scripte und keine Sperren
+
+   c) kein Schalter; Pflege nur in einer Sitzung in `.templatedev/`
+
+   * Antwort:
+
+---

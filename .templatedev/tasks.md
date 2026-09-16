@@ -69,7 +69,7 @@ wenn T1–T3 committet und gepusht sind:
   2. Nach Entscheidung in Teilaufgaben schneiden; Inhalte übernehmen (Backlog, Fragen, Journal, Regeln) und
      `questions.md`/`tasks.md` auf die Formregeln aus `docs/ai/README.md` bringen.
   3. Beleg: `/update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
-  Offen: Q12, Q13, Q14 (Konzept `concept-project-structure.md`).
+  Offen: Q12–Q15 (Konzept `concept-project-structure.md`).
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 
