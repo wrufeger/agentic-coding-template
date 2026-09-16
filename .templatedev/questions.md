@@ -98,3 +98,58 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    * Verarbeitet 2026-09-16: T5 auf Variante a) ausgerichtet, Konzept `.templatedev/konzept-projektstruktur.md` folgt.
 
 ---
+
+**Q8 · Über welchen Weg sprechen die Skills mit Git-Hoster und Tracker?**
+
+   Konzept: `konzept-repo-issues.md` § „Wege zum Dienst". `bandliste` liegt auf selbst betriebenem GitLab,
+   ohne `gh`/`glab`.
+
+   a) Git-Hoster per REST-Script (Token aus Umgebung/`.env`), CLI wenn vorhanden, MCP als Zusatz;
+      Jira/YouTrack/Linear per MCP — **Empfehlung**
+
+   b) alles per MCP — einheitlich, aber auf selbst betriebenem GitLab unsicher
+
+   c) alles per CLI (`gh`, `glab`, Jira-CLI) — Installation auf jedem Rechner nötig
+
+   * Antwort:
+
+---
+
+**Q9 · Wo wird das Ergebnis der Zugangsprüfung (T1) abgelegt?**
+
+   a) neue Datei `docs/project/integrationen.md` (Fähigkeit × Weg × Stand × Datum) — **Empfehlung**
+
+   b) neue Tabelle in `AI-CONFIG.md` — dort steht aber Steuerung, kein Messergebnis
+
+   c) Abschnitt in `docs/project/architecture.md`
+
+   * Antwort:
+
+---
+
+**Q10 · Welche Freigabe braucht das Anlegen von PR/MR, Issue oder Kommentar?**
+
+   Heute verlangt `AGENTS.md` für Schreibzugriffe eine datierte Freigabe je Zweck.
+
+   a) Vorschau plus „ja" im Chat je Aktion, Journal-Eintrag mit Link automatisch;
+      `AGENTS.md` wird um diesen Fall ergänzt — **Empfehlung**
+
+   b) wie a), PR/MR aber immer zuerst als Entwurf (Draft)
+
+   c) datierte Freigabe im Journal vor jeder Aktion, wie heute
+
+   * Antwort:
+
+---
+
+**Q11 · Mit welchen Diensten fangen wir an?**
+
+   a) GitLab (Beleg in `bandliste`) und GitHub, danach Jira, YouTrack zuletzt — **Empfehlung**
+
+   b) nur GitLab, weitere erst bei Bedarf
+
+   c) GitLab, GitHub und Jira gleichzeitig
+
+   * Antwort:
+
+---

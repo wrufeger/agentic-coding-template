@@ -31,7 +31,7 @@ wenn T1–T3 committet und gepusht sind:
      `.mcp.json`/`mcp-katalog.md`, CLI wie `gh`/`glab`, Token in `.env`), Probeaufruf nur lesend, Ablage des
      Ergebnisses, Hinweise bei fehlender oder fehlerhafter Einrichtung.
   2. Nach Entscheidung umsetzen (Script und/oder Skill), an einem Testprojekt belegen.
-  Offen: Konzept (Q6 = a); wo das Prüfergebnis im Projekt liegt (`docs/project/` oder `AI-CONFIG.md`).
+  Offen: Q8, Q9 (Konzept `konzept-repo-issues.md`).
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 - [ ] **T2 · Pull/Merge Requests vorbereiten und nach Zustimmung erstellen** ❓
@@ -41,7 +41,7 @@ wenn T1–T3 committet und gepusht sind:
   1. Konzept: Zielbranch-Ermittlung (gespeicherter Wert, sonst `development`/`develop`/`main`), Ablageort
      des Werts, Ablauf der Zustimmung, Abgrenzung zu `/commit` und `/release`.
   2. Nach Entscheidung Skill bauen, an einem Testprojekt mit echtem Remote belegen.
-  Offen: T1; Konzept (Q6 = a).
+  Offen: T1; Q10, Q11.
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 - [ ] **T3 · Issues und Stories anzeigen, anlegen und bearbeiten** ❓
@@ -52,7 +52,7 @@ wenn T1–T3 committet und gepusht sind:
   1. Konzept: welche Tracker zuerst, Befehlssätze, Zuordnung Issue → `T<n>`/Story, Schreibzugriffe nur mit
      Freigabe (`AGENTS.md` § „Zugriff auf laufende Systeme").
   2. Nach Entscheidung in Teilaufgaben schneiden (lesen zuerst, dann anlegen, dann „Arbeit starten").
-  Offen: T1; Konzept (Q6 = a).
+  Offen: T1; Q10, Q11.
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 - [ ] **T5 · Template-Entwicklung als normales Projekt führen** ❓
