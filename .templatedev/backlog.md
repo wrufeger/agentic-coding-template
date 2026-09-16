@@ -194,6 +194,10 @@ sie werden in Journal und Commits zitiert.
    sind (Code gepusht, Fragen beantwortet); bis dahin steht sie als Folgeschritt in der Aufgabe des
    Assistenten, die sie auslöst.
 
+34. -> später: **Issue-Tracker ohne Git anbinden — Jira, YouTrack, Linear** (angelegt 2026-09-16): `/issue`
+   und `/integrations` (T1, T3) bauen zunächst nur GitLab und GitHub (Q11). Danach dieselben Abläufe über MCP
+   (`atlassian`, `linear`); YouTrack fehlt noch im Katalog `.claude/mcp-katalog.md`.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):

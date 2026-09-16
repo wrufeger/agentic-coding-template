@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-16 – Status: Entwurf — wartet auf `Q8`–`Q11`
+> Datenstand: 2026-09-16 – Status: entschieden — `Q8`–`Q11` beantwortet, Umsetzung offen (T1–T3)
 
 # Repo- und Issue-Dienste: Zugänge, Pull/Merge Requests, Issues
 
@@ -32,7 +32,7 @@ Zugänge erkennen (T1), PR/MR vorbereiten und anlegen (T2), Issues anzeigen, anl
 
 ## T1 — Zugänge prüfen und festhalten
 
-Skill `/zugaenge` plus Script `.claude/scripts/zugaenge.py`:
+Skill `/integrations` plus Script `.claude/scripts/integrations.py`:
 
 1. **Erkennen** (Script, nur lesend): Hoster aus `git remote -v`; vorhandene CLIs samt Anmeldestatus; Namen
    (nie Werte) gesetzter Token-Variablen; MCP-Server aus `.mcp.json` und `claude mcp list`.
@@ -44,7 +44,7 @@ Skill `/zugaenge` plus Script `.claude/scripts/zugaenge.py`:
    Code nicht gelesen — `CLAUDE.md` § 4). Fehlschläge als `feedback.py --add --art mcp|fehler`, nur das
    Muster (z. B. „GitLab-MCP auf selbst betriebener Instanz nicht erreichbar"), ohne Hostnamen.
 
-T2 und T3 lesen die Ablage und rufen `/zugaenge` selbst auf, wenn sie fehlt oder älter als 30 Tage ist.
+T2 und T3 lesen die Ablage und rufen `/integrations` selbst auf, wenn sie fehlt oder älter als 30 Tage ist.
 
 ## T2 — Pull/Merge Request
 
@@ -85,6 +85,12 @@ Skill `/issue` mit Sätzen statt Unterbefehlen:
   danach Jira, YouTrack zuletzt (`Q11`).
 - **Neue Skills** in alle zusammenhängenden Pfadlisten (`.templatedev/regeln.md`) und `CLAUDE.md` § 2.
 
-## Offen
+## Entschieden am 2026-09-16
 
-`Q8`–`Q11` in `questions.md`.
+- **Weg (`Q8` a):** GitHub/GitLab per REST-Script (Token aus Prozessumgebung oder `.env`), CLI wenn vorhanden,
+  MCP als Zusatz; Tracker ohne Git per MCP.
+- **Ablage (`Q9` a):** `docs/project/integrations.md` — Dateinamen immer englisch; daher auch
+  `/integrations` und `.claude/scripts/integrations.py`.
+- **Freigabe (`Q10` a):** Vorschau plus „ja" im Chat je Aktion, Journal-Eintrag mit Link automatisch;
+  `AGENTS.md` § „Zugriff auf laufende Systeme" wird darum ergänzt.
+- **Umfang (`Q11`):** GitLab und GitHub; Jira, YouTrack, Linear später (Backlog-Punkt 34).

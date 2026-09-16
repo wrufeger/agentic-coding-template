@@ -31,8 +31,9 @@ wenn T1–T3 committet und gepusht sind:
      `.mcp.json`/`mcp-katalog.md`, CLI wie `gh`/`glab`, Token in `.env`), Probeaufruf nur lesend, Ablage des
      Ergebnisses, Hinweise bei fehlender oder fehlerhafter Einrichtung.
   2. Nach Entscheidung umsetzen (Script und/oder Skill), an einem Testprojekt belegen.
-  Offen: Q8, Q9 (Konzept `konzept-repo-issues.md`).
-  Stand 2026-09-16: aufgenommen, noch nicht begonnen.
+  Entschieden: Weg REST-Script/CLI/MCP (Q8); Ablage `docs/project/integrations.md`, Skill `/integrations` (Q9);
+    GitLab und GitHub (Q11). Konzept: `konzept-repo-issues.md`.
+  Stand 2026-09-16: entschieden, startklar.
 
 - [ ] **T2 · Pull/Merge Requests vorbereiten und nach Zustimmung erstellen** ❓
   Ziel: Ein Skill schreibt Titel und Beschreibung aus dem Diff gegen den Zielbranch und legt den PR/MR erst
@@ -41,8 +42,9 @@ wenn T1–T3 committet und gepusht sind:
   1. Konzept: Zielbranch-Ermittlung (gespeicherter Wert, sonst `development`/`develop`/`main`), Ablageort
      des Werts, Ablauf der Zustimmung, Abgrenzung zu `/commit` und `/release`.
   2. Nach Entscheidung Skill bauen, an einem Testprojekt mit echtem Remote belegen.
-  Offen: T1; Q10, Q11.
-  Stand 2026-09-16: aufgenommen, noch nicht begonnen.
+  Offen: T1.
+  Entschieden: Vorschau plus „ja" je Aktion, `AGENTS.md` wird ergänzt (Q10); GitLab und GitHub (Q11).
+  Stand 2026-09-16: entschieden, wartet auf T1.
 
 - [ ] **T3 · Issues und Stories anzeigen, anlegen und bearbeiten** ❓
   Ziel: Aus Sätzen wie „zeige meine offenen Stories" oder „Starte Arbeit an Issue xyz" wird ein geführter
@@ -52,8 +54,9 @@ wenn T1–T3 committet und gepusht sind:
   1. Konzept: welche Tracker zuerst, Befehlssätze, Zuordnung Issue → `T<n>`/Story, Schreibzugriffe nur mit
      Freigabe (`AGENTS.md` § „Zugriff auf laufende Systeme").
   2. Nach Entscheidung in Teilaufgaben schneiden (lesen zuerst, dann anlegen, dann „Arbeit starten").
-  Offen: T1; Q10, Q11.
-  Stand 2026-09-16: aufgenommen, noch nicht begonnen.
+  Offen: T1.
+  Entschieden: Freigabe wie T2 (Q10); GitLab und GitHub, Jira/YouTrack später (Q11).
+  Stand 2026-09-16: entschieden, wartet auf T1.
 
 - [ ] **T5 · Template-Entwicklung als normales Projekt führen** ❓
   Ziel: Die Arbeit am Template folgt denselben KI-Regeln und derselben Ordnerstruktur wie ein per

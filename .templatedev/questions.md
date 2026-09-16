@@ -111,7 +111,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) alles per CLI (`gh`, `glab`, Jira-CLI) — Installation auf jedem Rechner nötig
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-16: Konzept § Entschieden; gilt für T1–T3.
 
 ---
 
@@ -123,7 +124,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) Abschnitt in `docs/project/architecture.md`
 
-   * Antwort:
+   * Antwort: a) aber als integrations.md, da Dateinamen immer in englisch
+   * Verarbeitet 2026-09-16: `docs/project/integrations.md`; Skill und Script heißen entsprechend `/integrations`, `integrations.py`.
 
 ---
 
@@ -138,7 +140,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) datierte Freigabe im Journal vor jeder Aktion, wie heute
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-16: Ergänzung von `AGENTS.md` § „Zugriff auf laufende Systeme" ist Schritt in T2.
 
 ---
 
@@ -150,6 +153,7 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) GitLab, GitHub und Jira gleichzeitig
 
-   * Antwort:
+   * Antwort: GitLab und GitHub, Rest später
+   * Verarbeitet 2026-09-16: GitLab und GitHub in T1–T3; Jira, YouTrack, Linear als Backlog-Punkt 34.
 
 ---
