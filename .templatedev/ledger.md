@@ -12,6 +12,37 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-16 — Ladeversuch: was Claude Code in einer Sitzung im Unterordner sieht
+
+Anlass: Q7/T5 — Pflege-Sitzung in `.templatedev/` statt im Root. Wegwerf-Repo im Scratchpad, Root und
+`.templatedev/` je mit CLAUDE.md (Erkennungstext), Agent, Skill und gleichnamigem Agent/Skill; `claude -p`
+(2.1.273, Haiku) im Unterordner, Auswertung des `init`-Events und der Antworten. Kosten ~0,10 $.
+
+| Was | Ergebnis |
+| :--- | :--- |
+| CLAUDE.md des Elternordners | beim Start geladen (`MARKER-root` und `MARKER-dev` zitiert) |
+| `claudeMdExcludes` in `.templatedev/.claude/settings.json` | wirkt: nur noch `MARKER-dev` |
+| Agenten des Elternordners | geladen (`agent-root` in der Liste); gleicher Name → Unterordner gewinnt (`gleich` → „dev") |
+| Skills des Elternordners | geladen (`skill-root`); gleicher Name → einer in der Liste, Aufruf lieferte `SKILL-dev` |
+| `settings.json`/SessionStart-Hook des Elternordners | nicht ausgeführt; Hook im Unterordner lief |
+
+- Folge: Die Pflege-Sitzung erbt Agenten und Skills des Templates von selbst, überschreibt gleichnamig, und
+  schließt nur die Platzhalter-CLAUDE.md aus. Q7 neu gefasst, Empfehlung a).
+- Stolperstein Git Bash: `claude -p '/skill'` wird zu `C:/Program Files/Git/skill` umgeschrieben —
+  `MSYS_NO_PATHCONV=1` davor.
+
+## 2026-09-16 — `.templatedev/` bekommt Aufgaben und Aufgaben-Archiv
+
+- Wolfgang hat `.templatedev/tasks.md` angelegt (formlose Einträge, Tabu-Abschnitt wie `docs/ai/tasks.md`);
+  dazu neu `.templatedev/tasks_archive.md` (Volltext, neueste oben, Nummern bleiben gültig).
+- Verweise nachgezogen: `.templatedev/INDEX.md` (Tabelle, Sitzungsbeginn, Nummernregel), `AGENTS.md` und
+  `CLAUDE.md` (template-only-Blöcke), `.github/README.md` § Mitarbeiten.
+- `check-refs.py`: `T<n>`-Definitionen auch aus `.templatedev/tasks.md`/`tasks_archive.md`, wie bei `Q<n>`.
+  Beleg: `python .claude/scripts/check-refs.py` → 49 Dateien, 47 Zitate, 0 tot.
+- Wolfgangs drei Einträge als `T1`–`T3` nummeriert (Wortlaut bleibt stehen): Zugänge prüfen (T1) als
+  Voraussetzung für PR/MR-Skill (T2) und Issue-/Story-Abläufe (T3). Alle drei sind Ideen im Sinne der
+  Checkliste „Idee oder Änderungswunsch aufnehmen" — erst Konzept und Entscheidung, noch kein Code.
+
 ## 2026-09-16 — Freigabe für Schreibzugriff auf `rufeger.de` (über die Sitzung `homeassistant`)
 
 **Datierte Freigabe nach `AGENTS.md` § „Zugriff auf laufende Systeme":** Wolfgang hat am 2026-09-16

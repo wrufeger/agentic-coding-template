@@ -56,7 +56,7 @@ Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das s
 - **`docs/` ist Gerüst, kein Inhalt.** `docs/project/` beschreibt ein Projekt, das es hier nicht gibt;
   `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Backlog) sind leere Formulare. Beides bleibt leer — alles,
   was hier hineingeschrieben wird, landet später in jedem abgeleiteten Projekt.
-- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Backlog, Fragen, Journal, Regeln und die
+- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Aufgaben, Backlog, Fragen, Journal, Regeln und die
   Übersicht der Testprojekte, versioniert wie jede andere Datei. Einstieg über `.templatedev/INDEX.md`.
   Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist — `docs/` bleibt tabu.
 - **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;

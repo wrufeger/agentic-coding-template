@@ -56,4 +56,45 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    * Erledigt am 2026-09-16: `config-lib.py` (761) · `files-lib.py` (642) · `claudemd-lib.py` (208) ·
      `setup-lib.py` (1047, Ablauf + Fassade). Beleg im Ledger. a)
 
+**Q5 · Wie sollen die offenen Änderungen im Arbeitsbaum committet werden?**
+
+   Offen sind deine Feedback-Änderungen (Endpunkt, Abholung, `feedback/SKILL.md`, `docs/ai/template-feedback/`,
+   Checkliste) und meine Aufgaben-Verweise (`tasks.md`, `tasks_archive.md`, INDEX, AGENTS/CLAUDE, `check-refs.py`).
+   `ledger.md` enthält Einträge von beiden. Ein Push ist nötig, damit `bandliste` per `/update-template` nachzieht.
+   a) zwei Commits (erst Feedback, dann Aufgaben-Verweise) und pushen (Empfehlung)
+   b) zwei Commits, ohne Push
+   c) vorerst nichts committen — die Feedback-Änderungen sind noch nicht fertig
+   * Antwort: a)
+   * Verarbeitet 2026-09-16: `dcf4cf5` (Feedback), Aufgaben-Verweise im Folgecommit, beides gepusht.
+
+**Q6 · Soll ich das gemeinsame Konzept für T1–T3 jetzt schreiben?**
+
+   T1–T3 sind neue Funktionen im Template, keine Tests — es gibt heute weder PR/MR- noch Issue-Skill.
+   Das Konzept (`.templatedev/konzept-repo-issues.md`) legt Optionen und Empfehlung vor: Erkennung der Zugänge,
+   Zielbranch, Zustimmung vor dem Anlegen, welche Tracker zuerst, wie MCP-/PR-Fehler als Rückmeldung erfasst werden.
+   a) ja, alle drei in einem Konzept (Empfehlung)
+   b) ja, aber erst nur T1
+   c) nein, später
+   * Antwort: a)
+   * Verarbeitet 2026-09-16: Konzept `.templatedev/konzept-repo-issues.md` wird geschrieben, T1–T3 danach.
+
+**Q7 · Wie wird die Template-Entwicklung vom Template getrennt?**
+
+   Heute liegt das Template im Root, die Entwicklungsnotizen in `.templatedev/`. Das kostet Sonderfälle
+   (Blöcke „noch nicht initialisiert" in `AGENTS.md`/`CLAUDE.md`, `is_template`, `template_only`, 103 Stellen
+   in `.claude/scripts/`). `/update-template` merged per Git und braucht das Template im Root eines Branches.
+   Ladeversuch 2026-09-16 (Claude Code 2.1.273, Sitzung im Unterordner, Details im Ledger): CLAUDE.md,
+   Agenten und Skills des Elternordners werden mitgeladen, bei gleichem Namen gewinnt der Unterordner;
+   Eltern-CLAUDE.md per `claudeMdExcludes` abschaltbar; `settings.json`/Hooks kommen nur aus dem Startordner.
+   a) Aufbau bleibt, Sitzung für die Pflege startet **in `.templatedev/`**: eigene CLAUDE.md, Eltern-CLAUDE.md
+      ausgeschlossen, Agenten/Skills des Templates werden geerbt und nur bei Bedarf gleichnamig überschrieben;
+      Standardstruktur in `.templatedev/`, Abgleich per Script statt `/update-template`. Kein Split, kein
+      Umzug von `bandliste` (Empfehlung, ~1–1,5 PT)
+   b) Umdrehen: Root = Pflegeprojekt, Template in `template-src/`, Veröffentlichung per `git subtree split`
+      auf einen Branch `template`; Skills aus `template-src/` laden beim Dateizugriff nach, ohne Schalter (~2–3 PT)
+   c) Zwei Nachbarordner `template-src/` und `template-management/` im selben Repo: saubere Trennung, aber
+      Split plus Unterordner-Modus für `update-template.py` (~3 PT)
+   * Antwort: a)
+   * Verarbeitet 2026-09-16: T5 auf Variante a) ausgerichtet, Konzept `.templatedev/konzept-projektstruktur.md` folgt.
+
 ---

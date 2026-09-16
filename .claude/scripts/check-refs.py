@@ -17,7 +17,8 @@
 #       kein Fehler, nur ein Hinweis), sonst Exit 1.
 #
 # Kuerzel/Ziele (siehe docs/ai/README.md § "Querverweise"):
-#   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md
+#   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md - im Template-Checkout
+#                                     stattdessen .templatedev/tasks.md bzw. tasks_archive.md
 #   Q<n>          Question           docs/ai/questions.md, sonst docs/ai/questions_archive.md - im
 #                                     Template-Checkout stattdessen .templatedev/questions.md (eigener
 #                                     Namensraum je Repo, dasselbe Kuerzel)
@@ -344,7 +345,10 @@ _BACKLOG_NUMBERED_RE = re.compile(r"^(\d{1,6})\.\s", re.MULTILINE)
 _STORY_FILE_RE = re.compile(r"^S(\d{1,4})-.+\.md$", re.IGNORECASE)
 
 DEF_FILES = {
-    "task": ["docs/ai/tasks.md", "docs/ai/tasks_archive.md"],
+    # Wie bei "question": normales Projekt vs. Template-Checkout, je Repo nur eine Quelle mit echtem Inhalt.
+    "task": [
+        "docs/ai/tasks.md", "docs/ai/tasks_archive.md", ".templatedev/tasks.md", ".templatedev/tasks_archive.md",
+    ],
     # Question-Definitionen: normales Projekt (questions.md/-archive) UND Template-Checkout
     # (.templatedev/questions.md) - dasselbe Kuerzel Q<n>, aber je Repo nur eine der beiden Quellen mit
     # echtem Inhalt (siehe Kopfkommentar "eigener Namensraum je Repo").

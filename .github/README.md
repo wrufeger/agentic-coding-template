@@ -136,7 +136,7 @@ Template als Regel hinterlegt und lässt sich projektweit ändern.
 ## Mitarbeiten
 
 Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
-jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — offene Punkte,
+jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — Aufgaben, offene Punkte,
 Fragen, Journal, Regeln und die Testprojekte — steht deshalb im Ordner `.templatedev/` im Repo-Root und
 wird beim Anlegen eines Projekts entfernt.
 

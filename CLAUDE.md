@@ -56,19 +56,21 @@ folgenden Sub-Agenten sind die Worker:
 > **Sitzung im Template-Checkout?** Dann ist `.templatedev/` dein Arbeitsbereich, nicht `docs/`.
 >
 > Dieses Repo ist die **Vorlage**: `docs/ai/` und `docs/project/` sind leere Formulare, die Platzhalter in
-> dieser Datei sind Absicht. Backlog, Fragen, Journal, Regeln und die Testprojekte stehen in
+> dieser Datei sind Absicht. Aufgaben, Backlog, Fragen, Journal, Regeln und die Testprojekte stehen in
 > `.templatedev/` — Einstieg über `.templatedev/INDEX.md`.
 >
-> **Vor einer Änderung:** `.templatedev/ledger.md` (letzter Stand), `.templatedev/backlog.md` (was offen ist)
-> und `.templatedev/regeln.md` (u. a. die Tabelle der fünf zusammenhängenden Pfadlisten).
-> **Nach der Änderung:** dort verbuchen — Journal, ggf. Backlog-Punkt.
+> **Vor einer Änderung:** `.templatedev/ledger.md` (letzter Stand), `.templatedev/tasks.md` (was beauftragt
+> ist), `.templatedev/backlog.md` (was offen ist) und `.templatedev/regeln.md` (u. a. die Tabelle der fünf
+> zusammenhängenden Pfadlisten).
+> **Nach der Änderung:** dort verbuchen — Journal, Aufgabenstand (erledigt → `tasks_archive.md`), ggf.
+> Backlog-Punkt.
 
 **Solange dieses Repo noch nicht initialisiert ist** (Marker `is_template` in `.claude/template.json`), gelten
 für `docs/` abweichende Regeln:
 
 - `docs/ai/` und `docs/project/` sind **Vorlagen** und bleiben leer. Was dort steht, wandert in jedes
   abgeleitete Projekt — auch ein gut gemeinter Backlog-Eintrag.
-- Backlog, Fragen, Journal, Regeln und die Testprojekte stehen im Ordner `.templatedev/` im Repo-Root,
+- Aufgaben, Backlog, Fragen, Journal, Regeln und die Testprojekte stehen im Ordner `.templatedev/` im Repo-Root,
   versioniert wie jede andere Datei. Das ist hier der einzige Arbeitsbereich mit echtem Inhalt.
 - Auch das Agenten-Logging (`AGENTS.md` § Logging) beschreibt nur die Mechanik für spätere Projekte; ein
   Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal in `.templatedev/ledger.md`.

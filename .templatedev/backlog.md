@@ -186,6 +186,14 @@ sie werden in Journal und Commits zitiert.
        32-KB-Deckel prüfen.
     7. Zusagetexte nachziehen: `AGENTS.md`, `/finalize`, `/feedback`, `docs/ai/template-feedback/README.md`.
 
+33. -> machen: **Aufgaben für den Auftraggeber erst eintragen, wenn sie ausführbar sind** (angelegt
+   2026-09-16): Wolfgang liest „Aufgaben nur für {{AUFTRAGGEBER}}" als Arbeitsliste und führt die Schritte
+   nacheinander aus — eine `Offen:`-Zeile hält ihn davon nicht ab (Anlass: die Test-Aufgabe für
+   `bandliste` in `.templatedev/tasks.md` stand dort, bevor T1–T3 gebaut und gepusht waren). Regel für `AGENTS.md` § Tabu-Bereich und
+   `docs/ai/README.md`: Eine Aufgabe für den Auftraggeber erscheint erst, wenn alle Voraussetzungen erfüllt
+   sind (Code gepusht, Fragen beantwortet); bis dahin steht sie als Folgeschritt in der Aufgabe des
+   Assistenten, die sie auslöst.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):
