@@ -501,6 +501,17 @@ nehmen. Ablauf: Checkliste „Template-Update" (`docs/ai/checklists.md`); Claude
 keinen gemeinsamen Vorfahren mit dem Template — `update-template.py --graft` stellt ihn per leerem
 Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `--check`/`--apply` normal.
 
+**Auf Updates hinweisen lassen — optional, standardmäßig aus.** `AI-CONFIG.md` § `Template-Updates`
+(Default `manuell`) und § `Template-Update-Erinnerung` (Default `wöchentlich`) steuern eine
+Hintergrundprüfung. `automatisch` spielt **nichts** ein: Es prüft höchstens einmal je Kalendertag per
+`git fetch`, ob das Template neue Commits hat, und legt bei Rückstand `available-template-update.md` im
+Repo-Root an — eine Zusammenfassung der Neuerungen, gitignored, weil sie einen flüchtigen Zustand
+beschreibt. Eingespielt wird weiterhin ausschließlich von Hand. Die Erinnerung meldet einen Rückstand je
+nach Takt (`täglich` · `wöchentlich` · `monatlich` · `sitzungsstart` · `manuell`) und bietet dieselben drei
+Wege wie die Feedback-Erinnerung: ansehen und einspielen, verschieben oder Takt ändern, nicht mehr erinnern
+(setzt nur die Erinnerung auf `manuell`, die Prüfung läuft weiter). Gefragt wird einmal am Ende der
+Einrichtung; die Einwilligung zur Rückmeldung an den Template-Autor ist davon unberührt.
+
 Die Einrichtung selbst (Anlegen oder Nachrüsten) gilt erst als abgeschlossen, wenn {{AUFTRAGGEBER}} das
 ausdrücklich sagt — nicht automatisch am Ende der jeweiligen Checkliste. Danach verschwinden die Werkzeuge,
 die nur zum Anlegen/Nachrüsten gebraucht wurden, wieder aus dem Projekt (Checkliste „Einrichtung

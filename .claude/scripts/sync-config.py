@@ -40,9 +40,11 @@
 # Verfolgte Schluessel (applied_config, siehe setup-lib.py:build_applied_config): Projektname, Auftraggeber,
 # Orchestrator, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
 # Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Reine Verhaltens-
-# Schluessel (Ideen-Ablauf, Testtiefe, Schreibstil, Feedback/-Takt/-Umfang) werden MITGESCHRIEBEN, aber nicht
-# auf Aenderungen geprueft: Sie aendern keine Datei, muessen aber in applied_config stehen bleiben - sonst
-# leert ein --apply, was create-project.py gesetzt hat (feedback.py liest die Schalterstellungen von dort).
+# Schluessel (Ideen-Ablauf, Testtiefe, Schreibstil, Feedback/-Takt/-Umfang, Template-Updates/-Erinnerung)
+# werden MITGESCHRIEBEN, aber nicht auf Aenderungen geprueft: Sie aendern keine Datei, muessen aber in
+# applied_config stehen bleiben - sonst leert ein --apply, was create-project.py gesetzt hat (feedback.py
+# liest die Feedback-Schalterstellungen von dort; Template-Updates/-Erinnerung liest update-check.py dagegen
+# direkt aus AI-CONFIG.md, applied_config dient hier nur der Vollstaendigkeit des Schnappschusses).
 # Stack steht als
 # Fliesstext in Dokumentation - eine Aenderung wird nur uebernommen und mit den Fundstellen des ALTEN Werts
 # gemeldet (`find_literal_occurrences`), NIE automatisch ersetzt (Risiko falscher Treffer in Prosa); dasselbe
@@ -410,6 +412,14 @@ def compute_current(cp, root: Path):
     if feedback_umfang_unbekannt:
         fehler.append(f"Feedback-Umfang: \"{feedback_umfang_unbekannt}\" unbekannt "
                       f"({', '.join(sorted(cp.FEEDBACK_UMFANG_WERTE))}, Kommaliste).")
+    template_updates, template_updates_unbekannt = cp.normalize_template_updates(cfg)
+    if template_updates_unbekannt:
+        fehler.append(f"Template-Updates: \"{template_updates_unbekannt}\" unbekannt "
+                      f"({', '.join(sorted(cp.TEMPLATE_UPDATES_WERTE))}).")
+    template_update_erinnerung, template_update_erinnerung_unbekannt = cp.normalize_template_update_erinnerung(cfg)
+    if template_update_erinnerung_unbekannt:
+        fehler.append(f"Template-Update-Erinnerung: \"{template_update_erinnerung_unbekannt}\" unbekannt "
+                      f"({', '.join(sorted(cp.TEMPLATE_UPDATE_ERINNERUNG_WERTE))}).")
 
     remove_list = cp.tools_to_remove(cfg)
     snapshot = cp.build_applied_config(
@@ -418,6 +428,7 @@ def compute_current(cp, root: Path):
         commit_verhalten=commit_verhalten,
         ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
         feedback=feedback_val, feedback_takt=feedback_takt, feedback_umfang=feedback_umfang,
+        template_updates=template_updates, template_update_erinnerung=template_update_erinnerung,
     )
     return cfg, values, snapshot, fehler, hinweise
 

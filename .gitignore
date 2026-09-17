@@ -39,3 +39,6 @@ build/*.pptx
 
 # Design-Varianten und Pruef-Screenshots (Wegwerfware der Skills /design-ideas und /design-build)
 .design-varianten/
+
+# Verfuegbares Template-Update (.claude/scripts/update-check.py) - fluechtiger Zustand, kein Projektinhalt
+/available-template-update.md

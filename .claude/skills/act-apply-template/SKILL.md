@@ -118,7 +118,22 @@ Orchestrator-Name ersetzen), `.claude/scripts/create-project.py` (Platzhalter/We
 11. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}}.
 12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe — erzeugt einen
    Merge-Commit ohne Änderung des Arbeitsbaums, Voraussetzung für spätere `/update-template`-Läufe).
-13. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+13. **Letzte Frage der Einrichtung selbst** (die Einwilligung zur Rückmeldung an den Template-Autor kommt
+   getrennt davon, erst bei `/finalize`):
+
+   > Sollen automatisch auf Updates geprüft werden? a) täglich  b) wöchentlich  c) monatlich  d) nein
+
+   „Automatisch" spielt **nichts** ein — es prüft höchstens einmal am Tag im Hintergrund (`git fetch`), ob
+   es im Template-Remote Neues gibt, und legt bei Rückstand `available-template-update.md` an; eingespielt
+   wird weiterhin nur von Hand über `/act-update-template`. Beides lässt sich jederzeit in `AI-CONFIG.md`
+   ändern.
+
+   Antwort **in `AI-CONFIG.md` eintragen** — derselbe Weg wie die übrigen Werte in Schritt 5:
+   - a/b/c → `Template-Updates: automatisch` **und** `Template-Update-Erinnerung` auf den gewählten Wert
+     (täglich/wöchentlich/monatlich).
+   - d → `Template-Updates: manuell` (`Template-Update-Erinnerung` bleibt auf ihrem Standard, wirkt aber
+     dann nicht, weil ohne `automatisch` nie im Hintergrund geprüft wird).
+14. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
    — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
    `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
    erinnert daran.

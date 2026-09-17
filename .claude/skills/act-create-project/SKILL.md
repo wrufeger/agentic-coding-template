@@ -93,7 +93,23 @@ Skills `/adapt-template` und `/new-idea`). Läuft im Hauptkontext, da es Entsche
    b) nur Agenten c) Agenten + Skills d) alles". Ohne Antwort **nicht** installieren — keine Standardantwort
    annehmen.
 10. Commit per Pathspec nach Freigabe von {{AUFTRAGGEBER}} (Skill `/commit`).
-11. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
+11. **Letzte Frage der Einrichtung selbst** (die Einwilligung zur Rückmeldung an den Template-Autor kommt
+    getrennt davon, erst bei `/finalize`):
+
+    > Sollen automatisch auf Updates geprüft werden? a) täglich  b) wöchentlich  c) monatlich  d) nein
+
+    „Automatisch" spielt **nichts** ein — es prüft höchstens einmal am Tag im Hintergrund (`git fetch`), ob
+    es im Template-Remote Neues gibt, und legt bei Rückstand `available-template-update.md` an; eingespielt
+    wird weiterhin nur von Hand über `/act-update-template`. Beides lässt sich jederzeit in `AI-CONFIG.md`
+    ändern.
+
+    Antwort **in `AI-CONFIG.md` eintragen** — derselbe Weg wie bei den vier Fragen oben, damit
+    `sync-config.py` sie beim nächsten Abgleich wiederfindet:
+    - a/b/c → `Template-Updates: automatisch` **und** `Template-Update-Erinnerung` auf den gewählten Wert
+      (täglich/wöchentlich/monatlich).
+    - d → `Template-Updates: manuell` (`Template-Update-Erinnerung` bleibt auf ihrem Standard, wirkt aber
+      dann nicht, weil ohne `automatisch` nie im Hintergrund geprüft wird).
+12. **Einmal nachfragen:** „Ist die Einrichtung damit abgeschlossen, oder kommt noch etwas? a) abgeschlossen
     — Einrichtungswerkzeuge jetzt entfernen b) noch nicht — später mit `/finalize`". Bei a) den Skill
     `/finalize` gleich ausführen; bei b) bleibt alles liegen, ein Hinweis bei künftigen Sitzungsstarts
     erinnert daran.

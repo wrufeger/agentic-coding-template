@@ -9,6 +9,23 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
 `.claude/scripts/update-template.py`. Läuft im Hauptkontext, da mögliche Merge-Konflikte Entscheidungen mit
 {{AUFTRAGGEBER}} brauchen und nur der Orchestrator committet.
 
+## Bei fälliger Erinnerung
+
+Meldet der `SessionStart`-Hook (`.claude/scripts/update-check.py`, nur bei `AI-CONFIG.md` §
+`Template-Updates: automatisch`) einen Rückstand, liegt die Zusammenfassung bereits in
+`available-template-update.md` im Repo-Root (gitignored — nach Anzahl Commits gruppiert nach Praefix). Drei
+Wege, wie bei der Feedback-Erinnerung:
+
+- **a) ansehen und einspielen** — Inhalt von `available-template-update.md` zeigen, danach mit „Ablauf" unten
+  weitermachen.
+- **b) verschieben oder Takt ändern** — `python .claude/scripts/update-check.py --verschieben <Tage>` pausiert
+  nur die Erinnerung (die Prüfung selbst läuft weiter); `python .claude/scripts/update-check.py --takt
+  <täglich|wöchentlich|monatlich|sitzungsstart|manuell>` setzt „Template-Update-Erinnerung" in `AI-CONFIG.md`
+  dauerhaft um.
+- **c) nicht mehr erinnern** — `python .claude/scripts/update-check.py --takt manuell` (setzt nur die
+  Erinnerung still, die Hintergrundprüfung selbst bleibt an; sie ganz abschalten: `Template-Updates` in
+  `AI-CONFIG.md` auf `manuell`).
+
 ## Ablauf
 
 1. `python .claude/scripts/update-template.py --check` ausführen; Zusammenfassung an {{AUFTRAGGEBER}}

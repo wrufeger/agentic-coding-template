@@ -73,6 +73,8 @@ und Takt, Code-Optimierung, MCP-Server, globale Ablage): `docs/ai/config-guide.m
 | Wartung | aus | aus, ein |  | Wiederkehrende Wartung. `aus` entfernt Ordner, Skill, Agent und Fälligkeits-Hook — **umkehrbar**: `ein` holt sie aus dem Template-Remote zurück (Ablauf: `docs/ai/config-guide.md`). |
 | Wartungsaufgaben | kurz=14, docs=30, deps=90 |  |  | Aufgabe=Intervall in Tagen; weggelassene Aufgabe wird abgeschaltet. Nur bei „Wartung: ein". |
 | Wartungsberichte | docs | docs, intern |  | `docs` = `docs/maintenance/`, versioniert und im Doku-Index; `intern` = `.claude/maintenance/reports/`, gitignored. |
+| Template-Updates | manuell | manuell, automatisch |  | `automatisch` spielt **nichts** ein — es prüft höchstens einmal am Tag im Hintergrund (`git fetch`), ob es im Template-Remote Neues gibt, und legt bei Rückstand `available-template-update.md` an. Eingespielt wird weiterhin nur von Hand über `/act-update-template`. |
+| Template-Update-Erinnerung | wöchentlich | täglich, wöchentlich, monatlich, sitzungsstart, manuell |  | Wie oft ein festgestellter Rückstand gemeldet wird. Wirkt nur, wenn `Template-Updates` auf `automatisch` steht. |
 
 ## Nur beim Nachrüsten eines bestehenden Projekts
 

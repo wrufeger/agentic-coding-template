@@ -456,6 +456,8 @@ def cmd_dry_run(root: Path) -> int:
     feedback, feedback_unbekannt = normalize_feedback(cfg)
     feedback_takt, feedback_takt_unbekannt = normalize_feedback_takt(cfg)
     feedback_umfang, feedback_umfang_unbekannt = normalize_feedback_umfang(cfg)
+    template_updates, template_updates_unbekannt = normalize_template_updates(cfg)
+    template_update_erinnerung, template_update_erinnerung_unbekannt = normalize_template_update_erinnerung(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -545,6 +547,10 @@ def cmd_dry_run(root: Path) -> int:
         (schreibstil, schreibstil_unbekannt, "Schreibstil", SCHREIBSTIL_TEXT, SCHREIBSTIL_WERTE),
         (feedback, feedback_unbekannt, "Feedback", FEEDBACK_TEXT, FEEDBACK_WERTE),
         (feedback_takt, feedback_takt_unbekannt, "Feedback-Takt", FEEDBACK_TAKT_TEXT, FEEDBACK_TAKT_WERTE),
+        (template_updates, template_updates_unbekannt, "Template-Updates", TEMPLATE_UPDATES_TEXT,
+         TEMPLATE_UPDATES_WERTE),
+        (template_update_erinnerung, template_update_erinnerung_unbekannt, "Template-Update-Erinnerung",
+         TEMPLATE_UPDATE_ERINNERUNG_TEXT, TEMPLATE_UPDATE_ERINNERUNG_WERTE),
     ):
         if _unbek:
             lines.append(f"{_label}: \"{_unbek}\" ist kein bekannter Wert - --apply bricht damit ab. "
@@ -672,6 +678,8 @@ def cmd_apply(root: Path) -> int:
     feedback, feedback_unbekannt = normalize_feedback(cfg)
     feedback_takt, feedback_takt_unbekannt = normalize_feedback_takt(cfg)
     feedback_umfang, feedback_umfang_unbekannt = normalize_feedback_umfang(cfg)
+    template_updates, template_updates_unbekannt = normalize_template_updates(cfg)
+    template_update_erinnerung, template_update_erinnerung_unbekannt = normalize_template_update_erinnerung(cfg)
     wartung_val, wartung_unbekannt = normalize_wartung(cfg)
     wartungsberichte, wartungsberichte_unbekannt = normalize_wartungsberichte(cfg)
     code_analyse, code_analyse_unbekannt = normalize_code_analyse(cfg)
@@ -700,6 +708,8 @@ def cmd_apply(root: Path) -> int:
         (feedback_unbekannt, "Feedback", FEEDBACK_WERTE),
         (feedback_takt_unbekannt, "Feedback-Takt", FEEDBACK_TAKT_WERTE),
         (feedback_umfang_unbekannt, "Feedback-Umfang", FEEDBACK_UMFANG_WERTE),
+        (template_updates_unbekannt, "Template-Updates", TEMPLATE_UPDATES_WERTE),
+        (template_update_erinnerung_unbekannt, "Template-Update-Erinnerung", TEMPLATE_UPDATE_ERINNERUNG_WERTE),
     ):
         if _unbek:
             print(f"Fehler: AI-CONFIG.md {_label}: unbekannter Wert \"{_unbek}\" - erlaubt sind "
@@ -764,6 +774,7 @@ def cmd_apply(root: Path) -> int:
         commit_verhalten=commit_verhalten,
         ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
         feedback=feedback, feedback_takt=feedback_takt, feedback_umfang=feedback_umfang,
+        template_updates=template_updates, template_update_erinnerung=template_update_erinnerung,
     )
     write_template_json_values(root, values, applied_config)
     init_status = maybe_init_template_update(root, ist_template)
@@ -833,6 +844,8 @@ def cmd_apply(root: Path) -> int:
     lines.append("Feedback: " + FEEDBACK_TEXT[feedback])
     lines.append("Feedback-Takt: " + FEEDBACK_TAKT_TEXT[feedback_takt])
     lines.append("Feedback-Umfang: " + (feedback_umfang or "leer (nur Registrierung und eigenes Feedback)"))
+    lines.append("Template-Updates: " + TEMPLATE_UPDATES_TEXT[template_updates])
+    lines.append("Template-Update-Erinnerung: " + TEMPLATE_UPDATE_ERINNERUNG_TEXT[template_update_erinnerung])
     lines.append(f"Wartung: {wartung_status}")
     lines.append(f"Wartungsberichte: {wartungsberichte_status}")
     if wartungsberichte == "docs":

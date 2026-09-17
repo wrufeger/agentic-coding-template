@@ -37,6 +37,8 @@ KEY_MAP = {
     "Feedback": "feedback",
     "Feedback-Takt": "feedback_takt",
     "Feedback-Umfang": "feedback_umfang",
+    "Template-Updates": "template_updates",
+    "Template-Update-Erinnerung": "template_update_erinnerung",
     "Logging": "logging",
     "Logging-Tiefe": "logging_tiefe",
     "Wartung": "wartung",
@@ -244,6 +246,16 @@ FEEDBACK_UMFANG_ALIAS = {
     "alles": "a,b,c", "nichts": "",
 }
 DEFAULT_FEEDBACK_UMFANG = "a,b,c"
+
+# Erinnerung an Template-Updates (AGENTS.md/CLAUDE.md, .claude/scripts/update-check.py) - Pendant zu Feedback/
+# -Takt oben, dieselbe Aufteilung in WIE (Template-Updates) und WIE OFT (Template-Update-Erinnerung).
+# "automatisch" bei Template-Updates spielt NICHTS ein - es prueft hoechstens einmal am Tag im Hintergrund per
+# 'git fetch', ob es im Template-Remote Neues gibt (siehe update-check.py); eingespielt wird weiterhin nur von
+# Hand ueber /act-update-template.
+TEMPLATE_UPDATES_WERTE = {"manuell", "automatisch"}
+TEMPLATE_UPDATE_ERINNERUNG_WERTE = {"täglich", "wöchentlich", "monatlich", "sitzungsstart", "manuell"}
+# ae-Schreibweisen bleiben als Alias gueltig (gleiche Begruendung wie FEEDBACK_TAKT_ALIAS oben).
+TEMPLATE_UPDATE_ERINNERUNG_ALIAS = {"taeglich": "täglich", "woechentlich": "wöchentlich"}
 WARTUNG_WERTE = {"aus", "ein"}
 DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
 # Ablageort der Wartungsberichte (.claude/maintenance/reports/YYYY-MM-DD.md) - "docs" legt zusaetzlich
@@ -717,6 +729,19 @@ def normalize_feedback_umfang(cfg: dict):
     return ",".join(sorted(dict.fromkeys(teile))), (", ".join(dict.fromkeys(unbekannt)) or None)
 
 
+def normalize_template_updates(cfg: dict):
+    """Ob im Hintergrund auf Template-Updates geprueft wird (nicht: ob eingespielt wird). Default
+    "manuell" - ohne ausdrueckliche Entscheidung wird nie gefetcht."""
+    return _normalize_einfach(cfg, "template_updates", TEMPLATE_UPDATES_WERTE, "manuell")
+
+
+def normalize_template_update_erinnerung(cfg: dict):
+    """Wie oft eine faellige Pruefung gemeldet wird. Default "wöchentlich"; wirkt nur, wenn
+    Template-Updates auf "automatisch" steht."""
+    return _normalize_einfach(cfg, "template_update_erinnerung", TEMPLATE_UPDATE_ERINNERUNG_WERTE,
+                               "wöchentlich", TEMPLATE_UPDATE_ERINNERUNG_ALIAS)
+
+
 def normalize_schreibstil(cfg: dict):
     """Wie ausfuehrlich Fragen, Aufgaben und Antworten formuliert werden. Default "kurz"."""
     return _normalize_einfach(cfg, "schreibstil", SCHREIBSTIL_WERTE, "kurz", SCHREIBSTIL_ALIAS)
@@ -766,6 +791,20 @@ FEEDBACK_UMFANG_TEXT = {
     "a": "a - Kennzahlen aus git log und Dateisystem (Weg, Datum, Commit-Haeufigkeit, Repo-Groesse)",
     "b": "b - Aenderungen an den KI-Regeln und an der Struktur der Doku, als Beschreibung",
     "c": "c - Werkzeug-Nutzung (MCP-Server, Skills, Agenten, Scripte)",
+}
+
+TEMPLATE_UPDATES_TEXT = {
+    "manuell": "manuell - keine Pruefung im Hintergrund (Default)",
+    "automatisch": "automatisch - hoechstens einmal am Tag im Hintergrund pruefen (git fetch), "
+                   "eingespielt wird trotzdem nur von Hand ueber /act-update-template",
+}
+
+TEMPLATE_UPDATE_ERINNERUNG_TEXT = {
+    "täglich": "täglich - hoechstens einmal am Tag gemeldet",
+    "wöchentlich": "wöchentlich - hoechstens einmal je Woche gemeldet (Default)",
+    "monatlich": "monatlich - hoechstens einmal im Monat gemeldet",
+    "sitzungsstart": "sitzungsstart - bei jedem Sitzungsstart, solange ein Rueckstand besteht",
+    "manuell": "manuell - keine eigene Meldung, nur auf Nachfrage (/act-update-template)",
 }
 
 COMMIT_VERHALTEN_TEXT = {
@@ -937,6 +976,7 @@ def build_applied_config(
     commit_verhalten: str = None, ideen_ablauf: str = None,
     testtiefe: str = None, schreibstil: str = None, feedback: str = None,
     feedback_takt: str = None, feedback_umfang: str = None,
+    template_updates: str = None, template_update_erinnerung: str = None,
 ) -> dict:
     """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
     fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
@@ -970,6 +1010,8 @@ def build_applied_config(
         "Feedback": feedback,
         "Feedback-Takt": feedback_takt,
         "Feedback-Umfang": feedback_umfang,
+        "Template-Updates": template_updates,
+        "Template-Update-Erinnerung": template_update_erinnerung,
         "Logging": logging_val,
         "Logging-Tiefe": logging_tiefe,
         "Wartung": wartung_val,
