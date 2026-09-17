@@ -134,10 +134,11 @@ CONFIG_REL = "AI-CONFIG.md"
 # hier noch einmal, weil feedback.py bewusst ohne Abhaengigkeit zu setup-lib.py auskommt - es laeuft auch,
 # wenn die Einrichtungswerkzeuge laengst entfernt sind.
 TAKT_STUNDEN = {
-    "manuell": None, "sofort": 0, "stuendlich": 1, "taeglich": 24, "woechentlich": 168, "automatisch": 1,
+    "manuell": None, "sofort": 0, "stündlich": 1, "täglich": 24, "wöchentlich": 168, "automatisch": 1,
 }
-MODUS_ALIAS = {"nein": "aus", "ja": "automatisch", "bestätigen": "bestaetigen", "fragen": "bestaetigen"}
-TAKT_ALIAS = {"stündlich": "stuendlich", "täglich": "taeglich", "wöchentlich": "woechentlich"}
+# ae-Schreibweisen bleiben als Alias gueltig (bestehende Projekte, applied_config, gespeicherte Zustaende).
+MODUS_ALIAS = {"nein": "aus", "ja": "automatisch", "bestaetigen": "bestätigen", "fragen": "bestätigen"}
+TAKT_ALIAS = {"stuendlich": "stündlich", "taeglich": "täglich", "woechentlich": "wöchentlich"}
 TEMPLATE_JSON_REL = ".claude/template.json"
 ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler", "mcp", "link")
 TITEL_MAX = 120
@@ -251,7 +252,7 @@ def _modus(root: Path) -> str:
 
 
 def _takt(root: Path) -> str:
-    return _config_wert(root, "Feedback-Takt", "woechentlich", TAKT_ALIAS)
+    return _config_wert(root, "Feedback-Takt", "wöchentlich", TAKT_ALIAS)
 
 
 def _root() -> Path:
@@ -857,7 +858,7 @@ def cmd_status(root: Path) -> int:
         print(f"Repo-URL:  {fb['repo_url']}")
     if modus == "aus":
         print("")
-        print("Nichts wird gesendet. Einschalten: feedback.py --enable [--modus bestaetigen|automatisch|manuell]")
+        print("Nichts wird gesendet. Einschalten: feedback.py --enable [--modus bestätigen|automatisch|manuell]")
     return 0
 
 
@@ -865,8 +866,10 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
     tj = _template_json(root)
     fb = _feedback_block(tj)
     ziel = (modus or "automatisch") if an else "aus"
-    if ziel not in ("aus", "bestaetigen", "automatisch", "manuell"):
-        print("Fehler: --modus muss aus, bestaetigen, automatisch oder manuell sein.", file=sys.stderr)
+    ziel = ziel.strip().lower()
+    ziel = MODUS_ALIAS.get(ziel, ziel)
+    if ziel not in ("aus", "bestätigen", "automatisch", "manuell"):
+        print("Fehler: --modus muss aus, bestätigen, automatisch oder manuell sein.", file=sys.stderr)
         return 2
     if protokoll not in (None, "versionieren", "lokal"):
         print("Fehler: --protokoll muss versionieren oder lokal sein.", file=sys.stderr)
@@ -1085,10 +1088,10 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
         for f in fehler:
             print(f"  - {f}", file=sys.stderr)
         return 1
-    if modus == "bestaetigen" and not ja:
+    if modus == "bestätigen" and not ja:
         _zeige(nutzlast, endpoint)
         print("")
-        print("Modus 'bestaetigen': nichts gesendet. Zum Senden dieselbe Zeile mit --yes wiederholen.")
+        print("Modus 'bestätigen': nichts gesendet. Zum Senden dieselbe Zeile mit --yes wiederholen.")
         return 0
     code, fehlertext = _posten(endpoint, nutzlast)
     if fehlertext:
@@ -1245,9 +1248,9 @@ def _run(argv) -> int:
     parser.add_argument("--force", action="store_true",
                         help="mit --send: Takt- und Modus-Sperre uebergehen (das tut /act-feedback)")
     parser.add_argument("--yes", action="store_true",
-                        help="mit --send und Modus 'bestaetigen': nach Ansicht tatsaechlich senden")
+                        help="mit --send und Modus 'bestätigen': nach Ansicht tatsaechlich senden")
     parser.add_argument("--modus", default=None,
-                        help="mit --enable: aus, bestaetigen, automatisch (Default), manuell")
+                        help="mit --enable: aus, bestätigen, automatisch (Default), manuell (ae-Schreibweisen als Alias)")
     args = parser.parse_args(argv)
 
     root = _root()

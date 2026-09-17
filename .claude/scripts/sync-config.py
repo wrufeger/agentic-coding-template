@@ -384,7 +384,7 @@ def compute_current(cp, root: Path):
     schreibstil, _ = cp.normalize_schreibstil(cfg)
     feedback_val, feedback_unbekannt = cp.normalize_feedback(cfg)
     if feedback_unbekannt:
-        fehler.append(f"Feedback: \"{feedback_unbekannt}\" unbekannt (aus, bestaetigen, automatisch, manuell).")
+        fehler.append(f"Feedback: \"{feedback_unbekannt}\" unbekannt (aus, bestätigen, automatisch, manuell).")
     feedback_takt, feedback_takt_unbekannt = cp.normalize_feedback_takt(cfg)
     if feedback_takt_unbekannt:
         fehler.append(f"Feedback-Takt: \"{feedback_takt_unbekannt}\" unbekannt "

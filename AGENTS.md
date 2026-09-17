@@ -360,11 +360,11 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 
 | Schlüssel | Werte | Bedeutung |
 | :--- | :--- | :--- |
-| `Feedback` | `aus` (Default) · `bestaetigen` · `automatisch` · `manuell` | ob und wie **von selbst** gesendet wird |
-| `Feedback-Takt` | `manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Default) · `adaptiv` · `automatisch` | Obergrenze, wie oft |
+| `Feedback` | `aus` (Default) · `bestätigen` · `automatisch` · `manuell` | ob und wie **von selbst** gesendet wird |
+| `Feedback-Takt` | `manuell` · `sofort` · `stündlich` · `täglich` · `wöchentlich` (Default) · `adaptiv` · `automatisch` | Obergrenze, wie oft |
 | `Feedback-Umfang` | Kommaliste aus `a` (Kennzahlen) · `b` (Regel-/Strukturänderungen) · `c` (Werkzeug-Nutzung), Default `a,b,c` | was der Assistent **von sich aus** sammeln darf |
 
-`bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
+`bestätigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
 Rückfrage, `manuell` nur auf Aufruf von `/act-feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
 

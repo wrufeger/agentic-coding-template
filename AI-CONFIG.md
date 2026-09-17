@@ -54,8 +54,8 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Ideen-Ablauf | automatisch | automatisch, konzept, direkt |  | Was mit einer Idee oder einem Änderungswunsch passiert, bevor gebaut wird. |
 | Schreibstil | kurz | kurz, normal, ausführlich |  | Wie ausführlich Fragen, Aufgaben, Journal und Antworten formuliert werden. |
-| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie **von selbst** gesendet wird. Eine von Hand geschriebene Nachricht (`/act-feedback <Text>`) geht immer, auch bei `aus`. |
-| Feedback-Takt | woechentlich | manuell, sofort, stuendlich, taeglich, woechentlich, adaptiv, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. `adaptiv` richtet sich danach, wie oft am Projekt gearbeitet wird. |
+| Feedback | aus | aus, bestätigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie **von selbst** gesendet wird. Eine von Hand geschriebene Nachricht (`/act-feedback <Text>`) geht immer, auch bei `aus`. |
+| Feedback-Takt | wöchentlich | manuell, sofort, stündlich, täglich, wöchentlich, adaptiv, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. `adaptiv` richtet sich danach, wie oft am Projekt gearbeitet wird. |
 | Feedback-Umfang | a,b,c | a, b, c (Kommaliste) |  | Was der Assistent **von sich aus** sammeln darf: `a` Kennzahlen aus `git log`/Dateisystem, `b` Änderungen an KI-Regeln und Doku-Struktur (als Beschreibung), `c` Werkzeug-Nutzung. Leer = nur Registrierung und selbst geschriebenes Feedback. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |

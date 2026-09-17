@@ -31,13 +31,13 @@ beiden — das ist billiger als eine Nachricht, die so nie gemeint war.
    dasteht. Der Filter läuft trotzdem: Meldet er einen Pfad oder ein Zugangsdaten-Wort, wird **nicht**
    gesendet, sondern der Grund genannt.
 2. **`/feedback` ohne Text — die gesammelte Rückmeldung.** Das ist der Ablauf unten, und der ist
-   **gesteuert über `AI-CONFIG.md`:** `Feedback` (`aus` · `bestaetigen` · `automatisch` · `manuell`),
-   `Feedback-Takt` (`manuell` · `sofort` · `stuendlich` · `taeglich` · `woechentlich` · `adaptiv` ·
+   **gesteuert über `AI-CONFIG.md`:** `Feedback` (`aus` · `bestätigen` · `automatisch` · `manuell`),
+   `Feedback-Takt` (`manuell` · `sofort` · `stündlich` · `täglich` · `wöchentlich` · `adaptiv` ·
    `automatisch`) und `Feedback-Umfang` (`a,b,c`). Steht `Feedback` auf `aus`, tut dieser Weg nichts und
    sagt das auch — er umgeht die Einstellung nicht.
 
 Dieser Skill ist der **manuelle** Weg: Er sendet mit `--force` und übergeht damit Takt und Modus `manuell`.
-Der Modus `bestaetigen` bleibt wirksam — dort wird die Nutzlast gezeigt und erst mit Zusage gesendet.
+Der Modus `bestätigen` bleibt wirksam — dort wird die Nutzlast gezeigt und erst mit Zusage gesendet.
 
 ## Ablauf
 
@@ -71,7 +71,7 @@ Der Modus `bestaetigen` bleibt wirksam — dort wird die Nutzlast gezeigt und er
    nicht die erste. Steht `Feedback` auf `automatisch` und `Feedback-Takt` auf `sofort`, löst schon dieser
    `--add`-Aufruf den Versand aus (dieselben Prüfungen wie `--send`) — Schritt 5 ist dann bereits erledigt.
 4. **Ansehen:** `--plan` zeigt die vollständige Nutzlast.
-5. **Senden:** `--send --force` (bei Modus `bestaetigen` zusätzlich `--yes` nach der Ansicht).
+5. **Senden:** `--send --force` (bei Modus `bestätigen` zusätzlich `--yes` nach der Ansicht).
 6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protocols/` **mitcommitten** — es
    gehört zum Nachweis, nicht in den Papierkorb. Steht das Protokoll auf `lokal` (Eintrag in `.gitignore`),
    entfällt der Schritt: dann bleibt die Datei absichtlich außerhalb des Verlaufs, und die Ausgabe von

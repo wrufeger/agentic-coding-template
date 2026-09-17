@@ -220,15 +220,16 @@ SCHREIBSTIL_ALIAS = {"ausführlich": "ausfuehrlich", "stichpunkte": "kurz", "sti
 # Freiwillige Rueckmeldung an den Template-Autor (AGENTS.md, .claude/scripts/feedback.py). Zwei Schalter:
 # WIE gesendet wird und WIE OFT. Default ist "aus" - ohne ausdrueckliche Entscheidung verlaesst nichts das
 # Projekt, auch nicht versehentlich durch eine uebersehene Zeile.
-FEEDBACK_WERTE = {"aus", "bestaetigen", "automatisch", "manuell"}
-FEEDBACK_ALIAS = {"nein": "aus", "ja": "automatisch", "bestätigen": "bestaetigen", "fragen": "bestaetigen"}
-FEEDBACK_TAKT_WERTE = {"manuell", "sofort", "stuendlich", "taeglich", "woechentlich", "automatisch", "adaptiv"}
-FEEDBACK_TAKT_ALIAS = {"stündlich": "stuendlich", "täglich": "taeglich", "wöchentlich": "woechentlich"}
+FEEDBACK_WERTE = {"aus", "bestätigen", "automatisch", "manuell"}
+# ae-Schreibweisen bleiben als Alias gueltig (bestehende Projekte, applied_config, gespeicherte Zustaende).
+FEEDBACK_ALIAS = {"nein": "aus", "ja": "automatisch", "bestaetigen": "bestätigen", "fragen": "bestätigen"}
+FEEDBACK_TAKT_WERTE = {"manuell", "sofort", "stündlich", "täglich", "wöchentlich", "automatisch", "adaptiv"}
+FEEDBACK_TAKT_ALIAS = {"stuendlich": "stündlich", "taeglich": "täglich", "woechentlich": "wöchentlich"}
 # Mindestabstand je Takt in Stunden - im Script durchgesetzt, nicht nur dokumentiert. "adaptiv" hat keinen
 # festen Abstand: Dort rechnet feedback.py aus, wie oft am Projekt gearbeitet wird, und erinnert entsprechend
 # (ein Entwickler, der einmal die Woche codet, soll nicht woechentlich gefragt werden).
 FEEDBACK_TAKT_STUNDEN = {
-    "manuell": None, "sofort": 0, "stuendlich": 1, "taeglich": 24, "woechentlich": 168, "automatisch": 1,
+    "manuell": None, "sofort": 0, "stündlich": 1, "täglich": 24, "wöchentlich": 168, "automatisch": 1,
     "adaptiv": None,
 }
 # WAS gesammelt und gesendet werden darf - Mehrfachauswahl, Kommaliste. Die Registrierung (Datum, Weg,
@@ -686,8 +687,8 @@ def normalize_feedback(cfg: dict):
 
 
 def normalize_feedback_takt(cfg: dict):
-    """Wie oft gesendet wird. Default "woechentlich" - wirkt nur, wenn Feedback nicht "aus"/"manuell" ist."""
-    return _normalize_einfach(cfg, "feedback_takt", FEEDBACK_TAKT_WERTE, "woechentlich", FEEDBACK_TAKT_ALIAS)
+    """Wie oft gesendet wird. Default "wöchentlich" - wirkt nur, wenn Feedback nicht "aus"/"manuell" ist."""
+    return _normalize_einfach(cfg, "feedback_takt", FEEDBACK_TAKT_WERTE, "wöchentlich", FEEDBACK_TAKT_ALIAS)
 
 
 def normalize_feedback_umfang(cfg: dict):
@@ -744,7 +745,7 @@ SCHREIBSTIL_TEXT = {
 
 FEEDBACK_TEXT = {
     "aus": "aus - es wird nichts an den Template-Autor gesendet (Default)",
-    "bestaetigen": "bestaetigen - vor jedem Versand wird die Nutzlast gezeigt und gefragt",
+    "bestätigen": "bestätigen - vor jedem Versand wird die Nutzlast gezeigt und gefragt",
     "automatisch": "automatisch - der Assistent sendet ohne Rueckfrage, protokolliert in docs/ai/template-feedback/",
     "manuell": "manuell - nur auf Aufruf von /act-feedback, sonst nie",
 }
@@ -752,9 +753,9 @@ FEEDBACK_TEXT = {
 FEEDBACK_TAKT_TEXT = {
     "manuell": "manuell - kein automatischer Versand",
     "sofort": "sofort - nach jedem brauchbaren Vorschlag",
-    "stuendlich": "stuendlich - hoechstens einmal je Stunde",
-    "taeglich": "taeglich - hoechstens einmal am Tag",
-    "woechentlich": "woechentlich - hoechstens einmal je Woche (Default)",
+    "stündlich": "stündlich - hoechstens einmal je Stunde",
+    "täglich": "täglich - hoechstens einmal am Tag",
+    "wöchentlich": "wöchentlich - hoechstens einmal je Woche (Default)",
     "automatisch": "automatisch - der Assistent entscheidet, fruehestens eine Stunde nach der letzten Sendung",
     "adaptiv": "adaptiv - richtet sich danach, wie oft am Projekt gearbeitet wird (Vorschlag)",
 }

@@ -48,8 +48,8 @@ Der Wortlaut muss diese sechs Punkte nennen, sonst ist es keine Einwilligung:
 
 Bei **a)** zusätzlich fragen, **wie** gesendet werden soll — die Antwort landet in `AI-CONFIG.md` und gilt
 ab dann laufend: „ohne Rückfrage (`automatisch`), mit Anzeige und Bestätigung vor jedem Versand
-(`bestaetigen`), oder nur wenn du `/feedback` aufrufst (`manuell`)?" Dazu den Takt, falls nicht
-`manuell`: `sofort` · `stuendlich` · `taeglich` · `woechentlich` (Vorschlag) · `automatisch`.
+(`bestätigen`), oder nur wenn du `/feedback` aufrufst (`manuell`)?" Dazu den Takt, falls nicht
+`manuell`: `sofort` · `stündlich` · `täglich` · `wöchentlich` (Vorschlag) · `automatisch`.
 
 Ebenfalls bei **a)** fragen, **wo das Sendeprotokoll liegen soll** — die Frage wird gestellt, nicht
 angenommen:
@@ -59,7 +59,7 @@ angenommen:
 > oder b) **nur lokal** liegen (Eintrag in `.gitignore`; sinnvoll, wenn das Repo öffentlich ist oder andere
 > es nicht lesen sollen — dann ist es nach einem frischen Klon allerdings weg)?
 
-Dann: `python .claude/scripts/feedback.py --enable --modus <automatisch|bestaetigen|manuell>
+Dann: `python .claude/scripts/feedback.py --enable --modus <automatisch|bestätigen|manuell>
 --protokoll <versionieren|lokal>
 --weg <neu|nachgeruestet> --ausfuellart <leer|interview|config>`, optional `--repo-url <https://…>` bei
 einem **öffentlichen** Repo; den Takt in `AI-CONFIG.md` § `Feedback-Takt` setzen. Danach die Erstmeldung
