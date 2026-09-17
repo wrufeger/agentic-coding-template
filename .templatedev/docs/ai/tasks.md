@@ -1,10 +1,15 @@
-# Aufgaben für die Erweiterung des "Agentic Coding Template" Projekts
+> Datenstand: 2026-09-17 – Status: aktuell
+
+# Aufgaben — Template-Entwicklung
 
 Hier trägt Wolfgang ein, was zu tun ist — formlos, ein Satz genügt. Der Orchestrator macht daraus eine
 nummerierte Aufgabe (`T<n>`), arbeitet sie ab und hält den Stand nach; was unklar bleibt, wird zu einer Frage
 in `questions.md`.
 
 Marker: ✅ erledigt · 🔄 läuft oder wartet · ❓ Rückfrage offen.
+
+*Format, Archivierung und Kurzhalte-Regeln: `../../../docs/ai/README.md` § „Aufgaben" (eigene Fassung folgt
+mit T5 Schritt 3).*
 
 ---
 
@@ -32,7 +37,7 @@ wenn T1–T3 committet und gepusht sind:
      Ergebnisses, Hinweise bei fehlender oder fehlerhafter Einrichtung.
   2. Nach Entscheidung umsetzen (Script und/oder Skill), an einem Testprojekt belegen.
   Entschieden: Weg REST-Script/CLI/MCP (Q8); Ablage `docs/project/integrations.md`, Skill `/integrations` (Q9);
-    GitLab und GitHub (Q11). Konzept: `konzept-repo-issues.md`.
+    GitLab und GitHub (Q11). Konzept: `../project/concepts/repo-issues.md`.
   Stand 2026-09-16: entschieden, startklar.
 
 - [ ] **T2 · Pull/Merge Requests vorbereiten und nach Zustimmung erstellen**
@@ -63,7 +68,7 @@ wenn T1–T3 committet und gepusht sind:
     `/act-create-project` angelegtes Projekt (u. a. Formregeln für Fragen und Aufgaben) und lässt sich per
     `/act-update-template` aktualisieren; die Sonderfälle „noch nicht initialisiert" entfallen möglichst ganz.
   Schritte:
-  1. Konzept `.templatedev/concept-project-structure.md` zur Variante aus Q7: welche Sonderfälle entfallen
+  1. Konzept `.templatedev/docs/project/concepts/project-structure.md` zur Variante aus Q7: welche Sonderfälle entfallen
      (103 Stellen in `.claude/scripts/`), welche geerbten Root-Skills in `.templatedev/` überschrieben oder
      gesperrt werden müssen (z. B. `/act-finalize`, `/act-create-project`), wie der Abgleich der Struktur läuft.
   2. Nach Entscheidung in Teilaufgaben schneiden; Inhalte übernehmen (Backlog, Fragen, Journal, Regeln) und
@@ -71,7 +76,8 @@ wenn T1–T3 committet und gepusht sind:
   3. Beleg: `/act-update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
   Entschieden: gerenderte Kopie der Regeln (Q12); Standardorte, englische Namen, Template-Ordner
     `docs/project/konzepte/` → `concepts/` mit Prüfung aller Verweise (Q13); drei Zeilen im Root (Q14);
-    kein Pflege-Modus-Schalter (Q15, Backlog-Punkt 35). Konzept: `concept-project-structure.md`.
+    kein Pflege-Modus-Schalter, Idee dazu verworfen statt zurückgestellt (Q15/Q19 b) — Backlog-Punkt 35
+    dazu gelöscht statt gebaut. Konzept: `.templatedev/docs/project/concepts/project-structure.md`.
   Wechsel: bis Schritt 4 im Root; vor dem Beleg sagt der Orchestrator an, dass Wolfgang eine neue Sitzung
     in `.templatedev/` starten soll.
   Stand 2026-09-17: vorbereitet (`/act-prepare`), Plan im Journal; neu gegenüber dem Konzept: Sperre der
@@ -82,7 +88,16 @@ wenn T1–T3 committet und gepusht sind:
     GEWINNT (`/probe` lieferte die Unterordner-Fassung) — Sperr-Skills wie im Konzept funktionieren; die
     Doku-Aussage „Root gewinnt" trifft hier nicht zu. Script-Sperren zusätzlich als zweite Schranke.
   Entschieden 2026-09-17: Q19 b (kein Marker, strikte Trennung Root/`.templatedev/`), Q20–Q23 a.
-  Offen:
+  Entschieden 2026-09-17 (Wolfgang): `/act-update-template` funktioniert auch in `.templatedev/`, zieht aber
+    IMMER aus dem Parent — kein Fetch/Merge, sondern Weiterleitung an `sync-rules.py` (Regeldateien neu
+    rendern, fehlende Formulare ergänzen, Diff vor dem Schreiben). Alle Spezialregeln für `.templatedev/`
+    gelten weiter (nie in Projekte, `is_template`-Schutz, Regeln aus `coding_rules.md`, Sperren für
+    Einrichtung/Nachrüsten/Finalize/Wartung/`sync-config`). `.templatedev/.maintainer` gelöscht.
+  Stand 2026-09-17: Welle 1 fertig (Script-Sperren + Marker weg + `metadata.phase` + `check-refs` ohne
+    Sonderpfade; Umzug per `git mv`, Q1–Q18 archiviert, Backlog-Punkt 35 gelöscht; `konzepte/` → `concepts/`).
+  Stand 2026-09-17: Wellen 1–3 und Review fertig (Befunde behoben), committet; es fehlt Schritt 7: Beleg in
+    einer neuen Sitzung, die Wolfgang in `.templatedev/` startet, danach Push (Q23).
+  Offen: Schritt 7 (Sitzungswechsel durch Wolfgang).
 
 
 ---

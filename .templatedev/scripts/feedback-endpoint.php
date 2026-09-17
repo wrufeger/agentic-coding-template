@@ -1,14 +1,14 @@
 <?php
 declare(strict_types=1);
 /*
- * Fassung: 2026-09-16.2   (siehe const FASSUNG unten - bei jeder ausgerollten Aenderung erhoehen)
+ * Fassung: 2026-09-17.1   (siehe const FASSUNG unten - bei jeder ausgerollten Aenderung erhoehen)
  *
  * Zweck: Gegenstelle zu .claude/scripts/feedback.py - nimmt die freiwilligen Rueckmeldungen aller Projekte
  *        entgegen, die "Feedback" eingeschaltet haben, legt sie als JSON-Dateien ab und gibt sie gebuendelt
  *        an EINE authentifizierte Anfrage der Template-Seite heraus, die sie danach quittiert und damit
  *        vom Server loescht.
  *
- *        Zwei Operationen, bewusst getrennt (Konzept .templatedev/konzept-feedback.md):
+ *        Zwei Operationen, bewusst getrennt (Konzept .templatedev/docs/project/concepts/feedback.md):
  *          - Einliefern ist OEFFENTLICH. Jeder kann POSTen, also wird dem Client nichts geglaubt:
  *            Groessendeckel, Schemapruefung gegen geschlossene Wortlisten, Ratenbegrenzung.
  *          - Abholen ist AUTHENTIFIZIERT (JWT, HS256, gemeinsames Geheimnis). Gelesen wird nur mit Token.
@@ -29,7 +29,7 @@ declare(strict_types=1);
  *       liefert er die Startseite der Domain aus. Deshalb ist ?op=inbox der Normalweg, nicht der Ausweg.
  *
  *   Konfiguration per Umgebungsvariable (SetEnv/fastcgi_param) oder per Datei
- *   feedback-endpunkt.config.php. Gesucht wird ZUERST eine Ebene UEBER dem Script (ausserhalb des
+ *   feedback-endpoint.config.php. Gesucht wird ZUERST eine Ebene UEBER dem Script (ausserhalb des
  *   Web-Roots, dort ist sie per URL nicht erreichbar), danach daneben. Sie gibt ein Array zurueck:
  *     AGENTIC_FEEDBACK_DIR         Ablage, absoluter Pfad ausserhalb des Web-Roots (Pflicht)
  *     AGENTIC_FEEDBACK_JWT_SECRET  gemeinsames Geheimnis, >= 32 Zeichen (Pflicht)
@@ -57,7 +57,7 @@ declare(strict_types=1);
 // auf dem Server genau diese Datei liegt (sie kann nicht luegen, weil sie aus dem Inhalt entsteht). Die
 // Fassung SAGT einem Menschen, was darin steckt - "2026-09-16.2" ordnet man einem Stand zu, "ce44f3ed38b2"
 // niemandem. Eine Pruefsumme ohne Fassung war der Fehler der ersten Runde.
-const FASSUNG = '2026-09-16.2';
+const FASSUNG = '2026-09-17.1';
 
 const SCHEMA = 1;                // gesammelte Meldung des Assistenten
 const SCHEMA_DIREKT = 2;         // von Hand geschriebene Nachricht (art: "direkt"), nur `text` ist Pflicht
@@ -121,7 +121,7 @@ function konfig_kandidaten(): array
     $kandidaten = [];
     $ordner = __DIR__;
     for ($tiefe = 0; $tiefe <= KONFIG_SUCHTIEFE; $tiefe++) {
-        $kandidaten[] = $ordner . '/feedback-endpunkt.config.php';
+        $kandidaten[] = $ordner . '/feedback-endpoint.config.php';
         $eltern = dirname($ordner);
         if ($eltern === $ordner) {
             break;  // Dateisystemwurzel erreicht
@@ -174,13 +174,13 @@ function ablage(): string
 {
     $dir = konfig('AGENTIC_FEEDBACK_DIR');
     if ($dir === null) {
-        error_log('feedback-endpunkt: AGENTIC_FEEDBACK_DIR nicht gesetzt');
+        error_log('feedback-endpoint: AGENTIC_FEEDBACK_DIR nicht gesetzt');
         fehler(500, 'nicht eingerichtet');
     }
     foreach (['daten', 'limits'] as $unter) {
         $pfad = $dir . '/' . $unter;
         if (!is_dir($pfad) && !@mkdir($pfad, 0700, true) && !is_dir($pfad)) {
-            error_log('feedback-endpunkt: Ablage nicht anlegbar: ' . $pfad);
+            error_log('feedback-endpoint: Ablage nicht anlegbar: ' . $pfad);
             fehler(500, 'nicht eingerichtet');
         }
     }
@@ -293,7 +293,7 @@ function jwt_pruefen(): array
 {
     $geheim = konfig('AGENTIC_FEEDBACK_JWT_SECRET');
     if ($geheim === null || strlen($geheim) < 32) {
-        error_log('feedback-endpunkt: AGENTIC_FEEDBACK_JWT_SECRET fehlt oder ist zu kurz');
+        error_log('feedback-endpoint: AGENTIC_FEEDBACK_JWT_SECRET fehlt oder ist zu kurz');
         fehler(500, 'nicht eingerichtet');
     }
     $kopf = bearer_kopf();
@@ -571,7 +571,7 @@ function einliefern(): never
     }
     $ordner = $dir . '/daten/' . gmdate('Y-m');
     if (!is_dir($ordner) && !@mkdir($ordner, 0700, true) && !is_dir($ordner)) {
-        error_log('feedback-endpunkt: Monatsordner nicht anlegbar: ' . $ordner);
+        error_log('feedback-endpoint: Monatsordner nicht anlegbar: ' . $ordner);
         fehler(500, 'Ablage nicht schreibbar');
     }
     $id = gmdate('Ymd') . '-' . bin2hex(random_bytes(12));
@@ -581,7 +581,7 @@ function einliefern(): never
     $json = json_encode($satz, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if ($json === false || @file_put_contents($tmp, $json . "\n") === false || !@rename($tmp, $ziel)) {
         @unlink($tmp);
-        error_log('feedback-endpunkt: Schreiben fehlgeschlagen: ' . $ziel);
+        error_log('feedback-endpoint: Schreiben fehlgeschlagen: ' . $ziel);
         fehler(500, 'Ablage nicht schreibbar');
     }
     @chmod($ziel, 0600);

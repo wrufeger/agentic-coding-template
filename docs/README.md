@@ -27,7 +27,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/project/security.md` | Secrets-Regeln, Freigaben, Risiko-Liste | {{DATUM}} | vor Sicherheits-Änderungen |
 | `docs/project/glossary.md` | Fachbegriffe des Projekts | {{DATUM}} | bei Unklarheit über Begriffe |
 | `docs/project/incidents/README.md` | Fehleranalyse als Einzeldatei (Standard) oder Unterordner ab ~5/Jahr | {{DATUM}} | vor/nach Fehleranalyse |
-| `docs/project/konzepte/README.md` | Konzepte: Optionen, Empfehlung, Aufwand — je Thema eine Datei | {{DATUM}} | vor größeren Umbauten |
+| `docs/project/concepts/README.md` | Konzepte: Optionen, Empfehlung, Aufwand — je Thema eine Datei | {{DATUM}} | vor größeren Umbauten |
 | `docs/project/stories/README.md` | Stories: abgegrenzte, prüfbare Umsetzungsschritte `S<n>` | {{DATUM}} | vor der Umsetzung |
 | `docs/ai/README.md` | Aufbau/Formregeln des Zusammenarbeits-Ordners | {{DATUM}} | vor Nutzung von `docs/ai/` |
 | `docs/ai/config-guide.md` | Ausführliche Begründungen zu den Schlüsseln aus `AI-CONFIG.md` | {{DATUM}} | bei Unklarheit über einen Schalter |
@@ -62,7 +62,7 @@ Ein leeres Feld ist nie zulässig: entweder ein echter Stand oder eine Fußnote,
   | `Entwurf` | wird gerade geschrieben, noch nicht verbindlich |
   | `veraltet` | bekannt überholt; der Halbsatz sagt wodurch (z. B. „abgelöst durch ADR-<n>") |
 
-  Eigene Lebenszyklen haben nur `konzepte/` und `stories/` (`Entwurf` → `abgestimmt` → `umgesetzt`), je in
+  Eigene Lebenszyklen haben nur `concepts/` und `stories/` (`Entwurf` → `abgestimmt` → `umgesetzt`), je in
   der README des Ordners beschrieben. Im Template steht stattdessen „Vorlage, noch nicht projektspezifisch";
   diese Fassung ersetzt `.claude/scripts/setup-lib.py` beim Anlegen und Nachrüsten. Bleibt sie irgendwo
   stehen, ist das ein Fehler und gehört gemeldet.

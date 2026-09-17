@@ -53,7 +53,7 @@
 # "Alter Orchestrator-Name" (einmalige Bootstrap-Werte nur fuer /act-apply-template Weg 2, ohne Wirkung nach dem
 # einmaligen Lauf - eine erneute "Aenderung" haette hier keine sinnvolle Handlung).
 #
-# Zusaetzlich (Backlog B37, .templatedev/backlog.md): AI-CONFIG.md steht in keep_local und wird beim
+# Zusaetzlich (Backlog B37, .templatedev/docs/ai/backlog.md): AI-CONFIG.md steht in keep_local und wird beim
 # Template-Update nie gemergt - neue Tabellen-Schluessel der Template-Fassung gehen in einer ausgefuellten
 # Projektfassung sonst still verloren. Das ist KEIN Vergleich gegen applied_config (kein Snapshot noetig),
 # sondern ein LIVE-Abgleich gegen `git show <template-remote>/<branch>:AI-CONFIG.md` bei jedem --check/
@@ -99,6 +99,17 @@ def _load_module(root: Path, filename: str, mod_name: str):
     if not path.exists():
         return None
     spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_own_config_lib():
+    """config-lib.py aus dem EIGENEN Ordner (nicht aus `root`, siehe load_modules) - nur fuer
+    is_template_maintenance_dir()/TEMPLATE_MAINTENANCE_DIR_HINWEIS (T5), noch bevor feststeht, ob `root`
+    ueberhaupt wie ein Projekt aus diesem Template aussieht."""
+    cl_path = Path(__file__).resolve().parent / "config-lib.py"
+    spec = importlib.util.spec_from_file_location("_sync_config_own_cl", cl_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -855,7 +866,7 @@ def _get_ref(ref_holder: dict, tu, root: Path):
 
 
 def _ai_config_key_diffs(cp, tu, root: Path, hinweise: list, ref: str = None, fetch: bool = True) -> list:
-    """Backlog B37 (.templatedev/backlog.md): Schluessel, die die Template-Fassung von AI-CONFIG.md kennt,
+    """Backlog B37 (.templatedev/docs/ai/backlog.md): Schluessel, die die Template-Fassung von AI-CONFIG.md kennt,
     in der Projektfassung aber fehlen (die Datei steht in keep_local und wird beim Template-Update nie
     gemergt - neue Zeilen gehen sonst still verloren). Ergaenzt 'hinweise' in place (informative Meldungen
     ohne Abbruch), gibt eine Liste mit bis zu zwei synthetischen Diff-Eintraegen zurueck, beide mit marker=[]
@@ -1108,6 +1119,17 @@ def _run(argv) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     root = _find_root()
+
+    # T5: die Pflege-Sitzung des Templates in .templatedev/ hat eigene Sperr-Skills statt eines laufenden
+    # AI-CONFIG.md-Abgleichs - ausser dem automatischen --check --quiet-Hook (SessionStart), der bleibt
+    # still/Exit 0. Vor der AGENTS.md-Pruefung unten, die dort ohnehin (noch) fehlschlaegt, aber mit der
+    # falschen Meldung.
+    cl = _load_own_config_lib()
+    if cl.is_template_maintenance_dir(root):
+        if args.quiet and not (args.apply or args.adopt or args.status):
+            return 0
+        print(f"sync-config.py: Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
+        return 2
 
     if not (root / "AGENTS.md").exists():
         print(

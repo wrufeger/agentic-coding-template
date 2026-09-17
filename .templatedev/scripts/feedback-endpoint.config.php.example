@@ -1,6 +1,6 @@
 <?php
 /*
- * Vorlage fuer die Konfiguration des Endpunkts. Auf dem Server als feedback-endpunkt.config.php ablegen -
+ * Vorlage fuer die Konfiguration des Endpunkts. Auf dem Server als feedback-endpoint.config.php ablegen -
  * diese Datei bleibt die Vorlage und wird nie mit echten Werten gefuellt. Die fertige Datei ist in
  * .templatedev/.gitignore ausgenommen; sie enthaelt das gemeinsame Geheimnis.
  *
@@ -30,7 +30,7 @@ return [
     //   python -c "import secrets; print(secrets.token_urlsafe(48))"
     'AGENTIC_FEEDBACK_JWT_SECRET' => 'HIER-EIN-LANGES-ZUFALLSGEHEIMNIS-EINSETZEN',
 
-    // Nur aendern, wenn feedback-abholen.py entsprechend angepasst wird.
+    // Nur aendern, wenn feedback-fetch.py entsprechend angepasst wird.
     'AGENTIC_FEEDBACK_JWT_ISS' => 'templatedev',
     'AGENTIC_FEEDBACK_JWT_AUD' => 'agentic-coding-feedback',
 ];

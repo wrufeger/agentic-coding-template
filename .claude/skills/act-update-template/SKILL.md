@@ -96,3 +96,13 @@ weitermachen (`--conflicts`, dann `--continue`).
 
 `python .claude/scripts/update-template.py --abort` bricht einen laufenden Merge ab, ohne
 `.claude/template.json` zu verändern.
+
+## Im Pflege-Projekt `.templatedev/`
+
+Läuft diese Sitzung in `.templatedev/` (T5), gibt es kein eigenes Template, gegen das gemergt werden könnte —
+die Regeln kommen dort **immer** aus dem ARBEITSSTAND des Roots, nie aus einem Git-Ref. `--check`, `--apply`
+und `--status` leiten deshalb automatisch an `.templatedev/scripts/sync-rules.py` weiter, das `AGENTS.md`,
+`CLAUDE.md`, `docs/ai/README.md` und `docs/ai/checklists.md` aus dem Root neu rendert (Platzhalter ersetzt,
+Setup-Abschnitte entfernt). Ablauf wie sonst auch: erst Diff zeigen (`--diff`), danach nach Zustimmung
+`--apply` — nie ungefragt schreiben. Alle anderen Modi (`--graft`, `--continue`, `--conflicts`, `--abort`,
+`--init`) brechen hier mit einem Hinweis ab, dass Template-Dateien direkt im Root-Ordner bearbeitet werden.

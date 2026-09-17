@@ -1,7 +1,8 @@
 ---
 name: act-create-project
 description: Checkliste Neues Projekt - AI-CONFIG.md einlesen, Platzhalter/Werkzeugdateien/Logging setzen, Doku aus CONFIG befüllen.
-phase: setup
+metadata:
+  phase: setup
 ---
 
 # Neues Projekt

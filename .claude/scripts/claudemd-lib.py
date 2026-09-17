@@ -4,7 +4,7 @@
 # Bibliothek fuer die Textchirurgie an CLAUDE.md bei "Wartung: ein/aus": remove_maintenance_references
 # entfernt beim Abschalten den Sub-Agenten-Eintrag [MAINTENANCE] und die zugehoerigen Tabellen-/Fliesstext-/
 # Baum-Zeilen, add_maintenance_references stellt sie beim Einschalten aus dem Template-Stand wieder her.
-# Herausgetrennt aus setup-lib.py (Backlog/.templatedev/questions.md Q4), das als duenne Fassade (Re-Export
+# Herausgetrennt aus setup-lib.py (Backlog/.templatedev/docs/ai/questions.md Q4), das als duenne Fassade (Re-Export
 # dieser drei Module) plus dem eigentlichen Setup-Ablauf bestehen bleibt - siehe dort. Braucht die beiden
 # Text-Schreibhelfer aus files-lib.py (per importlib, wie dort - Bindestrich im Dateinamen).
 

@@ -53,39 +53,11 @@ folgenden Sub-Agenten sind die Worker:
 - Der Tabu-Bereich „Aufgaben nur für {{AUFTRAGGEBER}}" (`AGENTS.md`) gilt unverändert für jeden dieser Agenten.
 
 <!-- template-only:start -->
-> **Sitzung im Template-Checkout?** Dann ist `.templatedev/` dein Arbeitsbereich, nicht `docs/`.
->
-> Dieses Repo ist die **Vorlage**: `docs/ai/` und `docs/project/` sind leere Formulare, die Platzhalter in
-> dieser Datei sind Absicht. Aufgaben, Backlog, Fragen, Journal, Regeln und die Testprojekte stehen in
-> `.templatedev/` — Einstieg über `.templatedev/INDEX.md`.
->
-> **Vor einer Änderung:** `.templatedev/ledger.md` (letzter Stand), `.templatedev/tasks.md` (was beauftragt
-> ist), `.templatedev/backlog.md` (was offen ist) und `.templatedev/regeln.md` (u. a. die Tabelle der fünf
-> zusammenhängenden Pfadlisten).
-> **Nach der Änderung:** dort verbuchen — Journal, Aufgabenstand (erledigt → `tasks_archive.md`), ggf.
-> Backlog-Punkt.
->
-> **Frischer Klon:** Der Hook `.claude/scripts/template-welcome.py` gibt dem Modell bei jeder Eingabe den
-> Kontext mit, dass hier noch kein Projekt ist; was nicht erkennbar anlegen/nachrüsten will, bekommt zuerst
-> den Hinweis auf die beiden Wege (bewertet vom Modell, auch Antworten im laufenden Interview). Wer hier an der
-> Vorlage selbst arbeitet, legt einmalig die lokale, gitignorierte Marker-Datei `.templatedev/.maintainer`
-> an — danach bleibt der Hinweis aus.
-
-**Solange dieses Repo noch nicht initialisiert ist** (Marker `is_template` in `.claude/template.json`), gelten
-für `docs/` abweichende Regeln:
-
-- `docs/ai/` und `docs/project/` sind **Vorlagen** und bleiben leer. Was dort steht, wandert in jedes
-  abgeleitete Projekt — auch ein gut gemeinter Backlog-Eintrag.
-- Aufgaben, Backlog, Fragen, Journal, Regeln und die Testprojekte stehen im Ordner `.templatedev/` im Repo-Root,
-  versioniert wie jede andere Datei. Das ist hier der einzige Arbeitsbereich mit echtem Inhalt.
-- Auch das Agenten-Logging (`AGENTS.md` § Logging) beschreibt nur die Mechanik für spätere Projekte; ein
-  Mitschnitt der Template-Arbeit gehört, wenn überhaupt, ins Journal in `.templatedev/ledger.md`.
-- Unverändert gültig bleibt alles andere: Rollen, Delegation an Sub-Agenten, Modellwahl, „fertig nur mit
-  Beleg", Commit per Pathspec, Safeguard-Verhalten.
-
-Beim Anlegen eines Projekts (`/act-create-project`) entfernt `create-project.py` den Ordner `.templatedev/`
-**und** die so markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die
-normalen Regeln.
+> **Sitzung im Template-Checkout?** Dieses Repo ist die Vorlage (Marker `is_template` in
+> `.claude/template.json`): `docs/ai/`/`docs/project/` bleiben leere Formulare, hier entstehen nur neue
+> Projekte oder Nachrüstungen (Weg 1/2 unten). Für die Pflege der Vorlage selbst wird eine eigene Sitzung in
+> `.templatedev/` gestartet — eigenes Projekt in derselben Struktur, strikte Trennung vom Root, kein Schalter
+> (Q19); Einstieg dort über `.templatedev/docs/README.md`.
 <!-- template-only:end -->
 
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
@@ -102,6 +74,7 @@ nie projektweit. Bei `Code-Optimierung: aus` (`AI-CONFIG.md`) entfällt der Schr
 Jeder Skill ist die Claude-Code-Mechanik zu einer neutralen Checkliste aus `docs/ai/checklists.md` — die
 Checkliste selbst beschreibt, WAS zu tun ist (werkzeugneutral), der Skill beschreibt, WIE Claude Code es startet.
 
+<!-- template-only:start -->
 **Einstieg in Alltagssprache.** Läuft diese Sitzung im Template-Checkout, kommt der erste Auftrag meist als
 Satz mit einem Zielpfad statt als Skill-Aufruf. Zuordnung:
 
@@ -126,10 +99,11 @@ Danach mit `CLAUDE_PROJECT_DIR=<pfad>` weiterarbeiten: die Scripte nehmen den Pf
 werden mit absoluten Pfaden geschrieben. Existiert der Zielordner bereits und ist nicht leer, **nie**
 hineinklonen — dann ist es der Nachrüst-Weg. Zum Schluss {{AUFTRAGGEBER}} sagen, dass er für die eigentliche
 Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigene Regeln und Agenten.
+<!-- template-only:end -->
 
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
-| `/act [befehl\|all]` | — (Mechanik ohne Checkliste) | Übersicht der Projekt-Befehle, die zum aktuellen Stand des Repos passen (`.claude/template.json`: Template-Checkout/Einrichtung/laufendes Projekt, Frontmatter-Feld `phase` je Skill), mit Parametern und Kurzbeschreibung wie eine man page (`.claude/scripts/act-help.py`); `/act all` zeigt zusätzlich die ausgeblendeten Befehle, mit Namen ein Befehl ausführlich (auch ausgeblendet, dann mit Hinweis). Alle Projekt-Skills tragen das Präfix `act-`, damit sie nicht mit eingebauten Befehlen (`/feedback`) kollidieren |
+| `/act [befehl\|all]` | — (Mechanik ohne Checkliste) | Übersicht der Projekt-Befehle, die zum aktuellen Stand des Repos passen (`.claude/template.json`: Template-Checkout/Einrichtung/laufendes Projekt, Frontmatter `metadata.phase` je Skill), mit Parametern und Kurzbeschreibung wie eine man page (`.claude/scripts/act-help.py`); `/act all` zeigt zusätzlich die ausgeblendeten Befehle, mit Namen ein Befehl ausführlich (auch ausgeblendet, dann mit Hinweis). Alle Projekt-Skills tragen das Präfix `act-`, damit sie nicht mit eingebauten Befehlen (`/feedback`) kollidieren |
 | `/commit` · `/idea` · `/prepare` · `/update-template` | — (Mechanik ohne Checkliste) | Kurzformen ohne Präfix für die vier häufigsten Befehle (`.claude/skills/commit\|idea\|prepare\|update-template/SKILL.md`); `disable-model-invocation: true`, also nur von Hand aufrufbar, führen den gleichnamigen `/act-…`-Befehl mit denselben Argumenten aus; in `/act` nicht als eigene Befehle gelistet, nur als Kurzform-Hinweis am Ende der Übersicht |
 | `/act-create-project` | „Neues Projekt" | `AI-CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/create-project.py`, läuft **nie** in einem Sub-Agenten |
 | `/act-apply-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `apply-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`AI-CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
@@ -313,8 +287,9 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
-├── .templatedev/                 # nur im Template: Backlog, Fragen, Journal, Regeln,
-│                                 # Testprojekte (wird von /act-create-project entfernt)
+├── .templatedev/                 # nur im Template: eigenes Pflegeprojekt der Template-Entwicklung
+│                                 # (eigene AGENTS.md/CLAUDE.md, docs/ai/, docs/project/, Sitzung dort
+│                                 # starten), wird von /act-create-project entfernt
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
 │                                 # wird von /act-create-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot

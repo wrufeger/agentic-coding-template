@@ -2,17 +2,17 @@
 # -*- coding: utf-8 -*-
 #
 # Zweck: Ueberwacht die lokalen Test-Installationen dieses Projekts (Weiterentwicklung des Agentic-Coding-
-#        Templates). Haelt die Testprojekte-Tabelle in docs/project/testprojekte.md (zwischen den Markern
+#        Templates). Haelt die Testprojekte-Tabelle in docs/project/test-projects.md (zwischen den Markern
 #        "<!-- testprojekte:start -->"/"<!-- testprojekte:end -->") gegen den echten Git-Stand der dort
 #        eingetragenen Projekte aktuell und meldet zusaetzlich, wo seit der letzten Auswertung neuer Stoff in
 #        deren docs/ai/ liegt. Die Commits dieser Projekte liegen ueblicherweise nur lokal - der eingetragene
-#        Hash ist die einzige belastbare Referenz auf einen Stand, siehe docs/project/testprojekte.md. Reine
+#        Hash ist die einzige belastbare Referenz auf einen Stand, siehe docs/project/test-projects.md. Reine
 #        Python-Stdlib, kein Paket noetig. Laeuft auch als Wartungsaufgabe ("testprojekte", alle 7 Tage,
 #        siehe .claude/maintenance/status.json) und gehoert nicht zum Lieferumfang eines abgeleiteten
 #        Projekts.
 #
 # Aufruf:
-#   python .claude/scripts/testprojekte.py [--check] [--tabelle <pfad>]
+#   python .templatedev/scripts/test-projects.py [--check] [--tabelle <pfad>]
 #       (Default) Vergleicht je Projekt den eingetragenen Commit-Hash gegen den tatsaechlichen HEAD-Commit
 #       des Pfads. Schreibt NICHTS. Bei Gleichstand eine Zeile "unveraendert"; bei Abweichung alter/neuer
 #       Hash, Anzahl dazwischenliegender Commits (git rev-list --count) und deren Betreffzeilen (hoechstens
@@ -23,15 +23,15 @@
 #       letzten inhaltlichen Aenderung (Commit-Datum, nicht Dateisystem-Zeit) - fehlt eine Datei, ist das
 #       kein Fehler, nur eine Zeile. Diese Datumsangaben stehen ausschliesslich in der Ausgabe, nicht in der
 #       Tabelle.
-#   python .claude/scripts/testprojekte.py --update [--tabelle <pfad>]
+#   python .templatedev/scripts/test-projects.py --update [--tabelle <pfad>]
 #       Gibt dieselbe Uebersicht wie --check aus UND schreibt die Tabelle zwischen den Markern neu: Spalten
 #       "Letzter geprueften Commit" (Hash plus Datum) und "Stand" werden aus dem aktuellen Git-Stand gesetzt,
 #       die Spalten Projekt/Pfad/Weg bleiben unangetastet (die werden von Hand gepflegt). Schreibt atomar
 #       (Temp-Datei im selben Verzeichnis, dann os.replace, Temp-Datei im Fehlerfall aufgeraeumt) und erhaelt
 #       das Zeilenende der Datei.
-#   --tabelle <pfad>: abweichender Pfad zur Tabellendatei (Default: docs/project/testprojekte.md im
-#       Repo-Root, Root aus CLAUDE_PROJECT_DIR oder aus dem Pfad dieses Scripts). Praktisch zum Testen gegen
-#       eine Kopie.
+#   --tabelle <pfad>: abweichender Pfad zur Tabellendatei (Default: docs/project/test-projects.md im
+#       Projektordner .templatedev, Root aus CLAUDE_PROJECT_DIR oder aus dem Pfad dieses Scripts). Praktisch
+#       zum Testen gegen eine Kopie.
 #
 # Wichtig: Das Script liest fremde Repos nur (rev-parse, log, status, rev-list, cat-file -e) - es fuehrt dort
 #   NIE schreibende oder netzwerkfaehige Git-Befehle aus (kein fetch, kein pull, kein checkout).
@@ -62,7 +62,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 MARKER_START = "<!-- testprojekte:start -->"
 MARKER_END = "<!-- testprojekte:end -->"
-DEFAULT_TABELLE_REL = ".templatedev/README.md"
+DEFAULT_TABELLE_REL = "docs/project/test-projects.md"
 GIT_TIMEOUT = 20
 COLUMNS = ["Projekt", "Pfad", "Weg", "Letzter geprüfter Commit", "Stand"]
 COMMIT_CELL_RE = re.compile(r"`([0-9a-fA-F]+)`(?:\s*\(([^)]*)\))?")
@@ -77,7 +77,9 @@ class TableError(Exception):
 
 
 def _find_root() -> Path:
-    # Das Script liegt in .templatedev/ des Template-Checkouts, die Repo-Wurzel ist also eine Ebene hoeher.
+    # Projektordner dieser Pflege-Sitzung - .templatedev/ selbst (siehe
+    # docs/project/concepts/project-structure.md), nicht der Template-Root. Ohne CLAUDE_PROJECT_DIR (z. B.
+    # Handaufruf): die Datei liegt in .templatedev/scripts/, eine Ebene darueber ist .templatedev/ selbst.
     env_root = os.environ.get("CLAUDE_PROJECT_DIR")
     if env_root:
         return Path(env_root)
@@ -85,7 +87,7 @@ def _find_root() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Tabelle lesen (docs/project/testprojekte.md)
+# Tabelle lesen (docs/project/test-projects.md)
 # ---------------------------------------------------------------------------
 
 
@@ -492,7 +494,7 @@ def cmd_update(tabelle_path: Path) -> int:
 def main(argv=None) -> int:
     try:
         parser = argparse.ArgumentParser(
-            description="Vergleicht/aktualisiert die Testprojekte-Tabelle in docs/project/testprojekte.md "
+            description="Vergleicht/aktualisiert die Testprojekte-Tabelle in docs/project/test-projects.md "
             "gegen den echten Git-Stand der eingetragenen Projekte."
         )
         group = parser.add_mutually_exclusive_group()
@@ -500,13 +502,13 @@ def main(argv=None) -> int:
         group.add_argument("--update", action="store_true", help="Tabelle mit dem aktuellen Stand fortschreiben.")
         parser.add_argument(
             "--tabelle",
-            help="Pfad zur Tabellendatei (Default: docs/project/testprojekte.md im Repo-Root).",
+            help="Pfad zur Tabellendatei (Default: docs/project/test-projects.md im Projektordner .templatedev).",
         )
         args = parser.parse_args(argv)
 
         tabelle_path = Path(args.tabelle) if args.tabelle else _find_root() / DEFAULT_TABELLE_REL
         if not tabelle_path.is_file():
-            print(f"testprojekte.py: {tabelle_path} nicht lesbar.", file=sys.stderr)
+            print(f"test-projects.py: {tabelle_path} nicht lesbar.", file=sys.stderr)
             return 2
 
         try:
@@ -514,13 +516,13 @@ def main(argv=None) -> int:
                 return cmd_update(tabelle_path)
             return cmd_check(tabelle_path)
         except TableError as exc:
-            print(f"testprojekte.py: {exc}", file=sys.stderr)
+            print(f"test-projects.py: {exc}", file=sys.stderr)
             return 2
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 2
         return code if code == 0 else 2
     except Exception as exc:  # noqa: BLE001 - nie ein Traceback nach aussen
-        print(f"testprojekte.py: Fehler - {exc}", file=sys.stderr)
+        print(f"test-projects.py: Fehler - {exc}", file=sys.stderr)
         return 2
 
 

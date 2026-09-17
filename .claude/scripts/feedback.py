@@ -65,6 +65,7 @@
 # verweigert das Script jede Aktion - die Entwicklung des Templates meldet sich nicht an sich selbst.
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -616,7 +617,10 @@ def _kennzahlen(root: Path) -> dict:
     """Umfang a: Zahlen aus `git log` und Dateisystem - NUR Zahlen, nie Namen, nie Pfade, nie Texte.
     Was sich nicht ermitteln laesst, faellt weg statt geschaetzt zu werden (Entscheidung 2026-09-15)."""
     zahlen = {}
-    protokoll = _git(root, "log", "--format=%ad", "--date=short").split()
+    # Pathspec "-- ." (T5): `root` kann ein Unterordner-Projekt im selben Git-Repo sein (.templatedev/, die
+    # Template-Pflege selbst) - ohne Pathspec zaehlte `git log` sonst JEDEN Commit des ganzen Repos mit,
+    # nicht nur die des eigenen Projektordners.
+    protokoll = _git(root, "log", "--format=%ad", "--date=short", "--", ".").split()
     if protokoll:
         zahlen["commits"] = len(protokoll)
         zahlen["tage_aktiv"] = len(set(protokoll))
@@ -1210,6 +1214,20 @@ def cmd_clear(root: Path) -> int:
     return 0
 
 
+def _ist_pflege_ordner(root: Path) -> bool:
+    """T5-Review: im Pflege-Projekt .templatedev/ hat template.json kein is_template - trotzdem nie senden.
+    Gleiche Pruefung wie die uebrigen Sperren (config-lib.py:is_template_maintenance_dir); jeder Ladefehler
+    zaehlt aus Vorsicht als Pflege-Ordner, wenn der Ordner so heisst."""
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_feedback_config_lib", Path(__file__).resolve().parent / "config-lib.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return bool(mod.is_template_maintenance_dir(root))
+    except Exception:  # noqa: BLE001
+        return Path(root).resolve().name == ".templatedev"
+
+
 def _run(argv) -> int:
     parser = argparse.ArgumentParser(
         prog="feedback.py",
@@ -1249,9 +1267,9 @@ def _run(argv) -> int:
 
     root = _root()
     tj = _template_json(root)
-    if tj.get("is_template") is True:
-        print("Dieses Repo ist das Template selbst - es meldet sich nicht an sich selbst. Nichts getan.",
-              file=sys.stderr)
+    if tj.get("is_template") is True or _ist_pflege_ordner(root):
+        print("Dieses Repo ist das Template selbst (bzw. dessen Pflege-Projekt .templatedev/) - es meldet sich "
+              "nicht an sich selbst. Nichts getan.", file=sys.stderr)
         return 2
 
     # Altbestand nur bei einem SCHREIBENDEN Befehl aufraeumen - --status/--plan lesen nur und zeigen den

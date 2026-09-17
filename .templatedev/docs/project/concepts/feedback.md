@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-15 – Status: abgestimmt — `Q1`–`Q3` beantwortet, Client und Endpunkt gebaut, Betrieb offen
+> Datenstand: 2026-09-17 – Status: abgestimmt — `Q1`–`Q3` beantwortet, Client und Endpunkt gebaut, Betrieb offen
 
 > **Achtung beim Lesen:** Alles bis zur Trennlinie ist der Stand **vor** der Entscheidung — die dortige
 > Empfehlung (GitHub-Issue) wurde **verworfen**, weil Issues in einem öffentlichen Repo für jeden lesbar
@@ -171,10 +171,11 @@ erste Meldung ankommt.
 
 ## Offen
 
-- **Gebaut am 2026-09-15:** `.templatedev/scripts/feedback-endpunkt.php` (PHP, Stdlib, keine Abhängigkeit)
-  und `.templatedev/scripts/feedback-abholen.py` (abholen, ablegen, quittieren, auswerten). Authentifiziert
-  wird per **JWT** (HS256, gemeinsames Geheimnis) statt mit einem festen Bearer-Token — ein abgelaufenes
-  Token ist von selbst wertlos. Einrichtung: `.templatedev/scripts/README.md`.
+- **Gebaut am 2026-09-15** (seit T5 unter neuem Namen, siehe `docs/project/concepts/project-structure.md`):
+  `.templatedev/scripts/feedback-endpoint.php` (PHP, Stdlib, keine Abhängigkeit) und
+  `.templatedev/scripts/feedback-fetch.py` (abholen, ablegen, quittieren, auswerten). Authentifiziert wird
+  per **JWT** (HS256, gemeinsames Geheimnis) statt mit einem festen Bearer-Token — ein abgelaufenes Token
+  ist von selbst wertlos. Einrichtung: `.templatedev/scripts/README.md`.
 - **Offen bleibt der Betrieb:** Datei auf `rufeger.de` ausrollen, Geheimnis erzeugen, Ablage außerhalb des
   Web-Roots anlegen, prüfen, dass sie nicht per URL erreichbar ist.
 - Datenschutzhinweis unter der URL.

@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-16 – Status: entschieden — `Q8`–`Q11` beantwortet, Umsetzung offen (T1–T3)
+> Datenstand: 2026-09-17 – Status: entschieden — `Q8`–`Q11` beantwortet, Umsetzung offen (T1–T3)
 
 # Repo- und Issue-Dienste: Zugänge, Pull/Merge Requests, Issues
 
@@ -83,7 +83,8 @@ Skill `/issue` mit Sätzen statt Unterbefehlen:
   automatisch. Dafür wird § „Zugriff auf laufende Systeme" um diesen Fall ergänzt (`Q10`).
 - **Reihenfolge:** T1 → T2 → T3 lesen → T3 anlegen/starten; zuerst GitLab (Beleg `bandliste`) und GitHub,
   danach Jira, YouTrack zuletzt (`Q11`).
-- **Neue Skills** in alle zusammenhängenden Pfadlisten (`.templatedev/regeln.md`) und `CLAUDE.md` § 2.
+- **Neue Skills** in alle zusammenhängenden Pfadlisten (`.templatedev/docs/project/coding_rules.md`) und
+  `CLAUDE.md` § 2.
 
 ## Entschieden am 2026-09-16
 

@@ -7,7 +7,7 @@ werden kann**. Hierher wandern Begründung und Umsetzungsdetails, die in `../../
 Aufgabe mehr als etwa drei Zeilen gebraucht hätten — dort bleibt die Zeile mit dem Verweis, die Story trägt
 die Erklärung.
 
-Abgrenzung: Ein **Konzept** (`../konzepte/`) wägt Optionen ab und empfiehlt eine; eine **Story** setzt eine
+Abgrenzung: Ein **Konzept** (`../concepts/`) wägt Optionen ab und empfiehlt eine; eine **Story** setzt eine
 bereits getroffene Entscheidung in prüfbare Schritte um. Eine **Aufgabe** (`../../ai/tasks.md`) ist der
 Auftrag, eine Story tatsächlich zu bauen.
 

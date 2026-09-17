@@ -67,6 +67,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -151,6 +152,24 @@ def _load_template_update_module(own_root: Path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_config_lib_module(own_root: Path):
+    cl_path = own_root / ".claude" / "scripts" / "config-lib.py"
+    spec = importlib.util.spec_from_file_location("_install_global_cl", cl_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _running_for_template_maintenance_dir(own_root: Path, cl) -> bool:
+    """T5: `own_root` kommt bewusst NICHT aus CLAUDE_PROJECT_DIR (siehe _own_root - immer der Checkout, aus
+    dem heraus dieses Script liegt). Eine Sitzung in .templatedev/ ruft es trotzdem darueber auf - deshalb
+    hier zusaetzlich CLAUDE_PROJECT_DIR pruefen, falls gesetzt."""
+    if cl.is_template_maintenance_dir(own_root):
+        return True
+    env_root = os.environ.get("CLAUDE_PROJECT_DIR")
+    return bool(env_root) and cl.is_template_maintenance_dir(Path(env_root))
 
 
 def resolve_home_dir(args) -> Path:
@@ -350,6 +369,10 @@ def cmd_plan(own_root: Path, home_dir: Path, parts, ablage_hint: str) -> int:
 
 
 def cmd_apply(own_root: Path, home_dir: Path, parts, force: bool) -> int:
+    cl = _load_config_lib_module(own_root)
+    if _running_for_template_maintenance_dir(own_root, cl):
+        print(f"Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
+        return 2
     tu = _load_template_update_module(own_root)
     cfg, _ = tu.load_template_json(own_root)
     values = cfg.get("values") or {}

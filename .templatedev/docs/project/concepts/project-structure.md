@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-17 – Status: entschieden — `Q12`–`Q15` beantwortet, Umsetzung offen (T5)
+> Datenstand: 2026-09-17 – Status: entschieden — `Q12`–`Q15` beantwortet, Umsetzung läuft (T5)
 
 # Template-Pflege als eigenes Projekt in `.templatedev/`
 
@@ -49,7 +49,7 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
 │   ├── ai/                       # board, tasks(+archive), questions(+archive), ledger, backlog,
 │   │                             # README und checklists geerbt
 │   └── project/                  # coding_rules.md ← regeln.md; test-projects.md ← README.md;
-│                                 # konzepte/ ← konzept-*.md; data/ ← daten/ (Q13)
+│                                 # concepts/ ← konzept-*.md; data/ ← daten/ (Q13)
 └── scripts/                      # test-projects.py, feedback-fetch.py, feedback-endpoint.php …
 ```
 
@@ -71,31 +71,6 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
 
 **Stolperstein `/act-commit`:** Die Sitzung liegt nicht im Git-Root — Pathspecs sind relativ zu `.templatedev/`.
 Änderungen am Template (`../.claude/…`) müssen mit `../` angegeben werden; Schritt 5 prüft genau das.
-
-## Pflege-Modus im Root (Wunsch 2026-09-17, zurückgestellt — Backlog-Punkt 35)
-
-Schalter in `.env`, z. B. `TEMPLATEDEV_MODE=ein`: Eine Sitzung im Root verhält sich, als liefe sie in
-`.templatedev/` — praktisch, wenn IDE und Terminal ohnehin im Root geöffnet sind.
-
-**Was geht:**
-
-- **Regeln umlenken:** Der SessionStart-Hook von `finish-setup.py --check` meldet im Template-Checkout heute
-  „hier nichts zu tun". Er liest zusätzlich den Schalter aus `.env` und gibt dann den Pflege-Kontext aus:
-  `.templatedev/AGENTS.md` und `CLAUDE.md` gelten, Arbeitsordner ist `.templatedev/docs/ai/`, Pathspecs mit
-  `.templatedev/` davor. Kein neuer Hook, also nichts, was in abgeleitete Projekte wandert.
-- **Scripte umlenken:** Scripte, die Projektdateien lesen (`check-refs.py`, `sync-config.py`, `ai-log.py` …),
-  nehmen bei gesetztem Schalter `.templatedev/` als Projektordner — nur im Template-Checkout (`is_template`).
-- **Sperren:** `create-project`, `apply-template`, `finalize` lehnen im Pflege-Modus ab (Script-Ebene).
-
-**Was nicht geht — das ist der Unterschied zu einer Sitzung in `.templatedev/`:**
-
-- Claude Code liest `.env` nicht; der Schalter wirkt nur über Hook-Ausgabe und Scripte.
-- Die Root-`CLAUDE.md` mit Platzhaltern bleibt geladen, `.templatedev/.claude/settings.json` (Ausschlüsse,
-  Hooks) und die Sperr-Skills gelten nicht. Zwei Regelsätze stehen im Kontext; der Hook sagt, welcher gilt —
-  das ist eine Anweisung, keine technische Trennung.
-- Ein Umschalten wirkt erst mit der nächsten Sitzung.
-
-**Aufwand:** ~0,5 PT zusätzlich (Schalter lesen in einer gemeinsamen Hilfsfunktion, Hook-Text, drei Sperren).
 
 ## Empfehlung
 

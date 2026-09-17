@@ -148,12 +148,12 @@ fest hinterlegt, kein Schalter in `AI-CONFIG.md`.
 ## Mitarbeiten
 
 Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
-jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — Aufgaben, offene Punkte,
-Fragen, Journal, Regeln und die Testprojekte — steht deshalb im Ordner `.templatedev/` im Repo-Root und
-wird beim Anlegen eines Projekts entfernt. Wer hier tatsächlich entwickelt statt nur zu klonen, legt
-zusätzlich die lokale, gitignorierte Marker-Datei `.templatedev/.maintainer` an — sonst bekommt jede
-Eingabe, die nicht erkennbar ein Projekt anlegen oder nachrüsten will, zuerst einen kurzen Hinweis auf die
-beiden Wege.
+jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — Aufgaben, offene
+Punkte, Fragen, Journal, Regeln und die Testprojekte — steht deshalb im eigenen Pflegeprojekt `.templatedev/`
+(Einstieg: `.templatedev/docs/README.md`) und wird beim Anlegen eines Projekts entfernt. Wer hier tatsächlich
+an der Vorlage arbeitet statt nur zu klonen, startet dafür eine eigene Pflege-Sitzung in `.templatedev/`;
+Eingaben ohne erkennbaren Auftrag zum Anlegen oder Nachrüsten bekommen sonst zuerst einen kurzen Hinweis auf
+die beiden Wege.
 
 ## Lizenz
 

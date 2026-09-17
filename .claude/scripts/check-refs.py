@@ -10,18 +10,16 @@
 #
 # Aufruf:
 #   python .claude/scripts/check-refs.py [--check] [--root <pfad>]
-#       (Default) Durchsucht alle .md-Dateien unter docs/ und .templatedev/ (falls vorhanden) nach
-#       Kuerzeln, prueft je Fund, ob das Ziel existiert, und meldet tote Verweise (Fundstelle Datei:Zeile)
-#       sowie - als kuerzere, separate Liste - verwaiste Ziele (existieren, werden aber nirgends zitiert).
-#       Schreibt nichts. Exit 0, wenn keine toten Verweise gefunden wurden (verwaiste Ziele allein sind
-#       kein Fehler, nur ein Hinweis), sonst Exit 1.
+#       (Default) Durchsucht alle .md-Dateien unter docs/ des jeweiligen --root nach Kuerzeln, prueft je Fund,
+#       ob das Ziel existiert, und meldet tote Verweise (Fundstelle Datei:Zeile) sowie - als kuerzere,
+#       separate Liste - verwaiste Ziele (existieren, werden aber nirgends zitiert). Schreibt nichts. Exit 0,
+#       wenn keine toten Verweise gefunden wurden (verwaiste Ziele allein sind kein Fehler, nur ein Hinweis),
+#       sonst Exit 1. Die Template-Pflege in .templatedev/ (eigenes Projekt seit T5) laeuft als EIGENER Lauf
+#       mit `--root .templatedev` und dessen eigenem docs/ - keine Sonderbehandlung mehr in diesem Script.
 #
 # Kuerzel/Ziele (siehe docs/ai/README.md § "Querverweise"):
-#   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md - im Template-Checkout
-#                                     stattdessen .templatedev/tasks.md bzw. tasks_archive.md
-#   Q<n>          Question           docs/ai/questions.md, sonst docs/ai/questions_archive.md - im
-#                                     Template-Checkout stattdessen .templatedev/questions.md (eigener
-#                                     Namensraum je Repo, dasselbe Kuerzel)
+#   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md
+#   Q<n>          Question           docs/ai/questions.md, sonst docs/ai/questions_archive.md
 #   ADR-<n>       Entscheidung       docs/project/decisions.md (erste Spalte der Tabelle)
 #   S<n>          Story              docs/project/stories/S<n>-*.md (eigene Datei je Story)
 #   B<n>          Backlog-Punkt      docs/ai/backlog.md (erste Spalte "ID" der Tabelle) - bevorzugte Form;
@@ -36,8 +34,8 @@
 #     (z.B. "laeuft als **T11**.") zaehlt nicht als Definition, nur als Zitat.
 #   ADR: die erste Spalte einer Markdown-Tabellenzeile ("| 14 | ... |") in decisions.md.
 #   Backlog: drei gleichwertige Definitionsformen, alle nur in den Dateien aus DEF_FILES["backlog"]
-#     (docs/ai/backlog.md, .templatedev/backlog.md) gesucht - eine nummerierte Liste anderswo (Checkliste,
-#     Skill-Anleitung) ist KEINE Backlog-Definition:
+#     (docs/ai/backlog.md) gesucht - eine nummerierte Liste anderswo (Checkliste, Skill-Anleitung) ist KEINE
+#     Backlog-Definition:
 #       1. Tabellenzeile ("| 42 | ... |", so fuehrt z.B. bandliste seinen Backlog).
 #       2. Einzeiler unter "Erledigt" ("- 21 · ..." - Bindestrich, Zahl, Mittelpunkt).
 #       3. Nummerierte Liste fuer offene Punkte ("22. -> machen: ..." - der Pfeil-Marker ist ueblich, aber
@@ -67,10 +65,6 @@
 #   - Backlog-Nummern sind bloss Ziffern und damit das mehrdeutigste Kuerzel; erkannt werden die bevorzugte
 #     Form "B<n>" sowie die beiden Altschreibweisen "#<n>" (nicht direkt hinter einem Wortzeichen oder "/",
 #     damit "reponame#123"/URLs nicht mitzaehlen) und "Backlog <n>"/"Backlog-<n>".
-#   - .templatedev/ enthaelt Arbeitsnotizen der Template-Entwicklung, die auch ueber ANDERE Projekte
-#     sprechen (Testlaeufe) und dabei deren ADR-/Task-Nummern zitieren koennen - fuer dieses Repo sind
-#     das dann korrekt gemeldete tote Verweise (das Ziel existiert in DIESEM Repo nicht), auch wenn sie im
-#     Ursprungsprojekt gueltig waren.
 #
 # Exit-Codes: 0 = ok (auch "nichts gefunden"), 1 = --check hat
 #   mindestens einen toten Verweis gefunden. main() laeuft komplett in try/except, kein Traceback nach aussen.
@@ -126,12 +120,10 @@ def _load_rename_lib(root: Path):
 
 
 def _iter_md_files(root: Path):
-    """Alle .md-Dateien unter docs/ und .templatedev/ (falls vorhanden), root-relative Posix-Pfade,
-    sortiert fuer eine stabile Ausgabe."""
+    """Alle .md-Dateien unter docs/ von `root`, root-relative Posix-Pfade, sortiert fuer eine stabile
+    Ausgabe. `root` ist der jeweilige Projekt-Root eines Laufs (--root) - die Template-Pflege in
+    .templatedev/ (T5) laeuft als eigener Lauf mit --root .templatedev und hat dann selbst ein docs/."""
     bases = [root / "docs"]
-    templatedev = root / ".templatedev"
-    if templatedev.is_dir():
-        bases.append(templatedev)
     found = []
     for base in bases:
         if not base.is_dir():
@@ -348,17 +340,10 @@ _BACKLOG_STATUS_ROW_RE = re.compile(r"^\|\s*\[[ xX]\]\s*\|\s*B(\d{1,6})\s*\|", r
 _STORY_FILE_RE = re.compile(r"^S(\d{1,4})-.+\.md$", re.IGNORECASE)
 
 DEF_FILES = {
-    # Wie bei "question": normales Projekt vs. Template-Checkout, je Repo nur eine Quelle mit echtem Inhalt.
-    "task": [
-        "docs/ai/tasks.md", "docs/ai/tasks_archive.md", ".templatedev/tasks.md", ".templatedev/tasks_archive.md",
-    ],
-    # Question-Definitionen: normales Projekt (questions.md/-archive) UND Template-Checkout
-    # (.templatedev/questions.md) - dasselbe Kuerzel Q<n>, aber je Repo nur eine der beiden Quellen mit
-    # echtem Inhalt (siehe Kopfkommentar "eigener Namensraum je Repo").
-    "question": ["docs/ai/questions.md", "docs/ai/questions_archive.md", ".templatedev/questions.md"],
+    "task": ["docs/ai/tasks.md", "docs/ai/tasks_archive.md"],
+    "question": ["docs/ai/questions.md", "docs/ai/questions_archive.md"],
     "adr": ["docs/project/decisions.md"],
-    # Ebenfalls je Repo nur eine Quelle mit echtem Inhalt: normales Projekt vs. Template-Checkout.
-    "backlog": ["docs/ai/backlog.md", ".templatedev/backlog.md"],
+    "backlog": ["docs/ai/backlog.md"],
 }
 STORIES_DIR = "docs/project/stories"
 

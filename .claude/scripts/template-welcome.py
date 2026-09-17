@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Zweck: In einem frisch geklonten Template-Checkout (B51, .templatedev/backlog.md) bekommt das Modell zu
+# Zweck: In einem frisch geklonten Template-Checkout (B51, .templatedev/docs/ai/backlog.md) bekommt das Modell zu
 #        jeder Eingabe zusaetzlichen Kontext mit, wofuer dieses Repo da ist - unabhaengig davon, was die
 #        Eingabe im Wortlaut ist. Keine eigene Bewertung mehr per Regex/Muster: das Modell sieht den
 #        Gesprächsverlauf selbst und entscheidet, ob die Eingabe erkennbar "Projekt anlegen"/"nachruesten"
@@ -9,11 +9,13 @@
 #        erst kurz erklaert werden soll, wofuer das Repo da ist. Kostet ein paar Token je Eingabe -
 #        ausdruecklich in Ordnung (Wolfgang, 2026-09-17).
 #
-#        Erkennung frischer Klon vs. Pflege-Checkout ueber die lokale, gitignorierte Marker-Datei
-#        .templatedev/.maintainer (siehe .gitignore) - bewusst nicht ueber den Git-Remote:
-#          - Marker vorhanden                                  -> kein Kontext (Pflege-Checkout)
+#        Erkennung frischer Klon (T5, Entscheidung Q19 b - kein Marker mehr): eine Sitzung im Root-Ordner
+#        verhaelt sich seitdem IMMER wie ein frischer Klon, unabhaengig davon, ob hier auch am Template
+#        selbst gearbeitet wird. Wer das Template weiterentwickelt, startet die Pflege-Sitzung stattdessen im
+#        Ordner .templatedev/ (eigene AGENTS.md/CLAUDE.md dort, siehe .templatedev/docs/project/coding_rules.md) - dort greift
+#        dieser Hook gar nicht (er haengt nur an der Root-settings.json).
 #          - is_template fehlt/nicht lesbar/kein Objekt        -> kein Kontext (kein Template mehr)
-#          - is_template: true, kein Marker                    -> frischer Klon: Kontext bei jeder Eingabe
+#          - is_template: true                                 -> frischer Klon: Kontext bei jeder Eingabe
 #
 #        Ausnahme: Eingaben, die nur die Befehlsliste zeigen sollen ("/act", "/act all", "/act <name>"),
 #        bekommen keinen Kontext - dafuer blockt bereits der eigene Hook in act-help.py mit der Liste, ein
@@ -53,11 +55,11 @@ Weg 1, neues Projekt: /act-create-project oder ein Satz wie "Erstelle eine neue 
 Weg 2, bestehendes Repo nachruesten: /act-apply-template oder ein Satz wie "Nutze das Template in <pfad>".
 /act zeigt alle Befehle.
 
-Hinweis fuer Template-Pfleger (dem Nutzer nennen, nie selbst anlegen): Wer diese Vorlage selbst \
-weiterentwickelt, legt einmalig .templatedev/.maintainer an - danach bleibt dieser Hinweis aus.
+Wer das Template weiterentwickelt, startet die Sitzung im Ordner .templatedev/ - dort gelten eigene Regeln,\
+ und dieser Hinweis erscheint nicht mehr.
 
 Steht "is_template" in einem abgeleiteten Projekt faelschlich noch in .claude/template.json, dem Nutzer \
-nennen (nie selbst ausfuehren): .templatedev/.maintainer anlegen oder den Schluessel "is_template" entfernen.
+nennen (nie selbst ausfuehren): den Schluessel "is_template" aus .claude/template.json entfernen.
 
 Andere Auftraege nicht ausfuehren, bevor sich der Nutzer fuer einen der beiden Wege entschieden hat oder \
 ausdruecklich bestaetigt, dass er trotzdem so arbeiten will."""
@@ -73,11 +75,10 @@ def _root() -> Path:
 
 
 def _ist_frischer_klon(root: Path) -> bool:
-    """True nur bei is_template:true ohne Pflege-Marker. Jeder Lesefehler/jede unerwartete Form -> False,
-    also kein Kontext - im Zweifel nichts ausgeben."""
+    """True nur bei is_template:true (T5: kein Marker mehr - eine Sitzung im Root-Ordner verhaelt sich immer
+    wie ein frischer Klon, die Pflege-Sitzung laeuft in .templatedev/ und sieht diesen Hook nicht). Jeder
+    Lesefehler/jede unerwartete Form -> False, also kein Kontext - im Zweifel nichts ausgeben."""
     try:
-        if (root / ".templatedev" / ".maintainer").is_file():
-            return False
         cfg = json.loads((root / ".claude" / "template.json").read_text(encoding="utf-8"))
         return isinstance(cfg, dict) and bool(cfg.get("is_template"))
     except (OSError, ValueError):

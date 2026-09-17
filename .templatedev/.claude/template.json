@@ -1,0 +1,16 @@
+{
+  "setup_complete": true,
+  "values": {
+    "PROJEKTNAME": "Template-Pflege",
+    "AUFTRAGGEBER": "Wolfgang",
+    "ORCHESTRATOR": "Opus",
+    "STACK": "Python 3 + Markdown (Agentic-Coding-Template)",
+    "DATUM": "2026-09-17",
+    "INSTALL_BEFEHL": "—",
+    "DEV_START_BEFEHL": "—",
+    "LINT_BEFEHL": "python -m py_compile ../.claude/scripts/*.py scripts/*.py",
+    "TYPECHECK_BEFEHL": "—",
+    "TEST_BEFEHL": "python ../.claude/scripts/check-refs.py --root .. --check && python ../.claude/scripts/check-refs.py --root . --check",
+    "E2E_BEFEHL": "—"
+  }
+}

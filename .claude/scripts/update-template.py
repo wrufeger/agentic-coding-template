@@ -171,18 +171,19 @@ DEFAULT_NO_REPLACE = [
 # kein Import zwischen den Scripten, jedes bleibt fuer sich Stdlib-eigenstaendig, siehe DEFAULT_NO_REPLACE
 # oben). `create-project.py` entfernt sie beim Anlegen eines Projekts, `apply-template.py` kopiert sie nie -
 # ein Merge darf sie darum nie ins Projekt tragen: `.templatedev/` (Board/Backlog/Fragen/Ledger/Regeln der
-# Template-Entwicklung), `.github/README.md` (Template-Beschreibung fuer GitHub, hat Vorrang vor der
-# Projekt-README) und `.claude/scripts/template-welcome.py` (Hinweis-Hook fuer einen frischen
-# Template-Klon - der zugehoerige UserPromptSubmit-Eintrag in settings.json bleibt normale Merge-Sache,
-# siehe remove_welcome_hook() in files-lib.py). Bare Pfade ohne Wildcard: _remove_template_only() braucht sie so fuer `git rm -r -f` und
+# Template-Entwicklung, seit T5 in `.templatedev/docs/ai/` bzw. `.templatedev/docs/project/` - schliesst
+# dessen eigenen `.claude/skills/act-process-feedback`, den Skill der Template-Pflege, mit ein), `.github/
+# README.md` (Template-Beschreibung fuer GitHub, hat Vorrang vor der Projekt-README) und
+# `.claude/scripts/template-welcome.py` (Hinweis-Hook fuer einen frischen Template-Klon - der zugehoerige
+# UserPromptSubmit-Eintrag in settings.json bleibt normale Merge-Sache, siehe remove_welcome_hook() in
+# files-lib.py). Bare Pfade ohne Wildcard: _remove_template_only() braucht sie so fuer `git rm -r -f` und
 # das Path.exists()/is_dir()-Fallback (ein Ordner-Eintrag entfernt den Ordner rekursiv); matches_keep_local()
-# deckt dank Ordner-Praefix-Logik trotzdem auch einzelne Dateien darunter ab (z.B. ".templatedev/backlog.md").
+# deckt dank Ordner-Praefix-Logik trotzdem auch einzelne Dateien darunter ab (z.B. ".templatedev/docs/ai/backlog.md").
 # Werden normal gemergt (--check zeigt sie nur getrennt als "nicht eingespielt"), aber --apply/--continue
 # entfernt sie danach wieder aus dem Arbeitsbaum - siehe _remove_template_only().
 DEFAULT_TEMPLATE_ONLY = [
     ".github/README.md",
     ".templatedev",
-    ".claude/skills/act-process-feedback",  # Skill der Template-Pflege, zieht mit T5 nach .templatedev/
     ".claude/scripts/template-welcome.py",  # Hinweis-Hook fuer einen frischen Template-Klon (Review 2026-09-17)
 ]
 
@@ -262,7 +263,7 @@ def abgewaehlte_pfade(cfg: dict) -> list:
 # B38: abgeschlossene Projekte (setup_complete) - Setup-only-Abschnitte, die /act-finalize (finish-setup.py)
 # entfernt hat, duerfen ein Update nicht zurueckholen. Statt die Marker/Listen hier zu duplizieren, werden
 # finish-setup.py und setup-lib.py als Module NACHGELADEN (importlib, gleicher Ordner) - siehe
-# .templatedev/regeln.md "Pfadlisten haengen zusammen". Betroffen: REMOVE_ITEMS (ganze Dateien/Ordner, z.B.
+# .templatedev/docs/project/coding_rules.md "Pfadlisten haengen zusammen". Betroffen: REMOVE_ITEMS (ganze Dateien/Ordner, z.B.
 # create-project.py) und zwei Text-Ausschnitte innerhalb sonst normal gepflegter Dateien (template-only-
 # Bloecke in AGENTS.md/CLAUDE.md, Checklisten-Abschnitte in docs/ai/checklists.md).
 #
@@ -1575,7 +1576,7 @@ def _resolve_template_json_merge(root: Path, cfg: dict, ours_ref: str, theirs_re
     (Projekt ergaenzt keep_local, Template ergaenzt no_replace) mergt git oft klaglos automatisch, und der
     abschliessende save_template_json(cfg) in _finalize wuerde eine so automatisch gemergte Fassung sonst
     unbemerkt wieder verwerfen, weil cfg noch den Vor-Merge-Stand des Projekts traegt (siehe
-    .templatedev/backlog.md Punkt 1 - genau dieser Fall blieb bisher unbemerkt liegen). ours_ref/theirs_ref:
+    .templatedev/docs/ai/backlog.md Punkt 1 - genau dieser Fall blieb bisher unbemerkt liegen). ours_ref/theirs_ref:
     Commit vor dem Merge (Projekt) bzw. die Vergleichs-Ref des Templates.
 
     Schreibt bei Erfolg das Ergebnis in cfg (in place) UND auf die Platte, git add - das loest nebenbei auch
@@ -2257,6 +2258,39 @@ def _run(argv) -> int:
     args = parser.parse_args(argv)
 
     root = _find_root()
+
+    # T5: die Pflege-Sitzung des Templates in .templatedev/ hat kein eigenes Template, gegen das gemergt
+    # werden koennte - "Update" heisst dort stattdessen "Root-Arbeitsstand neu rendern" (sync-rules.py,
+    # siehe .templatedev/docs/project/concepts/project-structure.md). --check/--apply/--status leiten
+    # deshalb dorthin weiter statt zu verweigern; alles andere (--graft, --continue, Remote-Operationen)
+    # bleibt gesperrt - fuer einen echten Merge gibt es hier keinen Sinn.
+    cl = _config_lib_module()
+    if cl.is_template_maintenance_dir(root):
+        sync_rules = root / "scripts" / "sync-rules.py"
+        if args.check:
+            sr_args = ["--check"] + (["--quiet"] if args.quiet else [])
+        elif args.apply:
+            sr_args = None  # --diff zuerst zeigen, danach --apply (siehe unten)
+        elif args.status:
+            sr_args = ["--check"]
+        else:
+            print(f"update-template.py: Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
+            return 2
+
+        if not sync_rules.is_file():
+            print(f"update-template.py: Fehler: {sync_rules} fehlt.", file=sys.stderr)
+            return 2
+
+        if args.apply:
+            res_diff = subprocess.run([sys.executable, str(sync_rules), "--diff"])
+            if res_diff.returncode != 0:
+                return res_diff.returncode
+            res_apply = subprocess.run([sys.executable, str(sync_rules), "--apply"])
+            return res_apply.returncode
+
+        res = subprocess.run([sys.executable, str(sync_rules)] + sr_args)
+        return res.returncode
+
     cfg, path = load_template_json(root)
 
     if args.status:

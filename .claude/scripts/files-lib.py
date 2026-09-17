@@ -5,7 +5,7 @@
 # (replace_placeholders/_iter_text_files), der Datenverlust-Schutz beim Entfernen (ungesicherte_pfade) samt
 # der drei remove_*_files-Funktionen, Hook-Pflege in .claude/settings.json, Orchestrator-Modell/Logging-
 # Schalter setzen und die JSON-/Text-Schreibhelfer (_read_*/_write_*). Herausgetrennt aus setup-lib.py
-# (Backlog/.templatedev/questions.md Q4), das als duenne Fassade (Re-Export dieser drei Module) plus dem
+# (Backlog/.templatedev/docs/ai/questions.md Q4), das als duenne Fassade (Re-Export dieser drei Module) plus dem
 # eigentlichen Setup-Ablauf bestehen bleibt - siehe dort. Braucht TOOL_FILES aus config-lib.py (per
 # importlib, gleiches Muster wie sync-config.py/rename-lib.py - Bindestrich im Dateinamen verbietet ein
 # normales `import`); run_git und _load_template_update_module sind hier bewusst dupliziert (wie in vielen
@@ -155,7 +155,7 @@ def setup_docs_maintenance_reports(root: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Schutz vor Datenverlust beim Entfernen (Backlog #30, .templatedev/backlog.md)
+# Schutz vor Datenverlust beim Entfernen (Backlog #30, .templatedev/docs/ai/backlog.md)
 # ---------------------------------------------------------------------------
 #
 # Abschalten loescht Dateien - das bleibt so, darf aber nie Dateien treffen, die nirgendwo sonst liegen:
@@ -640,13 +640,15 @@ def remove_welcome_hook(root: Path):
     return changed, fremde
 
 
-# Zeilen in .gitignore, die ausschliesslich fuer den Template-Checkout selbst Sinn ergeben (Marker-Dateien
-# fuer den Pflege-Modus, siehe template-welcome.py) - ein neu angelegtes oder nachgeruestetes Projekt braucht
-# sie nicht, der zugehoerige Hinweis-Hook ist dort ohnehin schon entfernt (remove_welcome_hook). Reiner
-# Ballast, kein Schutz vor irgendetwas - deshalb genuegt ein exakter Zeilenabgleich statt einer eigenen
-# Pfadliste wie TEMPLATE_ONLY_PATHS.
-WELCOME_GITIGNORE_LINES = [".templatedev/.maintainer",
-                           "# Marker fuer Template-Pfleger (B51, nur im Template-Checkout relevant) - lokal, nie versioniert"]
+# Zeilen in .gitignore, die ausschliesslich fuer den Template-Checkout selbst Sinn ergeben - ein neu
+# angelegtes oder nachgeruestetes Projekt braucht sie nicht, der zugehoerige Hinweis-Hook ist dort ohnehin
+# schon entfernt (remove_welcome_hook). Reiner Ballast, kein Schutz vor irgendetwas - deshalb genuegt ein
+# exakter Zeilenabgleich statt einer eigenen Pfadliste wie TEMPLATE_ONLY_PATHS.
+# T5 (Entscheidung Q19 b): der frueher hier gelistete Marker ".templatedev/.maintainer" entfaellt ersatzlos -
+# eine Sitzung im Template-Root verhaelt sich seitdem IMMER wie ein frischer Klon, kein Marker mehr noetig.
+# Liste bleibt bewusst als Mechanismus stehen (remove_welcome_gitignore_lines() bleibt aufrufbar, wird nur zum
+# No-op), falls ein kuenftiger Template-only-Hinweis in .gitignore denselben Weg braucht.
+WELCOME_GITIGNORE_LINES = []
 
 
 def remove_welcome_gitignore_lines(root: Path) -> list:

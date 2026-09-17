@@ -19,7 +19,7 @@ Gebaut wird danach, über `/prepare` und den normalen Ablauf.
    Dateien wären betroffen? Und vor allem — **widerspricht der Wunsch einer getroffenen Entscheidung**
    (`docs/project/decisions.md`)? Wenn ja, steht das an erster Stelle, nicht als Fußnote: Dann geht es nicht
    um ein Feature, sondern um die Revision eines ADR, und das ist eine andere Frage.
-3. **Konzept schreiben** nach `docs/project/konzepte/<thema>.md`: Ausgangslage mit Fundstellen, **Optionen**
+3. **Konzept schreiben** nach `docs/project/concepts/<thema>.md`: Ausgangslage mit Fundstellen, **Optionen**
    (je Beschreibung, Vorteile, Nachteile, Aufwand), **Empfehlung**. Die Option „nichts tun" gehört dazu, mit
    ihren Folgen — manchmal ist sie die richtige.
 4. **Zur Entscheidung vorlegen** als Frage in `docs/ai/questions.md`, Optionen `a)`/`b)`/`c)`, Empfehlung

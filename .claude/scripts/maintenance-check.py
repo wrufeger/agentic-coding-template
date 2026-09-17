@@ -46,6 +46,7 @@
 # Fehler dieses Scripts darf nie mit Traceback nach aussen dringen (main() laeuft komplett in try/except).
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -465,10 +466,29 @@ def build_parser():
     return parser
 
 
+def _load_config_lib_module():
+    """config-lib.py per importlib (gleicher Ordner) - nur fuer is_template_maintenance_dir()/
+    TEMPLATE_MAINTENANCE_DIR_HINWEIS (T5), sonst bleibt dieses Script bewusst frei von der Bibliothek."""
+    cl_path = Path(__file__).resolve().parent / "config-lib.py"
+    spec = importlib.util.spec_from_file_location("_maintenance_check_config_lib", cl_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _run(argv) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     root = _find_root()
+
+    cl = _load_config_lib_module()
+    if cl.is_template_maintenance_dir(root):
+        # T5: die Pflege-Sitzung des Templates hat keine eigene Wartung - ausser dem automatischen
+        # --check/--quiet-Hook (SessionStart), der bleibt still/Exit 0.
+        if args.quiet and args.done is None and args.set is None and not args.status and not args.list:
+            return 0
+        print(f"maintenance-check.py: Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
+        return 2
 
     if not (root / "AGENTS.md").exists():
         return 0  # kein Projekt aus diesem Template - still, kein Fehler

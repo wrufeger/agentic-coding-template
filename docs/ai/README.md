@@ -74,7 +74,7 @@ führt das `ledger.md`.
 
 ## Aufgaben (`tasks.md`, `tasks_archive.md`)
 
-<!-- check-refs:ignore -->
+<!-- check-refs:ignore-start -->
 Jede Aufgabe bekommt eine fortlaufende Nummer mit Präfix `T<n>` (z. B. `T7`) — projektweite Referenz-ID, die
 in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archivieren nicht.
 
@@ -123,6 +123,7 @@ in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archi
   bis fünf Wörtern); freier Text ist immer zusätzlich möglich. Höchstens drei bis vier Zeilen Kontext vor der
   Frage, kein Fließtext, keine Herleitung. Eine Frage = eine Entscheidung.
 - **Damit Frage, Optionen und Antwortzeile gerendert erkennbar untereinander stehen** (IDE-Vorschau, GitHub):
+<!-- check-refs:ignore -->
   die Frage fett als eigener Absatz (`**Q3 · …**`), die Optionen als Markdown-Liste (`- a) …`), davor **und**
   vor der `* Antwort:`-Zeile je eine Leerzeile. Eingerückte Zeilen ohne Leerzeilen fließen beim Rendern zu
   einem Absatz zusammen und sind dann nicht mehr auseinanderzuhalten.
@@ -141,6 +142,7 @@ in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archi
 - b) abbrechen — nichts wird importiert, Ursache zuerst klären
 
 Blockiert T12, solange offen.
+<!-- check-refs:ignore-end -->
 
 * Antwort:
 ```
@@ -282,6 +284,7 @@ Die Kürzel werden überall im Repo zitiert. Damit sie nutzbar bleiben, gilt:
 
 - **Kürzel bleiben nackt, es wird nicht verlinkt.** Ein Markdown-Link kann in dieser Struktur nur auf die
   Datei zeigen, nicht auf den Eintrag — Aufgaben, Fragen und Backlog-Punkte sind Listen- oder Tabellenzeilen
+<!-- check-refs:ignore -->
   ohne eigene Überschrift, also ohne Anker. Wer `B22` anklickt, landet am Kopf von `backlog.md` und sucht von
   dort doch wieder selbst. Die Tabelle oben sagt, in welcher Datei zu suchen ist; die Suche nach dem Kürzel
   findet den Eintrag schneller als ein Link, der nur den Dateinamen wiederholt.
@@ -303,7 +306,7 @@ unterbringen will, legt sie nicht als neue Datei daneben, sondern an einen der v
 
 | Was | Wohin |
 | :--- | :--- |
-| Konzept, Analyse, Abwägung, Umbauplan | `../project/konzepte/` — eine Datei je Thema, siehe README dort |
+| Konzept, Analyse, Abwägung, Umbauplan | `../project/concepts/` — eine Datei je Thema, siehe README dort |
 | Abgegrenztes Vorhaben mit Umfang und Abnahme | `../project/stories/S<n>-….md` |
 | Ergebnis einer Entscheidung | `../project/decisions.md` (ADR) |
 | IST-Zustand des Projekts | die feste Dateiliste in `../project/` |

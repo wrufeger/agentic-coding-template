@@ -1,8 +1,12 @@
 # Gilt nur fuer die Template-Entwicklung - der ganze Ordner wird beim Anlegen eines Projekts entfernt.
 
-# Abgeholte Rueckmeldungen fremder Projekte (feedback-abholen.py). Fremde Daten gehoeren nicht in ein
+# Abgeholte Rueckmeldungen fremder Projekte (feedback-fetch.py). Fremde Daten gehoeren nicht in ein
 # oeffentliches Repo - ausgewertet wird lokal, ins Journal kommt nur das Muster.
-daten/feedback/
+docs/project/data/feedback/
 
 # Konfiguration des Endpunkts - enthaelt das gemeinsame Geheimnis.
-scripts/feedback-endpunkt.config.php
+scripts/feedback-endpoint.config.php
+
+# Sitzungseigene Werkzeugdaten, nie versioniert.
+.claude/settings.local.json
+ai.log*

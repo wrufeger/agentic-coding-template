@@ -51,27 +51,11 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 <!-- template-only:start -->
 ## Noch nicht initialisiert — abweichende Regeln
 
-Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das so ist:
-
-- **`docs/` ist Gerüst, kein Inhalt.** `docs/project/` beschreibt ein Projekt, das es hier nicht gibt;
-  `docs/ai/` (Board, Aufgaben, Fragen, Ledger, Backlog) sind leere Formulare. Beides bleibt leer — alles,
-  was hier hineingeschrieben wird, landet später in jedem abgeleiteten Projekt.
-- **Stattdessen der Ordner `.templatedev/`** im Repo-Root: Aufgaben, Backlog, Fragen, Journal, Regeln und die
-  Übersicht der Testprojekte, versioniert wie jede andere Datei. Einstieg über `.templatedev/INDEX.md`.
-  Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist — `docs/` bleibt tabu.
-- **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;
-  für die Arbeit am Template genügt das Journal in `.templatedev/ledger.md`.
-- **Frischer Klon zuerst erklären.** Fehlt `.templatedev/.maintainer` (lokaler Marker der Template-Pflege), ist
-  das hier ein frisch geklontes Template: Jede Eingabe, die nicht erkennbar ein Projekt anlegen oder nachrüsten
-  will — auch „hallo" oder „wie geht das hier" —, bekommt zuerst den kurzen Hinweis auf die beiden Wege
-  (`/act-create-project` bzw. „Erstelle eine neue Anwendung in <pfad>", `/act-apply-template` bzw. „Nutze das
-  Template in <pfad>"). Claude Code erledigt das per Hook (`.claude/scripts/template-welcome.py`, dort der
-  Wortlaut); andere Werkzeuge halten sich an diese Regel.
-- **Alles Übrige gilt unverändert:** Rollen und Delegation an Worker, Modell-/Kostenlogik, „fertig nur mit
-  Beleg", Commits per Pathspec, Tabu-Bereich, Umgang mit Safeguard-Warnungen, Zugriff auf laufende Systeme.
-
-Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in `CLAUDE.md` und der Ordner
-`.templatedev/` automatisch entfernt.
+Dieses Repo ist die Vorlage: Hier entstehen nur neue Projekte oder Nachrüstungen (Weg 1/2, `CLAUDE.md` § 2);
+`docs/ai/` und `docs/project/` bleiben leere Formulare. Die Pflege der Vorlage selbst läuft ausschließlich in
+einer eigenen Sitzung, die im Ordner `.templatedev/` gestartet wird (eigene Regeln dort, strikte Trennung vom
+Root, kein Schalter — Q19). **Frischer Klon zuerst erklären:** Eingaben ohne erkennbaren Auftrag zum Anlegen
+oder Nachrüsten bekommen zuerst den Hinweis auf beide Wege (`.claude/scripts/template-welcome.py`).
 <!-- template-only:end -->
 
 ## Grundregeln
@@ -132,7 +116,7 @@ Beim Anlegen eines Projekts werden dieser Abschnitt, der entsprechende Block in 
   und **erst verarbeitet, wenn alle beantwortet sind**. Fragen bleiben nach Nummer sortiert und werden nie
   umnummeriert; bei vielen offenen Fragen kommen Themen-Überschriften dazu.
 - **Eine Idee wird erst analysiert, dann gebaut.** Äußert {{AUFTRAGGEBER}} ein Feature, eine Idee oder einen
-  Änderungswunsch, entsteht daraus zuerst ein Konzept in `docs/project/konzepte/` — Ausgangslage, Optionen,
+  Änderungswunsch, entsteht daraus zuerst ein Konzept in `docs/project/concepts/` — Ausgangslage, Optionen,
   Empfehlung — und eine Entscheidung, nicht sofort Code. Erst danach werden Aufwand, fehlende Werkzeuge und
   die Aufteilung geschätzt und in Backlog und Aufgaben verbucht. Ablauf: Checkliste „Idee oder
   Änderungswunsch aufnehmen" (`docs/ai/checklists.md`). Für Kleinigkeiten darf abgekürzt werden — die

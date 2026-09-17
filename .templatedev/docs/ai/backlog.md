@@ -67,7 +67,7 @@
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B33 | offen | Aufgaben erst eintragen, wenn ausführbar | Machen: Aufgaben im Tabu-Bereich erst eintragen, wenn alle Voraussetzungen erfüllt sind (Code gepusht, Fragen beantwortet). [Details](#b33) |
-| [x] | B40 | mittel | Formatregel für Fragen rendert falsch | Erledigt 2026-09-17: Frage fett als Absatz, Optionen als Liste, Leerzeilen; `.templatedev/questions.md` noch im alten Format. [Details](#b40) |
+| [x] | B40 | mittel | Formatregel für Fragen rendert falsch | Erledigt 2026-09-17: Frage fett als Absatz, Optionen als Liste, Leerzeilen; `.templatedev/docs/ai/questions.md` seit T5 im neuen Format. [Details](#b40) |
 | [x] | B5 | offen | Fußnoten-Konvention Datenstände | 2026-09-13: Fußnoten-Konvention für fehlende Datenstände eingeführt (`docs/README.md`). |
 | [x] | B6 | offen | Incident als Einzeldatei | 2026-09-13: Incident-Schema als Einzeldatei beschrieben (`docs/project/incidents/README.md`). |
 
@@ -75,9 +75,9 @@
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B35 | niedrig | Pflege-Modus im Root per .env | Idee: `TEMPLATEDEV_MODE=ein` per `.env` lässt eine Root-Sitzung wie in `.templatedev/` arbeiten; ~0,5 PT, Entscheidung Q15. [Details](#b35) |
 | [ ] | B46 | niedrig | Hooks: Interpreter-Probe je Aufruf kostet Zeit | Neu (Review): jeder Hook startet Python zweimal; Probe je Sitzung zwischenspeichern, falls Latenz stört. [Details](#b46) |
 | [ ] | B47 | niedrig | Hooks führen ungeprüfte Merge-Fassung aus | Neu (Review): Hooks starten Scripte aus dem Arbeitsbaum, auch eine gemergte, noch nicht committete Fassung; Restrisiko bei nicht erkanntem `MERGE_HEAD`. [Details](#b47) |
+| [ ] | B52 | niedrig | Restrisiken Pflege-Projekt prüfen | Neu (Review T5): `claudeMdExcludes` mit Laufwerksbuchstaben, Skill-Suche im Monorepo, Sub-Agenten aus dem Root in `.templatedev/` erneut belegen. [Details](#b52) |
 | [x] | B22 | hoch | Erkenntnisse aus bandliste prüfen | Erledigt 2026-09-17: 6 Kandidaten aus `bandliste` — Ersetzung ohne `node_modules`/Build-Ordner (versionierte + neue nicht ignorierte Dateien), Kodierungsregel in `AGENTS.md`, 4 Regelbausteine Nuxt/Vue; Rest rein fachlich. [Details](#b22) |
 | [x] | B42 | niedrig | Warnung vor bewusst gehaltenen Altnamen | Erledigt 2026-09-17: `LEGACY_REMOVE_PATHS` in `setup-lib.py`, Selbstprüfung überspringt sie. [Details](#b42) |
 | [x] | B7 | offen | Atomares Schreiben von Statusdateien | 2026-09-13: `status.json`/`template.json` werden atomar geschrieben (`maintenance-check.py`, `update-template.py`, `setup-lib.py`). |
@@ -199,9 +199,9 @@
 
 - angelegt 2026-09-14, Priorität offen, Status: in Arbeit
 - Projekte aus dem Template sollen sich freiwillig als Testkandidat melden (Datum, öffentliche Repo-URL, Weg neu/nachgerüstet, Ausfüllart leer/Interview/Config), damit `.templatedev` ihre Weiterentwicklung auswerten kann
-- Konzept mit vier Optionen und Aufwand: `konzept-feedback.md`; erst `Q1`–`Q3` entscheiden, dann bauen — es geht um fremde Daten, Gegenstelle gab es anfangs nicht
+- Konzept mit vier Optionen und Aufwand: `../project/concepts/feedback.md`; erst `Q1`–`Q3` entscheiden, dann bauen — es geht um fremde Daten, Gegenstelle gab es anfangs nicht
 - Stand 2026-09-14: `Q1`–`Q3` beantwortet (eigener Endpunkt, Frage einmalig bei `/finalize`; Steuerung inzwischen doch in `AI-CONFIG.md`, siehe Nachtrag im Konzept); Client-Seite gebaut (`.claude/scripts/feedback.py`), Schnittstellenvertrag im Konzept
-- Stand 2026-09-15: beide Gegenstellen gebaut — `.templatedev/scripts/feedback-endpunkt.php` (öffentliches `POST`, JWT-geschütztes `GET /inbox` + `POST /ack`) und `.templatedev/scripts/feedback-abholen.py`; belegt gegen einen laufenden `php -S`; Sendeprotokoll im Projekt gitignorierbar (`feedback.py --enable --protokoll lokal`), Abgeholtes hier grundsätzlich gitignored
+- Stand 2026-09-15 (seit T5 unter neuem Namen): beide Gegenstellen gebaut — `.templatedev/scripts/feedback-endpoint.php` (öffentliches `POST`, JWT-geschütztes `GET /inbox` + `POST /ack`) und `.templatedev/scripts/feedback-fetch.py`; belegt gegen einen laufenden `php -S`; Sendeprotokoll im Projekt gitignorierbar (`feedback.py --enable --protokoll lokal`), Abgeholtes hier grundsätzlich gitignored
 - Offen: Ausrollen auf `rufeger.de` (Datei, Geheimnis, Ablage außerhalb des Web-Roots), Datenschutzhinweis unter der URL, danach die eigentliche Auswertung
 
 <a id="b30"></a>
@@ -237,7 +237,7 @@
   3. Ablage umgebaut: `<subject>.md` + `<subject>.json` unter `docs/ai/template-feedback/`, beim Senden nach `sent/`; bisheriger Ausgang `.claude/feedback-outbox.json` entfällt
   4. `feedback.md` als Fragebogen (Fragen, Freitext; beim Senden Antworten zusammenfassen, ans Dateiende anfügen, Fragen/Überschriften wiederherstellen)
   5. eigener `SessionStart`-Hook für die Erinnerung beim Takt `adaptiv`
-  6. Endpunkt auf Schema 2 (`.templatedev/scripts/feedback-endpunkt.php`): neue Felder, Wortlisten, 32-KB-Deckel prüfen
+  6. Endpunkt auf Schema 2 (`.templatedev/scripts/feedback-endpoint.php`): neue Felder, Wortlisten, 32-KB-Deckel prüfen
   7. Zusagetexte nachgezogen: `AGENTS.md`, `/finalize`, `/feedback`, `docs/ai/template-feedback/README.md`
 
 **Ursprünglicher Wunsch (Wortlaut):**
@@ -273,7 +273,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 
 - angelegt 2026-09-16
 - Wolfgang liest „Aufgaben nur für {{AUFTRAGGEBER}}" als Arbeitsliste und führt die Schritte nacheinander aus — eine `Offen:`-Zeile hält ihn davon nicht ab
-- Anlass: die Test-Aufgabe für `bandliste` stand in `.templatedev/tasks.md`, bevor T1–T3 gebaut und gepusht waren
+- Anlass: die Test-Aufgabe für `bandliste` stand in `.templatedev/docs/ai/tasks.md` (damals `.templatedev/tasks.md`), bevor T1–T3 gebaut und gepusht waren
 - Regel für `AGENTS.md` § Tabu-Bereich und `docs/ai/README.md`: eine Aufgabe für den Auftraggeber erscheint erst, wenn alle Voraussetzungen erfüllt sind (Code gepusht, Fragen beantwortet); bis dahin steht sie als Folgeschritt in der Aufgabe des Assistenten, die sie auslöst
 
 <a id="b34"></a>
@@ -282,14 +282,6 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - angelegt 2026-09-16, Priorität später
 - `/issue` und `/integrations` (T1, T3) bauen zunächst nur GitLab und GitHub (Q11)
 - danach dieselben Abläufe über MCP (`atlassian`, `linear`); YouTrack fehlt noch im Katalog `.claude/mcp-katalog.md`
-
-<a id="b35"></a>
-### B35 · Pflege-Modus im Root per .env
-
-- angelegt 2026-09-17, Priorität gering, Status: Idee
-- `TEMPLATEDEV_MODE=ein` lässt eine Sitzung im Root so arbeiten, als liefe sie in `.templatedev/` — Hook-Hinweis, Scripte mit `.templatedev/` als Projektordner, Sperren für `create-project`/`apply-template`/`finalize`
-- Grenzen und Aufwand (~0,5 PT): `concept-project-structure.md` § „Pflege-Modus im Root"
-- Entscheidung: Q15
 
 <a id="b36"></a>
 ### B36 · Template-Update bleibt als halber Merge stehen
@@ -337,6 +329,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - das Beispiel in `docs/ai/README.md` § Fragen nutzt eingerückte Zeilen ohne Leerzeilen; in IDE-Vorschau und auf GitHub fließen Frage, Optionen und Antwort zusammen
 - bewährt: Frage fett als eigener Absatz, Optionen als Liste `- a) …`, Leerzeile vor Liste und Antwortzeile
 - passt zu T5 (Formregeln in `.templatedev/`): Regel und Beispiel im Template zuerst ändern, dann erben
+- umgesetzt in `.templatedev/docs/ai/questions.md` (T5 Schritt 2, 2026-09-17)
 
 <a id="b41"></a>
 ### B41 · Erläuterungen aus AI-CONFIG.md auslagern
@@ -377,7 +370,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 
 - angelegt und erledigt 2026-09-17, Wunsch Wolfgang
 - Regel: im Gespräch nur den Pfad der aktuellen Plattform, in Doku `~` mit Erklärung oder Liste je Plattform, Scripte zur Laufzeit
-- `AGENTS.md` § Doku, Tests, Coding; `CLAUDE.md` § 4 (`~/.claude.json`); `.templatedev/regeln.md`
+- `AGENTS.md` § Doku, Tests, Coding; `CLAUDE.md` § 4 (`~/.claude.json`); `.templatedev/docs/project/coding_rules.md`
 
 <a id="b46"></a>
 ### B46 · Hooks: Interpreter-Probe je Aufruf kostet Zeit
@@ -437,3 +430,12 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - entschieden 2026-09-17 (Wolfgang): lieber ein paar Token — `UserPromptSubmit`-Hook `template-welcome.py` gibt dem Modell per `additionalContext` die Anweisung, die Eingabe zu bewerten; Werkzeuge ohne Hooks über die Regel in `AGENTS.md` (Block „Noch nicht initialisiert")
 - beim Anlegen/Nachrüsten werden Script, Hook-Eintrag und `.gitignore`-Zeile entfernt
 - **Erledigt 2026-09-17**, Review ALLOW. Restpunkte: ein vorher angelegtes Projekt bekommt den Hook-Eintrag per `/act-update-template` zurück (Script fehlt, `is_template` fehlt → still, kostet einen Python-Start; wie beim Wartungs-Hook); `/ACT` in Großbuchstaben fängt `act-help.py` nicht ab
+
+<a id="b52"></a>
+### B52 · Restrisiken des Pflege-Projekts belegen
+
+- angelegt 2026-09-17 aus dem Review zu T5, Priorität niedrig
+- `claudeMdExcludes` mit Windows-Laufwerksbuchstaben per Versuch belegt (D:/…); auf macOS/Linux einmal gegenprüfen
+- `act-help.py` sucht Skills bis zum Git-Root; ob Claude Code selbst genau dort stoppt (Monorepo), ist nicht belegt
+- `.templatedev/` hat keine eigenen Sub-Agenten — dass sie aus dem Root kommen, zeigte der Versuch vom 2026-09-16; in der ersten echten Pflege-Sitzung bestätigen
+- `update-template.py --apply` im Pflege-Ordner zeigt den Diff und schreibt ohne Rückfrage — die Rückfrage stellt der Skill; ggf. `--yes` verlangen

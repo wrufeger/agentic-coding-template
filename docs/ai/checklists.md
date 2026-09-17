@@ -16,7 +16,7 @@ Analyse und eine Entscheidung; sonst entsteht etwas, das niemand so bestellt hat
 
 1. **Wortlaut festhalten.** Der Wunsch in {{AUFTRAGGEBER}}s eigenen Worten, unverändert — er ist die
    Messlatte für alles Weitere. Nachfragen nur, wenn ohne die Antwort nicht einmal klar ist, worum es geht.
-2. **Analysieren, nicht schätzen.** Ein Konzept in `docs/project/konzepte/<thema>.md` (Format siehe README
+2. **Analysieren, nicht schätzen.** Ein Konzept in `docs/project/concepts/<thema>.md` (Format siehe README
    dort): Ausgangslage mit Fundstellen `Datei:Zeile`, dann **Optionen** — je Option Beschreibung, Vorteile,
    Nachteile, Aufwand. Dazu gehört immer auch die Option „nichts tun" mit ihren Folgen. Was schon entschieden
    ist (`docs/project/decisions.md`), wird geprüft: Widerspricht der Wunsch einer bestehenden Entscheidung,
@@ -329,7 +329,7 @@ Bereich `ai` — Arbeitsordner `docs/ai/` auf Ordnung prüfen, ohne Code-Zugriff
 - **Board-Hygiene:** erledigte Punkte unter „Als Nächstes", beantwortete Fragen unter „Ausstehende
   Freigaben", eine Kurzbilanz, die über eine Bildschirmseite hinausgeht.
 - **Freie Dateien in `docs/ai/`:** alles außerhalb der festen Dateiliste (`docs/ai/README.md` § Dateien)
-  gehört woandershin — Konzepte und Analysen nach `docs/project/konzepte/`, abgegrenzte Vorhaben nach
+  gehört woandershin — Konzepte und Analysen nach `docs/project/concepts/`, abgegrenzte Vorhaben nach
   `docs/project/stories/`, Entscheidungen nach `docs/project/decisions.md`.
 - **Vorlagenreste:** Kopfzeilen, die noch „Status: Vorlage, noch nicht projektspezifisch" tragen, obwohl die
   Datei längst Projektinhalt hat, oder ein Statuswort außerhalb des Vokabulars in `docs/README.md`
@@ -545,8 +545,12 @@ Arbeitsdateien, README) bleiben dabei erhalten:
    ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit einem Platzhalter der Form `{{NAME}}` mitbringt).
 6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,
    Konfigurationsdateien weiterhin gültig, Logging weiterhin funktionsfähig.
-7. Commit per Pathspec — sobald keine Konflikte mehr offen sind, sofort committen oder ausdrücklich fragen,
+7. **Sonderfall `docs/project/konzepte/`:** Der Ordner steht unter `keep_local` und wird beim Merge deshalb
+   nie automatisch umbenannt. Existiert er im Projekt noch (statt `docs/project/concepts/`), wird
+   vorgeschlagen, ihn per `git mv docs/project/konzepte docs/project/concepts` umzuziehen und alle Verweise
+   darauf nachzuziehen — nur nach Zustimmung von {{AUFTRAGGEBER}}.
+8. Commit per Pathspec — sobald keine Konflikte mehr offen sind, sofort committen oder ausdrücklich fragen,
    ob der Merge bewusst offen bleiben soll. Ein gestagter, nie committeter Merge bleibt sonst unbemerkt
    liegen; `--check`/`--status` warnen zwar beim nächsten Sitzungsstart, das ist aber der Notnagel.
-8. Den nachgezogenen Basis-Commit des Templates in `.claude/template.json` fortschreiben, damit das nächste
+9. Den nachgezogenen Basis-Commit des Templates in `.claude/template.json` fortschreiben, damit das nächste
    Update wieder ab diesem Stand vergleicht.
