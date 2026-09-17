@@ -15,6 +15,8 @@ Ergänzungen laufen dabei durch: ein nachgetragenes KI-Werkzeug holt sich seine 
 ergänzter Regelsatz kommt dazu. Alles, was löscht oder projektweit ersetzt — ein gestrichenes Werkzeug, ein
 geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 
+Ausführliche Begründungen zu einzelnen Schlüsseln (nicht nur die kurze Spalte „Bedeutung"): `docs/ai/config-guide.md`.
+
 ## Projekt
 
 | Schlüssel | Wert | Optionen | Platzhalter | Bedeutung |
@@ -36,12 +38,7 @@ geänderter Rufname —, wird vorher gezeigt und braucht eine Zusage.
 | Typecheck-Befehl |  |  | `TYPECHECK_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | Test-Befehl |  |  | `TEST_BEFEHL` | Steht in `ci.yml` und `testing.md`. |
 | E2E-Befehl |  |  | `E2E_BEFEHL` | Steht in `testing.md` und `setup.md`. |
-| Testtiefe | alles | ohne < unit < integration < e2e < alles |  | Wie weit getestet wird. Jede Stufe schließt die kleineren ein. |
-
-Zur Testtiefe: Sie sagt, was zu einer fertigen Aufgabe dazugehört — nicht, ob getestet werden *darf*.
-`alles` ist der Standard; `ohne` ist eine bewusste Entscheidung, die den Beleg nicht abschafft: „Fertig“
-braucht dann einen anderen Nachweis (ein Aufruf von außen, ein Screenshot, ein Datenstand). Details je
-Stufe: `docs/project/testing.md`.
+| Testtiefe | alles | ohne < unit < integration < e2e < alles |  | Wie weit getestet wird (nicht, ob getestet werden darf). Jede Stufe schließt die kleineren ein. |
 
 Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 `python .claude/scripts/guidelines.py --add <kennung>`.
@@ -62,40 +59,8 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Globale Ablage | nein | nein, agenten, agenten+skills, alles, fragen |  | Legt Rollen und allgemeine Skills zusätzlich nach `~/.claude/`, für alle Projekte dieses Rechners. |
 | MCP-Server |  | figma, playwright, chrome-devtools, github, grafana, home-assistant, ha-mcp, sentry, linear, notion, slack, atlassian, context7, postgres, mysql-mariadb, filesystem, fetch, adobe-firefly, openai-image, replicate-flux, fal-ai, google-imagen |  | Kommaliste der MCP-Server, die dieses Projekt nutzt. Katalog: `.claude/mcp-katalog.md`. Eingerichtet wird von Hand. Leer = keiner. |
 
-Zum Modell: Der Orchestrator plant, prüft und entscheidet — gespart wird bei den Workern, nicht hier.
-Zum Commit-Verhalten: `automatisch` committet abgenommene Arbeit selbst, `fragen` schlägt sie vor und wartet,
-`manuell` wartet auf eine ausdrückliche Anweisung.
-Zum Ideen-Ablauf: `automatisch` schreibt ein Konzept für alles, was eine Entscheidung braucht, und macht
-aus Kleinigkeiten direkt eine Aufgabe — die Abkürzung wird dabei ausgesprochen. `konzept` erzwingt den
-vollen Weg (Konzept, Optionen, Entscheidung) auch bei Kleinigkeiten, `direkt` überspringt ihn immer. Ablauf:
-`docs/ai/checklists.md` § „Idee oder Änderungswunsch aufnehmen“.
-Zum Schreibstil: Er gilt für Fragen, Aufgaben, Journal und die Antworten im Chat, nicht für
-Code-Kommentare (die regelt `docs/project/coding_rules.md`). `kurz` heißt stichpunktartig und auf den
-Punkt, `normal` ergänzt einen Satz Begründung dort, wo er trägt, `ausführlich` begründet vollständig und
-nachvollziehbar — sinnvoll, wenn jemand mitliest, der das Projekt nicht kennt.
-Zum Feedback: `aus` ist der Standard — ohne ausdrückliche Entscheidung verlässt nichts das Projekt.
-`bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt; `automatisch` sendet ohne
-Rückfrage; `manuell` sendet nur auf Aufruf von `/act-feedback`. Protokolliert wird in jedem Fall unter
-`docs/ai/template-feedback/` — standardmäßig versioniert, auf Wunsch per `.gitignore` lokal
-(`feedback.py --enable --protokoll lokal`). Was gesendet wird und was nicht, steht in `AGENTS.md`
-§ „Freiwillige Rückmeldung an den Template-Autor“ — nie Dateien, nie Projektbezug, nie Namen oder
-Zahlen aus dem Projekt. Das Zusammenfassen und Filtern kostet ein paar Token zusätzlich.
-Zum Umfang: Er steuert nur, was der Assistent **selbst zusammenträgt**. Was du mit `/act-feedback <Text>` von
-Hand schickst, geht unabhängig davon — dieser Kanal ist immer offen, auch bei `Feedback: aus`; dann enthält
-die Nachricht ausschließlich deinen Text, ohne Projekt-Kennung und ohne Kontext. Echte Dateien aus `docs/`
-sind bewusst nicht wählbar: Das widerspräche der Zusage „nie Dateien, nie Projektbezug".
-Zum Takt: Der Wert ist eine **Obergrenze**, keine Verpflichtung — gibt es nichts zu melden, wird auch
-nichts gesendet. `sofort` meldet nach jedem brauchbaren Vorschlag, `automatisch` überlässt dem
-Assistenten die Wahl des Zeitpunkts (frühestens eine Stunde nach der letzten Sendung).
-Zur Code-Optimierung: `ein` ist eine Runde, `intensiv` bis zu zwei und nimmt Geschwindigkeit und Speicher
-dazu, `aus` entfernt den Agenten `optimizer`. Der ältere Wert `streng` gilt weiter und bedeutet `intensiv`.
-Zu den MCP-Servern: Die Kennungen stehen mit Anbieter, Zweck, Reifegrad und benötigten Umgebungsvariablen
-in `.claude/mcp-katalog.md`. Eingetragen werden nur Server, die das Projekt wirklich braucht — jeder weitere
-ist eine zusätzliche Vertrauensbeziehung und bei den schreibfähigen zusätzlich ein Risiko. Secrets kommen nie
-in `.mcp.json`, sondern als `${VAR}` aus der Prozessumgebung (`CLAUDE.md` § MCP-Server); für Schreibzugriffe
-gilt `AGENTS.md` § „Zugriff auf laufende Systeme".
-Zur globalen Ablage: Was dort liegt, sehen Team, CI und Sitzungen in der Cloud **nicht** — Verbindliches
-gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
+Begründungen zu diesen Schlüsseln (Modell, Commit-Verhalten, Ideen-Ablauf, Schreibstil, Feedback samt Umfang
+und Takt, Code-Optimierung, MCP-Server, globale Ablage): `docs/ai/config-guide.md` § „Assistenten".
 
 ## Protokoll und Wartung
 
@@ -103,7 +68,7 @@ gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
 | :--- | :--- | :--- | :--- | :--- |
 | Logging | aus | aus, ein |  | Mitschnitt aller Agentenaktionen in `ai.log`; steuert `AI_LOG` in `AGENTS.md`. |
 | Logging-Tiefe | INFO | ERROR < WARN < INFO < DEBUG |  | Steuert `AI_LOG_LEVEL` in `AGENTS.md`: geschrieben wird alles ab dieser Stufe. |
-| Wartung | aus | aus, ein |  | Wiederkehrende Wartung. `aus` entfernt Ordner, Skill, Agent und Fälligkeits-Hook — **umkehrbar**: `ein` holt sie aus dem Template-Remote zurück (siehe unten). |
+| Wartung | aus | aus, ein |  | Wiederkehrende Wartung. `aus` entfernt Ordner, Skill, Agent und Fälligkeits-Hook — **umkehrbar**: `ein` holt sie aus dem Template-Remote zurück (Ablauf: `docs/ai/config-guide.md`). |
 | Wartungsaufgaben | kurz=14, docs=30, deps=90 |  |  | Aufgabe=Intervall in Tagen; weggelassene Aufgabe wird abgeschaltet. Nur bei „Wartung: ein". |
 | Wartungsberichte | docs | docs, intern |  | `docs` = `docs/maintenance/`, versioniert und im Doku-Index; `intern` = `.claude/maintenance/reports/`, gitignored. |
 
@@ -114,14 +79,6 @@ gehört ins Repo. Mechanik: `python .claude/scripts/install-global.py --plan`.
 | Code-Analyse | fragen | nein, vorschlagen, fragen |  | Nach der Doku zusätzlich den Bestand prüfen und Verbesserungen sammeln. |
 | Struktur-Migration | fragen | ja, nein, fragen |  | Vorhandene KI-Arbeitsordner und Regeldateien auf die Template-Struktur umstellen. |
 | Alter Orchestrator-Name |  |  |  | Bisheriger Rufname im Projekt; wird durch den Wert von `Orchestrator` ersetzt. Leer = das Script schlägt Kandidaten vor. |
-
-Zur Wartung: `aus` ist kein Einbahnweg. Wer später wieder `ein` einträgt, bekommt mit
-`python .claude/scripts/sync-config.py --apply` Ordner, Skill, Agent, Hook und `status.json` zurück — die
-Dateien holt das Script per `git show` aus dem Remote `template`. Das setzt voraus, dass dieser Remote
-existiert; fehlt er (etwa weil das Projekt kopiert statt geklont wurde), richtet
-`python .claude/scripts/update-template.py --init` ihn ein, und `--graft` stellt die gemeinsame Historie her.
-Dasselbe gilt für ein abgewähltes KI-Werkzeug, einen nachgetragenen Regelsatz und den `optimizer`
-(`Code-Optimierung`).
 
 Nicht in der Tabelle, weil niemand ihn setzt: `DATUM` wird beim Anlegen und bei jedem Doku-Lauf mit dem
 Tagesdatum gefüllt.

@@ -220,6 +220,16 @@ STALE_PATH_CHECK_LISTS = {
     "TEMPLATE_ONLY_PATHS": TEMPLATE_ONLY_PATHS,
 }
 
+# Pfade, die ABSICHTLICH nie im Template-Repo selbst existieren: Altnamen von vor dem `act-`-Praefix
+# (Umbenennung 2026-09-17), die in einer der Listen oben stehen bleiben, damit Projekte, die den
+# Umbenennungs-Merge noch nicht eingespielt haben, ihre alten Skill-Ordner beim Abschalten trotzdem
+# losgeworden (Backlog #B42, .templatedev/backlog.md). check_stale_remove_paths soll dafuer NICHT warnen -
+# das waere hier immer ein Fehlalarm, keine vergessene Umbenennung. Bei einer echten Umbenennung/Verschiebung
+# einer der Listen bleibt die Selbstpruefung fuer alle anderen Eintraege wirksam.
+LEGACY_REMOVE_PATHS = {
+    ".claude/skills/run-maintenance",
+}
+
 
 def check_stale_remove_paths(root: Path) -> list:
     """Selbstpruefung fuer '--check': prueft je Pfad in STALE_PATH_CHECK_LISTS, ob er im Repo existiert.
@@ -230,7 +240,8 @@ def check_stale_remove_paths(root: Path) -> list:
     oder frisch geklontes, noch nicht per --apply zugeschnittenes Projekt). Ist der Marker schon weg, hat
     --apply bereits gelaufen und genau diese Pfade wurden absichtlich entfernt - eine Warnung waere dann ein
     Fehlalarm, deshalb wird die Pruefung dafuer bewusst NICHT ausgefuehrt statt sie nur schwaecher zu
-    formulieren. Gibt eine Liste von Warnzeilen zurueck (leer = nichts zu melden)."""
+    formulieren. Pfade aus LEGACY_REMOVE_PATHS werden nie gemeldet (siehe dort). Gibt eine Liste von
+    Warnzeilen zurueck (leer = nichts zu melden)."""
     template_json = root / ".claude" / "template.json"
     try:
         cfg = json.loads(template_json.read_text(encoding="utf-8"))
@@ -246,6 +257,8 @@ def check_stale_remove_paths(root: Path) -> list:
     warnungen = []
     for listen_name, pfade in STALE_PATH_CHECK_LISTS.items():
         for rel in pfade:
+            if rel in LEGACY_REMOVE_PATHS:
+                continue
             if not (root / rel).exists():
                 warnungen.append(
                     f"WARNUNG: Pfad '{rel}' aus {listen_name} existiert nicht (mehr) im Repo - "

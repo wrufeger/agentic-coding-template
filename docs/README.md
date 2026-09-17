@@ -30,6 +30,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/project/konzepte/README.md` | Konzepte: Optionen, Empfehlung, Aufwand — je Thema eine Datei | {{DATUM}} | vor größeren Umbauten |
 | `docs/project/stories/README.md` | Stories: abgegrenzte, prüfbare Umsetzungsschritte `S<n>` | {{DATUM}} | vor der Umsetzung |
 | `docs/ai/README.md` | Aufbau/Formregeln des Zusammenarbeits-Ordners | {{DATUM}} | vor Nutzung von `docs/ai/` |
+| `docs/ai/config-guide.md` | Ausführliche Begründungen zu den Schlüsseln aus `AI-CONFIG.md` | {{DATUM}} | bei Unklarheit über einen Schalter |
 | `docs/ai/board.md` | Einstiegs-/Wiedereinstiegsboard | {{DATUM}} | immer zuerst |
 | `docs/ai/tasks.md` | Aufgabenliste inkl. Tabu-Abschnitt | {{DATUM}} | vor jeder neuen Aufgabe |
 | `docs/ai/tasks_archive.md` | Erledigte Aufgaben im Volltext | {{DATUM}} | bei Bedarf nachschlagen |

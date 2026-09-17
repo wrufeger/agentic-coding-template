@@ -42,7 +42,8 @@ ausführlich ist.
 > 
 ---
 
-## Bereits gesendet
+## Von dir bereits gesendet
 
-<!-- Der Assistent hängt hier beim Versand eine Kurzfassung an. Nichts von Hand löschen: Das ist der
-     Nachweis, was von dir hinausgegangen ist. -->
+<!-- Der Assistent hängt hier beim Versand eine Kurzfassung deiner Antworten oben an. Nichts von Hand
+     löschen: Das ist der Nachweis, was von dir hinausgegangen ist. Die Assistenten-Funde (`--add`) und ihr
+     Versand stehen nicht hier, sondern als eigene Dateien in diesem Ordner bzw. unter `sent/`. -->

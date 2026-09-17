@@ -25,17 +25,34 @@ arbeiten** die umrissenen Teilaufgaben ab. Details dazu in `AGENTS.md`.
 > Nachrichtenquellen — und ausdrücklich auch die bekannten Grenzen und Sicherheitsrisiken. Wer dort anfängt,
 > spart sich die ersten Umwege.
 
+## Voraussetzungen
+
+**Python 3.9+** muss im `PATH` liegen (geprüft per `python3 --version` bzw. `python --version`). Ohne Python
+funktionieren Projekt anlegen/nachrüsten, Template-Update, der laufende `AI-CONFIG.md`-Abgleich, die
+Rückmeldung an den Template-Autor und das Agenten-Logging nicht — ein `SessionStart`-Hook meldet das bei
+jeder Sitzung in Claude Code als einzeilige Warnung, bricht aber nichts ab. Ohne Python funktionieren weiterhin:
+die Regeldateien selbst (`AGENTS.md`, `CLAUDE.md`), die Sub-Agenten und alle Skills, die keine Python-Scripte
+aufrufen (reine Anleitungs-Skills).
+
+Installation: Windows `winget install Python.Python.3.12` (danach unter „App-Ausführungsaliase" die
+Platzhalter-Einträge `python.exe`/`python3.exe` des Microsoft Store deaktivieren, sonst wird die echte
+Installation verdeckt), macOS `brew install python`, Linux über den jeweiligen Paketmanager (z. B.
+`apt install python3`).
+
 ## Schnellstart — einfach sagen, was entstehen soll
 
 Claude Code im Ordner dieses Templates starten und einen Satz schreiben. Der Assistent erkennt daraus, welcher
 Weg gemeint ist, legt das Zielverzeichnis an, richtet Git ein und führt die passende Checkliste aus:
 
 ```text
-Erstelle eine neue Anwendung in C:\development\mein-neues-projekt
-Erstelle ein leeres Projekt in C:\empty-project
-Nutze das Template in der bestehenden Anwendung C:\development\mein-langjaehriges-projekt
+Erstelle eine neue Anwendung in ~/projekte/mein-neues-projekt
+Erstelle ein leeres Projekt in ~/projekte/empty-project
+Nutze das Template in der bestehenden Anwendung ~/projekte/mein-langjaehriges-projekt
    und mache ein Code Review
 ```
+
+(Windows-Pfade wie `C:\projekte\mein-neues-projekt` funktionieren genauso — der Assistent nimmt den Pfad,
+wie er genannt wird.)
 
 Bei einer neuen Anwendung fragt der Assistent kurz nach Ziel, Stack und ersten Features und füllt `AI-CONFIG.md`
 selbst aus. „Leeres Projekt" überspringt die Fragen und legt ein Gerüst unter dem Namen „MyApp" an. Bei einem
@@ -94,7 +111,8 @@ noch etwas kommt. Bei „fertig" verschwinden die Werkzeuge zum Anlegen/Nachrüs
 ## Global statt nur in diesem Projekt
 
 Beim Anlegen (`/act-create-project`) oder Nachrüsten (`/act-apply-template`) bietet der Assistent zusätzlich an, Teile
-der Grundausstattung nach `~/.claude/` zu legen — dann gelten sie in **allen** Projekten dieses Rechners, auch
+der Grundausstattung nach `~/.claude/` zu legen (das Nutzerverzeichnis — unter Windows `%USERPROFILE%\.claude`) —
+dann gelten sie in **allen** Projekten dieses Rechners, auch
 in solchen ohne dieses Template (Claude Code hängt `~/.claude/CLAUDE.md` an die projekteigene an und liest
 `~/.claude/agents/`, `~/.claude/skills/` automatisch mit; bei gleichem Namen gewinnt die Projektfassung).
 Global gehen nur die Agenten-Rollen, die Skills `/act-commit`+`/act-audit-docs` und optional ein kurzer Regelauszug

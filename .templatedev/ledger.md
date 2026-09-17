@@ -12,6 +12,39 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-17 — Rückmeldungen B36–B43 umgesetzt, dazu B44/B45 und Q16–Q18
+
+- Q16 a): gepusht `6843618..8807ad1`. Q17 b): Kurzform-Skills `commit`, `idea`, `prepare`, `update-template`. Q18 a): nichts zu tun.
+- Fünf `builder` parallel, nach Dateien geschnitten: `update-template.py` (B36, B38, später B37-Anschluss, F4),
+  `config-lib`/`files-lib`/`sync-config` (B43, B37), `feedback.py` (B39), `AI-CONFIG.md` + neu
+  `docs/ai/config-guide.md` + `docs/ai/README.md` (B40, B41), `setup-lib`/`act-help` + Kurzformen (B42, Q17).
+- Review in vier Runden (`reviewer`, Opus):
+  - R1 BLOCK: lokal gewählter Protokollort ging beim Migrieren verloren (F1), verschobener AI-CONFIG-Schlüssel
+    verlor seinen Wert (F2), `--check` fetchte im Hook (F3), Kurzformen kollidieren beim Update mit alten
+    Skillpfaden (F4, Entscheidung: Template gewinnt, mit Warnung und Rückweg).
+  - R2 BLOCK: B38 griff nicht, weil `/act-finalize` genau `finish-setup.py` löscht; Hook meldete reine Hinweise
+    bei jedem Start.
+  - R3 BLOCK (Sicherheit): der B38-Fix führte beim Sitzungsstart `finish-setup.py` aus dem frisch geholten
+    Template-Ref aus. Jetzt: Ref nur statisch per `ast.literal_eval`, Ausführung nur in `--apply` aus
+    `pre_merge_head`/`base_commit`, nie aus `MERGE_HEAD`; unaufgelöste Konfliktfassung wird nie geladen.
+    Dazu: Hooks fanden den Windows-Store-Platzhalter `python3` und fielen still aus → Interpreter per Probe.
+  - R4 ALLOW; Restpunkt selbst behoben: `_remove_paths` löscht nur sichere relative Pfade im Projekt
+    (Beleg: `''`, `.`, `../x`, absoluter Pfad übersprungen, nur `weg.txt` gelöscht), `except Exception` beim
+    statischen Lesen.
+- B44 (Wunsch): Python 3.9+ als Voraussetzung in beiden READMEs, Prüf-Hook ohne Python.
+- B45 (Wunsch): Pfade außerhalb des Projekts plattformgerecht, Regel in `AGENTS.md`/`CLAUDE.md` § 4.
+- Neue Regeln in `regeln.md`: nie Code aus geholtem Ref ausführen; Hook-Interpreter per Probe; plattformgerechte Pfade.
+- Neu im Backlog: B46 (Latenz der Probe), B47 (Hooks laufen auf ungeprüfter Merge-Fassung).
+- Belege: py_compile aller geänderten Scripte, `check-refs.py` 0 tote Verweise, `create-project.py --check` ok,
+  `settings.json` gültig, Smoketests je Punkt in Wegwerf-Repos (Scratchpad).
+
+## 2026-09-17 — Feedback abgeholt (dritter Abruf)
+
+- Freigabe per `/act-process-feedback`: 2 Sendungen abgeholt und quittiert (0 wartend), 1 Projekt.
+- Neu nur die zwei Direktmeldungen; die übrigen 8 Einträge waren schon als B36–B42 verbucht.
+- `B43` (hoch): fehlender `import time` in `files-lib.py`, `sync-config.py --apply` bricht ab — am Code bestätigt.
+- Ablage der Sendeprotokolle: Dublette zu `B39`, dort als bestätigt ergänzt. Nichts verworfen.
+
 ## 2026-09-17 — Backlog als Themen-Tabellen, `/act` per Hook, Feedback-Einträge als eine Datei
 
 - **Backlog neu formatiert** (Wunsch Wolfgang): 6 Themen-Tabellen `| [ ] | Nr | Prio | Titel | Info |`,

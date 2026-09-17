@@ -45,17 +45,32 @@ def _frontmatter(datei: Path) -> dict:
 
 
 def _befehle(root: Path) -> list:
+    """Nur echte Projekt-Befehle (Praefix 'act-'). Weiterleitungs-Skills ohne Praefix (commit, idea, prepare,
+    update-template - Q17 in .templatedev/questions.md) tauchen hier nicht als eigene Befehle auf, siehe
+    _kurzformen()."""
     befehle = []
     for datei in sorted((root / ".claude" / "skills").glob("*/SKILL.md")):
         fm = _frontmatter(datei)
         name = fm.get("name") or datei.parent.name
-        if name == "act":
+        if name == "act" or not name.startswith("act-"):
             continue
         beschreibung = fm.get("description", "")
         kurz, _, ausloeser = beschreibung.partition(" Auslöser - ")
         befehle.append({"name": name, "hint": fm.get("argument-hint", ""), "kurz": kurz.strip(),
                         "ausloeser": ausloeser.strip()})
     return befehle
+
+
+def _kurzformen(root: Path) -> list:
+    """Namen der Weiterleitungs-Skills ohne 'act-'-Praefix (z.B. 'commit' fuer /act-commit) - nur als
+    Alias-Hinweis in der Gesamtuebersicht, nie als eigener Befehl gelistet."""
+    namen = []
+    for datei in sorted((root / ".claude" / "skills").glob("*/SKILL.md")):
+        fm = _frontmatter(datei)
+        name = fm.get("name") or datei.parent.name
+        if name != "act" and not name.startswith("act-"):
+            namen.append(name)
+    return namen
 
 
 def _absatz(text: str, einzug: str) -> str:
@@ -120,6 +135,10 @@ def _ausgabe(argument: str) -> int:
         print(f"  /{b['name']} {b['hint']}".rstrip())
         print(_absatz(b["kurz"], "      "))
     print("\nStatt des Befehls genügt meist ein Satz, z. B. „ich hätte da eine Idee“ oder „Feedback: <Text>“.")
+    kurz = _kurzformen(root)
+    if kurz:
+        print("Kurzformen ohne Präfix (nur von Hand aufrufbar): " +
+              ", ".join(f"/{n}" for n in kurz))
     return 0
 
 

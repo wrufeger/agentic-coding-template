@@ -521,7 +521,10 @@ Arbeitsdateien, README) bleiben dabei erhalten:
 3. Änderungen per Merge einspielen.
 4. Bei Konflikten: projektspezifische Dateien/Bereiche (siehe `keep_local` in `.claude/template.json`)
    gewinnen bei gewöhnlichen Konflikten automatisch; alle übrigen werden **inhaltlich zusammengeführt**, nie durch Wegwerfen einer Seite
-   gelöst. Dazu jeweils beide Fassungen lesen und die Absicht dahinter erkennen:
+   gelöst. Ist die Einrichtung bereits abgeschlossen (`setup_complete`), verwirft ein Konflikt zusätzlich
+   automatisch die Template-Seite genau der Abschnitte, die `/act-finalize` aus diesem Projekt entfernt hat
+   (Einrichtungs-Scripte/-Skills, die Setup-Checklisten, `template-only`-Blöcke in `AGENTS.md`/`CLAUDE.md`) —
+   gemeldet, nicht still. Dazu jeweils beide Fassungen lesen und die Absicht dahinter erkennen:
    - **Beide Seiten geändert:** Template-Fassung als Gerüst, projektspezifische Zeilen (echte Werte, eigener
      Stack, zusätzliche Agenten/Skills) hineinziehen. Nur bei echtem Widerspruch entscheidet die Priorität —
      Template-Logik in `.claude/`, `AGENTS.md`, `CLAUDE.md` und den Checklisten, Projekt in `docs/project/`,
@@ -542,6 +545,8 @@ Arbeitsdateien, README) bleiben dabei erhalten:
    ersetzen (kommt z. B. vor, wenn das Template eine neue Datei mit einem Platzhalter der Form `{{NAME}}` mitbringt).
 6. Prüfen: keine verbleibenden Platzhalter außer den bekannten Fundstellen in den Checklisten/Skills selbst,
    Konfigurationsdateien weiterhin gültig, Logging weiterhin funktionsfähig.
-7. Commit per Pathspec.
+7. Commit per Pathspec — sobald keine Konflikte mehr offen sind, sofort committen oder ausdrücklich fragen,
+   ob der Merge bewusst offen bleiben soll. Ein gestagter, nie committeter Merge bleibt sonst unbemerkt
+   liegen; `--check`/`--status` warnen zwar beim nächsten Sitzungsstart, das ist aber der Notnagel.
 8. Den nachgezogenen Basis-Commit des Templates in `.claude/template.json` fortschreiben, damit das nächste
    Update wieder ab diesem Stand vergleicht.

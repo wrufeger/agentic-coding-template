@@ -17,16 +17,28 @@ die Platzhalter, entfernt die Dateien nicht genutzter Werkzeuge und befüllt die
 bestehenden Projekt aus dem echten Code, nicht aus Vermutungen. Spätere Verbesserungen am Template lassen sich
 jederzeit nachziehen, ohne die eigenen Anpassungen zu verlieren.
 
+## Voraussetzungen
+
+**Python 3.9+** im `PATH` (`python3 --version`/`python --version`) — Grundlage für Projekt anlegen/nachrüsten,
+Template-Update, den laufenden `AI-CONFIG.md`-Abgleich, Feedback und Logging. Ohne Python bleiben die
+Regeldateien, die Sub-Agenten und reine Anleitungs-Skills nutzbar; ein Hook meldet die fehlende Voraussetzung
+bei Sitzungsstart, bricht aber nichts ab. Installation: Windows `winget install Python.Python.3.12`
+(Microsoft-Store-Platzhalter „python3" per App-Ausführungsaliase deaktivieren), macOS `brew install python`,
+Linux über den Paketmanager. Details: [README im Repository-Root](../README.md#voraussetzungen).
+
 ## Loslegen
 
 Repository klonen, Claude Code darin starten und einen Satz schreiben:
 
 ```text
-Erstelle eine neue Anwendung in C:\development\mein-neues-projekt
-Erstelle ein leeres Projekt in C:\empty-project
-Nutze das Template in der bestehenden Anwendung C:\development\mein-langjaehriges-projekt
+Erstelle eine neue Anwendung in ~/projekte/mein-neues-projekt
+Erstelle ein leeres Projekt in ~/projekte/empty-project
+Nutze das Template in der bestehenden Anwendung ~/projekte/mein-langjaehriges-projekt
    und mache ein Code Review
 ```
+
+(Windows-Pfade wie `C:\projekte\mein-neues-projekt` funktionieren genauso — der Assistent nimmt den Pfad,
+wie er genannt wird.)
 
 Der Assistent erkennt daraus, welcher Weg gemeint ist, legt das Zielverzeichnis an, richtet Git ein und führt
 die passende Checkliste aus.

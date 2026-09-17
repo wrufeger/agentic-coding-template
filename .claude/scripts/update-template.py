@@ -104,15 +104,19 @@
 #             schreibt nie auf stdout, ausser es gibt tatsaechlich ein Update.
 
 import argparse
+import ast
 import difflib
 import fnmatch
+import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 # Windows liest sonst in der ANSI-Codepage - Pfade mit Umlauten kaemen als Mojibake an (dasselbe Muster wie
@@ -179,6 +183,22 @@ DEFAULT_TEMPLATE_ONLY = [
     ".claude/skills/act-process-feedback",  # Skill der Template-Pflege, zieht mit T5 nach .templatedev/
 ]
 
+# F4 (Review): Diese vier Pfade lagen VOR der Umbenennung auf das `act-`-Praefix (Commit 993b82e) unter
+# genau demselben Namen, aber mit dem VOLLEN Skill-Inhalt - ein damals angelegtes/geklontes Projekt hat dort
+# also noch seine platzhalter-ersetzte Vollfassung liegen (z.B. echte Werte statt `{{PROJEKTNAME}}`). Seit
+# der Umbenennung sind es reine Weiterleitungen auf `.claude/skills/act-<name>/SKILL.md` ("Verweist auf ...
+# und fuehrt dessen Anleitung aus."). Ein Update MUSS hier IMMER die Template-Seite gewinnen lassen -
+# unabhaengig vom Konflikt-Code (UU/AA/DU je nach Historie des Projekts) - die alte Vollfassung ist nie die
+# richtige Antwort, auch nicht lokal veraendert; der eigentliche Skill-Inhalt lebt unveraendert unter
+# `act-<name>/` weiter, es geht nichts verloren. Bare Pfade (Ordner) wie DEFAULT_TEMPLATE_ONLY oben -
+# matches_keep_local() deckt per Ordner-Praefix-Logik die einzelne SKILL.md-Datei darunter ab.
+FORWARDER_TEMPLATE_WINS_PATHS = [
+    ".claude/skills/commit",
+    ".claude/skills/idea",
+    ".claude/skills/prepare",
+    ".claude/skills/update-template",
+]
+
 # Pfade, die ein abgewaehlter Schalter aus dem Projekt entfernt hat. Quelle ist `applied_config` in
 # template.json (der zuletzt umgesetzte Stand von AI-CONFIG.md) - bewusst KEINE eigene Liste in
 # template.json: die waere eine zweite Wahrheit neben AI-CONFIG.md und wuerde veralten, sobald jemand
@@ -234,6 +254,499 @@ def abgewaehlte_pfade(cfg: dict) -> list:
         for werkzeug in werkzeuge:
             pfade.extend(ABGEWAEHLT_TOOL_PATHS.get(str(werkzeug), []))
     return sorted(dict.fromkeys(pfade))
+
+# ---------------------------------------------------------------------------
+# B38: abgeschlossene Projekte (setup_complete) - Setup-only-Abschnitte, die /act-finalize (finish-setup.py)
+# entfernt hat, duerfen ein Update nicht zurueckholen. Statt die Marker/Listen hier zu duplizieren, werden
+# finish-setup.py und setup-lib.py als Module NACHGELADEN (importlib, gleicher Ordner) - siehe
+# .templatedev/regeln.md "Pfadlisten haengen zusammen". Betroffen: REMOVE_ITEMS (ganze Dateien/Ordner, z.B.
+# create-project.py) und zwei Text-Ausschnitte innerhalb sonst normal gepflegter Dateien (template-only-
+# Bloecke in AGENTS.md/CLAUDE.md, Checklisten-Abschnitte in docs/ai/checklists.md).
+#
+# SICHERHEITSREGEL (Security-Fix, 2026-09-17): finish-setup.py existiert in einem ABGESCHLOSSENEN Projekt
+# lokal nicht mehr - ohne Vorsicht muesste der fehlende lokale Stand aus einem GIT-REF nachgeladen werden,
+# und einer dieser Refs ist bei --check der frisch gefetchte, ungeprueft Template-Remote (--check --quiet
+# laeuft als SessionStart-Hook, also OHNE menschliches Zutun). `exec_module` auf so einem Ref waere beliebige
+# Codeausfuehrung direkt aus dem Remote. Deshalb zwei getrennte Wege:
+#   - setup_removed_paths() (Ganzdatei-Konstanten REMOVE_ITEMS/SELF_REL, u.a. fuer --check) fuehrt NIEMALS
+#     Code aus einem Ref aus - fehlt die lokale Datei, werden die beiden Konstanten rein STATISCH per `ast`
+#     aus dem Ref-Text gelesen (_read_finish_setup_constants_from_ref), nie per exec_module.
+#   - _strip_setup_only_text()/_resolve_setup_only_text_conflict() (nur im menschlich gestarteten --apply/
+#     --continue, braucht echte Funktionen wie update_checklists()) laedt Code aus einem Ref nur, wenn dieser
+#     Ref explizit als `accepted_ref` uebergeben wird (siehe _load_sibling_module) - in der Praxis
+#     pre_merge_head/base_commit (Stand, den das Projekt bereits kennt), NIE MERGE_HEAD/der Template-Ref.
+#     Ist dort keine finish-setup.py vorhanden, bleibt der Konflikt offen statt automatisch geloest zu werden.
+# ---------------------------------------------------------------------------
+
+_SIBLING_MODULE_CACHE = {}
+
+
+def _sibling_path_conflicted(root: Path, filename: str) -> bool:
+    """Review-Befund (Security-Fix, 2026-09-17): waehrend eines LAUFENDEN Merges kann git fuer einen
+    'modify/delete'-Konflikt (typisch fuer finish-setup.py: das Projekt hat die Datei entfernt, das Template
+    hat sie geaendert) die THEIRS-Fassung bereits unaufgeloest in den Arbeitsbaum geschrieben, BEVOR
+    irgendeine Konfliktaufloesung gelaufen ist. Ein blosses `Path.is_file()` auf der Festplatte ist in diesem
+    Fenster also KEIN verlaessliches Signal fuer 'lokale, bereits angenommene Datei' - es kann stattdessen
+    frisch gemergten, ungeprueften Template-Inhalt liefern und exec_module wuerde ihn ausfuehren. Deshalb vor
+    jedem lokalen Ladeversuch von `.claude/scripts/<filename>` pruefen, ob der Pfad gerade ein ungeloester
+    Merge-Konflikt ist (`git ls-files --unmerged`) - wenn ja, gilt die Datei NICHT als lokal ladbar, der
+    Aufrufer faellt auf den (accepted_ref-gesicherten) Ref-Fallback zurueck. Ohne `root` (kein Git-Kontext)
+    wird nichts geprueft (False) - das entspricht dem bisherigen Verhalten ausserhalb eines Merges."""
+    if root is None:
+        return False
+    res = run_git(root, ["ls-files", "--unmerged", "--", f".claude/scripts/{filename}"])
+    return res.returncode == 0 and bool(res.stdout.strip())
+
+
+def _load_sibling_module_from_path(path: Path, mod_name: str):
+    """Kern von _load_sibling_module() ohne Cache: laedt genau die Datei unter `path` als Modul `mod_name`.
+    Liefert None statt zu werfen, wenn die Datei fehlt oder nicht ladbar ist."""
+    try:
+        spec = importlib.util.spec_from_file_location(mod_name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _load_sibling_module(filename: str, mod_name: str, root: Path = None, ref: str = None, accepted_ref=None):
+    """Laedt ein Geschwister-Script (gleicher Ordner wie dieses hier) als Modul - Bindestriche im Dateinamen
+    verbieten ein normales `import`, daher importlib.util wie setup-lib.py/_load_template_update_module().
+    Wird nur gelesen (Konstanten/Funktionen), nie veraendert.
+
+    Review-Befund (B38 greift nicht): in einem ABGESCHLOSSENEN Projekt hat /act-finalize (finish-setup.py)
+    genau diese Datei (finish-setup.py selbst, siehe SELF_REL) bereits aus `.claude/scripts/` entfernt - der
+    lokale Ladeversuch schlaegt dort also IMMER fehl, B38 griff nie. Fehlt die Datei lokal, kann sie
+    stattdessen per `git show <ref>:.claude/scripts/<filename>` aus einem Git-Objekt geladen werden.
+
+    SICHERHEITSREGEL (Security-Fix, 2026-09-17): Dieser Ref-Fallback fuehrt den geladenen Text per
+    `exec_module` AUS - er darf deshalb niemals fuer einen frisch gefetchten, ungeprueften Ref laufen (z.B.
+    den Template-Remote-Branch oder MERGE_HEAD eines laufenden Merges). `accepted_ref` erzwingt das: der
+    Ref-Fallback wird NUR versucht, wenn `ref` in `accepted_ref` enthalten ist (ein einzelner Ref-String oder
+    eine Sammlung von Refs) - der Aufrufer muss also an dieser Stelle ausdruecklich erklaeren, dass er `ref`
+    fuer bereits angenommenen Projektstand haelt (typischerweise `pre_merge_head`/`base_commit`, NIE
+    `MERGE_HEAD`/der Template-Ref). Fehlt `accepted_ref` oder steht `ref` nicht darin, wird der Fallback
+    ueberhaupt nicht versucht (Rueckgabe wie "nicht ladbar", kein Fehler). Ist ein Ref einmal als angenommen
+    geladen worden, darf das Ergebnis unter demselben (inhaltsadressierten) Commit-Hash wiederverwendet werden
+    - derselbe Hash bezeichnet immer denselben Inhalt, ein zweiter Aufrufer mit demselben `ref` bekommt also
+    nichts, was nicht schon einmal akzeptiert wurde.
+
+    Bei Erfolg wird der Text in eine Temp-Datei geschrieben, importiert und die Temp-Datei danach wieder
+    entfernt (shutil.rmtree, kein 'rm -rf'). Cache-Schluessel (filename, ref): verschiedene Referenzen sollen
+    nicht dieselbe (evtl. veraltete) Fassung wiederverwenden. Liefert None, wenn weder lokal noch per
+    akzeptiertem Git-Ref ladbar ist - der jeweilige Aufrufer ueberspringt B38 dann einfach (kein Fehler,
+    altes Verhalten)."""
+    cache_key = (filename, ref)
+    if cache_key in _SIBLING_MODULE_CACHE:
+        return _SIBLING_MODULE_CACHE[cache_key]
+
+    local_path = Path(__file__).resolve().parent / filename
+    mod = None
+    if local_path.is_file() and not _sibling_path_conflicted(root, filename):
+        mod = _load_sibling_module_from_path(local_path, mod_name)
+
+    ref_ok = ref is not None and accepted_ref is not None and (
+        ref == accepted_ref if isinstance(accepted_ref, str) else ref in accepted_ref
+    )
+    if mod is None and root is not None and ref_ok:
+        res = run_git(root, ["show", f"{ref}:.claude/scripts/{filename}"])
+        if res.returncode == 0 and res.stdout:
+            tmp_dir = tempfile.mkdtemp(prefix="update-template-sibling-")
+            try:
+                tmp_path = Path(tmp_dir) / filename
+                tmp_path.write_text(res.stdout, encoding="utf-8", newline="")
+                mod = _load_sibling_module_from_path(tmp_path, mod_name)
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    _SIBLING_MODULE_CACHE[cache_key] = mod
+    return mod
+
+
+def _finish_setup_module(root: Path = None, ref: str = None, accepted_ref=None):
+    return _load_sibling_module(
+        "finish-setup.py", "_update_template_finish_setup", root=root, ref=ref, accepted_ref=accepted_ref
+    )
+
+
+def _setup_lib_module():
+    """setup-lib.py wird von /act-finalize NIE entfernt (siehe Kopfkommentar dort: es bleibt dauerhaft, weil
+    sync-config.py seine Funktionen laufend braucht) und liegt darum in JEDEM Projekt lokal vor - anders als
+    finish-setup.py gibt es hier keinen sinnvollen Ref-Fallback (niedrige Prioritaet, Review-Befund): selbst
+    wenn man ihn erzwaenge, laedt setup-lib.py beim Import seine Geschwister config-lib.py/files-lib.py/
+    claudemd-lib.py relativ zu `__file__` (siehe setup-lib.py Zeilen ~95-112) - aus einem Git-Ref in ein
+    Temp-Verzeichnis kopiert, fehlen diese Geschwister dort, und der Import schlaegt zuverlaessig fehl. Rein
+    lokaler Ladeversuch; liefert None, wenn die Datei ausnahmsweise fehlt (Aufrufer ueberspringt B38 dann)."""
+    return _load_sibling_module("setup-lib.py", "_update_template_setup_lib")
+
+
+def _config_lib_module():
+    # config-lib.py bleibt in JEDEM Projekt liegen (finish-setup.py:REMOVE_ITEMS entfernt es nie, siehe
+    # CLAUDE.md Projektstruktur - sync-config.py braucht es laufend) - kein Git-Ref-Fallback noetig.
+    return _load_sibling_module("config-lib.py", "_update_template_config_lib")
+
+
+# ---------------------------------------------------------------------------
+# B37: AI-CONFIG.md steht in keep_local und wird bei einem normalen Merge nie automatisch mitgezogen - neue
+# Tabellen-Schluessel, die das Template mitbringt, muessen deshalb NACH einem erfolgreichen --apply/
+# --continue extra ergaenzt werden. Dieselbe Logik wie sync-config.py --apply (config-lib.py:
+# ai_config_missing_keys()/insert_missing_ai_config_rows(), per importlib geladen, siehe _config_lib_module
+# oben), hier direkt im Anschluss an ein Template-Update statt erst beim naechsten sync-config.py-Lauf.
+# ---------------------------------------------------------------------------
+
+_CONFLICT_MARKER_RE = re.compile(r"^<<<<<<< ", re.MULTILINE)
+
+
+def _has_conflict_markers(text: str) -> bool:
+    """True, wenn text noch echte Git-Konfliktmarker enthaelt. 'git add' prueft den Dateiinhalt nicht - ein
+    Pfad kann also als aufgeloest gelten (kein offener Konflikt mehr im Index), obwohl noch '<<<<<<<'-Zeilen
+    darin stehen (versehentlich zu frueh hinzugefuegt). Genau dieser Fall darf AI-CONFIG.md nicht anfassen."""
+    return bool(_CONFLICT_MARKER_RE.search(text))
+
+
+def _tu_namespace():
+    """Winziges Stellvertreter-Objekt mit genau den drei Funktionen, die
+    config-lib.py:fetch_template_ai_config_text() als `tu` erwartet (load_template_json/compare_ref/run_git)
+    - alle drei stehen bereits in DIESEM Modul. sys.modules[__name__] waere nicht zuverlaessig: wird
+    update-template.py seinerseits per importlib nachgeladen (siehe setup-lib.py/config-lib.py selbst), landet
+    es dort ueblicherweise gar nicht in sys.modules."""
+    return types.SimpleNamespace(load_template_json=load_template_json, compare_ref=compare_ref, run_git=run_git)
+
+
+def _read_text_with_newline(path: Path):
+    """Minimal-Variante von files-lib.py:_read_text_preserve_newline (hier nicht nachgeladen, um keine
+    weitere Modul-Abhaengigkeit fuer nur zwei Zeilen einzuziehen) - liest utf-8(-sig) und meldet, ob die
+    Rohdatei CRLF enthielt, damit insert_missing_ai_config_rows() (arbeitet intern mit '\\n') beim
+    Zurueckschreiben dieselbe Konvention erhaelt."""
+    raw = path.read_bytes()
+    newline = "\r\n" if b"\r\n" in raw else "\n"
+    return raw.decode("utf-8-sig"), newline
+
+
+def _write_text_with_newline(path: Path, text: str, newline: str) -> None:
+    with open(path, "w", encoding="utf-8", newline=newline) as f:
+        f.write(text)
+
+
+def apply_ai_config_missing_keys(root: Path, cfg: dict, ref: str = None) -> list:
+    """B37: nach einem erfolgreichen --apply/--continue (cmd_apply ruft das hier NUR, wenn keine Konflikte
+    mehr offen sind) fehlende AI-CONFIG.md-Tabellenzeilen aus dem Template ergaenzen und 'git add'. Greift
+    NIE im Template-Checkout selbst, und NIE, solange AI-CONFIG.md noch Konfliktmarker enthaelt (siehe
+    _has_conflict_markers) - dann nur ein Hinweis auf 'sync-config.py --apply' nach dem manuellen Aufloesen.
+    `ref`: der schon aufgeloeste Vergleichs-/Merge-Ref des Aufrufers (z.B. MERGE_HEAD) - wird UNVERAENDERT
+    mit fetch=False an config-lib.py:ai_config_missing_keys() durchgereicht (Review-Befund "zweiter Fetch":
+    der Aufrufer hat den Fetch fuer diesen Lauf bereits erledigt, ein zweiter waere unnoetiger
+    Netzwerkzugriff).
+    Rueckgabe: Report-Zeilen fuer die --apply-Ausgabe (leer = nichts zu tun/zu melden)."""
+    if cfg.get("is_template"):
+        return []
+    cl = _config_lib_module()
+    if cl is None or not hasattr(cl, "ai_config_missing_keys"):
+        return []
+    config_rel = getattr(cl, "CONFIG_REL", "AI-CONFIG.md")
+    path = root / config_rel
+    if not path.is_file():
+        return []
+    try:
+        text, newline = _read_text_with_newline(path)
+    except (OSError, UnicodeDecodeError):
+        return [f"{config_rel}: nicht lesbar - Schluessel nicht ergaenzt."]
+    if _has_conflict_markers(text):
+        return [
+            f"{config_rel}: enthaelt noch Konfliktmarker - Schluessel NICHT ergaenzt. Erst manuell "
+            "aufloesen, danach 'python .claude/scripts/sync-config.py --apply' ausfuehren."
+        ]
+    try:
+        missing, hinweise_manuell, hinweis, fehler = cl.ai_config_missing_keys(
+            root, tu=_tu_namespace(), ref=ref, fetch=False
+        )
+    except Exception as e:  # noqa: BLE001 - darf --apply nicht zum Absturz bringen
+        return [f"{config_rel}: Schluesselabgleich fehlgeschlagen ({e})."]
+    lines = []
+    if hinweis:
+        lines.append(hinweis)
+    if fehler:
+        lines.append(f"{config_rel}: {fehler}")
+    if missing:
+        new_text = cl.insert_missing_ai_config_rows(text, missing)
+        if new_text != text:
+            _write_text_with_newline(path, new_text, newline)
+            run_git(root, ["add", "--", config_rel])
+        lines.append(
+            f"{config_rel}: {len(missing)} Zeile(n) ergaenzt: "
+            + ", ".join(f"{m['tabelle']}/{m['schluessel']}" for m in missing)
+        )
+    # Review-Befund: hinweise_manuell IMMER ausgeben, auch wenn 'missing' leer ist (vorher fruehes
+    # 'return lines' bei 'if not missing' - eine ganze fehlende Tabelle oder ein verschobener Schluessel
+    # brauchen die manuelle Pruefung unabhaengig davon, ob sonst noch etwas automatisch ergaenzt wurde).
+    if hinweise_manuell:
+        lines.append(f"{config_rel}: von Hand pruefen:")
+        for eintrag in hinweise_manuell:
+            lines.append(f"  - {eintrag}")
+    return lines
+
+
+def report_ai_config_missing(root: Path, cfg: dict, ref: str = None) -> list:
+    """B37 fuer --check: nur MELDEN (nichts schreiben), ob die Template-Fassung von AI-CONFIG.md
+    Tabellen-Schluessel kennt, die im Projekt fehlen. Leer, wenn nichts fehlt oder der Abgleich nicht moeglich
+    ist (kein Remote, Template-Checkout selbst, Lesefehler) - config-lib.py:ai_config_missing_keys() liefert
+    dafuer bereits den stillen Fallback ([], [], None, None). `ref`: wie bei apply_ai_config_missing_keys()
+    der schon aufgeloeste Vergleichs-Ref des Aufrufers, fetch=False vermeidet einen zweiten 'git fetch'."""
+    if cfg.get("is_template"):
+        return []
+    cl = _config_lib_module()
+    if cl is None or not hasattr(cl, "ai_config_missing_keys"):
+        return []
+    try:
+        missing, hinweise_manuell, _hinweis, _fehler = cl.ai_config_missing_keys(
+            root, tu=_tu_namespace(), ref=ref, fetch=False
+        )
+    except Exception:
+        return []
+    config_rel = getattr(cl, "CONFIG_REL", "AI-CONFIG.md")
+    lines = []
+    if missing:
+        lines.append(
+            f"{config_rel}: {len(missing)} Schluessel im Template neu, im Projekt noch nicht: "
+            + ", ".join(f"{m['tabelle']}/{m['schluessel']}" for m in missing)
+        )
+    # Review-Befund: hinweise_manuell (verschobene Schluessel, ganze fehlende Tabellen - schon als fertiger
+    # Freitext von config-lib.py formuliert) IMMER ausgeben, nicht nur bei "ganze Tabelle(n) fehlen".
+    if hinweise_manuell:
+        lines.append(f"{config_rel}: von Hand pruefen:")
+        for eintrag in hinweise_manuell:
+            lines.append(f"  - {eintrag}")
+    return lines
+
+
+def _read_finish_setup_constants_from_ref(root: Path, ref: str):
+    """Liest REMOVE_ITEMS/SELF_REL aus `.claude/scripts/finish-setup.py` in Ref `ref`, OHNE den Code
+    auszufuehren. Sicherheitsregel (siehe B38-Kommentarblock oben): setup_removed_paths() laeuft u.a. in
+    `--check`, einem SessionStart-Hook, der bei JEDEM Sitzungsstart automatisch und ohne menschliches Zutun
+    auf einen frisch gefetchten, ungeprueften Template-Ref zugreift - `exec_module` waere dort beliebige
+    Codeausfuehrung direkt aus dem Remote. Stattdessen wird der Quelltext per `git show` geholt und rein
+    STATISCH per `ast` geparst: ausgewertet werden nur Zuweisungen auf Modulebene mit literalen Werten
+    (`ast.literal_eval`) - Funktionsaufrufe, Imports, Schleifen oder sonstige dynamische Konstrukte werden
+    ignoriert und koennen dadurch nichts ausloesen.
+
+    Rueckgabe (REMOVE_ITEMS oder None, SELF_REL oder None) - None je Wert bei fehlendem Ref, Parse-Fehler
+    oder wenn die Konstante keine einfache literale Zuweisung ist (z.B. aus einer zukuenftigen, anders
+    aufgebauten Template-Fassung)."""
+    res = run_git(root, ["show", f"{ref}:.claude/scripts/finish-setup.py"])
+    if res.returncode != 0 or not res.stdout:
+        return None, None
+    try:
+        tree = ast.parse(res.stdout)
+    except Exception:
+        return None, None
+    remove_items, self_rel = None, None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except Exception:  # TypeError bei z. B. {[1]: 2} - praeparierter Text darf --check nicht abbrechen
+            continue
+        if target.id == "REMOVE_ITEMS" and isinstance(value, list):
+            remove_items = value
+        elif target.id == "SELF_REL" and isinstance(value, str):
+            self_rel = value
+    return remove_items, self_rel
+
+
+def _safe_rel_path(rel) -> bool:
+    """Nur nicht-leere, relative Pfade ohne '..'-Segment und ohne Laufwerk/Wurzel. Schutz fuer Pfadlisten, die
+    aus einem Ref gelesen werden und spaeter geloescht werden koennen: '' oder '.' waere die Projektwurzel,
+    'C:/x' oder '/x' ein Ziel ausserhalb des Repos."""
+    if not isinstance(rel, str) or not rel.strip():
+        return False
+    norm = rel.replace("\\", "/")
+    if norm.startswith("/") or ":" in norm:
+        return False
+    teile = [t for t in norm.split("/") if t not in ("", ".")]
+    return bool(teile) and ".." not in teile
+
+
+def setup_removed_paths(cfg: dict, root: Path = None, ref: str = None) -> list:
+    """Pfade, die /act-finalize (finish-setup.py, Liste REMOVE_ITEMS + SELF_REL) aus einem ABGESCHLOSSENEN
+    Projekt entfernt hat (`setup_complete` in template.json) - dieselbe Rolle wie template_only()/
+    abgewaehlte_pfade() fuer diese Kategorie: ein Update darf sie nicht zurueckholen, das Template pflegt sie
+    ja fuer andere (noch nicht abgeschlossene) Projekte weiter. Leer, solange setup_complete fehlt (Einrichtung
+    laeuft noch - dort SOLLEN diese Pfade normal mitkommen) oder im Template-Checkout selbst.
+
+    Sicherheitsregel (siehe B38-Kommentarblock oben): fuehrt NIEMALS Code aus einem Ref aus, auch nicht aus
+    einem `ref`, der auf den ersten Blick vertrauenswuerdig wirkt - diese Funktion laeuft u.a. in `--check`
+    (SessionStart-Hook) mit dem frisch gefetchten Template-Ref. Die lokale, bereits im Projekt liegende
+    finish-setup.py (falls vorhanden - siehe Review-Befund "B38 greift nicht") wird weiterhin normal per
+    `exec_module` geladen, das ist im Regelfall unkritisch (eigene, bereits committete Projektdatei) - AUSSER
+    waehrend eines laufenden Merges, in dem git die Datei fuer einen offenen 'modify/delete'-Konflikt schon
+    mit der THEIRS-Fassung in den Arbeitsbaum geschrieben haben kann (siehe _sibling_path_conflicted): dann
+    zaehlt sie NICHT als lokal ladbar. Fehlt sie lokal bzw. ist der Pfad konfliktbehaftet (der Normalfall in
+    einem abgeschlossenen Projekt bzw. waehrend --apply) und ist `root`/`ref` gegeben, werden die Konstanten
+    stattdessen rein STATISCH gelesen (_read_finish_setup_constants_from_ref)."""
+    if cfg.get("is_template") or not cfg.get("setup_complete"):
+        return []
+    local_path = Path(__file__).resolve().parent / "finish-setup.py"
+    if local_path.is_file() and not _sibling_path_conflicted(root, "finish-setup.py"):
+        fs = _load_sibling_module_from_path(local_path, "_update_template_finish_setup")
+        if fs is not None:
+            items = getattr(fs, "REMOVE_ITEMS", None)
+            pfade = {rel for rel, _kind in items} if isinstance(items, list) else set()
+            self_rel = getattr(fs, "SELF_REL", None)
+            if self_rel:
+                pfade.add(self_rel)
+            return sorted(pfade)
+    if root is None or not ref:
+        return []
+    remove_items, self_rel = _read_finish_setup_constants_from_ref(root, ref)
+    pfade = set()
+    if isinstance(remove_items, list):
+        for entry in remove_items:
+            if isinstance(entry, (tuple, list)) and entry and _safe_rel_path(entry[0]):
+                pfade.add(entry[0])
+    if _safe_rel_path(self_rel):
+        pfade.add(self_rel)
+    return sorted(pfade)
+
+
+# Dateien, in denen NUR ein Ausschnitt Setup-only ist (Rest bleibt normale Template-Logik, siehe
+# priority_label: "Template gewinnt, Projektergaenzungen einarbeiten") - fuer diese greift setup_removed_paths()
+# nicht (kein Ganzdatei-Fall), sondern _strip_setup_only_text() unten.
+SETUP_ONLY_TEXT_STRIP_PATHS = ("AGENTS.md", "CLAUDE.md", "docs/ai/checklists.md")
+
+
+def _strip_setup_only_text(rel_path: str, text: str, root: Path = None, accepted_refs=()):
+    """Entfernt aus `text` denselben Ausschnitt, den /act-finalize aus dieser Datei entfernen wuerde -
+    template-only-Bloecke (setup-lib.py: remove_template_intro()/TEMPLATE_ONLY_BLOCK) in AGENTS.md/CLAUDE.md,
+    Checklisten-Abschnitte "Neues Projekt"/"Projekt nachruesten"/"Einrichtung abschliessen"
+    (finish-setup.py: update_checklists()/CHECKLIST_TITLES) in docs/ai/checklists.md. Ruft dazu die ECHTEN
+    Funktionen der beiden Scripte auf einem Temp-Verzeichnis auf (keine Nachbildung der Entfernungslogik) -
+    reine Textoperation, ruehrt das eigentliche Projekt nicht an. `text` selbst stammt vom Aufrufer meist von
+    der Template-Seite (theirs) - das ist unkritisch, hier wird nur Text verarbeitet, kein Code daraus
+    ausgefuehrt.
+
+    Sicherheitsregel (siehe B38-Kommentarblock oben): fuer AGENTS.md/CLAUDE.md wird ausschliesslich die
+    lokale setup-lib.py geladen (_setup_lib_module(), IMMER vorhanden, siehe deren Docstring) - kein
+    Ref-Fallback noetig oder moeglich. Fuer docs/ai/checklists.md (finish-setup.py existiert in einem
+    abgeschlossenen Projekt lokal nicht mehr) wird das Modul nur aus einem Ref geladen, der in
+    `accepted_refs` steht - typischerweise (pre_merge_head, base_commit), NIE der frisch gefetchte
+    Template-Ref/MERGE_HEAD (siehe _load_sibling_module `accepted_ref`). Rueckgabe (neuer_text, bool
+    geaendert); unveraendert (text, False), wenn kein Modul geladen werden konnte (fehlt lokal UND in jedem
+    Kandidaten aus `accepted_refs`) oder nichts zu entfernen war - der Konflikt bleibt dann fuer die manuelle
+    Aufloesung offen (siehe _resolve_setup_only_text_conflict)."""
+    norm = rel_path.replace("\\", "/")
+    if norm in ("AGENTS.md", "CLAUDE.md"):
+        sl = _setup_lib_module()
+        fn = getattr(sl, "remove_template_intro", None) if sl else None
+        if fn is None:
+            return text, False
+        tmp_dir = tempfile.mkdtemp(prefix="update-template-setup-only-")
+        try:
+            tmp_root = Path(tmp_dir)
+            fp = tmp_root / norm
+            fp.write_text(text, encoding="utf-8", newline="")
+            try:
+                fn(tmp_root)
+            except Exception:
+                return text, False
+            new_text = fp.read_text(encoding="utf-8")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return new_text, new_text != text
+    if norm == "docs/ai/checklists.md":
+        candidates = tuple(r for r in accepted_refs if r)
+        fs = None
+        for candidate in candidates:
+            fs = _finish_setup_module(root=root, ref=candidate, accepted_ref=candidates)
+            if fs is not None:
+                break
+        fn = getattr(fs, "update_checklists", None) if fs else None
+        if fn is None:
+            return text, False
+        tmp_dir = tempfile.mkdtemp(prefix="update-template-setup-only-")
+        try:
+            tmp_root = Path(tmp_dir)
+            fp = tmp_root / "docs" / "ai" / "checklists.md"
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(text, encoding="utf-8", newline="")
+            try:
+                fn(tmp_root, plan=False)
+            except Exception:
+                return text, False
+            new_text = fp.read_text(encoding="utf-8")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return new_text, new_text != text
+    return text, False
+
+
+def _resolve_setup_only_text_conflict(root: Path, rel_path: str, base_commit, ours_commit, theirs_commit):
+    """B38: rel_path ist eine der SETUP_ONLY_TEXT_STRIP_PATHS und steht im Konflikt, das Projekt hat die
+    Einrichtung bereits abgeschlossen. Entfernt aus der Template-Fassung zuerst denselben Setup-Ausschnitt,
+    den /act-finalize entfernen wuerde (_strip_setup_only_text), und fuehrt danach base/ours/die bereinigte
+    Template-Fassung per 'git merge-file' zusammen - meist verschwindet der Konflikt dabei vollstaendig
+    (der einzige Unterschied war der Setup-Ausschnitt). Bleibt danach noch ein echter inhaltlicher Konflikt,
+    wird die bereinigte Fassung trotzdem in den Arbeitsbaum geschrieben (weniger/kleinere Konfliktmarker fuer
+    die manuelle Aufloesung), aber NICHT gestaged - der Pfad bleibt als offen gemeldet.
+
+    Rueckgabe: Hinweistext bei sauberer automatischer Loesung, sonst None (kein B38-Fall, oder Restkonflikt
+    bleibt offen).
+
+    Sicherheitsregel: `theirs_commit` (MERGE_HEAD/Template-Ref) liefert hier NUR den Text der Template-Seite
+    (Daten, per `git show` gelesen) - die Funktion, die diesen Text bereinigt, wird dagegen ausschliesslich
+    aus `ours_commit`/`base_commit` geladen (siehe _strip_setup_only_text `accepted_refs`), also aus Stand,
+    den das Projekt bereits kennt. `theirs_commit` wird nie an `_strip_setup_only_text` als ladbarer Ref
+    durchgereicht."""
+    theirs_res = run_git(root, ["show", f"{theirs_commit}:{rel_path}"])
+    if theirs_res.returncode != 0:
+        return None
+    stripped_theirs, changed = _strip_setup_only_text(
+        rel_path, theirs_res.stdout, root=root, accepted_refs=(ours_commit, base_commit)
+    )
+    if not changed:
+        return None  # kein Setup-only-Ausschnitt betroffen - normaler Konflikt, bleibt offen
+
+    ours_res = run_git(root, ["show", f"{ours_commit}:{rel_path}"])
+    if ours_res.returncode != 0:
+        return None
+    base_res = run_git(root, ["show", f"{base_commit}:{rel_path}"]) if base_commit else None
+    base_text = base_res.stdout if (base_res is not None and base_res.returncode == 0) else ""
+
+    tmp_dir = tempfile.mkdtemp(prefix="update-template-mergefile-")
+    try:
+        ours_fp = Path(tmp_dir) / "ours"
+        base_fp = Path(tmp_dir) / "base"
+        theirs_fp = Path(tmp_dir) / "theirs"
+        ours_fp.write_text(ours_res.stdout, encoding="utf-8", newline="")
+        base_fp.write_text(base_text, encoding="utf-8", newline="")
+        theirs_fp.write_text(stripped_theirs, encoding="utf-8", newline="")
+        try:
+            res_mf = subprocess.run(
+                ["git", "merge-file", "-p", "-L", "HEAD", "-L", "base", "-L", "Template (Setup-Abschnitt entfernt)",
+                 str(ours_fp), str(base_fp), str(theirs_fp)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+        except OSError:
+            return None
+        # Review-Befund: 'git merge-file' liefert bei einem sauberen Merge 0, bei N verbleibenden Konflikten
+        # N (>0, Ausgabe mit Konfliktmarkern - beides gueltiger Text auf stdout) und bei einem echten Fehler
+        # (ungueltige Eingabe, per Signal beendet) < 0 bzw. >= 128 - dort ist stdout nicht vertrauenswuerdig
+        # (kann leer oder unvollstaendig sein). In diesem Fehlerfall NICHTS schreiben und den Konflikt so
+        # stehen lassen, wie er vor diesem Versuch war, statt eine kaputte Datei in den Arbeitsbaum zu legen.
+        if res_mf.returncode < 0 or res_mf.returncode >= 128 or not res_mf.stdout:
+            return None
+        (root / rel_path).write_text(res_mf.stdout, encoding="utf-8", newline="")
+        if res_mf.returncode == 0:
+            run_git(root, ["add", "--", rel_path])
+            return "Setup-Abschnitt aus Template-Seite verworfen, danach konfliktfrei gemergt"
+        return None  # echter Restkonflikt (1..127) - Datei hat jetzt weniger Marker, bleibt aber offen
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 # Prioritaetsregel je Pfad fuer --conflicts (dieselbe Aussage wie PRIORITY_RULES/priority_label in
 # rename-lib.py - dort nachsehen/nachziehen, falls sich die Regeln je aendern - z.B. die
@@ -548,6 +1061,22 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
     remote = cfg.get("template_remote") or "template"
     branch = cfg.get("template_branch") or "main"
 
+    # B36: ein liegen gebliebener, bereits fertig gemergter aber nie committeter Merge ist wichtiger als jede
+    # quiet-Unterdrueckung - erscheint sonst bei jedem Sitzungsstart nicht, obwohl der Arbeitsbaum seit dem
+    # letzten '--apply' einen halben Merge traegt. Nur fuer Merges vom Template-Remote (siehe
+    # _merge_is_from_template) - ein gewoehnlicher Feature-Merge geht diesen Hook nichts an.
+    merge_head = _merge_head(root)
+    if merge_head and _merge_is_from_template(root, cfg, merge_head):
+        offene, _status_map = _list_conflicts(root)
+        if offene:
+            print(f"Template-Update: Merge laeuft noch (MERGE_HEAD {merge_head[:7]}), {len(offene)} "
+                  "Konflikt(e) offen - '--conflicts' zeigt sie, danach '--continue [--commit]'.")
+        else:
+            print(f"Template-Update: WARNUNG - Merge ist fertig aufgeloest (MERGE_HEAD {merge_head[:7]}), "
+                  "aber noch NICHT committet. Erst 'git commit' (bzw. '--continue --commit'), sonst bleibt "
+                  "der Arbeitsbaum als halber Merge stehen.")
+        return 3
+
     ref, fetch_noetig = compare_ref(root, cfg)
     if cfg.get("base_commit") is None or ref is None:
         if quiet:
@@ -583,7 +1112,18 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         count = 0
 
     if count == 0:
+        # B37: auch ohne ausstehende Commits koennen im Template neue AI-CONFIG.md-Schluessel stecken, die
+        # dieses Projekt (keep_local, nie automatisch gemergt) noch nicht kennt. 'ref' ist hier bereits
+        # aufgeloest (und ggf. schon gefetcht, siehe oben) - report_ai_config_missing() bekommt ihn samt
+        # fetch=False mit, loest also KEINEN zweiten 'git fetch' mehr aus (Review-Befund "zweiter Fetch").
+        # Trotzdem NICHT unter --quiet: der SessionStart-Hook soll keine zusaetzliche Ausgabe bekommen, die
+        # dort niemand liest - interaktiv (ohne --quiet) bleibt der Hinweis erhalten.
         if not quiet:
+            ai_config_lines = report_ai_config_missing(root, cfg, ref=ref)
+            if ai_config_lines:
+                for line in ai_config_lines:
+                    print(line)
+                return 0
             print(f"Template-Update: aktuell (kein Unterschied zu {ref}).")
         return 0
 
@@ -605,7 +1145,8 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
     # nie ins Projekt gemergt (--apply raeumt sie danach ohnehin wieder weg). Greift nie im Template-Checkout
     # selbst (is_template): dort sind es normale, gepflegte Dateien.
     abgewaehlt = abgewaehlte_pfade(cfg)
-    normal_lines, template_only_lines, abgewaehlt_lines = [], [], []
+    setup_removed = setup_removed_paths(cfg, root=root, ref=ref)
+    normal_lines, template_only_lines, abgewaehlt_lines, setup_removed_lines = [], [], [], []
     for raw_line in diff_lines_raw:
         parts = raw_line.split("\t")
         rel_path = parts[-1] if parts else raw_line
@@ -614,6 +1155,10 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         elif not is_template and matches_keep_local(rel_path, abgewaehlt):
             # Die Vorschau darf nichts ankuendigen, was --apply anschliessend wieder wegraeumt.
             abgewaehlt_lines.append(rel_path)
+        elif not is_template and matches_keep_local(rel_path, setup_removed):
+            # B38: /act-finalize hat den Pfad aus diesem abgeschlossenen Projekt entfernt - kommt beim
+            # Merge nicht zurueck, siehe cmd_apply().
+            setup_removed_lines.append(rel_path)
         else:
             normal_lines.append(raw_line)
 
@@ -636,6 +1181,21 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
         lines.append("Abgewaehlt (AI-CONFIG.md), wird nicht eingespielt:")
         for rel_path in abgewaehlt_lines[:30]:
             lines.append(f"  {rel_path}")
+
+    if setup_removed_lines:
+        lines.append("")
+        lines.append("Setup abgeschlossen (/act-finalize entfernt), wird nicht eingespielt:")
+        for rel_path in setup_removed_lines[:30]:
+            lines.append(f"  {rel_path}")
+
+    # Review-Befund "zweiter Fetch": 'ref' ist hier bereits aufgeloest/gefetcht (siehe oben) - fetch=False
+    # in report_ai_config_missing() erspart einen zweiten 'git fetch'. Weiterhin nur interaktiv (nicht unter
+    # --quiet/SessionStart-Hook), damit dort keine zusaetzliche Ausgabe entsteht, die niemand liest.
+    if not quiet:
+        ai_config_lines = report_ai_config_missing(root, cfg, ref=ref)
+        if ai_config_lines:
+            lines.append("")
+            lines.extend(ai_config_lines)
 
     lines.append("")
     lines.append("Einspielen: Skill /act-update-template bzw. python .claude/scripts/update-template.py --apply")
@@ -699,6 +1259,31 @@ def _list_conflicts(root: Path):
 def _merge_head(root: Path):
     res = run_git(root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])
     return res.stdout.strip() if res.returncode == 0 else None
+
+
+def _merge_is_from_template(root: Path, cfg: dict, merge_head: str) -> bool:
+    """B36: grobe, netzwerkfreie Erkennung, ob ein laufender Merge (MERGE_HEAD) vom Template-Remote stammt -
+    fuer die Warnung in --check/--status vor einem halb abgeschlossenen Template-Update. Prueft nur den
+    bereits lokal bekannten Stand (kein fetch - --check --quiet laeuft als SessionStart-Hook und darf nicht
+    zusaetzlich Netzwerkzeit kosten): merge_head gilt als "vom Template" wenn er Vorfahr von (oder gleich)
+    dem Remote-Tracking-Branch <remote>/<branch> ist.
+
+    Review-Befund: bewusst KEIN Rueckfall auf den gleichnamigen LOKALEN Branch, wenn der Remote fehlt - anders
+    als compare_ref() (dort ein legitimer Sonderfall: Projekt als Branch im Template-Checkout selbst). Hier
+    waere das ein staendiger Fehlalarm: Nach jedem gewoehnlichen Merge in den lokalen 'main' ist der gemergte
+    Commit trivialerweise dessen Vorfahr, ganz unabhaengig vom Template. Ohne bekannten Template-Remote also
+    lieber False (keine Warnung) als ein falscher Alarm bei jedem Feature-Merge."""
+    if not merge_head:
+        return False
+    remote = cfg.get("template_remote") or "template"
+    branch = cfg.get("template_branch") or "main"
+    if not _remote_exists(root, remote):
+        return False
+    candidate = f"{remote}/{branch}"
+    if run_git(root, ["rev-parse", "--verify", "--quiet", candidate]).returncode != 0:
+        return False
+    res = run_git(root, ["merge-base", "--is-ancestor", merge_head, candidate])
+    return res.returncode == 0
 
 
 def _find_renames(root: Path, ref_a, ref_b: str) -> dict:
@@ -1092,9 +1677,14 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             abgewaehlt = abgewaehlte_pfade(cfg)
             is_template = bool(cfg.get("is_template"))
             merge_head = _merge_head(root)
+            # B38: root/ref (=merge_head) durchreichen - finish-setup.py existiert in einem abgeschlossenen
+            # Projekt lokal nicht mehr, siehe setup_removed_paths()/_load_sibling_module() oben.
+            setup_removed = setup_removed_paths(cfg, root=root, ref=merge_head)
             rename_map = _find_renames(root, cfg.get("base_commit"), "HEAD")
             auto_resolved, deleted_kept, dd_removed, du_decision, template_only_removed = [], [], [], [], []
             abgewaehlt_removed = []
+            setup_removed_removed, setup_only_resolved, setup_only_remaining = [], [], []
+            forwarder_template_wins, forwarder_template_wins_changed = [], []
             for rel_path, code in conflicts.items():
                 if code == "DD":
                     # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
@@ -1102,6 +1692,29 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     if res_rm.returncode != 0:
                         run_git(root, ["rm", "--cached", "--", rel_path])
                     dd_removed.append(rel_path)
+                elif not is_template and matches_keep_local(rel_path, FORWARDER_TEMPLATE_WINS_PATHS):
+                    # F4: reine Weiterleitung, Template gewinnt IMMER - unabhaengig vom Konflikt-Code. Inhalt
+                    # direkt aus dem Template-Ref schreiben (statt 'checkout --theirs', das bei DU/AU/UA nicht
+                    # zuverlaessig eine Stage-3-Fassung hat) und 'git add'.
+                    res_show = run_git(root, ["show", f"{merge_head}:{rel_path}"]) if merge_head else None
+                    if res_show is not None and res_show.returncode == 0:
+                        fp = root / rel_path
+                        fp.parent.mkdir(parents=True, exist_ok=True)
+                        fp.write_text(res_show.stdout, encoding="utf-8", newline="")
+                        run_git(root, ["add", "--", rel_path])
+                        forwarder_template_wins.append(rel_path)
+                        # Review-Befund: das Template gewinnt hier IMMER, auch wenn die Projektfassung (HEAD
+                        # vor diesem Merge) gegenueber der gemeinsamen Basis lokal veraendert war - diese
+                        # Aenderung geht dabei kommentarlos verloren. Deshalb pruefen und, falls ja, im Report
+                        # sichtbar machen samt Rueckweg zur alten Fassung.
+                        base_commit = cfg.get("base_commit")
+                        ours_res = run_git(root, ["show", f"{pre_merge_head}:{rel_path}"])
+                        base_res = run_git(root, ["show", f"{base_commit}:{rel_path}"]) if base_commit else None
+                        if ours_res.returncode == 0 and (
+                            base_res is None or base_res.returncode != 0 or base_res.stdout != ours_res.stdout
+                        ):
+                            forwarder_template_wins_changed.append(rel_path)
+                    # sonst: im Template-Ref nicht (mehr) vorhanden - Konflikt bleibt offen, von Hand loesen
                 elif code == "DU" and not is_template and matches_keep_local(rel_path, template_only):
                     # Projekt hat den Pfad nie (mehr), Template hat ihn geaendert - genau der Fall, fuer den
                     # template_only existiert (z.B. .templatedev/: create-project.py entfernt den Ordner
@@ -1120,6 +1733,25 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     if res_rm.returncode != 0:
                         run_git(root, ["rm", "--cached", "--", rel_path])
                     abgewaehlt_removed.append(rel_path)
+                elif code == "DU" and not is_template and matches_keep_local(rel_path, setup_removed):
+                    # B38: /act-finalize (finish-setup.py) hat den Pfad aus diesem ABGESCHLOSSENEN Projekt
+                    # entfernt (z.B. create-project.py, ein Einrichtungs-Skill-Ordner) - das Template pflegt
+                    # ihn fuer andere, noch nicht abgeschlossene Projekte weiter. {{AUFTRAGGEBER}} hat diese
+                    # Entscheidung mit dem Abschluss der Einrichtung bereits getroffen, keine Rename-Pruefung
+                    # noetig.
+                    res_rm = run_git(root, ["rm", "--", rel_path])
+                    if res_rm.returncode != 0:
+                        run_git(root, ["rm", "--cached", "--", rel_path])
+                    setup_removed_removed.append(rel_path)
+                elif not is_template and cfg.get("setup_complete") and rel_path.replace("\\", "/") in SETUP_ONLY_TEXT_STRIP_PATHS:
+                    # B38: nur ein AUSSCHNITT dieser Datei ist Setup-only (template-only-Block bzw.
+                    # Checklisten-Abschnitt) - kein Ganzdatei-Fall wie oben. Erst den Ausschnitt aus der
+                    # Template-Seite verwerfen, dann versuchen, den Rest konfliktfrei zu mergen.
+                    note = _resolve_setup_only_text_conflict(root, rel_path, cfg.get("base_commit"), pre_merge_head, merge_head)
+                    if note:
+                        setup_only_resolved.append(f"{rel_path} ({note})")
+                    else:
+                        setup_only_remaining.append(rel_path)
                 elif code == "DU":
                     # Vom Projekt geloescht, vom Template geaendert. Das Script darf das NICHT allein
                     # entscheiden, wenn die "Loeschung" in Wahrheit nur eine Umbenennung/Verschiebung ist
@@ -1141,12 +1773,26 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                         auto_resolved.append(rel_path)
                     # sonst: keine "ours"-Fassung vorhanden -> Konflikt bleibt offen, von Hand loesen
 
+            if forwarder_template_wins:
+                print("Weiterleitungs-Skill (F4), Template gewinnt immer: " + ", ".join(sorted(forwarder_template_wins)))
+            if forwarder_template_wins_changed:
+                print(
+                    "WARNUNG: davon lokal veraendert (gegenueber der Basis), trotzdem ueberschrieben - alte "
+                    "Fassung: 'git show HEAD:<Pfad>' (nach dem Commit stattdessen 'git show ORIG_HEAD:<Pfad>'): "
+                    + ", ".join(sorted(forwarder_template_wins_changed))
+                )
             if auto_resolved:
                 print("keep_local automatisch uebernommen (Projektfassung gewinnt): " + ", ".join(sorted(auto_resolved)))
             if template_only_removed:
                 print("Nur im Template, wird nicht eingespielt: " + ", ".join(sorted(template_only_removed)))
             if abgewaehlt_removed:
                 print("Abgewaehlt (AI-CONFIG.md), bleibt draussen: " + ", ".join(sorted(abgewaehlt_removed)))
+            if setup_removed_removed:
+                print("Setup abgeschlossen (/act-finalize entfernt), bleibt draussen: " + ", ".join(sorted(setup_removed_removed)))
+            if setup_only_resolved:
+                print("Setup abgeschlossen: Setup-Abschnitt der Template-Seite verworfen, automatisch gemergt: " + ", ".join(sorted(setup_only_resolved)))
+            if setup_only_remaining:
+                print("Setup abgeschlossen: Setup-Abschnitt verworfen, Restkonflikt noch offen: " + ", ".join(sorted(setup_only_remaining)))
             if dd_removed:
                 print("Von beiden geloescht (unstrittig) -> entfernt: " + ", ".join(sorted(dd_removed)))
             if deleted_kept:
@@ -1192,8 +1838,17 @@ def _remove_paths(root: Path, pfade) -> list:
     gar nicht existiert; was danach noch daliegt (von git nicht erfasste Dateien), wird direkt vom
     Dateisystem geloescht, damit keine Karteileiche zurueckbleibt."""
     removed = []
+    wurzel = root.resolve()
     for rel_path in pfade:
+        if not _safe_rel_path(rel_path):
+            print(f"Uebersprungen (unsicherer Pfad, nicht geloescht): {rel_path!r}", file=sys.stderr)
+            continue
         fp = root / rel_path
+        try:
+            fp.resolve().relative_to(wurzel)
+        except ValueError:
+            print(f"Uebersprungen (ausserhalb des Projekts, nicht geloescht): {rel_path!r}", file=sys.stderr)
+            continue
         existed = fp.exists()
         run_git(root, ["rm", "-r", "-f", "--ignore-unmatch", "--", rel_path])
         if fp.exists():
@@ -1210,6 +1865,12 @@ def _remove_paths(root: Path, pfade) -> list:
 
 
 def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
+    # MERGE_HEAD (falls ein Merge laeuft - _finalize() wird auch ohne einen laufenden Merge aufgerufen,
+    # z.B. nie von cmd_apply direkt ohne vorheriges '--apply') schon hier aufloesen: setup_removed_paths()
+    # braucht ihn als Fallback-Ref, falls finish-setup.py lokal fehlt (siehe dort). Wird weiter unten (B36)
+    # fuer new_base_full wiederverwendet statt ein zweites Mal aufgeloest.
+    merge_head = _merge_head(root)
+
     removed_template_only = _remove_template_only(root, cfg)
     if removed_template_only:
         print("Nur im Template, aus dem Projekt entfernt: " + ", ".join(removed_template_only))
@@ -1219,6 +1880,12 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
     removed_abgewaehlt = _remove_paths(root, abgewaehlte_pfade(cfg))
     if removed_abgewaehlt:
         print("Abgewaehlt (AI-CONFIG.md), aus dem Projekt entfernt: " + ", ".join(removed_abgewaehlt))
+
+    # B38: dasselbe fuer abgeschlossene Projekte - Pfade, die /act-finalize entfernt hat, koennen ohne
+    # Konflikt neu vom Merge hereinkommen (Datei existierte im Projekt schon lange nicht mehr).
+    removed_setup = _remove_paths(root, setup_removed_paths(cfg, root=root, ref=merge_head))
+    if removed_setup:
+        print("Setup abgeschlossen (/act-finalize entfernt), aus dem Projekt entfernt: " + ", ".join(removed_setup))
 
     res_cached = run_git(root, ["diff", "--cached", "--name-only"])
     res_unstaged = run_git(root, ["diff", "--name-only"])
@@ -1276,14 +1943,26 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
         if "{{" in new_content:
             remaining_placeholders.append(rel_path)
 
-    ref, _fetch_noetig = compare_ref(root, cfg)
-    if ref is None:
-        ref = f"{cfg.get('template_remote') or 'template'}/{cfg.get('template_branch') or 'main'}"
-    res_new = run_git(root, ["rev-parse", ref])
-    if res_new.returncode != 0:
-        print(f"Fehler: '{ref}' nicht aufloesbar: {res_new.stderr.strip()}", file=sys.stderr)
-        return 2
-    new_base_full = res_new.stdout.strip()
+    # B36: der tatsaechlich gemergte Commit ist MERGE_HEAD - NICHT der zwischenzeitlich frisch gefetchte
+    # Remote-Stand aus compare_ref(). Zwischen '--apply' (legt den Merge an) und '--continue' (loest ihn ab)
+    # kann ein erneutes 'git fetch template' (z.B. durch den --check-SessionStart-Hook) den Remote-Branch
+    # bereits weitergeschoben haben - compare_ref() wuerde dann auf einen Commit zeigen, dessen Aenderungen
+    # NIE tatsaechlich in den Arbeitsbaum gemergt wurden, und base_commit faelschlich darauf vorspringen.
+    # MERGE_HEAD existiert hier zuverlaessig (ein Merge wurde angelegt, git loescht ihn erst bei 'git commit'
+    # weiter unten) - nur ohne laufenden Merge (z.B. Aufruf ohne vorherige Konflikte) auf compare_ref()
+    # zurueckfallen. 'merge_head' wurde schon ganz oben aufgeloest (siehe dort) - hier nicht erneut abfragen,
+    # ein 'git commit' weiter unten wuerde MERGE_HEAD sonst zwischen den beiden Aufrufen verschwinden lassen.
+    if merge_head:
+        new_base_full = merge_head
+    else:
+        ref, _fetch_noetig = compare_ref(root, cfg)
+        if ref is None:
+            ref = f"{cfg.get('template_remote') or 'template'}/{cfg.get('template_branch') or 'main'}"
+        res_new = run_git(root, ["rev-parse", ref])
+        if res_new.returncode != 0:
+            print(f"Fehler: '{ref}' nicht aufloesbar: {res_new.stderr.strip()}", file=sys.stderr)
+            return 2
+        new_base_full = res_new.stdout.strip()
 
     old_base = cfg.get("base_commit")
     commits_count = 0
@@ -1309,6 +1988,13 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
     )
     save_template_json(root, cfg, path)
     run_git(root, ["add", "--", TEMPLATE_JSON_REL])
+
+    # B37: erst jetzt, wo garantiert keine Konflikte mehr offen sind (cmd_apply ruft _finalize() nur dann
+    # auf) - AI-CONFIG.md steht in keep_local, ein Merge zieht neue Template-Schluessel dort sonst nie mit.
+    # ref=new_base_full: derselbe, gerade erst aufgeloeste Merge-/Vergleichs-Commit - fetch=False in
+    # apply_ai_config_missing_keys() erspart einen zweiten 'git fetch' (Review-Befund "zweiter Fetch").
+    for line in apply_ai_config_missing_keys(root, cfg, ref=new_base_full):
+        print(line)
 
     if remaining_placeholders:
         print("Warnung: '{{' bleibt uebrig (kein Wert in values gesetzt) - manuell pruefen:")
@@ -1516,8 +2202,18 @@ def print_status(root: Path, cfg: dict) -> None:
     merge_head = _merge_head(root)
     if merge_head:
         offene, _status_map = _list_conflicts(root)
-        print(f"merge:           laeuft (MERGE_HEAD {merge_head[:7]}), {len(offene)} Konflikt(e) offen "
-              "- siehe '--conflicts'")
+        von_template = _merge_is_from_template(root, cfg, merge_head)
+        quelle = "vom Template-Update" if von_template else "unbekannter Herkunft"
+        if offene:
+            print(f"merge:           laeuft (MERGE_HEAD {merge_head[:7]}, {quelle}), {len(offene)} "
+                  "Konflikt(e) offen - siehe '--conflicts'")
+        else:
+            # B36: git hat den Merge bereits vollstaendig aufgeloest (keine offenen Konflikte mehr), aber
+            # niemand hat committet - ohne diese Warnung faellt das leicht durch, weil 'git status' allein es
+            # nicht klar von einem gewoehnlichen "Aenderungen gestaged" unterscheidet.
+            print(f"merge:           WARNUNG: fertig aufgeloest ({quelle}), aber NICHT committet "
+                  f"(MERGE_HEAD {merge_head[:7]}) - 'git commit' bzw. '--continue --commit' ausfuehren, "
+                  "oder '--abort' zum Verwerfen.")
     else:
         print("merge:           kein laufender Merge")
 

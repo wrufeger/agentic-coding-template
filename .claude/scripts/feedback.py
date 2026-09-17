@@ -15,7 +15,7 @@
 #             Datenbanknamen, Kennzahlen und Zitate - das ist NICHT anonym und verlaesst das Projekt nie.
 #          2. Es wird NIE ohne Einwilligung gesendet (consent in .claude/template.json).
 #          3. Jede Sendung wird PROTOKOLLIERT: die vollstaendige Nutzlast landet versioniert unter
-#             docs/ai/template-feedback/. Der Assistent sendet autonom, ohne Rueckfrage und ohne die Nutzlast
+#             docs/ai/template-feedback/sent/protokolle/. Der Assistent sendet autonom, ohne Rueckfrage und ohne die Nutzlast
 #             ins Terminal zu schreiben - wie jedes andere Programm auch. Nachvollziehbar bleibt es trotzdem,
 #             aber ueber das Protokoll im Repo: Es faellt im naechsten Diff auf, laesst sich nachlesen, wenn
 #             jemand es wissen will, und nicht erst, wenn er zufaellig hinsieht. Wer vorab sehen will, was
@@ -37,15 +37,17 @@
 #       versionieren (Nachweis im Diff).
 #   python .claude/scripts/feedback.py --add --art <regel|script|skill|ablauf|doku|fehler>
 #                                      --titel "<eine Zeile>" --text "<2-6 Saetze>"
-#       Legt einen Verbesserungs-Eintrag in den lokalen Ausgang (.claude/feedback-outbox.json, gitignored).
-#       Sendet nichts. Der Text wird fuer einen Fremden geschrieben: Muster statt Projekt, keine Namen, keine
-#       Pfade, kein Code.
+#       Legt einen Verbesserungs-Eintrag als <name>.md unter docs/ai/template-feedback/ an. Sendet nichts -
+#       AUSSER Feedback steht auf "automatisch" mit Takt "sofort": dann loest --add im Anschluss denselben
+#       Versand wie --send aus (dieselben Pruefungen, dieselbe Wochensperre bei anderem Takt). Der Text wird
+#       fuer einen Fremden geschrieben: Muster statt Projekt, keine Namen, keine Pfade, kein Code.
 #   python .claude/scripts/feedback.py --plan        (Default)
 #       Zeigt die vollstaendige Nutzlast, die gesendet wuerde. Schreibt und sendet nichts.
 #   python .claude/scripts/feedback.py --send [--force]
 #       Sendet, wenn Einwilligung vorliegt, der Filter nichts beanstandet und die letzte Sendung mindestens
-#       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/, leert den Ausgang und
-#       vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst.
+#       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/sent/protokolle/, leert den
+#       Ausgang und vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst. Steht
+#       Feedback auf "automatisch" und der Takt auf "sofort", loest bereits --add diesen Versand aus.
 #   python .claude/scripts/feedback.py --direkt "<Text>"
 #       Sendet eine von Hand geschriebene Nachricht SOFORT - unabhaengig von Einwilligung, Modus und Takt.
 #       Begruendung: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan,
@@ -105,15 +107,27 @@ HERKUNFT = "agentic-coding-template/1"
 # Der fruehere Ausgang (.claude/feedback-outbox.json) ist entfallen: ein Eintrag ist eine einzelne
 # <name>.md mit YAML-Front-Matter (art/titel/datum/status/gesendet, dazu die Ueberschrift und der Text als
 # Koerper) direkt unter docs/ai/template-feedback/ und wandert beim Senden nach sent/. Damit steht schon VOR
-# dem Versand im Repo, was hinausgehen soll - sichtbar im Diff, nicht in einer versteckten Datei.
+# dem Versand im Repo, was hinausgehen soll - sichtbar im Diff, nicht in einer versteckten Datei. Der Eintrag
+# ist die LESEFASSUNG fuer Menschen; das Sendeprotokoll (siehe unten) ist der Nachweis der tatsaechlich
+# uebertragenen Nutzlast samt Metadaten (Kennzahlen, Schalterstellungen, Projekt-ID) - beides zusammen ergibt
+# vollstaendige Nachvollziehbarkeit, keins ersetzt das andere.
 # Altbestand aus frueheren Projekten (Paar <name>.md + <name>.json, auch in sent/) wird beim LESEN
 # weiterhin erkannt - --add schreibt nur noch das neue Format.
-# Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist.
+# Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist. Liegt
+# UNTER sent/, eigens im Unterordner protokolle/, damit es nicht mit den (Lese-)Eintraegen im selben Ordner
+# verwechselt wird. Aeltere Protokolle, die noch direkt im Hauptordner liegen, verschiebt
+# _protokolle_migrieren() bei der naechsten SCHREIBENDEN Aktion (--add/--send/--direkt/--enable/--disable)
+# einmalig dorthin - --status/--plan lesen nur und zeigen den Altbestand, verschieben aber nichts.
 LOG_DIR_REL = "docs/ai/template-feedback"
+PROTOKOLL_DIR_REL = "docs/ai/template-feedback/sent/protokolle"
 # ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protokoll lokal). Dann
 # nimmt .gitignore genau die Nutzlast-Dateien aus; die README des Ordners bleibt versioniert, damit im Repo
 # nachlesbar bleibt, DASS gesendet wird - nur nicht mehr, WAS.
-GITIGNORE_GLOB = "docs/ai/template-feedback/*.json"
+GITIGNORE_GLOB = "docs/ai/template-feedback/sent/protokolle/*.json"
+# Muster aus der Zeit vor der Trennung von Eintrag und Protokoll (Protokolle lagen direkt im Hauptordner).
+# Wird weiterhin als "lokal" erkannt UND vor einer Migration um das neue Muster ergaenzt - sonst waeren
+# bereits ignorierte Protokolle nach dem Verschieben nach sent/protokolle/ ploetzlich nicht mehr ignoriert.
+GITIGNORE_GLOB_ALT = "docs/ai/template-feedback/*.json"
 GITIGNORE_KOPF = "# Protokoll der Rueckmeldungen (feedback.py) - auf Wunsch lokal, nicht versioniert"
 CONFIG_REL = "AI-CONFIG.md"
 # Mindestabstand je Takt in Stunden (None = kein automatischer Versand). Gleiche Tabelle wie in setup-lib.py;
@@ -437,8 +451,9 @@ _ANTWORT = re.compile(r"(?m)^##\s+(?P<frage>.+?)\s*$\n(?P<rumpf>(?:(?!^##\s).*\n
 
 def _fragebogen_lesen(root: Path) -> list:
     """Die vom Menschen geschriebenen Antworten aus feedback.md - je Abschnitt die Zeilen unter '> '.
-    Leer gebliebene Fragen fallen weg; der Abschnitt 'Bereits gesendet' ist Archiv und wird nie erneut
-    gesendet."""
+    Leer gebliebene Fragen fallen weg; der Abschnitt 'Von dir bereits gesendet' (frueher 'Bereits gesendet' -
+    beide Namen werden gelesen, die Trennung laeuft ueber die '---'-Zeile, nicht ueber die Ueberschrift) ist
+    Archiv und wird nie erneut gesendet."""
     fp = root / FRAGEBOGEN_REL
     if not fp.exists():
         return []
@@ -738,34 +753,75 @@ def _zeige(nutzlast: dict, endpoint: str) -> None:
         print("  " + zeile)
 
 
+def _gitignore_muster(root: Path) -> set:
+    gi = root / ".gitignore"
+    if not gi.exists():
+        return set()
+    try:
+        return {z.strip() for z in gi.read_text(encoding="utf-8").splitlines()}
+    except OSError:
+        return set()
+
+
 def _protokoll_lokal(root: Path) -> bool:
-    """True, wenn .gitignore die Nutzlast-Dateien des Protokolls ausnimmt."""
+    """True, wenn .gitignore die Protokoll-Dateien ausnimmt - das aktuelle Muster (GITIGNORE_GLOB) oder
+    noch das aeltere aus der Zeit vor der Trennung von Eintrag und Protokoll (GITIGNORE_GLOB_ALT)."""
+    muster = _gitignore_muster(root)
+    return GITIGNORE_GLOB in muster or GITIGNORE_GLOB_ALT in muster
+
+
+def _gitignore_altmuster_ergaenzen(root: Path) -> bool:
+    """Ergaenzt das neue Ignoriermuster, wenn nur das alte (GITIGNORE_GLOB_ALT) in .gitignore steht - VOR
+    dem Verschieben von Protokollen nach sent/protokolle/. Sonst waeren dort abgelegte Dateien ploetzlich
+    nicht mehr ignoriert, obwohl {{AUFTRAGGEBER}} 'lokal' gewaehlt hatte - die Wahl bleibt erhalten. Ruehrt
+    nichts an, wenn das neue Muster schon da ist oder das alte fehlt. True, wenn etwas geschrieben wurde."""
     gi = root / ".gitignore"
     if not gi.exists():
         return False
-    return any(z.strip() == GITIGNORE_GLOB for z in gi.read_text(encoding="utf-8").splitlines())
+    try:
+        zeilen = gi.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    stripped = [z.strip() for z in zeilen]
+    if GITIGNORE_GLOB_ALT not in stripped or GITIGNORE_GLOB in stripped:
+        return False
+    idx = stripped.index(GITIGNORE_GLOB_ALT)
+    zeilen.insert(idx + 1, GITIGNORE_GLOB)
+    try:
+        gi.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
 
 
 def _protokoll_lokal_setzen(root: Path, lokal: bool) -> str:
-    """Traegt die Nutzlast-Dateien in .gitignore ein bzw. nimmt den Eintrag wieder heraus.
+    """Traegt die Protokoll-Dateien in .gitignore ein bzw. nimmt sie wieder heraus - erkennt dabei sowohl
+    das aktuelle Muster als auch GITIGNORE_GLOB_ALT und raeumt bei 'versioniert' beide weg.
 
-    Rueckgabe: kurze Meldung fuer die Ausgabe. Angefasst wird nur die eigene Zeile samt Kopfkommentar -
+    Rueckgabe: kurze Meldung fuer die Ausgabe. Angefasst wird nur die eigenen Zeilen samt Kopfkommentar -
     alles andere in .gitignore bleibt unberuehrt.
     """
     gi = root / ".gitignore"
-    vorhanden = _protokoll_lokal(root)
-    if lokal == vorhanden:
-        return f"Protokoll: {'lokal (bereits in .gitignore)' if lokal else 'versioniert (unveraendert)'}"
-    zeilen = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
+    muster = _gitignore_muster(root)
+    hat_neu, hat_alt = GITIGNORE_GLOB in muster, GITIGNORE_GLOB_ALT in muster
     if lokal:
+        if hat_neu:
+            return "Protokoll: lokal (bereits in .gitignore)"
+        if hat_alt:
+            _gitignore_altmuster_ergaenzen(root)
+            return f"Protokoll: lokal - altes Muster {GITIGNORE_GLOB_ALT} gefunden, {GITIGNORE_GLOB} ergaenzt"
+        zeilen = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
         if zeilen and zeilen[-1].strip():
             zeilen.append("")
         zeilen += [GITIGNORE_KOPF, GITIGNORE_GLOB]
         gi.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
         return f"Protokoll: lokal - {GITIGNORE_GLOB} in .gitignore eingetragen"
+    if not (hat_neu or hat_alt):
+        return "Protokoll: versioniert (unveraendert)"
+    zeilen = gi.read_text(encoding="utf-8").splitlines()
     behalten, i = [], 0
     while i < len(zeilen):
-        if zeilen[i].strip() == GITIGNORE_GLOB:
+        if zeilen[i].strip() in (GITIGNORE_GLOB, GITIGNORE_GLOB_ALT):
             if behalten and behalten[-1].strip() == GITIGNORE_KOPF:
                 behalten.pop()
             i += 1
@@ -773,7 +829,7 @@ def _protokoll_lokal_setzen(root: Path, lokal: bool) -> str:
         behalten.append(zeilen[i])
         i += 1
     gi.write_text("\n".join(behalten).rstrip("\n") + "\n", encoding="utf-8")
-    return f"Protokoll: versioniert - {GITIGNORE_GLOB} aus .gitignore entfernt"
+    return "Protokoll: versioniert - Muster aus .gitignore entfernt"
 
 
 def cmd_status(root: Path) -> int:
@@ -786,8 +842,13 @@ def cmd_status(root: Path) -> int:
     print(f"Wartend:   {len(_outbox(root))} Eintraege ({LOG_DIR_REL}/, je eine .md; Altbestand .md + .json)")
     gesendet = list((root / LOG_DIR_REL / "sent").glob("*.json")) if (root / LOG_DIR_REL / "sent").is_dir() else []
     print(f"Gesendet:  {len(gesendet)} Eintraege ({LOG_DIR_REL}/sent/)")
-    print(f"Protokoll: {LOG_DIR_REL}/ - "
+    protokolle = list((root / PROTOKOLL_DIR_REL).glob("*.json")) if (root / PROTOKOLL_DIR_REL).is_dir() else []
+    print(f"Protokoll: {len(protokolle)} Sendungen ({PROTOKOLL_DIR_REL}/) - "
           f"{'lokal, per .gitignore ausgenommen' if _protokoll_lokal(root) else 'versioniert (im Diff sichtbar)'}")
+    altbestand = _protokolle_altbestand(root)
+    if altbestand:
+        print(f"Achtung:   {len(altbestand)} alte(s) Protokoll(e) noch direkt in {LOG_DIR_REL}/ - "
+              f"wird bei --add/--send/--direkt/--enable nach {PROTOKOLL_DIR_REL}/ verschoben.")
     print(f"Zuletzt gesendet: {fb.get('zuletzt_gesendet') or 'nie'}")
     if fb.get("repo_url"):
         print(f"Repo-URL:  {fb['repo_url']}")
@@ -835,7 +896,7 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
         print(_protokoll_lokal_setzen(root, protokoll == "lokal"))
     if an:
         wo = "lokal, per .gitignore ausgenommen" if _protokoll_lokal(root) else "versioniert"
-        print(f"Ziel: {_endpoint()} - Protokoll jeder Sendung unter {LOG_DIR_REL}/ ({wo})")
+        print(f"Ziel: {_endpoint()} - Protokoll jeder Sendung unter {PROTOKOLL_DIR_REL}/ ({wo})")
     return 0
 
 
@@ -878,6 +939,15 @@ def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
     ziel = _eintrag_schreiben(root, eintrag)
     print(f"Uebernommen: {ziel.relative_to(root).as_posix()}. "
           f"{len(_outbox(root))} Eintrag/Eintraege warten. Ansehen: feedback.py --plan")
+    # Modus "automatisch" + Takt "sofort" heisst: nicht sammeln, sofort raus. Bestehende Pruefungen (Filter,
+    # Einwilligung) bleiben dabei in Kraft - cmd_send sendet im Zweifel weiterhin nicht. Der Eintrag ist so
+    # oder so uebernommen: --add meldet nur den Grund eines ausgebliebenen Versands, bricht aber nicht ab
+    # (Exit 0) - ein blockierter Versand ist kein gescheitertes --add.
+    if _modus(root) == "automatisch" and _takt(root) == "sofort":
+        print("Takt 'sofort': Versand wird direkt ausgeloest.")
+        if cmd_send(root, force=False, ja=False) != 0:
+            print("Eintrag bleibt gespeichert - Versand wird beim naechsten Aufruf erneut versucht.",
+                  file=sys.stderr)
     return 0
 
 
@@ -911,11 +981,75 @@ def _tage_seit(stempel) -> float:
     return (time.time() - gesendet) / 86400.0
 
 
-def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
+def _protokoll_signatur(daten) -> bool:
+    """True, wenn `daten` nach einem Sendeprotokoll aussieht (nicht nach einem Eintrag im Altformat, der
+    ebenfalls als .json direkt im Hauptordner liegen kann)."""
+    return isinstance(daten, dict) and "nutzlast" in daten and "gesendet_an" in daten
+
+
+def _freier_pfad(ordner: Path, basis: str, endung: str) -> Path:
+    """Naechsten freien Pfad ordner/basis+endung liefern - bei einer Kollision mit Suffix -2, -3, ...
+    Nie ueberschreiben: weder zwei Sendungen in derselben Sekunde noch eine Migration, die auf einen
+    bereits vorhandenen Dateinamen trifft."""
+    fp = ordner / f"{basis}{endung}"
+    n = 2
+    while fp.exists():
+        fp = ordner / f"{basis}-{n}{endung}"
+        n += 1
+    return fp
+
+
+def _protokolle_altbestand(root: Path) -> list:
+    """Nur ERKENNEN, nichts verschieben: Pfade von Sendeprotokollen, die noch direkt unter
+    docs/ai/template-feedback/ liegen statt unter sent/protokolle/. Fuer --status/--plan - die duerfen
+    anzeigen, dass Altbestand da ist, aber nicht schreibend eingreifen."""
     ordner = root / LOG_DIR_REL
+    if not ordner.is_dir():
+        return []
+    raus = []
+    for fp in ordner.glob("*.json"):
+        try:
+            daten = json.loads(fp.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            continue
+        if _protokoll_signatur(daten):
+            raus.append(fp)
+    return raus
+
+
+def _protokolle_migrieren(root: Path) -> int:
+    """Altbestand: Sendeprotokolle, die vor der Trennung von Eintrag und Protokoll noch direkt unter
+    docs/ai/template-feedback/ liegen, einmalig nach sent/protokolle/ verschieben. Wird NUR von schreibenden
+    Befehlen aufgerufen (--add/--send/--direkt/--enable/--disable) - idempotent, sobald nichts mehr dort
+    liegt, tut die Funktion nichts. Kollisionsfrei ueber _freier_pfad(): trifft ein Altbestand-Name auf ein
+    bereits dort liegendes Protokoll (alt oder neu), bekommt er ein -2/-3/...-Suffix statt es zu
+    ueberschreiben. Bevor etwas verschoben wird, wird ein noch altes .gitignore-Muster um das neue ergaenzt
+    (_gitignore_altmuster_ergaenzen) - sonst waeren bislang ignorierte Protokolle am neuen Ort ploetzlich
+    nicht mehr ignoriert."""
+    treffer = _protokolle_altbestand(root)
+    if not treffer:
+        return 0
+    _gitignore_altmuster_ergaenzen(root)
+    ziel = root / PROTOKOLL_DIR_REL
+    bewegt = 0
+    for fp in treffer:
+        ziel.mkdir(parents=True, exist_ok=True)
+        ziel_fp = _freier_pfad(ziel, fp.stem, fp.suffix)
+        try:
+            fp.replace(ziel_fp)
+            bewegt += 1
+        except OSError:
+            pass
+    return bewegt
+
+
+def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
+    ordner = root / PROTOKOLL_DIR_REL
     ordner.mkdir(parents=True, exist_ok=True)
-    fp = ordner / (time.strftime("%Y-%m-%d_%H%M") + ".json")
-    fp.write_text(json.dumps({"gesendet_an": endpoint, "zeit": time.strftime("%Y-%m-%d %H:%M"),
+    # Sekunden im Namen plus Suffix -2, -3, ... bei Kollision: zwei Sofortversaende (Takt "sofort") koennen
+    # in derselben Sekunde landen, vor allem im Test - da darf das zweite Protokoll das erste nie ueberschreiben.
+    fp = _freier_pfad(ordner, time.strftime("%Y-%m-%d_%H%M%S"), ".json")
+    fp.write_text(json.dumps({"gesendet_an": endpoint, "zeit": time.strftime("%Y-%m-%d %H:%M:%S"),
                               "nutzlast": nutzlast}, indent=2, ensure_ascii=False) + "\n",
                   encoding="utf-8")
     return fp
@@ -1119,6 +1253,11 @@ def _run(argv) -> int:
         print("Dieses Repo ist das Template selbst - es meldet sich nicht an sich selbst. Nichts getan.",
               file=sys.stderr)
         return 2
+
+    # Altbestand nur bei einem SCHREIBENDEN Befehl aufraeumen - --status/--plan lesen nur und zeigen den
+    # Altbestand hoechstens an (cmd_status), verschieben aber nichts.
+    if args.enable or args.disable or args.add or args.direkt is not None or args.send:
+        _protokolle_migrieren(root)
 
     if args.status:
         return cmd_status(root)

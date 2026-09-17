@@ -12,9 +12,9 @@
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B36 | hoch | Template-Update bleibt halber Merge | Neu (Rückmeldung): `--apply` ohne `--commit` hinterlässt offenen Merge (`MERGE_HEAD`), `--continue` verliert dessen Stand. [Details](#b36) |
-| [ ] | B38 | mittel | Update bringt entfernte Abschnitte zurück | Neu (Rückmeldung): Ein Konflikt liefert bei abgeschlossenen Projekten Anlage-/Nachrüst-Checklisten und entfernte Scripte zurück. [Details](#b38) |
 | [ ] | B28 | niedrig | Widerspruch bei no_replace | Machen: `no_replace` widerspricht sich zwischen `AGENTS.md`, `template.json` und `checklists.md` — erst klären, welche Fassung gilt. [Details](#b28) |
+| [x] | B36 | hoch | Template-Update bleibt halber Merge | Erledigt 2026-09-17: Warnung bei offenem Template-Merge (`--check`/`--status`), `--continue` nimmt `MERGE_HEAD`, Skill verlangt Commit oder Rückfrage. [Details](#b36) |
+| [x] | B38 | mittel | Update bringt entfernte Abschnitte zurück | Erledigt 2026-09-17: bei `setup_complete` bleiben entfernte Scripte und Setup-Abschnitte draußen; Pfade aus dem Template-Ref nur statisch gelesen, kein fremder Code. [Details](#b38) |
 | [x] | B1 | offen | Feldweiser Merge von template.json | 2026-09-13: `template.json` wird feldweise gemergt (`update-template.py`). |
 | [x] | B2 | offen | Enge Permissions für Update/Abschluss | 2026-09-13: Permissions eng gefasst — `--apply`/`--finish` fragen nach, `git fetch template` exakt (`settings.json`). |
 | [x] | B3 | offen | CRLF bei Platzhalter-Ersetzung | 2026-09-13: Platzhalter-Ersetzung erhält CRLF-Unterstützung (`update-template.py`). |
@@ -38,17 +38,18 @@
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B27 | hoch | Sprache aus AI-CONFIG.md wirkt nicht | Machen: Schlüssel `Sprache` wirkt nicht — Template bleibt deutsch, Projekt auch; erst Übersetzungsstrategie klären, dann bauen. [Details](#b27) |
-| [ ] | B37 | hoch | Neue AI-CONFIG-Schlüssel gehen verloren | Neu (Rückmeldung): `AI-CONFIG.md` steht in `keep_local` — neue Template-Schlüssel gehen bei ausgefüllten Tabellen beim Update still verloren. [Details](#b37) |
-| [ ] | B41 | niedrig | Erläuterungen aus AI-CONFIG.md auslagern | Neu (Rückmeldung): Lange Erläuterungen zwischen den Tabellen vermischen Steuerung und Doku, verursachen Update-Konflikte. [Details](#b41) |
+| [x] | B43 | hoch | `sync-config.py --apply` bricht ab | Erledigt 2026-09-17: `import time` ergänzt, Import-Check über alle Scripte. [Details](#b43) |
+| [x] | B37 | hoch | Neue AI-CONFIG-Schlüssel gehen verloren | Erledigt 2026-09-17: fehlende Schlüssel werden in `sync-config.py` und nach dem Update ergänzt; verschobene Schlüssel/fehlende Tabellen nur als Hinweis, Hook bleibt still. [Details](#b37) |
+| [x] | B41 | niedrig | Erläuterungen aus AI-CONFIG.md auslagern | Erledigt 2026-09-17: Erläuterungen nach `docs/ai/config-guide.md`, in `AI-CONFIG.md` Verweise. [Details](#b41) |
 | [x] | B4 | offen | Ablageort Wartungsberichte wählbar | 2026-09-13: Ablageort der Wartungsberichte per `AI-CONFIG.md` wählbar (`create-project.py`). |
 
 ## Rückmeldung (Feedback)
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B39 | mittel | Feedback-Ablage nach Versand widersprüchlich | Teil erledigt 2026-09-17: ein Eintrag = eine `.md` mit Front-Matter, Status beim Versand. Offen: Protokolle, Abschnitt „Bereits gesendet“, Sofortversand. [Details](#b39) |
 | [ ] | B29 | offen | Rückmeldung abgeleiteter Projekte | In Arbeit: Abgeleitete Projekte melden sich freiwillig als Testkandidat, damit `.templatedev` ihre Weiterentwicklung auswerten kann. [Details](#b29) |
 | [ ] | B32 | offen | Feedback neu bearbeiten | Umgesetzt bis auf Endpunkt-Inbetriebnahme: Feedback-Umfang/-Takt/-Bestätigung neu gebaut; offen bleibt Rollout auf `rufeger.de`. [Details](#b32) |
+| [x] | B39 | mittel | Feedback-Ablage nach Versand widersprüchlich | Erledigt 2026-09-17: Protokolle unter `sent/protokolle/` (Altbestand migriert, lokal-Wahl bleibt), Sofortversand bei automatisch+sofort, Abschnitt „Von dir bereits gesendet“. [Details](#b39) |
 
 ## Integrationen/MCP und Design
 
@@ -63,8 +64,8 @@
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B40 | mittel | Formatregel für Fragen rendert falsch | Neu (Rückmeldung): Fragen-Beispiel in `docs/ai/README.md` fließt ohne Leerzeilen zu einem Absatz zusammen; erst im Template ändern, dann erben. [Details](#b40) |
 | [ ] | B33 | offen | Aufgaben erst eintragen, wenn ausführbar | Machen: Aufgaben im Tabu-Bereich erst eintragen, wenn alle Voraussetzungen erfüllt sind (Code gepusht, Fragen beantwortet). [Details](#b33) |
+| [x] | B40 | mittel | Formatregel für Fragen rendert falsch | Erledigt 2026-09-17: Frage fett als Absatz, Optionen als Liste, Leerzeilen; `.templatedev/questions.md` noch im alten Format. [Details](#b40) |
 | [x] | B5 | offen | Fußnoten-Konvention Datenstände | 2026-09-13: Fußnoten-Konvention für fehlende Datenstände eingeführt (`docs/README.md`). |
 | [x] | B6 | offen | Incident als Einzeldatei | 2026-09-13: Incident-Schema als Einzeldatei beschrieben (`docs/project/incidents/README.md`). |
 
@@ -74,11 +75,15 @@
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B22 | hoch | Erkenntnisse aus bandliste prüfen | Machen: Erkenntnisse aus `bandliste` (26 Fragen, über 25 Entscheidungen, >50 Backlog-Punkte) auf Template-Relevanz prüfen — Umfang unbekannt. [Details](#b22) |
 | [ ] | B35 | niedrig | Pflege-Modus im Root per .env | Idee: `TEMPLATEDEV_MODE=ein` per `.env` lässt eine Root-Sitzung wie in `.templatedev/` arbeiten; ~0,5 PT, Entscheidung Q15. [Details](#b35) |
-| [ ] | B42 | niedrig | Warnung vor bewusst gehaltenen Altnamen | Neu: `create-project.py --check` meldet absichtlich gehaltene Alt-Skillpfade als „möglicherweise veraltet". [Details](#b42) |
+| [ ] | B46 | niedrig | Hooks: Interpreter-Probe je Aufruf kostet Zeit | Neu (Review): jeder Hook startet Python zweimal; Probe je Sitzung zwischenspeichern, falls Latenz stört. [Details](#b46) |
+| [ ] | B47 | niedrig | Hooks führen ungeprüfte Merge-Fassung aus | Neu (Review): Hooks starten Scripte aus dem Arbeitsbaum, auch eine gemergte, noch nicht committete Fassung; Restrisiko bei nicht erkanntem `MERGE_HEAD`. [Details](#b47) |
+| [x] | B42 | niedrig | Warnung vor bewusst gehaltenen Altnamen | Erledigt 2026-09-17: `LEGACY_REMOVE_PATHS` in `setup-lib.py`, Selbstprüfung überspringt sie. [Details](#b42) |
 | [x] | B7 | offen | Atomares Schreiben von Statusdateien | 2026-09-13: `status.json`/`template.json` werden atomar geschrieben (`maintenance-check.py`, `update-template.py`, `setup-lib.py`). |
 | [x] | B9 | offen | Leere Argumente brechen ab | 2026-09-13: Leere Argumente brechen mit Exit 2 ab (`maintenance-check.py`). |
 | [x] | B13 | offen | UTF-8-Ausgabe in allen Scripten | 2026-09-13: UTF-8-Ausgabe in allen sieben Scripten eingeführt. |
 | [x] | B30 | offen | Löschen trifft nie ungesicherte Dateien | 2026-09-15: Löschen prüft vorher `git status`; gitignorierte/ungetrackte/geänderte Pfade bleiben liegen und werden gemeldet. [Details](#b30) |
+| [x] | B44 | mittel | Python als Voraussetzung, Hooks ohne Python | Erledigt 2026-09-17: README § Voraussetzungen (3.9+), Prüf-Hook beim Sitzungsstart, alle Hooks wählen den Interpreter per Probe (Store-Platzhalter). [Details](#b44) |
+| [x] | B45 | mittel | Pfade außerhalb des Projekts plattformgerecht | Erledigt 2026-09-17: Regel in `AGENTS.md`/`CLAUDE.md` § 4, Beispielpfade neutral, `~` erklärt. [Details](#b45) |
 
 ## Details
 
@@ -294,6 +299,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - Ergänzt 2026-09-17 (zweite Rückmeldung): Abschnitt „Bereits gesendet" in `feedback.md` sammelt nur selbst geschriebene Antworten und wirkt trotz Sendungen leer — umbenennen in „Von dir bereits gesendet", README erklärt Eintrag (Lesefassung) vs. Protokoll (Nutzlast mit Metadaten)
 - Option: ein Eintrag = eine `.md` mit Front-Matter für Maschinenfelder (Art, Titel, Datum, Status, gesendet) statt `.md` plus `.json`; Status wird beim Versand dort gesetzt, Protokoll bleibt eigene Datei
 
+- Bestätigt 2026-09-17 (dritte Rückmeldung, vom Code gedeckt): `_protokollieren` schreibt nach `LOG_DIR_REL` statt `sent/protokolle/` — betrifft `--send` und `--direkt` gleichermaßen; `--status` und README mitziehen
 - **Erledigt 2026-09-17:** Einträge als eine `.md` mit YAML-Front-Matter (`art`, `titel`, `datum`, `status`, `gesendet`); Lesen akzeptiert zusätzlich das alte Paar `.md`+`.json`; beim Versand werden `status: gesendet` und die Zeit gesetzt (`feedback.py`). Offen bleiben Ablage der Sendeprotokolle, Umbenennung des Abschnitts „Bereits gesendet“ samt README-Erklärung und Sofortversand bei automatisch+sofort.
 
 <a id="b40"></a>
@@ -319,3 +325,43 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - nach dem Präfix `act-` stehen alte Skill-Pfade absichtlich in den Entfernen-Listen, damit bestehende Projekte sie beim Update loswerden (`.claude/skills/run-maintenance` in `MAINTENANCE_REMOVE_PATHS`)
 - `check_stale_remove_paths` meldet sie als „möglicherweise veraltet"
 - Zu bauen: Altnamen kennzeichnen (eigene Liste oder Kommentar-Marker) und in der Prüfung auslassen
+
+<a id="b43"></a>
+### B43 · `sync-config.py --apply` bricht nach dem Übernehmen der Werte ab
+
+- angelegt 2026-09-17, aus einer Rückmeldung, Priorität hoch
+- `files-lib.py` nutzt `time.strftime` beim Setzen von `applied_config_stand` (Zeile 643), importiert `time` aber nicht → `NameError`
+- Folge: der zuletzt umgesetzte Stand wird nie gespeichert, der SessionStart-Hook meldet dieselben Änderungen immer wieder
+- Zu bauen: Import ergänzen; Smoketest, der `--apply` einmal bis zum Ende durchlaufen lässt, damit ein fehlender Import auffällt
+
+- **Erledigt 2026-09-17** (B36–B43): siehe Tabellen; Review in vier Runden, Befunde im Journal.
+
+<a id="b44"></a>
+### B44 · Python als Voraussetzung, Hooks ohne Python
+
+- angelegt und erledigt 2026-09-17, Wunsch Wolfgang
+- README und `.github/README.md` § Voraussetzungen: Python 3.9+ (Minimum aus `files-lib.py`), was ohne geht, Installation je Plattform
+- erster SessionStart-Hook prüft ohne Python, ob ein Interpreter wirklich läuft, sonst eine Warnzeile
+- alle Python-Hooks wählen den ersten Kandidaten aus `python3`, `python` per Probe (Windows-Store-Platzhalter)
+
+<a id="b45"></a>
+### B45 · Pfade außerhalb des Projekts plattformgerecht
+
+- angelegt und erledigt 2026-09-17, Wunsch Wolfgang
+- Regel: im Gespräch nur den Pfad der aktuellen Plattform, in Doku `~` mit Erklärung oder Liste je Plattform, Scripte zur Laufzeit
+- `AGENTS.md` § Doku, Tests, Coding; `CLAUDE.md` § 4 (`~/.claude.json`); `.templatedev/regeln.md`
+
+<a id="b46"></a>
+### B46 · Hooks: Interpreter-Probe je Aufruf kostet Zeit
+
+- angelegt 2026-09-17 aus dem Review zu B44, Priorität niedrig
+- jeder Hook startet Python zweimal (Probe + Script), auch Logging-Hooks bei `AI_LOG=aus`
+- Zu bauen, falls spürbar: gewählten Interpreter je Sitzung in einer gitignorierten Datei merken
+
+<a id="b47"></a>
+### B47 · Hooks führen ungeprüfte Merge-Fassung aus
+
+- angelegt 2026-09-17 aus dem Sicherheitsreview, Priorität niedrig
+- Hooks starten die Scripte im Arbeitsbaum, während eines Merges also die gemergte, noch nicht committete Fassung
+- `update-template.py --check` fängt einen erkannten Template-Merge ab; offen bleibt ein `MERGE_HEAD`, den `_merge_is_from_template` nicht erkennt
+- Zu bauen: Hooks bei jedem offenen `MERGE_HEAD` nur melden statt Scripte laufen zu lassen, oder bewusst hinnehmen

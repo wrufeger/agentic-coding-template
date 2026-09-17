@@ -233,7 +233,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) noch nicht
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-17: gepusht `6843618..8807ad1`.
 
 ---
 
@@ -249,7 +250,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) keine; `/act-…` und die Sätze genügen
 
-   * Antwort:
+   * Antwort: b)
+   * Verarbeitet 2026-09-17: Weiterleitungs-Skills `commit`, `idea`, `prepare`, `update-template` angelegt; beim Update gewinnt dort die Template-Fassung.
 
 ---
 
@@ -264,6 +266,7 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) nein — es denkt weiter nach oder wählt `/act-bug`
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-17: nichts zu tun; `/act`-Hook bestätigt.
 
 ---

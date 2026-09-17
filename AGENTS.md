@@ -222,6 +222,10 @@ APIs von Diensten, Container-Hosts, Router, Smart-Home- oder Monitoring-Instanze
   (Stil- und Sprachregeln), `testing.md` (Testpyramide, Pflichtläufe, ungetestete Bereiche), `features.md`
   (Featureliste mit Status), `decisions.md` (Architekturentscheidungen/ADRs), `incidents/README.md`
   (Schema für schwere Fehleranalysen).
+- **Pfade außerhalb des Projekts plattformgerecht nennen.** Nutzerverzeichnis, App- und MCP-Konfigurationen
+  unterscheiden sich je Betriebssystem. Im Gespräch gilt der Pfad der Plattform, auf der {{AUFTRAGGEBER}}
+  gerade arbeitet (nie `C:\Users\…` für macOS/Linux oder `~/Library/…` für Windows); in Doku `~` mit
+  einmaliger Erklärung oder eine Liste je Plattform; Scripte ermitteln solche Pfade zur Laufzeit.
 - Vor Code-Änderungen `docs/project/coding_rules.md` lesen; vor neuen Features/Schnittstellen `features.md` und
   `decisions.md`, damit keine bereits getroffene Entscheidung stillschweigend revidiert wird.
 - Lint, Typecheck und Unit-Tests laufen vor jedem Commit und in der CI (`.github/workflows/ci.yml`);

@@ -53,6 +53,13 @@
 # "Alter Orchestrator-Name" (einmalige Bootstrap-Werte nur fuer /act-apply-template Weg 2, ohne Wirkung nach dem
 # einmaligen Lauf - eine erneute "Aenderung" haette hier keine sinnvolle Handlung).
 #
+# Zusaetzlich (Backlog B37, .templatedev/backlog.md): AI-CONFIG.md steht in keep_local und wird beim
+# Template-Update nie gemergt - neue Tabellen-Schluessel der Template-Fassung gehen in einer ausgefuellten
+# Projektfassung sonst still verloren. Das ist KEIN Vergleich gegen applied_config (kein Snapshot noetig),
+# sondern ein LIVE-Abgleich gegen `git show <template-remote>/<branch>:AI-CONFIG.md` bei jedem --check/
+# --apply (siehe config-lib.py:ai_config_missing_keys/_ai_config_key_diffs) - fehlende Remote/Referenz ->
+# stiller Fallback, nichts gemeldet.
+#
 # Exit-Codes: 0 = ok, 2 = Vorbedingungsfehler (AI-CONFIG.md nicht eindeutig, Template-Remote fehlt fuer eine
 # faellige Ergaenzung), 3 = etwas offen (--check) bzw. zusagepflichtige Punkte uebersprungen (--apply ohne
 # --yes). Ein Fehler dieses Scripts darf nie mit Traceback nach aussen dringen - main() laeuft in try/except.
@@ -805,6 +812,34 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         ref_holder["executed"].add("Code-Optimierung")
         return lines
 
+    if kind == "ai_config_missing_keys":
+        # Kein eigener applied_config-Schluessel (marker=[]): Der Abgleich passiert live gegen den
+        # Template-Ref, nicht gegen einen gespeicherten Snapshot - siehe _ai_config_key_diffs. Diese Diff-Art
+        # traegt nur noch den Einfuegeteil (diff["missing"] ist hier nie leer) - reine Hinweise ohne
+        # einzufuegende Zeile laufen als eigener Diff mit kind 'ai_config_hinweis' (Review-Befund, sonst
+        # zaehlte ein verschobener Schluessel bei --check --quiet faelschlich als "1 Aenderung automatisch").
+        project_path = root / cp.CONFIG_REL
+        try:
+            project_text, newline = cp._read_text_preserve_newline(project_path)
+        except (OSError, UnicodeDecodeError):
+            lines.append(f"{cp.CONFIG_REL} konnte nicht gelesen werden - Schluessel nicht ergaenzt.")
+            return lines
+        new_text = cp.insert_missing_ai_config_rows(project_text, diff["missing"])
+        if new_text != project_text:
+            cp._write_text_preserve_newline(project_path, new_text, newline)
+        lines.append(
+            f"{len(diff['missing'])} Zeile(n) ergaenzt: "
+            + ", ".join(f"{m['tabelle']}/{m['schluessel']}" for m in diff["missing"])
+        )
+        return lines
+
+    if kind == "ai_config_hinweis":
+        # Reiner Hinweis (verschobener Schluessel, fehlende Tabelle) - nichts wird geschrieben, marker=[]
+        # wie bei ai_config_missing_keys, siehe _ai_config_key_diffs.
+        for hinweis_text in diff.get("hinweise_manuell") or []:
+            lines.append("Hinweis (bitte von Hand pruefen, nicht automatisch geaendert): " + hinweis_text)
+        return lines
+
     lines.append(f"Unbekannte Diff-Art '{kind}' - uebersprungen.")
     return lines
 
@@ -831,6 +866,50 @@ def _get_ref(ref_holder: dict, tu, root: Path):
 # ---------------------------------------------------------------------------
 # Kommandos
 # ---------------------------------------------------------------------------
+
+
+def _ai_config_key_diffs(cp, tu, root: Path, hinweise: list, ref: str = None, fetch: bool = True) -> list:
+    """Backlog B37 (.templatedev/backlog.md): Schluessel, die die Template-Fassung von AI-CONFIG.md kennt,
+    in der Projektfassung aber fehlen (die Datei steht in keep_local und wird beim Template-Update nie
+    gemergt - neue Zeilen gehen sonst still verloren). Ergaenzt 'hinweise' in place (informative Meldungen
+    ohne Abbruch), gibt eine Liste mit bis zu zwei synthetischen Diff-Eintraegen zurueck, beide mit marker=[]
+    (wird nie als 'fehlgeschlagen' gezaehlt, schreibt keinen eigenen applied_config-Schluessel, siehe
+    execute_diff):
+    - kind 'ai_config_missing_keys', kategorie 'automatisch': nur wenn 'missing' etwas einzufuegen hat.
+    - kind 'ai_config_hinweis', kategorie 'hinweis': nur wenn 'hinweise_manuell' (fehlende Tabelle/
+      verschobener Schluessel) etwas zu melden hat. Eigene Kategorie statt 'automatisch' (Review-Befund,
+      urspruenglich ein gemeinsamer Diff): sonst zaehlte ein reiner Hinweis ohne einzufuegende Zeile bei
+      `--check --quiet` (SessionStart-Hook) faelschlich als offene automatische Aenderung und loeste jede
+      Sitzung erneut Exit 3 aus, obwohl --apply dafuer nichts tut. cmd_check/cmd_apply behandeln 'hinweis'
+      wie folgt: --quiet zaehlt/druckt ihn nicht und loest keinen Exit 3 aus; ohne --quiet wird er als
+      Hinweis ausgegeben (nicht als offene Aenderung), Exit 0 wenn sonst nichts offen ist; --apply gibt ihn
+      aus und aktualisiert applied_config trotzdem (marker=[] wie beim Einfuegeteil).
+    'ref'/'fetch' werden unveraendert an cp.ai_config_missing_keys() durchgereicht (Review-Befund F3):
+    cmd_check gibt fetch=False (kein Netzwerkzugriff, nur der lokal schon bekannte Remote-Stand), cmd_apply
+    gibt den schon per _get_ref() aufgeloesten/gefetchten 'ref' durch (hoechstens 1 Fetch je Lauf, geteilt
+    mit den anderen Diff-Arten, die den Template-Ref ebenfalls brauchen)."""
+    missing, hinweise_manuell, hinweis, fehler = cp.ai_config_missing_keys(root, tu, ref=ref, fetch=fetch)
+    if hinweis:
+        hinweise.append(hinweis)
+    if fehler:
+        hinweise.append("AI-CONFIG.md-Schluesselabgleich: " + fehler)
+    diffs = []
+    if missing:
+        diffs.append({
+            "key": "AI-CONFIG.md-Schluessel", "old": None,
+            "new": sorted(f"{m['tabelle']}/{m['schluessel']}" for m in missing),
+            "kategorie": "automatisch", "kind": "ai_config_missing_keys", "marker": [],
+            "wirkung": f"{len(missing)} fehlende Zeile(n) ergaenzen (Wert leer = Standard)",
+            "missing": missing,
+        })
+    if hinweise_manuell:
+        diffs.append({
+            "key": "AI-CONFIG.md-Hinweis", "old": None, "new": None,
+            "kategorie": "hinweis", "kind": "ai_config_hinweis", "marker": [],
+            "wirkung": f"{len(hinweise_manuell)} Hinweis(e) zu manuell zu pruefenden Faellen",
+            "hinweise_manuell": hinweise_manuell,
+        })
+    return diffs
 
 
 def _print_unbekannt(root: Path) -> None:
@@ -869,10 +948,25 @@ def cmd_check(root: Path, mods: dict, quiet: bool) -> int:
         return 2
 
     diffs = compute_diffs(old, current)
+    # fetch=False (Review-Befund F3): --check (auch im SessionStart-Hook, --quiet) darf nie auf das Netz
+    # warten oder daran scheitern - verglichen wird nur gegen den lokal schon bekannten Remote-Stand.
+    diffs.extend(_ai_config_key_diffs(cp, tu, root, hinweise, fetch=False))
+    # kategorie 'hinweis' (reine Hinweise ohne einzufuegende Zeile, siehe _ai_config_key_diffs) zaehlt nicht
+    # als offene Aenderung: getrennt halten, damit --quiet sie weder zaehlt noch ausgibt und der
+    # SessionStart-Hook nicht bei jeder Sitzung Exit 3 meldet, obwohl --apply dafuer nichts umsetzt.
+    hinweis_diffs = [d for d in diffs if d["kategorie"] == "hinweis"]
+    diffs = [d for d in diffs if d["kategorie"] != "hinweis"]
+
+    def _print_hinweis_diffs() -> None:
+        for d in hinweis_diffs:
+            for hinweis_text in d.get("hinweise_manuell") or []:
+                print(f"AI-CONFIG.md: Hinweis (bitte von Hand pruefen): {hinweis_text}")
+
     if not diffs:
         if not quiet:
             for h in hinweise:
                 print("Hinweis: " + h)
+            _print_hinweis_diffs()
             print("sync-config: AI-CONFIG.md und Repo-Stand sind synchron.")
         return 0
 
@@ -885,8 +979,14 @@ def cmd_check(root: Path, mods: dict, quiet: bool) -> int:
 
     for h in hinweise:
         print("Hinweis: " + h)
+    _print_hinweis_diffs()
     for d in diffs:
         flag = "automatisch" if d["kategorie"] == "automatisch" else "braucht --yes"
+        if d["kind"] == "ai_config_missing_keys":
+            print(f"AI-CONFIG.md: {len(d['missing'])} Schluessel aus dem Template fehlen im Projekt [{flag}]")
+            for m in d["missing"]:
+                print(f"  {m['tabelle']}: {m['schluessel']}")
+            continue
         print(f"{d['key']}: {d['old']!r} -> {d['new']!r} — {d['wirkung']} [{flag}]")
         if d["kind"] == "stack_change" and d["old"]:
             treffer, gesamt = find_literal_occurrences(cp, root, d["old"])
@@ -916,14 +1016,24 @@ def cmd_apply(root: Path, mods: dict, yes: bool) -> int:
             print(f"  - {f}", file=sys.stderr)
         return 2
 
+    # ref_holder wird schon hier angelegt (statt erst vor der Diff-Ausfuehrung) und der Template-Ref sofort
+    # aufgeloest: _get_ref() fetcht dabei hoechstens einmal (Review-Befund F3) und cached ref/fehler fuer
+    # den Rest des Laufs - _ai_config_key_diffs bekommt den fertigen Ref durchgereicht (fetch=False, kein
+    # zweiter Netzwerkzugriff), spaetere execute_diff-Aufrufe fuer andere Diff-Arten (tools_add/wartung/
+    # code_opt_add) rufen _get_ref() ebenfalls auf und bekommen denselben gecachten Stand zurueck.
+    ref_holder = {"executed": set()}
+    ref, ref_hinweis, _ref_fehler = _get_ref(ref_holder, tu, root)
+    if ref_hinweis:
+        hinweise.append(ref_hinweis)
+
     diffs = compute_diffs(old, current)
+    diffs.extend(_ai_config_key_diffs(cp, tu, root, hinweise, ref=ref, fetch=False))
     for h in hinweise:
         print("Hinweis: " + h)
     if not diffs:
         print("sync-config: nichts zu tun - AI-CONFIG.md und Repo-Stand sind schon synchron.")
         return 0
 
-    ref_holder = {"executed": set()}
     offen_ohne_yes = []
     versucht = []
     for d in diffs:

@@ -46,6 +46,7 @@ ausschließlich darunter.
 | `ledger.md` | Sitzungsjournal mit Belegen, neuester Eintrag oben | zur Historie/Übergabe |
 | `backlog.md` | Verbesserungsvorschläge, {{AUFTRAGGEBER}} entscheidet inline | vor größeren Umbauten |
 | `checklists.md` | Neutrale Arbeitsanweisungen (Abschluss, Delegation, Doku prüfen und nachziehen, …) | vor der jeweiligen Aktion |
+| `config-guide.md` | Ausführliche Begründungen zu den Schlüsseln aus `../../AI-CONFIG.md` | bei Unklarheit über einen Schalter |
 | `resources.md` | Quellen zu Agentic Coding — vom Template gepflegt | beim Einarbeiten |
 | `template-feedback/` | Protokoll der freiwilligen Rückmeldungen an den Template-Autor — je Sendung eine Datei, versioniert | wenn du wissen willst, was hinausging |
 
@@ -121,6 +122,10 @@ in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archi
 - **Antwortmöglichkeiten vorgeben** (ja/nein oder `a)`/`b)`/`c)`, je Option eine Zeile mit der Folge in drei
   bis fünf Wörtern); freier Text ist immer zusätzlich möglich. Höchstens drei bis vier Zeilen Kontext vor der
   Frage, kein Fließtext, keine Herleitung. Eine Frage = eine Entscheidung.
+- **Damit Frage, Optionen und Antwortzeile gerendert erkennbar untereinander stehen** (IDE-Vorschau, GitHub):
+  die Frage fett als eigener Absatz (`**Q3 · …**`), die Optionen als Markdown-Liste (`- a) …`), davor **und**
+  vor der `* Antwort:`-Zeile je eine Leerzeile. Eingerückte Zeilen ohne Leerzeilen fließen beim Rendern zu
+  einem Absatz zusammen und sind dann nicht mehr auseinanderzuhalten.
 - **Keine Standardantwort annehmen:** Eine unbeantwortete Frage bleibt offen und wird nie stillschweigend nach
   Einschätzung des Assistenten entschieden. Eine naheliegende Option darf als „(Empfehlung)" markiert werden —
   beantwortet ist sie damit nicht.
@@ -130,11 +135,14 @@ in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archi
   offenen Fragen nach Themen gruppieren, innerhalb des Themas weiterhin nach Nummer.
 
 ```text
-Q3. Soll der Import fehlende Pflichtfelder überspringen oder abbrechen? 🔴
-   a) überspringen, Fehler ins Log — Import läuft durch (Empfehlung)
-   b) abbrechen — nichts wird importiert, Ursache zuerst klären
-   Blockiert T12, solange offen.
-   * Antwort:
+**Q3 · Soll der Import fehlende Pflichtfelder überspringen oder abbrechen?** 🔴
+
+- a) überspringen, Fehler ins Log — Import läuft durch (Empfehlung)
+- b) abbrechen — nichts wird importiert, Ursache zuerst klären
+
+Blockiert T12, solange offen.
+
+* Antwort:
 ```
 
 **Teilfragen (`Q5a`, `Q5b`, …).** Hängen mehrere Einzelentscheidungen so zusammen, dass die Umsetzung erst
@@ -143,13 +151,30 @@ als Block untereinander. Der Assistent verarbeitet einen solchen Block **erst, w
 ist**; teilweise beantwortete Blöcke bleiben offen.
 
 ```text
-Q5 · Benachrichtigungen (alle drei nötig, bevor umgesetzt wird)
-Q5a. Über welchen Kanal? a) E-Mail  b) Messenger  c) beides
-   * Antwort:
-Q5b. Wie oft? a) sofort  b) stündliche Sammelmeldung  c) täglich
-   * Antwort:
-Q5c. Auch bei Warnungen oder nur bei Fehlern? a) beides  b) nur Fehler
-   * Antwort:
+**Q5 · Benachrichtigungen** (alle drei nötig, bevor umgesetzt wird)
+
+**Q5a. Über welchen Kanal?**
+
+- a) E-Mail
+- b) Messenger
+- c) beides
+
+* Antwort:
+
+**Q5b. Wie oft?**
+
+- a) sofort
+- b) stündliche Sammelmeldung
+- c) täglich
+
+* Antwort:
+
+**Q5c. Auch bei Warnungen oder nur bei Fehlern?**
+
+- a) beides
+- b) nur Fehler
+
+* Antwort:
 ```
 
 **Archivieren.** Eine beantwortete Frage wird verbucht (kurze Bestätigungszeile darunter, wohin die Antwort

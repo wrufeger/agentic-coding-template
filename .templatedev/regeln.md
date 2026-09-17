@@ -53,6 +53,15 @@ Die Testprojekte und ihr letzter geprüfter Stand: `README.md`. Wo es neuen Stof
 - **Jede Änderung an einem Script braucht einen Beleg**, der über `py_compile` hinausgeht: ein echter Lauf in
   einem Wegwerf-Repo unter dem Scratchpad, mit gezeigter Ausgabe. Ein Script, das „kompiliert", ist nicht
   geprüft.
+- **Nie Code aus einem frisch geholten Ref ausführen** — schon gar nicht im `--check`-/SessionStart-Pfad. Aus
+  einem Ref wird nur gelesen (Text, `ast.literal_eval`); ausgeführt wird höchstens die Fassung, die das Projekt
+  schon eingespielt hat, und nur in einem vom Menschen gestarteten Befehl (Review 2026-09-17, `update-template.py`).
+- **Python-Hooks wählen den Interpreter per Probe**, nicht per `command -v`: erster Kandidat aus `python3`,
+  `python`, der `-c 'import sys; …>=(3,9)'` wirklich ausführt — unter Windows findet `command -v python3` den
+  Store-Platzhalter. Blockieren nur per JSON auf stdout, nie per Exit 2 (die Hooks enden mit `true`).
+- **Pfade außerhalb des Projekts nie nur für eine Plattform.** `~` für den gemeinsamen Fall, einmal erklärt
+  (Windows: `%USERPROFILE%`); abweichende Pfade je Plattform auflisten; Scripte über `Path.home()`/`sys.platform`,
+  nie hart codiert; im Gespräch nur den Pfad der aktuellen Plattform nennen.
 - **Pfadlisten hängen zusammen.** Wird eine Datei umbenannt, verschoben oder neu angelegt, sind mindestens
   diese Stellen zu prüfen:
 

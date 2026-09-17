@@ -68,12 +68,14 @@ Der Modus `bestaetigen` bleibt wirksam — dort wird die Nutzlast gezeigt und er
    Geprüft wird sie eigens: nur `http(s)`, keine Zugangsdaten in der URL, kein localhost, keine privaten
    IP-Bereiche, kein `*.intern`/`*.local`.
    Das Script lehnt sonst Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ab — es ist die letzte Schranke,
-   nicht die erste.
+   nicht die erste. Steht `Feedback` auf `automatisch` und `Feedback-Takt` auf `sofort`, löst schon dieser
+   `--add`-Aufruf den Versand aus (dieselben Prüfungen wie `--send`) — Schritt 5 ist dann bereits erledigt.
 4. **Ansehen:** `--plan` zeigt die vollständige Nutzlast.
 5. **Senden:** `--send --force` (bei Modus `bestaetigen` zusätzlich `--yes` nach der Ansicht).
-6. Das geschriebene Protokoll unter `docs/ai/template-feedback/` **mitcommitten** — es gehört zum Nachweis,
-   nicht in den Papierkorb. Steht das Protokoll auf `lokal` (Eintrag in `.gitignore`), entfällt der Schritt:
-   dann bleibt die Datei absichtlich außerhalb des Verlaufs, und die Ausgabe von `--send` sagt das auch.
+6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protokolle/` **mitcommitten** — es
+   gehört zum Nachweis, nicht in den Papierkorb. Steht das Protokoll auf `lokal` (Eintrag in `.gitignore`),
+   entfällt der Schritt: dann bleibt die Datei absichtlich außerhalb des Verlaufs, und die Ausgabe von
+   `--send` sagt das auch.
 
 ## Wie ein guter Eintrag aussieht
 

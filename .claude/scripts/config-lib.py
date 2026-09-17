@@ -9,6 +9,7 @@
 # (Re-Export dieser drei Module) plus dem eigentlichen Setup-Ablauf bestehen bleibt - siehe dort. Reine
 # Python-Stdlib, kein Paket noetig, keine Abhaengigkeit von files-lib.py/claudemd-lib.py (sonst Zyklus).
 
+import importlib.util
 import os
 import re
 import time
@@ -381,6 +382,219 @@ def load_config(root: Path) -> dict:
         except OSError:
             text = ""
     return parse_config(text)
+
+
+# ---------------------------------------------------------------------------
+# Backlog B37 (.templatedev/backlog.md): neue Schluessel aus der Template-Fassung von AI-CONFIG.md, die in
+# der (per keep_local nie gemergten) Projektfassung sonst still verloren gehen. Reine Textoperation auf den
+# Tabellen-Zeilen - unabhaengig von KEY_MAP/parse_config, damit auch ein Schluessel erkannt wird, den DIESE
+# (ggf. aeltere) config-lib.py noch gar nicht kennt. Funktioniert mit UND ohne die Erlaeuterungsabsaetze
+# zwischen den Tabellen (Backlog B41, geplante Auslagerung in eine Hilfedatei) - Prosazeilen zwischen zwei
+# Tabellen werden hier wie in parse_config() einfach uebersprungen, keine Tabellenzeile beginnt mit "|".
+# ---------------------------------------------------------------------------
+
+
+def _parse_table_sections(text: str) -> dict:
+    """Zerlegt eine Markdown-Datei mit '## Ueberschrift' + Tabelle (Format wie AI-CONFIG.md: Spalte 1 =
+    Schluessel) in ihre Tabellen-Abschnitte. Gibt {ueberschrift: {"keys": {schluessel_lower: {"key":
+    schluessel, "cells": [zelle, ...]}}, "order": [schluessel_lower, ...], "insert_after": zeilenindex}}
+    zurueck - "insert_after" ist der 0-basierte Index der letzten Datenzeile dieser Tabelle in 'lines'
+    (text.splitlines()), zum Einfuegen einer neuen Zeile direkt danach. Ueberschriften ohne Tabelle darunter
+    (z.B. die Freitextabschnitte 'Ziel', 'Nutzer' ...) tauchen im Ergebnis nicht auf. Zeilen innerhalb eines
+    Codeblocks (```...```) zaehlen nie als Tabellenzeile oder Ueberschrift, auch wenn sie wie eine aussehen
+    (Review-Befund F5b) - eine Beispielzeile in einer Anleitung soll keinen Schluessel vortaeuschen."""
+    sections = {}
+    heading = None
+    in_code_block = False
+    for i, line in enumerate(text.splitlines()):
+        if line.strip().startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        m = re.match(r"^##\s+(.+?)\s*$", line)
+        if m:
+            heading = m.group(1).strip()
+            continue
+        cells = _split_table_row(line)
+        if cells is None or heading is None or len(cells) < 2:
+            continue
+        key_raw = _clean_table_key(cells[0])
+        if key_raw.lower() == "schlüssel" or _TABLE_SEPARATOR_CELL.match(cells[0].strip()):
+            continue  # Kopf- bzw. Trennzeile der Tabelle
+        entry = sections.setdefault(heading, {"keys": {}, "order": [], "insert_after": i})
+        key_lower = key_raw.lower()
+        if key_lower not in entry["keys"]:
+            entry["order"].append(key_lower)
+        entry["keys"][key_lower] = {"key": key_raw, "cells": cells}
+        entry["insert_after"] = i
+    return sections
+
+
+def missing_ai_config_rows(project_text: str, template_text: str):
+    """Vergleicht die Tabellen-Schluessel aus 'project_text' (Projektfassung von AI-CONFIG.md) gegen
+    'template_text' (Template-Fassung, z.B. aus fetch_template_ai_config_text) - ueber die GANZE Datei,
+    ohne Gross-/Kleinschreibung, nicht nur innerhalb derselben Ueberschrift (Review-Befund F2: sonst wird
+    ein Schluessel, den das Template in eine andere Tabelle verschoben oder dessen Ueberschrift es
+    umbenannt hat, ein zweites Mal mit leerem Wert eingefuegt - parse_config() nimmt bei doppeltem
+    Schluessel den zuletzt gefundenen Wert, der vorhandene Nutzerwert waere dann weg). Gibt (missing,
+    hinweise_manuell) zurueck:
+      - missing: Liste von {"tabelle": Ueberschrift, "schluessel": Anzeigename, "zeile": fertige Markdown-
+        Tabellenzeile mit geleerter Wert-Spalte (Spalte 2) - leer heisst Standard, siehe AI-CONFIG.md-Kopf},
+        NUR fuer Schluessel, die im PROJEKT unter KEINER Ueberschrift vorkommen und deren Ziel-Tabelle im
+        Projekt existiert (sonst kein sicherer Einfuegepunkt).
+      - hinweise_manuell: Freitext-Hinweise fuer Faelle, die NICHT automatisch behandelt werden: eine ganze
+        Tabelle fehlt im Projekt, oder ein Schluessel steht im Projekt unter einer ANDEREN Ueberschrift als
+        im Template (vermutlich verschoben/umbenannt) - wird nur gemeldet, nicht verschoben, der
+        vorhandene Wert bleibt unangetastet."""
+    proj = _parse_table_sections(project_text)
+    tpl = _parse_table_sections(template_text)
+
+    # Schluessel -> Ueberschrift, ueber die GESAMTE Projektdatei (nicht nur je Tabelle), ohne Gross-/
+    # Kleinschreibung - so faellt ein verschobener/umbenannter Schluessel als "verschoben" auf statt als
+    # "fehlt" missverstanden zu werden. Kommt ein Schluessel im Projekt (fehlerhaft) mehrfach vor, gewinnt
+    # die zuerst gefundene Tabelle (setdefault).
+    proj_key_heading = {}
+    for heading, section in proj.items():
+        for key_lower in section["order"]:
+            proj_key_heading.setdefault(key_lower, heading)
+
+    missing = []
+    hinweise_manuell = []
+    for heading, tpl_section in tpl.items():
+        proj_section = proj.get(heading)
+        if proj_section is None:
+            hinweise_manuell.append(
+                f"Tabelle '{heading}' fehlt im Projekt - Schluessel darin nicht automatisch einfuegbar: "
+                + ", ".join(tpl_section["keys"][k]["key"] for k in tpl_section["order"])
+            )
+        for key_lower in tpl_section["order"]:
+            eintrag = tpl_section["keys"][key_lower]
+            proj_heading = proj_key_heading.get(key_lower)
+            if proj_heading is None:
+                if proj_section is None:
+                    continue  # schon oben als fehlende Tabelle gemeldet, kein Einfuegepunkt
+                cells = list(eintrag["cells"])
+                if len(cells) > 1:
+                    cells[1] = ""  # Wert-Spalte leeren = Standard (siehe AI-CONFIG.md-Kopf)
+                missing.append({
+                    "tabelle": heading, "schluessel": eintrag["key"],
+                    "zeile": "| " + " | ".join(cells) + " |",
+                })
+            elif proj_heading != heading:
+                hinweise_manuell.append(
+                    f"Schluessel '{eintrag['key']}' steht im Projekt unter '{proj_heading}', im Template "
+                    f"unter '{heading}' - vermutlich verschoben, bitte von Hand pruefen (Wert bleibt "
+                    "erhalten, wird nicht automatisch verschoben)."
+                )
+            # sonst: derselbe Schluessel steht im Projekt schon unter derselben Tabelle - nichts zu tun
+    return missing, hinweise_manuell
+
+
+def insert_missing_ai_config_rows(text: str, missing: list) -> str:
+    """Fuegt die von missing_ai_config_rows gelieferten Zeilen in 'text' ein - je Tabelle direkt nach deren
+    letzter vorhandener Datenzeile (_parse_table_sections § insert_after). Mehrere neue Zeilen derselben
+    Tabelle landen in der Reihenfolge von 'missing' direkt hintereinander. Tabellen ohne Einfuegepunkt (im
+    Text nicht gefunden) werden uebersprungen, nicht erzwungen. Gibt den neuen Text zurueck (Zeilenenden
+    '\\n', wie beim Rest dieses Moduls - Newline-Erhalt beim Schreiben ist Sache des Aufrufers, siehe
+    files-lib.py _read_text_preserve_newline/_write_text_preserve_newline)."""
+    if not missing:
+        return text
+    by_table = {}
+    for m in missing:
+        by_table.setdefault(m["tabelle"], []).append(m["zeile"])
+    sections = _parse_table_sections(text)
+    einfuegepunkte = [
+        (sections[heading]["insert_after"], zeilen) for heading, zeilen in by_table.items() if heading in sections
+    ]
+    lines = text.splitlines()
+    trailing_newline = text.endswith("\n")
+    for idx, zeilen in sorted(einfuegepunkte, key=lambda t: t[0], reverse=True):
+        for zeile in reversed(zeilen):
+            lines.insert(idx + 1, zeile)
+    return "\n".join(lines) + ("\n" if trailing_newline else "")
+
+
+def _load_template_update_module():
+    """Laedt update-template.py als Modul (gleicher Ordner, per importlib - Bindestrich im Dateinamen
+    verbietet ein normales `import`). Gleiches Muster wie in files-lib.py/sync-config.py; hier dupliziert
+    (kein Ring config-lib.py <-> update-template.py - update-template.py laedt umgekehrt nichts aus
+    config-lib.py)."""
+    tu_path = Path(__file__).resolve().parent / "update-template.py"
+    spec = importlib.util.spec_from_file_location("_config_lib_tu", tu_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def fetch_template_ai_config_text(root: Path, tu=None, ref: str = None, fetch: bool = True):
+    """Holt AI-CONFIG.md aus dem Template-Remote (`git show <ref>:AI-CONFIG.md`). `tu` ist das schon
+    geladene update-template.py-Modul (z.B. von sync-config.py); fehlt es, wird es selbst nachgeladen
+    (_load_template_update_module) - so ist diese Funktion auch von update-template.py selbst per importlib
+    aufrufbar (config-lib.py laden, siehe files-lib.py fuer dasselbe Muster in die andere Richtung), ohne
+    dass update-template.py dafuer geaendert werden muesste.
+    `ref`: schon aufgeloeste Referenz (z.B. von sync-config.py:_get_ref/resolve_template_ref, das denselben
+    Ref fuer mehrere Diffs in einem --apply-Lauf teilt) - wird dann UNVERAENDERT benutzt, kein erneutes
+    compare_ref/git fetch (Review-Befund F3: vermeidet doppeltes Fetchen in einem Lauf, der auch andere
+    Diffs bedient). Ohne 'ref' (Default) wird sie wie zuvor selbst ueber `.claude/template.json` §
+    template_remote/template_branch aufgeloest (siehe update-template.py:compare_ref).
+    `fetch`: nur wirksam, wenn 'ref' NICHT gegeben ist. True (Default) fetcht bei Bedarf einmal - fuer
+    --apply. False ueberspringt den Netzwerkzugriff komplett und vergleicht nur gegen den lokal schon
+    bekannten Remote-Stand (refs/remotes/<remote>/<branch> aus einem frueheren Fetch) - fuer --check/den
+    SessionStart-Hook (Review-Befund F3: dort darf kein Netzwerkzugriff blockieren/Meldungen verschlucken).
+    Ohne lokalen Stand schlaegt danach nur 'git show' fehl (kein Absturz, kein Haengen).
+    Rueckgabe (text_oder_None, hinweis_oder_None, fehler_oder_None):
+      - Kein Template-Remote/keine aufloesbare Referenz (nur wenn 'ref' nicht gegeben war) -> (None, None,
+        None). Laut Auftrag (Backlog B37) ist das der STILLE Fallback ohne Remote, kein Fehler.
+      - 'git show' schlaegt fehl (Datei im Ref nicht gefunden/Ref lokal nicht vorhanden) -> (None,
+        hinweis_oder_None, fehlertext).
+      - Erfolg -> (text, hinweis_oder_None, None). 'hinweis' ist zusaetzlich und informativ (z.B.
+        fehlgeschlagener 'git fetch' - dann wird mit dem lokalen Stand weitergearbeitet)."""
+    if tu is None:
+        tu = _load_template_update_module()
+    hinweis = None
+    if ref is None:
+        tpl_cfg, _path = tu.load_template_json(root)
+        if tpl_cfg.get("is_template"):
+            return None, None, None  # Template-Checkout selbst hat nichts, wogegen verglichen werden koennte
+        ref, fetch_noetig = tu.compare_ref(root, tpl_cfg)
+        if ref is None:
+            return None, None, None  # kein Remote/Branch - stiller Fallback, siehe Docstring
+        if fetch and fetch_noetig:
+            remote = tpl_cfg.get("template_remote") or "template"
+            try:
+                res_fetch = tu.run_git(root, ["fetch", remote], timeout=20)
+            except Exception as e:  # noqa: BLE001 - Netzwerk-/Timeoutfehler duerfen nicht durchschlagen
+                res_fetch = None
+                hinweis = f"'git fetch {remote}' fehlgeschlagen ({e}) - arbeite mit vorhandenem Stand weiter."
+            if res_fetch is not None and res_fetch.returncode != 0:
+                hinweis = f"'git fetch {remote}' fehlgeschlagen (offline?) - arbeite mit vorhandenem Stand weiter."
+    res = tu.run_git(root, ["show", f"{ref}:{CONFIG_REL}"])
+    if res.returncode != 0:
+        return None, hinweis, f"{CONFIG_REL} in '{ref}' nicht gefunden."
+    return res.stdout, hinweis, None
+
+
+def ai_config_missing_keys(root: Path, tu=None, ref: str = None, fetch: bool = True):
+    """Kompletter Ablauf fuer Backlog B37: Template-Fassung von AI-CONFIG.md holen (siehe
+    fetch_template_ai_config_text - `ref`/`fetch` werden unveraendert durchgereicht, siehe dort) und ihre
+    Tabellen-Schluessel gegen die Projektfassung vergleichen (siehe missing_ai_config_rows). `tu` wie dort -
+    optional, wird sonst selbst nachgeladen. Alter Aufruf `ai_config_missing_keys(root, tu)` verhaelt sich
+    unveraendert (ref=None, fetch=True = wie zuvor).
+    Rueckgabe (missing, hinweise_manuell, hinweis, fehler) - 'missing'/'hinweise_manuell' wie
+    missing_ai_config_rows(), leer bei fehlendem Remote (stiller Fallback) oder Lesefehler. Aufrufer:
+    sync-config.py (--check meldet 'missing'/'hinweise_manuell', --apply fuegt 'missing' per
+    insert_missing_ai_config_rows ein, schreibt AI-CONFIG.md zurueck und meldet 'hinweise_manuell' nur)."""
+    template_text, hinweis, fehler = fetch_template_ai_config_text(root, tu, ref=ref, fetch=fetch)
+    if template_text is None:
+        return [], [], hinweis, fehler
+    project_path = root / CONFIG_REL
+    try:
+        project_text = project_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        project_text = ""
+    missing, hinweise_manuell = missing_ai_config_rows(project_text, template_text)
+    return missing, hinweise_manuell, hinweis, fehler
 
 
 # ---------------------------------------------------------------------------
