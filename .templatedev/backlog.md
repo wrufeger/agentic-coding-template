@@ -383,7 +383,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - laufendes Projekt (`setup_complete` oder nach `/act-finalize`): diese beiden nicht; während der Einrichtung zusätzlich `act-finalize`
 - im Template-Checkout selbst zusätzlich die Pflege-Befehle (`act-process-feedback`)
 - Zu bauen: `act-help.py` liest `.claude/template.json` und filtert; Skill-Frontmatter könnte ein Feld wie `phase: setup|projekt|pflege` tragen statt einer Namensliste
-- offen: sollen ausgeblendete Befehle per `/act alle` sichtbar bleiben?
+- Entschieden 2026-09-17 (Wolfgang): `/act all` zeigt zusätzlich die ausgeblendeten Befehle (Parameter englisch)
 
 <a id="b49"></a>
 ### B49 · Skill `act-check-translations`
@@ -392,7 +392,8 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - Schritt 1 Erkennen, je Stack: z. B. Nuxt `@nuxtjs/i18n` + `locales/*.json`, Vue/React i18n-Bibliotheken, gettext `.po`, Rails/Laravel `lang/`; nichts gefunden → melden und beenden
 - Schritt 2 Vollständigkeit per Script: Schlüssel je Sprache gegen die Default-Sprache (fehlend, überzählig, leer, identisch mit Default = vermutlich unübersetzt), Platzhalter-Parität (`{name}`), im Code verwendete Schlüssel ohne Eintrag
 - Schritt 3 `extended`: Seiten je Sprache per Playwright öffnen, sichtbare Texte auf Default-Sprache, rohe Schlüssel (`home.title`) und Platzhalter prüfen
-- Schritt 4 Hinweis auf Texte aus Backend/Datenbank (Tabellen mit Sprachspalten), dort nur melden
+- Schritt 4 Texte aus Backend/Datenbank: ist ein Datenbankzugriff vorhanden (MySQL-/DB-MCP-Server, Zugangsdaten in `.env`, lokale DB als Docker-Container), werden auch dort Übersetzungen geprüft — Tabellen mit Sprachspalten oder Übersetzungstabellen auf fehlende/leere Einträge je Sprache; **nur lesend** (`AGENTS.md` § Zugriff auf laufende Systeme), Zugangsdaten nie auf die Kommandozeile; ohne Zugriff nur melden
+  (Ergänzung Wolfgang 2026-09-17)
 - Ergebnis nach Schwere, Befüllen fehlender Übersetzungen nur nach Freigabe
 - vorher Konzept nach Checkliste „Idee aufnehmen"; Script unter `.claude/scripts/` (Stdlib), Stack-Erkennung erweiterbar
 
