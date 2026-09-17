@@ -123,6 +123,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
+| `/act [befehl]` | — (Mechanik ohne Checkliste) | Übersicht aller Projekt-Befehle mit Parametern und Kurzbeschreibung wie eine man page (`.claude/scripts/act-help.py`); mit Namen ein Befehl ausführlich. Alle Projekt-Skills tragen das Präfix `act-`, damit sie nicht mit eingebauten Befehlen (`/feedback`) kollidieren |
 | `/act-create-project` | „Neues Projekt" | `AI-CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/create-project.py`, läuft **nie** in einem Sub-Agenten |
 | `/act-apply-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `apply-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`AI-CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
 | `/act-audit-docs [project\|ai\|alle]` | „Doku prüfen und nachziehen" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer`; Bereich `project` (Code-Abgleich) und/oder `ai` (Formprüfung Arbeitsordner), bewusst unabhängig von der optionalen Wartung |

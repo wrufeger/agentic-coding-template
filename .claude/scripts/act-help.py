@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Zweck: Uebersicht der Projekt-Befehle (/act-…) wie eine man page - Name, Parameter, Kurzbeschreibung,
+#        Ausloeser. Liest das Frontmatter aller .claude/skills/*/SKILL.md, deshalb nie veraltet. Wird vom
+#        Skill /act aufgerufen, laeuft aber auch direkt. Reine Python-Stdlib.
+#
+# Aufruf:
+#   python .claude/scripts/act-help.py            # alle Befehle, je zwei bis drei Zeilen
+#   python .claude/scripts/act-help.py commit     # ein Befehl ausfuehrlich (mit oder ohne act-, auch Teilname)
+#
+# Ausgabeformat: Klartext, feste Einrueckung. Exit 0 = ok, 1 = kein passender Befehl, 2 = kein Skill-Ordner.
+
+import os
+import sys
+import textwrap
+from pathlib import Path
+
+BREITE = 100
+
+
+def _root() -> Path:
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    return Path(env) if env else Path(__file__).resolve().parents[2]
+
+
+def _frontmatter(datei: Path) -> dict:
+    """Einfache Schluessel: Wert-Zeilen zwischen den beiden '---' - mehr brauchen SKILL.md-Dateien nicht."""
+    werte = {}
+    zeilen = datei.read_text(encoding="utf-8").splitlines()
+    if not zeilen or zeilen[0].strip() != "---":
+        return werte
+    for zeile in zeilen[1:]:
+        if zeile.strip() == "---":
+            break
+        if ":" in zeile and not zeile.startswith(" "):
+            schluessel, _, wert = zeile.partition(":")
+            werte[schluessel.strip()] = wert.strip().strip('"')
+    return werte
+
+
+def _befehle(root: Path) -> list:
+    befehle = []
+    for datei in sorted((root / ".claude" / "skills").glob("*/SKILL.md")):
+        fm = _frontmatter(datei)
+        name = fm.get("name") or datei.parent.name
+        if name == "act":
+            continue
+        beschreibung = fm.get("description", "")
+        kurz, _, ausloeser = beschreibung.partition(" Auslöser - ")
+        befehle.append({"name": name, "hint": fm.get("argument-hint", ""), "kurz": kurz.strip(),
+                        "ausloeser": ausloeser.strip()})
+    return befehle
+
+
+def _absatz(text: str, einzug: str) -> str:
+    return textwrap.fill(text, BREITE, initial_indent=einzug, subsequent_indent=einzug)
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    root = _root()
+    if not (root / ".claude" / "skills").is_dir():
+        print(f"Kein Skill-Ordner unter {root}/.claude/skills")
+        return 2
+    befehle = _befehle(root)
+    suche = sys.argv[1].lower().removeprefix("/").removeprefix("act-") if len(sys.argv) > 1 else ""
+
+    if suche:
+        treffer = [b for b in befehle if b["name"].removeprefix("act-") == suche] or \
+                  [b for b in befehle if suche in b["name"]]
+        if not treffer:
+            print(f"Kein Befehl passt zu '{sys.argv[1]}'. Uebersicht: /act")
+            return 1
+        for b in treffer:
+            print(f"/{b['name']} {b['hint']}".rstrip())
+            print(_absatz(b["kurz"], "    "))
+            if b["ausloeser"]:
+                print(_absatz("Auslöser: " + b["ausloeser"], "    "))
+            print(f"    Anleitung: .claude/skills/{b['name']}/SKILL.md")
+            print()
+        return 0
+
+    print("PROJEKT-BEFEHLE — /act <name> zeigt einen ausführlich\n")
+    for b in befehle:
+        print(f"  /{b['name']} {b['hint']}".rstrip())
+        print(_absatz(b["kurz"], "      "))
+    print("\nStatt des Befehls genügt meist ein Satz, z. B. „ich hätte da eine Idee“ oder „Feedback: <Text>“.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

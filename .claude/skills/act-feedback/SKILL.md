@@ -1,6 +1,7 @@
 ---
 name: act-feedback
 description: Rückmeldung an den Template-Autor zusammenstellen und senden - was sich an der Arbeitsweise bewährt oder gefehlt hat, ohne Projektbezug. Auslöser - "/feedback", "/feedback <Text>", "Feedback: <Text>", "Schicke Feedback <Text>", "Feedback senden", "ans Template melden", "Rückmeldung geben".
+argument-hint: "[Text]"
 ---
 
 # Rückmeldung an den Template-Autor
