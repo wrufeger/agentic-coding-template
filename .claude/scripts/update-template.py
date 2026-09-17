@@ -256,6 +256,46 @@ def abgewaehlte_pfade(cfg: dict) -> list:
             pfade.extend(ABGEWAEHLT_TOOL_PATHS.get(str(werkzeug), []))
     return sorted(dict.fromkeys(pfade))
 
+
+def abgewaehlte_guideline_pfade(cfg: dict, root: Path) -> list:
+    """B61: Bausteine unter docs/project/coding_rules.d/, die AI-CONFIG.md Paragraph "Coding-Guidelines"
+    NICHT gewaehlt hat - dieselbe Luecke wie bei abgewaehlte_pfade() (Wartung/Code-Optimierung/KI-Werkzeuge),
+    nur bisher an keiner Stelle in diesem Script ausgewertet: ein neuer Baustein des Templates landete in
+    jedem Projekt, auch wenn dessen AI-CONFIG.md ihn nie gelistet hat (Fremdbeleg siehe Backlog B61).
+    GRUNDSATZ (Wolfgang 2026-09-18): was beim Abschluss der Einrichtung rausgeflogen waere oder nie fuer
+    dieses Projekt gedacht war, bleibt draussen - AUCH WENN die Datei im Template neu ist und das Projekt sie
+    nie hatte.
+    Quelle der Auswahl ist `applied_config["Coding-Guidelines"]` (von sync-config.py/config-lib.py:
+    build_applied_config() geschrieben, IMMER eine - ggf. leere - Liste, sobald applied_config existiert).
+    Die vorhandenen Kennungen kommen aus config-lib.py:available_guidelines() (per _config_lib_module()
+    nachgeladen wie an den anderen B37/B38-Stellen) - bewusst KEINE zweite Namensliste hier, die vom
+    tatsaechlichen Baustein-Bestand abweichen koennte. README.md zaehlt dort nie als Baustein und bleibt so
+    immer erhalten, ein gewaehlter Baustein taucht in der Auswahl auf und wird nie zurueckgeliefert.
+    Nie im Template-Checkout selbst (is_template) - dieselbe Schranke wie abgewaehlte_pfade()/
+    _remove_template_only(). Leere Liste, wenn applied_config fehlt, den Schluessel nicht kennt (Projekt
+    aelter als die Coding-Guidelines-Auswahl) oder config-lib.py nicht ladbar ist - Raten waere schlimmer als
+    Einspielen (derselbe Vorbehalt wie bei abgewaehlte_pfade())."""
+    if cfg.get("is_template"):
+        return []
+    angewandt = cfg.get("applied_config")
+    if not isinstance(angewandt, dict):
+        return []
+    gewaehlt = angewandt.get("Coding-Guidelines")
+    if not isinstance(gewaehlt, list):
+        return []
+    gewaehlt_set = {str(kennung).strip().lower() for kennung in gewaehlt}
+    cl = _config_lib_module()
+    if cl is None or not hasattr(cl, "available_guidelines"):
+        return []
+    guidelines_dir = str(getattr(cl, "GUIDELINES_DIR", "docs/project/coding_rules.d"))
+    try:
+        vorhanden = cl.available_guidelines(root)
+    except Exception:  # noqa: BLE001 - darf --apply/--check nicht zum Absturz bringen
+        return []
+    return sorted(
+        f"{guidelines_dir}/{kennung}.md" for kennung in vorhanden if kennung not in gewaehlt_set
+    )
+
 # ---------------------------------------------------------------------------
 # B38: abgeschlossene Projekte (setup_complete) - Setup-only-Abschnitte, die /act-finalize (finish-setup.py)
 # entfernt hat, duerfen ein Update nicht zurueckholen. Statt die Marker/Listen hier zu duplizieren, werden
@@ -1675,7 +1715,9 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
 
             keep_local = cfg.get("keep_local") or []
             template_only = cfg.get("template_only") or []
-            abgewaehlt = abgewaehlte_pfade(cfg)
+            # B61: abgewaehlte Sprachbausteine (coding_rules.d/) gehoeren zur selben Kategorie wie die
+            # uebrigen abgewaehlten Pfade - derselbe "geloescht belassen"-Automatismus im DU-Zweig unten.
+            abgewaehlt = abgewaehlte_pfade(cfg) + abgewaehlte_guideline_pfade(cfg, root)
             is_template = bool(cfg.get("is_template"))
             merge_head = _merge_head(root)
             # B38: root/ref (=merge_head) durchreichen - finish-setup.py existiert in einem abgeschlossenen
@@ -1877,8 +1919,11 @@ def _finalize(root: Path, cfg: dict, path: Path, do_commit: bool) -> int:
         print("Nur im Template, aus dem Projekt entfernt: " + ", ".join(removed_template_only))
 
     # Abgewaehlte Pfade: Der Merge kann dort auch DATEIEN NEU angelegt haben, die es im Projekt noch nie gab -
-    # die erzeugen keinen Konflikt und kaemen sonst unbemerkt zurueck (Backlog 31).
-    removed_abgewaehlt = _remove_paths(root, abgewaehlte_pfade(cfg))
+    # die erzeugen keinen Konflikt und kaemen sonst unbemerkt zurueck (Backlog 31). B61: dasselbe fuer
+    # abgewaehlte Sprachbausteine unter coding_rules.d/ - bisher hier nie ausgewertet.
+    removed_abgewaehlt = _remove_paths(
+        root, abgewaehlte_pfade(cfg) + abgewaehlte_guideline_pfade(cfg, root)
+    )
     if removed_abgewaehlt:
         print("Abgewaehlt (AI-CONFIG.md), aus dem Projekt entfernt: " + ", ".join(removed_abgewaehlt))
 
