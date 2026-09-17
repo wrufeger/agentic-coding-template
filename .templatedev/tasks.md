@@ -74,7 +74,15 @@ wenn T1–T3 committet und gepusht sind:
     kein Pflege-Modus-Schalter (Q15, Backlog-Punkt 35). Konzept: `concept-project-structure.md`.
   Wechsel: bis Schritt 4 im Root; vor dem Beleg sagt der Orchestrator an, dass Wolfgang eine neue Sitzung
     in `.templatedev/` starten soll.
-  Stand 2026-09-16: aufgenommen, noch nicht begonnen.
+  Stand 2026-09-17: vorbereitet (`/act-prepare`), Plan im Journal; neu gegenüber dem Konzept: Sperre der
+    Einrichtungs-Skills zusätzlich in den Scripten;
+    Eltern-`CLAUDE.md` wird mitgeladen → Ausschluss per absolutem Pfad in gitignorierter
+    `.templatedev/.claude/settings.local.json`, geschrieben von `sync-rules.py` (per Versuch belegt).
+    Korrektur nach erneutem Test 2026-09-17 (Zufallswörter, 2.1.274): gleichnamiger Skill im Unterordner
+    GEWINNT (`/probe` lieferte die Unterordner-Fassung) — Sperr-Skills wie im Konzept funktionieren; die
+    Doku-Aussage „Root gewinnt" trifft hier nicht zu. Script-Sperren zusätzlich als zweite Schranke.
+  Entschieden 2026-09-17: Q19 b (kein Marker, strikte Trennung Root/`.templatedev/`), Q20–Q23 a.
+  Offen:
 
 
 ---
