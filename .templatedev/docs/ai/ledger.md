@@ -43,6 +43,16 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 - Belege: py_compile aller Scripte, `check-refs.py` Root und `--root .templatedev` 0 tot, `create-project.py
   --check` ok, `sync-rules.py --check` rc 0.
 
+### T5 Schritt 7 — Prüfung in neuer Sitzung (`.templatedev/`)
+
+- Grün: nur `.templatedev/CLAUDE.md`+`AGENTS.md` geladen; `py_compile` ok; `check-refs.py` Root 0 tot (1 verwaist),
+  `.templatedev` 0 tot (3 verwaist); `sync-rules.py --check` rc 0; mit `CLAUDE_PROJECT_DIR=.templatedev` rc 2 bei
+  `sync-config`, `finish-setup`, `feedback`, `update-template --check` leitet an `sync-rules` weiter (rc 0).
+- Rot: `CLAUDE_PROJECT_DIR` im Bash-Tool leer → Sperren/Weiterleitung greifen bei Skill-Aufrufen nicht
+  (`update-template.py --check` meldete „nicht konfiguriert“); Skill ruft relativen Pfad `.claude/scripts/`.
+- Rot: `bandliste --check` läuft gegen GitHub (Stand vor `add483c`, alte `.templatedev/`-Pfade) — Beleg erst nach Push.
+- Auffällig: Skill-Liste der Sitzung zeigt Root-Beschreibungen von `act-create-project`/`act-finalize`/`act-feedback`.
+
 ### B22, B27, B48, B51
 
 - B27 (Wolfgang): Schlüssel `Sprache` entfernt, Deutsch fest; Ideensammlung Mehrsprachigkeit im Backlog, Prio mittel (u. a. Englisch als Basis, Projektsprache nur für neue `docs/`-Inhalte).

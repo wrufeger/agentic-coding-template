@@ -97,7 +97,14 @@ wenn T1–T3 committet und gepusht sind:
     Sonderpfade; Umzug per `git mv`, Q1–Q18 archiviert, Backlog-Punkt 35 gelöscht; `konzepte/` → `concepts/`).
   Stand 2026-09-17: Wellen 1–3 und Review fertig (Befunde behoben), committet; es fehlt Schritt 7: Beleg in
     einer neuen Sitzung, die Wolfgang in `.templatedev/` startet, danach Push (Q23).
-  Offen: Schritt 7 (Sitzungswechsel durch Wolfgang).
+  Stand 2026-09-17: Schritt 7 geprüft in neuer Sitzung in `.templatedev/` — nicht bestanden. Grün: nur eigene
+    `CLAUDE.md` geladen, Lint, `check-refs` 0 tot (Root + `.templatedev`), `sync-rules --check` rc 0, Sperren greifen
+    MIT `CLAUDE_PROJECT_DIR`. Rot: (1) Bash-Tool setzt `CLAUDE_PROJECT_DIR` nicht (nur Hooks) → Scripte finden
+    per `__file__` den Root, Sperren und Update-Weiterleitung greifen im Skill-Aufruf nicht; `/act-update-template`
+    ruft `.claude/scripts/…` relativ auf, das es in `.templatedev/` nicht gibt. (2) `bandliste` prüft gegen GitHub,
+    ohne Push kein Beleg für den neuen Stand. (3) Skill-Liste zeigt die Root-Beschreibungen von `act-create-project`,
+    `act-finalize`, `act-feedback` (Sperr-Skills wegen `disable-model-invocation` unsichtbar).
+  Offen: Befunde (1)–(3) beheben, danach Schritt 7 wiederholen; Push erst danach (Q23).
 
 
 ---
