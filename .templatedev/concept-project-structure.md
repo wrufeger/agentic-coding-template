@@ -1,4 +1,4 @@
-> Datenstand: 2026-09-16 – Status: Entwurf — wartet auf `Q12`–`Q15`
+> Datenstand: 2026-09-17 – Status: entschieden — `Q12`–`Q15` beantwortet, Umsetzung offen (T5)
 
 # Template-Pflege als eigenes Projekt in `.templatedev/`
 
@@ -72,7 +72,7 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
 **Stolperstein `/commit`:** Die Sitzung liegt nicht im Git-Root — Pathspecs sind relativ zu `.templatedev/`.
 Änderungen am Template (`../.claude/…`) müssen mit `../` angegeben werden; Schritt 5 prüft genau das.
 
-## Pflege-Modus im Root (Wunsch 2026-09-17)
+## Pflege-Modus im Root (Wunsch 2026-09-17, zurückgestellt — Backlog-Punkt 35)
 
 Schalter in `.env`, z. B. `TEMPLATEDEV_MODE=ein`: Eine Sitzung im Root verhält sich, als liefe sie in
 `.templatedev/` — praktisch, wenn IDE und Terminal ohnehin im Root geöffnet sind.
@@ -106,6 +106,14 @@ Schalter in `.env`, z. B. `TEMPLATEDEV_MODE=ein`: Eine Sitzung im Root verhält 
 - `Q14` a — drei Zeilen im Root statt ~30.
 - `Q15` a — Schalter in `.env` wie gewünscht; die Grenzen oben stehen dann im Hook-Text selbst.
 
-## Offen
+## Entschieden am 2026-09-17
 
-`Q12`–`Q15` in `questions.md`.
+- **Vererbung (`Q12` a):** gerenderte Kopie per `scripts/sync-rules.py`, `--check` beim Sitzungsstart.
+- **Ablage (`Q13` b):** Standardorte mit englischen Namen; zusätzlich heißt `docs/project/konzepte/` im
+  Template künftig `docs/project/concepts/` — alle Links, Erwähnungen und Referenzen werden geprüft.
+  Abgeleitete Projekte (`bandliste`) behalten eigene Konzepte zunächst im alten Ordner; der Umzug dort ist
+  ein Hinweis beim nächsten `/update-template`.
+- **Root (`Q14` a):** drei Zeilen Hinweis statt der Blöcke.
+- **Pflege-Modus (`Q15` c):** kein Schalter; Idee als Backlog-Punkt 35.
+- **Wechsel der Sitzung:** bis einschließlich Schritt 4 wird im Root gearbeitet; erst für den Beleg in
+  Schritt 5 startet Wolfgang eine neue Sitzung in `.templatedev/` — das wird rechtzeitig angesagt.

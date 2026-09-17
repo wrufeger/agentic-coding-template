@@ -169,7 +169,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) Import per `@../AGENTS.md` — lädt dieselben Platzhalter mit, kein Script nötig
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-17: T5 Schritt 3 (`sync-rules.py`, `--check` beim Sitzungsstart).
 
 ---
 
@@ -183,7 +184,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) Dateien ohne Gegenstück bleiben, wo sie sind; nur die `docs/ai/`-Dateien ziehen um
 
-   * Antwort:
+   * Antwort: b) und alle Links, Erwähnungen und Referenzen prüfen
+   * Verarbeitet 2026-09-17: T5 Schritt 2 um die Umbenennung `docs/project/konzepte/` → `concepts/` im Template erweitert (heute 12 Erwähnungen in 9 Dateien), samt Prüfung aller Verweise und Hinweis für `bandliste` beim nächsten `/update-template`.
 
 ---
 
@@ -196,7 +198,8 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) die heutigen Blöcke bleiben unverändert
 
-   * Antwort:
+   * Antwort: a)
+   * Verarbeitet 2026-09-17: T5 Schritt 4.
 
 ---
 
@@ -214,6 +217,7 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
 
    c) kein Schalter; Pflege nur in einer Sitzung in `.templatedev/`
 
-   * Antwort:
+   * Antwort: c) TEMPLATEDEV_MODE=ein als Idee festhalten, prio gering. Sag rechtzeitig Bescheid, wenn ich das Verzeichnis wechseln und eine neue Session beginnen muß
+   * Verarbeitet 2026-09-17: kein Schalter in T5; Idee als Backlog-Punkt 35 (Priorität gering). Zeitpunkt für den Wechsel nach `.templatedev/` steht in T5 und wird angesagt.
 
 ---

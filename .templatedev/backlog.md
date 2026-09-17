@@ -198,6 +198,11 @@ sie werden in Journal und Commits zitiert.
    und `/integrations` (T1, T3) bauen zunächst nur GitLab und GitHub (Q11). Danach dieselben Abläufe über MCP
    (`atlassian`, `linear`); YouTrack fehlt noch im Katalog `.claude/mcp-katalog.md`.
 
+35. -> Idee, Priorität gering: **Pflege-Modus im Root per `.env`** (angelegt 2026-09-17): `TEMPLATEDEV_MODE=ein`
+   lässt eine Sitzung im Root so arbeiten, als liefe sie in `.templatedev/` — Hook-Hinweis, Scripte mit
+   `.templatedev/` als Projektordner, Sperren für `create-project`/`apply-template`/`finalize`. Grenzen und
+   Aufwand (~0,5 PT): `concept-project-structure.md` § „Pflege-Modus im Root". Entscheidung: Q15.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):

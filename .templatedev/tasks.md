@@ -69,7 +69,11 @@ wenn T1–T3 committet und gepusht sind:
   2. Nach Entscheidung in Teilaufgaben schneiden; Inhalte übernehmen (Backlog, Fragen, Journal, Regeln) und
      `questions.md`/`tasks.md` auf die Formregeln aus `docs/ai/README.md` bringen.
   3. Beleg: `/update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
-  Offen: Q12–Q15 (Konzept `concept-project-structure.md`).
+  Entschieden: gerenderte Kopie der Regeln (Q12); Standardorte, englische Namen, Template-Ordner
+    `docs/project/konzepte/` → `concepts/` mit Prüfung aller Verweise (Q13); drei Zeilen im Root (Q14);
+    kein Pflege-Modus-Schalter (Q15, Backlog-Punkt 35). Konzept: `concept-project-structure.md`.
+  Wechsel: bis Schritt 4 im Root; vor dem Beleg sagt der Orchestrator an, dass Wolfgang eine neue Sitzung
+    in `.templatedev/` starten soll.
   Stand 2026-09-16: aufgenommen, noch nicht begonnen.
 
 
