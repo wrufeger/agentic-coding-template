@@ -15,7 +15,7 @@
 #             Datenbanknamen, Kennzahlen und Zitate - das ist NICHT anonym und verlaesst das Projekt nie.
 #          2. Es wird NIE ohne Einwilligung gesendet (consent in .claude/template.json).
 #          3. Jede Sendung wird PROTOKOLLIERT: die vollstaendige Nutzlast landet versioniert unter
-#             docs/ai/template-feedback/sent/protokolle/. Der Assistent sendet autonom, ohne Rueckfrage und ohne die Nutzlast
+#             docs/ai/template-feedback/sent/protocols/. Der Assistent sendet autonom, ohne Rueckfrage und ohne die Nutzlast
 #             ins Terminal zu schreiben - wie jedes andere Programm auch. Nachvollziehbar bleibt es trotzdem,
 #             aber ueber das Protokoll im Repo: Es faellt im naechsten Diff auf, laesst sich nachlesen, wenn
 #             jemand es wissen will, und nicht erst, wenn er zufaellig hinsieht. Wer vorab sehen will, was
@@ -45,7 +45,7 @@
 #       Zeigt die vollstaendige Nutzlast, die gesendet wuerde. Schreibt und sendet nichts.
 #   python .claude/scripts/feedback.py --send [--force]
 #       Sendet, wenn Einwilligung vorliegt, der Filter nichts beanstandet und die letzte Sendung mindestens
-#       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/sent/protokolle/, leert den
+#       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/sent/protocols/, leert den
 #       Ausgang und vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst. Steht
 #       Feedback auf "automatisch" und der Takt auf "sofort", loest bereits --add diesen Versand aus.
 #   python .claude/scripts/feedback.py --direkt "<Text>"
@@ -114,19 +114,19 @@ HERKUNFT = "agentic-coding-template/1"
 # Altbestand aus frueheren Projekten (Paar <name>.md + <name>.json, auch in sent/) wird beim LESEN
 # weiterhin erkannt - --add schreibt nur noch das neue Format.
 # Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist. Liegt
-# UNTER sent/, eigens im Unterordner protokolle/, damit es nicht mit den (Lese-)Eintraegen im selben Ordner
+# UNTER sent/, eigens im Unterordner protocols/, damit es nicht mit den (Lese-)Eintraegen im selben Ordner
 # verwechselt wird. Aeltere Protokolle, die noch direkt im Hauptordner liegen, verschiebt
 # _protokolle_migrieren() bei der naechsten SCHREIBENDEN Aktion (--add/--send/--direkt/--enable/--disable)
 # einmalig dorthin - --status/--plan lesen nur und zeigen den Altbestand, verschieben aber nichts.
 LOG_DIR_REL = "docs/ai/template-feedback"
-PROTOKOLL_DIR_REL = "docs/ai/template-feedback/sent/protokolle"
+PROTOKOLL_DIR_REL = "docs/ai/template-feedback/sent/protocols"
 # ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protokoll lokal). Dann
 # nimmt .gitignore genau die Nutzlast-Dateien aus; die README des Ordners bleibt versioniert, damit im Repo
 # nachlesbar bleibt, DASS gesendet wird - nur nicht mehr, WAS.
-GITIGNORE_GLOB = "docs/ai/template-feedback/sent/protokolle/*.json"
+GITIGNORE_GLOB = "docs/ai/template-feedback/sent/protocols/*.json"
 # Muster aus der Zeit vor der Trennung von Eintrag und Protokoll (Protokolle lagen direkt im Hauptordner).
 # Wird weiterhin als "lokal" erkannt UND vor einer Migration um das neue Muster ergaenzt - sonst waeren
-# bereits ignorierte Protokolle nach dem Verschieben nach sent/protokolle/ ploetzlich nicht mehr ignoriert.
+# bereits ignorierte Protokolle nach dem Verschieben nach sent/protocols/ ploetzlich nicht mehr ignoriert.
 GITIGNORE_GLOB_ALT = "docs/ai/template-feedback/*.json"
 GITIGNORE_KOPF = "# Protokoll der Rueckmeldungen (feedback.py) - auf Wunsch lokal, nicht versioniert"
 CONFIG_REL = "AI-CONFIG.md"
@@ -772,7 +772,7 @@ def _protokoll_lokal(root: Path) -> bool:
 
 def _gitignore_altmuster_ergaenzen(root: Path) -> bool:
     """Ergaenzt das neue Ignoriermuster, wenn nur das alte (GITIGNORE_GLOB_ALT) in .gitignore steht - VOR
-    dem Verschieben von Protokollen nach sent/protokolle/. Sonst waeren dort abgelegte Dateien ploetzlich
+    dem Verschieben von Protokollen nach sent/protocols/. Sonst waeren dort abgelegte Dateien ploetzlich
     nicht mehr ignoriert, obwohl {{AUFTRAGGEBER}} 'lokal' gewaehlt hatte - die Wahl bleibt erhalten. Ruehrt
     nichts an, wenn das neue Muster schon da ist oder das alte fehlt. True, wenn etwas geschrieben wurde."""
     gi = root / ".gitignore"
@@ -1001,7 +1001,7 @@ def _freier_pfad(ordner: Path, basis: str, endung: str) -> Path:
 
 def _protokolle_altbestand(root: Path) -> list:
     """Nur ERKENNEN, nichts verschieben: Pfade von Sendeprotokollen, die noch direkt unter
-    docs/ai/template-feedback/ liegen statt unter sent/protokolle/. Fuer --status/--plan - die duerfen
+    docs/ai/template-feedback/ liegen statt unter sent/protocols/. Fuer --status/--plan - die duerfen
     anzeigen, dass Altbestand da ist, aber nicht schreibend eingreifen."""
     ordner = root / LOG_DIR_REL
     if not ordner.is_dir():
@@ -1019,7 +1019,7 @@ def _protokolle_altbestand(root: Path) -> list:
 
 def _protokolle_migrieren(root: Path) -> int:
     """Altbestand: Sendeprotokolle, die vor der Trennung von Eintrag und Protokoll noch direkt unter
-    docs/ai/template-feedback/ liegen, einmalig nach sent/protokolle/ verschieben. Wird NUR von schreibenden
+    docs/ai/template-feedback/ liegen, einmalig nach sent/protocols/ verschieben. Wird NUR von schreibenden
     Befehlen aufgerufen (--add/--send/--direkt/--enable/--disable) - idempotent, sobald nichts mehr dort
     liegt, tut die Funktion nichts. Kollisionsfrei ueber _freier_pfad(): trifft ein Altbestand-Name auf ein
     bereits dort liegendes Protokoll (alt oder neu), bekommt er ein -2/-3/...-Suffix statt es zu

@@ -13,6 +13,7 @@
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B28 | niedrig | Widerspruch bei no_replace | Machen: `no_replace` widerspricht sich zwischen `AGENTS.md`, `template.json` und `checklists.md` — erst klären, welche Fassung gilt. [Details](#b28) |
+| [ ] | B48 | mittel | `/act` zeigt nur passende Befehle | Idee (Wolfgang): frischer Klon zeigt nur `act-create-project`/`act-apply-template`, laufendes Projekt diese nicht mehr. [Details](#b48) |
 | [x] | B36 | hoch | Template-Update bleibt halber Merge | Erledigt 2026-09-17: Warnung bei offenem Template-Merge (`--check`/`--status`), `--continue` nimmt `MERGE_HEAD`, Skill verlangt Commit oder Rückfrage. [Details](#b36) |
 | [x] | B38 | mittel | Update bringt entfernte Abschnitte zurück | Erledigt 2026-09-17: bei `setup_complete` bleiben entfernte Scripte und Setup-Abschnitte draußen; Pfade aus dem Template-Ref nur statisch gelesen, kein fremder Code. [Details](#b38) |
 | [x] | B1 | offen | Feldweiser Merge von template.json | 2026-09-13: `template.json` wird feldweise gemergt (`update-template.py`). |
@@ -49,7 +50,7 @@
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B29 | offen | Rückmeldung abgeleiteter Projekte | In Arbeit: Abgeleitete Projekte melden sich freiwillig als Testkandidat, damit `.templatedev` ihre Weiterentwicklung auswerten kann. [Details](#b29) |
 | [ ] | B32 | offen | Feedback neu bearbeiten | Umgesetzt bis auf Endpunkt-Inbetriebnahme: Feedback-Umfang/-Takt/-Bestätigung neu gebaut; offen bleibt Rollout auf `rufeger.de`. [Details](#b32) |
-| [x] | B39 | mittel | Feedback-Ablage nach Versand widersprüchlich | Erledigt 2026-09-17: Protokolle unter `sent/protokolle/` (Altbestand migriert, lokal-Wahl bleibt), Sofortversand bei automatisch+sofort, Abschnitt „Von dir bereits gesendet“. [Details](#b39) |
+| [x] | B39 | mittel | Feedback-Ablage nach Versand widersprüchlich | Erledigt 2026-09-17: Protokolle unter `sent/protocols/` (Altbestand migriert, lokal-Wahl bleibt), Sofortversand bei automatisch+sofort, Abschnitt „Von dir bereits gesendet“. [Details](#b39) |
 
 ## Integrationen/MCP und Design
 
@@ -84,6 +85,13 @@
 | [x] | B30 | offen | Löschen trifft nie ungesicherte Dateien | 2026-09-15: Löschen prüft vorher `git status`; gitignorierte/ungetrackte/geänderte Pfade bleiben liegen und werden gemeldet. [Details](#b30) |
 | [x] | B44 | mittel | Python als Voraussetzung, Hooks ohne Python | Erledigt 2026-09-17: README § Voraussetzungen (3.9+), Prüf-Hook beim Sitzungsstart, alle Hooks wählen den Interpreter per Probe (Store-Platzhalter). [Details](#b44) |
 | [x] | B45 | mittel | Pfade außerhalb des Projekts plattformgerecht | Erledigt 2026-09-17: Regel in `AGENTS.md`/`CLAUDE.md` § 4, Beispielpfade neutral, `~` erklärt. [Details](#b45) |
+
+## Neue Skills
+
+| | Nr | Prio | Titel | Info |
+| :-: | :-- | :-- | :-- | :-- |
+| [ ] | B49 | offen | Skill `act-check-translations` | Idee (Wolfgang): Mehrsprachigkeit erkennen, Sprachdateien auf Vollständigkeit prüfen; `extended` per Playwright im Browser. Vorschlag mittel. [Details](#b49) |
+| [ ] | B50 | offen | Skill `act-seo` | Idee (Wolfgang): SEO-Prüfung im Code (Head, Überschriften, SSR/SSG, Links, Duplikate, `lang`); live Google/Search Console nur bei `live: ja`. Vorschlag mittel. [Details](#b50) |
 
 ## Details
 
@@ -301,6 +309,7 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 
 - Bestätigt 2026-09-17 (dritte Rückmeldung, vom Code gedeckt): `_protokollieren` schreibt nach `LOG_DIR_REL` statt `sent/protokolle/` — betrifft `--send` und `--direkt` gleichermaßen; `--status` und README mitziehen
 - **Erledigt 2026-09-17:** Einträge als eine `.md` mit YAML-Front-Matter (`art`, `titel`, `datum`, `status`, `gesendet`); Lesen akzeptiert zusätzlich das alte Paar `.md`+`.json`; beim Versand werden `status: gesendet` und die Zeit gesetzt (`feedback.py`). Offen bleiben Ablage der Sendeprotokolle, Umbenennung des Abschnitts „Bereits gesendet“ samt README-Erklärung und Sofortversand bei automatisch+sofort.
+- Nachtrag 2026-09-17 (Wolfgang): Ordner heißt `sent/protocols/` (Dateinamen englisch), nicht `sent/protokolle/`; noch nicht veröffentlicht, deshalb ohne Migration.
 
 <a id="b40"></a>
 ### B40 · Formatregel für Fragen rendert als ein Absatz
@@ -365,3 +374,35 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - Hooks starten die Scripte im Arbeitsbaum, während eines Merges also die gemergte, noch nicht committete Fassung
 - `update-template.py --check` fängt einen erkannten Template-Merge ab; offen bleibt ein `MERGE_HEAD`, den `_merge_is_from_template` nicht erkennt
 - Zu bauen: Hooks bei jedem offenen `MERGE_HEAD` nur melden statt Scripte laufen zu lassen, oder bewusst hinnehmen
+
+<a id="b48"></a>
+### B48 · `/act` zeigt nur die Befehle, die gerade passen
+
+- angelegt 2026-09-17, Idee Wolfgang
+- frischer Klon (Marker `is_template`, noch nicht angelegt): nur `act-create-project` und `act-apply-template` (plus `/act` selbst)
+- laufendes Projekt (`setup_complete` oder nach `/act-finalize`): diese beiden nicht; während der Einrichtung zusätzlich `act-finalize`
+- im Template-Checkout selbst zusätzlich die Pflege-Befehle (`act-process-feedback`)
+- Zu bauen: `act-help.py` liest `.claude/template.json` und filtert; Skill-Frontmatter könnte ein Feld wie `phase: setup|projekt|pflege` tragen statt einer Namensliste
+- offen: sollen ausgeblendete Befehle per `/act alle` sichtbar bleiben?
+
+<a id="b49"></a>
+### B49 · Skill `act-check-translations`
+
+- angelegt 2026-09-17, Idee Wolfgang, Priorität offen (Vorschlag mittel)
+- Schritt 1 Erkennen, je Stack: z. B. Nuxt `@nuxtjs/i18n` + `locales/*.json`, Vue/React i18n-Bibliotheken, gettext `.po`, Rails/Laravel `lang/`; nichts gefunden → melden und beenden
+- Schritt 2 Vollständigkeit per Script: Schlüssel je Sprache gegen die Default-Sprache (fehlend, überzählig, leer, identisch mit Default = vermutlich unübersetzt), Platzhalter-Parität (`{name}`), im Code verwendete Schlüssel ohne Eintrag
+- Schritt 3 `extended`: Seiten je Sprache per Playwright öffnen, sichtbare Texte auf Default-Sprache, rohe Schlüssel (`home.title`) und Platzhalter prüfen
+- Schritt 4 Hinweis auf Texte aus Backend/Datenbank (Tabellen mit Sprachspalten), dort nur melden
+- Ergebnis nach Schwere, Befüllen fehlender Übersetzungen nur nach Freigabe
+- vorher Konzept nach Checkliste „Idee aufnehmen"; Script unter `.claude/scripts/` (Stdlib), Stack-Erkennung erweiterbar
+
+<a id="b50"></a>
+### B50 · Skill `act-seo`
+
+- angelegt 2026-09-17, Idee Wolfgang, Priorität offen (Vorschlag mittel)
+- Code/Build: gültiges HTML, `<html lang>`, `<title>`/`meta description` je Seite, Canonical, `hreflang` bei Mehrsprachigkeit, Open Graph, eine `h1` und saubere Überschriftenfolge, Textmenge, Alt-Texte
+- Auslieferung: Inhalte per SSR/SSG im ausgelieferten HTML (nicht erst per JS), `robots.txt`, `sitemap.xml`, interne Verlinkung, verwaiste Seiten, doppelte Titel/Inhalte, Statuscodes
+- live, nur wenn das Projekt veröffentlicht ist: Suchergebnis-Darstellung (Titel, Beschreibung), Indexierung; Daten über die Google Search Console per API/MCP (Zugang nötig → Tabu-Bereich bzw. Freigabe)
+- Pagerank ist öffentlich nicht mehr abrufbar — stattdessen Search-Console-Kennzahlen (Impressionen, Klicks, Position)
+- neuer Schlüssel in `AI-CONFIG.md`, z. B. `Live-Adresse` (URL, leer = nicht live) oder `Veröffentlicht: ja/nein` samt Datum; hängt an B37 (Schlüssel werden jetzt nachgezogen)
+- vorher Konzept; ggf. Lighthouse-SEO-Audit per Playwright/CLI als Basis statt Eigenbau

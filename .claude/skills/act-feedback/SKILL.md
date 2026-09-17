@@ -72,7 +72,7 @@ Der Modus `bestaetigen` bleibt wirksam — dort wird die Nutzlast gezeigt und er
    `--add`-Aufruf den Versand aus (dieselben Prüfungen wie `--send`) — Schritt 5 ist dann bereits erledigt.
 4. **Ansehen:** `--plan` zeigt die vollständige Nutzlast.
 5. **Senden:** `--send --force` (bei Modus `bestaetigen` zusätzlich `--yes` nach der Ansicht).
-6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protokolle/` **mitcommitten** — es
+6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protocols/` **mitcommitten** — es
    gehört zum Nachweis, nicht in den Papierkorb. Steht das Protokoll auf `lokal` (Eintrag in `.gitignore`),
    entfällt der Schritt: dann bleibt die Datei absichtlich außerhalb des Verlaufs, und die Ausgabe von
    `--send` sagt das auch.

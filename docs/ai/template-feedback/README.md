@@ -8,7 +8,7 @@ werden:
 - **Eintrag** (`JJJJ-MM-TT-<thema>.md`, YAML-Front-Matter + Text) ist die **Lesefassung**: ein Fund, für
   einen Menschen geschrieben, bevor er verschickt wird. Steht schon **vor** dem Versand im Repo — im Diff
   sichtbar, nicht in einer versteckten Datei.
-- **Protokoll** (`sent/protokolle/JJJJ-MM-TT_HHMM.json`) ist der **Nachweis**: die tatsächlich übertragene
+- **Protokoll** (`sent/protocols/JJJJ-MM-TT_HHMMSS.json`) ist der **Nachweis**: die tatsächlich übertragene
   Nutzlast einer Sendung, inklusive der Metadaten, die kein Eintrag zeigt — Kennzahlen, Schalterstellungen,
   Projekt-ID, Zeitpunkt, Zieladresse. Ein Eintrag beschreibt einen Fund; ein Protokoll belegt, was davon
   wann tatsächlich hinausging (mehrere Einträge können in einem Protokoll zusammenlaufen).
@@ -18,12 +18,12 @@ werden:
 | Ein gesammelter Eintrag (Lesefassung) | `JJJJ-MM-TT-<thema>.md` (YAML-Front-Matter + Text) | sobald der Assistent etwas gefunden hat (`--add`) |
 | Dein eigenes Feedback | `feedback.md` | wann immer du magst — Fragen beantworten, Freitext |
 | Bereits gesendete Einträge | `sent/…` | beim Versand dorthin verschoben |
-| Protokoll einer Sendung (Nachweis) | `sent/protokolle/JJJJ-MM-TT_HHMM.json` | je Sendung eine Datei mit Zeitpunkt, Ziel und vollständiger Nutzlast |
+| Protokoll einer Sendung (Nachweis) | `sent/protocols/JJJJ-MM-TT_HHMMSS.json` | je Sendung eine Datei mit Zeitpunkt, Ziel und vollständiger Nutzlast |
 
 Der Kopf eines Eintrags (`art`, `titel`, `datum`, `status`, `gesendet`) steht als Front-Matter zwischen zwei
 `---`-Zeilen, der Text darunter als gewöhnlicher Markdown-Text hinter der Überschrift. Aus älteren Projekten
 kann noch ein Paar `<name>.md` + `<name>.json` herumliegen (auch in `sent/`) — wird gelesen, aber nicht mehr
-neu geschrieben; ältere Protokolle, die noch direkt in diesem Ordner statt unter `sent/protokolle/` liegen,
+neu geschrieben; ältere Protokolle, die noch direkt in diesem Ordner statt unter `sent/protocols/` liegen,
 verschiebt das Script beim nächsten Aufruf automatisch dorthin.
 
 Der Ordner ist standardmäßig **versioniert**. Das ist sein ganzer Zweck: Der Assistent sendet autonom und
@@ -31,7 +31,7 @@ fragt nicht vorher, aber nichts verlässt das Projekt unbemerkt — jede Sendung
 lässt sich auch Monate später nachlesen.
 
 **Ausnahme auf Wunsch:** Ist das Repo öffentlich, wäre die Rückmeldung darin für jeden lesbar. Dann nimmt
-`.gitignore` die Protokoll-Dateien aus (`docs/ai/template-feedback/sent/protokolle/*.json`, gesetzt über
+`.gitignore` die Protokoll-Dateien aus (`docs/ai/template-feedback/sent/protocols/*.json`, gesetzt über
 `feedback.py --enable --protokoll lokal`); die Einträge selbst (Lesefassung) und diese README bleiben
 versioniert, damit nachlesbar bleibt, **was** gefunden wurde und **dass** gesendet wird — nur die Nutzlast
 mit den Metadaten liegt dann nicht im Verlauf. `--status` zeigt, welcher der beiden Fälle gilt.
