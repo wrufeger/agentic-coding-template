@@ -228,6 +228,11 @@ APIs von Diensten, Container-Hosts, Router, Smart-Home- oder Monitoring-Instanze
   einmaliger Erklärung oder eine Liste je Plattform; Scripte ermitteln solche Pfade zur Laufzeit.
 - Vor Code-Änderungen `docs/project/coding_rules.md` lesen; vor neuen Features/Schnittstellen `features.md` und
   `decisions.md`, damit keine bereits getroffene Entscheidung stillschweigend revidiert wird.
+- **Sprachtrennung, überall:** Dokumentation, Oberflächentexte und Kommentare in der Projektsprache;
+  **Code-Bezeichner immer in Englisch** — Variablen, Funktionen, Klassen, Parameter, Dateinamen, Ordnernamen,
+  Schlüssel in Konfigurationen und Frontmatter, Feldnamen in JSON. Das gilt auch für Scripte und Skills des
+  Templates selbst. Die Regel steht zusätzlich in `docs/project/coding_rules.md`, aber diese Datei gehört dem
+  Projekt und wird beim Nachrüsten nie überschrieben — deshalb gilt sie hier.
 - Lint, Typecheck und Unit-Tests laufen vor jedem Commit und in der CI (`.github/workflows/ci.yml`);
   Integrations-/E2E-Tests bei größeren oder UI-relevanten Änderungen. Details: `docs/project/testing.md`.
 - **Vor dem Bearbeiten einer Datei die Kodierung prüfen** (`file -i`, notfalls Python: binär öffnen, Decode-
