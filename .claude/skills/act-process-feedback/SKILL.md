@@ -1,6 +1,7 @@
 ---
 name: act-process-feedback
 description: Nur im Template-Checkout - Rückmeldungen abgeleiteter Projekte vom Endpunkt abholen, einordnen und neu formuliert ins Backlog der Template-Pflege übernehmen. Auslöser - "/act-process-feedback", "Feedback abholen", "Rückmeldungen verarbeiten", "was kam an Feedback rein".
+phase: maintenance
 ---
 
 # Feedback abholen und verarbeiten

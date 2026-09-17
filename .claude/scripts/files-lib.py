@@ -309,14 +309,14 @@ def _write_text_preserve_newline(path: Path, text: str, newline: str, encoding: 
 
 
 def _iter_text_files(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d != ".git"]
-        for fname in filenames:
-            fp = Path(dirpath) / fname
-            rel = fp.relative_to(root).as_posix()
-            if rel in EXCLUDED_FROM_REPLACE:
-                continue
-            yield fp, rel
+    """Kandidatendateien fuer die Platzhalter-/Befehls-Ersetzung - Sammlung per
+    _config_lib.iter_repo_replace_files (versionierte und neue, nicht ignorierte Dateien, Ausschlussliste fuer Abhaengigkeits-/
+    Build-Ordner wie node_modules, siehe dort/Backlog B22), zusaetzlich die 3 EXCLUDED_FROM_REPLACE-Dateien
+    dieses Moduls ausgenommen."""
+    for fp, rel in _config_lib.iter_repo_replace_files(root, run_git):
+        if rel in EXCLUDED_FROM_REPLACE:
+            continue
+        yield fp, rel
 
 
 # Die Kopfzeile jeder Doku-Datei ("> Datenstand: ... - Status: ...") sagt im Template, dass die Datei noch
@@ -582,6 +582,103 @@ def remove_maintenance_hook(root: Path):
     if changed:
         _write_json(path, data, newline)
     return changed, fremde
+
+
+def remove_welcome_hook(root: Path):
+    """Entfernt aus .claude/settings.json den UserPromptSubmit-Hook-Eintrag fuer template-welcome.py (Review
+    2026-09-17: das Script steht in TEMPLATE_ONLY_PATHS/setup-lib.py und wird beim Anlegen eines Projekts
+    geloescht - ohne diese Funktion bliebe der Hook-Eintrag stehen und riefe ein nicht mehr vorhandenes
+    Script auf). Gleiches Erkennungsmuster wie remove_maintenance_hook: nur Eintraege, deren Kommando SOWOHL
+    'template-welcome.py' ALS AUCH 'CLAUDE_PROJECT_DIR' enthalten, gelten als vom Template gesetzt. Anders als
+    remove_maintenance_hook (dort ist jeder SessionStart-Treffer eine eigene Gruppe) liegt der Treffer hier
+    INNERHALB der 'hooks'-Liste einer einzelnen UserPromptSubmit-Gruppe, die noch weitere, bleibende Eintraege
+    enthaelt (act-help.py, ai-log.py) - entfernt wird nur der einzelne Eintrag, nicht die ganze Gruppe; wird
+    eine Gruppe dadurch leer, faellt sie ganz weg. Ein fremder, selbst ergaenzter Hook, der template-welcome.py
+    nur nebenbei aufruft (ohne CLAUDE_PROJECT_DIR-Bezug), bleibt stehen und wird ueber die zurueckgegebene
+    Liste gemeldet. Gibt (changed: bool, fremde: list[str]) zurueck; fehlt die Datei, still (False, [])."""
+    path = root / ".claude" / "settings.json"
+    if not path.exists():
+        return False, []
+    try:
+        data, newline = _read_json_preserve_newline(path)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False, []
+    if not isinstance(data, dict):
+        return False, []
+
+    changed = False
+    fremde = []
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        groups = hooks.get("UserPromptSubmit")
+        if isinstance(groups, list):
+            new_groups = []
+            for group in groups:
+                inner = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(inner, list):
+                    new_groups.append(group)
+                    continue
+                new_inner = []
+                for e in inner:
+                    dumped = json.dumps(e, ensure_ascii=False).replace("\\\\", "/")
+                    if "template-welcome.py" in dumped and "CLAUDE_PROJECT_DIR" in dumped:
+                        changed = True
+                        continue
+                    if "template-welcome.py" in dumped:
+                        fremde.append(_hook_command_desc({"hooks": [e]}))
+                    new_inner.append(e)
+                if len(new_inner) != len(inner):
+                    group = dict(group)
+                    group["hooks"] = new_inner
+                if new_inner:
+                    new_groups.append(group)
+            if changed:
+                hooks["UserPromptSubmit"] = new_groups
+
+    if changed:
+        _write_json(path, data, newline)
+    return changed, fremde
+
+
+# Zeilen in .gitignore, die ausschliesslich fuer den Template-Checkout selbst Sinn ergeben (Marker-Dateien
+# fuer den Pflege-Modus, siehe template-welcome.py) - ein neu angelegtes oder nachgeruestetes Projekt braucht
+# sie nicht, der zugehoerige Hinweis-Hook ist dort ohnehin schon entfernt (remove_welcome_hook). Reiner
+# Ballast, kein Schutz vor irgendetwas - deshalb genuegt ein exakter Zeilenabgleich statt einer eigenen
+# Pfadliste wie TEMPLATE_ONLY_PATHS.
+WELCOME_GITIGNORE_LINES = [".templatedev/.maintainer",
+                           "# Marker fuer Template-Pfleger (B51, nur im Template-Checkout relevant) - lokal, nie versioniert"]
+
+
+def remove_welcome_gitignore_lines(root: Path) -> list:
+    """Entfernt die in WELCOME_GITIGNORE_LINES genannten Zeilen (falls vorhanden) aus der .gitignore des
+    Projekts. Gibt die tatsaechlich entfernten Zeilen zurueck (leer, wenn die Datei fehlt oder keine der
+    Zeilen vorkommt - z.B. weil eine der beiden Zeilen erst mit einer spaeteren Template-Version dazukam)."""
+    path = root / ".gitignore"
+    if not path.exists():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines()
+    removed = []
+    kept = []
+    for line in lines:
+        if line.strip() in WELCOME_GITIGNORE_LINES:
+            removed.append(line.strip())
+            continue
+        kept.append(line)
+    if not removed:
+        return []
+    new_text = newline.join(kept)
+    if text.endswith(("\n", "\r\n")):
+        new_text += newline
+    try:
+        path.write_text(new_text, encoding="utf-8")
+    except OSError:
+        return []
+    return removed
 
 
 def write_maintenance_status(root: Path, aufgaben: dict) -> None:

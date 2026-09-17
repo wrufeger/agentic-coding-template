@@ -142,15 +142,18 @@ per `/act-update-template` aktuell gehalten.
 
 ## Sprache
 
-Dokumentation, Oberflächentexte und Kommentare auf Deutsch, Code-Bezeichner auf Englisch. Beides ist im
-Template als Regel hinterlegt und lässt sich projektweit ändern.
+Dokumentation, Oberflächentexte und Kommentare auf Deutsch, Code-Bezeichner auf Englisch. Das ist im Template
+fest hinterlegt, kein Schalter in `AI-CONFIG.md`.
 
 ## Mitarbeiten
 
 Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
 jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — Aufgaben, offene Punkte,
 Fragen, Journal, Regeln und die Testprojekte — steht deshalb im Ordner `.templatedev/` im Repo-Root und
-wird beim Anlegen eines Projekts entfernt.
+wird beim Anlegen eines Projekts entfernt. Wer hier tatsächlich entwickelt statt nur zu klonen, legt
+zusätzlich die lokale, gitignorierte Marker-Datei `.templatedev/.maintainer` an — sonst bekommt jede
+Eingabe, die nicht erkennbar ein Projekt anlegen oder nachrüsten will, zuerst einen kurzen Hinweis auf die
+beiden Wege.
 
 ## Lizenz
 

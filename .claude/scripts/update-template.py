@@ -171,8 +171,10 @@ DEFAULT_NO_REPLACE = [
 # kein Import zwischen den Scripten, jedes bleibt fuer sich Stdlib-eigenstaendig, siehe DEFAULT_NO_REPLACE
 # oben). `create-project.py` entfernt sie beim Anlegen eines Projekts, `apply-template.py` kopiert sie nie -
 # ein Merge darf sie darum nie ins Projekt tragen: `.templatedev/` (Board/Backlog/Fragen/Ledger/Regeln der
-# Template-Entwicklung) und `.github/README.md` (Template-Beschreibung fuer GitHub, hat Vorrang vor der
-# Projekt-README). Bare Pfade ohne Wildcard: _remove_template_only() braucht sie so fuer `git rm -r -f` und
+# Template-Entwicklung), `.github/README.md` (Template-Beschreibung fuer GitHub, hat Vorrang vor der
+# Projekt-README) und `.claude/scripts/template-welcome.py` (Hinweis-Hook fuer einen frischen
+# Template-Klon - der zugehoerige UserPromptSubmit-Eintrag in settings.json bleibt normale Merge-Sache,
+# siehe remove_welcome_hook() in files-lib.py). Bare Pfade ohne Wildcard: _remove_template_only() braucht sie so fuer `git rm -r -f` und
 # das Path.exists()/is_dir()-Fallback (ein Ordner-Eintrag entfernt den Ordner rekursiv); matches_keep_local()
 # deckt dank Ordner-Praefix-Logik trotzdem auch einzelne Dateien darunter ab (z.B. ".templatedev/backlog.md").
 # Werden normal gemergt (--check zeigt sie nur getrennt als "nicht eingespielt"), aber --apply/--continue
@@ -181,6 +183,7 @@ DEFAULT_TEMPLATE_ONLY = [
     ".github/README.md",
     ".templatedev",
     ".claude/skills/act-process-feedback",  # Skill der Template-Pflege, zieht mit T5 nach .templatedev/
+    ".claude/scripts/template-welcome.py",  # Hinweis-Hook fuer einen frischen Template-Klon (Review 2026-09-17)
 ]
 
 # F4 (Review): Diese vier Pfade lagen VOR der Umbenennung auf das `act-`-Praefix (Commit 993b82e) unter

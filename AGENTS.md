@@ -61,6 +61,12 @@ Dieses Repo ist zurzeit die **Vorlage selbst**, nicht ein Projekt. Solange das s
   Dorthin gehören Befunde, offene Punkte und was in einer Sitzung passiert ist — `docs/` bleibt tabu.
 - **Kein Logging über `docs/`.** Der Abschnitt „Logging" unten beschreibt die Mechanik für spätere Projekte;
   für die Arbeit am Template genügt das Journal in `.templatedev/ledger.md`.
+- **Frischer Klon zuerst erklären.** Fehlt `.templatedev/.maintainer` (lokaler Marker der Template-Pflege), ist
+  das hier ein frisch geklontes Template: Jede Eingabe, die nicht erkennbar ein Projekt anlegen oder nachrüsten
+  will — auch „hallo" oder „wie geht das hier" —, bekommt zuerst den kurzen Hinweis auf die beiden Wege
+  (`/act-create-project` bzw. „Erstelle eine neue Anwendung in <pfad>", `/act-apply-template` bzw. „Nutze das
+  Template in <pfad>"). Claude Code erledigt das per Hook (`.claude/scripts/template-welcome.py`, dort der
+  Wortlaut); andere Werkzeuge halten sich an diese Regel.
 - **Alles Übrige gilt unverändert:** Rollen und Delegation an Worker, Modell-/Kostenlogik, „fertig nur mit
   Beleg", Commits per Pathspec, Tabu-Bereich, Umgang mit Safeguard-Warnungen, Zugriff auf laufende Systeme.
 
@@ -230,6 +236,9 @@ APIs von Diensten, Container-Hosts, Router, Smart-Home- oder Monitoring-Instanze
   `decisions.md`, damit keine bereits getroffene Entscheidung stillschweigend revidiert wird.
 - Lint, Typecheck und Unit-Tests laufen vor jedem Commit und in der CI (`.github/workflows/ci.yml`);
   Integrations-/E2E-Tests bei größeren oder UI-relevanten Änderungen. Details: `docs/project/testing.md`.
+- **Vor dem Bearbeiten einer Datei die Kodierung prüfen** (`file -i`, notfalls Python: binär öffnen, Decode-
+  Versuch) — sonst zerstört ein UTF-8-Schreibzugriff die Umlaute einer Latin-1/Windows-1252-Altdatei. Die
+  Kodierung bleibt erhalten, außer eine Umstellung ist gewollt — dann in einem eigenen Commit.
 - Diese Datei nur anfassen, wenn sich eine werkzeugunabhängige Grundregel ändert — Stack-Details gehören nach
   `docs/project/coding_rules.md`, werkzeugspezifische Mechanik in die jeweilige Ergänzungsdatei.
 

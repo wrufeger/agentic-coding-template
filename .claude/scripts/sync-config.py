@@ -38,15 +38,15 @@
 # von ihren Platzhaltern befreit; am Ende steht in keiner geschriebenen Datei mehr "{{".
 #
 # Verfolgte Schluessel (applied_config, siehe setup-lib.py:build_applied_config): Projektname, Auftraggeber,
-# Orchestrator, Sprache, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
+# Orchestrator, Stack, KI-Werkzeuge, Coding-Guidelines, die 6 Befehle, Orchestrator-Modell,
 # Commit-Verhalten, Logging/-Tiefe, Wartung/-aufgaben/-berichte, Code-Optimierung. Reine Verhaltens-
 # Schluessel (Ideen-Ablauf, Testtiefe, Schreibstil, Feedback/-Takt/-Umfang) werden MITGESCHRIEBEN, aber nicht
 # auf Aenderungen geprueft: Sie aendern keine Datei, muessen aber in applied_config stehen bleiben - sonst
 # leert ein --apply, was create-project.py gesetzt hat (feedback.py liest die Schalterstellungen von dort).
-# Stack/Sprache stehen als
+# Stack steht als
 # Fliesstext in Dokumentation - eine Aenderung wird nur uebernommen und mit den Fundstellen des ALTEN Werts
 # gemeldet (`find_literal_occurrences`), NIE automatisch ersetzt (Risiko falscher Treffer in Prosa); dasselbe
-# gilt fuer Commit-Verhalten (reines Orchestrator-Verhalten, keine Datei-Wirkung) - alle drei fielen vorher
+# gilt fuer Commit-Verhalten (reines Orchestrator-Verhalten, keine Datei-Wirkung) - beide fielen vorher
 # durchs Raster, weil sie in keiner Diff-Pruefung auftauchten (Befund: Stack-Aenderung wurde als "synchron"
 # gemeldet). Bewusst NICHT verfolgt: "Globale Ablage" (eigener Schalter von install-global.py, kein
 # KEY_MAP-Eintrag in setup-lib.py, kein applied_config-Zyklus) sowie "Code-Analyse"/"Struktur-Migration"/
@@ -398,7 +398,7 @@ def compute_current(cp, root: Path):
     snapshot = cp.build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
-        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
+        commit_verhalten=commit_verhalten,
         ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
         feedback=feedback_val, feedback_takt=feedback_takt, feedback_umfang=feedback_umfang,
     )
@@ -491,7 +491,7 @@ def compute_diffs(old: dict, current: dict) -> list:
             "wirkung": "keine Datei-Aenderung (nur Verhalten des Orchestrators bei /act-commit)",
         })
 
-    # Stack/Sprache stehen als Fliesstext in Dokumentation - eine Aenderung in AI-CONFIG.md ersetzt den alten
+    # Stack steht als Fliesstext in Dokumentation - eine Aenderung in AI-CONFIG.md ersetzt den alten
     # Wert NIRGENDS automatisch (Risiko projektweiter Fehlersetzungen in Prosa), sondern wird nur uebernommen
     # und als Aufgabe an den Menschen gemeldet (siehe execute_diff/find_literal_occurrences).
     if old.get("Stack") != current.get("Stack"):
@@ -500,14 +500,6 @@ def compute_diffs(old: dict, current: dict) -> list:
             "kategorie": "automatisch", "kind": "stack_change", "marker": ["Stack"],
             "wirkung": "Wert uebernehmen; alte Erwaehnungen im Repo als Aufgabe an den Menschen melden "
                        "(keine automatische Ersetzung)",
-        })
-
-    if old.get("Sprache") != current.get("Sprache"):
-        diffs.append({
-            "key": "Sprache", "old": old.get("Sprache"), "new": current.get("Sprache"),
-            "kategorie": "automatisch", "kind": "sprache_change", "marker": ["Sprache"],
-            "wirkung": "Wert uebernehmen; vorhandene Doku ist ggf. noch in der alten Sprache "
-                       "(keine automatische Uebersetzung)",
         })
 
     if (old.get("Logging"), old.get("Logging-Tiefe")) != (current.get("Logging"), current.get("Logging-Tiefe")):
@@ -681,12 +673,6 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
             else:
                 lines.append("  alter Wert im Repo nicht mehr gefunden - nichts nachzuziehen.")
         ref_holder["executed"].add("Stack")
-        return lines
-
-    if kind == "sprache_change":
-        lines.append(f"Wert uebernommen: {diff['old']!r} -> {diff['new']!r} - vorhandene Doku ist ggf. noch "
-                     "in der alten Sprache, bitte von Hand pruefen.")
-        ref_holder["executed"].add("Sprache")
         return lines
 
     if kind == "logging":

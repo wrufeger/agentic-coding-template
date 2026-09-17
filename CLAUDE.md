@@ -64,6 +64,12 @@ folgenden Sub-Agenten sind die Worker:
 > zusammenhängenden Pfadlisten).
 > **Nach der Änderung:** dort verbuchen — Journal, Aufgabenstand (erledigt → `tasks_archive.md`), ggf.
 > Backlog-Punkt.
+>
+> **Frischer Klon:** Der Hook `.claude/scripts/template-welcome.py` gibt dem Modell bei jeder Eingabe den
+> Kontext mit, dass hier noch kein Projekt ist; was nicht erkennbar anlegen/nachrüsten will, bekommt zuerst
+> den Hinweis auf die beiden Wege (bewertet vom Modell, auch Antworten im laufenden Interview). Wer hier an der
+> Vorlage selbst arbeitet, legt einmalig die lokale, gitignorierte Marker-Datei `.templatedev/.maintainer`
+> an — danach bleibt der Hinweis aus.
 
 **Solange dieses Repo noch nicht initialisiert ist** (Marker `is_template` in `.claude/template.json`), gelten
 für `docs/` abweichende Regeln:
@@ -123,7 +129,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
-| `/act [befehl]` | — (Mechanik ohne Checkliste) | Übersicht aller Projekt-Befehle mit Parametern und Kurzbeschreibung wie eine man page (`.claude/scripts/act-help.py`); mit Namen ein Befehl ausführlich. Alle Projekt-Skills tragen das Präfix `act-`, damit sie nicht mit eingebauten Befehlen (`/feedback`) kollidieren |
+| `/act [befehl\|all]` | — (Mechanik ohne Checkliste) | Übersicht der Projekt-Befehle, die zum aktuellen Stand des Repos passen (`.claude/template.json`: Template-Checkout/Einrichtung/laufendes Projekt, Frontmatter-Feld `phase` je Skill), mit Parametern und Kurzbeschreibung wie eine man page (`.claude/scripts/act-help.py`); `/act all` zeigt zusätzlich die ausgeblendeten Befehle, mit Namen ein Befehl ausführlich (auch ausgeblendet, dann mit Hinweis). Alle Projekt-Skills tragen das Präfix `act-`, damit sie nicht mit eingebauten Befehlen (`/feedback`) kollidieren |
 | `/commit` · `/idea` · `/prepare` · `/update-template` | — (Mechanik ohne Checkliste) | Kurzformen ohne Präfix für die vier häufigsten Befehle (`.claude/skills/commit\|idea\|prepare\|update-template/SKILL.md`); `disable-model-invocation: true`, also nur von Hand aufrufbar, führen den gleichnamigen `/act-…`-Befehl mit denselben Argumenten aus; in `/act` nicht als eigene Befehle gelistet, nur als Kurzform-Hinweis am Ende der Übersicht |
 | `/act-create-project` | „Neues Projekt" | `AI-CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/create-project.py`, läuft **nie** in einem Sub-Agenten |
 | `/act-apply-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `apply-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`AI-CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |

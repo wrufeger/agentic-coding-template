@@ -13,7 +13,8 @@
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
 | [ ] | B28 | niedrig | Widerspruch bei no_replace | Machen: `no_replace` widerspricht sich zwischen `AGENTS.md`, `template.json` und `checklists.md` — erst klären, welche Fassung gilt. [Details](#b28) |
-| [ ] | B48 | mittel | `/act` zeigt nur passende Befehle | Idee (Wolfgang): frischer Klon zeigt nur `act-create-project`/`act-apply-template`, laufendes Projekt diese nicht mehr. [Details](#b48) |
+| [x] | B48 | mittel | `/act` zeigt nur passende Befehle | Erledigt 2026-09-17: `/act` filtert per Frontmatter `phase` (`setup`/`project`/`maintenance`) nach Repo-Stand, `/act all` zeigt alles. [Details](#b48) |
+| [x] | B51 | mittel | Frischer Klon erklärt sich selbst | Erledigt 2026-09-17: Hook `template-welcome.py` gibt dem Modell im frischen Klon Kontext (kein Blockieren), Marker `.templatedev/.maintainer`; beim Anlegen/Nachrüsten entfernt. [Details](#b51) |
 | [x] | B36 | hoch | Template-Update bleibt halber Merge | Erledigt 2026-09-17: Warnung bei offenem Template-Merge (`--check`/`--status`), `--continue` nimmt `MERGE_HEAD`, Skill verlangt Commit oder Rückfrage. [Details](#b36) |
 | [x] | B38 | mittel | Update bringt entfernte Abschnitte zurück | Erledigt 2026-09-17: bei `setup_complete` bleiben entfernte Scripte und Setup-Abschnitte draußen; Pfade aus dem Template-Ref nur statisch gelesen, kein fremder Code. [Details](#b38) |
 | [x] | B1 | offen | Feldweiser Merge von template.json | 2026-09-13: `template.json` wird feldweise gemergt (`update-template.py`). |
@@ -38,7 +39,7 @@
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B27 | hoch | Sprache aus AI-CONFIG.md wirkt nicht | Machen: Schlüssel `Sprache` wirkt nicht — Template bleibt deutsch, Projekt auch; erst Übersetzungsstrategie klären, dann bauen. [Details](#b27) |
+| [ ] | B27 | mittel | Mehrsprachigkeit des Templates konzipieren | Entschieden 2026-09-17 (Wolfgang): Schlüssel `Sprache` vorerst entfernt, Deutsch ist Standard; Ideensammlung für ein späteres Konzept. [Details](#b27) |
 | [x] | B43 | hoch | `sync-config.py --apply` bricht ab | Erledigt 2026-09-17: `import time` ergänzt, Import-Check über alle Scripte. [Details](#b43) |
 | [x] | B37 | hoch | Neue AI-CONFIG-Schlüssel gehen verloren | Erledigt 2026-09-17: fehlende Schlüssel werden in `sync-config.py` und nach dem Update ergänzt; verschobene Schlüssel/fehlende Tabellen nur als Hinweis, Hook bleibt still. [Details](#b37) |
 | [x] | B41 | niedrig | Erläuterungen aus AI-CONFIG.md auslagern | Erledigt 2026-09-17: Erläuterungen nach `docs/ai/config-guide.md`, in `AI-CONFIG.md` Verweise. [Details](#b41) |
@@ -74,10 +75,10 @@
 
 | | Nr | Prio | Titel | Info |
 | :-: | :-- | :-- | :-- | :-- |
-| [ ] | B22 | hoch | Erkenntnisse aus bandliste prüfen | Machen: Erkenntnisse aus `bandliste` (26 Fragen, über 25 Entscheidungen, >50 Backlog-Punkte) auf Template-Relevanz prüfen — Umfang unbekannt. [Details](#b22) |
 | [ ] | B35 | niedrig | Pflege-Modus im Root per .env | Idee: `TEMPLATEDEV_MODE=ein` per `.env` lässt eine Root-Sitzung wie in `.templatedev/` arbeiten; ~0,5 PT, Entscheidung Q15. [Details](#b35) |
 | [ ] | B46 | niedrig | Hooks: Interpreter-Probe je Aufruf kostet Zeit | Neu (Review): jeder Hook startet Python zweimal; Probe je Sitzung zwischenspeichern, falls Latenz stört. [Details](#b46) |
 | [ ] | B47 | niedrig | Hooks führen ungeprüfte Merge-Fassung aus | Neu (Review): Hooks starten Scripte aus dem Arbeitsbaum, auch eine gemergte, noch nicht committete Fassung; Restrisiko bei nicht erkanntem `MERGE_HEAD`. [Details](#b47) |
+| [x] | B22 | hoch | Erkenntnisse aus bandliste prüfen | Erledigt 2026-09-17: 6 Kandidaten aus `bandliste` — Ersetzung ohne `node_modules`/Build-Ordner (versionierte + neue nicht ignorierte Dateien), Kodierungsregel in `AGENTS.md`, 4 Regelbausteine Nuxt/Vue; Rest rein fachlich. [Details](#b22) |
 | [x] | B42 | niedrig | Warnung vor bewusst gehaltenen Altnamen | Erledigt 2026-09-17: `LEGACY_REMOVE_PATHS` in `setup-lib.py`, Selbstprüfung überspringt sie. [Details](#b42) |
 | [x] | B7 | offen | Atomares Schreiben von Statusdateien | 2026-09-13: `status.json`/`template.json` werden atomar geschrieben (`maintenance-check.py`, `update-template.py`, `setup-lib.py`). |
 | [x] | B9 | offen | Leere Argumente brechen ab | 2026-09-13: Leere Argumente brechen mit Exit 2 ab (`maintenance-check.py`). |
@@ -157,13 +158,31 @@
 - Lehre (zweimal dieselbe): „ergänzen" und „erwähnen" sind schwache Anweisungen — wo Position und Lesart zählen, muss die Regel beides vorgeben, sonst landet der wichtigste Teil unten und liest sich wie eine Dateiliste
 
 <a id="b27"></a>
-### B27 · Sprache aus AI-CONFIG.md wirkt nicht
+### B27 · Mehrsprachigkeit des Templates konzipieren (früher: Sprache aus AI-CONFIG.md wirkt nicht)
 
 - angelegt 2026-09-14, Priorität hoch
 - Schlüssel `Sprache` steht in der Konfiguration, hat aber keine Wirkung — das Template ist durchgehend deutsch, ein angelegtes Projekt bleibt es auch
 - (a) Template auf Englisch umstellen: für GitHub ist Deutsch die falsche Ausgangssprache — betrifft `AGENTS.md`, `CLAUDE.md`, `README.md`, alle Checklisten, Skills, Agenten-Rollen, Regelbausteine, Doku-Skelette und Script-Ausgaben; größter Einzelposten dieser Liste
 - (b) Sprache beim Anlegen/Nachrüsten anwenden: steht in `AI-CONFIG.md` § `Sprache` etwas anderes als die Ausgangssprache, wird das Zielprojekt darin geführt — Doku, Kommentare, Commit-Messages **und** die Kommunikation des Assistenten; keine reine Textersetzung, Vorlagen müssten zweisprachig vorliegen oder beim Anlegen übersetzt werden
 - zu klären vor Beginn: zweisprachige Pflege (doppelter Aufwand, verlässlich) oder einmalige Übersetzung beim Anlegen (billiger, aber `/update-template` bekommt danach in jeder Zeile Konflikte) — diese Entscheidung bestimmt den ganzen Rest
+- **Entschieden 2026-09-17 (Wolfgang):** Schlüssel `Sprache` vorerst aus `AI-CONFIG.md` entfernt, Deutsch ist Standard; Priorität mittel, erst Konzept
+- Ideensammlung für das Konzept (Optionen, noch nicht bewertet):
+  - **Branch je Sprache** (`main` deutsch, `en` englisch): Update-Weg bleibt Merge, aber jede Template-Änderung muss in alle Branches übertragen werden; Drift-Gefahr
+  - **Verzeichnisse je Sprache** (`i18n/de/…`, `i18n/en/…`), `create-project` kopiert die gewählte Fassung an die Standardorte: klare Trennung, doppelte Pflege, `update-template` muss die Zuordnung kennen
+  - **Platzhalter + Übersetzungsdateien** (Texte als Schlüssel, `de.json`/`en.json`, beim Anlegen gerendert): eine Quelle für die Struktur, aber Markdown-Regeltexte in Schlüssel zu zerlegen macht sie schwer lesbar und editierbar
+  - **Nur per KI übersetzen** beim Anlegen/Update: keine Pflege zweier Fassungen, aber nicht reproduzierbar, kostet Token, jede Template-Änderung erzeugt Konflikte in übersetzten Dateien
+  - **Mischform:** Scripte und Script-Ausgaben per Übersetzungsdatei (klein, mechanisch), Regel-/Doku-Texte als Verzeichnis je Sprache oder per KI
+  - **Nur Englisch als Ausgangssprache**, Deutsch als Übersetzung — betrifft auch die GitHub-Sichtbarkeit (siehe a)
+  - **Englisch als Basis, Projektsprache nur für neue Inhalte** (Idee Wolfgang 2026-09-17): Template, Regeln, Skills und Scripte bleiben durchgehend englisch; beim Projektstart fragt der Assistent nach der Projektsprache oder liest sie aus `AI-CONFIG.md` (z. B. `Language: de`). Ab dann entsteht alles, was neu in `docs/` geschrieben wird (Konzepte, Aufgaben, Fragen, Journal, Projekt-Doku), in dieser Sprache; die vom Template gelieferten Dateien bleiben englisch. Vorteil: keine Übersetzung der Vorlage, keine Update-Konflikte. Zu klären: gemischtsprachige Dateien (Formulare aus dem Template mit Einträgen in Projektsprache), Überschriften/Schlüsselwörter, die Scripte parsen (`* Antwort:`, `Offen:`), Kommunikation im Chat
+- Ergänzung Wolfgang 2026-09-17 zu gemischten Dateien und festen Schlüsselwörtern: Originaltexte und
+  Schlüsselwörter je Sprache an einer Stelle im Repo ablegen, z. B. als Zuordnung
+  `{ filename: 'docs/ai/questions.md', question_marker: { en: '* Question:', de: '* Frage:' }, changed: false }`
+  — Scripte lesen die Marker daraus statt fest verdrahtet, `changed` zeigt, ob eine Datei vom Original abweicht
+  (Grundlage für Updates). Wahrscheinlich versioniert.
+- Chat-Sprache: wie festgelegt, sonst wie der Nutzer schreibt. Annahme Wolfgang: für das Modell ist es kein
+  Problem, auf eine deutsche oder spanische Anweisung hin englische Texte zu lesen und zu schreiben — die
+  Regeldateien können also englisch bleiben, auch wenn im Chat und in `docs/` eine andere Sprache gilt.
+- Kriterien fürs Konzept: Aufwand je Template-Änderung, Konfliktverhalten bei `/act-update-template`, Reproduzierbarkeit, Lesbarkeit der Quelltexte, Übersetzung der Kommunikation des Assistenten (reine Anweisung genügt vermutlich)
 
 <a id="b28"></a>
 ### B28 · no_replace steht in AGENTS.md anders als in template.json
@@ -407,3 +426,14 @@ Das solle datenschutkonform sein und nicht zu aufdringlich. Frequenz und Umfang 
 - Pagerank ist öffentlich nicht mehr abrufbar — stattdessen Search-Console-Kennzahlen (Impressionen, Klicks, Position)
 - neuer Schlüssel in `AI-CONFIG.md`, z. B. `Live-Adresse` (URL, leer = nicht live) oder `Veröffentlicht: ja/nein` samt Datum; hängt an B37 (Schlüssel werden jetzt nachgezogen)
 - vorher Konzept; ggf. Lighthouse-SEO-Audit per Playwright/CLI als Basis statt Eigenbau
+
+<a id="b51"></a>
+### B51 · Frischer Klon erklärt sich selbst
+
+- angelegt 2026-09-17, Wunsch Wolfgang, Priorität mittel
+- frisch geklontes Template (`is_template`, kein lokaler Marker `.templatedev/.maintainer`): jede Eingabe, die nicht erkennbar anlegen oder nachrüsten will — auch „hallo" oder „wie geht das hier" —, bekommt zuerst einen kurzen Hinweis auf Weg 1 (`/act-create-project`) und Weg 2 (`/act-apply-template`), unabhängig vom Modell
+- entschieden: Marker-Datei für den Pflege-Checkout (gitignored); gilt, solange das Repo Vorlage ist
+- erster Entwurf blockte per Script mit festem Text und Regex-Durchlass — verworfen: blockte die Antworten im Anlege-Interview und bewertete Freitext schlecht
+- entschieden 2026-09-17 (Wolfgang): lieber ein paar Token — `UserPromptSubmit`-Hook `template-welcome.py` gibt dem Modell per `additionalContext` die Anweisung, die Eingabe zu bewerten; Werkzeuge ohne Hooks über die Regel in `AGENTS.md` (Block „Noch nicht initialisiert")
+- beim Anlegen/Nachrüsten werden Script, Hook-Eintrag und `.gitignore`-Zeile entfernt
+- **Erledigt 2026-09-17**, Review ALLOW. Restpunkte: ein vorher angelegtes Projekt bekommt den Hook-Eintrag per `/act-update-template` zurück (Script fehlt, `is_template` fehlt → still, kostet einen Python-Start; wie beim Wartungs-Hook); `/ACT` in Großbuchstaben fängt `act-help.py` nicht ab

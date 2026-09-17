@@ -23,4 +23,10 @@ Regeln für Vue-3-Komponenten mit Composition API und `<script setup>`.
 ## Fallstricke
 - `v-if` und `v-for` nicht auf demselben Element kombinieren.
 - Direkte Mutation von Props vermeiden — Änderungen über Events an die Elternkomponente melden.
+- **Sicherheitsrelevant:** Formulare mit `@submit.prevent` brauchen zusätzlich `method="post"` auf dem
+  `<form>`-Element. Der Handler existiert erst nach Abschluss der Hydration; ein Submit vor diesem Zeitpunkt
+  (Passwort-Manager mit Enter, langsame Verbindung, blockiertes JS-Bundle) löst den nativen Browser-Submit
+  aus. Ohne `method` ist das ein GET auf die aktuelle URL — bei Formularen mit Zugangsdaten landen die Werte
+  in Adresszeile, Browser-Historie und Server-Log. Gilt für jede serverseitig gerenderte Anwendung, nicht nur
+  für Auth-Formulare (Beleg: GHSA-gj2h-2fpw-fhv9, derselbe Fehler in `@nuxt/ui` vor Version 4.8.1).
 - Setzt zusätzlich `typescript` voraus.

@@ -1,6 +1,7 @@
 ---
 name: act-apply-template
 description: Checkliste Projekt nachrüsten - bestehendes Repo mit der Agentic-Coding-Grundausstattung ausstatten, IST-Zustand dokumentieren.
+phase: setup
 ---
 
 # Projekt nachrüsten

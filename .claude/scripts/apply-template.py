@@ -19,10 +19,13 @@
 #   - wird beim Zusammenfuehren beruecksichtigt" gelistet, siehe `migrate-project.py --plan` im Ziel):
 #   LICENSE (landet im Ziel als .claude/TEMPLATE-LICENSE, damit eine vorhandene Projekt-LICENSE bleibt),
 #   AGENTS.md, CLAUDE.md, GEMINI.md, .aider.conf.yml, .cursor/, .github/copilot-instructions.md,
-#   .claude/ (komplett AUSSER .claude/settings.local.json - `migrate-project.py` kommt darueber automatisch
-#   mit), docs/ai/ (alle), docs/project/ (alle Skelette inkl. incidents/), docs/README.md, AI-CONFIG.md,
-#   .editorconfig, .gitattributes, renovate.json, .mcp.json.example, .env.example,
-#   .github/workflows/ci.yml.
+#   .claude/ (komplett AUSSER .claude/settings.local.json, .claude/skills/act-process-feedback/ und
+#   .claude/scripts/template-welcome.py - reine Template-Pflege-Dateien, siehe EXCLUDE_* unten;
+#   `migrate-project.py` kommt darueber automatisch mit), docs/ai/ (alle), docs/project/ (alle Skelette
+#   inkl. incidents/), docs/README.md, AI-CONFIG.md, .editorconfig, .gitattributes, renovate.json,
+#   .mcp.json.example, .env.example, .github/workflows/ci.yml. In der kopierten settings.json wird
+#   zusaetzlich der UserPromptSubmit-Hook-Eintrag fuer das nicht mitkopierte template-welcome.py entfernt
+#   (remove_welcome_hook(), files-lib.py) - er zeigte sonst ins Leere.
 # NIE kopiert: README.md (wird im Ziel meist schon existieren; eigener Abschnitt statt Ersetzung, siehe
 #   Skill), .gitignore (stattdessen werden fehlende Zeilen aus dem Template-.gitignore als Vorschlag
 #   ausgegeben, nie automatisch geschrieben).
@@ -79,7 +82,14 @@ COPY_ITEMS = [
 # nicht verdraengen - deshalb liegt sie dort bei den Template-Dateien.
 COPY_RENAME = {"LICENSE": ".claude/TEMPLATE-LICENSE"}
 
-EXCLUDE_FILES = {".claude/settings.local.json"}
+EXCLUDE_FILES = {
+    ".claude/settings.local.json",
+    # Hinweis-Hook fuer einen frischen Template-Klon (TEMPLATE_ONLY_PATHS/setup-lib.py, DEFAULT_TEMPLATE_ONLY/
+    # update-template.py) - im Ziel wertlos, der zugehoerige UserPromptSubmit-Eintrag in der KOPIERTEN
+    # settings.json wird zusaetzlich per remove_welcome_hook() entfernt (siehe main()/_run() unten), sonst
+    # zeigt er nach dieser Ausschlussliste ins Leere. Review 2026-09-17.
+    ".claude/scripts/template-welcome.py",
+}
 EXCLUDE_GLOBS = [
     ".claude/skills/act-process-feedback/*",  # Skill der Template-Pflege, nie in ein Projekt
     ".claude/maintenance/reports/*",
@@ -127,6 +137,18 @@ def run_git(root: Path, args, timeout=None):
 def _load_template_update_module(template_root: Path):
     tu_path = template_root / ".claude" / "scripts" / "update-template.py"
     spec = importlib.util.spec_from_file_location("_template_update_ct", tu_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_files_lib_module(template_root: Path):
+    # Fuer remove_welcome_hook() (settings.json im ZIEL von einem Hook-Eintrag befreien, der ins Leere
+    # zeigt, weil template-welcome.py nicht mitkopiert wird, siehe EXCLUDE_FILES oben). Geladen aus dem
+    # Template-Checkout wie _load_template_update_module - die Funktion selbst arbeitet auf dem uebergebenen
+    # 'root'-Argument (hier: target_root), nicht auf dem Ladeort.
+    fl_path = template_root / ".claude" / "scripts" / "files-lib.py"
+    spec = importlib.util.spec_from_file_location("_files_lib_apply_ct", fl_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -291,6 +313,11 @@ def _run(argv) -> int:
     cfg = write_target_template_json(template_root, target_root, args.dry_run)
     remote_status = setup_template_remote(template_root, target_root, cfg.get("template_url"), args.dry_run)
 
+    welcome_hook_removed, welcome_hook_fremde = False, []
+    if not args.dry_run:
+        fl = _load_files_lib_module(template_root)
+        welcome_hook_removed, welcome_hook_fremde = fl.remove_welcome_hook(target_root)
+
     lines = [f"apply-template.py {'--dry-run' if args.dry_run else '--apply'} -> {target_root}", ""]
     lines.append(f"Kopiert ({len(copied)}):")
     lines.extend(f"  {rel}" for rel in copied[:60])
@@ -316,6 +343,11 @@ def _run(argv) -> int:
     lines.append("")
     lines.append(f".claude/template.json: base_commit={cfg.get('base_commit')}, template_url={cfg.get('template_url')}")
     lines.append(f"Remote 'template': {remote_status}")
+    if welcome_hook_removed:
+        lines.append("settings.json: Hinweis-Hook fuer template-welcome.py im Ziel entfernt (Script wird nie mitkopiert).")
+    for f in welcome_hook_fremde:
+        lines.append(f"settings.json: fremder Hook mit template-welcome.py belassen: {f} - zeigt ins Leere, "
+                      "da das Script nie mitkopiert wird.")
 
     lines.append("")
     lines.append("Naechste Schritte: im Zielrepo Skill /act-apply-template ausfuehren; darin "

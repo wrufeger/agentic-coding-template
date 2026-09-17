@@ -8,6 +8,24 @@ Regeln für Nuxt-Projekte: Verzeichniskonvention, Datenzugriff, sichere Konfigur
 
 ## Struktur
 - `useFetch`/`useAsyncData` zum Lesen von Daten beim Rendern, `$fetch` für einmalige Schreibzugriffe/Aktionen.
+- **Rückgabe von `useFetch`/`useAsyncData` nie in ein eigenes `ref` umkopieren** — direkt weiterreichen und, wo
+  `data`/`status`/`error` im Template landen, `await`-en. Beim Umkopieren geht die Awaitability verloren: der
+  Aufruf läuft sofort durch, der Server rendert ohne Daten, der Client füllt sie nach — Ergebnis ist ein
+  Hydration-Mismatch.
+
+  ```ts
+  // Falsch — Awaitability geht verloren
+  function useThing() {
+    const result = ref()
+    useFetch('/api/thing').then(r => (result.value = r.data.value))
+    return result
+  }
+
+  // Richtig — Rückgabeobjekt unverändert durchreichen
+  async function useThing() {
+    return await useFetch('/api/thing')
+  }
+  ```
 - Server-Routen unter `server/api/` mit Verb-Suffix benennen (`login.post.ts`, `users.get.ts`).
 - **Feste Ordner im Repo-Root, je mit eigenem Alias** — jeweils die einzige Ablage ihrer Art, keine zweite
   Fassung unterhalb von `app/`:
@@ -49,4 +67,24 @@ Regeln für Nuxt-Projekte: Verzeichniskonvention, Datenzugriff, sichere Konfigur
 ## Fallstricke
 - SSR-Code darf nicht auf browserspezifische Globals (`window`, `document`) ohne Guard zugreifen.
 - `<ClientOnly>` nur, wenn eine Komponente wirklich nicht serverseitig rendern kann, nicht als Standardlösung.
+- **Sicherheitsrelevant:** Kein modulweites `ref`/`reactive` für Zustand, der pro Anfrage gilt. Auf dem
+  Server lebt ein solcher Wert über alle Anfragen hinweg und wird zwischen Nutzern geteilt — die nächste
+  Anfrage bekommt die Daten der vorigen. Für Zustand, der über den Request hinaus geteilt werden soll, immer
+  `useState` verwenden.
+- Formulare mit `@submit.prevent` brauchen zusätzlich `method="post"` — sicherheitsrelevant bei SSR, siehe
+  `vue.md` § Fallstricke.
+- **Windows:** Ein abgebrochener Dev-Server hält seinen Port teils weiter belegt; der nächste Start weicht auf
+  den nächsten freien Port aus und danach kommt es zu HMR-/WebSocket-Fehlern (falscher Port in der
+  Browser-Verbindung). Kein Konfigurationsfehler, sondern der belegte Port — Abhilfe ist der laufende Prozess
+  beenden, nicht ein eigener HMR-Port:
+
+  ```sh
+  # Windows (PowerShell/cmd)
+  netstat -ano | findstr :3000
+  taskkill /PID <pid> /F
+
+  # Linux/macOS
+  lsof -i :3000
+  kill <pid>
+  ```
 - Setzt zusätzlich `vue` und `typescript` voraus.

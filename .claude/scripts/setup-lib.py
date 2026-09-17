@@ -204,12 +204,21 @@ def check_maintenance_runner_files(root: Path) -> list:
 
 
 # Pfade, die nur das TEMPLATE selbst betreffen und in einem abgeleiteten Projekt nichts verloren haben:
-# `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt) und
+# `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt),
 # `.templatedev/` (Board/Backlog/Fragen/Ledger/Regeln der Template-Entwicklung - der einzige Ordner im
-# Template mit echtem Inhalt statt Platzhaltern). Bare Ordnername ohne Trailing-Slash/Wildcard: greift bei
+# Template mit echtem Inhalt statt Platzhaltern), `.claude/skills/act-process-feedback` (Skill der
+# Template-Pflege) und `.claude/scripts/template-welcome.py` (Hinweis-Hook fuer einen frischen
+# Template-Klon, Review 2026-09-17 - der zugehoerige UserPromptSubmit-Hook-Eintrag in settings.json wird
+# zusaetzlich per remove_welcome_hook() entfernt, siehe unten, weil er sonst nach dem Loeschen des Scripts
+# ins Leere zeigt). Bare Ordnername/Dateiname ohne Trailing-Slash/Wildcard: greift bei
 # Path.exists()/is_dir() (siehe remove_template_intro) direkt, und muss zu DEFAULT_TEMPLATE_ONLY in
 # update-template.py passen (kein Import zwischen den Scripten, siehe dort).
-TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev", ".claude/skills/act-process-feedback"]
+TEMPLATE_ONLY_PATHS = [
+    ".github/README.md",
+    ".templatedev",
+    ".claude/skills/act-process-feedback",
+    ".claude/scripts/template-welcome.py",
+]
 
 # Fest verdrahtete Pfadlisten, deren Eintraege nach einer Umbenennung/Verschiebung veraltet sein koennen
 # (siehe check_stale_remove_paths) - ohne Gegenprobe faellt so etwas erst auf, wenn der jeweilige
@@ -751,10 +760,12 @@ def cmd_apply(root: Path) -> int:
     optimizer_entfernt, _behalten_opt = remove_optimizer_files(root) if code_opt == "aus" else ([], {})
     guidelines_entfernt = apply_coding_guidelines(root, guidelines_gewaehlt)
     intro_entfernt = remove_template_intro(root)
+    welcome_hook_entfernt, welcome_hook_fremd = remove_welcome_hook(root)
+    welcome_gitignore_entfernt = remove_welcome_gitignore_lines(root)
     applied_config = build_applied_config(
         values, orch_modell, logging_val, logging_tiefe, wartung_val, wartungsaufgaben,
         wartungsberichte, code_opt, guidelines_gewaehlt, remove_list,
-        sprache=cfg.get("sprache"), commit_verhalten=commit_verhalten,
+        commit_verhalten=commit_verhalten,
         ideen_ablauf=ideen_ablauf, testtiefe=testtiefe, schreibstil=schreibstil,
         feedback=feedback, feedback_takt=feedback_takt, feedback_umfang=feedback_umfang,
     )
@@ -847,6 +858,13 @@ def cmd_apply(root: Path) -> int:
     if intro_entfernt:
         lines.append("Nur-Template-Dateien entfernt (gelten nicht fuer dieses Projekt): "
                      + ", ".join(intro_entfernt))
+    if welcome_hook_entfernt:
+        lines.append("Hinweis-Hook fuer frische Template-Klone (template-welcome.py) aus settings.json entfernt.")
+    for f in welcome_hook_fremd:
+        lines.append(f"fremder Hook mit template-welcome.py belassen: {f} - ACHTUNG: das Script wurde "
+                     "entfernt, dieser Hook zeigt damit ins Leere.")
+    if welcome_gitignore_entfernt:
+        lines.append(".gitignore: Nur-Template-Zeilen entfernt (" + ", ".join(welcome_gitignore_entfernt) + ").")
     lines.append(f"template.json: {init_status}")
 
     lines.append("")

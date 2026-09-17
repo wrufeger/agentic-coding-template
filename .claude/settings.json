@@ -147,6 +147,12 @@
             "shell": "bash",
             "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; [ -n \"$P\" ] && \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook; true",
             "async": true
+          },
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; [ -n \"$P\" ] && \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/scripts/template-welcome.py\" --hook; true",
+            "timeout": 10
           }
         ]
       }

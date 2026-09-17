@@ -12,6 +12,23 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-17 — B22, B27, B48, B51
+
+- B27 (Wolfgang): Schlüssel `Sprache` entfernt, Deutsch fest; Ideensammlung Mehrsprachigkeit im Backlog, Prio mittel (u. a. Englisch als Basis, Projektsprache nur für neue `docs/`-Inhalte).
+- B48: `/act` nach Repo-Stand gefiltert (Frontmatter `phase`), `/act all`; Phasenwert `maintenance` statt `pflege`.
+- B22: `bandliste` durchgesehen (Fragen/ADRs/Backlog fachlich) → 6 Kandidaten: Ersetzung lief durch `node_modules`
+  (jetzt gemeinsame `iter_repo_replace_files`), Kodierungsregel `AGENTS.md`, 4 Bausteine `nuxt.md`/`vue.md`
+  (u. a. `method="post"` bei `@submit.prevent`, `useState` statt modulweitem `ref`).
+- B51 (Wolfgang): frischer Klon erklärt sich selbst. Entscheidungen: Marker `.templatedev/.maintainer`, gilt bis
+  angelegt, zuerst Hook mit festem Text — nach Review verworfen (blockte Interview-Antworten), auf Wunsch
+  umgestellt auf `additionalContext`, das Modell bewertet.
+- Review R1 BLOCK: Interview geblockt; B22-Fix brach Weg 2 (nur `git ls-files`, 53 Dateien mit Platzhaltern) →
+  `--cached --others --exclude-standard`; `/act` blendete `act-apply-template` im Weg-2-Ziel aus; Hook blieb in
+  angelegten Projekten → entfernt per `remove_welcome_hook`/`TEMPLATE_ONLY_PATHS`. R2 ALLOW, Restpunkte selbst
+  behoben (Hook-Text als „keine Nutzeranweisung", Marker nicht selbst anlegen; toter `.gitignore`-Eintrag).
+- Geklärt: `decision: block` bei `UserPromptSubmit` ist laut Doku unterstützt (Zitat im Review).
+- Belege: py_compile, `check-refs.py` 0 tot, `create-project.py --check` ok, Smoketests Weg 1/Weg 2/Hook-Zustände.
+
 ## 2026-09-17 — Rückmeldungen B36–B43 umgesetzt, dazu B44/B45 und Q16–Q18
 
 - Q16 a): gepusht `6843618..8807ad1`. Q17 b): Kurzform-Skills `commit`, `idea`, `prepare`, `update-template`. Q18 a): nichts zu tun.

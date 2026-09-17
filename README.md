@@ -174,6 +174,8 @@ docs/
 .github/workflows/ci.yml   # Lint/Typecheck/Test (Platzhalter-Befehle)
 .templatedev/         # nur im Template: Backlog, Fragen, Journal, Regeln, Testprojekte —
                       # wird beim Anlegen eines Projekts entfernt
+.templatedev/.maintainer  # lokaler Marker fuer Template-Pfleger (gitignored) - legt an, wer hier an der
+                      # Vorlage selbst arbeitet, sonst bekommt jede Eingabe zunaechst einen Hinweis
 LICENSE               # MIT (Wolfgang Rufeger) — gilt für das Template, nicht für deinen Projektcode
 .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes
 ```

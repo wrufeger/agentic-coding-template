@@ -8,10 +8,14 @@
 # Herausgetrennt aus setup-lib.py (Backlog/.templatedev/questions.md Q4), das als duenne Fassade
 # (Re-Export dieser drei Module) plus dem eigentlichen Setup-Ablauf bestehen bleibt - siehe dort. Reine
 # Python-Stdlib, kein Paket noetig, keine Abhaengigkeit von files-lib.py/claudemd-lib.py (sonst Zyklus).
+# Zusaetzlich die gemeinsame Dateisammlung fuers projektweite Ersetzen (EXCLUDE_DIR_NAMES_REPLACE/
+# iter_repo_replace_files) - genutzt von files-lib.py (Platzhalter/Befehls-Werte) und rename-lib.py
+# (Rufname), siehe dort.
 
 import importlib.util
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -22,7 +26,6 @@ KEY_MAP = {
     "Projektname": "projektname",
     "Auftraggeber": "auftraggeber",
     "Orchestrator": "orchestrator",
-    "Sprache": "sprache",
     "KI-Werkzeuge": "ki_werkzeuge",
     "Stack": "stack",
     "Orchestrator-Modell": "orchestrator_modell",
@@ -929,15 +932,15 @@ def tools_to_remove(cfg: dict):
 def build_applied_config(
     values: dict, orch_modell: str, logging_val: str, logging_tiefe: str, wartung_val: str,
     wartungsaufgaben: dict, wartungsberichte: str, code_opt: str, guidelines_gewaehlt, entfernte_tools,
-    sprache: str = None, commit_verhalten: str = None, ideen_ablauf: str = None,
+    commit_verhalten: str = None, ideen_ablauf: str = None,
     testtiefe: str = None, schreibstil: str = None, feedback: str = None,
     feedback_takt: str = None, feedback_umfang: str = None,
 ) -> dict:
     """Schnappschuss der Betrieb/Einrichtung-Schluessel, wie sie soeben umgesetzt wurden - Vergleichsgrundlage
     fuer sync-config.py (dort per importlib geladen statt hier verdoppelt). Die meisten Schluessel haben eine
-    Datei-Wirkung (siehe sync-config.py compute_diffs); Sprache/Commit-Verhalten haben keine (reines
-    Verhalten/Hinweis), werden aber trotzdem gefuehrt, damit eine Aenderung ueberhaupt gemeldet wird - sonst
-    faellt sie beim Abgleich durchs Raster (siehe Befund zu "Stack" unten). Bewusst NICHT gefuehrt: "Globale
+    Datei-Wirkung (siehe sync-config.py compute_diffs); Commit-Verhalten hat keine (reines Verhalten/Hinweis),
+    wird aber trotzdem gefuehrt, damit eine Aenderung ueberhaupt gemeldet wird - sonst faellt sie beim Abgleich
+    durchs Raster (siehe Befund zu "Stack" unten). Bewusst NICHT gefuehrt: "Globale
     Ablage" (eigener, direkt aus AI-CONFIG.md gelesener Schalter von install-global.py, kein KEY_MAP-Eintrag,
     keine Wiederholungssemantik), "Code-Analyse"/"Struktur-Migration"/"Alter Orchestrator-Name" (einmalige
     Weg-2-Bootstrap-Werte fuer /act-apply-template, nach dem einmaligen Lauf ohne erneute Wirkung - siehe
@@ -948,7 +951,6 @@ def build_applied_config(
         "Projektname": values.get("PROJEKTNAME"),
         "Auftraggeber": values.get("AUFTRAGGEBER"),
         "Orchestrator": values.get("ORCHESTRATOR"),
-        "Sprache": sprache,
         "Stack": values.get("STACK"),
         "KI-Werkzeuge-entfernt": sorted(entfernte_tools or []),
         "Coding-Guidelines": sorted(guidelines_gewaehlt or []),
@@ -973,3 +975,66 @@ def build_applied_config(
         "Wartungsberichte": wartungsberichte,
         "Code-Optimierung": code_opt,
     }
+
+
+# ---------------------------------------------------------------------------
+# Datei-Sammlung fuers projektweite Ersetzen (Platzhalter, Rufname, Befehls-Werte) - Backlog B22
+# ---------------------------------------------------------------------------
+#
+# Gemeinsame Sammelstelle fuer files-lib.py (_iter_text_files, Platzhalter-/Befehls-Ersetzung) und
+# rename-lib.py (_iter_text_files_for_rename, Rufname-Ersetzung) - vorher hatte nur rename-lib.py eine
+# Ausschlussliste (RENAME_SKIP_DIR_NAMES), files-lib.py keine. Dadurch lief eine Befehls-Ersetzung (z.B.
+# Test-Befehl "npm test" -> ein neuer Wert, per sync-config.py --apply) auch durch node_modules/ - Beleg aus
+# einem abgeleiteten Projekt: Treffer in node_modules/@typescript-eslint/.../inferSingleRun.js und
+# node_modules/baseline-browser-mapping/package.json (dort kommt "npm test" o.ae. rein zufaellig als
+# Code-/Script-Literal vor).
+
+# Bekannte Abhaengigkeits-/Build-Ordner, die nie absichtlich einen gesuchten Platzhalter/Rufnamen/
+# Befehls-Wert enthalten - ein Treffer dort ist immer ein Zufallstreffer in generiertem/fremdem Code. Union
+# aus der bisherigen RENAME_SKIP_DIR_NAMES (rename-lib.py) und der fuer B22 vorgegebenen Liste, damit die
+# schon bestehende Rufname-Ersetzung keinen Schutz verliert.
+EXCLUDE_DIR_NAMES_REPLACE = {
+    ".git", "node_modules", ".venv", "venv", "dist", "build", "out", "target", "vendor", "coverage",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".next", ".tox", ".gradle", ".idea",
+    ".nuxt", ".output",
+}
+
+
+def iter_repo_replace_files(root: Path, run_git):
+    """Liefert (Path, rel_posix) fuer jede Kandidatendatei einer projektweiten Ersetzung. Bevorzugt werden
+    versionierte UND unversionierte-aber-nicht-ignorierte Dateien ('git ls-files -z --cached --others
+    --exclude-standard' - '-z' wegen Pfaden mit Leerzeichen/Umlauten, wie an anderen Git-Aufrufen dieses
+    Ordners): git kennt gitignorierte Dateien (node_modules & Co.) dort weiterhin gar nicht erst, aber auch
+    frisch von apply-template.py kopierte, noch nicht committete Dateien zaehlen mit - ohne '--others' meldete
+    ein Weg-2-Lauf ohne Zwischen-Commit "0 ersetzte Dateien" und liess Platzhalter in allen frisch kopierten
+    Dateien stehen (Review 2026-09-17). '--cached'/'--others' koennen sich ueberschneiden (z.B. bei einer
+    Teil-Stage), deshalb wird hier selbst dedupliziert statt auf ein '--deduplicate' von 'git ls-files' zu
+    setzen (das gibt es erst ab neueren Git-Versionen, die Mindest-Git-Version dieses Templates ist offen).
+    Zusaetzlich wird jeder Pfad gegen EXCLUDE_DIR_NAMES_REPLACE geprueft - ein Sicherheitsnetz, z.B. fuer
+    versehentlich eingecheckte Abhaengigkeitsordner. Ohne Git (kein Repo, 'git' fehlt im PATH, Timeout,
+    Fehler-Returncode) Fallback auf os.walk ab 'root' - dort greift nur die Ausschlussliste (keine
+    .gitignore-Wirkung), aber immer noch besser als vorher (gar keine Ausnahme). 'run_git' ist die
+    run_git(root, args, timeout=None)-Funktion des Aufrufers (jedes Script hat seine eigene Kopie, siehe
+    Kopfkommentare von files-lib.py/rename-lib.py - keine gemeinsame Abhaengigkeit auf subprocess-Ebene)."""
+    def _excluded(rel: str) -> bool:
+        return any(part in EXCLUDE_DIR_NAMES_REPLACE for part in Path(rel).parts[:-1])
+
+    res = None
+    try:
+        res = run_git(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        res = None
+    if res is not None and res.returncode == 0:
+        seen = set()
+        for rel in res.stdout.split("\0"):
+            if not rel or rel in seen or _excluded(rel):
+                continue
+            seen.add(rel)
+            yield root / rel, rel
+        return
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIR_NAMES_REPLACE]
+        for fname in filenames:
+            fp = Path(dirpath) / fname
+            yield fp, fp.relative_to(root).as_posix()

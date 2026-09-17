@@ -40,8 +40,9 @@
 #       schreibt aber nichts und braucht kein --yes (Exit 0). Ohne --yes endet der Lauf mit dem Hinweis,
 #       vorher zu committen und zur Bestaetigung --yes anzuhaengen. Erst mit --yes wird tatsaechlich
 #       geschrieben - dafuer gilt dieselbe Vorbedingung wie --apply: Git-Repo, sauberer Arbeitsbaum, sonst
-#       Exit 2. Ausgelassen werden AI-CONFIG.md, .claude/scripts/*.py, Binaerdateien und die Ordner aus
-#       RENAME_SKIP_DIR_NAMES (node_modules, .venv, dist, build, ...). In .md-Dateien werden zusaetzlich
+#       Exit 2. Ausgelassen werden AI-CONFIG.md, .claude/scripts/*.py, Binaerdateien, nicht versionierte
+#       Dateien und die Ordner aus config-lib.py EXCLUDE_DIR_NAMES_REPLACE (node_modules, .venv, dist,
+#       build, ...). In .md-Dateien werden zusaetzlich
 #       eingerueckte Codebloecke (nur wenn ihnen eine Leerzeile vorausgeht, siehe unten), Fenced Code
 #       Blocks (auch in Blockzitaten), Inline-Code in Backticks, URLs (http(s)://, www.) und plausible
 #       Pfad-/Dateiangaben mit "/" (z.B. docs/fable/README.md, nicht aber beliebige Wort/Wort-Token)
@@ -112,6 +113,22 @@ for _stream in (sys.stdout, sys.stderr):
 # ohne dies wuerde ein reiner --plan-Lauf ein __pycache__/ im Ziel hinterlassen und damit "git status
 # --porcelain" verschmutzen (blockiert dann faelschlich die Vorbedingung von --apply).
 sys.dont_write_bytecode = True
+
+
+def _load_sibling_module(filename: str, mod_name: str):
+    """Laedt eine Datei aus demselben Ordner wie dieses Script (nicht aus einem Ziel-Root wie _load_module
+    unten) - gleiches Muster wie in files-lib.py/setup-lib.py. dont_write_bytecode ist oben schon gesetzt,
+    schreibt also kein __pycache__."""
+    path = Path(__file__).resolve().parent / filename
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# Nur fuer die gemeinsame Dateisammlung beim projektweiten Ersetzen (iter_repo_replace_files) - config-lib.py
+# haengt selbst von nichts hier ab, kein Ring.
+_config_lib = _load_sibling_module("config-lib.py", "_rename_lib_config")
 
 # ---------------------------------------------------------------------------
 # Erkennung KI-Arbeitsordner + Arbeitsdateien
@@ -564,15 +581,6 @@ def _rename_variants(alt: str, neu: str):
     return list(seen.items())
 
 
-# Beim projektweiten Ersetzen uebersprungene Verzeichnisse: fremder bzw. erzeugter Code, der den Rufnamen
-# des Orchestrators nie meint - wuerde man dort schreiben, veraendert die Migration Abhaengigkeiten und
-# Build-Ergebnisse. .claude/ bleibt bewusst drin (Agenten-/Skill-Dateien nennen den Namen).
-RENAME_SKIP_DIR_NAMES = {
-    ".git", "node_modules", ".venv", "venv", "dist", "build", "out", "target", "vendor", "coverage",
-    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".next", ".tox", ".gradle", ".idea",
-}
-
-
 def _read_text_or_none(fp: Path):
     """Dateiinhalt als Text - None bei Binaerdatei (NUL-Byte), kaputtem UTF-8 oder Lesefehler. Gelesen wird
     ueber Bytes, damit Zeilenenden (CRLF) und ein BOM unveraendert erhalten bleiben."""
@@ -589,16 +597,16 @@ def _read_text_or_none(fp: Path):
 
 
 def _iter_text_files_for_rename(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in RENAME_SKIP_DIR_NAMES]
-        for fname in filenames:
-            fp = Path(dirpath) / fname
-            rel = fp.relative_to(root).as_posix()
-            if rel == "AI-CONFIG.md":
-                continue
-            if rel.startswith(".claude/scripts/") and rel.endswith(".py"):
-                continue
-            yield fp, rel
+    """Kandidatendateien fuer die Rufname-Ersetzung - Sammlung per _config_lib.iter_repo_replace_files (nur
+    versionierte Dateien, Ausschlussliste fuer Abhaengigkeits-/Build-Ordner wie node_modules, siehe dort/
+    Backlog B22 - .claude/ bleibt bewusst drin, Agenten-/Skill-Dateien nennen den Rufnamen), zusaetzlich
+    AI-CONFIG.md und alle .claude/scripts/*.py ausgenommen (Script-Code, kein Fliesstext)."""
+    for fp, rel in _config_lib.iter_repo_replace_files(root, run_git):
+        if rel == "AI-CONFIG.md":
+            continue
+        if rel.startswith(".claude/scripts/") and rel.endswith(".py"):
+            continue
+        yield fp, rel
 
 
 # Punkt 11 der Umbauliste: in Markdown-Dateien werden Codebloecke, Inline-Code, URLs und Pfadangaben beim
@@ -772,9 +780,10 @@ def _apply_rename_to_text(content: str, patterns, spans):
 
 
 def rename_orchestrator(root: Path, alt: str, neu: str, dry_run: bool = False):
-    """Ersetzt ALT durch NEU (3 Schreibvarianten, Wortgrenzen) in allen Textdateien ausser AI-CONFIG.md,
-    .claude/scripts/*.py und den Ordnern aus RENAME_SKIP_DIR_NAMES. In .md-Dateien werden Codebloecke,
-    Inline-Code, URLs und Pfadangaben ausgemaskiert (siehe _find_masked_spans_md). Mit dry_run=True wird
+    """Ersetzt ALT durch NEU (3 Schreibvarianten, Wortgrenzen) in allen versionierten Textdateien ausser
+    AI-CONFIG.md, .claude/scripts/*.py und den Ordnern aus config-lib.py EXCLUDE_DIR_NAMES_REPLACE. In
+    .md-Dateien werden Codebloecke, Inline-Code, URLs und Pfadangaben ausgemaskiert (siehe
+    _find_masked_spans_md). Mit dry_run=True wird
     nichts geschrieben (Trefferliste/Vorschau vor --yes) - Rueckgabe wie bei echter Ausfuehrung, nur ohne
     Schreibzugriff und ohne FEHLER-Eintraege. Gibt (per_file: [(rel, ersetzt, geschuetzt)], total,
     fehler: [rel], total_geschuetzt) zurueck. Geschrieben wird ueber Bytes - Zeilenenden und BOM bleiben,
