@@ -221,3 +221,49 @@ Standardantwort annehmen (dieselben Formregeln wie `docs/ai/questions.md`).
    * Verarbeitet 2026-09-17: kein Schalter in T5; Idee als Backlog-Punkt 35 (Priorität gering). Zeitpunkt für den Wechsel nach `.templatedev/` steht in T5 und wird angesagt.
 
 ---
+
+**Q16 · Sollen die Commits seit `70b0af0` gepusht werden?**
+
+   Lokal liegen u. a. `993b82e` (Präfix `act-`), `568b1a8` und `0be54df` (`/act`) sowie die Commits vom
+   2026-09-17 (Journal). Ein Push macht sie für `bandliste` per `/act-update-template` verfügbar.
+
+   a) ja, alles pushen — **Empfehlung**, sobald Q18 geprüft ist
+
+   b) nur bis `993b82e` (Umbenennung), `/act` erst nach dem Test
+
+   c) noch nicht
+
+   * Antwort:
+
+---
+
+**Q17 · Sollen Kurz-Befehle wie `/idea` weiter funktionieren?**
+
+   Interaktiv weist Claude Code unbekannte Befehle ab, bevor das Modell sie sieht („Unknown command: /idea").
+   Möglich sind nur echte Weiterleitungs-Skills ohne Präfix (je zwei Zeilen, nur von Hand aufrufbar).
+   Eingebaute Namen (`/feedback`, vermutlich `/bug`) sind ausgeschlossen.
+
+   a) Weiterleitungen für alle Skills außer eingebauten Namen (~0,25 PT)
+
+   b) nur für die häufigsten: `commit`, `idea`, `prepare`, `update-template` — **Empfehlung**
+
+   c) keine; `/act-…` und die Sätze genügen
+
+   * Antwort:
+
+---
+
+**Q18 · Zeigt `/act` die Liste jetzt sofort?**
+
+   Hook `act-help.py --hook` (Commit `0be54df`) fängt `/act` und `/act <name>` ab, bevor das Modell läuft
+   (Probe mit `claude -p`: 0 Runden, 0 $). Interaktiv ungeprüft; ggf. nach Neustart der Sitzung.
+
+   a) ja, sofort und lesbar
+
+   b) ja, aber die Zusatzzeilen von Claude Code („blocked by hook", „Original prompt") stören
+
+   c) nein — es denkt weiter nach oder wählt `/act-bug`
+
+   * Antwort:
+
+---

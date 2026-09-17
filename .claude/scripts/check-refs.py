@@ -342,6 +342,9 @@ _BACKLOG_DONE_RE = re.compile(r"^-\s*(\d{1,6})\s*·", re.MULTILINE)
 # DEF_FILES["backlog"] verwendet (siehe collect_definitions) - eine nummerierte Liste in einer Checkliste
 # oder Skill-Anleitung ("7. Schritt ...") ist dort KEINE Backlog-Definition.
 _BACKLOG_NUMBERED_RE = re.compile(r"^(\d{1,6})\.\s", re.MULTILINE)
+# Vierte Definitionsform (seit 2026-09-17): Themen-Tabellen "| [ ] | B36 | Prio | Titel | Info |" - erste
+# Spalte Status, zweite die Nummer mit B-Praefix.
+_BACKLOG_STATUS_ROW_RE = re.compile(r"^\|\s*\[[ xX]\]\s*\|\s*B(\d{1,6})\s*\|", re.MULTILINE)
 _STORY_FILE_RE = re.compile(r"^S(\d{1,4})-.+\.md$", re.IGNORECASE)
 
 DEF_FILES = {
@@ -401,7 +404,7 @@ def collect_definitions(root: Path, files_by_rel: dict, excluded_by_rel: dict = 
                 n = int(m.group(1))
                 definitions[key].setdefault(n, rel)
             if key == "backlog":
-                for extra_pat in (_BACKLOG_DONE_RE, _BACKLOG_NUMBERED_RE):
+                for extra_pat in (_BACKLOG_DONE_RE, _BACKLOG_NUMBERED_RE, _BACKLOG_STATUS_ROW_RE):
                     for m in extra_pat.finditer(content):
                         if _pos_in_spans(m.start(), excluded):
                             continue

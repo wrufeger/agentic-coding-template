@@ -478,6 +478,11 @@ def cmd_auswerten(seit: str) -> int:
         zeilen.append("")
 
     ziel = root / ABLAGE_REL / f"auswertung-{time.strftime('%Y-%m-%d')}.md"
+    # Nie ueberschreiben: eine schon eingeordnete Liste desselben Tages ginge sonst verloren (2026-09-17).
+    nummer = 2
+    while ziel.exists():
+        ziel = ziel.with_name(f"auswertung-{time.strftime('%Y-%m-%d')}-{nummer}.md")
+        nummer += 1
     ziel.parent.mkdir(parents=True, exist_ok=True)
     ziel.write_text("\n".join(zeilen) + "\n", encoding="utf-8")
     print(f"Arbeitsliste geschrieben: {ziel.relative_to(root).as_posix()} "

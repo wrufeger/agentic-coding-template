@@ -12,6 +12,27 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-17 — Backlog als Themen-Tabellen, `/act` per Hook, Feedback-Einträge als eine Datei
+
+- **Backlog neu formatiert** (Wunsch Wolfgang): 6 Themen-Tabellen `| [ ] | Nr | Prio | Titel | Info |`,
+  offene nach Prio oben, erledigte unten je Tabelle; lange Texte unter `## Details` mit Sprungmarke. Entwurf
+  per `builder` im Scratchpad, geprüft: B1–B42 je genau einmal, alle Zeilen des Wortlauts in B32 unverändert,
+  Schlüsselbegriffe vorhanden; Entscheidungs-Nummern des Testprojekts aus einer Info-Zelle genommen (tote
+  Verweise). `check-refs.py` kennt die neue Zeilenform (`_BACKLOG_STATUS_ROW_RE`). Beleg: 0 tot.
+- **`/act`:** Skill plus `act-help.py` (liest das Frontmatter aller Skills, `argument-hint` für `act-feedback`
+  ergänzt). Interaktiv dachte das Modell bei `/act` lange nach → `UserPromptSubmit`-Hook `act-help.py --hook`
+  blockt genau `/act [name]` und zeigt die Liste als Grund. Beleg `claude -p '/act'` in Wegwerf-Kopie:
+  0 Runden, 0 $. Interaktiv ungeprüft → Q18. Commits `568b1a8`, `0be54df`.
+- **Kurz-Befehle:** interaktiv „Unknown command: /idea" — unbekannte Befehle erreichen weder Modell noch Hook
+  (nur `-p` reicht sie durch). Weiterleitungs-Skills als Lösung → Q17.
+- **Feedback-Einträge** (Wunsch Wolfgang, Teil von B39): eine `.md` mit YAML-Front-Matter statt `.md`+`.json`,
+  Lesen akzeptiert beide Formate, Status beim Versand (`builder`). Beleg: Probe in Wegwerf-Kopie (neuer Eintrag,
+  Altpaar daneben = 2, `_nach_sent` setzt Status, Sonderzeichen-Rundweg) plus eigene Stichprobe mit zwei echten
+  Altpaaren aus `bandliste` (kopiert, nur gelesen): 3 wartend, `README.md` kein Eintrag. Dazu aus `bandliste`
+  übernommen: `template_basis` als kurzer Hash.
+- **Nicht gepusht** (keine Freigabe): offene Commits seit `70b0af0` → Q16. Danach PC per `shutdown /s /t 300`
+  heruntergefahren, wie beauftragt.
+
 ## 2026-09-17 — Erste Rückmeldungen abgeholt, Skills bekommen das Präfix `act-`
 
 - **Freigabe:** Wolfgang hat am 2026-09-17 beauftragt, das Feedback abzuholen und zu verarbeiten; das
@@ -35,6 +56,12 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 - `act-process-feedback` in `TEMPLATE_ONLY_PATHS`, `DEFAULT_TEMPLATE_ONLY`, `template.json`, `EXCLUDE_GLOBS`.
 - `feedback-abholen.py` zählt jetzt „Sendungen mit Einträgen" (3 Sendungen, 6 Einträge) — „3 Meldungen" las sich
   wie ein Verlust gegenüber 6 Dateien in `sent/` des Projekts.
+- **Zweiter Abruf** (`/act-process-feedback`, erster Lauf des Skills): `--status` 1 wartend → `--hole`: 1 Sendung
+  mit 2 Einträgen geschrieben, 1 quittiert, 0 wartend. 1 Projekt, beide Doku; beide gehören zur Feedback-Ablage
+  und stehen als Ergänzung bei Backlog-Punkt 39, kein neuer Punkt, nichts verworfen.
+- **Fehler dabei gefunden und behoben:** `--auswerten` überschrieb die Arbeitsliste desselben Tages samt
+  Einordnung. Jetzt entsteht `auswertung-<datum>-2.md` usw.; Beleg: zweiter Lauf legte `-3` an, die
+  eingeordnete Liste blieb unverändert (6 Einordnungen).
 
 ## 2026-09-16 — Ladeversuch: was Claude Code in einer Sitzung im Unterordner sieht
 

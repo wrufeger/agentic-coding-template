@@ -6,14 +6,16 @@ Dieser Ordner ist **Ausgang und Protokoll zugleich**:
 
 | Was | Datei | Wann |
 | :--- | :--- | :--- |
-| Ein gesammelter Eintrag | `JJJJ-MM-TT-<thema>.md` + `.json` | sobald der Assistent etwas gefunden hat (`--add`) |
+| Ein gesammelter Eintrag | `JJJJ-MM-TT-<thema>.md` (YAML-Front-Matter + Text) | sobald der Assistent etwas gefunden hat (`--add`) |
 | Dein eigenes Feedback | `feedback.md` | wann immer du magst — Fragen beantworten, Freitext |
 | Bereits gesendete Einträge | `sent/…` | beim Versand dorthin verschoben |
 | Protokoll einer Sendung | `JJJJ-MM-TT_HHMM.json` | je Sendung eine Datei mit Zeitpunkt, Ziel und vollständiger Nutzlast |
 
-Die `.md` neben jedem Eintrag ist zum Lesen da: Schon **vor** dem Versand steht im Repo, was hinausgehen
-soll — sichtbar im Diff, nicht in einer versteckten Datei. Die `.json` daneben ist dasselbe in der Form, die
-der Empfänger verarbeitet.
+Ein Eintrag ist schon **vor** dem Versand im Repo sichtbar — im Diff, nicht in einer versteckten Datei. Der
+Kopf (`art`, `titel`, `datum`, `status`, `gesendet`) steht als Front-Matter zwischen zwei `---`-Zeilen, der
+Text darunter als gewöhnlicher Markdown-Text hinter der Überschrift. Aus älteren Projekten kann noch ein
+Paar `<name>.md` + `<name>.json` herumliegen (auch in `sent/`) — wird gelesen, aber nicht mehr neu
+geschrieben.
 
 Der Ordner ist standardmäßig **versioniert**. Das ist sein ganzer Zweck: Der Assistent sendet autonom und
 fragt nicht vorher, aber nichts verlässt das Projekt unbemerkt — jede Sendung taucht im nächsten Diff auf und

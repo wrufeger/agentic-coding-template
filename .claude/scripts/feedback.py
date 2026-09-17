@@ -102,10 +102,12 @@ SCHEMA_DIREKT = 2
 # keine lange Hex-Kette (die faengt _LANGE_HEX ab).
 HERKUNFT = "agentic-coding-template/1"
 
-# Der fruehere Ausgang (.claude/feedback-outbox.json) ist entfallen: Eintraege liegen jetzt als Paar
-# <name>.md + <name>.json direkt unter docs/ai/template-feedback/ und wandern beim Senden nach sent/.
-# Damit steht schon VOR dem Versand im Repo, was hinausgehen soll - sichtbar im Diff, nicht in einer
-# versteckten Datei.
+# Der fruehere Ausgang (.claude/feedback-outbox.json) ist entfallen: ein Eintrag ist eine einzelne
+# <name>.md mit YAML-Front-Matter (art/titel/datum/status/gesendet, dazu die Ueberschrift und der Text als
+# Koerper) direkt unter docs/ai/template-feedback/ und wandert beim Senden nach sent/. Damit steht schon VOR
+# dem Versand im Repo, was hinausgehen soll - sichtbar im Diff, nicht in einer versteckten Datei.
+# Altbestand aus frueheren Projekten (Paar <name>.md + <name>.json, auch in sent/) wird beim LESEN
+# weiterhin erkannt - --add schreibt nur noch das neue Format.
 # Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist.
 LOG_DIR_REL = "docs/ai/template-feedback"
 # ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protokoll lokal). Dann
@@ -275,10 +277,11 @@ def _endpoint() -> str:
     return roh + "/"
 
 
-def _ist_eintrag(fp: Path) -> bool:
-    """Trennt Eintraege von Sendeprotokollen - beide liegen als .json im selben Ordner. Ein Eintrag hat
-    eine gleichnamige .md daneben UND die Felder art/titel/text. Ohne diese Pruefung wanderte ein
-    Protokoll der letzten Sendung als "Eintrag" in die naechste Nutzlast (im Test genau so passiert)."""
+def _ist_eintrag_alt(fp: Path) -> bool:
+    """Altformat (Paar): trennt Eintraege von Sendeprotokollen - beide lagen als .json im selben Ordner.
+    Ein Eintrag hat eine gleichnamige .md daneben UND die Felder art/titel/text. Ohne diese Pruefung
+    wanderte ein Protokoll der letzten Sendung als "Eintrag" in die naechste Nutzlast (im Test genau so
+    passiert)."""
     if not fp.with_suffix(".md").exists():
         return False
     try:
@@ -288,26 +291,102 @@ def _ist_eintrag(fp: Path) -> bool:
     return isinstance(daten, dict) and {"art", "titel", "text"} <= set(daten)
 
 
-def _wartende_dateien(root: Path) -> list:
-    """Die noch nicht gesendeten Eintraege: je Eintrag eine <name>.json (Daten) neben einer <name>.md
-    (Zusammenfassung zum Lesen). Gesendetes liegt in sent/ und zaehlt hier nicht mehr mit; die
-    Sendeprotokolle bleiben, wo sie sind - sie sind der Nachweis, kein Eintrag."""
+_FM_ZEILE = re.compile(r"^([a-z_]+):[ \t]?(.*)$")
+
+
+def _front_matter_parsen(text: str):
+    """Einfacher Parser fuer flaches YAML-Front-Matter (--- ... ---) am Dateianfang - Stdlib, kein PyYAML.
+    Werte in doppelten Anfuehrungszeichen werden per json.loads gelesen (gueltiges YAML, sicher bei
+    ':'/'#'/Umlauten), sonst roh uebernommen; ein leerer Wert wird None. Gibt (felder, rumpf) zurueck; ohne
+    erkennbares Front-Matter ({}, der ganze Text)."""
+    if not text.startswith("---"):
+        return {}, text
+    ende = text.find("\n---", 3)
+    if ende == -1:
+        return {}, text
+    kopf = text[3:ende]
+    rumpf = text[ende + 4:]
+    if rumpf.startswith("\n"):
+        rumpf = rumpf[1:]
+    felder = {}
+    for zeile in kopf.splitlines():
+        m = _FM_ZEILE.match(zeile)
+        if not m:
+            continue
+        schluessel, wert = m.group(1), m.group(2).strip()
+        if not wert:
+            felder[schluessel] = None
+        elif wert.startswith('"') and wert.endswith('"') and len(wert) >= 2:
+            try:
+                felder[schluessel] = json.loads(wert)
+            except ValueError:
+                felder[schluessel] = wert
+        else:
+            felder[schluessel] = wert
+    return felder, rumpf
+
+
+def _eintrag_neu_lesen(fp: Path):
+    """Neues Format: eine .md mit Front-Matter. Gibt das Eintrags-dict zurueck (art/titel/text/datum/url,
+    dazu die internen Statusfelder _status/_gesendet) oder None, wenn kein Front-Matter mit art UND titel
+    vorliegt - genau das haelt README.md und den Fragebogen feedback.md davon ab, als Eintrag zu zaehlen."""
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+    felder, rumpf = _front_matter_parsen(text)
+    if not felder.get("art") or not felder.get("titel"):
+        return None
+    m = re.search(r"(?m)^#\s+.*\n?", rumpf)
+    body = rumpf[m.end():] if m else rumpf
+    eintrag = {"art": felder["art"], "titel": felder["titel"], "text": body.strip("\n"),
+               "datum": felder.get("datum")}
+    if felder.get("url"):
+        eintrag["url"] = felder["url"]
+    eintrag["_status"] = felder.get("status")
+    eintrag["_gesendet"] = felder.get("gesendet")
+    return eintrag
+
+
+def _wartende_eintraege(root: Path) -> list:
+    """Die noch nicht gesendeten Eintraege, neues und altes Format gemischt: je Eintrag ein dict mit
+    format ('neu'|'alt'), md_path (Datei fuer Status-Update/Verschieben), json_path (nur beim Altformat,
+    sonst None) und daten (die Felder fuer die Nutzlast). Sortiert nach Dateiname fuer eine stabile
+    Reihenfolge. Gesendetes liegt in sent/ und wird hier nicht durchsucht (Glob ist nicht rekursiv)."""
     ordner = root / LOG_DIR_REL
     if not ordner.is_dir():
         return []
-    return sorted(fp for fp in ordner.glob("*.json") if _ist_eintrag(fp))
-
-
-def _outbox(root: Path) -> list:
-    """Die wartenden Eintraege als Liste von dicts - das Format, das in die Nutzlast geht."""
-    eintraege = []
-    for fp in _wartende_dateien(root):
+    raus = []
+    for fp in ordner.glob("*.md"):
+        if fp.name in ("README.md", "feedback.md"):
+            continue
+        daten = _eintrag_neu_lesen(fp)
+        if daten is not None:
+            raus.append({"format": "neu", "md_path": fp, "json_path": None, "daten": daten})
+    for fp in ordner.glob("*.json"):
+        if not _ist_eintrag_alt(fp):
+            continue
         try:
             daten = json.loads(fp.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             continue
         if isinstance(daten, dict):
-            eintraege.append(daten)
+            raus.append({"format": "alt", "md_path": fp.with_suffix(".md"), "json_path": fp, "daten": daten})
+    raus.sort(key=lambda e: e["md_path"].name)
+    return raus
+
+
+def _outbox(root: Path) -> list:
+    """Die wartenden Eintraege als Liste von dicts - das Format, das in die Nutzlast geht (interne
+    Statusfelder wie _status/_gesendet bleiben aussen vor)."""
+    eintraege = []
+    for e in _wartende_eintraege(root):
+        d = e["daten"]
+        eintrag = {"art": d.get("art"), "titel": d.get("titel"), "text": d.get("text"),
+                   "datum": d.get("datum")}
+        if d.get("url"):
+            eintrag["url"] = d["url"]
+        eintraege.append(eintrag)
     return eintraege
 
 
@@ -324,23 +403,32 @@ def _slug(titel: str) -> str:
 
 
 def _eintrag_schreiben(root: Path, eintrag: dict) -> Path:
-    """Legt das Paar <name>.json / <name>.md an. Die .md ist fuer Menschen (auch fuer den, der das Projekt
-    fuehrt und im Diff sehen soll, was hinausgehen wuerde), die .json fuer den Empfaenger."""
+    """Legt einen Eintrag im neuen Format an: eine <name>.md mit YAML-Front-Matter, gefolgt von einer
+    "# Titel"-Ueberschrift und dem Text als Koerper. Zeichenketten stehen in doppelten Anfuehrungszeichen
+    (json.dumps, ensure_ascii=False) - gueltiges YAML, sicher bei ':'/'#'/Umlauten."""
     ordner = root / LOG_DIR_REL
     ordner.mkdir(parents=True, exist_ok=True)
     basis = f"{eintrag.get('datum', time.strftime('%Y-%m-%d'))}-{_slug(eintrag.get('titel', ''))}"
     name, nummer = basis, 2
-    while (ordner / f"{name}.json").exists():
+    while (ordner / f"{name}.md").exists():
         name, nummer = f"{basis}-{nummer}", nummer + 1
-    (ordner / f"{name}.json").write_text(
-        json.dumps(eintrag, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    zeilen = [f"# {eintrag.get('titel') or '(ohne Titel)'}", "",
-              f"- Art: `{eintrag.get('art')}`", f"- Datum: {eintrag.get('datum')}"]
+    titel = eintrag.get("titel") or ""
+    kopf = [
+        "---",
+        f"art: {eintrag.get('art')}",
+        f"titel: {json.dumps(titel, ensure_ascii=False)}",
+        f"datum: {eintrag.get('datum')}",
+        "status: wartet",
+        "gesendet:",
+    ]
     if eintrag.get("url"):
-        zeilen.append(f"- Link: {eintrag['url']}")
-    zeilen += ["- Status: wartet auf Versand", "", eintrag.get("text") or "", ""]
-    (ordner / f"{name}.md").write_text("\n".join(zeilen), encoding="utf-8")
-    return ordner / f"{name}.json"
+        kopf.append(f"url: {json.dumps(eintrag['url'], ensure_ascii=False)}")
+    kopf.append("---")
+    inhalt = ("\n".join(kopf) + "\n\n" + f"# {titel or '(ohne Titel)'}" + "\n\n"
+              + (eintrag.get("text") or "") + "\n")
+    fp = ordner / f"{name}.md"
+    fp.write_text(inhalt, encoding="utf-8")
+    return fp
 
 
 FRAGEBOGEN_REL = "docs/ai/template-feedback/feedback.md"
@@ -390,16 +478,65 @@ def _fragebogen_zuruecksetzen(root: Path, antworten: list) -> None:
     fp.write_text(neu_kopf + (trenner or "\n---\n") + archiv + "\n".join(block), encoding="utf-8")
 
 
+def _eintrag_status_setzen(fp: Path, zeit: str) -> None:
+    """Neues Format: vor dem Verschieben nach sent/ status auf 'gesendet' setzen und den Zeitpunkt in
+    'gesendet' eintragen. Aendert nur diese beiden Zeilen im Front-Matter, der Rest bleibt unberuehrt."""
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    if not text.startswith("---"):
+        return
+    ende = text.find("\n---", 3)
+    if ende == -1:
+        return
+    kopf = text[3:ende]
+    rest = text[ende:]
+    if re.search(r"(?m)^status:", kopf):
+        kopf = re.sub(r"(?m)^status:.*$", "status: gesendet", kopf)
+    else:
+        kopf += "status: gesendet\n"
+    if re.search(r"(?m)^gesendet:", kopf):
+        kopf = re.sub(r"(?m)^gesendet:.*$", f"gesendet: {zeit}", kopf)
+    else:
+        kopf += f"gesendet: {zeit}\n"
+    try:
+        fp.write_text("---" + kopf + rest, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _eintrag_status_setzen_alt(fp: Path, zeit: str) -> None:
+    """Altformat: die Zeile '- Status: ...' in der .md auf 'gesendet <Zeit>' setzen, falls vorhanden."""
+    if not fp.exists():
+        return
+    try:
+        text = fp.read_text(encoding="utf-8-sig")
+    except OSError:
+        return
+    neu = re.sub(r"(?m)^- Status:.*$", f"- Status: gesendet {zeit}", text)
+    if neu != text:
+        try:
+            fp.write_text(neu, encoding="utf-8")
+        except OSError:
+            pass
+
+
 def _nach_sent(root: Path) -> int:
-    """Nach erfolgreichem Versand: Paare nach sent/ verschieben. Sie bleiben damit nachlesbar - der Nachweis
-    ist der ganze Zweck des Ordners -, zaehlen aber nicht mehr als wartend."""
+    """Nach erfolgreichem Versand: Status vermerken (neues Format: Front-Matter status/gesendet; Altformat:
+    Zeile '- Status: ...' in der .md) und die Datei(en) nach sent/ verschieben. Sie bleiben damit nachlesbar
+    - der Nachweis ist der ganze Zweck des Ordners -, zaehlen aber nicht mehr als wartend."""
     ziel = root / LOG_DIR_REL / "sent"
     ziel.mkdir(parents=True, exist_ok=True)
+    zeit = time.strftime("%Y-%m-%d %H:%M")
     bewegt = 0
-    for fp in _wartende_dateien(root):
-        for endung in (".json", ".md"):
-            quelle = fp.with_suffix(endung)
-            if quelle.exists():
+    for e in _wartende_eintraege(root):
+        if e["format"] == "neu":
+            _eintrag_status_setzen(e["md_path"], zeit)
+        else:
+            _eintrag_status_setzen_alt(e["md_path"], zeit)
+        for quelle in (e["json_path"], e["md_path"]):
+            if quelle and quelle.exists():
                 quelle.replace(ziel / quelle.name)
         bewegt += 1
     return bewegt
@@ -538,7 +675,7 @@ def _nutzlast(root: Path, tj: dict) -> dict:
         "herkunft": HERKUNFT,
         "projekt_id": fb.get("projekt_id"),
         "datum": time.strftime("%Y-%m-%d"),
-        "template_basis": tj.get("base_commit"),
+        "template_basis": (tj.get("base_commit") or "")[:7] or None,
         "weg": fb.get("weg"),
         "ausfuellart": fb.get("ausfuellart"),
         "umfang": ",".join(sorted(umfang)),
@@ -646,7 +783,7 @@ def cmd_status(root: Path) -> int:
     print(f"Feedback:  {modus}   (Takt: {takt}, aus {CONFIG_REL})")
     print(f"Ziel:      {_endpoint()}")
     print(f"Projekt-ID: {fb.get('projekt_id') or '- (entsteht bei --enable)'}")
-    print(f"Wartend:   {len(_outbox(root))} Eintraege ({LOG_DIR_REL}/, je .md + .json)")
+    print(f"Wartend:   {len(_outbox(root))} Eintraege ({LOG_DIR_REL}/, je eine .md; Altbestand .md + .json)")
     gesendet = list((root / LOG_DIR_REL / "sent").glob("*.json")) if (root / LOG_DIR_REL / "sent").is_dir() else []
     print(f"Gesendet:  {len(gesendet)} Eintraege ({LOG_DIR_REL}/sent/)")
     print(f"Protokoll: {LOG_DIR_REL}/ - "
@@ -739,7 +876,7 @@ def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
     if url:
         eintrag["url"] = url
     ziel = _eintrag_schreiben(root, eintrag)
-    print(f"Uebernommen: {ziel.relative_to(root).as_posix()} (+ gleichnamige .md zum Lesen). "
+    print(f"Uebernommen: {ziel.relative_to(root).as_posix()}. "
           f"{len(_outbox(root))} Eintrag/Eintraege warten. Ansehen: feedback.py --plan")
     return 0
 
@@ -930,10 +1067,9 @@ def cmd_clear(root: Path) -> int:
     """Verwirft die wartenden Eintraege. Was bereits gesendet wurde, liegt in sent/ und bleibt dort -
     das Protokoll ist der Nachweis und wird nie geleert."""
     anzahl = 0
-    for fp in _wartende_dateien(root):
-        for endung in (".json", ".md"):
-            kandidat = fp.with_suffix(endung)
-            if kandidat.exists():
+    for e in _wartende_eintraege(root):
+        for kandidat in (e["json_path"], e["md_path"]):
+            if kandidat and kandidat.exists():
                 kandidat.unlink()
         anzahl += 1
     print(f"Ausgang geleert ({anzahl} Eintraege verworfen). Gesendetes in sent/ bleibt unangetastet.")
