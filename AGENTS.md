@@ -399,7 +399,7 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 | :--- | :--- | :--- |
 | `Feedback` | `aus` (Default) · `bestätigen` · `automatisch` · `manuell` | ob und wie **von selbst** gesendet wird |
 | `Feedback-Takt` | `manuell` · `sofort` · `stündlich` · `täglich` · `wöchentlich` (Default) · `adaptiv` · `automatisch` | Obergrenze, wie oft |
-| `Feedback-Umfang` | Kommaliste aus `a` (Kennzahlen) · `b` (Regel-/Strukturänderungen) · `c` (Werkzeug-Nutzung), Default `a,b,c` | was der Assistent **von sich aus** sammeln darf |
+| `Feedback-Umfang` | Kommaliste aus `a` (Kennzahlen) · `b` (Regel-/Strukturänderungen) · `c` (Werkzeug-Nutzung: wie oft welches Werkzeug benutzt wurde, als Zahlen zu festen Kennungen; Namen selbstgebauter Skills nie, nur deren Anzahl), Default `a,b,c` | was der Assistent **von sich aus** sammeln darf |
 
 `bestätigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
 Rückfrage, `manuell` nur auf Aufruf von `/act-feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —

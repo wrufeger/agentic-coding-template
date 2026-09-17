@@ -38,6 +38,23 @@ from pathlib import Path
 BREITE = 100
 
 
+def _count_usage(root: Path, kennung: str) -> None:
+    """Meldet einen Aufruf an die anonyme Nutzungsstatistik (.claude/scripts/usage.py) - rein defensiv,
+    ein Fehler des Zaehlers darf den Hook nie stoeren."""
+    import subprocess
+
+    script = root / ".claude" / "scripts" / "usage.py"
+    if not script.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable or "python3", str(script), "--count", kennung],
+            cwd=str(root), capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _root() -> Path:
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     return Path(env) if env else Path(__file__).resolve().parents[2]
@@ -160,6 +177,7 @@ def _hook() -> int:
     m = re.fullmatch(r"\s*/act(?:\s+(\S+))?\s*", prompt or "")  # (\S+) faengt auch "all"
     if not m:
         return 0
+    _count_usage(_root(), "act-help")
     puffer = io.StringIO()
     alt = sys.stdout
     sys.stdout = puffer

@@ -94,6 +94,23 @@ def _find_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _count_usage(root: Path, kennung: str) -> None:
+    """Meldet einen Aufruf an die anonyme Nutzungsstatistik (.claude/scripts/usage.py) - rein defensiv,
+    ein Fehler des Zaehlers darf den eigentlichen Lauf nie stoeren."""
+    import subprocess
+
+    script = root / ".claude" / "scripts" / "usage.py"
+    if not script.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable or "python3", str(script), "--count", kennung],
+            cwd=str(root), capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _load_module(root: Path, filename: str, mod_name: str):
     path = root / ".claude" / "scripts" / filename
     if not path.exists():
@@ -1124,7 +1141,9 @@ def _run(argv) -> int:
         return 2
 
     if args.apply:
-        return cmd_apply(root, mods, args.yes)
+        ergebnis = cmd_apply(root, mods, args.yes)
+        _count_usage(root, "sync-config")
+        return ergebnis
     if args.adopt:
         return cmd_adopt(root, mods)
     if args.status:

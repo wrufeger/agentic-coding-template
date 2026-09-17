@@ -2,6 +2,7 @@
 .env
 .mcp.json
 .claude/settings.local.json
+.claude/usage.json
 
 # Wartungslogs/-berichte
 .claude/maintenance/reports/

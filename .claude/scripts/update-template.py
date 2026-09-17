@@ -859,6 +859,22 @@ def _find_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _count_usage(root: Path, kennung: str) -> None:
+    """Meldet einen Aufruf an die anonyme Nutzungsstatistik (.claude/scripts/usage.py) - rein defensiv,
+    ein Fehler des Zaehlers darf den eigentlichen Lauf nie stoeren. Gleicher Aufbau wie
+    setup-lib.py/apply_coding_guidelines() fuer den Aufruf von guidelines.py --sync."""
+    script = Path(__file__).resolve().parent / "usage.py"
+    if not script.exists():
+        return
+    try:
+        subprocess.run(
+            [sys.executable or "python3", str(script), "--count", kennung],
+            cwd=str(root), capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def run_git(root: Path, args, timeout=None):
     # core.quotePath=false: Pfade mit Umlauten kommen unveraendert zurueck (sonst "docs/\303\234bersicht.md"
     # und der Pfad laesst sich weder oeffnen noch an git zurueckgeben).
@@ -2314,7 +2330,9 @@ def _run(argv) -> int:
     if args.cont:
         return cmd_apply(root, cfg, path, args.commit, continuing=True)
     if args.apply:
-        return cmd_apply(root, cfg, path, args.commit, continuing=False)
+        ergebnis = cmd_apply(root, cfg, path, args.commit, continuing=False)
+        _count_usage(root, "update-template")
+        return ergebnis
     if args.check:
         return cmd_check(root, cfg, args.quiet)
     if args.init:

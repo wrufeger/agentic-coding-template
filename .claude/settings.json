@@ -179,6 +179,17 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; [ -n \"$P\" ] && \"$P\" \"$CLAUDE_PROJECT_DIR/.claude/scripts/usage.py\" --hook; true",
+            "async": true
+          }
+        ]
       }
     ],
     "PostToolUse": [

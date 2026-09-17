@@ -76,6 +76,7 @@
 # verweigert das Script jede Aktion - die Entwicklung des Templates meldet sich nicht an sich selbst.
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -726,6 +727,110 @@ def _werkzeug_nutzung(root: Path) -> dict:
     return raus
 
 
+def _usage_modul(root: Path):
+    """Laedt usage.py als Modul (Muster wie sync-config.py:_load_module per importlib) - liefert die
+    Kennungslisten (EREIGNISSE, EIGEN) und die Lese-Helfer (_paths/_load), damit sie hier nicht ein zweites
+    Mal gepflegt werden muessen. None, wenn die Datei fehlt oder sich nicht laden laesst."""
+    pfad = root / ".claude" / "scripts" / "usage.py"
+    if not pfad.exists():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("usage_lib_feedback", pfad)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:  # noqa: BLE001 - ein kaputtes usage.py darf die Rueckmeldung nie verhindern
+        return None
+
+
+def _nutzung(root: Path, tj: dict) -> dict:
+    """Umfang c: die flache Zaehlerliste aus usage.py (.claude/usage.json) in drei Gruppen einsortiert -
+    skills/scripte/ereignisse, Feldname und Form fest vorgegeben (Auswertung auf der Gegenseite baut schon
+    dagegen). Verwendet die Kennungslisten aus dem geladenen usage.py-Modul statt sie hier zweimal zu
+    pflegen. Fehlt usage.py oder die Zaehlerdatei, bleibt das ganze Feld weg - nie geraten oder geschaetzt.
+
+    Ein manipulierter Zaehlerstand (z. B. ein Name statt einer Zahl) wird still uebersprungen statt in die
+    Nutzlast zu wandern - _pruefen() sieht ihn dadurch erst gar nicht; das ist zusaetzlich zur, nicht
+    anstelle der, allgemeinen Pruefung dort.
+
+    Die drei Reaktionszaehler aus dem feedback-Block (erinnerungen_ohne_reaktion, verschiebungen,
+    sendungen_in_folge - siehe feedback-check.py Kopfkommentar) sind inhaltlich Ereignisse wie
+    "feedback-verschoben" aus usage.py: sie zaehlen, WIE OFT rund um die Rueckmeldung selbst etwas
+    passiert ist (ignoriert, verschoben, in Folge gesendet), nicht WAS benutzt wurde. Deshalb landen sie
+    ebenfalls unter "ereignisse" statt in einer vierten Gruppe."""
+    mod = _usage_modul(root)
+    if mod is None:
+        return {}
+    try:
+        pfad, _lock_pfad = mod._paths(root)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not pfad.exists():
+        return {}
+    try:
+        daten = mod._load(pfad)
+    except Exception:  # noqa: BLE001
+        return {}
+    zaehler = daten.get("zaehler") if isinstance(daten, dict) else None
+    seit = daten.get("seit") if isinstance(daten, dict) else None
+    if not isinstance(zaehler, dict) or not seit:
+        return {}
+
+    bekannte_skills, bekannte_scripte = set(), set()
+    skills_dir = root / ".claude" / "skills"
+    if skills_dir.is_dir():
+        try:
+            bekannte_skills = {p.name for p in skills_dir.iterdir()
+                                if p.is_dir() and (p / "SKILL.md").exists()}
+        except OSError:
+            pass
+    scripts_dir = root / ".claude" / "scripts"
+    if scripts_dir.is_dir():
+        try:
+            bekannte_scripte = {p.stem for p in scripts_dir.glob("*.py")}
+        except OSError:
+            pass
+    ereignisse_bekannt = set(getattr(mod, "EREIGNISSE", ()))
+    eigen = getattr(mod, "EIGEN", "eigen")
+
+    skills, scripte, ereignisse = {}, {}, {}
+    for kennung, stand in zaehler.items():
+        try:
+            n = int(stand)
+        except (TypeError, ValueError):
+            continue  # manipulierter/kaputter Zaehlerstand - wird verworfen, nie geraten
+        if n <= 0:
+            continue
+        if kennung == eigen:
+            skills[eigen] = n  # Sammelzaehler bleibt bei skills, wird nie aufgeloest
+        elif kennung in ereignisse_bekannt:
+            ereignisse[kennung] = n
+        elif kennung in bekannte_skills:
+            skills[kennung] = n
+        elif kennung in bekannte_scripte:
+            scripte[kennung] = n
+        # sonst: weder Skill/Script noch Ereignis (z. B. seit dem letzten Reset entfernt) - wird nicht
+        # geraten und faellt weg.
+
+    fb = _feedback_block(tj)
+    for schluessel in ("erinnerungen_ohne_reaktion", "verschiebungen", "sendungen_in_folge"):
+        try:
+            wert = int(fb.get(schluessel) or 0)
+        except (TypeError, ValueError):
+            wert = 0
+        if wert > 0:
+            ereignisse[schluessel] = wert
+
+    ergebnis = {"seit": seit[:10] if isinstance(seit, str) else seit}
+    if skills:
+        ergebnis["skills"] = skills
+    if scripte:
+        ergebnis["scripte"] = scripte
+    if ereignisse:
+        ergebnis["ereignisse"] = ereignisse
+    return ergebnis
+
+
 def _nutzlast(root: Path, tj: dict) -> dict:
     fb = _feedback_block(tj)
     angewandt = tj.get("applied_config") or {}
@@ -760,6 +865,9 @@ def _nutzlast(root: Path, tj: dict) -> dict:
     if "c" in umfang:
         nutzlast["mcp_server"] = _mcp_server(root)
         nutzlast["werkzeuge"] = _werkzeug_nutzung(root)
+        nutzung = _nutzung(root, tj)
+        if nutzung:
+            nutzlast["nutzung"] = nutzung
     if fb.get("repo_url"):
         nutzlast["repo_url"] = fb["repo_url"]
     return nutzlast
@@ -1152,6 +1260,24 @@ def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
     return fp
 
 
+def _usage_zuruecksetzen(root: Path) -> None:
+    """Setzt die Nutzungsstatistik (.claude/usage.json) nach einer erfolgreichen Sendung zurueck - Aufruf
+    NUR aus cmd_send, NUR wenn der Versand bereits geglueckt ist. Rein defensiv: usage.py meldet laut
+    eigenem Kopfkommentar zwar immer Exit 0, ein Fehlschlag hier (kaputte Datei, kein Python gefunden) darf
+    trotzdem nie einen erfolgreichen Versand nachtraeglich zum Fehlschlag machen - nur sichtbar bleiben."""
+    script = root / ".claude" / "scripts" / "usage.py"
+    if not script.exists():
+        return
+    try:
+        ergebnis = subprocess.run([sys.executable, str(script), "--reset"],
+                                   capture_output=True, text=True, timeout=10)
+        if ergebnis.returncode != 0:
+            print(f"Warnung: Nutzungsstatistik nicht zurueckgesetzt (usage.py --reset, Exit "
+                  f"{ergebnis.returncode}): {ergebnis.stderr.strip()}", file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"Warnung: Nutzungsstatistik nicht zurueckgesetzt (usage.py --reset): {e}", file=sys.stderr)
+
+
 def cmd_send(root: Path, force: bool, ja: bool) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
@@ -1201,6 +1327,11 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
     fb.pop("letzte_erinnerung", None)
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
+    # Die eben gesendeten Nutzungszahlen (Umfang "c", siehe _nutzung()) sollen nicht doppelt in die
+    # naechste Nutzlast wandern - NUR bei erfolgreichem Versand (wir sind hier bereits daran vorbei, dass
+    # _posten() ohne Fehler zurueckkam). Schlaegt das Zuruecksetzen selbst fehl, bleibt der Versand trotzdem
+    # ein Erfolg - nur sichtbar gemeldet, damit es nicht stillschweigend haengen bleibt.
+    _usage_zuruecksetzen(root)
     _fragebogen_zuruecksetzen(root, nutzlast.get("fragebogen") or [])
     bewegt = _nach_sent(root)
     anzahl = len(nutzlast.get("eintraege") or [])
