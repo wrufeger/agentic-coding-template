@@ -7,7 +7,7 @@
 #        Templates, Werte noch leer) und richtet den Git-Remote "template" ein, damit
 #        `update-template.py --graft` danach eine gemeinsame Historie herstellen kann. Laeuft AUS DIESEM
 #        TEMPLATE-CHECKOUT HERAUS (nicht im Zielrepo). Reine Python-Stdlib, kein Paket noetig. Siehe
-#        `.claude/skills/apply-template/SKILL.md`, `docs/ai/checklists.md` § "Projekt nachruesten".
+#        `.claude/skills/act-apply-template/SKILL.md`, `docs/ai/checklists.md` § "Projekt nachruesten".
 #
 # Aufruf:
 #   python .claude/scripts/apply-template.py --target <ziel-repo> [--dry-run]
@@ -81,6 +81,7 @@ COPY_RENAME = {"LICENSE": ".claude/TEMPLATE-LICENSE"}
 
 EXCLUDE_FILES = {".claude/settings.local.json"}
 EXCLUDE_GLOBS = [
+    ".claude/skills/act-process-feedback/*",  # Skill der Template-Pflege, nie in ein Projekt
     ".claude/maintenance/reports/*",
     ".claude/maintenance/*.log",
     "*/ai.log",
@@ -317,7 +318,7 @@ def _run(argv) -> int:
     lines.append(f"Remote 'template': {remote_status}")
 
     lines.append("")
-    lines.append("Naechste Schritte: im Zielrepo Skill /apply-template ausfuehren; darin "
+    lines.append("Naechste Schritte: im Zielrepo Skill /act-apply-template ausfuehren; darin "
                   "'python .claude/scripts/migrate-project.py --plan' fuer den Struktur-Migrationsplan "
                   "(AI-CONFIG.md befuellen, docs/project mit dem IST-Zustand befuellen, danach "
                   "update-template.py --graft).")

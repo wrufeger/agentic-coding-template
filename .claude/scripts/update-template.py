@@ -6,7 +6,7 @@
 #        `.claude/template.json` (Remote/Branch des Templates, zuletzt eingespielter Basis-Commit, die
 #        eingesetzten Platzhalterwerte, Dateien/Ordner, deren Projektfassung bei Konflikten immer gewinnt,
 #        Update-Historie). Siehe AGENTS.md § "Template-Herkunft und Updates", CLAUDE.md § 2 (Skill
-#        `/update-template`), docs/ai/checklists.md § "Template-Update". Reine Python-Stdlib, kein Paket
+#        `/act-update-template`), docs/ai/checklists.md § "Template-Update". Reine Python-Stdlib, kein Paket
 #        noetig.
 #
 # Aufruf:
@@ -71,7 +71,7 @@
 #       zu base_commit her, OHNE den Arbeitsbaum zu veraendern - danach funktionieren --check/--apply wie
 #       bei einem per `git clone` angelegten Projekt. Voraussetzung: sauberer Arbeitsbaum, base_commit
 #       gesetzt (siehe .claude/template.json), Remote vorher gefetcht (macht `apply-template.py` bzw. der
-#       Skill /apply-template bereits). Existiert bereits ein gemeinsamer Vorfahr (`git merge-base HEAD
+#       Skill /act-apply-template bereits). Existiert bereits ein gemeinsamer Vorfahr (`git merge-base HEAD
 #       base_commit`), ist --graft ein No-op (Exit 0, Hinweis).
 #
 # --commit auf --apply/--continue erstellt den Merge-Commit direkt; ohne --commit bleiben die Aenderungen
@@ -176,6 +176,7 @@ DEFAULT_NO_REPLACE = [
 DEFAULT_TEMPLATE_ONLY = [
     ".github/README.md",
     ".templatedev",
+    ".claude/skills/act-process-feedback",  # Skill der Template-Pflege, zieht mit T5 nach .templatedev/
 ]
 
 # Pfade, die ein abgewaehlter Schalter aus dem Projekt entfernt hat. Quelle ist `applied_config` in
@@ -187,9 +188,12 @@ DEFAULT_TEMPLATE_ONLY = [
 ABGEWAEHLT_SCHALTER_PATHS = {
     "Wartung": [
         ".claude/maintenance",
-        ".claude/skills/run-maintenance",
+        ".claude/skills/act-run-maintenance",
         ".claude/agents/maintenance-orchestrator.md",
         ".claude/scripts/maintenance-check.py",
+        # Altname vor act-Praefix, 2026-09-17: haelt den alten Ordnernamen ebenfalls draussen, falls ein
+        # Projekt den Umbenennungs-Merge noch nicht eingespielt hat.
+        ".claude/skills/act-run-maintenance",
     ],
     "Code-Optimierung": [".claude/agents/optimizer.md"],
 }
@@ -634,7 +638,7 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
             lines.append(f"  {rel_path}")
 
     lines.append("")
-    lines.append("Einspielen: Skill /update-template bzw. python .claude/scripts/update-template.py --apply")
+    lines.append("Einspielen: Skill /act-update-template bzw. python .claude/scripts/update-template.py --apply")
     print("\n".join(lines))
     return 3
 

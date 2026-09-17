@@ -368,11 +368,11 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 | `Feedback-Umfang` | Kommaliste aus `a` (Kennzahlen) · `b` (Regel-/Strukturänderungen) · `c` (Werkzeug-Nutzung), Default `a,b,c` | was der Assistent **von sich aus** sammeln darf |
 
 `bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
-Rückfrage, `manuell` nur auf Aufruf von `/feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
+Rückfrage, `manuell` nur auf Aufruf von `/act-feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
 
 **Eine von Hand geschriebene Nachricht geht immer** — „Feedback: <Text>", „Schicke Feedback <Text>" oder, wo
-das Werkzeug Slash-Befehle kennt, `/feedback <Text>`; auch bei `Feedback: aus`. Der Auslöser ist bewusst ein
+das Werkzeug Slash-Befehle kennt, `/act-feedback <Text>`; auch bei `Feedback: aus`. Der Auslöser ist bewusst ein
 **Satz**, kein Befehl: Diese Datei gilt für jeden Assistenten, und die wenigsten kennen Skills. Steht hinter
 dem Wort noch ein Satz, **ist** er die Nachricht und geht unverändert hinaus; steht nichts dahinter, ist die
 gesammelte Rückmeldung gemeint. Sie ist
@@ -429,13 +429,13 @@ darin listet Dateien/Ordner, deren Projektfassung **bei Konflikten** gewinnt (u.
 `docs/ai/`-Arbeitsdateien, `README.md`, `AI-CONFIG.md`) — konfliktfreie Template-Änderungen an diesen Dateien
 werden normal mitgemergt. `no_replace` listet zusätzlich Dateien, die zwar normal mitgemergt, aber nie
 platzhalter-ersetzt werden, weil sie Platzhalter absichtlich als Beispiel zeigen (`docs/ai/checklists.md`,
-`.claude/skills/create-project/SKILL.md`).
+`.claude/skills/act-create-project/SKILL.md`).
 
 Regel bei einem Update: Template-Logik in `.claude/`, `AGENTS.md`, `CLAUDE.md` und den Checklisten wird
 nachgezogen; Projektinhalte in `docs/project/`, die `docs/ai/`-Arbeitsdateien und die README werden nie
 überschrieben — bei Konflikten außerhalb von `keep_local` beide Seiten zusammenführen, nie blind eine Seite
 nehmen. Ablauf: Checkliste „Template-Update" (`docs/ai/checklists.md`); Claude-Code-Mechanik dazu in
-`CLAUDE.md` § 2 (Skill `/update-template`). Ein per `apply-template.py` nachgerüstetes Projekt hat zunächst
+`CLAUDE.md` § 2 (Skill `/act-update-template`). Ein per `apply-template.py` nachgerüstetes Projekt hat zunächst
 keinen gemeinsamen Vorfahren mit dem Template — `update-template.py --graft` stellt ihn per leerem
 Merge-Commit her (Arbeitsbaum bleibt unverändert), erst danach funktionieren `--check`/`--apply` normal.
 
@@ -445,7 +445,7 @@ die nur zum Anlegen/Nachrüsten gebraucht wurden, wieder aus dem Projekt (Checkl
 abschließen", `docs/ai/checklists.md`); was dauerhaft gebraucht wird — Template-Update, die laufend wirkende
 `AI-CONFIG.md`, Logging — bleibt unangetastet. Solange der Abschluss aussteht, erinnert eine kurze Meldung bei
 jedem Sitzungsstart daran; das gilt unabhängig vom Werkzeug, Mechanik-Details dazu stehen in der jeweiligen
-Ergänzungsdatei (Claude Code: `CLAUDE.md` § 2, Skill `/finalize`).
+Ergänzungsdatei (Claude Code: `CLAUDE.md` § 2, Skill `/act-finalize`).
 
 ## Werkzeugspezifische Ergänzungsdateien
 

@@ -77,7 +77,7 @@ für `docs/` abweichende Regeln:
 - Unverändert gültig bleibt alles andere: Rollen, Delegation an Sub-Agenten, Modellwahl, „fertig nur mit
   Beleg", Commit per Pathspec, Safeguard-Verhalten.
 
-Beim Anlegen eines Projekts (`/create-project`) entfernt `create-project.py` den Ordner `.templatedev/`
+Beim Anlegen eines Projekts (`/act-create-project`) entfernt `create-project.py` den Ordner `.templatedev/`
 **und** die so markierten Blöcke aus `AGENTS.md` und dieser Datei — ab dann gelten ausschließlich die
 normalen Regeln.
 <!-- template-only:end -->
@@ -101,12 +101,12 @@ Satz mit einem Zielpfad statt als Skill-Aufruf. Zuordnung:
 
 | Was {{AUFTRAGGEBER}} sagt | Was {{ORCHESTRATOR}} tut |
 | :--- | :--- |
-| „Erstelle eine neue Anwendung in `<pfad>`" | Template dorthin klonen, Remote einrichten, `AI-CONFIG.md` im Gespräch ausfüllen, dann `/create-project` im Zielordner |
+| „Erstelle eine neue Anwendung in `<pfad>`" | Template dorthin klonen, Remote einrichten, `AI-CONFIG.md` im Gespräch ausfüllen, dann `/act-create-project` im Zielordner |
 | „Erstelle ein **leeres** Projekt in `<pfad>`" | dasselbe, aber **ohne Interview** — `AI-CONFIG.md` bleibt leer, es entsteht „MyApp" |
-| „Erstelle ein **neues Projekt** in `<pfad>`" (weder das eine noch das andere gesagt) | **nicht raten:** einmal fragen, ob es leer werden soll; bei „nein" die vier Fragen aus `/create-project` Schritt 1 stellen |
-| „Nutze das Template in `<pfad>`" (bestehendes Repo) | `apply-template.py --target <pfad>`, dann `/apply-template` im Zielordner |
+| „Erstelle ein **neues Projekt** in `<pfad>`" (weder das eine noch das andere gesagt) | **nicht raten:** einmal fragen, ob es leer werden soll; bei „nein" die vier Fragen aus `/act-create-project` Schritt 1 stellen |
+| „Nutze das Template in `<pfad>`" (bestehendes Repo) | `apply-template.py --target <pfad>`, dann `/act-apply-template` im Zielordner |
 | … „und mache ein Code Review" | zusätzlich `Code-Analyse: vorschlagen` setzen, statt im Chat nachzufragen |
-| „Projekterstellung abschließen" / „Nachrüsten abschließen" / „Einrichtung fertig" | `/finalize` im Zielprojekt ausführen |
+| „Projekterstellung abschließen" / „Nachrüsten abschließen" / „Einrichtung fertig" | `/act-finalize` im Zielprojekt ausführen |
 
 Ablauf für einen Zielpfad, der noch nicht existiert:
 
@@ -123,28 +123,28 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 
 | Skill | Checkliste in `docs/ai/checklists.md` | Mechanik |
 | :--- | :--- | :--- |
-| `/create-project` | „Neues Projekt" | `AI-CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/create-project.py`, läuft **nie** in einem Sub-Agenten |
-| `/apply-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `apply-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`AI-CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
-| `/audit-docs [project\|ai\|alle]` | „Doku prüfen und nachziehen" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer`; Bereich `project` (Code-Abgleich) und/oder `ai` (Formprüfung Arbeitsordner), bewusst unabhängig von der optionalen Wartung |
-| `/run-maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `AI-CONFIG.md` `Wartung: aus`, entfernt `/create-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
-| `/update-template` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/update-template.py` |
-| `/idea` | „Idee oder Änderungswunsch aufnehmen" | vom Wunsch zum Backlog-Punkt: Bestand prüfen, Konzept mit Optionen und Empfehlung, Entscheidung, dann Aufwand, fehlende Werkzeuge, Prio von **beiden** Seiten |
-| `/prepare` | „Block vorbereiten" | vor einem größeren Vorhaben: Bestand parallel per `explorer` recherchieren, in Aufgaben schneiden, Startklar prüfen, **einen** Fragenblock vorlegen — damit der Block danach ohne Rückfragen durchläuft |
-| `/onboard` | — (Mechanik ohne Checkliste) | ein fremdes Projekt verstehen; Ergebnis nach `docs/project/`, nicht in eine Chat-Antwort |
-| `/bug` | — (Mechanik ohne Checkliste) | Fehler beheben: reproduzieren, eingrenzen, **erst roter Test**, dann Fix |
-| `/refactor` | — (Mechanik ohne Checkliste) | umbauen ohne Verhaltensänderung; ohne Testnetz zuerst `/test-gap` |
-| `/test-gap` | — (Mechanik ohne Checkliste) | Testlücken nach **Risiko** priorisieren, nicht nach Coverage-Prozent |
-| `/deps` | — (Mechanik ohne Checkliste) | Abhängigkeiten aktualisieren: Major einzeln, je ein Commit |
-| `/perf` | — (Mechanik ohne Checkliste) | erst messen, dann ändern, erneut messen — sonst zurücknehmen |
-| `/release` | — (Mechanik ohne Checkliste) | Version, Änderungsprotokoll, Tag; nicht bei rotem Pflichtlauf |
-| `/a11y` | — (Mechanik ohne Checkliste) | Barrierefreiheit einer Seite oder Komponente: Tastatur, Fokus, Kontrast, Struktur — Befunde nach Schwere, dann beheben |
-| `/design-ideas` | — (Mechanik ohne Checkliste) | drei bis vier Varianten als Vorschaubilder (Playwright), zur Auswahl; Wegwerf-Ordner `.design-varianten/`, kein Projektcode |
-| `/design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
-| `/slides` | — (Mechanik ohne Checkliste) | Präsentation über das Projekt: Folien als Markdown im Repo, Inhalt aus der vorhandenen Doku, Export per Marp |
-| `/design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
-| `/feedback [Text]` | — (Mechanik ohne Checkliste) | **Mit Text:** genau dieser Satz geht sofort raus (`--direkt`) — auch bei `Feedback: aus`, dann anonym ohne Projekt-Kennung. **Ohne Text:** gesammelte Rückmeldung zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`-Takt`/`-Umfang`, umgeht die Einstellung nie |
-| `/commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
-| `/finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project`/`apply-template` (Skills, Scripte) und sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
+| `/act-create-project` | „Neues Projekt" | `AI-CONFIG.md` einlesen → Platzhalter/Werkzeugdateien/Logging setzen, Doku befüllen; Mechanik in `.claude/scripts/create-project.py`, läuft **nie** in einem Sub-Agenten |
+| `/act-apply-template` | „Projekt nachrüsten" | läuft im Ziel-Repo, nach `apply-template.py`; Fan-out auf `explorer`/`doc-writer`; danach optional eine Code-Analyse (`AI-CONFIG.md` § `Code-Analyse`, Default: im Chat nachfragen) mit Vorschlägen nach `docs/ai/backlog.md` |
+| `/act-audit-docs [project\|ai\|alle]` | „Doku prüfen und nachziehen" | `context: fork` über `general-purpose`, Fan-out auf `explorer`/`doc-writer`; Bereich `project` (Code-Abgleich) und/oder `ai` (Formprüfung Arbeitsordner), bewusst unabhängig von der optionalen Wartung |
+| `/act-run-maintenance […]` | — (reine Automations-Mechanik) | `context: fork` über `maintenance-orchestrator`; **optional** — steht in `AI-CONFIG.md` `Wartung: aus`, entfernt `/act-create-project` diesen Skill samt Agent, Ordner und Fälligkeits-Hook |
+| `/act-update-template` | „Template-Update" | läuft **nie** in einem Sub-Agenten, nur im Hauptkontext; Mechanik in `.claude/scripts/update-template.py` |
+| `/act-idea` | „Idee oder Änderungswunsch aufnehmen" | vom Wunsch zum Backlog-Punkt: Bestand prüfen, Konzept mit Optionen und Empfehlung, Entscheidung, dann Aufwand, fehlende Werkzeuge, Prio von **beiden** Seiten |
+| `/act-prepare` | „Block vorbereiten" | vor einem größeren Vorhaben: Bestand parallel per `explorer` recherchieren, in Aufgaben schneiden, Startklar prüfen, **einen** Fragenblock vorlegen — damit der Block danach ohne Rückfragen durchläuft |
+| `/act-onboard` | — (Mechanik ohne Checkliste) | ein fremdes Projekt verstehen; Ergebnis nach `docs/project/`, nicht in eine Chat-Antwort |
+| `/act-bug` | — (Mechanik ohne Checkliste) | Fehler beheben: reproduzieren, eingrenzen, **erst roter Test**, dann Fix |
+| `/act-refactor` | — (Mechanik ohne Checkliste) | umbauen ohne Verhaltensänderung; ohne Testnetz zuerst `/act-test-gap` |
+| `/act-test-gap` | — (Mechanik ohne Checkliste) | Testlücken nach **Risiko** priorisieren, nicht nach Coverage-Prozent |
+| `/act-deps` | — (Mechanik ohne Checkliste) | Abhängigkeiten aktualisieren: Major einzeln, je ein Commit |
+| `/act-perf` | — (Mechanik ohne Checkliste) | erst messen, dann ändern, erneut messen — sonst zurücknehmen |
+| `/act-release` | — (Mechanik ohne Checkliste) | Version, Änderungsprotokoll, Tag; nicht bei rotem Pflichtlauf |
+| `/act-a11y` | — (Mechanik ohne Checkliste) | Barrierefreiheit einer Seite oder Komponente: Tastatur, Fokus, Kontrast, Struktur — Befunde nach Schwere, dann beheben |
+| `/act-design-ideas` | — (Mechanik ohne Checkliste) | drei bis vier Varianten als Vorschaubilder (Playwright), zur Auswahl; Wegwerf-Ordner `.design-varianten/`, kein Projektcode |
+| `/act-design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
+| `/act-slides` | — (Mechanik ohne Checkliste) | Präsentation über das Projekt: Folien als Markdown im Repo, Inhalt aus der vorhandenen Doku, Export per Marp |
+| `/act-design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
+| `/act-feedback [Text]` | — (Mechanik ohne Checkliste) | **Mit Text:** genau dieser Satz geht sofort raus (`--direkt`) — auch bei `Feedback: aus`, dann anonym ohne Projekt-Kennung. **Ohne Text:** gesammelte Rückmeldung zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`-Takt`/`-Umfang`, umgeht die Einstellung nie |
+| `/act-commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
+| `/act-finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project.py`/`apply-template.py` (Scripte) und die Skills `act-create-project`/`act-apply-template` sowie sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
 
 ## 3. Token-/Modellregeln
 
@@ -259,9 +259,9 @@ Nicht aus dem Repo ableitbares Wissen (Zugänge, Arbeitsweisen einzelner Persone
 ins Claude-Memory, nicht in dieses Repo. Repo-Inhalte (Architektur, Entscheidungen, Stand) gehören nach
 `docs/project/`/`docs/ai/` und werden dort gepflegt, nicht im Memory dupliziert.
 
-In der gleichen Nachbarschaft: Sub-Agenten-Rollen und die Skills `/commit`+`/audit-docs` können zusätzlich
+In der gleichen Nachbarschaft: Sub-Agenten-Rollen und die Skills `/act-commit`+`/act-audit-docs` können zusätzlich
 projektübergreifend unter `~/.claude/` liegen (`.claude/scripts/install-global.py`, angeboten von
-`/create-project`/`/apply-template`, Schalter `AI-CONFIG.md` § „Globale Ablage") — das ist Werkzeug-
+`/act-create-project`/`/act-apply-template`, Schalter `AI-CONFIG.md` § „Globale Ablage") — das ist Werkzeug-
 Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 
 ## 7. Projektstruktur
@@ -302,9 +302,9 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
 ├── .templatedev/                 # nur im Template: Backlog, Fragen, Journal, Regeln,
-│                                 # Testprojekte (wird von /create-project entfernt)
+│                                 # Testprojekte (wird von /act-create-project entfernt)
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
-│                                 # wird von /create-project entfernt
+│                                 # wird von /act-create-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot
 ├── .github/workflows/ci.yml      # Lint/Typecheck/Test als Platzhalter-Steps
 ├── .env.example  .mcp.json.example  renovate.json  .editorconfig  .gitignore  .gitattributes

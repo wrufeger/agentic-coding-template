@@ -31,7 +31,7 @@ Projekt C ─┘  (öffentlich, ohne Anmeldung)          │
 
 - **Mit Projekt-Kennung** — alles, wofür jemand die Rückmeldung eingeschaltet hat. Wird unter dieser Kennung
   abgelegt, damit sich mehrere Meldungen desselben Projekts zusammenführen und Dubletten erkennen lassen.
-- **Ohne Kennung** — eine Nachricht aus `/feedback <Text>` bei `Feedback: aus`. Sie ist **anonym** und wird
+- **Ohne Kennung** — eine Nachricht aus `/act-feedback <Text>` bei `Feedback: aus`. Sie ist **anonym** und wird
   **keinem Projekt zugeordnet**, auch nicht anhand von Zeitpunkt, Stil oder Inhalt. Sie landet in `anonym/`
   und bleibt dort für sich. Das ist keine technische Einschränkung, sondern die Zusage selbst.
 

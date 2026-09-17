@@ -12,6 +12,30 @@ Sitzungs-Journal und Kurzchronik. Neueste Sitzung oben. Nur der Orchestrator sch
 
 ---
 
+## 2026-09-17 — Erste Rückmeldungen abgeholt, Skills bekommen das Präfix `act-`
+
+- **Freigabe:** Wolfgang hat am 2026-09-17 beauftragt, das Feedback abzuholen und zu verarbeiten; das
+  schließt das Quittieren (Löschen auf dem Server) ein. `feedback-abholen.py --status`: 3 wartend →
+  `--hole`: 3 geschrieben nach `.templatedev/daten/feedback/eingang/`, 3 quittiert, 0 wartend.
+- **Inhalt:** 3 Meldungen aus 1 Projekt, 6 Punkte (4 Fehler, 2 Doku), keiner schon im Backlog. Neu
+  formuliert als Backlog-Punkte 36–41 (halber Merge nach Update, verlorene `AI-CONFIG`-Schlüssel,
+  zurückkehrende Setup-Abschnitte, Feedback-Ablage nach Versand, Fragenformat, Erläuterungen aus
+  `AI-CONFIG`). Nichts verworfen. Arbeitsliste lokal: `daten/feedback/auswertung-2026-09-17.md`.
+- **Anlass Präfix:** `/feedback` kollidiert mit dem eingebauten Claude-Code-Befehl. Alle 22 Skills heißen
+  künftig `act-<name>`; `/act` listet dann alle Projekt-Befehle. Umbenennung läuft über einen `builder`.
+- **Neu:** Skill `act-process-feedback` (Abholen, Einordnen, neu formuliert ins Backlog) — gehört nur zur
+  Template-Pflege, muss in die `template_only`-Listen und zieht mit T5 nach `.templatedev/`.
+- **Umbenennung erledigt** (`builder`): 22 Skill-Ordner per `git mv`, Verweise in 37 Dateien, davon 15 Scripte.
+  Mitgefunden: `install-global.py` (`SKILL_ITEMS` mit nackten Namen) und der Prompt in
+  `run-maintenance.ps1`/`.sh` hätten die Skills sonst nicht mehr gefunden. Übergang: Altnamen zusätzlich in
+  `REMOVE_ITEMS`, `MAINTENANCE_REMOVE_PATHS`, `ABGEWAEHLT_SCHALTER_PATHS`. Beleg: `py_compile` ok,
+  `check-refs.py` 0 tot, Wegwerf-Kopie: `create-project.py --dry-run`, `finish-setup.py --plan`,
+  `install-global.py --plan` fehlerfrei; `apply-template.py --dry-run` kopiert 22 `act-`-Skills, nicht
+  `act-process-feedback`. Rest: Warnung bei `create-project.py --check` → Backlog-Punkt 42.
+- `act-process-feedback` in `TEMPLATE_ONLY_PATHS`, `DEFAULT_TEMPLATE_ONLY`, `template.json`, `EXCLUDE_GLOBS`.
+- `feedback-abholen.py` zählt jetzt „Sendungen mit Einträgen" (3 Sendungen, 6 Einträge) — „3 Meldungen" las sich
+  wie ein Verlust gegenüber 6 Dateien in `sent/` des Projekts.
+
 ## 2026-09-16 — Ladeversuch: was Claude Code in einer Sitzung im Unterordner sieht
 
 Anlass: Q7/T5 — Pflege-Sitzung in `.templatedev/` statt im Root. Wegwerf-Repo im Scratchpad, Root und

@@ -47,12 +47,12 @@ den Code und sammelt Verbesserungsvorschläge — ohne eine Zeile zu ändern.
 
 | Befehl | Wofür |
 | :--- | :--- |
-| `/create-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
-| `/apply-template` | Bestehendes Repository nachrüsten und angleichen |
-| `/update-template` | Neuerungen aus dem Template nachziehen |
-| `/audit-docs` | Dokumentation gegen den echten Stand prüfen und nachziehen |
-| `/commit` | Aufgabe abnehmen: archivieren, Index, Bilanz, Commit |
-| `/run-maintenance` | Wiederkehrende Wartung (optional) |
+| `/act-create-project` | Neues Projekt aufsetzen: Platzhalter, Werkzeuge, Dokumentation |
+| `/act-apply-template` | Bestehendes Repository nachrüsten und angleichen |
+| `/act-update-template` | Neuerungen aus dem Template nachziehen |
+| `/act-audit-docs` | Dokumentation gegen den echten Stand prüfen und nachziehen |
+| `/act-commit` | Aufgabe abnehmen: archivieren, Index, Bilanz, Commit |
+| `/act-run-maintenance` | Wiederkehrende Wartung (optional) |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den entsprechenden Satz sagen, etwa
 „Führe die Checkliste Neues Projekt aus".
@@ -80,7 +80,7 @@ zurückgeben will, muss dafür keinen Pull Request öffnen, kein Issue formulier
 tippen. Die Ideen und Kniffe, die ohnehin beim Entwickeln entstehen, sammelt der Assistent nebenbei ein und
 schickt sie auf Wunsch weg. Aus zehn Projekten, die still ihre Erkenntnisse teilen, wird eine Vorlage, die
 besser ist als alles, was ein Einzelner sich ausdenken könnte — und jedes dieser Projekte bekommt das Ergebnis
-per `/update-template` zurück.
+per `/act-update-template` zurück.
 
 Was daraus entsteht, ist der eigentliche Punkt: **Meldet dasselbe Anliegen aus zwei unabhängigen Projekten,
 wandert es in der Priorität nach oben** — auch wenn beide es völlig anders formuliert haben. Aus einem Fehler,
@@ -93,7 +93,7 @@ Und weil ein Rückkanal nur so viel wert ist wie sein Vertrauen:
   beim Abschluss der Einrichtung; ohne Antwort passiert nichts.
 - **Alles ist nachlesbar.** Jede Sendung liegt vollständig im Repo (`docs/ai/template-feedback/`) und fällt
   im nächsten Diff auf. Wer sie lieber nicht versioniert, hält sie mit einer Frage mehr lokal.
-- **Ein Satz geht immer.** `/feedback <Text>` schickt genau diesen Text — auch bei ausgeschalteter
+- **Ein Satz geht immer.** `/act-feedback <Text>` schickt genau diesen Text — auch bei ausgeschalteter
   Rückmeldung, und dann **anonym**: ohne Projekt-Kennung, ohne Kontext, ohne Zuordnung beim Empfänger.
 - **Eine letzte Schranke.** Vor jedem Versand prüft ein Filter jede Zeichenkette auf Zugangsdaten, Pfade,
   Mailadressen und interne Adressen — im Zweifel wird nicht gesendet, sondern nachgefragt.
@@ -126,7 +126,7 @@ Ausnahme: dort gibt es keine Sub-Agenten, nur die Architect/Editor-Trennung.
 
 Wer neu im Thema ist, findet in `docs/ai/resources.md` eine geprüfte Linksammlung: Einstieg, Werkzeug-Doku,
 Anbieter, Nachrichtenquellen und die bekannten Grenzen. Sie wandert in jedes abgeleitete Projekt mit und wird
-per `/update-template` aktuell gehalten.
+per `/act-update-template` aktuell gehalten.
 
 ## Sprache
 

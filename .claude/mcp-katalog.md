@@ -154,7 +154,7 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
 - **Bei Bildgeneratoren zusätzlich die Rechtefrage klären.** Rein KI-generierte Werke sind nicht
   automatisch urheberrechtlich geschützt (das US Copyright Office verlangt einen menschlichen
   Schöpfungsanteil), und die Anbieter regeln kommerzielle Nutzung unterschiedlich — teils je Modellvariante.
-  Für ein Logo ist das der entscheidende Punkt, nicht die Bildqualität. Siehe Skill `/design-assets`.
+  Für ein Logo ist das der entscheidende Punkt, nicht die Bildqualität. Siehe Skill `/act-design-assets`.
 - **Home Assistant braucht je nach Ziel beides.** Die offizielle Core-Integration (`home-assistant`) kann
   Geräte steuern und Werte lesen — für eine Anwendung, die Zustände abfragt, genügt das. Wer Home Assistant
   selbst **einrichten und konfigurieren** will (Integrationen anlegen, YAML ändern, Automatisierungen
@@ -195,7 +195,7 @@ Integrationen → „Model Context Protocol Server" aktivieren, dann URL und Tok
   und fällt damit für ein plattformneutrales Template aus. `GongRzhe/Office-PowerPoint-MCP-Server` käme ohne
   Office aus, ist aber seit dem 2026-03-03 archiviert und obendrein nur ein dünner Wrapper um `python-pptx`.
   Einen offiziellen Server von Microsoft oder Google gibt es nicht. **Für Folien braucht es hier keinen
-  Server:** Die Werkzeuge sind Kommandozeilenprogramme — siehe Skill `/slides`, der Marp nutzt (Markdown im
+  Server:** Die Werkzeuge sind Kommandozeilenprogramme — siehe Skill `/act-slides`, der Marp nutzt (Markdown im
   Repo, Export per `npx`). Ein MCP-Server lohnte nur, um eine bereits geöffnete fremde Präsentation live
   weiterzubearbeiten.
 

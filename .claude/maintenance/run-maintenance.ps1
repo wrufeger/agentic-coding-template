@@ -1,4 +1,4 @@
-# Zweck: Headless-Wartungslauf ueber den Skill /run-maintenance (.claude/skills/run-maintenance/SKILL.md) anstossen,
+# Zweck: Headless-Wartungslauf ueber den Skill /act-run-maintenance (.claude/skills/act-run-maintenance/SKILL.md) anstossen,
 #        fuer einen Aufruf aus dem Windows Task Scheduler heraus (siehe .claude/maintenance/README.md).
 # Aufruf: pwsh -File .claude/maintenance/run-maintenance.ps1 [-Modus kurz|docs|deps|alle]
 # Ausgabeformat: Log-Datei .claude/maintenance/run-YYYY-MM-DD-HHmmss.log (gitignored), Exit-Code 0 = ok.
@@ -14,7 +14,7 @@ $logDir = Join-Path $PSScriptRoot "."
 $timestamp = Get-Date -Format "yyyy-MM-dd-HHmmss"
 $logFile = Join-Path $logDir "run-$timestamp.log"
 
-$prompt = if ($Modus) { "/run-maintenance $Modus" } else { "/run-maintenance" }
+$prompt = if ($Modus) { "/act-run-maintenance $Modus" } else { "/act-run-maintenance" }
 
 Push-Location $root
 try {

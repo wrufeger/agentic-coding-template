@@ -199,7 +199,7 @@ REMOVABLE_TOOLS = list(TOOL_FILES.keys())
 
 # Orchestrator-Modell (steuert "model" in .claude/settings.json) und Wartung (ein/aus).
 ORCHESTRATOR_MODELLE = {"opus", "sonnet", "haiku", "inherit"}
-# Steuert nur den Orchestrator (Checkliste "Aufgabe abschliessen"/Skill /commit), keine Datei -
+# Steuert nur den Orchestrator (Checkliste "Aufgabe abschliessen"/Skill /act-commit), keine Datei -
 # analog zu Code-Analyse/Code-Optimierung.
 COMMIT_VERHALTEN_WERTE = {"automatisch", "fragen", "manuell"}
 
@@ -243,7 +243,7 @@ DEFAULT_WARTUNGSAUFGABEN = "kurz=14, docs=30, deps=90"
 # Ablageort der Wartungsberichte (.claude/maintenance/reports/YYYY-MM-DD.md) - "docs" legt zusaetzlich
 # docs/maintenance/README.md an, siehe setup_docs_maintenance_reports.
 WARTUNGSBERICHTE_WERTE = {"intern", "docs"}
-# Nur fuer Weg 2 (/apply-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
+# Nur fuer Weg 2 (/act-apply-template): soll nach dem Befuellen von docs/project/ zusaetzlich der bestehende
 # Code geprueft und Verbesserungen vorgeschlagen werden? "fragen" = der Assistent fragt im Chat nach.
 CODE_ANALYSE_WERTE = {"nein", "vorschlagen", "fragen"}
 # Optionaler Politur-Agent nach jeder Umsetzungswelle: "aus" entfernt ihn, "ein"/"intensiv" behalten ihn
@@ -256,7 +256,7 @@ CODE_OPTIMIERUNG_ALIASE = {"streng": "intensiv"}
 # die in AI-CONFIG.md genannten liegen - der Rest kommt bei Bedarf per `guidelines.py --add` aus dem Template
 # zurueck. Leere Angabe = keine (kein Ballast im Projekt).
 GUIDELINES_DIR = "docs/project/coding_rules.d"
-# Nur fuer Weg 2 (/apply-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
+# Nur fuer Weg 2 (/act-apply-template): sollen vorhandene KI-Arbeitsordner/-Regeldateien auf die
 # Template-Struktur migriert und zusammengefuehrt werden (siehe rename-lib.py)? "fragen" = der
 # Assistent zeigt den Plan und fragt im Chat nach.
 STRUKTUR_MIGRATION_WERTE = {"ja", "nein", "fragen"}
@@ -427,7 +427,7 @@ def normalize_orchestrator_modell(cfg: dict):
 def normalize_commit_verhalten(cfg: dict):
     """Gibt (commit_verhalten, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
     'automatisch'. Der Wert aendert keine Datei, sondern nur, wie der Orchestrator mit der Checkliste "Aufgabe
-    abschliessen" (Skill /commit) umgeht."""
+    abschliessen" (Skill /act-commit) umgeht."""
     raw = cfg.get("commit_verhalten")
     if not raw:
         return "automatisch", None
@@ -528,7 +528,7 @@ FEEDBACK_TEXT = {
     "aus": "aus - es wird nichts an den Template-Autor gesendet (Default)",
     "bestaetigen": "bestaetigen - vor jedem Versand wird die Nutzlast gezeigt und gefragt",
     "automatisch": "automatisch - der Assistent sendet ohne Rueckfrage, protokolliert in docs/ai/template-feedback/",
-    "manuell": "manuell - nur auf Aufruf von /feedback, sonst nie",
+    "manuell": "manuell - nur auf Aufruf von /act-feedback, sonst nie",
 }
 
 FEEDBACK_TAKT_TEXT = {
@@ -587,7 +587,7 @@ WARTUNGSBERICHTE_TEXT = {
 
 def normalize_code_analyse(cfg: dict):
     """Gibt (code_analyse, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default 'fragen'.
-    Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /apply-template (Weg 2)."""
+    Der Wert steuert keinen Dateieingriff, sondern nur den Ablauf des Skills /act-apply-template (Weg 2)."""
     raw = cfg.get("code_analyse")
     if not raw:
         return "fragen", None
@@ -658,7 +658,7 @@ CODE_ANALYSE_TEXT = {
 def normalize_struktur_migration(cfg: dict):
     """Gibt (struktur_migration, unbekannter_rohwert) zurueck - genau einer der beiden ist None. Default
     'fragen'. Der Wert aendert selbst keine Datei, sondern steuert nur den Ablauf des Skills
-    /apply-template (Weg 2, migrate-project.py)."""
+    /act-apply-template (Weg 2, migrate-project.py)."""
     raw = cfg.get("struktur_migration")
     if not raw:
         return "fragen", None
@@ -726,7 +726,7 @@ def build_applied_config(
     faellt sie beim Abgleich durchs Raster (siehe Befund zu "Stack" unten). Bewusst NICHT gefuehrt: "Globale
     Ablage" (eigener, direkt aus AI-CONFIG.md gelesener Schalter von install-global.py, kein KEY_MAP-Eintrag,
     keine Wiederholungssemantik), "Code-Analyse"/"Struktur-Migration"/"Alter Orchestrator-Name" (einmalige
-    Weg-2-Bootstrap-Werte fuer /apply-template, nach dem einmaligen Lauf ohne erneute Wirkung - siehe
+    Weg-2-Bootstrap-Werte fuer /act-apply-template, nach dem einmaligen Lauf ohne erneute Wirkung - siehe
     sync-config.py Kopfkommentar). Bei KI-Werkzeuge wird bewusst die RESULTIERENDE Entfernliste gespeichert
     (nicht die Roh-Kommaliste aus AI-CONFIG.md) - "leer = alle behalten" waere sonst nicht von "alle explizit
     genannt" zu unterscheiden."""

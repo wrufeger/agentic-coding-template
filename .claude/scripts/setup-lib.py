@@ -12,7 +12,7 @@
 #        genutzte Werkzeug-Dateien entfernen, Logging-Schalter in AGENTS.md setzen und die eingesetzten
 #        Werte in `.claude/template.json` festhalten. Ergaenzt/ersetzt die frueheren Skills
 #        `adapt-template` + `new-idea`. Reine Python-Stdlib, kein Paket noetig. Siehe
-#        `.claude/skills/create-project/SKILL.md`, `docs/ai/checklists.md` § "Neues Projekt".
+#        `.claude/skills/act-create-project/SKILL.md`, `docs/ai/checklists.md` § "Neues Projekt".
 #
 # Aufruf:
 #   python .claude/scripts/create-project.py --dry-run
@@ -24,7 +24,7 @@
 #       .vue/.jsx/... zaehlen nicht als Platzhalter, siehe replace_placeholders()).
 #   python .claude/scripts/create-project.py --apply
 #       Platzhalter ersetzen (ausser .git, AI-CONFIG.md, docs/ai/checklists.md,
-#       .claude/skills/create-project/SKILL.md und den beiden Scripten setup-lib.py/update-template.py -
+#       .claude/skills/act-create-project/SKILL.md und den beiden Scripten setup-lib.py/update-template.py -
 #       dort sind sie absichtlich als Beispiel sichtbar), nicht genannte Werkzeug-Dateien entfernen (nur
 #       wenn KI-Werkzeuge gesetzt ist), AI_LOG/AI_LOG_LEVEL in AGENTS.md setzen, "model" in
 #       .claude/settings.json setzen (Orchestrator-Modell; "inherit" entfernt den Schluessel; fehlt
@@ -209,7 +209,7 @@ def check_maintenance_runner_files(root: Path) -> list:
 # Template mit echtem Inhalt statt Platzhaltern). Bare Ordnername ohne Trailing-Slash/Wildcard: greift bei
 # Path.exists()/is_dir() (siehe remove_template_intro) direkt, und muss zu DEFAULT_TEMPLATE_ONLY in
 # update-template.py passen (kein Import zwischen den Scripten, siehe dort).
-TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev"]
+TEMPLATE_ONLY_PATHS = [".github/README.md", ".templatedev", ".claude/skills/act-process-feedback"]
 
 # Fest verdrahtete Pfadlisten, deren Eintraege nach einer Umbenennung/Verschiebung veraltet sein koennen
 # (siehe check_stale_remove_paths) - ohne Gegenprobe faellt so etwas erst auf, wenn der jeweilige
@@ -576,7 +576,7 @@ def cmd_dry_run(root: Path) -> int:
         lines.append(f"Code-Analyse: \"{code_analyse_unbekannt}\" ist kein bekannter Wert - --apply bricht "
                      "damit ab. Erlaubt: nein, vorschlagen, fragen.")
     else:
-        lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
+        lines.append("Code-Analyse (nur Weg 2 /act-apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
 
     lines.append("")
     if code_opt_unbekannt:
@@ -605,7 +605,7 @@ def cmd_dry_run(root: Path) -> int:
         lines.append(f"Struktur-Migration: \"{struktur_migration_unbekannt}\" ist kein bekannter Wert - "
                       "--apply bricht damit ab. Erlaubt: ja, nein, fragen.")
     else:
-        lines.append("Struktur-Migration (nur Weg 2 /apply-template): "
+        lines.append("Struktur-Migration (nur Weg 2 /act-apply-template): "
                       + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")
     if alter_name:
@@ -817,13 +817,13 @@ def cmd_apply(root: Path) -> int:
     lines.append(f"Wartungsberichte: {wartungsberichte_status}")
     if wartungsberichte == "docs":
         lines.append("  Bitte docs/maintenance/ noch in docs/README.md eintragen.")
-    lines.append("Code-Analyse (nur Weg 2 /apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
+    lines.append("Code-Analyse (nur Weg 2 /act-apply-template): " + CODE_ANALYSE_TEXT[code_analyse])
     lines.append("Code-Optimierung: " + CODE_OPTIMIERUNG_TEXT[code_opt]
                  + (" (entfernt: " + ", ".join(optimizer_entfernt) + ")" if optimizer_entfernt else "")
                  + (" - Hinweis: " + code_opt_hinweis if code_opt_hinweis else ""))
     lines.append("Coding-Guidelines: " + (", ".join(guidelines_gewaehlt) if guidelines_gewaehlt else "keine")
                  + (" (entfernt: " + ", ".join(guidelines_entfernt) + ")" if guidelines_entfernt else ""))
-    lines.append("Struktur-Migration (nur Weg 2 /apply-template): "
+    lines.append("Struktur-Migration (nur Weg 2 /act-apply-template): "
                   + STRUKTUR_MIGRATION_TEXT[struktur_migration])
     alter_name = cfg.get("alter_orchestrator_name")
     if alter_name:
@@ -842,7 +842,7 @@ def cmd_apply(root: Path) -> int:
         for entry in remaining:
             lines.append(f"  {entry}")
     else:
-        lines.append("Offene Platzhalter: keine (ausser den bekannten Fundstellen in checklists.md/create-project SKILL.md).")
+        lines.append("Offene Platzhalter: keine (ausser den bekannten Fundstellen in checklists.md/act-create-project SKILL.md).")
 
     lines.append("")
     lines.append("AI-CONFIG-Abschnitte (Hinweis fuer die Doku-Befuellung durch den Skill):")

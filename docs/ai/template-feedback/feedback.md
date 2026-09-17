@@ -5,7 +5,7 @@ deine Antworten zusammengefasst ans Ende dieser Datei gehängt und die Fragen wi
 das nächste Mal bereitstehen.
 
 Nichts davon ist Pflicht. Eine beantwortete Frage reicht, und auch gar nichts ist eine Antwort.
-Kürzester Weg für einen einzelnen Gedanken: `/feedback <dein Satz>` — das geht sofort raus, ohne diese Datei.
+Kürzester Weg für einen einzelnen Gedanken: `/act-feedback <dein Satz>` — das geht sofort raus, ohne diese Datei.
 
 **Ein Maßstab gilt überall:** Beschreibe das **Muster**, nicht dein Projekt. Kein Projektname, keine Pfade,
 kein Code, keine Kundennamen, keine Zahlen aus dem Projekt. Der Filter lehnt so etwas ohnehin ab, aber besser,

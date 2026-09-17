@@ -40,7 +40,7 @@ Projekts bekommen. Tabelle statt Fließtext, damit man ohne Öffnen jeder Datei 
 | `docs/ai/resources.md` | Quellen zu Agentic Coding (Einstieg, Werkzeuge, News, Grenzen) | 2026-09-13¹ | zum Einlesen ins Thema |
 
 ¹ Diese Datei pflegt das Template, nicht das Projekt — der Stand ist deshalb der des Templates und
-wird von `/update-template` nachgezogen, nicht beim Anlegen gesetzt.
+wird von `/act-update-template` nachgezogen, nicht beim Anlegen gesetzt.
 
 **Datenstand ohne Kopfzeile:** Trägt eine Datei keine eigene `> Datenstand:`-Zeile (generierte Datei,
 Fremdformat, sehr kurze Datei), bekommt ihr Eintrag hier eine hochgestellte Ziffer und darunter eine Fußnote

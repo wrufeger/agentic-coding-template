@@ -40,7 +40,7 @@ wenn T1–T3 committet und gepusht sind:
     nach ausdrücklicher Zustimmung an.
   Schritte:
   1. Konzept: Zielbranch-Ermittlung (gespeicherter Wert, sonst `development`/`develop`/`main`), Ablageort
-     des Werts, Ablauf der Zustimmung, Abgrenzung zu `/commit` und `/release`.
+     des Werts, Ablauf der Zustimmung, Abgrenzung zu `/act-commit` und `/act-release`.
   2. Nach Entscheidung Skill bauen, an einem Testprojekt mit echtem Remote belegen.
   Offen: T1.
   Entschieden: Vorschau plus „ja" je Aktion, `AGENTS.md` wird ergänzt (Q10); GitLab und GitHub (Q11).
@@ -60,15 +60,15 @@ wenn T1–T3 committet und gepusht sind:
 
 - [ ] **T5 · Template-Entwicklung als normales Projekt führen**
   Ziel: Die Arbeit am Template folgt denselben KI-Regeln und derselben Ordnerstruktur wie ein per
-    `/create-project` angelegtes Projekt (u. a. Formregeln für Fragen und Aufgaben) und lässt sich per
-    `/update-template` aktualisieren; die Sonderfälle „noch nicht initialisiert" entfallen möglichst ganz.
+    `/act-create-project` angelegtes Projekt (u. a. Formregeln für Fragen und Aufgaben) und lässt sich per
+    `/act-update-template` aktualisieren; die Sonderfälle „noch nicht initialisiert" entfallen möglichst ganz.
   Schritte:
   1. Konzept `.templatedev/concept-project-structure.md` zur Variante aus Q7: welche Sonderfälle entfallen
      (103 Stellen in `.claude/scripts/`), welche geerbten Root-Skills in `.templatedev/` überschrieben oder
-     gesperrt werden müssen (z. B. `/finalize`, `/create-project`), wie der Abgleich der Struktur läuft.
+     gesperrt werden müssen (z. B. `/act-finalize`, `/act-create-project`), wie der Abgleich der Struktur läuft.
   2. Nach Entscheidung in Teilaufgaben schneiden; Inhalte übernehmen (Backlog, Fragen, Journal, Regeln) und
      `questions.md`/`tasks.md` auf die Formregeln aus `docs/ai/README.md` bringen.
-  3. Beleg: `/update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
+  3. Beleg: `/act-update-template` im neuen Projekt und in `bandliste`, `check-refs.py` ohne tote Verweise.
   Entschieden: gerenderte Kopie der Regeln (Q12); Standardorte, englische Namen, Template-Ordner
     `docs/project/konzepte/` → `concepts/` mit Prüfung aller Verweise (Q13); drei Zeilen im Root (Q14);
     kein Pflege-Modus-Schalter (Q15, Backlog-Punkt 35). Konzept: `concept-project-structure.md`.

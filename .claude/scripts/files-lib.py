@@ -92,9 +92,12 @@ OPTIMIZER_REMOVE_PATHS = [".claude/agents/optimizer.md"]
 # tolerant, siehe remove_maintenance_files).
 MAINTENANCE_REMOVE_PATHS = [
     ".claude/maintenance",
-    ".claude/skills/run-maintenance",
+    ".claude/skills/act-run-maintenance",
     ".claude/agents/maintenance-orchestrator.md",
     ".claude/scripts/maintenance-check.py",
+    # Altname vor act-Praefix, 2026-09-17: faengt Projekte ab, die den Umbenennungs-Merge noch nicht
+    # eingespielt haben.
+    ".claude/skills/run-maintenance",
 ]
 
 # Gleicher Hinweistext wie _HINWEIS in maintenance-check.py (dort massgeblich) - hier dupliziert, weil

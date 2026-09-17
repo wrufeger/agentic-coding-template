@@ -6,7 +6,7 @@ Sammlung geprüfter Quellen rund um die Zusammenarbeit mit KI-Assistenten in der
 Ansatz ist, wie man einsteigt, welche Werkzeuge es gibt, wo man Neues erfährt und was die bekannten Grenzen
 sind. Gedacht für alle, die in diesem Projekt mitarbeiten und den Hintergrund brauchen.
 
-**Diese Datei pflegt das Template**, nicht das Projekt. `/update-template` zieht die jeweils aktuelle Fassung
+**Diese Datei pflegt das Template**, nicht das Projekt. `/act-update-template` zieht die jeweils aktuelle Fassung
 nach (`docs/ai/checklists.md` § „Template-Update"). Eigene Fundstellen deshalb unten unter „Eigene Quellen
 dieses Projekts" ergänzen — dieser Abschnitt bleibt beim Aktualisieren unberührt. Alle Links wurden am
 2026-09-13 abgerufen.
@@ -97,7 +97,7 @@ Was daraus für dieses Projekt folgt, steht in `AGENTS.md` § „Umgang mit Sich
 
 ## Eigene Quellen dieses Projekts
 
-*(hier eigene Fundstellen ergänzen — bleibt bei `/update-template` unberührt)*
+*(hier eigene Fundstellen ergänzen — bleibt bei `/act-update-template` unberührt)*
 
 > **Links aus diesem Abschnitt werden mitgeteilt**, wenn die freiwillige Rückmeldung eingeschaltet ist
 > (`AI-CONFIG.md` § `Feedback`, standardmäßig **aus**). Gesendet werden nur Adresse, Titel und ein Satz,

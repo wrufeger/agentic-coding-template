@@ -3,7 +3,7 @@
 #
 # Zweck: Bestandsaufnahme eines beliebigen Codebaums - Umfang und Struktur messen, ohne dass ein Sub-Agent
 #        (z. B. `explorer`) tausende Dateien lesen muss. Nuetzlich beim Uebernehmen eines fremden Projekts
-#        oder beim Nachruesten (`/apply-template`): Zahlen statt Vermutungen. Liefert Zeilen je Verzeichnis
+#        oder beim Nachruesten (`/act-apply-template`): Zahlen statt Vermutungen. Liefert Zeilen je Verzeichnis
 #        und je Dateityp, trennt Code von Markdown/Konfiguration, zaehlt TODO/FIXME/HACK/XXX-Markierungen
 #        und listet die groessten Einzeldateien. Allgemeine Weiterentwicklung von legacy-inventory.py
 #        (Projekt "bandliste", dort auf eine feste alte PHP-Struktur zugeschnitten).

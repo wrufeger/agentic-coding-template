@@ -29,7 +29,7 @@ angeboten (Checkliste „Einrichtung abschließen").
 
 | Womit | Befehl |
 | :--- | :--- |
-| Ein Satz, sofort und immer möglich | „Feedback: <Text>" · „Schicke Feedback <Text>" · `/feedback <Text>` — oder direkt `python .claude/scripts/feedback.py --direkt "<Text>"` |
+| Ein Satz, sofort und immer möglich | „Feedback: <Text>" · „Schicke Feedback <Text>" · `/act-feedback <Text>` — oder direkt `python .claude/scripts/feedback.py --direkt "<Text>"` |
 | Zustand ansehen | `python .claude/scripts/feedback.py --status` |
 | Sehen, was gesendet würde | `python .claude/scripts/feedback.py --plan` |
 | Abschalten | `python .claude/scripts/feedback.py --disable` |

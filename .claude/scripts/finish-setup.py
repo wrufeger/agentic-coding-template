@@ -13,7 +13,7 @@
 #       Fuehrt die Aufraeumung tatsaechlich aus.
 #   python .claude/scripts/finish-setup.py --check [--quiet]
 #       Fuer den SessionStart-Hook (.claude/settings.json): erinnert daran, dass der Abschluss (Skill
-#       `/finalize`) noch aussteht. Faellig = `.claude/template.json` hat kein `setup_complete: true` UND
+#       `/act-finalize`) noch aussteht. Faellig = `.claude/template.json` hat kein `setup_complete: true` UND
 #       mindestens eine Datei/ein Ordner aus REMOVE_ITEMS liegt noch im Repo. Faellig -> kurze Erinnerung
 #       (2-3 Zeilen) auf stdout, Exit 3. Nicht faellig (setup_complete bereits true, nichts mehr aus
 #       REMOVE_ITEMS vorhanden, template.json fehlt/kaputt, oder Template-Checkout selbst) -> KEINE Ausgabe,
@@ -29,16 +29,17 @@
 # Entfernt (jeweils nur, wenn vorhanden - fehlende Eintraege sind kein Fehler):
 #   .claude/scripts/create-project.py, .claude/scripts/apply-template.py,
 #   .claude/scripts/migrate-project.py, .claude/scripts/install-global.py,
-#   .claude/skills/create-project/, .claude/skills/apply-template/, .claude/skills/finalize/ (der Skill,
-#   der dieses Script aufruft - danach zeigt er ins Leere),
+#   .claude/skills/act-create-project/, .claude/skills/act-apply-template/, .claude/skills/act-finalize/
+#   (der Skill, der dieses Script aufruft - danach zeigt er ins Leere; zusaetzlich die alten,
+#   unpraefigierten Ordnernamen als Uebergang fuer Projekte vor dem act-Praefix, siehe REMOVE_ITEMS),
 #   .claude/TEMPLATE-LICENSE (nur wenn das Projekt eine eigene LICENSE/LICENSE.md/LICENSE.txt hat - sonst
 #   bleibt sie liegen und wird gemeldet), sich selbst (.claude/scripts/finish-setup.py, immer zuletzt).
 #   Getrackte Dateien/Ordner werden per "git rm" entfernt, sonst per Dateisystem (shutil/Path.unlink).
 #   Ist das Repo gar nicht unter Git, wird das gemeldet und komplett auf dem Dateisystem gearbeitet.
 #
 # Bleibt ausdruecklich unangetastet: update-template.py, sync-config.py, guidelines.py, ai-log.py,
-#   setup-lib.py, rename-lib.py, maintenance-check.py, die Skills update-template/commit/audit-docs, sowie
-#   alles unter docs/, was Projektinhalt ist. Dieses Script ruehrt keine dieser Dateien an.
+#   setup-lib.py, rename-lib.py, maintenance-check.py, die Skills act-update-template/act-commit/act-audit-docs,
+#   sowie alles unter docs/, was Projektinhalt ist. Dieses Script ruehrt keine dieser Dateien an.
 #
 # Weitere Schritte:
 #   - .claude/template.json: setzt "setup_complete": true und "setup_completed_at": "<heute, YYYY-MM-DD>".
@@ -89,9 +90,14 @@ REMOVE_ITEMS = [
     (".claude/scripts/apply-template.py", "file"),
     (".claude/scripts/migrate-project.py", "file"),
     (".claude/scripts/install-global.py", "file"),
+    (".claude/skills/act-create-project", "dir"),
+    (".claude/skills/act-apply-template", "dir"),
+    # Der Skill, der dieses Script aufruft - nach dem Abschluss zeigt er ins Leere und muss mit weg.
+    (".claude/skills/act-finalize", "dir"),
+    # Altname vor act-Praefix, 2026-09-17: faengt Projekte ab, die den Umbenennungs-Merge noch nicht
+    # eingespielt haben und die Skill-Ordner noch unter dem alten Namen liegen haben.
     (".claude/skills/create-project", "dir"),
     (".claude/skills/apply-template", "dir"),
-    # Der Skill, der dieses Script aufruft - nach dem Abschluss zeigt er ins Leere und muss mit weg.
     (".claude/skills/finalize", "dir"),
 ]
 TEMPLATE_LICENSE_REL = ".claude/TEMPLATE-LICENSE"
@@ -413,7 +419,7 @@ def cmd_check(root: Path, quiet: bool) -> int:
         return 0
     print("Einrichtung noch nicht abgeschlossen: Einrichtungswerkzeuge liegen noch im Projekt.")
     print(f"{remaining} Einrichtungsdatei(en)/-ordner betroffen.")
-    print("Alles fertig? Mit /finalize abschliessen - das entfernt sie.")
+    print("Alles fertig? Mit /act-finalize abschliessen - das entfernt sie.")
     return 3
 
 
@@ -499,7 +505,7 @@ def run(root: Path, plan: bool) -> int:
 
     kept.append(
         "update-template.py, sync-config.py, guidelines.py, ai-log.py, setup-lib.py, rename-lib.py, "
-        "maintenance-check.py sowie die Skills update-template/commit/audit-docs (unangetastet)"
+        "maintenance-check.py sowie die Skills act-update-template/act-commit/act-audit-docs (unangetastet)"
     )
 
     if plan:

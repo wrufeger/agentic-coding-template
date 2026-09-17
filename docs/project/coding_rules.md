@@ -33,7 +33,7 @@ Generische Regeln gelten sofort; der Abschnitt „Stack-spezifisch" wird beim An
   Orchestrator eine **Frage** in `docs/ai/questions.md` an (aufteilen, kürzen oder so lassen? — mit
   Empfehlung) und nach der Entscheidung eine **Aufgabe im Backlog** (`docs/ai/backlog.md`): entflechten,
   kürzen oder in mehrere Dateien teilen. Nicht im laufenden Auftrag nebenbei umbauen — das ist ein eigener
-  Umbau mit eigenem Testnetz (Skill `/refactor`).
+  Umbau mit eigenem Testnetz (Skill `/act-refactor`).
 
 ## Vorgefertigte Regelsätze
 

@@ -3,7 +3,7 @@
 # Template-Pflege als eigenes Projekt in `.templatedev/`
 
 **Leitfrage:** Wie wird `.templatedev/` ein Projekt mit derselben Struktur und denselben KI-Regeln wie ein per
-`/create-project` angelegtes — ohne dass der Root seine Rolle als Template verliert? (T5, Variante a aus `Q7`)
+`/act-create-project` angelegtes — ohne dass der Root seine Rolle als Template verliert? (T5, Variante a aus `Q7`)
 
 **Aufwand:** ~1,5 PT in fünf Schritten, siehe unten.
 
@@ -66,10 +66,10 @@ Weniger Sonderfälle als erhofft: Der Gewinn liegt in Struktur und Formregeln, n
    SessionStart-Hook meldet Abweichungen. Sperr-Skills anlegen.
 4. **Root aufräumen** (0,25 PT): Blöcke in `AGENTS.md`/`CLAUDE.md` kürzen (`Q14`), `.templatedev`-Sonderpfade
    aus `check-refs.py`, `testprojekte`-Scripte auf festen Root umstellen.
-5. **Beleg:** Pflege-Sitzung in `.templatedev/` mit Fragen und `/commit`; `/create-project` in einem
+5. **Beleg:** Pflege-Sitzung in `.templatedev/` mit Fragen und `/act-commit`; `/act-create-project` in einem
    Wegwerf-Klon entfernt `.templatedev/` weiterhin vollständig.
 
-**Stolperstein `/commit`:** Die Sitzung liegt nicht im Git-Root — Pathspecs sind relativ zu `.templatedev/`.
+**Stolperstein `/act-commit`:** Die Sitzung liegt nicht im Git-Root — Pathspecs sind relativ zu `.templatedev/`.
 Änderungen am Template (`../.claude/…`) müssen mit `../` angegeben werden; Schritt 5 prüft genau das.
 
 ## Pflege-Modus im Root (Wunsch 2026-09-17, zurückgestellt — Backlog-Punkt 35)
@@ -112,7 +112,7 @@ Schalter in `.env`, z. B. `TEMPLATEDEV_MODE=ein`: Eine Sitzung im Root verhält 
 - **Ablage (`Q13` b):** Standardorte mit englischen Namen; zusätzlich heißt `docs/project/konzepte/` im
   Template künftig `docs/project/concepts/` — alle Links, Erwähnungen und Referenzen werden geprüft.
   Abgeleitete Projekte (`bandliste`) behalten eigene Konzepte zunächst im alten Ordner; der Umzug dort ist
-  ein Hinweis beim nächsten `/update-template`.
+  ein Hinweis beim nächsten `/act-update-template`.
 - **Root (`Q14` a):** drei Zeilen Hinweis statt der Blöcke.
 - **Pflege-Modus (`Q15` c):** kein Schalter; Idee als Backlog-Punkt 35.
 - **Wechsel der Sitzung:** bis einschließlich Schritt 4 wird im Root gearbeitet; erst für den Beleg in

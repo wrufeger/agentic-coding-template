@@ -13,7 +13,7 @@
 #        schlaegt vor, sie nach docs/ai/<template-name> zu verschieben; erkennt Dateien, die im Ziel UND im
 #        Template existieren und sich inhaltlich unterscheiden (Zusammenfuehren noetig); erkennt einen im
 #        Projekt fest verwendeten Orchestrator-Rufnamen (z.B. "Fable") und kann ihn projektweit durch den
-#        neuen Namen ersetzen. Siehe .claude/skills/apply-template/SKILL.md,
+#        neuen Namen ersetzen. Siehe .claude/skills/act-apply-template/SKILL.md,
 #        docs/ai/checklists.md § "Projekt nachruesten". Reine Python-Stdlib, kein Paket noetig.
 #
 # Aufruf:

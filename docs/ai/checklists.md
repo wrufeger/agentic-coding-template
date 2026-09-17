@@ -161,7 +161,7 @@ was sich angesammelt hat, und sichert das Ergebnis.
    der dieses Projekt nie sehen wird? Das **Muster**, nicht der Fall. Gesendet wird gesammelt, höchstens
    einmal je Woche; ist die Rückmeldung aus, entfällt der Schritt ersatzlos.
    Davon unberührt: {{AUFTRAGGEBER}} kann jederzeit selbst einen Satz schicken — „Feedback: <Text>",
-   „Schicke Feedback <Text>" oder `/feedback <Text>`. Das geht auch bei ausgeschalteter Rückmeldung und
+   „Schicke Feedback <Text>" oder `/act-feedback <Text>`. Das geht auch bei ausgeschalteter Rückmeldung und
    dann anonym, ohne Projekt-Kennung.
 9. **Logging** (falls eingeschaltet, `AGENTS.md` § Logging): Commit als
    `[orchestrator] [commit] <hash> <message>` schreiben — das Log ist Mitschnitt, kein Ersatz für Journal
@@ -373,7 +373,7 @@ Idee, das Formular `AI-CONFIG.md` deckt beides ab:
 2. `python .claude/scripts/create-project.py --dry-run` ausführen, Plan (Werte, zu entfernende Dateien,
    Logging-Schalter, offene Platzhalter) gegen {{AUFTRAGGEBER}} prüfen.
 3. `python .claude/scripts/create-project.py --apply` ausführen: ersetzt Platzhalter im ganzen Repo (außer
-   `AI-CONFIG.md`, `docs/ai/checklists.md`, `.claude/skills/create-project/SKILL.md`), entfernt nicht genutzte
+   `AI-CONFIG.md`, `docs/ai/checklists.md`, `.claude/skills/act-create-project/SKILL.md`), entfernt nicht genutzte
    Werkzeug-Dateien (nur wenn `KI-Werkzeuge` gesetzt ist), setzt `AI_LOG`/`AI_LOG_LEVEL` in `AGENTS.md` und
    schreibt die Werte (und bei vorhandenem Remote `template` den Basis-Commit) in `.claude/template.json`.
 4. Aus den `AI-CONFIG.md`-Abschnitten befüllen: `docs/project/project_description.md` (Ziel, Nutzer, Scope aus
@@ -463,7 +463,7 @@ nachträglich bekommen soll:
 11. Commit per Pathspec nach Freigabe.
 12. `python .claude/scripts/update-template.py --graft` ausführen (nach Freigabe) — stellt per leerem
    Merge-Commit eine gemeinsame Historie mit dem Template her, ohne den Arbeitsbaum zu verändern;
-   Voraussetzung für spätere `/update-template`-Läufe.
+   Voraussetzung für spätere `/act-update-template`-Läufe.
 13. **Einrichtung abschließen**, sobald {{AUFTRAGGEBER}} das ausdrücklich sagt — nicht automatisch an dieser
     Stelle: einmal fragen, ob die Einrichtung abgeschlossen ist oder noch etwas kommt (Checkliste
     „Einrichtung abschließen" unten). Bei „abgeschlossen" die dortigen Schritte ausführen; bei „noch nicht"

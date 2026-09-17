@@ -14,8 +14,8 @@ Zugänge erkennen (T1), PR/MR vorbereiten und anlegen (T2), Issues anzeigen, anl
   fest — eingerichtet wird von Hand (Backlog-Punkt 25 will das automatisieren).
 - **Niemand prüft, ob ein Zugang wirklich geht.** Kein Script ruft `claude mcp list`, `gh auth status` o. Ä. auf.
 - **Keine Schlüssel** für Zielbranch, Branch-Schema oder Issue-Tracker in `AI-CONFIG.md`.
-- **Kein Skill fasst Branches, Push oder Remote an.** `/commit` committet nur lokal, `/release` taggt nur.
-  Andockstellen: `/prepare` (Zuschnitt in Aufgaben/Story), Checkliste „Idee oder Änderungswunsch aufnehmen".
+- **Kein Skill fasst Branches, Push oder Remote an.** `/act-commit` committet nur lokal, `/act-release` taggt nur.
+  Andockstellen: `/act-prepare` (Zuschnitt in Aufgaben/Story), Checkliste „Idee oder Änderungswunsch aufnehmen".
 - **Schreibzugriffe nach außen** fallen unter `AGENTS.md` § „Zugriff auf laufende Systeme": Lesen frei,
   Schreiben nur mit Freigabe, Vorschau vorher, wiederkehrend über ein geprüftes Script.
 - **Rückmeldung passt schon:** `feedback.py --add --art fehler|mcp` gibt es; keine neue Kategorie nötig.
@@ -69,7 +69,7 @@ Skill `/issue` mit Sätzen statt Unterbefehlen:
   1. Issue lesen, Art bestimmen (Label/Typ `bug` → `bugfix/`, sonst `feature/`), Branch
      `<art>/<nummer>-<kurztitel>` vom Zielbranch anlegen (lokal, kein Push).
   2. Zusammenfassung und Arbeitsauftrag zeigen.
-  3. Ablauf „Block vorbereiten" (`/prepare`): Bestand, Zuschnitt in `T<n>` (je mit Zeile `Issue: <Link>`),
+  3. Ablauf „Block vorbereiten" (`/act-prepare`): Bestand, Zuschnitt in `T<n>` (je mit Zeile `Issue: <Link>`),
      bei Größerem eine Story; offene Punkte in **einem** Fragenblock; Aufgaben für den Entwickler erst,
      wenn sie ausführbar sind (Backlog-Punkt 33).
   4. Backlog und Doku nachziehen; zum Schluss Hinweis auf `/pr`.

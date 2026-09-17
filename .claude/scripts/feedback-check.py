@@ -111,7 +111,7 @@ def main() -> int:
     if faellig:
         was = f"{wartend} Eintrag/Eintraege warten" if wartend else "noch nichts gesammelt"
         print(f"Rueckmeldung ans Template waere faellig ({arbeitstage} Arbeitstage seit der letzten "
-              f"Sendung, {was}). Ansehen: /feedback - oder ein Satz genuegt: /feedback <Text>.")
+              f"Sendung, {was}). Ansehen: /act-feedback - oder ein Satz genuegt: /act-feedback <Text>.")
     return 0
 
 

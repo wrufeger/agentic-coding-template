@@ -11,8 +11,8 @@
 #   - Agenten (`.claude/agents/*.md`, ALLE acht) - Rollen wie "Builder" oder "Reviewer" sind an sich
 #     projektunabhaengig; welche Datei ein einzelner Agent referenziert (docs/ai/, docs/project/, eigene
 #     Scripte) ist Sache des jeweiligen Projekts und wird unten je Datei gemeldet, nicht ausgefiltert.
-#   - Skills: NUR `/commit` und `/audit-docs`. Die uebrigen (`create-project`, `apply-template`,
-#     `update-template`, `run-maintenance`) rufen Scripte auf, die es ausserhalb eines Template-Checkouts/
+#   - Skills: NUR `/act-commit` und `/act-audit-docs`. Die uebrigen (`act-create-project`, `act-apply-template`,
+#     `act-update-template`, `act-run-maintenance`) rufen Scripte auf, die es ausserhalb eines Template-Checkouts/
 #     -Projekts gar nicht gibt (`create-project.py`, `apply-template.py`, `update-template.py`,
 #     `maintenance-check.py`) - global angeboten waeren sie nur totes Menue.
 #   - Ein Board, eine Aufgabenliste oder Checklisten fuer alle Projekte gleichzeitig ergeben keinen Sinn
@@ -91,7 +91,7 @@ NEUTRAL_FALLBACK = {
 }
 
 # Nur diese beiden Skills sind ohne die Scripte des Templates sinnvoll (siehe Kopfkommentar).
-SKILL_ITEMS = ["commit", "audit-docs"]
+SKILL_ITEMS = ["act-commit", "act-audit-docs"]
 
 REFERENCE_MARKERS = [
     "docs/ai/",
@@ -129,7 +129,7 @@ klar umrissene Teilaufgaben. Unabhängige Teilaufgaben parallel starten, nicht n
 
 Installiert von `install-global.py` aus dem Template „Agentic Coding" — Stand/Herkunft in
 `~/.claude/.template-global.json`. Aus demselben Grund liegen dort auch Rollen (`~/.claude/agents/`) und die
-Skills `/commit`+`/audit-docs` (`~/.claude/skills/`); was diese jeweils projektintern voraussetzen (z. B.
+Skills `/act-commit`+`/act-audit-docs` (`~/.claude/skills/`); was diese jeweils projektintern voraussetzen (z. B.
 `docs/ai/`), gilt nur in Projekten, die selbst mit dem Template arbeiten.
 """
 
@@ -237,7 +237,7 @@ def find_reference_markers(text: str):
 # Agenten, die global NICHT angeboten werden: Sie arbeiten nach Dateien, die nur ein Projekt aus diesem
 # Template hat. Dieselbe Begruendung wie bei den uebersprungenen Skills (siehe SKILL_ITEMS) - der
 # maintenance-orchestrator laeuft nach `.claude/maintenance/status.json`, ohne die Datei hat er keinen
-# Auftrag, und sein Skill `/run-maintenance` wird global ohnehin nicht mitinstalliert.
+# Auftrag, und sein Skill `/act-run-maintenance` wird global ohnehin nicht mitinstalliert.
 AGENTS_SKIP = {"maintenance-orchestrator"}
 
 

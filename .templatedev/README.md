@@ -25,7 +25,7 @@ fehlende Automatisierung, entgleiste Worker-Läufe —, ist ein Befund über das
 aufgenommen, nicht nur im Projekt behoben.
 
 **Template-Entwicklung** (dieses Projekt) ist das Referenzprojekt für **Neues Projekt** (Weg 1): Es ist selbst
-per `/create-project` aus dem Template entstanden und zieht Template-Änderungen per `/update-template` nach.
+per `/act-create-project` aus dem Template entstanden und zieht Template-Änderungen per `/act-update-template` nach.
 Was hier beim Arbeiten stört, ist ebenfalls ein Befund über das Template — siehe
 `docs/project/architecture.md` § Kreislauf.
 

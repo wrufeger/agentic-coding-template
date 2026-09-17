@@ -792,11 +792,11 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
         print(f"Abbruch: Feedback ist aus ({CONFIG_REL}).", file=sys.stderr)
         return 2
     if modus == "manuell" and not force:
-        print("Nichts gesendet: Feedback steht auf 'manuell' - Versand nur ueber /feedback (--force).")
+        print("Nichts gesendet: Feedback steht auf 'manuell' - Versand nur ueber /act-feedback (--force).")
         return 0
     stunden_min = TAKT_STUNDEN.get(takt)
     if stunden_min is None and not force:
-        print("Nichts gesendet: Takt steht auf 'manuell' - Versand nur ueber /feedback (--force).")
+        print("Nichts gesendet: Takt steht auf 'manuell' - Versand nur ueber /act-feedback (--force).")
         return 0
     stunden = _tage_seit(fb.get("zuletzt_gesendet")) * 24.0
     if stunden_min is not None and stunden < stunden_min and not force:
@@ -970,7 +970,7 @@ def _run(argv) -> int:
     parser.add_argument("--ausfuellart", default=None, choices=["leer", "interview", "config"],
                         help="mit --enable: wie AI-CONFIG.md befuellt wurde")
     parser.add_argument("--force", action="store_true",
-                        help="mit --send: Takt- und Modus-Sperre uebergehen (das tut /feedback)")
+                        help="mit --send: Takt- und Modus-Sperre uebergehen (das tut /act-feedback)")
     parser.add_argument("--yes", action="store_true",
                         help="mit --send und Modus 'bestaetigen': nach Ansicht tatsaechlich senden")
     parser.add_argument("--modus", default=None,

@@ -55,7 +55,7 @@ Regelsätze lassen sich jederzeit nachladen: Kennung hier ergänzen, oder direkt
 | Commit-Verhalten | automatisch | automatisch, fragen, manuell |  | Wie der Orchestrator mit der Checkliste „Aufgabe abschließen" umgeht. |
 | Ideen-Ablauf | automatisch | automatisch, konzept, direkt |  | Was mit einer Idee oder einem Änderungswunsch passiert, bevor gebaut wird. |
 | Schreibstil | kurz | kurz, normal, ausführlich |  | Wie ausführlich Fragen, Aufgaben, Journal und Antworten formuliert werden. |
-| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie **von selbst** gesendet wird. Eine von Hand geschriebene Nachricht (`/feedback <Text>`) geht immer, auch bei `aus`. |
+| Feedback | aus | aus, bestaetigen, automatisch, manuell |  | Freiwillige Rückmeldung an den Template-Autor — ob und wie **von selbst** gesendet wird. Eine von Hand geschriebene Nachricht (`/act-feedback <Text>`) geht immer, auch bei `aus`. |
 | Feedback-Takt | woechentlich | manuell, sofort, stuendlich, taeglich, woechentlich, adaptiv, automatisch |  | Wie oft höchstens gesendet wird. Wirkt nur, wenn `Feedback` nicht `aus` oder `manuell` ist. `adaptiv` richtet sich danach, wie oft am Projekt gearbeitet wird. |
 | Feedback-Umfang | a,b,c | a, b, c (Kommaliste) |  | Was der Assistent **von sich aus** sammeln darf: `a` Kennzahlen aus `git log`/Dateisystem, `b` Änderungen an KI-Regeln und Doku-Struktur (als Beschreibung), `c` Werkzeug-Nutzung. Leer = nur Registrierung und selbst geschriebenes Feedback. |
 | Code-Optimierung | aus | aus, ein, intensiv |  | Politur frisch geschriebenen Codes auf Kürze und Lesbarkeit. |
@@ -75,12 +75,12 @@ Punkt, `normal` ergänzt einen Satz Begründung dort, wo er trägt, `ausführlic
 nachvollziehbar — sinnvoll, wenn jemand mitliest, der das Projekt nicht kennt.
 Zum Feedback: `aus` ist der Standard — ohne ausdrückliche Entscheidung verlässt nichts das Projekt.
 `bestaetigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt; `automatisch` sendet ohne
-Rückfrage; `manuell` sendet nur auf Aufruf von `/feedback`. Protokolliert wird in jedem Fall unter
+Rückfrage; `manuell` sendet nur auf Aufruf von `/act-feedback`. Protokolliert wird in jedem Fall unter
 `docs/ai/template-feedback/` — standardmäßig versioniert, auf Wunsch per `.gitignore` lokal
 (`feedback.py --enable --protokoll lokal`). Was gesendet wird und was nicht, steht in `AGENTS.md`
 § „Freiwillige Rückmeldung an den Template-Autor“ — nie Dateien, nie Projektbezug, nie Namen oder
 Zahlen aus dem Projekt. Das Zusammenfassen und Filtern kostet ein paar Token zusätzlich.
-Zum Umfang: Er steuert nur, was der Assistent **selbst zusammenträgt**. Was du mit `/feedback <Text>` von
+Zum Umfang: Er steuert nur, was der Assistent **selbst zusammenträgt**. Was du mit `/act-feedback <Text>` von
 Hand schickst, geht unabhängig davon — dieser Kanal ist immer offen, auch bei `Feedback: aus`; dann enthält
 die Nachricht ausschließlich deinen Text, ohne Projekt-Kennung und ohne Kontext. Echte Dateien aus `docs/`
 sind bewusst nicht wählbar: Das widerspräche der Zusage „nie Dateien, nie Projektbezug".

@@ -27,7 +27,7 @@ _write_text_preserve_newline = _files_lib._write_text_preserve_newline
 
 
 def remove_maintenance_references(root: Path) -> dict:
-    """Entfernt bei Wartung 'aus' den Sub-Agenten-Eintrag [MAINTENANCE] und die '/run-maintenance'-Zeile aus
+    """Entfernt bei Wartung 'aus' den Sub-Agenten-Eintrag [MAINTENANCE] und die '/act-run-maintenance'-Zeile aus
     CLAUDE.md (gleiche Technik wie remove_tool_files/_remove_table_row). Wird eine Stelle nicht gefunden,
     still weitermachen - das Ergebnis wird im Bericht genannt."""
     result = {"agent_zeile": False, "skill_zeile": False, "modell_zeile": False, "baum_zeile": False}
@@ -45,7 +45,7 @@ def remove_maintenance_references(root: Path) -> dict:
         new_text = agent_pattern.sub("", new_text)
         result["agent_zeile"] = True
 
-    skill_pattern = re.compile(r"^\|\s*`/run-maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
+    skill_pattern = re.compile(r"^\|\s*`/act-run-maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
     if skill_pattern.search(new_text):
         new_text = skill_pattern.sub("", new_text)
         result["skill_zeile"] = True
@@ -160,7 +160,7 @@ def add_maintenance_references(root: Path, vorlage_text: str) -> dict:
     agent_pattern = re.compile(r"^- \*\*\[MAINTENANCE\]\*\*.*\n(?:  .+\n)*", re.MULTILINE)
     result["agent_zeile"] = restore_pattern(agent_pattern)
 
-    skill_pattern = re.compile(r"^\|\s*`/run-maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
+    skill_pattern = re.compile(r"^\|\s*`/act-run-maintenance[^\n|]*\|[^\n|]*\|[^\n|]*\|[ \t]*\n?", re.MULTILINE)
     result["skill_zeile"] = restore_pattern(skill_pattern)
 
     modell_pattern = re.compile(

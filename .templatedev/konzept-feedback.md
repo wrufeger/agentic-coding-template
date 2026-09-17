@@ -102,7 +102,7 @@ sinnlos.
 # Entschieden am 2026-09-14 (`Q1` c, `Q2` a, `Q3` b)
 
 Gewählt wurde **c) eigener Endpunkt** auf `rufeger.de`, **kein** Schlüssel in `AI-CONFIG.md` (nur die
-einmalige Frage bei `/finalize`), und die Meldung nennt die Zieladresse im Klartext.
+einmalige Frage bei `/act-finalize`), und die Meldung nennt die Zieladresse im Klartext.
 
 **Warum nicht a)**, obwohl es oben empfohlen war: Ein Issue in einem öffentlichen Repo ist für jeden lesbar,
 auch für Suchmaschinen und über die API. Eine Rückmeldung darüber, was in einem Projekt an der
@@ -188,7 +188,7 @@ erste Meldung ankommt.
 1. **Schalter in `AI-CONFIG.md`.** Die Entscheidung oben sagt „kein Schlüssel in `AI-CONFIG.md`". Inzwischen
    stehen dort zwei — `Feedback` (`aus`/`bestaetigen`/`automatisch`/`manuell`) und `Feedback-Takt` —, weil
    „ob und wie oft gesendet wird" laufend gilt und nicht nur einmal beim Abschluss. Die einmalige Frage bei
-   `/finalize` bleibt daneben bestehen; sie setzt die Schlüssel, ersetzt sie aber nicht.
+   `/act-finalize` bleibt daneben bestehen; sie setzt die Schlüssel, ersetzt sie aber nicht.
 2. **Wo das Sendeprotokoll liegt, ist jetzt eine eigene Frage.** Das Protokoll unter
    `docs/ai/template-feedback/` ist der Nachweis — in einem **öffentlichen** Projekt-Repo wäre damit
    allerdings auch die Rückmeldung öffentlich lesbar. Also wird bei der Einwilligung mitgefragt:

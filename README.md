@@ -2,7 +2,7 @@
 
 > Diese README richtet sich an Menschen (keine Vorkenntnisse über KI-Assistenten nötig). Platzhalter wie
 > `{{PROJEKTNAME}}`, `{{AUFTRAGGEBER}}`, `{{ORCHESTRATOR}}` werden beim Anlegen des Projekts aus `AI-CONFIG.md`
-> ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`, Claude Code: `/create-project`).
+> ersetzt (Checkliste „Neues Projekt" in `docs/ai/checklists.md`, Claude Code: `/act-create-project`).
 
 ## Was ist das?
 
@@ -49,13 +49,13 @@ im Projekt selbst.
 
 | Befehl | Wofür |
 | :--- | :--- |
-| `/create-project` | Neues Projekt aus `AI-CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
-| `/apply-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
-| `/update-template` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
-| `/audit-docs [project\|ai\|alle]` | Doku gegen den echten Stand prüfen und nachziehen |
-| `/commit` | Aufgabe abnehmen: archivieren, Doku-Index, Bilanz, Commit — nach **jeder** fertigen Aufgabe |
-| `/run-maintenance` | Wiederkehrende Wartung (optional, per `AI-CONFIG.md` abwählbar) |
-| `/finalize` | Einrichtung für abgeschlossen erklären: Anlege-/Nachrüst-Werkzeuge aus dem Projekt entfernen |
+| `/act-create-project` | Neues Projekt aus `AI-CONFIG.md` aufsetzen: Platzhalter ersetzen, nicht genutzte Werkzeuge entfernen, Doku befüllen |
+| `/act-apply-template` | Bestehendes Repository nachrüsten: Ist-Zustand dokumentieren, Struktur angleichen, optional Code-Review |
+| `/act-update-template` | Neuerungen aus dem Template nachziehen, eigene Anpassungen bleiben |
+| `/act-audit-docs [project\|ai\|alle]` | Doku gegen den echten Stand prüfen und nachziehen |
+| `/act-commit` | Aufgabe abnehmen: archivieren, Doku-Index, Bilanz, Commit — nach **jeder** fertigen Aufgabe |
+| `/act-run-maintenance` | Wiederkehrende Wartung (optional, per `AI-CONFIG.md` abwählbar) |
+| `/act-finalize` | Einrichtung für abgeschlossen erklären: Anlege-/Nachrüst-Werkzeuge aus dem Projekt entfernen |
 
 Ohne Claude Code funktioniert alles genauso — dann statt des Befehls den Satz sagen: „Führe die Checkliste
 Neues Projekt aus (`docs/ai/checklists.md`)."
@@ -64,7 +64,7 @@ Neues Projekt aus (`docs/ai/checklists.md`)."
 
 **Neues Projekt.** `git clone <Template-URL> <projekt>`, dann
 `cd <projekt> && git remote rename origin template && git remote add origin <eigene-Repo-URL>`. Danach
-`AI-CONFIG.md` ausfüllen (oder leer lassen) und `/create-project` starten. In `AI-CONFIG.md` stehen auch die Schalter
+`AI-CONFIG.md` ausfüllen (oder leer lassen) und `/act-create-project` starten. In `AI-CONFIG.md` stehen auch die Schalter
 für das Modell der Hauptsession, das Agenten-Logging und die Wartung.
 
 **Später etwas ändern?** Einfach in `AI-CONFIG.md` ändern. Die Datei wirkt laufend: Der Assistent liest sie
@@ -75,10 +75,10 @@ Von Hand: `python .claude/scripts/sync-config.py --check` und `--apply`.
 
 *Ohne Klon:* Wer im Template-Checkout bleiben will, legt einen Branch an (`git switch -c projekt/<name>`) —
 das Projekt entsteht dann als Branch, Updates kommen später per Merge aus `main`. Auf `main` selbst bricht
-`/create-project` ab, damit das Template seine Platzhalter behält.
+`/act-create-project` ab, damit das Template seine Platzhalter behält.
 
 **Bestehendes Projekt.** `python .claude/scripts/apply-template.py --target <ziel-repo>` kopiert die
-Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/apply-template`: Der Assistent
+Grundausstattung, ohne etwas zu überschreiben. Dann im Ziel-Repo `/act-apply-template`: Der Assistent
 dokumentiert den Ist-Zustand, schlägt die Struktur-Migration vor (vorhandene KI-Ordner wandern nach
 `docs/ai/`, der bisherige Rufname des Assistenten wird projektweit ersetzt, Regeldateien werden
 zusammengeführt — dazu zählen auch Regeldateien anderer KI-Werkzeuge wie `.clinerules` oder `.cursorrules`,
@@ -88,16 +88,16 @@ Updates funktionieren.
 
 **Einrichtung abschließen.** Beide Wege enden mit einer Rückfrage, ob die Einrichtung damit fertig ist oder
 noch etwas kommt. Bei „fertig" verschwinden die Werkzeuge zum Anlegen/Nachrüsten wieder aus dem Projekt
-(`/finalize`, Checkliste „Einrichtung abschließen"); bei „noch nicht" bleibt alles liegen, bis
+(`/act-finalize`, Checkliste „Einrichtung abschließen"); bei „noch nicht" bleibt alles liegen, bis
 {{AUFTRAGGEBER}} den Abschluss später auslöst — ein Hinweis bei jedem Sitzungsstart erinnert so lange daran.
 
 ## Global statt nur in diesem Projekt
 
-Beim Anlegen (`/create-project`) oder Nachrüsten (`/apply-template`) bietet der Assistent zusätzlich an, Teile
+Beim Anlegen (`/act-create-project`) oder Nachrüsten (`/act-apply-template`) bietet der Assistent zusätzlich an, Teile
 der Grundausstattung nach `~/.claude/` zu legen — dann gelten sie in **allen** Projekten dieses Rechners, auch
 in solchen ohne dieses Template (Claude Code hängt `~/.claude/CLAUDE.md` an die projekteigene an und liest
 `~/.claude/agents/`, `~/.claude/skills/` automatisch mit; bei gleichem Namen gewinnt die Projektfassung).
-Global gehen nur die Agenten-Rollen, die Skills `/commit`+`/audit-docs` und optional ein kurzer Regelauszug
+Global gehen nur die Agenten-Rollen, die Skills `/act-commit`+`/act-audit-docs` und optional ein kurzer Regelauszug
 als `~/.claude/CLAUDE.md` (Mechanik: `python .claude/scripts/install-global.py --plan`/`--apply`, Steuerung
 über `AI-CONFIG.md` § „Globale Ablage"). **Nicht** global: `docs/ai/`, `docs/project/` und alles andere
 Projektgebundene — ein Board oder eine Aufgabenliste für alle Projekte gleichzeitig ergibt keinen Sinn, und
@@ -107,7 +107,7 @@ Team, CI und Cloud-Sessions sehen `~/.claude/` ohnehin nicht — Projektverbindl
 
 Ein `SessionStart`-Hook meldet in Claude Code automatisch, wenn das Template neuer ist als der zuletzt
 eingespielte Stand. Einspielen: Assistenten anweisen „Führe die Checkliste Template-Update aus"
-(`docs/ai/checklists.md`), Claude Code: `/update-template`. Die in `.claude/template.json` unter
+(`docs/ai/checklists.md`), Claude Code: `/act-update-template`. Die in `.claude/template.json` unter
 `keep_local` gelisteten Dateien (u. a. `docs/project/**`, `docs/ai/`-Arbeitsdateien, `README.md`,
 `AI-CONFIG.md`) gewinnen **bei Konflikten** immer mit der Projektfassung; `no_replace` listet zusätzlich
 Dateien, die zwar normal mitgemergt, aber nie platzhalter-ersetzt werden (sie zeigen Platzhalter absichtlich
@@ -132,7 +132,7 @@ Aufruf und Ablageort der Rollen.
 
 `docs/ai/resources.md` sammelt geprüfte Quellen: was Agentic Coding ist, Einstiegsanleitungen der Hersteller,
 die Dokumentation der gängigen Werkzeuge, Anbieter und lokale Modelle, laufende Nachrichtenquellen und —
-ausdrücklich — die bekannten Grenzen und Sicherheitsrisiken. Das Template pflegt diese Datei; `/update-template`
+ausdrücklich — die bekannten Grenzen und Sicherheitsrisiken. Das Template pflegt diese Datei; `/act-update-template`
 zieht spätere Fassungen nach.
 
 ## Ordnerübersicht

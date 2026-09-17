@@ -203,6 +203,48 @@ sie werden in Journal und Commits zitiert.
    `.templatedev/` als Projektordner, Sperren für `create-project`/`apply-template`/`finalize`. Grenzen und
    Aufwand (~0,5 PT): `concept-project-structure.md` § „Pflege-Modus im Root". Entscheidung: Q15.
 
+36. -> neu aus Rückmeldung, Priorität hoch: **Template-Update bleibt als halber Merge stehen** (angelegt
+   2026-09-17): `update-template.py --apply` ohne `--commit` hinterlässt einen gestagten Merge mit
+   `MERGE_HEAD`; spätere Arbeit landet im selben Index. `--continue` setzt `base_commit` und die Historie
+   danach auf den inzwischen neuer gefetchten Template-Stand, ohne dessen Commits gemergt zu haben. Zu bauen:
+   Skill schließt mit Commit ab oder fragt ausdrücklich; `--status` und SessionStart-Hook warnen bei offenem
+   Merge; `--continue` nimmt den Stand aus `MERGE_HEAD`, nicht aus dem letzten Fetch.
+
+37. -> neu aus Rückmeldung, Priorität hoch: **Neue Schlüssel in `AI-CONFIG.md` gehen beim Update verloren**
+   (angelegt 2026-09-17): `AI-CONFIG.md` steht in `keep_local`; bei ausgefüllten Tabellen kollidiert fast
+   jede Template-Änderung, die Projektfassung gewinnt ganz, neue Zeilen verschwinden still, und `sync-config.py`
+   meldet fehlende Schlüssel nicht. Zu bauen: Schlüssel beider Seiten vergleichen, fehlende Zeilen mit
+   Standardwert ergänzen und melden; `sync-config.py --check` meldet Schlüssel, die das Template kennt.
+
+38. -> neu aus Rückmeldung, Priorität mittel: **Update bringt nach `/finalize` entfernte Abschnitte zurück**
+   (angelegt 2026-09-17): In abgeschlossenen Projekten liefert ein Konflikt auf Template-Seite die
+   Checklisten-Abschnitte zum Anlegen/Nachrüsten, `template-only`-Blöcke und Zeilen zu entfernten Scripten
+   wieder mit; das Script entscheidet nicht selbst. Zu bauen: bei `setup_complete` diese Abschnitte und
+   Blöcke beim Update automatisch verwerfen (dieselben Marker, die `/finalize` entfernt).
+
+39. -> neu aus Rückmeldung, Priorität mittel: **Feedback-Ablage nach dem Versand widersprüchlich** (angelegt
+   2026-09-17): Nach dem Senden liegen Einträge in `sent/`, tragen aber noch „wartet auf Versand"; die
+   Sendeprotokolle (`.json`) liegen ohne `.md` im Hauptordner und sehen wie hängengebliebene Einträge aus;
+   bei `Feedback: automatisch` und Takt `sofort` löst `--add` keinen Versand aus. Zu bauen: Status beim
+   Verschieben auf „gesendet <Zeit>", Protokolle nach `sent/protokolle/`, bei automatisch+sofort direkt senden.
+
+40. -> neu aus Rückmeldung, Priorität mittel: **Formatregel für Fragen rendert als ein Absatz** (angelegt
+   2026-09-17): Das Beispiel in `docs/ai/README.md` § Fragen nutzt eingerückte Zeilen ohne Leerzeilen; in
+   IDE-Vorschau und auf GitHub fließen Frage, Optionen und Antwort zusammen. Bewährt: Frage fett als eigener
+   Absatz, Optionen als Liste `- a) …`, Leerzeile vor Liste und Antwortzeile. Passt zu T5 (Formregeln in
+   `.templatedev/`): Regel und Beispiel im Template zuerst ändern, dann erben.
+
+41. -> neu aus Rückmeldung, Priorität niedrig: **Erläuterungen aus `AI-CONFIG.md` auslagern** (angelegt
+   2026-09-17): Die langen Absätze zwischen den Tabellen (Modell, Feedback, MCP-Server …) vermischen Steuerung
+   und Doku und verursachen Update-Konflikte. Vorschlag: Hilfedatei unter `docs/ai/`, in `AI-CONFIG.md` bleibt
+   die Spalte „Bedeutung" und ein Verweis. Hängt mit Punkt 37 zusammen.
+
+42. -> neu, Priorität niedrig: **`create-project.py --check` warnt vor bewusst gehaltenen Altnamen** (angelegt
+   2026-09-17): Nach dem Präfix `act-` stehen alte Skill-Pfade absichtlich in den Entfernen-Listen, damit
+   bestehende Projekte sie beim Update loswerden (`.claude/skills/run-maintenance` in
+   `MAINTENANCE_REMOVE_PATHS`). `check_stale_remove_paths` meldet sie als „möglicherweise veraltet". Zu bauen:
+   Altnamen kennzeichnen (eigene Liste oder Kommentar-Marker) und in der Prüfung auslassen.
+
 ## Erledigt
 
 2026-09-13 (3. Runde):

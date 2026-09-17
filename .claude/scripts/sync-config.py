@@ -50,7 +50,7 @@
 # durchs Raster, weil sie in keiner Diff-Pruefung auftauchten (Befund: Stack-Aenderung wurde als "synchron"
 # gemeldet). Bewusst NICHT verfolgt: "Globale Ablage" (eigener Schalter von install-global.py, kein
 # KEY_MAP-Eintrag in setup-lib.py, kein applied_config-Zyklus) sowie "Code-Analyse"/"Struktur-Migration"/
-# "Alter Orchestrator-Name" (einmalige Bootstrap-Werte nur fuer /apply-template Weg 2, ohne Wirkung nach dem
+# "Alter Orchestrator-Name" (einmalige Bootstrap-Werte nur fuer /act-apply-template Weg 2, ohne Wirkung nach dem
 # einmaligen Lauf - eine erneute "Aenderung" haette hier keine sinnvolle Handlung).
 #
 # Exit-Codes: 0 = ok, 2 = Vorbedingungsfehler (AI-CONFIG.md nicht eindeutig, Template-Remote fehlt fuer eine
@@ -314,7 +314,7 @@ def add_maintenance_hook(cp, tu, root: Path, ref: str) -> str:
 # write_maintenance_status() gleich danach passend zu AI-CONFIG.md § Wartungsaufgaben.
 def maintenance_fetch_paths(cp):
     return [
-        ".claude/skills/run-maintenance",
+        ".claude/skills/act-run-maintenance",
         ".claude/agents/maintenance-orchestrator.md",
         ".claude/scripts/maintenance-check.py",
     ] + [f".claude/maintenance/{name}" for name in cp.MAINTENANCE_RUNNER_FILES]
@@ -481,7 +481,7 @@ def compute_diffs(old: dict, current: dict) -> list:
         diffs.append({
             "key": "Commit-Verhalten", "old": old.get("Commit-Verhalten"), "new": current.get("Commit-Verhalten"),
             "kategorie": "automatisch", "kind": "commit_verhalten", "marker": ["Commit-Verhalten"],
-            "wirkung": "keine Datei-Aenderung (nur Verhalten des Orchestrators bei /commit)",
+            "wirkung": "keine Datei-Aenderung (nur Verhalten des Orchestrators bei /act-commit)",
         })
 
     # Stack/Sprache stehen als Fliesstext in Dokumentation - eine Aenderung in AI-CONFIG.md ersetzt den alten
@@ -654,7 +654,7 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         return lines
 
     if kind == "commit_verhalten":
-        lines.append("Nur Stand uebernommen - steuert nur den Orchestrator bei /commit, keine Datei geaendert.")
+        lines.append("Nur Stand uebernommen - steuert nur den Orchestrator bei /act-commit, keine Datei geaendert.")
         ref_holder["executed"].add("Commit-Verhalten")
         return lines
 
