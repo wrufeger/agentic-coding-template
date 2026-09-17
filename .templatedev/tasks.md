@@ -23,7 +23,7 @@ Daraus nummeriert (Wolfgangs Einträge oben bleiben im Wortlaut stehen). Umgeset
 belegt im Testprojekt `bandliste`. Die Test-Aufgabe dafür kommt erst unter „Aufgaben nur für Wolfgang",
 wenn T1–T3 committet und gepusht sind:
 
-- [ ] **T1 · Zugänge zu Repo- und Issue-Diensten einmalig prüfen und dokumentieren** ❓
+- [ ] **T1 · Zugänge zu Repo- und Issue-Diensten einmalig prüfen und dokumentieren**
   Ziel: Ein Projekt weiß, welche Dienste (GitHub, GitLab, Jira, YouTrack, …) per MCP oder Zugangsdaten
     erreichbar sind und welche Werkzeuge sie anbieten — Voraussetzung für T2 und T3.
   Schritte:
@@ -35,7 +35,7 @@ wenn T1–T3 committet und gepusht sind:
     GitLab und GitHub (Q11). Konzept: `konzept-repo-issues.md`.
   Stand 2026-09-16: entschieden, startklar.
 
-- [ ] **T2 · Pull/Merge Requests vorbereiten und nach Zustimmung erstellen** ❓
+- [ ] **T2 · Pull/Merge Requests vorbereiten und nach Zustimmung erstellen**
   Ziel: Ein Skill schreibt Titel und Beschreibung aus dem Diff gegen den Zielbranch und legt den PR/MR erst
     nach ausdrücklicher Zustimmung an.
   Schritte:
@@ -46,7 +46,7 @@ wenn T1–T3 committet und gepusht sind:
   Entschieden: Vorschau plus „ja" je Aktion, `AGENTS.md` wird ergänzt (Q10); GitLab und GitHub (Q11).
   Stand 2026-09-16: entschieden, wartet auf T1.
 
-- [ ] **T3 · Issues und Stories anzeigen, anlegen und bearbeiten** ❓
+- [ ] **T3 · Issues und Stories anzeigen, anlegen und bearbeiten**
   Ziel: Aus Sätzen wie „zeige meine offenen Stories" oder „Starte Arbeit an Issue xyz" wird ein geführter
     Ablauf: Beschreibung holen, Branch `feature/…`/`bugfix/…`, Arbeitsauftrag, Aufgaben für KI und Entwickler,
     Backlog und Doku nachziehen.
@@ -58,7 +58,7 @@ wenn T1–T3 committet und gepusht sind:
   Entschieden: Freigabe wie T2 (Q10); GitLab und GitHub, Jira/YouTrack später (Q11).
   Stand 2026-09-16: entschieden, wartet auf T1.
 
-- [ ] **T5 · Template-Entwicklung als normales Projekt führen** ❓
+- [ ] **T5 · Template-Entwicklung als normales Projekt führen**
   Ziel: Die Arbeit am Template folgt denselben KI-Regeln und derselben Ordnerstruktur wie ein per
     `/create-project` angelegtes Projekt (u. a. Formregeln für Fragen und Aufgaben) und lässt sich per
     `/update-template` aktualisieren; die Sonderfälle „noch nicht initialisiert" entfallen möglichst ganz.
