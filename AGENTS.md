@@ -405,6 +405,13 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 Rückfrage, `manuell` nur auf Aufruf von `/act-feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
 
+**Die fällige Erinnerung bietet immer drei Wege an, nie nur einen Hinweis:** Rückmeldung ansehen und senden,
+das Intervall verschieben oder den Takt ändern, oder nicht mehr erinnern. „Nicht mehr erinnern" setzt
+`Feedback` auf `manuell`, nicht auf `aus` — gesammelt wird weiter, nur der Anstoß von selbst entfällt. Takt
+`adaptiv` lernt zusätzlich aus der Reaktion: Wird eine Erinnerung wiederholt ignoriert oder verschoben, wächst
+der Abstand bis zur nächsten; wird prompt gesendet oder ein Template-Update eingespielt, schrumpft er wieder
+— Zahlen und Reihenfolge stehen im Kopfkommentar von `feedback-check.py`, nicht hier.
+
 **Ein Fehler der Vorlage selbst ist von dieser Obergrenze ausgenommen.** Schlägt ein Script oder Skill der
 Vorlage fehl oder tut etwas Falsches, spielt ein Update etwas ein, das draußen bleiben müsste, oder lässt
 etwas Nötiges draußen, widersprechen sich zwei Regeln der Vorlage, oder greift eine Regel/Mechanik nachweislich

@@ -58,6 +58,16 @@
 #       mitkopierter Pfad oder ein Token wird gemeldet statt gesendet.
 #   python .claude/scripts/feedback.py --clear
 #       Leert den Ausgang, ohne zu senden.
+#   python .claude/scripts/feedback.py --takt <manuell|sofort|stündlich|täglich|wöchentlich|adaptiv|automatisch>
+#       Setzt NUR "Feedback-Takt" in AI-CONFIG.md, unabhaengig von --enable - fuer eine Intervalländerung,
+#       ohne den Modus ("Feedback") anzufassen. "Nicht mehr erinnern" ist dagegen KEIN Takt-, sondern ein
+#       Modus-Wechsel: --enable --modus manuell (gesammelt wird weiter, nur der Anstoss von selbst entfaellt;
+#       "aus" waere die falsche Wahl, das schaltet auch das Sammeln ab). Beides sind die Optionen b/c der
+#       faelligen Erinnerung aus feedback-check.py.
+#   python .claude/scripts/feedback.py --verschieben <Tage>
+#       Pausiert die faellige Erinnerung (feedback-check.py) um die angegebene Anzahl Tage - schreibt
+#       "erinnerung_pausiert_bis" (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet
+#       nichts, aendert AI-CONFIG.md nicht. Option b der faelligen Erinnerung.
 #
 # Ausgabeformat: Klartext-Bloecke, die Nutzlast als eingerueckter JSON-Block. Exit 0 = ok, 1 = Nutzlast
 #   beanstandet (nicht gesendet), 2 = Abbruch (keine Einwilligung, fehlende Angabe, Transportfehler).
@@ -71,6 +81,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import urllib.error
@@ -140,6 +151,10 @@ CONFIG_REL = "AI-CONFIG.md"
 TAKT_STUNDEN = {
     "manuell": None, "sofort": 0, "stündlich": 1, "täglich": 24, "wöchentlich": 168, "automatisch": 1,
 }
+# Gueltige Werte fuer Feedback-Takt (AI-CONFIG.md) - TAKT_STUNDEN ohne "adaptiv" hat keinen festen Abstand
+# (der wird stattdessen gelernt, siehe feedback-check.py), deshalb hier ergaenzt statt eine zweite,
+# von Hand gepflegte Liste anzulegen.
+TAKT_GUELTIG = tuple(TAKT_STUNDEN) + ("adaptiv",)
 # ae-Schreibweisen bleiben als Alias gueltig (bestehende Projekte, applied_config, gespeicherte Zustaende).
 MODUS_ALIAS = {"nein": "aus", "ja": "automatisch", "bestaetigen": "bestätigen", "fragen": "bestätigen"}
 TAKT_ALIAS = {"stuendlich": "stündlich", "taeglich": "täglich", "woechentlich": "wöchentlich"}
@@ -282,8 +297,29 @@ def _template_json(root: Path) -> dict:
 
 
 def _template_json_schreiben(root: Path, daten: dict) -> None:
+    """Schreibt atomar: erst in eine Temp-Datei im selben Ordner, dann per os.replace an ihren Platz - selbes
+    Muster wie files-lib.py:_write_json/maintenance-check.py:save_status, hier lokal gehalten, weil
+    feedback.py bewusst ohne Abhaengigkeit zu den anderen Scripten auskommt (siehe TAKT_STUNDEN unten). Kein
+    Leser sieht eine halb geschriebene Datei, und ein Fehler laesst keine Temp-Datei liegen. Auch
+    feedback-check.py (der SessionStart-Hook) nutzt diese Funktion fuer seinen eigenen Lern-Merker, statt
+    einen zweiten Schreibmechanismus zu bauen."""
     fp = root / TEMPLATE_JSON_REL
-    fp.write_text(json.dumps(daten, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n", dir=str(fp.parent),
+                                          prefix=fp.name + ".", suffix=".tmp", delete=False) as f:
+            tmp_path = f.name
+            json.dump(daten, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp_path, fp)
+    except BaseException:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def _endpoint() -> str:
@@ -921,6 +957,46 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
     return 0
 
 
+def cmd_takt(root: Path, wert: str) -> int:
+    """Setzt nur 'Feedback-Takt' in AI-CONFIG.md - unabhaengig von --enable, fuer eine Intervalländerung ohne
+    den Modus ('Feedback') anzufassen (Option b der faelligen Erinnerung, siehe feedback-check.py)."""
+    ziel = (wert or "").strip().lower()
+    ziel = TAKT_ALIAS.get(ziel, ziel)
+    if ziel not in TAKT_GUELTIG:
+        print(f"Fehler: --takt muss eines von {', '.join(TAKT_GUELTIG)} sein.", file=sys.stderr)
+        return 2
+    if not _config_setzen(root, "Feedback-Takt", ziel):
+        print(f"Fehler: Zeile 'Feedback-Takt' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
+              file=sys.stderr)
+        return 2
+    print(f"{CONFIG_REL}: Feedback-Takt = {ziel}")
+    return 0
+
+
+def cmd_verschieben(root: Path, tage) -> int:
+    """Pausiert die faellige Erinnerung (feedback-check.py) um `tage` Tage - schreibt
+    'erinnerung_pausiert_bis' (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet nichts,
+    aendert AI-CONFIG.md nicht (Option b der faelligen Erinnerung). Zaehlt bei Takt 'adaptiv' zugleich als
+    "negatives" Lernsignal: 'verschiebungen' steigt, eine laufende Sende-Serie ('sendungen_in_folge') wird
+    unterbrochen - siehe feedback-check.py fuer die Rechnung. Der Zaehler ist Teil der anonymen
+    Nutzungsstatistik (Umfang "c") und geht mit, wenn dieser Umfang gewaehlt ist - die Anbindung an
+    _nutzlast() ist NICHT Teil dieser Funktion (macht der Lauf, der Umfang "c" erweitert)."""
+    if tage is None or tage <= 0:
+        print("Fehler: --verschieben braucht eine positive Anzahl Tage.", file=sys.stderr)
+        return 2
+    tj = _template_json(root)
+    fb = _feedback_block(tj)
+    bis = time.strftime("%Y-%m-%d", time.localtime(time.time() + tage * 86400))
+    fb["erinnerung_pausiert_bis"] = bis
+    fb["verschiebungen"] = int(fb.get("verschiebungen") or 0) + 1
+    fb["sendungen_in_folge"] = 0
+    fb.pop("letzte_erinnerung", None)
+    tj["feedback"] = fb
+    _template_json_schreiben(root, tj)
+    print(f"Erinnerung pausiert bis {bis} ({tage} Tag/e).")
+    return 0
+
+
 def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
     if art not in ARTEN:
         print(f"Fehler: --art muss eines von {', '.join(ARTEN)} sein.", file=sys.stderr)
@@ -1114,6 +1190,15 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
         return 2
     protokoll = _protokollieren(root, nutzlast, endpoint)
     fb["zuletzt_gesendet"] = time.strftime("%Y-%m-%d %H:%M")
+    # Lern-Merker fuer Takt "adaptiv" (siehe feedback-check.py): eine erfolgreiche Sendung loescht die
+    # "negativen" Zaehler (ignorierte Erinnerungen, Verschiebungen) und zaehlt den "positiven" Zaehler
+    # (Sendungen in Folge) hoch - beide Richtungen wirken nie gleichzeitig. Diese Zaehler sind Teil der
+    # anonymen Nutzungsstatistik (Umfang "c") und gehen mit, wenn dieser Umfang gewaehlt ist - die Anbindung
+    # an _nutzlast() ist NICHT Teil dieser Aenderung (macht der Lauf, der Umfang "c" erweitert).
+    fb["erinnerungen_ohne_reaktion"] = 0
+    fb["verschiebungen"] = 0
+    fb["sendungen_in_folge"] = int(fb.get("sendungen_in_folge") or 0) + 1
+    fb.pop("letzte_erinnerung", None)
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
     _fragebogen_zuruecksetzen(root, nutzlast.get("fragebogen") or [])
@@ -1257,6 +1342,10 @@ def _run(argv) -> int:
     gruppe.add_argument("--direkt", default=None, metavar="TEXT",
                         help="Eine von Hand geschriebene Nachricht sofort senden - geht IMMER, auch bei "
                              "Feedback: aus (dann ohne Projekt-Kennung und ohne Kontext)")
+    gruppe.add_argument("--takt", default=None, metavar="TAKT",
+                        help=f"nur 'Feedback-Takt' in {CONFIG_REL} setzen ({', '.join(TAKT_GUELTIG)})")
+    gruppe.add_argument("--verschieben", type=int, default=None, metavar="TAGE",
+                        help="faellige Erinnerung (feedback-check.py) um so viele Tage pausieren")
     parser.add_argument("--art", default=None, help=f"mit --add: {', '.join(ARTEN)}")
     parser.add_argument("--titel", default=None, help="mit --add: eine Zeile")
     parser.add_argument("--text", default=None, help="mit --add: zwei bis sechs Saetze")
@@ -1305,6 +1394,10 @@ def _run(argv) -> int:
         return cmd_send(root, args.force, args.yes)
     if args.clear:
         return cmd_clear(root)
+    if args.takt is not None:
+        return cmd_takt(root, args.takt)
+    if args.verschieben is not None:
+        return cmd_verschieben(root, args.verschieben)
     return cmd_plan(root)
 
 

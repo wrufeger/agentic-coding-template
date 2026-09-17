@@ -51,6 +51,28 @@ Projektdaten>"`, danach je nach `Feedback`: `automatisch` → gleich `--send --f
 zeigen und {{AUFTRAGGEBER}} fragen; `manuell` → Eintrag bleibt liegen, geht beim nächsten Versand mit;
 `aus` → nichts senden, aber {{AUFTRAGGEBER}} einmal auf den Fund hinweisen, nicht wiederholen.
 
+## Fällige Erinnerung (SessionStart-Hook)
+
+`feedback-check.py` läuft automatisch bei Sitzungsstart und meldet nur die Fälligkeit — er fragt nie selbst
+(Begründung: `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor"). Erscheint bei Modus `bestätigen`
+eine Zeile mit `a)`/`b)`/`c)`, legt der Assistent {{AUFTRAGGEBER}} genau diese drei Wege vor — nie nur den
+Hinweis, dass etwas fällig wäre:
+
+| Antwort | Aufruf |
+| :--- | :--- |
+| a) ansehen und senden | Ablauf unten ab Schritt 2, zum Schluss `--send --force` (bzw. `--yes` nach der Ansicht) |
+| b) verschieben | nachfragen, um wie viele Tage → `feedback.py --verschieben <Tage>` |
+| b) Takt ändern | nachfragen, auf welchen Takt → `feedback.py --takt <manuell\|sofort\|stündlich\|täglich\|wöchentlich\|adaptiv\|automatisch>` |
+| c) nicht mehr erinnern | `feedback.py --enable --modus manuell` — setzt `Feedback` auf `manuell`, **nicht** auf `aus`: gesammelt wird weiter, nur der Anstoß von selbst entfällt |
+
+Bei Modus `automatisch` erinnert der Hook mit der klassischen einzeiligen Meldung (kein `a`/`b`/`c` nötig, da
+dort ohnehin ohne Rückfrage gesendet wird) — der Ablauf unten gilt trotzdem unverändert.
+
+**Takt `adaptiv` lernt aus der Reaktion**, siehe Kopfkommentar von `feedback-check.py`: `--status` zeigt die
+aktuelle Schwelle samt Begründung (z. B. „Schwelle 11 Arbeitstage (Basis 5, 2x verschoben)"). Die dafür
+nötigen Zähler sind Teil der anonymen Nutzungsstatistik (Umfang `c`) und gehen mit, wenn dieser Umfang
+gewählt ist.
+
 ## Ablauf
 
 1. **Zustand prüfen:** `python .claude/scripts/feedback.py --status`. Bei `aus` hier abbrechen und
