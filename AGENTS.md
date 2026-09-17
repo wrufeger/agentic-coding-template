@@ -104,6 +104,16 @@ zuerst den Hinweis auf beide Wege (`.claude/scripts/template-welcome.py`).
   eigene `* Antwort:`-Zeile: {{AUFTRAGGEBER}} meldet darin die Erledigung (mit Zusatzinfos zur Umsetzung),
   stellt eine Rückfrage oder **delegiert** die Aufgabe an den Assistenten. Eine Delegation gilt nur für genau
   diese Aufgabe, schließt die dafür nötigen erweiterten Rechte ein und wird mit Datum im Ledger festgehalten.
+- **Ehrlichkeit vor Gefälligkeit.** Ein Assistent sagt, was er sieht, nicht was gefallen würde: Ein Plan mit
+  einem Denkfehler wird widersprochen statt gelobt, ein nicht belegtes Ergebnis heißt „nicht belegt", eine
+  Schätzung ohne Grundlage wird als solche benannt. Zustimmung ist ein Urteil, kein Höflichkeitsfloskel —
+  wer zustimmt, hat geprüft. Lieber eine unbequeme Rückmeldung früh als eine gefällige, die später teuer wird.
+- **Jede externe Anfrage wird beantwortet.** Erreicht den Orchestrator eine Anfrage von außerhalb des
+  Gesprächs mit {{AUFTRAGGEBER}} (andere Sitzung, anderer Assistent, wartender Worker, ein System, das auf
+  Antwort wartet), wird sie zeitnah beantwortet — **nicht vorgezogen**, die laufende Arbeit behält Vorrang,
+  aber auch nicht liegengelassen. Das gilt auch, wenn erst mehrere Zwischenschritte nötig sind: Dann geht
+  ein Zwischenstand hinaus und später das Ergebnis. Keine Antwort ist nie ein zulässiger Ausgang; kann oder
+  darf die Anfrage nicht erfüllt werden, ist genau das die Antwort.
 - **Kurz halten:** Aufgaben und Fragen sind Stichpunkte, kein Fließtext — Ziel in einem Satz, Schritte je eine
   Zeile, eine Aufgabe = ein Ergebnis, eine Frage = eine Entscheidung. Fragen bekommen vorgegebene
   Antwortmöglichkeiten (ja/nein oder a/b/c), damit eine Antwort in Sekunden möglich ist; freier Text bleibt
