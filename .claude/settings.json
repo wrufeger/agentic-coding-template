@@ -129,6 +129,12 @@
           {
             "type": "command",
             "shell": "bash",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/act-help.py\" --hook",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "shell": "bash",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/scripts/ai-log.py\" --hook",
             "async": true
           }

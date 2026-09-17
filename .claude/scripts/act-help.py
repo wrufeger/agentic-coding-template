@@ -8,10 +8,15 @@
 # Aufruf:
 #   python .claude/scripts/act-help.py            # alle Befehle, je zwei bis drei Zeilen
 #   python .claude/scripts/act-help.py commit     # ein Befehl ausfuehrlich (mit oder ohne act-, auch Teilname)
+#   python .claude/scripts/act-help.py --hook     # UserPromptSubmit-Hook: bei Eingabe "/act [name]" die Liste
+#                                                 # sofort zeigen und die Eingabe NICHT ans Modell geben
 #
 # Ausgabeformat: Klartext, feste Einrueckung. Exit 0 = ok, 1 = kein passender Befehl, 2 = kein Skill-Ordner.
 
+import io
+import json
 import os
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -57,21 +62,49 @@ def _absatz(text: str, einzug: str) -> str:
     return textwrap.fill(text, BREITE, initial_indent=einzug, subsequent_indent=einzug)
 
 
+def _hook() -> int:
+    """Liest die Hook-Nutzlast. Nur bei genau "/act" oder "/act <name>" wird geblockt - dann zeigt Claude Code
+    den Grund (die Liste) an, ohne das Modell zu fragen. Alles andere laeuft unveraendert weiter (Exit 0)."""
+    try:
+        prompt = json.loads(sys.stdin.read() or "{}").get("prompt", "")
+    except (ValueError, AttributeError):
+        return 0
+    m = re.fullmatch(r"\s*/act(?:\s+(\S+))?\s*", prompt or "")
+    if not m:
+        return 0
+    puffer = io.StringIO()
+    alt = sys.stdout
+    sys.stdout = puffer
+    try:
+        _ausgabe(m.group(1) or "")
+    finally:
+        sys.stdout = alt
+    sys.stdout.reconfigure(encoding="utf-8") if hasattr(sys.stdout, "reconfigure") else None
+    print(json.dumps({"decision": "block", "reason": puffer.getvalue().rstrip()}, ensure_ascii=False))
+    return 0
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if sys.argv[1:] == ["--hook"]:
+        return _hook()
+    return _ausgabe(sys.argv[1] if len(sys.argv) > 1 else "")
+
+
+def _ausgabe(argument: str) -> int:
     root = _root()
     if not (root / ".claude" / "skills").is_dir():
         print(f"Kein Skill-Ordner unter {root}/.claude/skills")
         return 2
     befehle = _befehle(root)
-    suche = sys.argv[1].lower().removeprefix("/").removeprefix("act-") if len(sys.argv) > 1 else ""
+    suche = argument.lower().removeprefix("/").removeprefix("act-")
 
     if suche:
         treffer = [b for b in befehle if b["name"].removeprefix("act-") == suche] or \
                   [b for b in befehle if suche in b["name"]]
         if not treffer:
-            print(f"Kein Befehl passt zu '{sys.argv[1]}'. Uebersicht: /act")
+            print(f"Kein Befehl passt zu '{argument}'. Uebersicht: /act")
             return 1
         for b in treffer:
             print(f"/{b['name']} {b['hint']}".rstrip())
