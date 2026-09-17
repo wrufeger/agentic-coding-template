@@ -132,8 +132,14 @@ in Ledger und Commits zitiert und **nie neu vergeben** wird, auch nach dem Archi
   beantwortet ist sie damit nicht.
 - Blockiert eine Frage die Arbeit, wird sie mit 🔴 markiert und im Board unter „Ausstehende Freigaben"
   geführt; der Assistent arbeitet in der Zwischenzeit an etwas anderem weiter.
-- Offene Fragen stehen oben, **nach Nummer sortiert** (nie umnummerieren, Lücken bleiben). Ab etwa zehn
+- **Zwei Abschnitte, feste Reihenfolge:** `## Antworten` steht **oben** (verarbeitete Fragen samt
+  Bestätigungszeile des Assistenten), `## Fragen` darunter (alles Offene, einschließlich Rückfragen des
+  Assistenten). Wer die Datei öffnet, sieht zuerst, was entschieden ist, und darunter, was von ihm erwartet wird.
+- Innerhalb beider Abschnitte **nach Nummer sortiert** (nie umnummerieren, Lücken bleiben). Ab etwa zehn
   offenen Fragen nach Themen gruppieren, innerhalb des Themas weiterhin nach Nummer.
+- **Rückfrage des Assistenten:** Ist eine Antwort widersprüchlich oder unklar, schreibt der Assistent seine
+  Rückfrage unter die vorhandene Antwort und hängt **eine neue leere `* Antwort:`-Zeile als letzte Zeile der
+  Frage** an. Die Frage bleibt so lange im Abschnitt `Fragen`.
 
 ```text
 **Q3 · Soll der Import fehlende Pflichtfelder überspringen oder abbrechen?** 🔴
