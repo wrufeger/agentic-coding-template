@@ -243,6 +243,18 @@ APIs von Diensten, Container-Hosts, Router, Smart-Home- oder Monitoring-Instanze
   Schlüssel in Konfigurationen und Frontmatter, Feldnamen in JSON. Das gilt auch für Scripte und Skills des
   Templates selbst. Die Regel steht zusätzlich in `docs/project/coding_rules.md`, aber diese Datei gehört dem
   Projekt und wird beim Nachrüsten nie überschrieben — deshalb gilt sie hier.
+- **Quellcode und Sonderzeichen in Markdown werden formatiert, nicht roh geschrieben.** Gilt für jede
+  `.md`-Datei im Repo, `docs/` eingeschlossen. Mehrzeiliger Code gehört in einen Zaunblock **mit
+  Sprachangabe** (`python`, `bash`, `json`; hat der Inhalt keine Sprache, dann `text`) —
+  das ergibt Syntax-Hervorhebung und schützt den Inhalt; ein nur eingerückter Block ist nicht gleichwertig,
+  weil ihm die Sprache fehlt. Einzelne Bezeichner, Pfade, Befehle, Dateimuster und Platzhalter stehen inline
+  in Backticks, sonst liest Markdown sie als Steuerzeichen: `snake_case` wird sonst kursiv, `*.py` fett,
+  `<name>` verschwindet als HTML-Tag, eine Zeile mit `#` wird zur Überschrift. Drei Stellen, an denen
+  Backticks allein nicht genügen: ein `|` in einer Tabellenzelle wird **auch im Code-Span** als
+  Spaltentrenner gelesen und muss `\|` geschrieben werden; enthält der Text selbst Backticks, wird außen mit
+  mehr Backticks umschlossen (Zaun dann vier Backticks oder `~~~`); ein Umbruch in einer Tabellenzelle geht
+  nur als `<br>`. Geprüft wird an der **gerenderten** Ansicht, nicht am Quelltext — dort fällt ein falsch
+  gesetztes Zeichen sofort auf, im Quelltext nie.
 - Lint, Typecheck und Unit-Tests laufen vor jedem Commit und in der CI (`.github/workflows/ci.yml`);
   Integrations-/E2E-Tests bei größeren oder UI-relevanten Änderungen. Details: `docs/project/testing.md`.
 - **Vor dem Bearbeiten einer Datei die Kodierung prüfen** (`file -i`, notfalls Python: binär öffnen, Decode-
@@ -392,6 +404,22 @@ wird es danach wie alles andere über **`AI-CONFIG.md`**, mit zwei Schlüsseln:
 `bestätigen` zeigt vor jedem Versand die vollständige Nutzlast und fragt, `automatisch` sendet ohne
 Rückfrage, `manuell` nur auf Aufruf von `/act-feedback`. Der Takt ist eine **Obergrenze, keine Verpflichtung** —
 gibt es nichts zu melden, wird nichts gesendet.
+
+**Ein Fehler der Vorlage selbst ist von dieser Obergrenze ausgenommen.** Schlägt ein Script oder Skill der
+Vorlage fehl oder tut etwas Falsches, spielt ein Update etwas ein, das draußen bleiben müsste, oder lässt
+etwas Nötiges draußen, widersprechen sich zwei Regeln der Vorlage, oder greift eine Regel/Mechanik nachweislich
+nie — dann löst der Befund die Rückmeldung **sofort** aus, unabhängig vom eingestellten `Feedback-Takt`: Der
+Takt begrenzt das autonome *Sammeln*, nicht einen frischen Fehlerbefund. Grund: Ein Vorlagenfehler trifft alle
+anderen Projekte weiter, solange er nicht gemeldet ist. Eigene Fehler des Projekts, Fehler im Projektcode und
+Umgebungsprobleme des Rechners fallen **nicht** darunter. Der Eintrag wird noch am selben Fund angelegt
+(`--add --art fehler`), solange der Beleg frisch ist (dieselbe Regel wie „Laufend nachziehen, nicht sammeln");
+er beschreibt das Muster, nie den Fall — Pfade der Vorlage selbst (Script-, Skill- und Regeldateinamen) dürfen
+genannt werden, weil sie in jedem Projekt gleich heißen. Danach entscheidet weiter der Modus: `automatisch`
+sendet sofort, `bestätigen` zeigt die Nutzlast und fragt, `manuell` lässt den Eintrag bis zum nächsten Versand
+liegen, und bei `aus` verlässt nichts das Projekt — {{AUFTRAGGEBER}} bekommt den Befund aber **einmal**
+genannt, mit dem Hinweis, dass eine Meldung anderen Projekten hilft, ohne zu drängen oder es zu wiederholen.
+Nach einem Template-Update mit solchen Befunden gehört der Eintrag zum Abschluss des Updates (Checkliste
+„Template-Update", `docs/ai/checklists.md`).
 
 **Eine von Hand geschriebene Nachricht geht immer** — „Feedback: <Text>", „Schicke Feedback <Text>" oder, wo
 das Werkzeug Slash-Befehle kennt, `/act-feedback <Text>`; auch bei `Feedback: aus`. Der Auslöser ist bewusst ein

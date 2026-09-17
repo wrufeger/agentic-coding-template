@@ -554,3 +554,7 @@ Arbeitsdateien, README) bleiben dabei erhalten:
    liegen; `--check`/`--status` warnen zwar beim nächsten Sitzungsstart, das ist aber der Notnagel.
 9. Den nachgezogenen Basis-Commit des Templates in `.claude/template.json` fortschreiben, damit das nächste
    Update wieder ab diesem Stand vergleicht.
+10. Fiel bei diesem Update ein Fehler der Vorlage selbst auf (falsch eingespielte oder fehlende Datei,
+    doppelter Abschnitt, eine Regel/Mechanik, die nachweislich nie greift) — sofort als Rückmeldung an den
+    Template-Autor festhalten, unabhängig vom sonstigen Rückmelde-Takt (Regel: `AGENTS.md` § „Freiwillige
+    Rückmeldung an den Template-Autor").

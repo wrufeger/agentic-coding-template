@@ -79,6 +79,10 @@ Setzt die werkzeugneutrale Checkliste „Template-Update" aus `docs/ai/checklist
    nie committeter Merge fällt sonst erst beim nächsten Sitzungsstart auf (`--check`/`--status` warnen dann,
    aber das ist der Notnagel, nicht der Normalfall).
 7. `docs/ai/ledger.md`-Zeile mit Basis-Commit-Wechsel und Anzahl Commits.
+8. Fiel bei diesem Update ein Fehler der Vorlage selbst auf (falsch eingespielte oder fehlende Datei,
+   doppelter Abschnitt, unwirksame Regel/Mechanik): sofort als Eintrag anlegen — Sofort-Auslöser in
+   `.claude/skills/act-feedback/SKILL.md`, Regel in `AGENTS.md` § „Freiwillige Rückmeldung an den
+   Template-Autor".
 
 ## Wann NICHT
 
