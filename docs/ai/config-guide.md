@@ -57,8 +57,9 @@ paar Token zusätzlich.
 
 Steuert nur, was der Assistent **selbst zusammenträgt**. Was du mit `/act-feedback <Text>` von Hand schickst,
 geht unabhängig davon — dieser Kanal ist immer offen, auch bei `Feedback: aus`; dann enthält die Nachricht
-ausschließlich deinen Text, ohne Projekt-Kennung und ohne Kontext. Echte Dateien aus `docs/` sind bewusst
-nicht wählbar: Das widerspräche der Zusage „nie Dateien, nie Projektbezug".
+nur deinen Text und den Commit-Hash des Template-Stands, ohne Projekt-Kennung und ohne weiteren Kontext
+(Begründung: `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor"). Echte Dateien aus `docs/` sind
+bewusst nicht wählbar: Das widerspräche der Zusage „nie Dateien, nie Projektbezug".
 
 ### Feedback-Takt
 

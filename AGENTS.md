@@ -427,9 +427,14 @@ das Werkzeug Slash-Befehle kennt, `/act-feedback <Text>`; auch bei `Feedback: au
 dem Wort noch ein Satz, **ist** er die Nachricht und geht unverändert hinaus; steht nichts dahinter, ist die
 gesammelte Rückmeldung gemeint. Sie ist
 kein Sonderfall der Automatik, sondern das Gegenteil davon: {{AUFTRAGGEBER}} formuliert selbst und löst
-selbst aus. Bei `aus` verlässt **ausschließlich dieser Text** das Projekt, ohne Projekt-Kennung und ohne
-Kontext; ist die Rückmeldung eingeschaltet, gehen Kennung, Template-Stand, Weg und Ausfüllart mit, damit
-sich mehrere Nachrichten desselben Projekts zusammenführen lassen. Der Text wird nicht umformuliert und
+selbst aus. Bei `aus` verlassen **nur dieser Text und der volle Commit-Hash des Template-Stands** das
+Projekt, ohne Projekt-Kennung und ohne weiteren Kontext. Gemeint ist der Stand, auf dem das Projekt
+steht: der Template-Commit seiner Erstellung, fortgeschrieben mit jedem eingespielten Template-Update
+(`base_commit` in `.claude/template.json`). Der Hash beschreibt die Vorlage, nicht das
+Projekt: er ist in jedem Projekt mit demselben Stand identisch und verrät nichts über dieses Projekt, ist
+aber die einzige Angabe, ohne die sich eine Meldung keinem Vorlagenstand zuordnen ließe. Ist die
+Rückmeldung eingeschaltet, gehen zusätzlich Kennung, Weg und Ausfüllart mit, damit sich mehrere
+Nachrichten desselben Projekts zusammenführen lassen. Der Text wird nicht umformuliert und
 nicht ergänzt. Die Prüfung auf Zugangsdaten und Pfade läuft trotzdem: Schlägt sie an, wird nicht gesendet,
 sondern der Grund genannt.
 

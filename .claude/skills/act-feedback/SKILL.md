@@ -25,9 +25,10 @@ beiden — das ist billiger als eine Nachricht, die so nie gemeint war.
 
 1. **`/feedback <Text>` — eine Nachricht von Hand.** Geht **immer**, auch bei `Feedback: aus`:
    `python .claude/scripts/feedback.py --direkt "<Text>"`. {{AUFTRAGGEBER}} hat sie selbst geschrieben und
-   selbst ausgelöst — mehr, als eine Einwilligung je zusichern könnte. Bei `aus` verlässt **ausschließlich
-   der Text** das Projekt, ohne Projekt-Kennung und ohne Kontext; sonst gehen Kennung, Template-Stand, Weg
-   und Ausfüllart mit. Der Text wird nicht umformuliert und nicht ergänzt — er geht so hinaus, wie er
+   selbst ausgelöst — mehr, als eine Einwilligung je zusichern könnte. Bei `aus` verlassen **nur der Text
+   und der Commit-Hash des Template-Stands** das Projekt, ohne Projekt-Kennung und ohne weiteren Kontext
+   (Begründung: `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor"); sonst gehen zusätzlich
+   Kennung, Weg und Ausfüllart mit. Der Text wird nicht umformuliert und nicht ergänzt — er geht so hinaus, wie er
    dasteht. Der Filter läuft trotzdem: Meldet er einen Pfad oder ein Zugangsdaten-Wort, wird **nicht**
    gesendet, sondern der Grund genannt.
 2. **`/feedback` ohne Text — die gesammelte Rückmeldung.** Das ist der Ablauf unten, und der ist

@@ -51,10 +51,11 @@
 #   python .claude/scripts/feedback.py --direkt "<Text>"
 #       Sendet eine von Hand geschriebene Nachricht SOFORT - unabhaengig von Einwilligung, Modus und Takt.
 #       Begruendung: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan,
-#       wofuer die Einwilligung sonst da ist. Steht Feedback auf "aus", geht ausschliesslich der Text hinaus
-#       (keine Projekt-Kennung, kein Kontext); sonst gehen Projekt-Kennung, Template-Stand, Weg und
-#       Ausfuellart mit, damit sich mehrere Meldungen desselben Projekts zusammenfuehren lassen. Der Filter
-#       laeuft auch hier: ein versehentlich mitkopierter Pfad oder ein Token wird gemeldet statt gesendet.
+#       wofuer die Einwilligung sonst da ist. Steht Feedback auf "aus", gehen nur der Text und der volle
+#       Commit-Hash des Template-Stands (template_basis) hinaus - keine Projekt-Kennung, kein weiterer
+#       Kontext; sonst gehen zusaetzlich Projekt-Kennung, Weg und Ausfuellart mit, damit sich mehrere
+#       Meldungen desselben Projekts zusammenfuehren lassen. Der Filter laeuft auch hier: ein versehentlich
+#       mitkopierter Pfad oder ein Token wird gemeldet statt gesendet.
 #   python .claude/scripts/feedback.py --clear
 #       Leert den Ausgang, ohne zu senden.
 #
@@ -91,7 +92,10 @@ FEEDBACK_ENDPOINT = "https://rufeger.de/agentic-coding-feedback"
 ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 
 # Schema der von Hand geschriebenen Nachricht (--direkt). Eigene Nummer, weil sie anders aufgebaut ist als
-# die gesammelte Meldung: Pflicht ist nur `text`, alles Uebrige ist optionaler Kontext.
+# die gesammelte Meldung: Pflicht ist nur `text`, alles Uebrige ist optionaler Kontext - AUSSER
+# `template_basis` (voller Commit-Hash), der ausnahmslos mitgeht, auch bei Feedback "aus" (siehe
+# cmd_direkt): Er beschreibt die Vorlage, nicht das Projekt, und ist die einzige Angabe, ohne die sich
+# eine Meldung keinem Vorlagenstand zuordnen liesse.
 SCHEMA_DIREKT = 2
 
 # Herkunftskennung, die jede Meldung mitfuehrt. BEWUSST OEFFENTLICH und eingecheckt - sie ist kein Geheimnis
@@ -162,6 +166,7 @@ _WIN_PFAD = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]")
 _UNIX_PFAD = re.compile(r"(?<![\w.])/(?:home|Users|var|etc|opt|srv)/")
 _URL = re.compile(r"https?://[^\s)]+")
 _LANGE_HEX = re.compile(r"\b[0-9a-f]{32,}\b")
+_COMMIT_HASH = re.compile(r"[0-9a-f]{7,40}")  # Template-Stand in der Nutzlast, siehe _pruefen()
 
 # Hosts, die nie in einem geteilten Link stehen duerfen: Ein Verweis auf ein Intranet oder eine lokale
 # Instanz ist fuer Fremde wertlos und verraet zugleich, wie es dort drinnen heisst.
@@ -694,7 +699,10 @@ def _nutzlast(root: Path, tj: dict) -> dict:
         "herkunft": HERKUNFT,
         "projekt_id": fb.get("projekt_id"),
         "datum": time.strftime("%Y-%m-%d"),
-        "template_basis": (tj.get("base_commit") or "")[:7] or None,
+        # Voller Hash, nicht gekuerzt: die Template-Pflege hat die vollstaendige Historie und kann daraus
+        # Datum/Abstand selbst ableiten - ein gekuerzter Hash waere doppeldeutig (Kollisionen ueber viele
+        # Projekte hinweg) und brauchte trotzdem einen zweiten Abgleich.
+        "template_basis": tj.get("base_commit") or None,
         "weg": fb.get("weg"),
         "ausfuellart": fb.get("ausfuellart"),
         "umfang": ",".join(sorted(umfang)),
@@ -741,6 +749,13 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
     for k, v in nutzlast.items():
         if k in ("repo_url", "projekt_id"):
             continue  # bewusst angegeben, siehe --enable --repo-url
+        if k == "template_basis":
+            # Voller Commit-Hash (40 Hex-Zeichen) - _LANGE_HEX wuerde ihn sonst als Geheimnis beanstanden.
+            # Statt die Pruefung zu ueberspringen, wird der Wert eng geprueft: nur Hex, 7 bis 40 Zeichen.
+            # Alles andere waere kein Hash und verlaesst das Projekt nicht (manipulierte template.json).
+            if not (isinstance(v, str) and _COMMIT_HASH.fullmatch(v)):
+                fehler.append(f"{k}: kein Commit-Hash (erwartet 7-40 Hex-Zeichen)")
+            continue
         lauf(v, k)
     return fehler
 
@@ -1151,9 +1166,12 @@ DIREKT_MAX = 4000
 def cmd_direkt(root: Path, text: str, ja: bool) -> int:
     """Eine von Hand geschriebene Nachricht senden. Dieser Weg ist bewusst NICHT an die Einwilligung
     gebunden: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan, wofuer
-    die Einwilligung sonst da ist. Steht Feedback auf "aus", geht ausschliesslich der Text hinaus - keine
-    Projekt-Kennung, kein Kontext, nichts, was das Projekt wiedererkennbar macht. Sonst darf der Kontext
-    mit, damit sich mehrere Meldungen desselben Projekts zusammenfuehren lassen."""
+    die Einwilligung sonst da ist. Steht Feedback auf "aus", gehen nur der Text und der volle Commit-Hash
+    des Template-Stands (template_basis) hinaus - keine Projekt-Kennung, kein weiterer Kontext. Der Hash
+    beschreibt die VORLAGE, nicht das Projekt: er ist in jedem Projekt mit demselben Stand identisch,
+    verraet also nichts ueber DIESES Projekt - ohne ihn liesse sich eine Meldung aber keinem Vorlagenstand
+    zuordnen. Sonst (Feedback nicht "aus") darf zusaetzlich Kontext mit, damit sich mehrere Meldungen
+    desselben Projekts zusammenfuehren lassen."""
     text = (text or "").strip()
     if not text:
         print("Abbruch: kein Text angegeben.", file=sys.stderr)
@@ -1179,9 +1197,15 @@ def cmd_direkt(root: Path, text: str, ja: bool) -> int:
     modus = _modus(root)
     nutzlast = {"schema": SCHEMA_DIREKT, "herkunft": HERKUNFT, "art": "direkt",
                 "datum": time.strftime("%Y-%m-%d"), "text": text}
+    # Der Commit-Hash beschreibt die VORLAGE, nicht das Projekt: identisch in jedem Projekt mit demselben
+    # Stand, verraet also nichts ueber DIESES Projekt - ist aber die einzige Angabe, ohne die sich eine
+    # Meldung keinem Vorlagenstand zuordnen liesse. Deshalb geht er AUCH bei "aus" mit, als einziges
+    # Kontextfeld neben text/datum/schema/herkunft. Fehlt base_commit (kein template.json, keine Herkunft),
+    # bleibt das Feld ganz weg statt eines leeren Strings.
+    if tj.get("base_commit"):
+        nutzlast["template_basis"] = tj["base_commit"]
     if modus != "aus":
         nutzlast["projekt_id"] = fb.get("projekt_id")
-        nutzlast["template_basis"] = tj.get("base_commit")
         for schluessel in ("weg", "ausfuellart"):
             if fb.get(schluessel):
                 nutzlast[schluessel] = fb[schluessel]
@@ -1190,7 +1214,8 @@ def cmd_direkt(root: Path, text: str, ja: bool) -> int:
     _zeige(nutzlast, endpoint)
     print("")
     if modus == "aus":
-        print("Feedback steht auf 'aus' - es geht ausschliesslich dieser Text hinaus, ohne Projekt-Kennung.")
+        print("Feedback steht auf 'aus' - es gehen nur dieser Text und der Commit-Hash des Template-Stands "
+              "hinaus, ohne Projekt-Kennung und ohne weiteren Kontext.")
 
     code, fehlertext = _posten(endpoint, nutzlast)
     if fehlertext:
