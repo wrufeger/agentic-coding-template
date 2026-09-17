@@ -87,6 +87,16 @@ zuerst den Hinweis auf beide Wege (`.claude/scripts/template-welcome.py`).
   `docs/ai/tasks.md`) und neue Fragen werden **sofort** nach der jeweiligen Teilaufgabe geschrieben, solange
   der Beleg frisch ist — nicht am Ende einer Sitzung aus der Erinnerung. Bricht eine Sitzung ab, ist der Stand
   dann trotzdem vollständig.
+- **Eine neue Sitzung setzt die alte fort.** „Weitermachen", „Fortsetzen", „weiter" oder ein ähnlich knapper
+  Zuruf ohne weitere Angabe heißt: dort anknüpfen, wo die letzte Sitzung endete — erst `docs/ai/board.md`,
+  den `Stand <Datum>:` der laufenden Aufgabe in `docs/ai/tasks.md` und die letzten Journal-Einträge lesen,
+  dann den offenen Punkt aufnehmen. Ist eindeutig, was ansteht, wird gearbeitet statt gefragt; ist es nicht
+  eindeutig, werden die nächsten Schritte gezeigt — nicht die Frage „was möchtest du?" gestellt.
+- **Ein erzwungener Neustart wird sofort geprüft.** Musste die Sitzung neu gestartet werden, damit etwas
+  greift (Hooks, geänderte Werkzeug-Konfiguration, neue Regeldateien, ein Nachrüsten), prüft der Orchestrator
+  **ohne Rückfrage** als erstes, ob der Neustart das Problem gelöst hat, und meldet das Ergebnis mit Beleg.
+  Steht dafür eine Prüfliste in der Aufgabe, wird sie Punkt für Punkt abgearbeitet und jedes Ergebnis ins
+  Journal geschrieben — auch wenn alles grün ist.
 - **Committet wird abgenommene Arbeit**, kein Zeitabschnitt: sobald eine Aufgabe fertig und belegt ist,
   folgt der Abschluss (Checkliste „Aufgabe abschließen"). Mehrere Commits pro Sitzung sind der Normalfall,
   ein einziger Sammel-Commit am Ende die Ausnahme.
