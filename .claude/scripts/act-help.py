@@ -2,21 +2,13 @@
 # -*- coding: utf-8 -*-
 #
 # Zweck: Uebersicht der Projekt-Befehle (/act-…) wie eine man page - Name, Parameter, Kurzbeschreibung,
-#        Ausloeser. Liest das Frontmatter aller .claude/skills/*/SKILL.md, deshalb nie veraltet. Sucht dafuer
-#        (wie Claude Code selbst) vom Projektordner aufwaerts bis zum Git-Root (`git rev-parse
-#        --show-toplevel`, sonst nur der Projektordner) - so findet eine Sitzung in einem Unterordner ohne
-#        eigenes ".claude/skills" (z. B. die Pflege-Sitzung in .templatedev/) auch die im Root vererbten
-#        Projektbefehle. Bei gleichem Skill-Ordnernamen gewinnt der naehere Ordner (siehe _skill_files()).
-#        Wird vom Skill /act aufgerufen, laeuft aber auch direkt. Reine Python-Stdlib.
+#        Ausloeser. Liest das Frontmatter aller '<projektroot>/.claude/skills/*/SKILL.md', deshalb nie
+#        veraltet. Wird vom Skill /act aufgerufen, laeuft aber auch direkt. Reine Python-Stdlib.
 #
-#        Filtert nach Stand des Repos (B48/T5, docs/ai/backlog.md): ein Frontmatter-Feld "phase" je
-#        Skill ("setup" | "maintenance", Default "project" - steht seit T5 unter "metadata:", ein flaches
-#        "phase:" wird zur Rueckwaertskompatibilitaet weiterhin gelesen) wird gegen .claude/template.json bzw.
-#        gegen den Pfad geprueft:
-#          - Projektordner ist die Pflege-Sitzung des Templates (".templatedev/" mit "is_template: true" im
-#            Root, siehe config-lib.py:is_template_maintenance_dir, T5 Entscheidung Q19 b - kein Marker mehr,
-#            eine Sitzung im Template-Root selbst verhaelt sich IMMER wie ein frischer Klon)
-#                                                                  -> nur "project" + "maintenance", nie "setup"
+#        Filtert nach Stand des Repos (B48, docs/ai/backlog.md): ein Frontmatter-Feld "phase" je
+#        Skill ("setup" | "maintenance", Default "project" - steht unter "metadata:", ein flaches
+#        "phase:" wird zur Rueckwaertskompatibilitaet weiterhin gelesen) wird gegen .claude/template.json
+#        geprueft:
 #          - keine template.json/nicht lesbar                 -> keine Filterung, alles zeigen
 #          - is_template true                                 -> nur "setup" (frischer Klon zum Anlegen)
 #          - is_template fehlt, setup_complete (noch) nicht gesetzt -> "setup" + "project" (Weg-2-Ziel:
@@ -39,7 +31,6 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -55,7 +46,7 @@ def _root() -> Path:
 def _frontmatter(datei: Path) -> dict:
     """Einfache Schluessel: Wert-Zeilen zwischen den beiden '---' - mehr brauchen SKILL.md-Dateien nicht.
     Ein eingerueckter Block unter einem Top-Level-Schluessel ohne eigenen Wert (z. B. "metadata:") wird EINE
-    Ebene tief mitgelesen und als "<eltern>.<kind>" abgelegt (T5: "metadata: / phase: setup" statt eines
+    Ebene tief mitgelesen und als "<eltern>.<kind>" abgelegt ("metadata: / phase: setup" statt eines
     flachen "phase: setup") - kein YAML-Parser, nur genau so viel wie SKILL.md-Frontmatter braucht."""
     werte = {}
     zeilen = datei.read_text(encoding="utf-8").splitlines()
@@ -83,7 +74,7 @@ _PHASEN = {"setup", "maintenance", "project"}
 
 
 def _phase(fm: dict) -> str:
-    """Frontmatter-Wert "metadata.phase" (T5), zur Rueckwaertskompatibilitaet ersatzweise das alte flache
+    """Frontmatter-Wert "metadata.phase", zur Rueckwaertskompatibilitaet ersatzweise das alte flache
     "phase" - normalisiert: Kommentar (#...) und Quotes abschneiden, kleinschreiben. Leer oder unbekannt
     zaehlt als "project" (Default-Phase)."""
     wert = fm.get("metadata.phase") or fm.get("phase", "")
@@ -91,62 +82,12 @@ def _phase(fm: dict) -> str:
     return wert if wert in _PHASEN else "project"
 
 
-def _git_toplevel(start: Path):
-    """Git-Root von `start` aus (`git rev-parse --show-toplevel`), oder None (kein Repo, `git` fehlt,
-    Timeout) - dann greift in `_skill_search_dirs` der Rueckfall auf den Projektordner allein."""
-    try:
-        ergebnis = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(start), capture_output=True, text=True, timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if ergebnis.returncode != 0:
-        return None
-    ausgabe = ergebnis.stdout.strip()
-    if not ausgabe:
-        return None
-    try:
-        return Path(ausgabe).resolve()
-    except OSError:
-        return None
-
-
-def _skill_search_dirs(root: Path) -> list:
-    """Ordner, in denen nach '.claude/skills/*/SKILL.md' gesucht wird: `root` selbst, dann aufwaerts bis zum
-    Git-Root (`git rev-parse --show-toplevel`), naehester Ordner zuerst - so wie Claude Code Skills selbst
-    findet. Ausserhalb eines Git-Repos, oder wenn `git` fehlschlaegt, nur `root` allein. Das faengt die
-    Pflege-Sitzung in `.templatedev/` (kein eigenes Git-Repo, aber Unterordner des Template-Checkouts) ein:
-    Projektbefehle wie /act-idea liegen nur im Root und werden sonst nicht gefunden."""
-    root = root.resolve()
-    kette = [root]
-    top = _git_toplevel(root)
-    if top is not None and top != root and top in root.parents:
-        aktuell = root
-        while aktuell != top:
-            aktuell = aktuell.parent
-            kette.append(aktuell)
-    return kette
-
-
 def _skill_files(root: Path) -> list:
-    """SKILL.md-Dateien aus '.claude/skills' aller Ordner in `_skill_search_dirs(root)`, naehester zuerst.
-    Bei gleichem Skill-Ordnernamen (z.B. eine Sperr-Fassung in `.templatedev/.claude/skills/`, die einen
-    gleichnamigen Skill im Root ueberschreibt) gewinnt der naehere - der entferntere wird ignoriert, nicht
-    zusaetzlich gelistet."""
-    gesehen = set()
-    dateien = []
-    for verzeichnis in _skill_search_dirs(root):
-        skills_ordner = verzeichnis / ".claude" / "skills"
-        if not skills_ordner.is_dir():
-            continue
-        for datei in sorted(skills_ordner.glob("*/SKILL.md")):
-            skill_ordner_name = datei.parent.name
-            if skill_ordner_name in gesehen:
-                continue
-            gesehen.add(skill_ordner_name)
-            dateien.append(datei)
-    return dateien
+    """SKILL.md-Dateien aus '<root>/.claude/skills', sortiert."""
+    skills_ordner = root / ".claude" / "skills"
+    if not skills_ordner.is_dir():
+        return []
+    return sorted(skills_ordner.glob("*/SKILL.md"))
 
 
 def _befehle(dateien: list) -> list:
@@ -191,28 +132,8 @@ def _template_config(root: Path):
     return daten if isinstance(daten, dict) else None
 
 
-def _load_config_lib_module(root: Path):
-    """config-lib.py per importlib (gleicher Ordner) - nur fuer is_template_maintenance_dir() (T5). None bei
-    fehlender/kaputter Datei, damit ein Ladefehler hier nie die Befehlsuebersicht selbst zum Absturz bringt."""
-    cl_path = Path(__file__).resolve().parent / "config-lib.py"
-    if not cl_path.is_file():
-        return None
-    try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("_act_help_config_lib", cl_path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-    except Exception:  # noqa: BLE001 - darf /act nie blockieren
-        return None
-
-
 def _erlaubte_phasen(root: Path):
     """Liefert (erlaubte Phasen als Menge oder None fuer 'keine Filterung', Kurzbegruendung fuer /act all)."""
-    cl = _load_config_lib_module(root)
-    if cl is not None and cl.is_template_maintenance_dir(root):
-        return ({"project", "maintenance"},
-                "Pflege-Sitzung des Templates (.templatedev/) - nur Projektbefehle + Wartung, nie Einrichtung")
     cfg = _template_config(root)
     if cfg is None:
         return None, "keine .claude/template.json - keine Filterung"

@@ -68,7 +68,6 @@
 #   Pfad dieses Scripts (parents[2]). main() laeuft komplett in try/except - kein Traceback nach aussen.
 
 import argparse
-import importlib.util
 import json
 import os
 import re
@@ -195,16 +194,6 @@ def _load_template_json(root: Path):
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
-
-
-def _load_config_lib_module():
-    """config-lib.py per importlib (gleicher Ordner) - nur fuer is_template_maintenance_dir()/
-    TEMPLATE_MAINTENANCE_DIR_HINWEIS (T5), sonst bleibt dieses Script bewusst frei von der Bibliothek."""
-    cl_path = Path(__file__).resolve().parent / "config-lib.py"
-    spec = importlib.util.spec_from_file_location("_finish_setup_config_lib", cl_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def _is_template_checkout(root: Path) -> bool:
@@ -425,8 +414,6 @@ def cmd_check(root: Path, quiet: bool) -> int:
     data = _load_template_json(root)
     if not data or data.get("is_template") is True or data.get("setup_complete") is True:
         return 0
-    if _load_config_lib_module().is_template_maintenance_dir(root):
-        return 0
     remaining = sum(1 for rel, _kind in REMOVE_ITEMS if (root / rel).exists())
     if remaining == 0:
         return 0
@@ -448,10 +435,6 @@ def run(root: Path, plan: bool) -> int:
             "Einrichtungswerkzeuge gepflegt, nicht geloescht. Abbruch.",
             file=sys.stderr,
         )
-        return 2
-    cl = _load_config_lib_module()
-    if cl.is_template_maintenance_dir(root):
-        print(f"finish-setup.py: Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
         return 2
     is_git = _is_git_repo(root)
 

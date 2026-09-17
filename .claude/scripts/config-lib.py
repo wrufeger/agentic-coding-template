@@ -5,7 +5,7 @@
 # *_WERTE/*_ALIAS/*_TEXT), das Tabellen-/Altformat-Parsing (parse_config/load_config), die Normalisierer je
 # Schluessel (normalize_*) und die Ableitung von Platzhalterwerten/Orchestrator-Rufname (compute_values,
 # default_orchestrator/detect_ai_tool) sowie den Schnappschuss fuer sync-config.py (build_applied_config).
-# Herausgetrennt aus setup-lib.py (Backlog/.templatedev/docs/ai/questions.md Q4), das als duenne Fassade
+# Herausgetrennt aus setup-lib.py (Backlog der Template-Pflege, Q4), das als duenne Fassade
 # (Re-Export dieser drei Module) plus dem eigentlichen Setup-Ablauf bestehen bleibt - siehe dort. Reine
 # Python-Stdlib, kein Paket noetig, keine Abhaengigkeit von files-lib.py/claudemd-lib.py (sonst Zyklus).
 # Zusaetzlich die gemeinsame Dateisammlung fuers projektweite Ersetzen (EXCLUDE_DIR_NAMES_REPLACE/
@@ -22,42 +22,6 @@ from pathlib import Path
 
 
 CONFIG_REL = "AI-CONFIG.md"
-
-# T5 (Entscheidung Q19 b, .templatedev/docs/project/concepts/project-structure.md): die Template-Pflege wird ein eigenes
-# Projekt in .templatedev/, eine Sitzung im Root-Ordner verhaelt sich seitdem IMMER wie ein frischer Klon -
-# kein Marker mehr (".templatedev/.maintainer" entfaellt). Einrichtung/Update/Wartung duerfen trotzdem nie
-# GEGEN .templatedev/ laufen: Ziel dort waere entweder ein Unfall (aus Versehen im falschen Ordner) oder
-# wuerde die Pflege-Sitzung wie ein frisch angelegtes Projekt behandeln, obwohl sie eigene Sperr-Skills hat.
-TEMPLATE_MAINTENANCE_DIR_HINWEIS = (
-    "Pflege-Projekt des Templates - Einrichtung/Update hier nicht; Template-Dateien direkt im "
-    "Root-Ordner bearbeiten."
-)
-
-
-def is_template_maintenance_dir(root) -> bool:
-    """True, wenn `root` der Pflege-Checkout des Templates selbst ist (".templatedev/" direkt im Root eines
-    Template-Checkouts). Erkannt rein am Pfad plus einem Blick in die Nachbardatei: `root` muss
-    ".templatedev" heissen UND der Elternordner muss eine ".claude/template.json" mit "is_template: true"
-    haben - bewusst nur json.load (kein Import von update-template.py:load_template_json(), das mit
-    default_config()/keep_local/... mehr macht als hier noetig ist und einen schwereren Import braeuchte).
-    Liefert bei jedem Zweifel False (fehlende/kaputte Datei, falscher Typ, kein Path-artiges Argument) - eine
-    Sperre, die faelschlich greift, waere schlimmer als eine, die einmal zu wenig greift: sie wuerde ein
-    normales Projekt namens '.templatedev' lahmlegen."""
-    try:
-        root_path = Path(root).resolve()
-    except (TypeError, OSError):
-        return False
-    if root_path.name != ".templatedev":
-        return False
-    tpl_path = root_path.parent / ".claude" / "template.json"
-    if not tpl_path.is_file():
-        return False
-    try:
-        with open(tpl_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return False
-    return bool(isinstance(data, dict) and data.get("is_template"))
 
 KEY_MAP = {
     "Projektname": "projektname",
@@ -425,7 +389,7 @@ def load_config(root: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Backlog B37 (.templatedev/docs/ai/backlog.md): neue Schluessel aus der Template-Fassung von AI-CONFIG.md, die in
+# Backlog B37 (Backlog der Template-Pflege): neue Schluessel aus der Template-Fassung von AI-CONFIG.md, die in
 # der (per keep_local nie gemergten) Projektfassung sonst still verloren gehen. Reine Textoperation auf den
 # Tabellen-Zeilen - unabhaengig von KEY_MAP/parse_config, damit auch ein Schluessel erkannt wird, den DIESE
 # (ggf. aeltere) config-lib.py noch gar nicht kennt. Funktioniert mit UND ohne die Erlaeuterungsabsaetze

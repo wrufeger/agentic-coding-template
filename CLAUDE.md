@@ -55,9 +55,8 @@ folgenden Sub-Agenten sind die Worker:
 <!-- template-only:start -->
 > **Sitzung im Template-Checkout?** Dieses Repo ist die Vorlage (Marker `is_template` in
 > `.claude/template.json`): `docs/ai/`/`docs/project/` bleiben leere Formulare, hier entstehen nur neue
-> Projekte oder Nachrüstungen (Weg 1/2 unten). Für die Pflege der Vorlage selbst wird eine eigene Sitzung in
-> `.templatedev/` gestartet — eigenes Projekt in derselben Struktur, strikte Trennung vom Root, kein Schalter
-> (Q19); Einstieg dort über `.templatedev/docs/README.md`.
+> Projekte oder Nachrüstungen (Weg 1/2 unten). Die Weiterentwicklung des Templates selbst läuft in einem
+> eigenen, separaten Pflege-Repo und ist nicht Teil dieses Checkouts.
 <!-- template-only:end -->
 
 **Eskalation statt Wiederholung:** Scheitert ein Worker zweimal an derselben Aufgabe, wird der Auftrag kein
@@ -287,9 +286,6 @@ Konfiguration des Rechners, kein Repo-Inhalt und kein Ersatz für das Memory.
 │   ├── settings.json              # Modell der Hauptsession, unkritische Permissions (keine Secrets), Hooks
 │   └── settings.local.json.example
 ├── .cursor/rules/agents.mdc      # Verweis auf AGENTS.md für Cursor
-├── .templatedev/                 # nur im Template: eigenes Pflegeprojekt der Template-Entwicklung
-│                                 # (eigene AGENTS.md/CLAUDE.md, docs/ai/, docs/project/, Sitzung dort
-│                                 # starten), wird von /act-create-project entfernt
 ├── .github/README.md             # Template-Beschreibung für GitHub (Vorrang vor /README.md),
 │                                 # wird von /act-create-project entfernt
 ├── .github/copilot-instructions.md  # Verweis auf AGENTS.md für Copilot

@@ -20,9 +20,8 @@
 #   LICENSE (landet im Ziel als .claude/TEMPLATE-LICENSE, damit eine vorhandene Projekt-LICENSE bleibt),
 #   AGENTS.md, CLAUDE.md, GEMINI.md, .aider.conf.yml, .cursor/, .github/copilot-instructions.md,
 #   .claude/ (komplett AUSSER .claude/settings.local.json und .claude/scripts/template-welcome.py - reine
-#   Template-Pflege-Dateien, siehe EXCLUDE_* unten; der Skill der Template-Pflege
-#   (act-process-feedback) liegt seit T5 ohnehin unter .templatedev/.claude/skills/, ausserhalb von
-#   .claude/ und damit nie im Kopierumfang; `migrate-project.py` kommt darueber automatisch mit),
+#   Template-Pflege-Dateien, siehe EXCLUDE_* unten; der Skill der Template-Pflege (act-process-feedback)
+#   liegt in deren eigenem, separatem Repo, ausserhalb dieses Checkouts und damit nie im Kopierumfang),
 #   docs/ai/ (alle), docs/project/ (alle Skelette
 #   inkl. incidents/), docs/README.md, AI-CONFIG.md, .editorconfig, .gitattributes, renovate.json,
 #   .mcp.json.example, .env.example, .github/workflows/ci.yml. In der kopierten settings.json wird
@@ -138,16 +137,6 @@ def run_git(root: Path, args, timeout=None):
 def _load_template_update_module(template_root: Path):
     tu_path = template_root / ".claude" / "scripts" / "update-template.py"
     spec = importlib.util.spec_from_file_location("_template_update_ct", tu_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _load_config_lib_module(template_root: Path):
-    # Fuer is_template_maintenance_dir()/TEMPLATE_MAINTENANCE_DIR_HINWEIS (T5) - Ziel darf nie die
-    # Pflege-Sitzung des Templates selbst sein. Geladen wie _load_template_update_module/_load_files_lib_module.
-    cl_path = template_root / ".claude" / "scripts" / "config-lib.py"
-    spec = importlib.util.spec_from_file_location("_config_lib_apply_ct", cl_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -307,11 +296,6 @@ def _run(argv) -> int:
 
     if not target_root.exists() or not target_root.is_dir():
         print(f"Fehler: --target {target_root} existiert nicht oder ist kein Verzeichnis.", file=sys.stderr)
-        return 2
-
-    cl = _load_config_lib_module(template_root)
-    if cl.is_template_maintenance_dir(target_root):
-        print(f"Fehler: {cl.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
         return 2
 
     # Das Template in sich selbst (oder in einen eigenen Unterordner) zu kopieren ueberschreibt dessen

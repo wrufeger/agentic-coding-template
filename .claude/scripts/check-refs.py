@@ -14,8 +14,7 @@
 #       ob das Ziel existiert, und meldet tote Verweise (Fundstelle Datei:Zeile) sowie - als kuerzere,
 #       separate Liste - verwaiste Ziele (existieren, werden aber nirgends zitiert). Schreibt nichts. Exit 0,
 #       wenn keine toten Verweise gefunden wurden (verwaiste Ziele allein sind kein Fehler, nur ein Hinweis),
-#       sonst Exit 1. Die Template-Pflege in .templatedev/ (eigenes Projekt seit T5) laeuft als EIGENER Lauf
-#       mit `--root .templatedev` und dessen eigenem docs/ - keine Sonderbehandlung mehr in diesem Script.
+#       sonst Exit 1.
 #
 # Kuerzel/Ziele (siehe docs/ai/README.md § "Querverweise"):
 #   T<n>          Task               docs/ai/tasks.md, sonst docs/ai/tasks_archive.md
@@ -121,8 +120,7 @@ def _load_rename_lib(root: Path):
 
 def _iter_md_files(root: Path):
     """Alle .md-Dateien unter docs/ von `root`, root-relative Posix-Pfade, sortiert fuer eine stabile
-    Ausgabe. `root` ist der jeweilige Projekt-Root eines Laufs (--root) - die Template-Pflege in
-    .templatedev/ (T5) laeuft als eigener Lauf mit --root .templatedev und hat dann selbst ein docs/."""
+    Ausgabe. `root` ist der jeweilige Projekt-Root eines Laufs (--root)."""
     bases = [root / "docs"]
     found = []
     for base in bases:

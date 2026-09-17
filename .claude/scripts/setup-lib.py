@@ -81,7 +81,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 # ---------------------------------------------------------------------------
-# config-lib.py/files-lib.py/claudemd-lib.py laden (Aufteilung Backlog/.templatedev/docs/ai/questions.md Q4:
+# config-lib.py/files-lib.py/claudemd-lib.py laden (Aufteilung Backlog der Template-Pflege, Q4:
 # setup-lib.py war 2461 Zeilen und blockierte parallele Auftraege, die die Datei gleichzeitig brauchten).
 # Diese Datei bleibt die Fassade: jeder Name aus den drei Modulen (ausser Dunder-Attributen) landet per
 # _merge_module() in diesen globalen Namensraum - sowohl fuer den Ablauf unten (bare Namen wie vor der
@@ -204,19 +204,15 @@ def check_maintenance_runner_files(root: Path) -> list:
 
 
 # Pfade, die nur das TEMPLATE selbst betreffen und in einem abgeleiteten Projekt nichts verloren haben:
-# `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt),
-# `.templatedev/` (Board/Backlog/Fragen/Ledger/Regeln der Template-Entwicklung, seit T5 in
-# `.templatedev/docs/ai/` bzw. `.templatedev/docs/project/` - der einzige Ordner im Template mit echtem
-# Inhalt statt Platzhaltern; das schliesst dessen eigenen `.claude/skills/act-process-feedback` mit ein,
-# der Skill der Template-Pflege steht seit T5 dort statt im Root) und `.claude/scripts/template-welcome.py`
-# (Hinweis-Hook fuer einen frischen Template-Klon, Review 2026-09-17 - der zugehoerige UserPromptSubmit-
-# Hook-Eintrag in settings.json wird zusaetzlich per remove_welcome_hook() entfernt, siehe unten, weil er
-# sonst nach dem Loeschen des Scripts ins Leere zeigt). Bare Ordnername/Dateiname ohne Trailing-Slash/
-# Wildcard: greift bei Path.exists()/is_dir() (siehe remove_template_intro) direkt, und muss zu
-# DEFAULT_TEMPLATE_ONLY in update-template.py passen (kein Import zwischen den Scripten, siehe dort).
+# `.github/README.md` (Template-Beschreibung, wird von GitHub vor der Root-README angezeigt) und
+# `.claude/scripts/template-welcome.py` (Hinweis-Hook fuer einen frischen Template-Klon, Review 2026-09-17 -
+# der zugehoerige UserPromptSubmit-Hook-Eintrag in settings.json wird zusaetzlich per remove_welcome_hook()
+# entfernt, siehe unten, weil er sonst nach dem Loeschen des Scripts ins Leere zeigt). Bare Ordnername/
+# Dateiname ohne Trailing-Slash/Wildcard: greift bei Path.exists()/is_dir() (siehe remove_template_intro)
+# direkt, und muss zu DEFAULT_TEMPLATE_ONLY in update-template.py passen (kein Import zwischen den
+# Scripten, siehe dort).
 TEMPLATE_ONLY_PATHS = [
     ".github/README.md",
-    ".templatedev",
     ".claude/scripts/template-welcome.py",
 ]
 
@@ -232,7 +228,7 @@ STALE_PATH_CHECK_LISTS = {
 # Pfade, die ABSICHTLICH nie im Template-Repo selbst existieren: Altnamen von vor dem `act-`-Praefix
 # (Umbenennung 2026-09-17), die in einer der Listen oben stehen bleiben, damit Projekte, die den
 # Umbenennungs-Merge noch nicht eingespielt haben, ihre alten Skill-Ordner beim Abschalten trotzdem
-# losgeworden (Backlog #B42, .templatedev/docs/ai/backlog.md). check_stale_remove_paths soll dafuer NICHT warnen -
+# losgeworden (Backlog #B42, Backlog der Template-Pflege). check_stale_remove_paths soll dafuer NICHT warnen -
 # das waere hier immer ein Fehlalarm, keine vergessene Umbenennung. Bei einer echten Umbenennung/Verschiebung
 # einer der Listen bleibt die Selbstpruefung fuer alle anderen Eintraege wirksam.
 LEGACY_REMOVE_PATHS = {
@@ -286,8 +282,8 @@ TEMPLATE_ONLY_BLOCK_FILES = ["AGENTS.md", "CLAUDE.md"]
 
 
 def remove_template_intro(root: Path) -> list:
-    """Entfernt die nur fuer das Template gedachten Pfade (TEMPLATE_ONLY_PATHS - Dateien oder Ordner, z.B.
-    `.templatedev/`) und die `template-only`-Bloecke aus den Regeldateien. Gibt zurueck, was entfernt wurde."""
+    """Entfernt die nur fuer das Template gedachten Pfade (TEMPLATE_ONLY_PATHS - Dateien oder Ordner) und die
+    `template-only`-Bloecke aus den Regeldateien. Gibt zurueck, was entfernt wurde."""
     removed = []
     for rel in TEMPLATE_ONLY_PATHS:
         fp = root / rel
@@ -661,9 +657,6 @@ def cmd_dry_run(root: Path) -> int:
 
 
 def cmd_apply(root: Path) -> int:
-    if is_template_maintenance_dir(root):
-        print(f"Fehler: {TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
-        return 2
     cfg = load_config(root)
     values = compute_values(cfg)
     logging_val, logging_tiefe = logging_settings(cfg)

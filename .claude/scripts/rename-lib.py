@@ -1226,9 +1226,6 @@ def check_clean_worktree(root: Path) -> int:
 
 
 def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
-    if _config_lib.is_template_maintenance_dir(root):
-        print(f"Fehler: {_config_lib.TEMPLATE_MAINTENANCE_DIR_HINWEIS}", file=sys.stderr)
-        return 2
     rc = check_clean_worktree(root)
     if rc != 0:
         return rc

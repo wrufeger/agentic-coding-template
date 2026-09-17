@@ -65,7 +65,6 @@
 # verweigert das Script jede Aktion - die Entwicklung des Templates meldet sich nicht an sich selbst.
 
 import argparse
-import importlib.util
 import json
 import os
 import re
@@ -84,8 +83,8 @@ for _stream in (sys.stdout, sys.stderr):
         except (ValueError, OSError):
             pass
 
-# Ziel der Meldung. Bewusst hier als Konstante und nicht in .templatedev/: Dieser Ordner wird beim Anlegen
-# eines Projekts entfernt (template_only), die Adresse muss aber genau dort verfuegbar sein, wo gesendet wird.
+# Ziel der Meldung. Bewusst hier als Konstante: Die Adresse muss genau dort verfuegbar sein, wo gesendet
+# wird - in jedem abgeleiteten Projekt, nicht nur in der Template-Pflege selbst.
 # Wer das Template forkt, aendert diese Zeile. Fuer Tests laesst sich die Adresse per Umgebungsvariable
 # uebersteuern, ohne die Datei anzufassen.
 FEEDBACK_ENDPOINT = "https://rufeger.de/agentic-coding-feedback"
@@ -617,9 +616,9 @@ def _kennzahlen(root: Path) -> dict:
     """Umfang a: Zahlen aus `git log` und Dateisystem - NUR Zahlen, nie Namen, nie Pfade, nie Texte.
     Was sich nicht ermitteln laesst, faellt weg statt geschaetzt zu werden (Entscheidung 2026-09-15)."""
     zahlen = {}
-    # Pathspec "-- ." (T5): `root` kann ein Unterordner-Projekt im selben Git-Repo sein (.templatedev/, die
-    # Template-Pflege selbst) - ohne Pathspec zaehlte `git log` sonst JEDEN Commit des ganzen Repos mit,
-    # nicht nur die des eigenen Projektordners.
+    # Pathspec "-- .": `root` kann ein Unterordner-Projekt in einem groesseren Git-Repo sein - ohne
+    # Pathspec zaehlte `git log` sonst JEDEN Commit des ganzen Repos mit, nicht nur die des eigenen
+    # Projektordners.
     protokoll = _git(root, "log", "--format=%ad", "--date=short", "--", ".").split()
     if protokoll:
         zahlen["commits"] = len(protokoll)
@@ -1214,20 +1213,6 @@ def cmd_clear(root: Path) -> int:
     return 0
 
 
-def _ist_pflege_ordner(root: Path) -> bool:
-    """T5-Review: im Pflege-Projekt .templatedev/ hat template.json kein is_template - trotzdem nie senden.
-    Gleiche Pruefung wie die uebrigen Sperren (config-lib.py:is_template_maintenance_dir); jeder Ladefehler
-    zaehlt aus Vorsicht als Pflege-Ordner, wenn der Ordner so heisst."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "_feedback_config_lib", Path(__file__).resolve().parent / "config-lib.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return bool(mod.is_template_maintenance_dir(root))
-    except Exception:  # noqa: BLE001
-        return Path(root).resolve().name == ".templatedev"
-
-
 def _run(argv) -> int:
     parser = argparse.ArgumentParser(
         prog="feedback.py",
@@ -1267,9 +1252,9 @@ def _run(argv) -> int:
 
     root = _root()
     tj = _template_json(root)
-    if tj.get("is_template") is True or _ist_pflege_ordner(root):
-        print("Dieses Repo ist das Template selbst (bzw. dessen Pflege-Projekt .templatedev/) - es meldet sich "
-              "nicht an sich selbst. Nichts getan.", file=sys.stderr)
+    if tj.get("is_template") is True:
+        print("Dieses Repo ist das Template selbst - es meldet sich nicht an sich selbst. Nichts getan.",
+              file=sys.stderr)
         return 2
 
     # Altbestand nur bei einem SCHREIBENDEN Befehl aufraeumen - --status/--plan lesen nur und zeigen den

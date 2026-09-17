@@ -148,12 +148,10 @@ fest hinterlegt, kein Schalter in `AI-CONFIG.md`.
 ## Mitarbeiten
 
 Das Repository enthält bewusst fast keinen echten Inhalt: `docs/ai/` und `docs/project/` sind Gerüste, die
-jedes abgeleitete Projekt selbst füllt. Was die Weiterentwicklung des Templates betrifft — Aufgaben, offene
-Punkte, Fragen, Journal, Regeln und die Testprojekte — steht deshalb im eigenen Pflegeprojekt `.templatedev/`
-(Einstieg: `.templatedev/docs/README.md`) und wird beim Anlegen eines Projekts entfernt. Wer hier tatsächlich
-an der Vorlage arbeitet statt nur zu klonen, startet dafür eine eigene Pflege-Sitzung in `.templatedev/`;
-Eingaben ohne erkennbaren Auftrag zum Anlegen oder Nachrüsten bekommen sonst zuerst einen kurzen Hinweis auf
-die beiden Wege.
+jedes abgeleitete Projekt selbst füllt. Die Weiterentwicklung des Templates (Backlog, Fragen, Journal,
+Testprojekte) läuft in einem eigenen, separaten Pflege-Repo und ist nicht Teil dieses Checkouts. Eingaben
+ohne erkennbaren Auftrag zum Anlegen oder Nachrüsten bekommen hier zuerst einen kurzen Hinweis auf die
+beiden Wege.
 
 ## Lizenz
 

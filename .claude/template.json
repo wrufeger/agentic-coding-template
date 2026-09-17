@@ -40,7 +40,6 @@
   ],
   "template_only": [
     ".github/README.md",
-    ".templatedev",
     ".claude/scripts/template-welcome.py"
   ],
   "updates": [],

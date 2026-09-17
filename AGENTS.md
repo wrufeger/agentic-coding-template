@@ -52,10 +52,10 @@ Definitionen, feste Modell-IDs, Automations-Mechanik) stehen in eigenen Dateien 
 ## Noch nicht initialisiert — abweichende Regeln
 
 Dieses Repo ist die Vorlage: Hier entstehen nur neue Projekte oder Nachrüstungen (Weg 1/2, `CLAUDE.md` § 2);
-`docs/ai/` und `docs/project/` bleiben leere Formulare. Die Pflege der Vorlage selbst läuft ausschließlich in
-einer eigenen Sitzung, die im Ordner `.templatedev/` gestartet wird (eigene Regeln dort, strikte Trennung vom
-Root, kein Schalter — Q19). **Frischer Klon zuerst erklären:** Eingaben ohne erkennbaren Auftrag zum Anlegen
-oder Nachrüsten bekommen zuerst den Hinweis auf beide Wege (`.claude/scripts/template-welcome.py`).
+`docs/ai/` und `docs/project/` bleiben leere Formulare. Die Weiterentwicklung des Templates (Backlog, Fragen,
+Journal, Testprojekte) läuft in einem eigenen, separaten Pflege-Repo und ist nicht Teil dieses Checkouts.
+**Frischer Klon zuerst erklären:** Eingaben ohne erkennbaren Auftrag zum Anlegen oder Nachrüsten bekommen
+zuerst den Hinweis auf beide Wege (`.claude/scripts/template-welcome.py`).
 <!-- template-only:end -->
 
 ## Grundregeln
