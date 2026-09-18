@@ -32,7 +32,7 @@
 #       erteilt, weil der Plan vorher angezeigt wurde. Vorbedingung: sauberer Arbeitsbaum (git status
 #       --porcelain leer) - sonst Exit 2, damit die Migration bei Bedarf rueckgaengig gemacht werden kann.
 #       Kein Git-Repo -> Exit 2.
-#   python .claude/scripts/migrate-project.py --rename-orchestrator ALT=NEU [--yes]
+#   python .claude/scripts/migrate-project.py --rename-orchestrator OLD=NEW [--yes]
 #       Nur die Namensersetzung (auch einzeln nutzbar, ohne Struktur-Migration). Zeigt zuerst eine
 #       Trefferliste (Datei:Zeile, Zeile auf ca. 100 Zeichen gekuerzt, Treffer in [[...]] markiert - bei
 #       vielen Treffern die ersten 40 plus Gesamtzahl, siehe collect_rename_hits) sowie je Datei, wie viele
@@ -1290,7 +1290,7 @@ def cmd_apply(root: Path, forced_alt=None, forced_neu=None) -> int:
     elif alt:
         lines.append(f"Orchestrator-Name: alter Name '{alt}' bekannt, aber kein neuer - AI-CONFIG.md § "
                       "\"Orchestrator\" ist leer. Keine Ersetzung ausgefuehrt, bei Bedarf einzeln mit "
-                      "--rename-orchestrator ALT=NEU.")
+                      "--rename-orchestrator OLD=NEW.")
     else:
         lines.append("Orchestrator-Name: kein Name uebergeben und keiner in AI-CONFIG.md § \"Alter "
                       "Orchestrator-Name\" gesetzt - keine Ersetzung ausgefuehrt.")
@@ -1315,7 +1315,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--apply", action="store_true", help="Plan ausfuehren")
     group.add_argument("--status", action="store_true", help="Kurzuebersicht Template-Konformitaet")
     parser.add_argument(
-        "--rename-orchestrator", metavar="ALT=NEU", default=None,
+        "--rename-orchestrator", metavar="OLD=NEW", default=None,
         help="Orchestrator-Rufnamen ersetzen; zeigt zuerst die Trefferliste (Vorschau, nichts geschrieben) - "
         "erst --yes fuehrt sie aus. Mit --plan kombiniert bleibt es eine reine Vorschau.",
     )
@@ -1340,14 +1340,14 @@ def _run(argv) -> int:
         if "=" not in args.rename_orchestrator:
             print(
                 f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - erwartet "
-                "ALT=NEU.",
+                "OLD=NEW.",
                 file=sys.stderr,
             )
             return 2
         alt, neu = (p.strip() for p in args.rename_orchestrator.split("=", 1))
         if not alt or not neu:
             print(
-                f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - ALT und NEU "
+                f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - OLD und NEW "
                 "duerfen nicht leer sein.",
                 file=sys.stderr,
             )
@@ -1367,7 +1367,7 @@ def _run(argv) -> int:
             if rc != 0:
                 return rc
         if alt == neu:
-            print(f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - ALT und NEU "
+            print(f"Fehler: --rename-orchestrator {args.rename_orchestrator} ist ungueltig - OLD und NEW "
                   "sind identisch.", file=sys.stderr)
             return 2
         per_file, total, fehler, total_skipped = rename_orchestrator(root, alt, neu, dry_run=not args.yes)

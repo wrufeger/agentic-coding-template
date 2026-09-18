@@ -32,7 +32,7 @@ lässt sich auch Monate später nachlesen.
 
 **Ausnahme auf Wunsch:** Ist das Repo öffentlich, wäre die Rückmeldung darin für jeden lesbar. Dann nimmt
 `.gitignore` die Protokoll-Dateien aus (`docs/ai/template-feedback/sent/protocols/*.json`, gesetzt über
-`feedback.py --enable --protokoll lokal`); die Einträge selbst (Lesefassung) und diese README bleiben
+`feedback.py --enable --protocol lokal|versionieren`); die Einträge selbst (Lesefassung) und diese README bleiben
 versioniert, damit nachlesbar bleibt, **was** gefunden wurde und **dass** gesendet wird — nur die Nutzlast
 mit den Metadaten liegt dann nicht im Verlauf. `--status` zeigt, welcher der beiden Fälle gilt.
 
@@ -41,11 +41,11 @@ angeboten (Checkliste „Einrichtung abschließen").
 
 | Womit | Befehl |
 | :--- | :--- |
-| Ein Satz, sofort und immer möglich | „Feedback: <Text>" · „Schicke Feedback <Text>" · `/act-feedback <Text>` — oder direkt `python .claude/scripts/feedback.py --direkt "<Text>"` |
+| Ein Satz, sofort und immer möglich | „Feedback: <Text>" · „Schicke Feedback <Text>" · `/act-feedback <Text>` — oder direkt `python .claude/scripts/feedback.py --direct "<Text>"` |
 | Zustand ansehen | `python .claude/scripts/feedback.py --status` |
 | Sehen, was gesendet würde | `python .claude/scripts/feedback.py --plan` |
 | Abschalten | `python .claude/scripts/feedback.py --disable` |
-| Protokoll lokal halten / wieder versionieren | `python .claude/scripts/feedback.py --enable --protokoll lokal\|versionieren` |
+| Protokoll lokal halten / wieder versionieren | `python .claude/scripts/feedback.py --enable --protocol lokal\|versionieren` |
 
 Was gesendet wird und was nicht, steht in `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor".
 Kurzfassung: nie Dateien, nie Projektbezug, nie Namen oder Zahlen aus dem Projekt — nur das Muster, das auch

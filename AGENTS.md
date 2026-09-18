@@ -419,7 +419,7 @@ nie — dann löst der Befund die Rückmeldung **sofort** aus, unabhängig vom e
 Takt begrenzt das autonome *Sammeln*, nicht einen frischen Fehlerbefund. Grund: Ein Vorlagenfehler trifft alle
 anderen Projekte weiter, solange er nicht gemeldet ist. Eigene Fehler des Projekts, Fehler im Projektcode und
 Umgebungsprobleme des Rechners fallen **nicht** darunter. Der Eintrag wird noch am selben Fund angelegt
-(`--add --art fehler`), solange der Beleg frisch ist (dieselbe Regel wie „Laufend nachziehen, nicht sammeln");
+(`--add --kind fehler`), solange der Beleg frisch ist (dieselbe Regel wie „Laufend nachziehen, nicht sammeln");
 er beschreibt das Muster, nie den Fall — Pfade der Vorlage selbst (Script-, Skill- und Regeldateinamen) dürfen
 genannt werden, weil sie in jedem Projekt gleich heißen. Danach entscheidet weiter der Modus: `automatisch`
 sendet sofort, `bestätigen` zeigt die Nutzlast und fragt, `manuell` lässt den Eintrag bis zum nächsten Versand
@@ -468,13 +468,13 @@ So funktioniert es, wenn {{AUFTRAGGEBER}} zustimmt:
   unsichtbar, es fällt im Diff auf und ist jederzeit nachlesbar, auch Monate später.
 - **Wo dieses Protokoll liegt, wird mitgefragt.** Ein versioniertes Protokoll ist in einem öffentlichen Repo
   für jeden lesbar. Deshalb gehört zur Einwilligung eine zweite Frage: mitversionieren (Vorschlag) oder per
-  `.gitignore` lokal halten (`feedback.py --enable --protokoll versionieren|lokal`, jederzeit umstellbar).
+  `.gitignore` lokal halten (`feedback.py --enable --protocol versionieren|lokal`, jederzeit umstellbar).
   Lokal heißt: nach einem frischen Klon ist das Protokoll weg — der Nachweis bleibt dann nur auf dem
   Rechner, auf dem gesendet wurde.
 - **Widerruf jederzeit**, und das Zusammenfassen kostet ein paar Token zusätzlich — beides gehört in die
   Frage, mit der die Einwilligung eingeholt wird.
 
-Claude-Code-Mechanik: `.claude/scripts/feedback.py` (`--status`, `--enable`/`--disable` mit `--protokoll`,
+Claude-Code-Mechanik: `.claude/scripts/feedback.py` (`--status`, `--enable`/`--disable` mit `--protocol`,
 `--add`, `--plan`, `--send [--force]`). Vor jedem Versand prüft das Script jede Zeichenkette auf Zugangsdaten, Pfade,
 Mailadressen, IPs und fremde URLs und **sendet im Zweifel nicht**. Diese Prüfung ist die letzte Schranke,
 nicht die erste: Was gar nicht erst in einen Eintrag geschrieben wird, kann auch nicht durchrutschen.

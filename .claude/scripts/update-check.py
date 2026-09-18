@@ -30,7 +30,7 @@
 #
 #        Der Hook erinnert nur, er fragt nie - eine faellige Erinnerung nennt trotzdem drei Wege (ansehen und
 #        einspielen, verschieben/Takt aendern, nicht mehr erinnern), damit {{AUFTRAGGEBER}} in einer Zeile
-#        antworten kann. Ein Verschieben (--verschieben) traegt "erinnerung_pausiert_bis" in den
+#        antworten kann. Ein Verschieben (--postpone) traegt "erinnerung_pausiert_bis" in den
 #        "template_updates"-Block von .claude/template.json ein - solange dieses Datum in der Zukunft liegt,
 #        bleibt der Hook still. Er schreibt sonst nichts ausser diesem eigenen Block.
 #
@@ -43,12 +43,13 @@
 #   python .claude/scripts/update-check.py --status
 #       Zeigt Takt, letzte Pruefung, Pausierung, ob ein Rueckstand vorliegt, faellig ja/nein. Rein lesend -
 #       schreibt nichts, loest auch keinen Fetch aus.
-#   python .claude/scripts/update-check.py --verschieben <Tage>
+#   python .claude/scripts/update-check.py --postpone <Tage>  (Alias: --verschieben)
 #       Pausiert die Erinnerung (nicht die Pruefung selbst) um die angegebene Anzahl Tage. Option b der
 #       faelligen Erinnerung.
-#   python .claude/scripts/update-check.py --takt <täglich|wöchentlich|monatlich|sitzungsstart|manuell>
-#       Setzt nur "Template-Update-Erinnerung" in AI-CONFIG.md (ae-Schreibweisen als Alias). Option c der
-#       faelligen Erinnerung ist stattdessen `--takt manuell` (siehe Meldungstext).
+#   python .claude/scripts/update-check.py --cadence <täglich|wöchentlich|monatlich|sitzungsstart|manuell>
+#       Setzt nur "Template-Update-Erinnerung" in AI-CONFIG.md (ae-Schreibweisen und Englisch als Alias,
+#       Alias fuer die Option selbst: --takt). Option c der faelligen Erinnerung ist stattdessen
+#       `--cadence manuell` (siehe Meldungstext).
 #
 # Ausgabeformat: ein bis drei Zeilen Klartext oder nichts. Exit immer 0.
 
@@ -63,7 +64,13 @@ FETCH_TIMEOUT_S = 8  # kurz und bewusst - ein Rechner ohne Netz darf nicht spuer
 # Mindestabstand je Erinnerungstakt in Tagen. "sitzungsstart" und "manuell" haben keinen Abstand (gesondert
 # behandelt, siehe _erinnerung_faellig) - deshalb hier bewusst nicht aufgefuehrt.
 ERINNERUNG_TAGE = {"täglich": 1, "wöchentlich": 7, "monatlich": 30}
-ERINNERUNG_ALIAS = {"taeglich": "täglich", "woechentlich": "wöchentlich"}
+# ae-Schreibweisen UND die englischen --cadence-Werte (Alias, siehe --cadence/--takt) bleiben gueltig -
+# gespeichert wird vorerst weiter der heutige deutsche Wert (Umstellung ist ein spaeterer Auftrag).
+ERINNERUNG_ALIAS = {
+    "taeglich": "täglich", "woechentlich": "wöchentlich",
+    "daily": "täglich", "weekly": "wöchentlich", "monthly": "monatlich",
+    "sessionstart": "sitzungsstart", "manual": "manuell",
+}
 ERINNERUNG_GUELTIG = ("täglich", "wöchentlich", "monatlich", "sitzungsstart", "manuell")
 AVAILABLE_REL = "available-template-update.md"
 MAX_ZEILEN = 40
@@ -220,14 +227,16 @@ def main() -> int:
     if fb is None or tu is None:
         return 0
 
-    if "--takt" in argv:
+    # Eigenes argv-Parsing (kein argparse) - erkennt Haupt- (englisch) und Alias-Form (deutsch) gleichermassen.
+    takt_flag = next((f for f in ("--cadence", "--takt") if f in argv), None)
+    if takt_flag:
         try:
-            wert = argv[argv.index("--takt") + 1].strip().lower()
+            wert = argv[argv.index(takt_flag) + 1].strip().lower()
         except IndexError:
             wert = ""
         wert = ERINNERUNG_ALIAS.get(wert, wert)
         if wert not in ERINNERUNG_GUELTIG:
-            print(f"Fehler: --takt muss eines von {', '.join(ERINNERUNG_GUELTIG)} sein.", file=sys.stderr)
+            print(f"Fehler: --cadence muss eines von {', '.join(ERINNERUNG_GUELTIG)} sein.", file=sys.stderr)
             return 2
         if not fb._config_setzen(root, "Template-Update-Erinnerung", wert):
             print("Fehler: Zeile 'Template-Update-Erinnerung' in AI-CONFIG.md nicht gefunden - bitte dort "
@@ -236,13 +245,14 @@ def main() -> int:
         print(f"AI-CONFIG.md: Template-Update-Erinnerung = {wert}")
         return 0
 
-    if "--verschieben" in argv:
+    postpone_flag = next((f for f in ("--postpone", "--verschieben") if f in argv), None)
+    if postpone_flag:
         try:
-            tage = int(argv[argv.index("--verschieben") + 1])
+            tage = int(argv[argv.index(postpone_flag) + 1])
         except (IndexError, ValueError):
             tage = 0
         if tage <= 0:
-            print("Fehler: --verschieben braucht eine positive Anzahl Tage.", file=sys.stderr)
+            print("Fehler: --postpone braucht eine positive Anzahl Tage.", file=sys.stderr)
             return 2
         try:
             tj = fb._template_json(root)
@@ -307,7 +317,7 @@ def main() -> int:
             pass
         print(f"Ein Template-Update ist verfuegbar (siehe {AVAILABLE_REL}).")
         print("a) ansehen und einspielen: /act-update-template   b) verschieben (Tage) oder Takt aendern   "
-              "c) nicht mehr erinnern: update-check.py --takt manuell")
+              "c) nicht mehr erinnern: update-check.py --cadence manuell")
     return 0
 
 

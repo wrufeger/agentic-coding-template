@@ -24,7 +24,7 @@ beiden — das ist billiger als eine Nachricht, die so nie gemeint war.
 **Zwei Wege, die nicht verwechselt werden dürfen:**
 
 1. **`/feedback <Text>` — eine Nachricht von Hand.** Geht **immer**, auch bei `Feedback: aus`:
-   `python .claude/scripts/feedback.py --direkt "<Text>"`. {{AUFTRAGGEBER}} hat sie selbst geschrieben und
+   `python .claude/scripts/feedback.py --direct "<Text>"`. {{AUFTRAGGEBER}} hat sie selbst geschrieben und
    selbst ausgelöst — mehr, als eine Einwilligung je zusichern könnte. Bei `aus` verlassen **nur der Text
    und der Commit-Hash des Template-Stands** das Projekt, ohne Projekt-Kennung und ohne weiteren Kontext
    (Begründung: `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor"); sonst gehen zusätzlich
@@ -46,7 +46,7 @@ Fällt unterwegs ein Fehler der **Vorlage selbst** auf — Script/Skill schlägt
 Update spielt etwas Falsches ein oder lässt etwas Nötiges aus, zwei Regeln der Vorlage widersprechen sich,
 eine Regel/Mechanik greift nachweislich nie —, gilt nicht der übliche Takt: Regel und Begründung stehen in
 `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor". Mechanik hier: sofort
-`python .claude/scripts/feedback.py --add --art fehler --titel "<eine Zeile>" --text "<Muster, keine
+`python .claude/scripts/feedback.py --add --kind fehler --title "<eine Zeile>" --text "<Muster, keine
 Projektdaten>"`, danach je nach `Feedback`: `automatisch` → gleich `--send --force`; `bestätigen` → `--plan`
 zeigen und {{AUFTRAGGEBER}} fragen; `manuell` → Eintrag bleibt liegen, geht beim nächsten Versand mit;
 `aus` → nichts senden, aber {{AUFTRAGGEBER}} einmal auf den Fund hinweisen, nicht wiederholen.
@@ -61,9 +61,9 @@ Hinweis, dass etwas fällig wäre:
 | Antwort | Aufruf |
 | :--- | :--- |
 | a) ansehen und senden | Ablauf unten ab Schritt 2, zum Schluss `--send --force` (bzw. `--yes` nach der Ansicht) |
-| b) verschieben | nachfragen, um wie viele Tage → `feedback.py --verschieben <Tage>` |
-| b) Takt ändern | nachfragen, auf welchen Takt → `feedback.py --takt <manuell\|sofort\|stündlich\|täglich\|wöchentlich\|adaptiv\|automatisch>` |
-| c) nicht mehr erinnern | `feedback.py --enable --modus manuell` — setzt `Feedback` auf `manuell`, **nicht** auf `aus`: gesammelt wird weiter, nur der Anstoß von selbst entfällt |
+| b) verschieben | nachfragen, um wie viele Tage → `feedback.py --postpone <Tage>` |
+| b) Takt ändern | nachfragen, auf welchen Takt → `feedback.py --cadence <manuell\|sofort\|stündlich\|täglich\|wöchentlich\|adaptiv\|automatisch>` |
+| c) nicht mehr erinnern | `feedback.py --enable --mode manuell` — setzt `Feedback` auf `manuell`, **nicht** auf `aus`: gesammelt wird weiter, nur der Anstoß von selbst entfällt |
 
 Bei Modus `automatisch` erinnert der Hook mit der klassischen einzeiligen Meldung (kein `a`/`b`/`c` nötig, da
 dort ohnehin ohne Rückfrage gesendet wird) — der Ablauf unten gilt trotzdem unverändert.
@@ -79,7 +79,7 @@ gewählt ist.
    {{AUFTRAGGEBER}} sagen, wie er es einschaltet — nicht selbst umstellen. `--status` zeigt in derselben
    Ausgabe, ob das Sendeprotokoll versioniert wird oder per `.gitignore` lokal bleibt; wird beim
    Einschalten über diesen Weg mit eingeschaltet, gilt dieselbe Frage wie bei `/finalize`
-   (`--enable --protokoll versionieren|lokal`).
+   (`--enable --protocol versionieren|lokal`).
 2. **Lesen und herausdestillieren.** `.claude/`, `CLAUDE.md`, `AGENTS.md`, `docs/ai/` durchgehen und die
    Frage stellen: **Was davon hilft jemandem, der dieses Projekt nie sehen wird?** Typische Funde:
    - eine Regel, die hier ergänzt wurde, weil die Vorlage sie nicht hatte
@@ -96,15 +96,15 @@ gewählt ist.
    und werden danach ins Archiv am Dateiende verschoben. Steht dort nichts, ist das in Ordnung — nachfragen
    höchstens einmal, nie drängen.
 3. **Je Fund einen Eintrag anlegen:**
-   `python .claude/scripts/feedback.py --add --art <regel|script|skill|ablauf|doku|fehler|mcp|link>
-   --titel "<eine Zeile>" --text "<zwei bis sechs Sätze>"`
-   Für einen Link: `--art link --url <https://…>` — die Adresse gehört ins eigene Feld, nicht in den Text.
+   `python .claude/scripts/feedback.py --add --kind <regel|script|skill|ablauf|doku|fehler|mcp|link>
+   --title "<eine Zeile>" --text "<zwei bis sechs Sätze>"`
+   Für einen Link: `--kind link --url <https://…>` — die Adresse gehört ins eigene Feld, nicht in den Text.
    Geprüft wird sie eigens: nur `http(s)`, keine Zugangsdaten in der URL, kein localhost, keine privaten
    IP-Bereiche, kein `*.intern`/`*.local`.
    Das Script lehnt sonst Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ab — es ist die letzte Schranke,
    nicht die erste. Steht `Feedback` auf `automatisch` und `Feedback-Takt` auf `sofort`, löst schon dieser
    `--add`-Aufruf den Versand aus (dieselben Prüfungen wie `--send`) — Schritt 5 ist dann bereits erledigt.
-   Bei `--art fehler` gilt statt Takt und Modus-Reihenfolge hier der Sofort-Auslöser oben.
+   Bei `--kind fehler` gilt statt Takt und Modus-Reihenfolge hier der Sofort-Auslöser oben.
 4. **Ansehen:** `--plan` zeigt die vollständige Nutzlast.
 5. **Senden:** `--send --force` (bei Modus `bestätigen` zusätzlich `--yes` nach der Ansicht).
 6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protocols/` **mitcommitten** — es

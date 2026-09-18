@@ -290,7 +290,7 @@ def build_parser():
         prog="usage.py",
         description="Anonyme Nutzungsstatistik (.claude/usage.json) fuehren.",
     )
-    parser.add_argument("--count", metavar="KENNUNG", help="Zaehler fuer KENNUNG um 1 erhoehen")
+    parser.add_argument("--count", metavar="ID", help="Zaehler fuer ID um 1 erhoehen")
     parser.add_argument("--hook", action="store_true", help="Skill-Tool-Hook - Kennung aus stdin-Payload zaehlen")
     parser.add_argument("--status", action="store_true", help="Zaehlerstand lesbar anzeigen")
     parser.add_argument("--json", action="store_true", help="Zaehlerstand maschinenlesbar ausgeben")

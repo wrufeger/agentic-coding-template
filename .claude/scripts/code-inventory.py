@@ -8,19 +8,19 @@
 #        und listet die groessten Einzeldateien. Allgemeine Weiterentwicklung von legacy-inventory.py
 #        (Projekt "bandliste", dort auf eine feste alte PHP-Struktur zugeschnitten).
 #
-# Aufruf: python .claude/scripts/code-inventory.py [--root <pfad>] [--top <n>] [--json] [--alle]
+# Aufruf: python .claude/scripts/code-inventory.py [--root <pfad>] [--top <n>] [--json] [--all]
 #         --root  Zu vermessende Wurzel (Default: CLAUDE_PROJECT_DIR, sonst die Repo-Wurzel relativ zu
 #                 dieser Datei - siehe _find_root(), gleiches Muster wie finish-setup.py)
 #         --top   Anzahl Zeilen je Rangliste "Groesste Dateien" (Default: 25)
 #         --json  Maschinenlesbare Ausgabe statt Texttabellen
-#         --alle  Auch Abhaengigkeits-/Build-Ordner (EXCLUDE_DIRS) mitzaehlen UND die Gitignore-Pruefung
-#                 abschalten - zaehlt wirklich alles ausser dem immer uebersprungenen ".git". Ohne --alle
-#                 werden beide Ausschluesse getrennt ausgewiesen (Anzahl Dateien), aber nicht mitgezaehlt;
-#                 ihr Inhalt wird dafuer nur ueberflogen (Dateien zaehlen), nicht gelesen (Zeilen/Marker) -
-#                 sonst waere ein einzelnes node_modules/ schon zu teuer.
+#         --all   (alias: --alle) Auch Abhaengigkeits-/Build-Ordner (EXCLUDE_DIRS) mitzaehlen UND die
+#                 Gitignore-Pruefung abschalten - zaehlt wirklich alles ausser dem immer uebersprungenen
+#                 ".git". Ohne --all werden beide Ausschluesse getrennt ausgewiesen (Anzahl Dateien), aber
+#                 nicht mitgezaehlt; ihr Inhalt wird dafuer nur ueberflogen (Dateien zaehlen), nicht gelesen
+#                 (Zeilen/Marker) - sonst waere ein einzelnes node_modules/ schon zu teuer.
 #
 # Ausschluesse (Verzeichnisname, an beliebiger Tiefe, ohne Beachtung der Gross-/Kleinschreibung):
-#   node_modules, .git (immer, unabhaengig von --alle), dist, build, .nuxt, .output, target, bin, obj,
+#   node_modules, .git (immer, unabhaengig von --all), dist, build, .nuxt, .output, target, bin, obj,
 #   __pycache__, .venv, venv, coverage, .next, vendor
 # Gitignore: in einem Git-Repository wird zusaetzlich einmalig `git ls-files --others --ignored
 #   --exclude-standard --directory` abgefragt (ein Aufruf, keine Datei einzeln geprueft) und alles, was Git
@@ -65,7 +65,7 @@ CONFIG_EXT = {".yaml", ".yml", ".json", ".toml", ".ini", ".xml"}
 ALLE_EXT = CODE_EXT | MARKDOWN_EXT | CONFIG_EXT
 
 # Verzeichnisnamen, die standardmaessig uebersprungen werden (Punkt 3 im Auftrag) - ".git" kommt unten
-# separat und immer dazu, unabhaengig von --alle.
+# separat und immer dazu, unabhaengig von --all.
 EXCLUDE_DIRS = {
     "node_modules", "dist", "build", ".nuxt", ".output", "target", "bin", "obj", "__pycache__",
     ".venv", "venv", "coverage", ".next", "vendor",
@@ -233,7 +233,9 @@ def main() -> int:
         ap.add_argument("--root", default=None)
         ap.add_argument("--top", type=int, default=25)
         ap.add_argument("--json", action="store_true")
-        ap.add_argument("--alle", action="store_true")
+        ap.add_argument("--all", "--alle", dest="alle", action="store_true",
+                        help="Auch Abhaengigkeits-/Build-Ordner mitzaehlen, Gitignore-Pruefung abschalten "
+                             "(alias: --alle)")
         a = ap.parse_args()
         root = Path(a.root).resolve() if a.root else _find_root()
         if not root.is_dir():

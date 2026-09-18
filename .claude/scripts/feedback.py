@@ -29,18 +29,19 @@
 #   python .claude/scripts/feedback.py --status
 #       Zeigt: Einwilligung ja/nein, Ziel-URL, wie viele Eintraege im Ausgang liegen, wann zuletzt gesendet
 #       wurde. Schreibt nichts.
-#   python .claude/scripts/feedback.py --enable [--repo-url <url>] [--protokoll versionieren|lokal] | --disable
+#   python .claude/scripts/feedback.py --enable [--repo-url <url>] [--protocol versioniert|lokal] | --disable
 #       Setzt bzw. widerruft die Einwilligung in .claude/template.json. --repo-url ist optional und wird nur
 #       mitgesendet, wenn sie oeffentlich erreichbar ist; ohne sie bleibt die Meldung ohne Projektbezug.
-#       --protokoll lokal traegt die Nutzlast-Dateien in .gitignore ein - fuer Projekte, deren Repo
+#       --protocol lokal traegt die Nutzlast-Dateien in .gitignore ein - fuer Projekte, deren Repo
 #       oeffentlich ist oder die das Protokoll schlicht nicht im Verlauf haben wollen. Default:
-#       versionieren (Nachweis im Diff).
-#   python .claude/scripts/feedback.py --add --art <regel|script|skill|ablauf|doku|fehler>
-#                                      --titel "<eine Zeile>" --text "<2-6 Saetze>"
+#       versionieren (Nachweis im Diff). (Alias: --protokoll)
+#   python .claude/scripts/feedback.py --add --kind <regel|script|skill|ablauf|doku|fehler>
+#                                      --title "<eine Zeile>" --text "<2-6 Saetze>"
 #       Legt einen Verbesserungs-Eintrag als <name>.md unter docs/ai/template-feedback/ an. Sendet nichts -
 #       AUSSER Feedback steht auf "automatisch" mit Takt "sofort": dann loest --add im Anschluss denselben
 #       Versand wie --send aus (dieselben Pruefungen, dieselbe Wochensperre bei anderem Takt). Der Text wird
-#       fuer einen Fremden geschrieben: Muster statt Projekt, keine Namen, keine Pfade, kein Code.
+#       fuer einen Fremden geschrieben: Muster statt Projekt, keine Namen, keine Pfade, kein Code. (Alias:
+#       --art/--titel)
 #   python .claude/scripts/feedback.py --plan        (Default)
 #       Zeigt die vollstaendige Nutzlast, die gesendet wuerde. Schreibt und sendet nichts.
 #   python .claude/scripts/feedback.py --send [--force]
@@ -48,26 +49,26 @@
 #       sieben Tage her ist. Schreibt die Nutzlast nach docs/ai/template-feedback/sent/protocols/, leert den
 #       Ausgang und vermerkt den Zeitpunkt. --force hebt nur die Wochensperre auf, nichts sonst. Steht
 #       Feedback auf "automatisch" und der Takt auf "sofort", loest bereits --add diesen Versand aus.
-#   python .claude/scripts/feedback.py --direkt "<Text>"
+#   python .claude/scripts/feedback.py --direct "<Text>"
 #       Sendet eine von Hand geschriebene Nachricht SOFORT - unabhaengig von Einwilligung, Modus und Takt.
 #       Begruendung: Wer den Text selbst schreibt und den Versand selbst ausloest, hat damit alles getan,
 #       wofuer die Einwilligung sonst da ist. Steht Feedback auf "aus", gehen nur der Text und der volle
 #       Commit-Hash des Template-Stands (template_basis) hinaus - keine Projekt-Kennung, kein weiterer
 #       Kontext; sonst gehen zusaetzlich Projekt-Kennung, Weg und Ausfuellart mit, damit sich mehrere
 #       Meldungen desselben Projekts zusammenfuehren lassen. Der Filter laeuft auch hier: ein versehentlich
-#       mitkopierter Pfad oder ein Token wird gemeldet statt gesendet.
+#       mitkopierter Pfad oder ein Token wird gemeldet statt gesendet. (Alias: --direkt)
 #   python .claude/scripts/feedback.py --clear
 #       Leert den Ausgang, ohne zu senden.
-#   python .claude/scripts/feedback.py --takt <manuell|sofort|stündlich|täglich|wöchentlich|adaptiv|automatisch>
+#   python .claude/scripts/feedback.py --cadence <manuell|sofort|stündlich|täglich|wöchentlich|adaptiv|automatisch>
 #       Setzt NUR "Feedback-Takt" in AI-CONFIG.md, unabhaengig von --enable - fuer eine Intervalländerung,
 #       ohne den Modus ("Feedback") anzufassen. "Nicht mehr erinnern" ist dagegen KEIN Takt-, sondern ein
-#       Modus-Wechsel: --enable --modus manuell (gesammelt wird weiter, nur der Anstoss von selbst entfaellt;
+#       Modus-Wechsel: --enable --mode manuell (gesammelt wird weiter, nur der Anstoss von selbst entfaellt;
 #       "aus" waere die falsche Wahl, das schaltet auch das Sammeln ab). Beides sind die Optionen b/c der
-#       faelligen Erinnerung aus feedback-check.py.
-#   python .claude/scripts/feedback.py --verschieben <Tage>
+#       faelligen Erinnerung aus feedback-check.py. (Alias: --takt/--modus)
+#   python .claude/scripts/feedback.py --postpone <Tage>
 #       Pausiert die faellige Erinnerung (feedback-check.py) um die angegebene Anzahl Tage - schreibt
 #       "erinnerung_pausiert_bis" (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet
-#       nichts, aendert AI-CONFIG.md nicht. Option b der faelligen Erinnerung.
+#       nichts, aendert AI-CONFIG.md nicht. Option b der faelligen Erinnerung. (Alias: --verschieben)
 #
 # Ausgabeformat: Klartext-Bloecke, die Nutzlast als eingerueckter JSON-Block. Exit 0 = ok, 1 = Nutzlast
 #   beanstandet (nicht gesendet), 2 = Abbruch (keine Einwilligung, fehlende Angabe, Transportfehler).
@@ -103,7 +104,7 @@ for _stream in (sys.stdout, sys.stderr):
 FEEDBACK_ENDPOINT = "https://rufeger.de/agentic-coding-feedback"
 ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 
-# Schema der von Hand geschriebenen Nachricht (--direkt). Eigene Nummer, weil sie anders aufgebaut ist als
+# Schema der von Hand geschriebenen Nachricht (--direct). Eigene Nummer, weil sie anders aufgebaut ist als
 # die gesammelte Meldung: Pflicht ist nur `text`, alles Uebrige ist optionaler Kontext - AUSSER
 # `template_basis` (voller Commit-Hash), der ausnahmslos mitgeht, auch bei Feedback "aus" (siehe
 # cmd_direkt): Er beschreibt die Vorlage, nicht das Projekt, und ist die einzige Angabe, ohne die sich
@@ -132,11 +133,11 @@ HERKUNFT = "agentic-coding-template/1"
 # Protokoll jeder Sendung - versioniert, damit im Repo nachlesbar bleibt, was hinausgegangen ist. Liegt
 # UNTER sent/, eigens im Unterordner protocols/, damit es nicht mit den (Lese-)Eintraegen im selben Ordner
 # verwechselt wird. Aeltere Protokolle, die noch direkt im Hauptordner liegen, verschiebt
-# _protokolle_migrieren() bei der naechsten SCHREIBENDEN Aktion (--add/--send/--direkt/--enable/--disable)
+# _protokolle_migrieren() bei der naechsten SCHREIBENDEN Aktion (--add/--send/--direct/--enable/--disable)
 # einmalig dorthin - --status/--plan lesen nur und zeigen den Altbestand, verschieben aber nichts.
 LOG_DIR_REL = "docs/ai/template-feedback"
 PROTOKOLL_DIR_REL = "docs/ai/template-feedback/sent/protocols"
-# ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protokoll lokal). Dann
+# ... es sei denn, {{AUFTRAGGEBER}} will das Protokoll lokal halten (--enable --protocol lokal). Dann
 # nimmt .gitignore genau die Nutzlast-Dateien aus; die README des Ordners bleibt versioniert, damit im Repo
 # nachlesbar bleibt, DASS gesendet wird - nur nicht mehr, WAS.
 GITIGNORE_GLOB = "docs/ai/template-feedback/sent/protocols/*.json"
@@ -157,10 +158,28 @@ TAKT_STUNDEN = {
 # von Hand gepflegte Liste anzulegen.
 TAKT_GUELTIG = tuple(TAKT_STUNDEN) + ("adaptiv",)
 # ae-Schreibweisen bleiben als Alias gueltig (bestehende Projekte, applied_config, gespeicherte Zustaende).
-MODUS_ALIAS = {"nein": "aus", "ja": "automatisch", "bestaetigen": "bestätigen", "fragen": "bestätigen"}
-TAKT_ALIAS = {"stuendlich": "stündlich", "taeglich": "täglich", "woechentlich": "wöchentlich"}
+# Die englischen CLI-Werte (--mode/--cadence) sind ebenfalls nur Aliase: gespeichert wird vorerst weiter der
+# heutige deutsche Wert (Umstellung der gespeicherten Werte ist ein spaeterer Auftrag).
+MODUS_ALIAS = {
+    "nein": "aus", "ja": "automatisch", "bestaetigen": "bestätigen", "fragen": "bestätigen",
+    "off": "aus", "confirm": "bestätigen", "automatic": "automatisch", "manual": "manuell",
+}
+TAKT_ALIAS = {
+    "stuendlich": "stündlich", "taeglich": "täglich", "woechentlich": "wöchentlich",
+    "manual": "manuell", "immediate": "sofort", "hourly": "stündlich", "daily": "täglich",
+    "weekly": "wöchentlich", "adaptive": "adaptiv", "automatic": "automatisch",
+}
 TEMPLATE_JSON_REL = ".claude/template.json"
 ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler", "mcp", "link")
+# Englische --kind-Werte (Alias, siehe --art/--kind) -> heutiger interner Wert. script/skill/mcp/link sind
+# schon englisch und brauchen keinen Eintrag.
+ART_ALIAS = {"rule": "regel", "workflow": "ablauf", "docs": "doku", "bug": "fehler"}
+# Englische --protocol-Werte -> heutiger interner Wert (--enable --protokoll versionieren|lokal).
+PROTOKOLL_ALIAS = {"versioned": "versionieren", "local": "lokal"}
+# Englische --setup-path-Werte -> heutiger interner Wert (--enable --weg neu|nachgeruestet).
+WEG_ALIAS = {"new": "neu", "applied": "nachgeruestet"}
+# Englischer --entry-mode-Wert -> heutiger interner Wert (interview/config sind schon englisch).
+AUSFUELLART_ALIAS = {"empty": "leer"}
 TITEL_MAX = 120
 TEXT_MAX = 1200
 TIMEOUT_S = 15
@@ -1004,13 +1023,13 @@ def cmd_status(root: Path) -> int:
     altbestand = _protokolle_altbestand(root)
     if altbestand:
         print(f"Achtung:   {len(altbestand)} alte(s) Protokoll(e) noch direkt in {LOG_DIR_REL}/ - "
-              f"wird bei --add/--send/--direkt/--enable nach {PROTOKOLL_DIR_REL}/ verschoben.")
+              f"wird bei --add/--send/--direct/--enable nach {PROTOKOLL_DIR_REL}/ verschoben.")
     print(f"Zuletzt gesendet: {fb.get('zuletzt_gesendet') or 'nie'}")
     if fb.get("repo_url"):
         print(f"Repo-URL:  {fb['repo_url']}")
     if modus == "aus":
         print("")
-        print("Nichts wird gesendet. Einschalten: feedback.py --enable [--modus bestätigen|automatisch|manuell]")
+        print("Nichts wird gesendet. Einschalten: feedback.py --enable [--mode bestätigen|automatisch|manuell]")
     return 0
 
 
@@ -1024,11 +1043,17 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
     ziel = ziel.strip().lower()
     ziel = MODUS_ALIAS.get(ziel, ziel)
     if ziel not in ("aus", "bestätigen", "automatisch", "manuell"):
-        print("Fehler: --modus muss aus, bestätigen, automatisch oder manuell sein.", file=sys.stderr)
+        print("Fehler: --mode muss aus, bestätigen, automatisch oder manuell sein.", file=sys.stderr)
         return 2
+    if protokoll is not None:
+        protokoll = PROTOKOLL_ALIAS.get(protokoll.strip().lower(), protokoll)
     if protokoll not in (None, "versionieren", "lokal"):
-        print("Fehler: --protokoll muss versionieren oder lokal sein.", file=sys.stderr)
+        print("Fehler: --protocol muss versionieren oder lokal sein.", file=sys.stderr)
         return 2
+    if weg is not None:
+        weg = WEG_ALIAS.get(weg.strip().lower(), weg)
+    if ausfuellart is not None:
+        ausfuellart = AUSFUELLART_ALIAS.get(ausfuellart.strip().lower(), ausfuellart)
     if not _config_setzen(root, "Feedback", ziel):
         print(f"Fehler: Zeile 'Feedback' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
               file=sys.stderr)
@@ -1072,7 +1097,7 @@ def cmd_takt(root: Path, wert: str) -> int:
     ziel = (wert or "").strip().lower()
     ziel = TAKT_ALIAS.get(ziel, ziel)
     if ziel not in TAKT_GUELTIG:
-        print(f"Fehler: --takt muss eines von {', '.join(TAKT_GUELTIG)} sein.", file=sys.stderr)
+        print(f"Fehler: --cadence muss eines von {', '.join(TAKT_GUELTIG)} sein.", file=sys.stderr)
         return 2
     if not _config_setzen(root, "Feedback-Takt", ziel):
         print(f"Fehler: Zeile 'Feedback-Takt' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
@@ -1091,7 +1116,7 @@ def cmd_verschieben(root: Path, tage) -> int:
     "feedback-verschoben" in der Nutzungsstatistik (usage.py) - getrennt vom Reaktionszaehler
     'verschiebungen' oben, der lokal bleibt und nur die adaptive Schwelle speist (siehe _nutzung())."""
     if tage is None or tage <= 0:
-        print("Fehler: --verschieben braucht eine positive Anzahl Tage.", file=sys.stderr)
+        print("Fehler: --postpone braucht eine positive Anzahl Tage.", file=sys.stderr)
         return 2
     tj = _template_json(root)
     fb = _feedback_block(tj)
@@ -1108,20 +1133,21 @@ def cmd_verschieben(root: Path, tage) -> int:
 
 
 def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
+    art = ART_ALIAS.get((art or "").strip().lower(), art)
     if art not in ARTEN:
-        print(f"Fehler: --art muss eines von {', '.join(ARTEN)} sein.", file=sys.stderr)
+        print(f"Fehler: --kind muss eines von {', '.join(ARTEN)} sein.", file=sys.stderr)
         return 2
     titel = (titel or "").strip()
     text = (text or "").strip()
     if not titel or not text:
-        print("Fehler: --titel und --text werden beide gebraucht.", file=sys.stderr)
+        print("Fehler: --title und --text werden beide gebraucht.", file=sys.stderr)
         return 2
     if len(titel) > TITEL_MAX or len(text) > TEXT_MAX:
         print(f"Fehler: Titel max. {TITEL_MAX}, Text max. {TEXT_MAX} Zeichen.", file=sys.stderr)
         return 2
     if art == "link":
         if not url:
-            print("Fehler: --art link braucht --url.", file=sys.stderr)
+            print("Fehler: --kind link braucht --url.", file=sys.stderr)
             return 2
         schlecht = _link_pruefen(url)
         if schlecht:
@@ -1130,7 +1156,7 @@ def cmd_add(root: Path, art: str, titel: str, text: str, url=None) -> int:
                 print(f"  - {grund}", file=sys.stderr)
             return 1
     elif url:
-        print("Fehler: --url gibt es nur mit --art link.", file=sys.stderr)
+        print("Fehler: --url gibt es nur mit --kind link.", file=sys.stderr)
         return 2
     beanstandet = _verdaechtig(titel, _endpoint()) + _verdaechtig(text, _endpoint())
     if beanstandet:
@@ -1227,7 +1253,7 @@ def _protokolle_altbestand(root: Path) -> list:
 def _protokolle_migrieren(root: Path) -> int:
     """Altbestand: Sendeprotokolle, die vor der Trennung von Eintrag und Protokoll noch direkt unter
     docs/ai/template-feedback/ liegen, einmalig nach sent/protocols/ verschieben. Wird NUR von schreibenden
-    Befehlen aufgerufen (--add/--send/--direkt/--enable/--disable) - idempotent, sobald nichts mehr dort
+    Befehlen aufgerufen (--add/--send/--direct/--enable/--disable) - idempotent, sobald nichts mehr dort
     liegt, tut die Funktion nichts. Kollisionsfrei ueber _freier_pfad(): trifft ein Altbestand-Name auf ein
     bereits dort liegendes Protokoll (alt oder neu), bekommt er ein -2/-3/...-Suffix statt es zu
     ueberschreiben. Bevor etwas verschoben wird, wird ein noch altes .gitignore-Muster um das neue ergaenzt
@@ -1494,32 +1520,41 @@ def _run(argv) -> int:
     gruppe.add_argument("--send", action="store_true",
                         help="Senden, wenn Einwilligung, Filter und Wochensperre es zulassen")
     gruppe.add_argument("--clear", action="store_true", help="Ausgang leeren")
-    gruppe.add_argument("--direkt", default=None, metavar="TEXT",
+    gruppe.add_argument("--direct", "--direkt", dest="direkt", default=None, metavar="TEXT",
                         help="Eine von Hand geschriebene Nachricht sofort senden - geht IMMER, auch bei "
-                             "Feedback: aus (dann ohne Projekt-Kennung und ohne Kontext)")
-    gruppe.add_argument("--takt", default=None, metavar="TAKT",
-                        help=f"nur 'Feedback-Takt' in {CONFIG_REL} setzen ({', '.join(TAKT_GUELTIG)})")
-    gruppe.add_argument("--verschieben", type=int, default=None, metavar="TAGE",
-                        help="faellige Erinnerung (feedback-check.py) um so viele Tage pausieren")
-    parser.add_argument("--art", default=None, help=f"mit --add: {', '.join(ARTEN)}")
-    parser.add_argument("--titel", default=None, help="mit --add: eine Zeile")
+                             "Feedback: aus (dann ohne Projekt-Kennung und ohne Kontext) (alias: --direkt)")
+    gruppe.add_argument("--cadence", "--takt", dest="takt", default=None, metavar="CADENCE",
+                        help=f"nur 'Feedback-Takt' in {CONFIG_REL} setzen ({', '.join(TAKT_GUELTIG)}) "
+                             "(alias: --takt)")
+    gruppe.add_argument("--postpone", "--verschieben", dest="verschieben", type=int, default=None,
+                        metavar="DAYS",
+                        help="faellige Erinnerung (feedback-check.py) um so viele Tage pausieren "
+                             "(alias: --verschieben)")
+    parser.add_argument("--kind", "--art", dest="art", default=None,
+                        help=f"mit --add: {', '.join(ARTEN)} (alias: --art)")
+    parser.add_argument("--title", "--titel", dest="titel", default=None,
+                        help="mit --add: eine Zeile (alias: --titel)")
     parser.add_argument("--text", default=None, help="mit --add: zwei bis sechs Saetze")
     parser.add_argument("--url", default=None,
-                        help="mit --add --art link: die oeffentliche Adresse aus docs/ai/resources.md")
+                        help="mit --add --kind link: die oeffentliche Adresse aus docs/ai/resources.md")
     parser.add_argument("--repo-url", default=None, help="mit --enable: oeffentliche Repo-URL (optional)")
-    parser.add_argument("--protokoll", default=None, choices=["versionieren", "lokal"],
+    parser.add_argument("--protocol", "--protokoll", dest="protokoll", default=None,
+                        choices=["versionieren", "lokal", "versioned", "local"],
                         help="mit --enable: Sendeprotokoll versionieren (Default) oder per .gitignore "
-                             "lokal halten")
-    parser.add_argument("--weg", default=None, choices=["neu", "nachgeruestet"],
-                        help="mit --enable: wie das Projekt entstanden ist")
-    parser.add_argument("--ausfuellart", default=None, choices=["leer", "interview", "config"],
-                        help="mit --enable: wie AI-CONFIG.md befuellt wurde")
+                             "lokal halten (alias: --protokoll)")
+    parser.add_argument("--setup-path", "--weg", dest="weg", default=None,
+                        choices=["neu", "nachgeruestet", "new", "applied"],
+                        help="mit --enable: wie das Projekt entstanden ist (alias: --weg)")
+    parser.add_argument("--entry-mode", "--ausfuellart", dest="ausfuellart", default=None,
+                        choices=["leer", "interview", "config", "empty"],
+                        help="mit --enable: wie AI-CONFIG.md befuellt wurde (alias: --ausfuellart)")
     parser.add_argument("--force", action="store_true",
                         help="mit --send: Takt- und Modus-Sperre uebergehen (das tut /act-feedback)")
     parser.add_argument("--yes", action="store_true",
                         help="mit --send und Modus 'bestätigen': nach Ansicht tatsaechlich senden")
-    parser.add_argument("--modus", default=None,
-                        help="mit --enable: aus, bestätigen, automatisch (Default), manuell (ae-Schreibweisen als Alias)")
+    parser.add_argument("--mode", "--modus", dest="modus", default=None,
+                        help="mit --enable: aus, bestätigen, automatisch (Default), manuell (ae-Schreibweisen "
+                             "und Englisch als Alias) (alias: --modus)")
     args = parser.parse_args(argv)
 
     root = _root()

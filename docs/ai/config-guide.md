@@ -48,7 +48,7 @@ jedem Versand die vollständige Nutzlast und fragt; `automatisch` sendet ohne R�
 auf Aufruf von `/act-feedback`. Die frühere Schreibweise ohne Umlaut (`bestaetigen`, ebenso `stuendlich`,
 `taeglich`, `woechentlich` bei `Feedback-Takt`) wird als Alias weiterhin angenommen. Protokolliert wird in
 jedem Fall unter `docs/ai/template-feedback/` —
-standardmäßig versioniert, auf Wunsch per `.gitignore` lokal (`feedback.py --enable --protokoll lokal`). Was
+standardmäßig versioniert, auf Wunsch per `.gitignore` lokal (`feedback.py --enable --protocol lokal`). Was
 gesendet wird und was nicht, steht in `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor" — nie
 Dateien, nie Projektbezug, nie Namen oder Zahlen aus dem Projekt. Das Zusammenfassen und Filtern kostet ein
 paar Token zusätzlich.

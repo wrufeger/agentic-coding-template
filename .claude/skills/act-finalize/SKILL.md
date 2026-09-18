@@ -59,9 +59,9 @@ angenommen:
 > oder b) **nur lokal** liegen (Eintrag in `.gitignore`; sinnvoll, wenn das Repo öffentlich ist oder andere
 > es nicht lesen sollen — dann ist es nach einem frischen Klon allerdings weg)?
 
-Dann: `python .claude/scripts/feedback.py --enable --modus <automatisch|bestätigen|manuell>
---protokoll <versionieren|lokal>
---weg <neu|nachgeruestet> --ausfuellart <leer|interview|config>`, optional `--repo-url <https://…>` bei
+Dann: `python .claude/scripts/feedback.py --enable --mode <automatisch|bestätigen|manuell>
+--protocol <versionieren|lokal>
+--setup-path <neu|nachgeruestet> --entry-mode <leer|interview|config>`, optional `--repo-url <https://…>` bei
 einem **öffentlichen** Repo; den Takt in `AI-CONFIG.md` § `Feedback-Takt` setzen. Danach die Erstmeldung
 zusammenstellen (`--add`, siehe unten) und `--send --force` aufrufen.
 
@@ -69,7 +69,7 @@ Bei **b)** oder **c)**: nichts tun, `Feedback` bleibt auf `aus`. Einschalten ist
 (`--enable` oder die Zeile in `AI-CONFIG.md`), `--disable` widerruft.
 
 **Was in eine Meldung gehört.** Der Assistent liest die Regel- und Arbeitsdateien und macht daraus Einträge
-(`feedback.py --add --art <regel|script|skill|ablauf|doku|fehler|mcp|link> --titel … --text …`). Maßstab ist
+(`feedback.py --add --kind <regel|script|skill|ablauf|doku|fehler|mcp|link> --title … --text …`). Maßstab ist
 allein: **Hilft das einem Fremden, der dieses Projekt nie sehen wird?** Also „eine Regel gegen X fehlte" statt
 „wir haben X gebaut"; das Muster, nicht der Fall. Kein Projektname, keine Pfade, kein Code, keine Zahlen aus
 dem Projekt. Der Filter im Script lehnt Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ohnehin ab — er ist

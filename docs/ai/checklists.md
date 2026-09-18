@@ -504,7 +504,7 @@ noch offen ist.
    dieses Sendeprotokoll **mitversioniert** wird (Vorschlag — der Nachweis steht im Verlauf) oder per
    `.gitignore` **lokal** bleibt. Letzteres ist die Antwort auf ein öffentliches Projekt-Repo, in dem sonst
    auch die Rückmeldung öffentlich lesbar wäre. Mechanik bei Claude Code: `.claude/scripts/feedback.py`
-   (`--enable --protokoll versionieren|lokal`).
+   (`--enable --protocol versionieren|lokal`).
 7. Ergebnis verbuchen — Ledger-Eintrag „Einrichtung abgeschlossen" mit der Liste der entfernten Dateien,
    Board-Kurzbilanz nachziehen — und per Pathspec committen (Checkliste „Aufgabe abschließen").
 

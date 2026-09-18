@@ -459,9 +459,9 @@ def build_parser():
     parser.add_argument("--quiet", action="store_true", help="Fuer den Hook-Aufruf - Verhalten wie --check")
     parser.add_argument("--list", action="store_true", help="Alle Aufgaben mit Status anzeigen")
     parser.add_argument("--status", action="store_true", help="Wie --list, plus Pfad/Einrichtungsstatus")
-    parser.add_argument("--done", metavar="AUFGABE[,AUFGABE...]|alle", help="letzter_lauf/naechster_lauf fortschreiben")
+    parser.add_argument("--done", metavar="TASK[,TASK...]|alle", help="letzter_lauf/naechster_lauf fortschreiben")
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="Datum fuer --done (Default heute)")
-    parser.add_argument("--set", metavar="AUFGABE=TAGE[,AUFGABE=TAGE...]", help="Intervalle setzen/aendern")
+    parser.add_argument("--set", metavar="TASK=DAYS[,TASK=DAYS...]", help="Intervalle setzen/aendern")
     return parser
 
 
@@ -476,7 +476,7 @@ def _run(argv) -> int:
     if args.done is not None:
         if not args.done.strip():
             print(
-                "Fehler: --done erwartet AUFGABE[,AUFGABE...] oder 'alle', z.B. --done kurz,docs",
+                "Fehler: --done erwartet TASK[,TASK...] oder 'alle', z.B. --done kurz,docs",
                 file=sys.stderr,
             )
             return 2
@@ -484,7 +484,7 @@ def _run(argv) -> int:
     if args.set is not None:
         if not args.set.strip():
             print(
-                "Fehler: --set erwartet AUFGABE=TAGE[,AUFGABE=TAGE...], z.B. --set docs=7,deps=0",
+                "Fehler: --set erwartet TASK=DAYS[,TASK=DAYS...], z.B. --set docs=7,deps=0",
                 file=sys.stderr,
             )
             return 2

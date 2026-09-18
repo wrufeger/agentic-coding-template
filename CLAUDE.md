@@ -123,7 +123,7 @@ Projektarbeit Claude Code im neuen Ordner starten soll; dort gelten dessen eigen
 | `/act-design-build` | — (Mechanik ohne Checkliste) | Komponente oder Seite im echten Code umsetzen und selbst im Browser prüfen, höchstens drei Runden |
 | `/act-slides` | — (Mechanik ohne Checkliste) | Präsentation über das Projekt: Folien als Markdown im Repo, Inhalt aus der vorhandenen Doku, Export per Marp |
 | `/act-design-assets` | — (Mechanik ohne Checkliste) | Logo, Icons, Favicons, Illustrationen — SVG von Claude, Rasterbilder nur über ein Bildmodell per MCP |
-| `/act-feedback [Text]` | — (Mechanik ohne Checkliste) | **Mit Text:** genau dieser Satz geht sofort raus (`--direkt`) — auch bei `Feedback: aus`, dann anonym ohne Projekt-Kennung. **Ohne Text:** gesammelte Rückmeldung zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`-Takt`/`-Umfang`, umgeht die Einstellung nie |
+| `/act-feedback [Text]` | — (Mechanik ohne Checkliste) | **Mit Text:** genau dieser Satz geht sofort raus (`--direct`) — auch bei `Feedback: aus`, dann anonym ohne Projekt-Kennung. **Ohne Text:** gesammelte Rückmeldung zusammenstellen und senden; gesteuert über `AI-CONFIG.md` § `Feedback`/`-Takt`/`-Umfang`, umgeht die Einstellung nie |
 | `/act-commit` | „Aufgabe abschließen" | nach **jeder** abgenommenen Aufgabe: archivieren, Index, Board, Commit per Pathspec; läuft **nie** in einem Sub-Agenten |
 | `/act-finalize` | „Einrichtung abschließen" | `.claude/scripts/finish-setup.py --plan`/`--apply`; entfernt `create-project.py`/`apply-template.py` (Scripte) und die Skills `act-create-project`/`act-apply-template` sowie sich selbst, nachdem {{AUFTRAGGEBER}} einmal ausdrücklich zugestimmt hat; läuft **nie** in einem Sub-Agenten, da es sich selbst löscht |
 
