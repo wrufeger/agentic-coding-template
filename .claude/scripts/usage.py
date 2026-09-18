@@ -3,8 +3,10 @@
 #
 # Zweck: Anonyme Nutzungsstatistik lokal fuehren - wie oft welcher Skill/welches Script tatsaechlich
 #        benutzt wurde bzw. welches Feedback-Ereignis eintrat (Grundlage fuer AI-CONFIG.md § Feedback-
-#        Umfang "c" Werkzeug-Nutzung; Entscheidung Wolfgang 2026-09-18). Ersetzt die bisherigen reinen
-#        Bestandszahlen aus feedback.py:_werkzeug_nutzung() durch echte Aufrufzahlen. Gezaehlt wird nur,
+#        Umfang "c" Werkzeug-Nutzung; Entscheidung Wolfgang 2026-09-18). ERGAENZT die Bestandszahlen aus
+#        feedback.py:_werkzeug_nutzung() (wie VIELE Skills/Scripte es im Projekt gibt), ersetzt sie aber
+#        NICHT - Bestand und Nutzung beantworten verschiedene Fragen und gehen beide in die Nutzlast
+#        (siehe feedback.py:_nutzlast()). Gezaehlt wird nur,
 #        was es im Template tatsaechlich gibt: die Skill-Ordner unter `.claude/skills/` und die Scripte
 #        unter `.claude/scripts/`, dazu eine feste kleine Ereignisliste (siehe EREIGNISSE unten). Eine
 #        unbekannte Kennung landet NICHT unter ihrem eigenen Namen, sondern auf dem Sammelzaehler "eigen" -
@@ -67,7 +69,11 @@ LOCK_STALE_AFTER = 5.0  # Lock aelter als das gilt als verwaist und wird ueberno
 LOCK_SPIN_SLEEP = 0.02
 
 # Ereignisse, die kein Skill/Script sind, aber ebenfalls gezaehlt werden (Feedback-Ablauf, s. act-feedback).
-EREIGNISSE = {"feedback-gesendet", "feedback-verschoben", "feedback-abgelehnt"}
+# "feedback-ignoriert" hat noch KEINEN Aufrufer: der einzig sinnvolle Zaehlpunkt waere in
+# feedback-check.py:_merker_fortschreiben() (dort, wo "erinnerungen_ohne_reaktion" hochgezaehlt wird), aber
+# dieses Script gehoert nicht zu diesem Lauf und wird hier bewusst nicht angefasst. Die Kennung steht schon
+# hier, damit --count feedback-ignoriert kuenftig als bekannt gilt, sobald jemand den Aufruf ergaenzt.
+EREIGNISSE = {"feedback-gesendet", "feedback-verschoben", "feedback-abgelehnt", "feedback-ignoriert"}
 EIGEN = "eigen"
 
 

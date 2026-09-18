@@ -743,7 +743,7 @@ def _usage_modul(root: Path):
         return None
 
 
-def _nutzung(root: Path, tj: dict) -> dict:
+def _nutzung(root: Path) -> dict:
     """Umfang c: die flache Zaehlerliste aus usage.py (.claude/usage.json) in drei Gruppen einsortiert -
     skills/scripte/ereignisse, Feldname und Form fest vorgegeben (Auswertung auf der Gegenseite baut schon
     dagegen). Verwendet die Kennungslisten aus dem geladenen usage.py-Modul statt sie hier zweimal zu
@@ -754,10 +754,12 @@ def _nutzung(root: Path, tj: dict) -> dict:
     anstelle der, allgemeinen Pruefung dort.
 
     Die drei Reaktionszaehler aus dem feedback-Block (erinnerungen_ohne_reaktion, verschiebungen,
-    sendungen_in_folge - siehe feedback-check.py Kopfkommentar) sind inhaltlich Ereignisse wie
-    "feedback-verschoben" aus usage.py: sie zaehlen, WIE OFT rund um die Rueckmeldung selbst etwas
-    passiert ist (ignoriert, verschoben, in Folge gesendet), nicht WAS benutzt wurde. Deshalb landen sie
-    ebenfalls unter "ereignisse" statt in einer vierten Gruppe."""
+    sendungen_in_folge - siehe feedback-check.py Kopfkommentar) gehen BEWUSST NICHT hier mit ein, obwohl
+    sie inhaltlich Ereignisse waeren: "verschiebungen" waechst bei jedem cmd_verschieben() genauso wie der
+    Ereigniszaehler "feedback-verschoben" aus usage.py - dieselbe Information aus zwei Quellen, und die
+    Gegenseite koennte nicht wissen, welche gilt. Entscheidung Wolfgang 2026-09-18: usage.py/EREIGNISSE ist
+    die gemeldete Wahrheit, die Reaktionszaehler bleiben lokal und speisen nur die adaptive Schwelle in
+    feedback-check.py."""
     mod = _usage_modul(root)
     if mod is None:
         return {}
@@ -812,15 +814,6 @@ def _nutzung(root: Path, tj: dict) -> dict:
         # sonst: weder Skill/Script noch Ereignis (z. B. seit dem letzten Reset entfernt) - wird nicht
         # geraten und faellt weg.
 
-    fb = _feedback_block(tj)
-    for schluessel in ("erinnerungen_ohne_reaktion", "verschiebungen", "sendungen_in_folge"):
-        try:
-            wert = int(fb.get(schluessel) or 0)
-        except (TypeError, ValueError):
-            wert = 0
-        if wert > 0:
-            ereignisse[schluessel] = wert
-
     ergebnis = {"seit": seit[:10] if isinstance(seit, str) else seit}
     if skills:
         ergebnis["skills"] = skills
@@ -865,7 +858,7 @@ def _nutzlast(root: Path, tj: dict) -> dict:
     if "c" in umfang:
         nutzlast["mcp_server"] = _mcp_server(root)
         nutzlast["werkzeuge"] = _werkzeug_nutzung(root)
-        nutzung = _nutzung(root, tj)
+        nutzung = _nutzung(root)
         if nutzung:
             nutzlast["nutzung"] = nutzung
     if fb.get("repo_url"):
@@ -1022,6 +1015,9 @@ def cmd_status(root: Path) -> int:
 
 
 def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus=None, protokoll=None) -> int:
+    # VOR jeder Aenderung lesen - _config_setzen() weiter unten ueberschreibt genau diesen Wert in
+    # AI-CONFIG.md. Wird fuer das Ereignis "feedback-abgelehnt" gebraucht (siehe unten).
+    vorher = _modus(root)
     tj = _template_json(root)
     fb = _feedback_block(tj)
     ziel = (modus or "automatisch") if an else "aus"
@@ -1056,6 +1052,11 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
         fb["repo_url"] = repo_url
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
+    # "feedback-abgelehnt" nur beim WECHSEL von einem sendenden Modus (bestätigen/automatisch) auf
+    # "manuell" - nicht bei jedem --enable (z. B. "aus" -> "automatisch" ist eine Aktivierung, keine
+    # Ablehnung; "manuell" -> "manuell" ist keine neue Entscheidung). Entscheidung Wolfgang 2026-09-18.
+    if ziel == "manuell" and vorher not in ("manuell", "aus"):
+        _usage_zaehlen(root, "feedback-abgelehnt")
     print(f"{CONFIG_REL}: Feedback = {ziel}   (Takt: {_takt(root)})")
     if protokoll is not None:
         print(_protokoll_lokal_setzen(root, protokoll == "lokal"))
@@ -1086,9 +1087,9 @@ def cmd_verschieben(root: Path, tage) -> int:
     'erinnerung_pausiert_bis' (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet nichts,
     aendert AI-CONFIG.md nicht (Option b der faelligen Erinnerung). Zaehlt bei Takt 'adaptiv' zugleich als
     "negatives" Lernsignal: 'verschiebungen' steigt, eine laufende Sende-Serie ('sendungen_in_folge') wird
-    unterbrochen - siehe feedback-check.py fuer die Rechnung. Der Zaehler ist Teil der anonymen
-    Nutzungsstatistik (Umfang "c") und geht mit, wenn dieser Umfang gewaehlt ist - die Anbindung an
-    _nutzlast() ist NICHT Teil dieser Funktion (macht der Lauf, der Umfang "c" erweitert)."""
+    unterbrochen - siehe feedback-check.py fuer die Rechnung. Zaehlt zusaetzlich das Ereignis
+    "feedback-verschoben" in der Nutzungsstatistik (usage.py) - getrennt vom Reaktionszaehler
+    'verschiebungen' oben, der lokal bleibt und nur die adaptive Schwelle speist (siehe _nutzung())."""
     if tage is None or tage <= 0:
         print("Fehler: --verschieben braucht eine positive Anzahl Tage.", file=sys.stderr)
         return 2
@@ -1101,6 +1102,7 @@ def cmd_verschieben(root: Path, tage) -> int:
     fb.pop("letzte_erinnerung", None)
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
+    _usage_zaehlen(root, "feedback-verschoben")
     print(f"Erinnerung pausiert bis {bis} ({tage} Tag/e).")
     return 0
 
@@ -1260,6 +1262,23 @@ def _protokollieren(root: Path, nutzlast: dict, endpoint: str) -> Path:
     return fp
 
 
+def _usage_zaehlen(root: Path, kennung: str) -> None:
+    """Erhoeht ein Ereignis in der Nutzungsstatistik (.claude/usage.json) um 1 - rein defensiv wie
+    _usage_zuruecksetzen darunter: ein Fehler hier (kaputtes usage.py, kein Python gefunden) darf den
+    eigentlichen Vorgang (Senden, Verschieben, Modus-Wechsel) nie stoeren, nur sichtbar bleiben."""
+    script = root / ".claude" / "scripts" / "usage.py"
+    if not script.exists():
+        return
+    try:
+        ergebnis = subprocess.run([sys.executable, str(script), "--count", kennung],
+                                   capture_output=True, text=True, timeout=10)
+        if ergebnis.returncode != 0:
+            print(f"Warnung: Ereignis '{kennung}' nicht gezaehlt (usage.py --count, Exit "
+                  f"{ergebnis.returncode}): {ergebnis.stderr.strip()}", file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"Warnung: Ereignis '{kennung}' nicht gezaehlt (usage.py --count): {e}", file=sys.stderr)
+
+
 def _usage_zuruecksetzen(root: Path) -> None:
     """Setzt die Nutzungsstatistik (.claude/usage.json) nach einer erfolgreichen Sendung zurueck - Aufruf
     NUR aus cmd_send, NUR wenn der Versand bereits geglueckt ist. Rein defensiv: usage.py meldet laut
@@ -1332,6 +1351,11 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
     # _posten() ohne Fehler zurueckkam). Schlaegt das Zuruecksetzen selbst fehl, bleibt der Versand trotzdem
     # ein Erfolg - nur sichtbar gemeldet, damit es nicht stillschweigend haengen bleibt.
     _usage_zuruecksetzen(root)
+    # ACHTUNG Reihenfolge: --reset (oben) ersetzt die ganze Zaehlerdatei durch eine leere - ein VORHER
+    # gezaehltes "feedback-gesendet" waere also sofort wieder weg. Erst NACH dem Reset zaehlen, damit dieser
+    # Versand als erstes Ereignis der naechsten Periode ueberlebt (belegt per Testlauf: die umgekehrte
+    # Reihenfolge liess den Zaehler bei 0 stehen).
+    _usage_zaehlen(root, "feedback-gesendet")
     _fragebogen_zuruecksetzen(root, nutzlast.get("fragebogen") or [])
     bewegt = _nach_sent(root)
     anzahl = len(nutzlast.get("eintraege") or [])
