@@ -17,24 +17,27 @@ zugehörigen `SessionStart`-Hook (siehe `.claude/scripts/create-project.py`).
 - `*.log` — Log-Dateien der Runner, **gitignored**.
 
 ## `status.json` — Schema und Fälligkeit
+Schlüssel seit Block B27/T8 englisch (vorher `aufgaben`/`intervall_tage`/`letzter_lauf`/`naechster_lauf`/
+`_hinweis`) — alte Schlüssel werden beim Lesen noch erkannt (`maintenance-check.py:_migrate_status`),
+geschrieben wird nur noch die neue Form.
 ```json
 {
-  "aufgaben": {
-    "kurz": { "intervall_tage": 14, "letzter_lauf": null, "naechster_lauf": null },
-    "docs": { "intervall_tage": 30, "letzter_lauf": null, "naechster_lauf": null },
-    "deps": { "intervall_tage": 90, "letzter_lauf": null, "naechster_lauf": null }
+  "tasks": {
+    "kurz": { "interval_days": 14, "last_run": null, "next_run": null },
+    "docs": { "interval_days": 30, "last_run": null, "next_run": null },
+    "deps": { "interval_days": 90, "last_run": null, "next_run": null }
   },
-  "_hinweis": "…"
+  "_note": "…"
 }
 ```
-- `intervall_tage: null` = **ereignisgesteuert** — die Aufgabe läuft nur auf Zuruf (`/act-run-maintenance <name>` bzw.
+- `interval_days: null` = **ereignisgesteuert** — die Aufgabe läuft nur auf Zuruf (`/act-run-maintenance <name>` bzw.
   `/act-run-maintenance alle`), nie automatisch fällig.
-- Fehlt eine Aufgabe unter `aufgaben`, gilt sie als **deaktiviert**.
-- Fällig ist eine Aufgabe, wenn `naechster_lauf` gesetzt und `<= heute` ist, oder wenn `intervall_tage` gesetzt
-  und `letzter_lauf` noch `null` ist (noch nie gelaufen).
+- Fehlt eine Aufgabe unter `tasks`, gilt sie als **deaktiviert**.
+- Fällig ist eine Aufgabe, wenn `next_run` gesetzt und `<= heute` ist, oder wenn `interval_days` gesetzt
+  und `last_run` noch `null` ist (noch nie gelaufen).
 - Nach einem Lauf schreibt der `maintenance-orchestrator` (bzw. von Hand
-  `maintenance-check.py --done <aufgabe>`) `letzter_lauf = heute` und `naechster_lauf = heute + intervall_tage`
-  (bei `intervall_tage: null` nur `letzter_lauf`).
+  `maintenance-check.py --done <aufgabe>`) `last_run = heute` und `next_run = heute + interval_days`
+  (bei `interval_days: null` nur `last_run`).
 - Datumsformat immer `YYYY-MM-DD`.
 
 ## `maintenance-check.py`
@@ -43,7 +46,7 @@ Prüft/pflegt `status.json` (`.claude/scripts/maintenance-check.py`, Details im 
 python .claude/scripts/maintenance-check.py --check [--quiet]   # faellige Aufgaben melden, Exit immer 0
 python .claude/scripts/maintenance-check.py --list               # alle Aufgaben mit Status
 python .claude/scripts/maintenance-check.py --status              # wie --list, plus Pfad/Einrichtungsstatus
-python .claude/scripts/maintenance-check.py --done kurz,docs      # letzter_lauf/naechster_lauf fortschreiben
+python .claude/scripts/maintenance-check.py --done kurz,docs      # last_run/next_run fortschreiben
 python .claude/scripts/maintenance-check.py --set docs=7,deps=0   # Intervalle setzen (0/leer/'-' = ereignisgesteuert)
 ```
 `--check --quiet` läuft automatisch per `SessionStart`-Hook (`.claude/settings.json`) und meldet nur dann etwas,

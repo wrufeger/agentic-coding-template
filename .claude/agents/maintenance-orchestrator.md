@@ -12,8 +12,8 @@ Ist der Agenten-Typ `maintenance-orchestrator` in dieser Installation nicht regi
 verbindliche Rolle referenzieren.
 
 ## Aufgabe
-Anhand `.claude/maintenance/status.json` (Schema: eine Aufgabe je Schlüssel unter `"aufgaben"`, je
-`{"intervall_tage": <int|null>, "letzter_lauf": "YYYY-MM-DD"|null, "naechster_lauf": "YYYY-MM-DD"|null}` -
+Anhand `.claude/maintenance/status.json` (Schema: eine Aufgabe je Schlüssel unter `"tasks"`, je
+`{"interval_days": <int|null>, "last_run": "YYYY-MM-DD"|null, "next_run": "YYYY-MM-DD"|null}` -
 Details `.claude/maintenance/README.md`) fällige Wartungsaufgaben abarbeiten. Fälligkeit per
 `python .claude/scripts/maintenance-check.py --check` prüfen (nicht selbst nachrechnen). Aufruf ohne Argument
 bzw. mit `faellig` = nur was `--check` meldet; mit Argument (`kurz`/`docs`/`deps`/`alle`) genau diese

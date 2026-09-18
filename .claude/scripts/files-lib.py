@@ -104,10 +104,10 @@ MAINTENANCE_REMOVE_PATHS = [
 # Gleicher Hinweistext wie _HINWEIS in maintenance-check.py (dort massgeblich) - hier dupliziert, weil
 # setup-lib.py status.json direkt schreibt, ohne das Script zu importieren.
 MAINTENANCE_HINWEIS = (
-    "Aufgabe je Schluessel unter 'aufgaben'. intervall_tage: null = ereignisgesteuert (laeuft nur auf "
+    "Aufgabe je Schluessel unter 'tasks'. interval_days: null = ereignisgesteuert (laeuft nur auf "
     "Zuruf, nie automatisch faellig). Fehlt eine Aufgabe hier, ist sie deaktiviert. Nach einem Lauf setzt "
-    "der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') letzter_lauf = heute und "
-    "naechster_lauf = heute + intervall_tage (bei null nur letzter_lauf). Datumsformat YYYY-MM-DD. Siehe "
+    "der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') last_run = heute und "
+    "next_run = heute + interval_days (bei null nur last_run). Datumsformat YYYY-MM-DD. Siehe "
     ".claude/maintenance/README.md."
 )
 
@@ -685,11 +685,11 @@ def remove_welcome_gitignore_lines(root: Path) -> list:
 def write_maintenance_status(root: Path, aufgaben: dict) -> None:
     path = root / ".claude" / "maintenance" / "status.json"
     data = {
-        "aufgaben": {
-            name: {"intervall_tage": intervall, "letzter_lauf": None, "naechster_lauf": None}
+        "tasks": {
+            name: {"interval_days": intervall, "last_run": None, "next_run": None}
             for name, intervall in aufgaben.items()
         },
-        "_hinweis": MAINTENANCE_HINWEIS,
+        "_note": MAINTENANCE_HINWEIS,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     _write_json(path, data)

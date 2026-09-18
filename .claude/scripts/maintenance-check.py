@@ -9,8 +9,8 @@
 #
 # Aufruf:
 #   python .claude/scripts/maintenance-check.py --check [--quiet]
-#       (Default, auch ohne Argument) Prueft status.json auf faellige Aufgaben. Faellig = `naechster_lauf`
-#       gesetzt und <= heute, ODER `intervall_tage` gesetzt und `letzter_lauf` null (noch nie gelaufen).
+#       (Default, auch ohne Argument) Prueft status.json auf faellige Aufgaben. Faellig = `next_run`
+#       gesetzt und <= heute, ODER `interval_days` gesetzt und `last_run` null (noch nie gelaufen).
 #       Fehlt status.json/der Wartungsordner, ist die Datei kaputt, oder ist nichts faellig: KEINE Ausgabe,
 #       Exit 0 (Wartung ist dann entweder abgeschaltet oder gerade nichts zu tun - beides kein Fehler).
 #       Sonst kurzer Block (max. 8 Zeilen) mit den faelligen Aufgaben, weiterhin Exit 0 - so kann ein
@@ -21,22 +21,23 @@
 #       Alle Aufgaben mit Intervall, letztem/naechstem Lauf und Status (faellig / in n Tagen /
 #       ereignisgesteuert / nie gelaufen).
 #   python .claude/scripts/maintenance-check.py --done <aufgabe>[,<aufgabe>...] [--date YYYY-MM-DD]
-#       Setzt `letzter_lauf` (Default heute) und berechnet `naechster_lauf` = letzter_lauf + intervall_tage
-#       (ereignisgesteuerte Aufgaben bekommen `naechster_lauf: null`). `--done alle` trifft alle Aufgaben mit
-#       gesetztem intervall_tage. Unbekannte Aufgabe(n) -> Exit 2 mit Liste der bekannten Aufgaben. Ein
+#       Setzt `last_run` (Default heute) und berechnet `next_run` = last_run + interval_days
+#       (ereignisgesteuerte Aufgaben bekommen `next_run: null`). `--done alle` trifft alle Aufgaben mit
+#       gesetztem interval_days. Unbekannte Aufgabe(n) -> Exit 2 mit Liste der bekannten Aufgaben. Ein
 #       leeres Argument (`--done ""`) faellt NICHT still auf --check zurueck, sondern -> Exit 2 mit Hinweis.
 #   python .claude/scripts/maintenance-check.py --set <aufgabe>=<tage>[,<aufgabe>=<tage>...]
 #       Setzt/aendert Intervalle (Tage als Zahl; 0, leer, 'null' oder '-' = ereignisgesteuert). Legt fehlende
-#       Aufgaben an (mit `letzter_lauf`/`naechster_lauf: null`). Ist bereits ein `letzter_lauf` gesetzt, wird
-#       `naechster_lauf` mit dem neuen Intervall neu berechnet. Ein leeres Argument (`--set ""`) faellt NICHT
+#       Aufgaben an (mit `last_run`/`next_run: null`). Ist bereits ein `last_run` gesetzt, wird
+#       `next_run` mit dem neuen Intervall neu berechnet. Ein leeres Argument (`--set ""`) faellt NICHT
 #       still auf --check zurueck, sondern -> Exit 2 mit Hinweis.
 #   python .claude/scripts/maintenance-check.py --status
 #       Wie --list, zusaetzlich Pfad der Statusdatei und ob die Wartung im Projekt ueberhaupt eingerichtet ist.
 #
-# status.json-Schema:
-#   {"aufgaben": {"<name>": {"intervall_tage": <int|null>, "letzter_lauf": "YYYY-MM-DD"|null,
-#                             "naechster_lauf": "YYYY-MM-DD"|null}, ...}, "_hinweis": "..."}
-#   `intervall_tage: null` = ereignisgesteuert (laeuft nur auf Zuruf, nie automatisch faellig). Eine hier
+# status.json-Schema (seit Block B27/T8 englisch, vorher aufgaben/intervall_tage/letzter_lauf/naechster_lauf/
+# _hinweis - alte Schluessel werden beim Lesen erkannt und umgehaengt, siehe _migrate_status):
+#   {"tasks": {"<name>": {"interval_days": <int|null>, "last_run": "YYYY-MM-DD"|null,
+#                          "next_run": "YYYY-MM-DD"|null}, ...}, "_note": "..."}
+#   `interval_days` = null: ereignisgesteuert (laeuft nur auf Zuruf, nie automatisch faellig). Eine hier
 #   fehlende Aufgabe gilt als deaktiviert. Datei wird immer mit indent=2, LF, ensure_ascii=False geschrieben,
 #   unbekannte Top-Level-Felder bleiben erhalten.
 #
@@ -64,12 +65,47 @@ STATUS_REL = Path(".claude") / "maintenance" / "status.json"
 DATE_FMT = "%Y-%m-%d"
 
 _HINWEIS = (
-    "Aufgabe je Schluessel unter 'aufgaben'. intervall_tage: null = ereignisgesteuert (laeuft nur auf "
+    "Aufgabe je Schluessel unter 'tasks'. interval_days: null = ereignisgesteuert (laeuft nur auf "
     "Zuruf, nie automatisch faellig). Fehlt eine Aufgabe hier, ist sie deaktiviert. Nach einem Lauf setzt "
-    "der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') letzter_lauf = heute und "
-    "naechster_lauf = heute + intervall_tage (bei null nur letzter_lauf). Datumsformat YYYY-MM-DD. Siehe "
+    "der Orchestrator (bzw. 'maintenance-check.py --done <aufgabe>') last_run = heute und "
+    "next_run = heute + interval_days (bei null nur last_run). Datumsformat YYYY-MM-DD. Siehe "
     ".claude/maintenance/README.md."
 )
+
+# Alte Schluessel (status.json, vor Block B27/T8) -> neue - Aufgaben-Dict und Top-Level gleichermassen.
+_KEY_ALIAS = {
+    "aufgaben": "tasks", "intervall_tage": "interval_days", "letzter_lauf": "last_run",
+    "naechster_lauf": "next_run", "_hinweis": "_note",
+}
+
+
+def _migrate_task(task: dict) -> dict:
+    task = dict(task)
+    for alt, neu in _KEY_ALIAS.items():
+        if alt in task:
+            wert = task.pop(alt)
+            if neu not in task:
+                task[neu] = wert
+    return task
+
+
+def _migrate_status(data: dict) -> dict:
+    """Alte Schluessel (aufgaben/intervall_tage/letzter_lauf/naechster_lauf/_hinweis) auf die neuen
+    umhaengen - Top-Level UND je Aufgabe. Ein neuer Schluessel hat Vorrang, falls beide vorliegen. Ein
+    nachfolgender Schreibvorgang (save_status) speichert dadurch nur noch die neue Form."""
+    data = dict(data)
+    if "aufgaben" in data:
+        wert = data.pop("aufgaben")
+        if "tasks" not in data:
+            data["tasks"] = wert
+    if "_hinweis" in data:
+        wert = data.pop("_hinweis")
+        if "_note" not in data:
+            data["_note"] = wert
+    if isinstance(data.get("tasks"), dict):
+        data["tasks"] = {name: _migrate_task(task) if isinstance(task, dict) else task
+                          for name, task in data["tasks"].items()}
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -100,8 +136,8 @@ def _as_date(value):
 
 
 def _intervall(task: dict):
-    """intervall_tage als positive ganze Zahl oder None - auch wenn im JSON Text, 0 oder Negatives steht."""
-    value = task.get("intervall_tage")
+    """interval_days als positive ganze Zahl oder None - auch wenn im JSON Text, 0 oder Negatives steht."""
+    value = task.get("interval_days")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return int(value) if value > 0 else None
@@ -116,13 +152,13 @@ def _plus_tage(d: date, tage: int):
 
 
 def _faellig_ab(task: dict):
-    """Datum, ab dem die Aufgabe faellig ist: naechster_lauf, ersatzweise letzter_lauf + intervall_tage.
+    """Datum, ab dem die Aufgabe faellig ist: next_run, ersatzweise last_run + interval_days.
     None = kein Termin bestimmbar (ereignisgesteuert oder noch nie gelaufen)."""
-    naechster = _as_date(task.get("naechster_lauf"))
+    naechster = _as_date(task.get("next_run"))
     if naechster:
         return naechster
     intervall = _intervall(task)
-    letzter = _as_date(task.get("letzter_lauf"))
+    letzter = _as_date(task.get("last_run"))
     if intervall and letzter:
         return _plus_tage(letzter, intervall)
     return None
@@ -148,7 +184,7 @@ def load_status_raw(root: Path):
         return None, path
     if not isinstance(data, dict):
         return None, path
-    return data, path
+    return _migrate_status(data), path
 
 
 def save_status(root: Path, data: dict, path: Path) -> None:
@@ -182,7 +218,7 @@ def save_status(root: Path, data: dict, path: Path) -> None:
 
 
 def _aufgaben(data: dict) -> dict:
-    aufgaben = data.get("aufgaben")
+    aufgaben = data.get("tasks")
     return aufgaben if isinstance(aufgaben, dict) else {}
 
 
@@ -196,7 +232,7 @@ def _is_faellig(task: dict, today: date) -> bool:
     if faellig_ab:
         return faellig_ab <= today
     # Kein Termin bestimmbar: zeitgesteuert und noch nie gelaufen ist faellig.
-    return bool(_intervall(task)) and not task.get("letzter_lauf")
+    return bool(_intervall(task)) and not task.get("last_run")
 
 
 def _status_text(task: dict, today: date) -> str:
@@ -208,7 +244,7 @@ def _status_text(task: dict, today: date) -> str:
     intervall = _intervall(task)
     if not intervall:
         return "ereignisgesteuert"
-    if not task.get("letzter_lauf"):
+    if not task.get("last_run"):
         return "nie gelaufen"
     if faellig_ab:
         return f"in {(faellig_ab - today).days} Tagen"
@@ -252,7 +288,7 @@ def cmd_check(root: Path, quiet: bool) -> int:
     body = []
     for name, task in faellig:
         intervall = _intervall(task)
-        letzter = _as_date(task.get("letzter_lauf"))
+        letzter = _as_date(task.get("last_run"))
         if not letzter:
             body.append(f"  {name}: noch nie gelaufen (Intervall {intervall} Tage)")
             continue
@@ -288,7 +324,7 @@ def cmd_list(root: Path) -> int:
         return 0
     aufgaben = _aufgaben(data)
     if not aufgaben:
-        print("Wartung ist eingerichtet, aber keine Aufgaben konfiguriert (status.json ohne 'aufgaben').")
+        print("Wartung ist eingerichtet, aber keine Aufgaben konfiguriert (status.json ohne 'tasks').")
         return 0
 
     today = _today()
@@ -298,7 +334,7 @@ def cmd_list(root: Path) -> int:
             continue
         intervall = _intervall(task)
         intervall_txt = str(intervall) + " Tage" if intervall else "ereignisgesteuert"
-        letzter_d = _as_date(task.get("letzter_lauf"))
+        letzter_d = _as_date(task.get("last_run"))
         letzter = _fmt_date(letzter_d) if letzter_d else "nie"
         faellig_ab = _faellig_ab(task)
         naechster = _fmt_date(faellig_ab) if faellig_ab else "-"
@@ -330,13 +366,13 @@ def cmd_done(root: Path, aufgaben_arg: str, date_arg: str) -> int:
         )
         return 2
 
-    aufgaben = data.setdefault("aufgaben", {})
+    aufgaben = data.setdefault("tasks", {})
     if not isinstance(aufgaben, dict):
         aufgaben = {}
-        data["aufgaben"] = aufgaben
+        data["tasks"] = aufgaben
 
     if aufgaben_arg.strip().lower() == "alle":
-        names = [n for n, t in aufgaben.items() if isinstance(t, dict) and t.get("intervall_tage")]
+        names = [n for n, t in aufgaben.items() if isinstance(t, dict) and t.get("interval_days")]
         if not names:
             print("Keine zeitgesteuerten Aufgaben vorhanden (alle sind ereignisgesteuert oder es gibt keine).")
             return 0
@@ -361,18 +397,18 @@ def cmd_done(root: Path, aufgaben_arg: str, date_arg: str) -> int:
     for name in names:
         task = aufgaben.get(name)
         if not isinstance(task, dict):
-            task = {"intervall_tage": None, "letzter_lauf": None, "naechster_lauf": None}
-        task["letzter_lauf"] = _fmt_date(today)
+            task = {"interval_days": None, "last_run": None, "next_run": None}
+        task["last_run"] = _fmt_date(today)
         intervall = _intervall(task)
         naechster = _plus_tage(today, intervall) if intervall else None
-        task["naechster_lauf"] = _fmt_date(naechster) if naechster else None
+        task["next_run"] = _fmt_date(naechster) if naechster else None
         aufgaben[name] = task
 
     save_status(root, data, path)
     print("Aktualisiert:")
     for name in names:
         task = aufgaben[name]
-        print(f"  {name}: letzter Lauf {task.get('letzter_lauf')}, naechster Lauf {task.get('naechster_lauf') or '-'}")
+        print(f"  {name}: letzter Lauf {task.get('last_run')}, naechster Lauf {task.get('next_run') or '-'}")
     return 0
 
 
@@ -387,13 +423,13 @@ EREIGNISGESTEUERT_WERTE = {"0", "", "null", "none", "-"}
 def cmd_set(root: Path, set_arg: str) -> int:
     data, path = load_status_raw(root)
     if data is None:
-        data = {"aufgaben": {}, "_hinweis": _HINWEIS}
+        data = {"tasks": {}, "_note": _HINWEIS}
         path = root / STATUS_REL
 
-    aufgaben = data.setdefault("aufgaben", {})
+    aufgaben = data.setdefault("tasks", {})
     if not isinstance(aufgaben, dict):
         aufgaben = {}
-        data["aufgaben"] = aufgaben
+        data["tasks"] = aufgaben
 
     pairs = [p.strip() for p in set_arg.split(",") if p.strip()]
     if not pairs:
@@ -425,22 +461,22 @@ def cmd_set(root: Path, set_arg: str) -> int:
 
         task = aufgaben.get(name)
         if not isinstance(task, dict):
-            task = {"intervall_tage": None, "letzter_lauf": None, "naechster_lauf": None}
-        task["intervall_tage"] = intervall
-        if intervall and _as_date(task.get("letzter_lauf")):
-            naechster = _plus_tage(_as_date(task["letzter_lauf"]), intervall)
-            task["naechster_lauf"] = _fmt_date(naechster) if naechster else None
+            task = {"interval_days": None, "last_run": None, "next_run": None}
+        task["interval_days"] = intervall
+        if intervall and _as_date(task.get("last_run")):
+            naechster = _plus_tage(_as_date(task["last_run"]), intervall)
+            task["next_run"] = _fmt_date(naechster) if naechster else None
         elif not intervall:
-            task["naechster_lauf"] = None
+            task["next_run"] = None
         aufgaben[name] = task
         changed.append(name)
 
-    if "_hinweis" not in data:
-        data["_hinweis"] = _HINWEIS
+    if "_note" not in data:
+        data["_note"] = _HINWEIS
     save_status(root, data, path)
     print("Intervalle gesetzt:")
     for name in changed:
-        intervall = aufgaben[name].get("intervall_tage")
+        intervall = aufgaben[name].get("interval_days")
         print(f"  {name}: {(str(intervall) + ' Tage') if intervall else 'ereignisgesteuert'}")
     return 0
 
@@ -459,7 +495,7 @@ def build_parser():
     parser.add_argument("--quiet", action="store_true", help="Fuer den Hook-Aufruf - Verhalten wie --check")
     parser.add_argument("--list", action="store_true", help="Alle Aufgaben mit Status anzeigen")
     parser.add_argument("--status", action="store_true", help="Wie --list, plus Pfad/Einrichtungsstatus")
-    parser.add_argument("--done", metavar="TASK[,TASK...]|alle", help="letzter_lauf/naechster_lauf fortschreiben")
+    parser.add_argument("--done", metavar="TASK[,TASK...]|alle", help="last_run/next_run fortschreiben")
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="Datum fuer --done (Default heute)")
     parser.add_argument("--set", metavar="TASK=DAYS[,TASK=DAYS...]", help="Intervalle setzen/aendern")
     return parser

@@ -17,11 +17,11 @@
 #        Die Schwelle fuer "adaptiv" (in Arbeitstagen) ist keine feste Zahl mehr, sondern wird aus
 #        FAELLIG_TAGE (Basis) berechnet - drei Einfluesse, in dieser Reihenfolge:
 #          1. Ignoriert/verschoben -> SELTENER. Zaehler im feedback-Block von .claude/template.json:
-#             "erinnerungen_ohne_reaktion" (dieses Script zaehlt hoch, siehe _merker_fortschreiben - die
+#             "reminders_without_reaction" (dieses Script zaehlt hoch, siehe _merker_fortschreiben - die
 #             ALLERERSTE Erinnerung eines Zyklus zaehlt noch nicht, erst die naechste ohne Sendung dazwischen,
-#             hoechstens ein Schritt je Kalendertag) und "verschiebungen" (feedback.py --verschieben). Je
+#             hoechstens ein Schritt je Kalendertag) und "postponements" (feedback.py --verschieben). Je
 #             Zaehlung: Schwelle *= LERN_FAKTOR_NEGATIV, gedeckelt bei SCHWELLE_MAX.
-#          2. Gesendet -> HAEUFIGER. Nach jedem --send wird "sendungen_in_folge" hochgezaehlt und die beiden
+#          2. Gesendet -> HAEUFIGER. Nach jedem --send wird "consecutive_sends" hochgezaehlt und die beiden
 #             Zaehler aus 1. auf 0 gesetzt (feedback.py:cmd_send) - eine Sendung loescht also die
 #             "negative" Vorgeschichte. Je Zaehlung: Schwelle *= LERN_FAKTOR_POSITIV, Untergrenze
 #             SCHWELLE_MIN.
@@ -40,7 +40,7 @@
 #        nennt trotzdem drei Wege (ansehen+senden, verschieben/Takt aendern, nicht mehr erinnern), damit
 #        {{AUFTRAGGEBER}} in einer Zeile antworten kann; die eigentliche Aktion fuehrt der Assistent im
 #        Gespraech aus (siehe .claude/skills/act-feedback/SKILL.md). Ein Verschieben (feedback.py
-#        --verschieben) traegt "erinnerung_pausiert_bis" in den feedback-Block von .claude/template.json ein
+#        --verschieben) traegt "reminder_paused_until" in den feedback-Block von .claude/template.json ein
 #        - solange dieses Datum in der Zukunft liegt, bleibt der Hook still. Er schreibt sonst nichts ausser
 #        diesen eigenen Merkern - und bei "Feedback: aus" tut er sofort gar nichts.
 #
@@ -117,10 +117,10 @@ def _arbeitstage_seit(root: Path, stempel: str) -> int:
 
 
 def _pausiert_bis(block: dict) -> str:
-    """Gibt das Pausier-Datum zurueck, wenn 'erinnerung_pausiert_bis' (feedback-Block in template.json)
+    """Gibt das Pausier-Datum zurueck, wenn 'reminder_paused_until' (feedback-Block in template.json)
     gesetzt ist und noch in der Zukunft liegt - sonst leeren String. ISO-Datum (JJJJ-MM-TT) vergleicht sich
     als String korrekt gegen das heutige Datum."""
-    bis = str(block.get("erinnerung_pausiert_bis") or "").strip()
+    bis = str(block.get("reminder_paused_until") or "").strip()
     if not bis:
         return ""
     return bis if bis > time.strftime("%Y-%m-%d") else ""
@@ -142,9 +142,9 @@ def _adaptive_schwelle(tj: dict, block: dict, zuletzt_gesendet: str):
     """Berechnet die dynamische Schwelle (Arbeitstage) fuer Takt "adaptiv" - siehe Kopfkommentar fuer die
     Herleitung. Gibt (schwelle: int, begruendung: str) zurueck; die Begruendung ist fuer --status gedacht,
     damit die Rechnung nachvollziehbar bleibt statt eine Blackbox zu sein."""
-    ohne_reaktion = int(block.get("erinnerungen_ohne_reaktion") or 0)
-    verschoben = int(block.get("verschiebungen") or 0)
-    in_folge_gesendet = int(block.get("sendungen_in_folge") or 0)
+    ohne_reaktion = int(block.get("reminders_without_reaction") or 0)
+    verschoben = int(block.get("postponements") or 0)
+    in_folge_gesendet = int(block.get("consecutive_sends") or 0)
     updates_seit = _updates_seit(tj, zuletzt_gesendet)
 
     schwelle = FAELLIG_TAGE * (LERN_FAKTOR_NEGATIV ** (ohne_reaktion + verschoben))
@@ -177,13 +177,13 @@ def _merker_fortschreiben(block: dict, arbeitstage: int, schwelle: int) -> bool:
     if arbeitstage < schwelle:
         return False
     heute = time.strftime("%Y-%m-%d")
-    letzte = block.get("letzte_erinnerung") or ""
+    letzte = block.get("last_reminder") or ""
     if letzte == heute:
         return False
     if letzte:
-        block["erinnerungen_ohne_reaktion"] = int(block.get("erinnerungen_ohne_reaktion") or 0) + 1
-        block["sendungen_in_folge"] = 0
-    block["letzte_erinnerung"] = heute
+        block["reminders_without_reaction"] = int(block.get("reminders_without_reaction") or 0) + 1
+        block["consecutive_sends"] = 0
+    block["last_reminder"] = heute
     return True
 
 
@@ -215,7 +215,7 @@ def main() -> int:
         modus = fb._modus(root)
         takt = fb._takt(root)
         block = fb._feedback_block(tj)
-        zuletzt = block.get("zuletzt_gesendet") or ""
+        zuletzt = block.get("last_sent") or ""
         wartend = len(fb._outbox(root))
         stunden = fb._tage_seit(zuletzt) * 24.0
         pausiert_bis = _pausiert_bis(block)

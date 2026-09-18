@@ -30,7 +30,7 @@
 #
 #        Der Hook erinnert nur, er fragt nie - eine faellige Erinnerung nennt trotzdem drei Wege (ansehen und
 #        einspielen, verschieben/Takt aendern, nicht mehr erinnern), damit {{AUFTRAGGEBER}} in einer Zeile
-#        antworten kann. Ein Verschieben (--postpone) traegt "erinnerung_pausiert_bis" in den
+#        antworten kann. Ein Verschieben (--postpone) traegt "reminder_paused_until" in den
 #        "template_updates"-Block von .claude/template.json ein - solange dieses Datum in der Zukunft liegt,
 #        bleibt der Hook still. Er schreibt sonst nichts ausser diesem eigenen Block.
 #
@@ -106,9 +106,22 @@ def _lade_modul(root: Path, dateiname: str, modulname: str):
         return None
 
 
+# Dieselbe Umbenennung (Block B27/T8) wie im feedback-Block von feedback.py:_feedback_block() - hier fuer den
+# eigenen "template_updates"-Block. Alter Schluessel wird auf den neuen umgehaengt, ein bereits vorhandener
+# neuer Schluessel hat Vorrang; ein nachfolgender Schreibvorgang speichert dadurch nur noch die neue Form.
+_BLOCK_KEY_ALIAS = {"erinnerung_pausiert_bis": "reminder_paused_until", "letzte_erinnerung": "last_reminder"}
+
+
 def _block(tj: dict) -> dict:
     b = tj.get("template_updates")
-    return b if isinstance(b, dict) else {}
+    b = b if isinstance(b, dict) else {}
+    b = dict(b)
+    for alt, neu in _BLOCK_KEY_ALIAS.items():
+        if alt in b:
+            wert = b.pop(alt)
+            if neu not in b:
+                b[neu] = wert
+    return b
 
 
 def _heute() -> str:
@@ -116,7 +129,7 @@ def _heute() -> str:
 
 
 def _pausiert_bis(block: dict) -> str:
-    bis = str(block.get("erinnerung_pausiert_bis") or "").strip()
+    bis = str(block.get("reminder_paused_until") or "").strip()
     return bis if bis and bis > _heute() else ""
 
 
@@ -258,8 +271,8 @@ def main() -> int:
             tj = fb._template_json(root)
             block = _block(tj)
             bis = time.strftime("%Y-%m-%d", time.localtime(time.time() + tage * 86400))
-            block["erinnerung_pausiert_bis"] = bis
-            block.pop("letzte_erinnerung", None)
+            block["reminder_paused_until"] = bis
+            block.pop("last_reminder", None)
             tj["template_updates"] = block
             fb._template_json_schreiben(root, tj)
         except Exception as exc:  # noqa: BLE001
@@ -296,7 +309,7 @@ def main() -> int:
             pass
 
     rueckstand = modus == "automatisch" and verfuegbar_datei.exists()
-    faellig = rueckstand and _erinnerung_faellig(takt, block.get("letzte_erinnerung") or "", pausiert_bis)
+    faellig = rueckstand and _erinnerung_faellig(takt, block.get("last_reminder") or "", pausiert_bis)
 
     if ist_status:
         print(f"Template-Updates: {modus}, Erinnerung: {takt}")
@@ -309,7 +322,7 @@ def main() -> int:
         return 0
 
     if faellig:
-        block["letzte_erinnerung"] = _heute()
+        block["last_reminder"] = _heute()
         tj["template_updates"] = block
         try:
             fb._template_json_schreiben(root, tj)

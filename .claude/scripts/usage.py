@@ -9,32 +9,34 @@
 #        (siehe feedback.py:_nutzlast()). Gezaehlt wird nur,
 #        was es im Template tatsaechlich gibt: die Skill-Ordner unter `.claude/skills/` und die Scripte
 #        unter `.claude/scripts/`, dazu eine feste kleine Ereignisliste (siehe EREIGNISSE unten). Eine
-#        unbekannte Kennung landet NICHT unter ihrem eigenen Namen, sondern auf dem Sammelzaehler "eigen" -
+#        unbekannte Kennung landet NICHT unter ihrem eigenen Namen, sondern auf dem Sammelzaehler "own" -
 #        Namen selbstgebauter Skills/Scripte verraten oft, worum es im Projekt geht, ihre blosse Anzahl
 #        nicht. Gespeichert werden ausschliesslich Kennung + Zaehlerstand, nie Argumente, Pfade,
-#        Zeitstempel je Aufruf oder Text - "seit" ist ein einziger Zeitstempel fuer die ganze Datei, kein
+#        Zeitstempel je Aufruf oder Text - "since" ist ein einziger Zeitstempel fuer die ganze Datei, kein
 #        Verlauf. Reine Python-Stdlib, kein Paket noetig.
 #
 # Aufruf:
 #   python .claude/scripts/usage.py --count <kennung>
 #       Erhoeht den Zaehler fuer <kennung> um 1 (bekannte Kennung: unter ihrem eigenen Namen, sonst unter
-#       "eigen"). Wird aus einzelnen Scripten heraus aufgerufen (z. B. update-template.py --apply,
+#       "own"). Wird aus einzelnen Scripten heraus aufgerufen (z. B. update-template.py --apply,
 #       sync-config.py --apply, act-help.py) sowie ueber --hook aus settings.json.
 #   python .claude/scripts/usage.py --hook
 #       Hook-Modus fuer den `Skill`-Tool-Aufruf in settings.json: liest die Hook-Nutzlast von stdin und
 #       zaehlt bei tool_name == "Skill" die uebergebene Kennung (tool_input.skill). Alles andere ist ein
 #       stilles No-op.
 #   python .claude/scripts/usage.py --status
-#       Zaehlerstand lesbar (inkl. "seit").
+#       Zaehlerstand lesbar (inkl. "since").
 #   python .claude/scripts/usage.py --json
 #       Dieselben Zahlen maschinenlesbar, Grundlage fuer die spaetere Ruecklieferung an /act-feedback (holt
 #       die Zahlen ueber diesen Aufruf, liest die Datei nicht selbst).
 #   python .claude/scripts/usage.py --reset
-#       Setzt alle Zaehler zurueck und "seit" auf jetzt - wird nach einer Sendung durch /act-feedback
+#       Setzt alle Zaehler zurueck und "since" auf jetzt - wird nach einer Sendung durch /act-feedback
 #       aufgerufen.
 #
-# Ablage: `.claude/usage.json` (gitignored, rein lokal je Rechner). Schema:
-#   {"seit": "YYYY-MM-DDTHH:MM:SS", "zaehler": {"<kennung>": <int>, ..., "eigen": <int>}}
+# Ablage: `.claude/usage.json` (gitignored, rein lokal je Rechner). Schema (seit Block B27/T8 englisch,
+# vorher seit/zaehler/eigen - alte Schluessel/Zaehlernamen werden beim Lesen erkannt und auf die neuen
+# aufaddiert, geschrieben wird nur noch die neue Form, siehe _load):
+#   {"since": "YYYY-MM-DDTHH:MM:SS", "counters": {"<kennung>": <int>, ..., "own": <int>}}
 # Geschrieben wird atomar wie bei `.claude/template.json`/`.claude/maintenance/status.json` (Temp-Datei im
 # selben Ordner, dann os.replace - kein Leser sieht eine halb geschriebene Datei), zusaetzlich per
 # Datei-Lock serialisiert (gleicher Aufbau wie die Zustandsdatei in ai-log.py: os.open mit O_CREAT|O_EXCL,
@@ -69,12 +71,20 @@ LOCK_STALE_AFTER = 5.0  # Lock aelter als das gilt als verwaist und wird ueberno
 LOCK_SPIN_SLEEP = 0.02
 
 # Ereignisse, die kein Skill/Script sind, aber ebenfalls gezaehlt werden (Feedback-Ablauf, s. act-feedback).
-# "feedback-ignoriert" hat noch KEINEN Aufrufer: der einzig sinnvolle Zaehlpunkt waere in
-# feedback-check.py:_merker_fortschreiben() (dort, wo "erinnerungen_ohne_reaktion" hochgezaehlt wird), aber
+# Namen seit Block B27/T8 englisch (vorher feedback-gesendet/-verschoben/-abgelehnt/-ignoriert) - alte
+# Zaehlerstaende in usage.json werden beim Lesen auf die neuen addiert (_EREIGNIS_ALIAS, siehe _load).
+# "feedback-ignored" hat noch KEINEN Aufrufer: der einzig sinnvolle Zaehlpunkt waere in
+# feedback-check.py:_merker_fortschreiben() (dort, wo "reminders_without_reaction" hochgezaehlt wird), aber
 # dieses Script gehoert nicht zu diesem Lauf und wird hier bewusst nicht angefasst. Die Kennung steht schon
-# hier, damit --count feedback-ignoriert kuenftig als bekannt gilt, sobald jemand den Aufruf ergaenzt.
-EREIGNISSE = {"feedback-gesendet", "feedback-verschoben", "feedback-abgelehnt", "feedback-ignoriert"}
-EIGEN = "eigen"
+# hier, damit --count feedback-ignored kuenftig als bekannt gilt, sobald jemand den Aufruf ergaenzt.
+EREIGNISSE = {"feedback-sent", "feedback-postponed", "feedback-declined", "feedback-ignored"}
+EIGEN = "own"
+# Alte Ereignis-/Bucket-Namen -> neue, fuer --count-Aufrufe mit noch altem Aufrufer (z. B. ein noch nicht
+# aktualisiertes Nachbar-Script) und fuer die Zaehler-Migration beim Lesen (_load).
+_EREIGNIS_ALIAS = {
+    "feedback-gesendet": "feedback-sent", "feedback-verschoben": "feedback-postponed",
+    "feedback-abgelehnt": "feedback-declined", "feedback-ignoriert": "feedback-ignored", "eigen": EIGEN,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -171,15 +181,42 @@ def _paths(root: Path):
     return path, path.with_suffix(path.suffix + ".lock")
 
 
+_KEY_ALIAS = {"seit": "since", "zaehler": "counters"}
+
+
 def _load(path: Path) -> dict:
-    """Liest usage.json; fehlt sie oder ist sie kaputt, wird still neu begonnen."""
+    """Liest usage.json; fehlt sie oder ist sie kaputt, wird still neu begonnen. Alte Schluessel (seit/
+    zaehler) werden auf die neuen umgehaengt, alte Ereignis-/Bucket-Namen im Zaehler (_EREIGNIS_ALIAS) auf
+    die neuen AUFADDIERT statt nur umbenannt - so gehen bereits gezaehlte Ereignisse beim Umstieg nicht
+    verloren. Ein nachfolgender Schreibvorgang (_save) speichert dadurch nur noch die neue Form."""
     data = None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = None
-    if not isinstance(data, dict) or not isinstance(data.get("zaehler"), dict):
-        data = {"seit": _now_iso(), "zaehler": {}}
+    if not isinstance(data, dict):
+        data = {}
+    for alt, neu in _KEY_ALIAS.items():
+        if alt in data:
+            wert = data.pop(alt)
+            if neu not in data:
+                data[neu] = wert
+    if not isinstance(data.get("counters"), dict):
+        return {"since": _now_iso(), "counters": {}}
+    zaehler = data["counters"]
+    for alt, neu in _EREIGNIS_ALIAS.items():
+        if alt in zaehler:
+            alt_wert = zaehler.pop(alt)
+            try:
+                alt_wert = int(alt_wert)
+            except (TypeError, ValueError):
+                alt_wert = 0
+            try:
+                neu_wert = int(zaehler.get(neu, 0))
+            except (TypeError, ValueError):
+                neu_wert = 0
+            zaehler[neu] = neu_wert + alt_wert
+    data["counters"] = zaehler
     return data
 
 
@@ -214,7 +251,7 @@ def _increment(root: Path, kennung: str) -> None:
     path, lock_path = _paths(root)
     with _FileLock(lock_path):
         data = _load(path)
-        zaehler = data.setdefault("zaehler", {})
+        zaehler = data.setdefault("counters", {})
         try:
             bisher = int(zaehler.get(kennung, 0))
         except (TypeError, ValueError):
@@ -232,6 +269,7 @@ def cmd_count(root: Path, kennung: str) -> int:
     kennung = (kennung or "").strip()
     if not kennung:
         return 0
+    kennung = _EREIGNIS_ALIAS.get(kennung, kennung)
     known = _known_identifiers(root)
     key = kennung if kennung in known else EIGEN
     _increment(root, key)
@@ -256,7 +294,7 @@ def cmd_hook(root: Path) -> int:
 def cmd_reset(root: Path) -> int:
     path, lock_path = _paths(root)
     with _FileLock(lock_path):
-        _save(path, {"seit": _now_iso(), "zaehler": {}})
+        _save(path, {"since": _now_iso(), "counters": {}})
     print("Zaehler zurueckgesetzt.")
     return 0
 
@@ -264,8 +302,8 @@ def cmd_reset(root: Path) -> int:
 def cmd_status(root: Path) -> int:
     path, _lock_path = _paths(root)
     data = _load(path)
-    zaehler = data.get("zaehler", {})
-    print(f"Zaehlt seit: {data.get('seit', '-')}")
+    zaehler = data.get("counters", {})
+    print(f"Zaehlt seit: {data.get('since', '-')}")
     if not isinstance(zaehler, dict) or not zaehler:
         print("Noch keine Zaehlungen.")
         return 0

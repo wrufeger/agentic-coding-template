@@ -779,9 +779,9 @@ def execute_diff(mods, root: Path, cfg: dict, values: dict, current: dict, diff:
         entfallen = sorted(set(alt) - set(neu))
         if entfallen:
             data, path = mc.load_status_raw(root)
-            if isinstance(data, dict) and isinstance(data.get("aufgaben"), dict):
+            if isinstance(data, dict) and isinstance(data.get("tasks"), dict):
                 for name in entfallen:
-                    data["aufgaben"].pop(name, None)
+                    data["tasks"].pop(name, None)
                 mc.save_status(root, data, path)
             lines.append(f"Abgeschaltet (nicht mehr in AI-CONFIG.md): {entfallen}")
         ref_holder["executed"].add("Wartungsaufgaben")

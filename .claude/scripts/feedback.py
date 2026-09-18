@@ -22,6 +22,10 @@
 #             gesendet wuerde, ruft --plan auf.
 #          4. Hoechstens EINMAL JE WOCHE, und erstmals nach dem Abschluss der Einrichtung. --force hebt die
 #             Sperre auf; das ist der manuelle Fall.
+#        Gespeicherte Schluessel im feedback-Block von .claude/template.json, in der Nutzlast und die
+#        Ereignisnamen in usage.py sind seit Block B27/T8 englisch (setup_path/entry_mode/reminder_paused_until/
+#        origin/kind/... statt weg/ausfuellart/erinnerung_pausiert_bis/herkunft/art/...) - alte Schluessel/Werte
+#        werden beim Lesen noch erkannt (siehe _feedback_block), geschrieben wird nur noch die neue Form.
 #        Zusaetzlich laeuft jede Zeichenkette durch eine Pruefung auf Geheimnisse, Pfade, Mailadressen, IPs
 #        und fremde URLs (siehe _verdaechtig). Schlaegt sie an, wird NICHT gesendet, sondern gemeldet.
 #
@@ -35,7 +39,7 @@
 #       --protocol lokal traegt die Nutzlast-Dateien in .gitignore ein - fuer Projekte, deren Repo
 #       oeffentlich ist oder die das Protokoll schlicht nicht im Verlauf haben wollen. Default:
 #       versionieren (Nachweis im Diff). (Alias: --protokoll)
-#   python .claude/scripts/feedback.py --add --kind <regel|script|skill|ablauf|doku|fehler>
+#   python .claude/scripts/feedback.py --add --kind <rule|script|skill|workflow|docs|bug>
 #                                      --title "<eine Zeile>" --text "<2-6 Saetze>"
 #       Legt einen Verbesserungs-Eintrag als <name>.md unter docs/ai/template-feedback/ an. Sendet nichts -
 #       AUSSER Feedback steht auf "automatisch" mit Takt "sofort": dann loest --add im Anschluss denselben
@@ -67,7 +71,7 @@
 #       faelligen Erinnerung aus feedback-check.py. (Alias: --takt/--modus)
 #   python .claude/scripts/feedback.py --postpone <Tage>
 #       Pausiert die faellige Erinnerung (feedback-check.py) um die angegebene Anzahl Tage - schreibt
-#       "erinnerung_pausiert_bis" (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet
+#       "reminder_paused_until" (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet
 #       nichts, aendert AI-CONFIG.md nicht. Option b der faelligen Erinnerung. (Alias: --verschieben)
 #
 # Ausgabeformat: Klartext-Bloecke, die Nutzlast als eingerueckter JSON-Block. Exit 0 = ok, 1 = Nutzlast
@@ -109,7 +113,12 @@ ENDPOINT_ENV = "AGENTIC_FEEDBACK_URL"
 # `template_basis` (voller Commit-Hash), der ausnahmslos mitgeht, auch bei Feedback "aus" (siehe
 # cmd_direkt): Er beschreibt die Vorlage, nicht das Projekt, und ist die einzige Angabe, ohne die sich
 # eine Meldung keinem Vorlagenstand zuordnen liesse.
-SCHEMA_DIREKT = 2
+# Seit Block B27/T8 (Nutzlast-Feldnamen deutsch->englisch) 3/4 statt vormals 1/2 (Sammel-Nutzlast/Direkt) -
+# NICHT bloss 2/3 (naechste freie Zahlen): das alte Direkt-Schema war bereits 2, ein neues Sammel-Schema=2
+# waere davon nicht zu unterscheiden. feedback-endpoint.php/feedback-fetch.py erkennen 1/2 als alt, 3/4 als
+# neu und nehmen (vorerst) beide an, siehe SCHEMA_NEU/SCHEMA_DIREKT_NEU dort.
+SCHEMA_SAMMEL = 3
+SCHEMA_DIREKT = 4
 
 # Herkunftskennung, die jede Meldung mitfuehrt. BEWUSST OEFFENTLICH und eingecheckt - sie ist kein Geheimnis
 # und soll auch keines sein: Sie sagt dem Endpunkt nur, dass die Meldung aus einem Projekt kommt, das dieses
@@ -170,16 +179,19 @@ TAKT_ALIAS = {
     "weekly": "wöchentlich", "adaptive": "adaptiv", "automatic": "automatisch",
 }
 TEMPLATE_JSON_REL = ".claude/template.json"
-ARTEN = ("regel", "script", "skill", "ablauf", "doku", "fehler", "mcp", "link")
-# Englische --kind-Werte (Alias, siehe --art/--kind) -> heutiger interner Wert. script/skill/mcp/link sind
-# schon englisch und brauchen keinen Eintrag.
-ART_ALIAS = {"rule": "regel", "workflow": "ablauf", "docs": "doku", "bug": "fehler"}
+# Kanonisch seit Block B27/T8 englisch (vorher regel/ablauf/doku/fehler) - script/skill/mcp/link waren schon
+# englisch. Alte deutsche Werte (CLI-Eingabe UND bereits auf der Platte liegende Eintraege) werden ueber
+# ART_ALIAS auf die neue Form abgebildet, siehe cmd_add/_outbox.
+ARTEN = ("rule", "script", "skill", "workflow", "docs", "bug", "mcp", "link")
+# Alte deutsche --kind-Werte (auch aus bereits geschriebenen Eintraegen) -> heutiger interner Wert.
+# script/skill/mcp/link sind unveraendert und brauchen keinen Eintrag.
+ART_ALIAS = {"regel": "rule", "ablauf": "workflow", "doku": "docs", "fehler": "bug"}
 # Englische --protocol-Werte -> heutiger interner Wert (--enable --protokoll versionieren|lokal).
 PROTOKOLL_ALIAS = {"versioned": "versionieren", "local": "lokal"}
-# Englische --setup-path-Werte -> heutiger interner Wert (--enable --weg neu|nachgeruestet).
-WEG_ALIAS = {"new": "neu", "applied": "nachgeruestet"}
-# Englischer --entry-mode-Wert -> heutiger interner Wert (interview/config sind schon englisch).
-AUSFUELLART_ALIAS = {"empty": "leer"}
+# Alter --setup-path-Wert -> heutiger interner Wert (--enable --weg neu|nachgeruestet).
+WEG_ALIAS = {"neu": "new", "nachgeruestet": "applied"}
+# Alter --entry-mode-Wert -> heutiger interner Wert (interview/config sind unveraendert).
+AUSFUELLART_ALIAS = {"leer": "empty"}
 TITEL_MAX = 120
 TEXT_MAX = 1200
 TIMEOUT_S = 15
@@ -402,25 +414,53 @@ def _front_matter_parsen(text: str):
     return felder, rumpf
 
 
+# Alte Front-Matter-Schluessel eines Eintrags (docs/ai/template-feedback/*.md) -> neue, seit Block B27/T8.
+# 'status' ist in beiden Sprachen gleich und bleibt aussen vor.
+_FM_KEY_ALIAS = {"art": "kind", "titel": "title", "datum": "date", "gesendet": "sent"}
+
+
+def _front_matter_migrieren(kopf: str) -> str:
+    """Haengt alte Front-Matter-Schluessel im Roh-Kopf-Text (zwischen den '---'-Zeilen) auf die neuen um.
+    Ein bereits vorhandener neuer Schluessel gewinnt (die alte Zeile wird dann entfernt statt umbenannt),
+    sonst wird die alte Zeile umbenannt. Bei 'kind' wird zusaetzlich der ARTEN-WERT selbst auf die neue Form
+    gebracht (regel/ablauf/doku/fehler -> rule/workflow/docs/bug, ART_ALIAS), sonst stuende dort nach der
+    Migration z. B. 'kind: regel' - richtiger Schluessel, aber noch der alte Wert."""
+    for alt, neu in _FM_KEY_ALIAS.items():
+        if re.search(rf"(?m)^{neu}:", kopf):
+            kopf = re.sub(rf"(?m)^{alt}:.*\n?", "", kopf)
+        else:
+            kopf = re.sub(rf"(?m)^{alt}:", f"{neu}:", kopf, count=1)
+    kopf = re.sub(
+        r"(?m)^kind:[ \t]*(\S+)[ \t]*$",
+        lambda m: f"kind: {ART_ALIAS.get(m.group(1).strip().lower(), m.group(1))}",
+        kopf, count=1)
+    return kopf
+
+
 def _eintrag_neu_lesen(fp: Path):
-    """Neues Format: eine .md mit Front-Matter. Gibt das Eintrags-dict zurueck (art/titel/text/datum/url,
-    dazu die internen Statusfelder _status/_gesendet) oder None, wenn kein Front-Matter mit art UND titel
-    vorliegt - genau das haelt README.md und den Fragebogen feedback.md davon ab, als Eintrag zu zaehlen."""
+    """Neues Format: eine .md mit Front-Matter. Front-Matter-Schluessel seit Block B27/T8 englisch
+    (kind/title/date/sent statt art/titel/datum/gesendet; 'status' bleibt in beiden Sprachen gleich) -
+    _eintrag_schreiben() schreibt nur noch die neue Form, hier werden beide gelesen (neuer Schluessel hat
+    Vorrang). Gibt das Eintrags-dict zurueck (interne Form bleibt art/titel/datum/url, dazu _status/_gesendet
+    - Rule 5, keine internen Bezeichner umbenennen) oder None, wenn weder kind/art noch title/titel vorliegen
+    - genau das haelt README.md und den Fragebogen feedback.md davon ab, als Eintrag zu zaehlen."""
     try:
         text = fp.read_text(encoding="utf-8-sig")
     except OSError:
         return None
     felder, rumpf = _front_matter_parsen(text)
-    if not felder.get("art") or not felder.get("titel"):
+    art = felder.get("kind") if felder.get("kind") is not None else felder.get("art")
+    titel = felder.get("title") if felder.get("title") is not None else felder.get("titel")
+    if not art or not titel:
         return None
     m = re.search(r"(?m)^#\s+.*\n?", rumpf)
     body = rumpf[m.end():] if m else rumpf
-    eintrag = {"art": felder["art"], "titel": felder["titel"], "text": body.strip("\n"),
-               "datum": felder.get("datum")}
+    datum = felder.get("date") if felder.get("date") is not None else felder.get("datum")
+    eintrag = {"art": art, "titel": titel, "text": body.strip("\n"), "datum": datum}
     if felder.get("url"):
         eintrag["url"] = felder["url"]
     eintrag["_status"] = felder.get("status")
-    eintrag["_gesendet"] = felder.get("gesendet")
+    eintrag["_gesendet"] = felder.get("sent") if felder.get("sent") is not None else felder.get("gesendet")
     return eintrag
 
 
@@ -454,12 +494,16 @@ def _wartende_eintraege(root: Path) -> list:
 
 def _outbox(root: Path) -> list:
     """Die wartenden Eintraege als Liste von dicts - das Format, das in die Nutzlast geht (interne
-    Statusfelder wie _status/_gesendet bleiben aussen vor)."""
+    Statusfelder wie _status/_gesendet bleiben aussen vor). Front-Matter auf der Platte bleibt bei den
+    deutschen Feldnamen/Werten (art/titel/datum, ggf. noch regel/ablauf/doku/fehler) - hier, am Uebergang zur
+    Nutzlast, werden Feldname UND Wert auf die neue englische Form gebracht (ART_ALIAS deckt beide Richtungen
+    ab: alte CLI-Eingabe und bereits geschriebene Eintraege)."""
     eintraege = []
     for e in _wartende_eintraege(root):
         d = e["daten"]
-        eintrag = {"art": d.get("art"), "titel": d.get("titel"), "text": d.get("text"),
-                   "datum": d.get("datum")}
+        roh_art = (d.get("art") or "").strip().lower()
+        eintrag = {"kind": ART_ALIAS.get(roh_art, d.get("art")), "title": d.get("titel"), "text": d.get("text"),
+                   "date": d.get("datum")}
         if d.get("url"):
             eintrag["url"] = d["url"]
         eintraege.append(eintrag)
@@ -481,7 +525,9 @@ def _slug(titel: str) -> str:
 def _eintrag_schreiben(root: Path, eintrag: dict) -> Path:
     """Legt einen Eintrag im neuen Format an: eine <name>.md mit YAML-Front-Matter, gefolgt von einer
     "# Titel"-Ueberschrift und dem Text als Koerper. Zeichenketten stehen in doppelten Anfuehrungszeichen
-    (json.dumps, ensure_ascii=False) - gueltiges YAML, sicher bei ':'/'#'/Umlauten."""
+    (json.dumps, ensure_ascii=False) - gueltiges YAML, sicher bei ':'/'#'/Umlauten. Front-Matter-Schluessel
+    seit Block B27/T8 englisch (kind/title/date/sent) - 'eintrag' selbst bleibt intern bei art/titel/datum
+    (Rule 5), nur die geschriebenen YAML-Zeilen sind neu."""
     ordner = root / LOG_DIR_REL
     ordner.mkdir(parents=True, exist_ok=True)
     basis = f"{eintrag.get('datum', time.strftime('%Y-%m-%d'))}-{_slug(eintrag.get('titel', ''))}"
@@ -491,11 +537,11 @@ def _eintrag_schreiben(root: Path, eintrag: dict) -> Path:
     titel = eintrag.get("titel") or ""
     kopf = [
         "---",
-        f"art: {eintrag.get('art')}",
-        f"titel: {json.dumps(titel, ensure_ascii=False)}",
-        f"datum: {eintrag.get('datum')}",
+        f"kind: {eintrag.get('art')}",
+        f"title: {json.dumps(titel, ensure_ascii=False)}",
+        f"date: {eintrag.get('datum')}",
         "status: wartet",
-        "gesendet:",
+        "sent:",
     ]
     if eintrag.get("url"):
         kopf.append(f"url: {json.dumps(eintrag['url'], ensure_ascii=False)}")
@@ -557,7 +603,10 @@ def _fragebogen_zuruecksetzen(root: Path, antworten: list) -> None:
 
 def _eintrag_status_setzen(fp: Path, zeit: str) -> None:
     """Neues Format: vor dem Verschieben nach sent/ status auf 'gesendet' setzen und den Zeitpunkt in
-    'gesendet' eintragen. Aendert nur diese beiden Zeilen im Front-Matter, der Rest bleibt unberuehrt."""
+    'sent' eintragen. Migriert dabei nebenbei noch alte Front-Matter-Schluessel (art/titel/datum/gesendet)
+    eines Altbestand-Eintrags auf die neuen (kind/title/date/sent, siehe _front_matter_migrieren) - jeder
+    Eintrag, der diesen Weg durchlaeuft, traegt danach nur noch die neue Form. Aendert sonst nichts am
+    Front-Matter, der Rest bleibt unberuehrt."""
     try:
         text = fp.read_text(encoding="utf-8-sig")
     except OSError:
@@ -567,16 +616,16 @@ def _eintrag_status_setzen(fp: Path, zeit: str) -> None:
     ende = text.find("\n---", 3)
     if ende == -1:
         return
-    kopf = text[3:ende]
+    kopf = _front_matter_migrieren(text[3:ende])
     rest = text[ende:]
     if re.search(r"(?m)^status:", kopf):
         kopf = re.sub(r"(?m)^status:.*$", "status: gesendet", kopf)
     else:
         kopf += "status: gesendet\n"
-    if re.search(r"(?m)^gesendet:", kopf):
-        kopf = re.sub(r"(?m)^gesendet:.*$", f"gesendet: {zeit}", kopf)
+    if re.search(r"(?m)^sent:", kopf):
+        kopf = re.sub(r"(?m)^sent:.*$", f"sent: {zeit}", kopf)
     else:
-        kopf += f"gesendet: {zeit}\n"
+        kopf += f"sent: {zeit}\n"
     try:
         fp.write_text("---" + kopf + rest, encoding="utf-8")
     except OSError:
@@ -619,9 +668,34 @@ def _nach_sent(root: Path) -> int:
     return bewegt
 
 
+# Alter Schluessel (feedback-Block .claude/template.json) -> neuer Schluessel, seit Block B27/T8. Wer nur den
+# alten Schluessel gesetzt hat, bekommt ihn hier auf den neuen umgehaengt; steht bereits der neue da, hat er
+# Vorrang. _FB_VALUE_ALIAS deckt die Faelle ab, in denen sich auch der WERT geaendert hat (weg/ausfuellart).
+_FB_KEY_ALIAS = {
+    "weg": "setup_path", "ausfuellart": "entry_mode", "datum": "date", "projekt_id": "project_id",
+    "erinnerung_pausiert_bis": "reminder_paused_until", "verschiebungen": "postponements",
+    "letzte_erinnerung": "last_reminder", "erinnerungen_ohne_reaktion": "reminders_without_reaction",
+    "sendungen_in_folge": "consecutive_sends", "zuletzt_gesendet": "last_sent",
+}
+_FB_VALUE_ALIAS = {"setup_path": WEG_ALIAS, "entry_mode": AUSFUELLART_ALIAS}
+
+
 def _feedback_block(tj: dict) -> dict:
+    """Liest den feedback-Block aus .claude/template.json - alte Schluessel (und bei weg/ausfuellart auch
+    alte Werte) werden auf die neuen abgebildet, ein bereits vorhandener neuer Schluessel hat Vorrang. Ab
+    hier arbeitet das ganze Script nur noch mit den neuen Namen; ein nachfolgender Schreibvorgang
+    (tj["feedback"] = fb) speichert dadurch automatisch nur noch die neue Form (Migration beim ersten
+    Schreiben, siehe AGENTS.md/CLAUDE.md § Modell-/Kostenlogik - hier: Block B27/T8)."""
     block = tj.get("feedback")
-    return block if isinstance(block, dict) else {}
+    block = block if isinstance(block, dict) else {}
+    fb = dict(block)
+    for alt, neu in _FB_KEY_ALIAS.items():
+        if alt in fb:
+            wert = fb.pop(alt)
+            if neu not in fb:
+                alias = _FB_VALUE_ALIAS.get(neu)
+                fb[neu] = alias.get(wert, wert) if alias else wert
+    return fb
 
 
 def _schalter(tj: dict) -> dict:
@@ -684,11 +758,11 @@ def _kennzahlen(root: Path) -> dict:
     protokoll = _git(root, "log", "--format=%ad", "--date=short", "--", ".").split()
     if protokoll:
         zahlen["commits"] = len(protokoll)
-        zahlen["tage_aktiv"] = len(set(protokoll))
-        zahlen["erster_commit"] = protokoll[-1]
-        zahlen["letzter_commit"] = protokoll[0]
+        zahlen["days_active"] = len(set(protokoll))
+        zahlen["first_commit"] = protokoll[-1]
+        zahlen["last_commit"] = protokoll[0]
         seit = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
-        zahlen["commits_30_tage"] = sum(1 for d in protokoll if d >= seit)
+        zahlen["commits_30_days"] = sum(1 for d in protokoll if d >= seit)
     ki_doku = _git(root, "log", "--format=%h", "--", "docs/ai").split()
     if ki_doku:
         zahlen["commits_docs_ai"] = len(ki_doku)
@@ -703,14 +777,14 @@ def _kennzahlen(root: Path) -> dict:
                 bytes_gesamt += pfad.stat().st_size
             except OSError:
                 pass
-    zahlen["dateien"] = dateien
-    zahlen["groesse_mb"] = round(bytes_gesamt / 1_048_576, 1)
+    zahlen["files"] = dateien
+    zahlen["size_mb"] = round(bytes_gesamt / 1_048_576, 1)
     log = root / "ai.log"
     if log.exists():  # nur, wenn das Logging ueberhaupt laeuft - es ist standardmaessig aus
         try:
             zeilen = log.read_text(encoding="utf-8", errors="ignore").splitlines()
-            zahlen["log_zeilen"] = len(zeilen)
-            zahlen["log_sitzungen"] = sum(1 for z in zeilen if "[session]" in z and " start" in z)
+            zahlen["log_lines"] = len(zeilen)
+            zahlen["log_sessions"] = sum(1 for z in zeilen if "[session]" in z and " start" in z)
         except OSError:
             pass
     return zahlen
@@ -722,8 +796,8 @@ def _regel_aenderungen(root: Path) -> dict:
     beschreibt der Assistent in einem eigenen Eintrag (--add), wenn es fuer Fremde taugt."""
     bereiche = {
         "agents_md": "AGENTS.md", "claude_md": "CLAUDE.md",
-        "agenten": ".claude/agents", "skills": ".claude/skills", "scripte": ".claude/scripts",
-        "checklisten": "docs/ai/checklists.md",
+        "agents": ".claude/agents", "skills": ".claude/skills", "scripts": ".claude/scripts",
+        "checklists": "docs/ai/checklists.md",
     }
     raus = {}
     for name, pfad in bereiche.items():
@@ -737,9 +811,9 @@ def _werkzeug_nutzung(root: Path) -> dict:
     """Umfang c: Wie viele Agenten, Skills und Scripte es gibt und wie viele davon NICHT aus dem Template
     stammen. Namen selbstgebauter Dateien bleiben drauusen - sie verraten oft das Projekt."""
     raus = {}
-    for name, ordner, muster in (("agenten", ".claude/agents", "*.md"),
+    for name, ordner, muster in (("agents", ".claude/agents", "*.md"),
                                  ("skills", ".claude/skills", "*"),
-                                 ("scripte", ".claude/scripts", "*.py")):
+                                 ("scripts", ".claude/scripts", "*.py")):
         d = root / ordner
         if d.is_dir():
             raus[name] = len([p for p in d.glob(muster) if p.name != "README.md"])
@@ -772,10 +846,10 @@ def _nutzung(root: Path) -> dict:
     Nutzlast zu wandern - _pruefen() sieht ihn dadurch erst gar nicht; das ist zusaetzlich zur, nicht
     anstelle der, allgemeinen Pruefung dort.
 
-    Die drei Reaktionszaehler aus dem feedback-Block (erinnerungen_ohne_reaktion, verschiebungen,
-    sendungen_in_folge - siehe feedback-check.py Kopfkommentar) gehen BEWUSST NICHT hier mit ein, obwohl
-    sie inhaltlich Ereignisse waeren: "verschiebungen" waechst bei jedem cmd_verschieben() genauso wie der
-    Ereigniszaehler "feedback-verschoben" aus usage.py - dieselbe Information aus zwei Quellen, und die
+    Die drei Reaktionszaehler aus dem feedback-Block (reminders_without_reaction, postponements,
+    consecutive_sends - siehe feedback-check.py Kopfkommentar) gehen BEWUSST NICHT hier mit ein, obwohl
+    sie inhaltlich Ereignisse waeren: "postponements" waechst bei jedem cmd_verschieben() genauso wie der
+    Ereigniszaehler "feedback-postponed" aus usage.py - dieselbe Information aus zwei Quellen, und die
     Gegenseite koennte nicht wissen, welche gilt. Entscheidung Wolfgang 2026-09-18: usage.py/EREIGNISSE ist
     die gemeldete Wahrheit, die Reaktionszaehler bleiben lokal und speisen nur die adaptive Schwelle in
     feedback-check.py."""
@@ -792,8 +866,8 @@ def _nutzung(root: Path) -> dict:
         daten = mod._load(pfad)
     except Exception:  # noqa: BLE001
         return {}
-    zaehler = daten.get("zaehler") if isinstance(daten, dict) else None
-    seit = daten.get("seit") if isinstance(daten, dict) else None
+    zaehler = daten.get("counters") if isinstance(daten, dict) else None
+    seit = daten.get("since") if isinstance(daten, dict) else None
     if not isinstance(zaehler, dict) or not seit:
         return {}
 
@@ -812,7 +886,7 @@ def _nutzung(root: Path) -> dict:
         except OSError:
             pass
     ereignisse_bekannt = set(getattr(mod, "EREIGNISSE", ()))
-    eigen = getattr(mod, "EIGEN", "eigen")
+    eigen = getattr(mod, "EIGEN", "own")
 
     skills, scripte, ereignisse = {}, {}, {}
     for kennung, stand in zaehler.items():
@@ -833,13 +907,13 @@ def _nutzung(root: Path) -> dict:
         # sonst: weder Skill/Script noch Ereignis (z. B. seit dem letzten Reset entfernt) - wird nicht
         # geraten und faellt weg.
 
-    ergebnis = {"seit": seit[:10] if isinstance(seit, str) else seit}
+    ergebnis = {"since": seit[:10] if isinstance(seit, str) else seit}
     if skills:
         ergebnis["skills"] = skills
     if scripte:
-        ergebnis["scripte"] = scripte
+        ergebnis["scripts"] = scripte
     if ereignisse:
-        ergebnis["ereignisse"] = ereignisse
+        ergebnis["events"] = ereignisse
     return ergebnis
 
 
@@ -848,38 +922,38 @@ def _nutzlast(root: Path, tj: dict) -> dict:
     angewandt = tj.get("applied_config") or {}
     umfang = _umfang(root)
     nutzlast = {
-        "schema": 1,
-        "herkunft": HERKUNFT,
-        "projekt_id": fb.get("projekt_id"),
-        "datum": time.strftime("%Y-%m-%d"),
+        "schema": SCHEMA_SAMMEL,
+        "origin": HERKUNFT,
+        "project_id": fb.get("project_id"),
+        "date": time.strftime("%Y-%m-%d"),
         # Voller Hash, nicht gekuerzt: die Template-Pflege hat die vollstaendige Historie und kann daraus
         # Datum/Abstand selbst ableiten - ein gekuerzter Hash waere doppeldeutig (Kollisionen ueber viele
         # Projekte hinweg) und brauchte trotzdem einen zweiten Abgleich.
-        "template_basis": tj.get("base_commit") or None,
-        "weg": fb.get("weg"),
-        "ausfuellart": fb.get("ausfuellart"),
-        "umfang": ",".join(sorted(umfang)),
-        "werkzeuge_entfernt": angewandt.get("KI-Werkzeuge-entfernt") or [],
-        "regelsaetze": angewandt.get("Coding-Guidelines") or [],
-        "schalter": _schalter(tj),
-        "eintraege": _outbox(root),
+        "template_base": tj.get("base_commit") or None,
+        "setup_path": fb.get("setup_path"),
+        "entry_mode": fb.get("entry_mode"),
+        "scope": ",".join(sorted(umfang)),
+        "tools_removed": angewandt.get("KI-Werkzeuge-entfernt") or [],
+        "rule_sets": angewandt.get("Coding-Guidelines") or [],
+        "switches": _schalter(tj),
+        "entries": _outbox(root),
     }
     # Was der Mensch selbst geschrieben hat, geht immer mit - unabhaengig vom gewaehlten Umfang. Der Umfang
     # steuert, was der ASSISTENT von sich aus sammelt, nicht was {{AUFTRAGGEBER}} sagen will.
     antworten = _fragebogen_lesen(root)
     if antworten:
-        nutzlast["fragebogen"] = antworten
+        nutzlast["questionnaire"] = antworten
     # Die drei Umfaenge sind einzeln abwaehlbar - was nicht gewaehlt ist, wird gar nicht erst erhoben.
     if "a" in umfang:
-        nutzlast["kennzahlen"] = _kennzahlen(root)
+        nutzlast["metrics"] = _kennzahlen(root)
     if "b" in umfang:
-        nutzlast["regel_aenderungen"] = _regel_aenderungen(root)
+        nutzlast["rule_changes"] = _regel_aenderungen(root)
     if "c" in umfang:
         nutzlast["mcp_server"] = _mcp_server(root)
-        nutzlast["werkzeuge"] = _werkzeug_nutzung(root)
+        nutzlast["tools"] = _werkzeug_nutzung(root)
         nutzung = _nutzung(root)
         if nutzung:
-            nutzlast["nutzung"] = nutzung
+            nutzlast["usage"] = nutzung
     if fb.get("repo_url"):
         nutzlast["repo_url"] = fb["repo_url"]
     return nutzlast
@@ -895,7 +969,7 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
                 fehler.append(f"{pfad}: {grund}")
         elif isinstance(wert, dict):
             for k, v in wert.items():
-                if k == "url" and wert.get("art") == "link":
+                if k == "url" and wert.get("kind") == "link":
                     continue  # bewusst gesetzt und eigens geprueft, siehe _link_pruefen
                 lauf(v, f"{pfad}.{k}")
         elif isinstance(wert, list):
@@ -903,9 +977,9 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
                 lauf(v, f"{pfad}[{i}]")
 
     for k, v in nutzlast.items():
-        if k in ("repo_url", "projekt_id"):
+        if k in ("repo_url", "project_id"):
             continue  # bewusst angegeben, siehe --enable --repo-url
-        if k == "template_basis":
+        if k == "template_base":
             # Voller Commit-Hash (40 Hex-Zeichen) - _LANGE_HEX wuerde ihn sonst als Geheimnis beanstanden.
             # Statt die Pruefung zu ueberspringen, wird der Wert eng geprueft: nur Hex, 7 bis 40 Zeichen.
             # Alles andere waere kein Hash und verlaesst das Projekt nicht (manipulierte template.json).
@@ -918,10 +992,10 @@ def _pruefen(nutzlast: dict, endpoint: str) -> list:
 
 def _zeige(nutzlast: dict, endpoint: str) -> None:
     print(f"Ziel:     {endpoint}")
-    if nutzlast.get("art") == "direkt":
+    if nutzlast.get("kind") == "direct":
         print("Inhalt:   eine von Hand geschriebene Nachricht")
     else:
-        print(f"Eintraege: {len(nutzlast.get('eintraege') or [])}")
+        print(f"Eintraege: {len(nutzlast.get('entries') or [])}")
     print("")
     print("Vollstaendige Nutzlast:")
     for zeile in json.dumps(nutzlast, indent=2, ensure_ascii=False).split("\n"):
@@ -1013,7 +1087,7 @@ def cmd_status(root: Path) -> int:
     modus, takt = _modus(root), _takt(root)
     print(f"Feedback:  {modus}   (Takt: {takt}, aus {CONFIG_REL})")
     print(f"Ziel:      {_endpoint()}")
-    print(f"Projekt-ID: {fb.get('projekt_id') or '- (entsteht bei --enable)'}")
+    print(f"Projekt-ID: {fb.get('project_id') or '- (entsteht bei --enable)'}")
     print(f"Wartend:   {len(_outbox(root))} Eintraege ({LOG_DIR_REL}/, je eine .md; Altbestand .md + .json)")
     gesendet = list((root / LOG_DIR_REL / "sent").glob("*.json")) if (root / LOG_DIR_REL / "sent").is_dir() else []
     print(f"Gesendet:  {len(gesendet)} Eintraege ({LOG_DIR_REL}/sent/)")
@@ -1024,7 +1098,7 @@ def cmd_status(root: Path) -> int:
     if altbestand:
         print(f"Achtung:   {len(altbestand)} alte(s) Protokoll(e) noch direkt in {LOG_DIR_REL}/ - "
               f"wird bei --add/--send/--direct/--enable nach {PROTOKOLL_DIR_REL}/ verschoben.")
-    print(f"Zuletzt gesendet: {fb.get('zuletzt_gesendet') or 'nie'}")
+    print(f"Zuletzt gesendet: {fb.get('last_sent') or 'nie'}")
     if fb.get("repo_url"):
         print(f"Repo-URL:  {fb['repo_url']}")
     if modus == "aus":
@@ -1035,7 +1109,7 @@ def cmd_status(root: Path) -> int:
 
 def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus=None, protokoll=None) -> int:
     # VOR jeder Aenderung lesen - _config_setzen() weiter unten ueberschreibt genau diesen Wert in
-    # AI-CONFIG.md. Wird fuer das Ereignis "feedback-abgelehnt" gebraucht (siehe unten).
+    # AI-CONFIG.md. Wird fuer das Ereignis "feedback-declined" gebraucht (siehe unten).
     vorher = _modus(root)
     tj = _template_json(root)
     fb = _feedback_block(tj)
@@ -1051,25 +1125,25 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
         print("Fehler: --protocol muss versionieren oder lokal sein.", file=sys.stderr)
         return 2
     if weg is not None:
-        weg = WEG_ALIAS.get(weg.strip().lower(), weg)
+        weg = WEG_ALIAS.get(weg.strip().lower(), weg.strip().lower())
     if ausfuellart is not None:
-        ausfuellart = AUSFUELLART_ALIAS.get(ausfuellart.strip().lower(), ausfuellart)
+        ausfuellart = AUSFUELLART_ALIAS.get(ausfuellart.strip().lower(), ausfuellart.strip().lower())
     if not _config_setzen(root, "Feedback", ziel):
         print(f"Fehler: Zeile 'Feedback' in {CONFIG_REL} nicht gefunden - bitte dort von Hand setzen.",
               file=sys.stderr)
         return 2
     fb["consent"] = bool(an)
-    fb["datum"] = time.strftime("%Y-%m-%d")
+    fb["date"] = time.strftime("%Y-%m-%d")
     # Eine zufaellige, hier erzeugte Kennung - kein Name, kein Pfad, kein Hash aus Projektdaten. Sie macht
     # mehrere Meldungen desselben Projekts zusammenfuehrbar, ohne das Projekt zu benennen. Wer sie loswerden
     # will, loescht den feedback-Block in .claude/template.json; die naechste Einwilligung erzeugt eine neue.
-    if an and not fb.get("projekt_id"):
-        fb["projekt_id"] = uuid.uuid4().hex
+    if an and not fb.get("project_id"):
+        fb["project_id"] = uuid.uuid4().hex
     fb["endpoint"] = _endpoint()
-    if weg in ("neu", "nachgeruestet"):
-        fb["weg"] = weg
-    if ausfuellart in ("leer", "interview", "config"):
-        fb["ausfuellart"] = ausfuellart
+    if weg in ("new", "applied"):
+        fb["setup_path"] = weg
+    if ausfuellart in ("empty", "interview", "config"):
+        fb["entry_mode"] = ausfuellart
     if repo_url:
         if not repo_url.startswith("https://"):
             print("Fehler: --repo-url muss mit https:// beginnen (oeffentlich erreichbar).", file=sys.stderr)
@@ -1077,11 +1151,11 @@ def cmd_enable(root: Path, repo_url, an: bool, weg=None, ausfuellart=None, modus
         fb["repo_url"] = repo_url
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
-    # "feedback-abgelehnt" nur beim WECHSEL von einem sendenden Modus (bestätigen/automatisch) auf
+    # "feedback-declined" nur beim WECHSEL von einem sendenden Modus (bestätigen/automatisch) auf
     # "manuell" - nicht bei jedem --enable (z. B. "aus" -> "automatisch" ist eine Aktivierung, keine
     # Ablehnung; "manuell" -> "manuell" ist keine neue Entscheidung). Entscheidung Wolfgang 2026-09-18.
     if ziel == "manuell" and vorher not in ("manuell", "aus"):
-        _usage_zaehlen(root, "feedback-abgelehnt")
+        _usage_zaehlen(root, "feedback-declined")
     print(f"{CONFIG_REL}: Feedback = {ziel}   (Takt: {_takt(root)})")
     if protokoll is not None:
         print(_protokoll_lokal_setzen(root, protokoll == "lokal"))
@@ -1109,25 +1183,25 @@ def cmd_takt(root: Path, wert: str) -> int:
 
 def cmd_verschieben(root: Path, tage) -> int:
     """Pausiert die faellige Erinnerung (feedback-check.py) um `tage` Tage - schreibt
-    'erinnerung_pausiert_bis' (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet nichts,
+    'reminder_paused_until' (JJJJ-MM-TT) in den feedback-Block von .claude/template.json. Sendet nichts,
     aendert AI-CONFIG.md nicht (Option b der faelligen Erinnerung). Zaehlt bei Takt 'adaptiv' zugleich als
-    "negatives" Lernsignal: 'verschiebungen' steigt, eine laufende Sende-Serie ('sendungen_in_folge') wird
+    "negatives" Lernsignal: 'postponements' steigt, eine laufende Sende-Serie ('consecutive_sends') wird
     unterbrochen - siehe feedback-check.py fuer die Rechnung. Zaehlt zusaetzlich das Ereignis
-    "feedback-verschoben" in der Nutzungsstatistik (usage.py) - getrennt vom Reaktionszaehler
-    'verschiebungen' oben, der lokal bleibt und nur die adaptive Schwelle speist (siehe _nutzung())."""
+    "feedback-postponed" in der Nutzungsstatistik (usage.py) - getrennt vom Reaktionszaehler
+    'postponements' oben, der lokal bleibt und nur die adaptive Schwelle speist (siehe _nutzung())."""
     if tage is None or tage <= 0:
         print("Fehler: --postpone braucht eine positive Anzahl Tage.", file=sys.stderr)
         return 2
     tj = _template_json(root)
     fb = _feedback_block(tj)
     bis = time.strftime("%Y-%m-%d", time.localtime(time.time() + tage * 86400))
-    fb["erinnerung_pausiert_bis"] = bis
-    fb["verschiebungen"] = int(fb.get("verschiebungen") or 0) + 1
-    fb["sendungen_in_folge"] = 0
-    fb.pop("letzte_erinnerung", None)
+    fb["reminder_paused_until"] = bis
+    fb["postponements"] = int(fb.get("postponements") or 0) + 1
+    fb["consecutive_sends"] = 0
+    fb.pop("last_reminder", None)
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
-    _usage_zaehlen(root, "feedback-verschoben")
+    _usage_zaehlen(root, "feedback-postponed")
     print(f"Erinnerung pausiert bis {bis} ({tage} Tag/e).")
     return 0
 
@@ -1337,7 +1411,7 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
     if stunden_min is None and not force:
         print("Nichts gesendet: Takt steht auf 'manuell' - Versand nur ueber /act-feedback (--force).")
         return 0
-    stunden = _tage_seit(fb.get("zuletzt_gesendet")) * 24.0
+    stunden = _tage_seit(fb.get("last_sent")) * 24.0
     if stunden_min is not None and stunden < stunden_min and not force:
         print(f"Nichts gesendet: letzte Sendung vor {stunden:.1f} h, Takt '{takt}' erlaubt fruehestens nach "
               f"{stunden_min} h. Der Ausgang bleibt erhalten und geht beim naechsten Mal mit.")
@@ -1360,16 +1434,16 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
         print(f"Abbruch: {fehlertext} Ausgang bleibt erhalten.", file=sys.stderr)
         return 2
     protokoll = _protokollieren(root, nutzlast, endpoint)
-    fb["zuletzt_gesendet"] = time.strftime("%Y-%m-%d %H:%M")
+    fb["last_sent"] = time.strftime("%Y-%m-%d %H:%M")
     # Lern-Merker fuer Takt "adaptiv" (siehe feedback-check.py): eine erfolgreiche Sendung loescht die
     # "negativen" Zaehler (ignorierte Erinnerungen, Verschiebungen) und zaehlt den "positiven" Zaehler
     # (Sendungen in Folge) hoch - beide Richtungen wirken nie gleichzeitig. Diese Zaehler sind Teil der
     # anonymen Nutzungsstatistik (Umfang "c") und gehen mit, wenn dieser Umfang gewaehlt ist - die Anbindung
     # an _nutzlast() ist NICHT Teil dieser Aenderung (macht der Lauf, der Umfang "c" erweitert).
-    fb["erinnerungen_ohne_reaktion"] = 0
-    fb["verschiebungen"] = 0
-    fb["sendungen_in_folge"] = int(fb.get("sendungen_in_folge") or 0) + 1
-    fb.pop("letzte_erinnerung", None)
+    fb["reminders_without_reaction"] = 0
+    fb["postponements"] = 0
+    fb["consecutive_sends"] = int(fb.get("consecutive_sends") or 0) + 1
+    fb.pop("last_reminder", None)
     tj["feedback"] = fb
     _template_json_schreiben(root, tj)
     # Die eben gesendeten Nutzungszahlen (Umfang "c", siehe _nutzung()) sollen nicht doppelt in die
@@ -1378,13 +1452,13 @@ def cmd_send(root: Path, force: bool, ja: bool) -> int:
     # ein Erfolg - nur sichtbar gemeldet, damit es nicht stillschweigend haengen bleibt.
     _usage_zuruecksetzen(root)
     # ACHTUNG Reihenfolge: --reset (oben) ersetzt die ganze Zaehlerdatei durch eine leere - ein VORHER
-    # gezaehltes "feedback-gesendet" waere also sofort wieder weg. Erst NACH dem Reset zaehlen, damit dieser
+    # gezaehltes "feedback-sent" waere also sofort wieder weg. Erst NACH dem Reset zaehlen, damit dieser
     # Versand als erstes Ereignis der naechsten Periode ueberlebt (belegt per Testlauf: die umgekehrte
     # Reihenfolge liess den Zaehler bei 0 stehen).
-    _usage_zaehlen(root, "feedback-gesendet")
-    _fragebogen_zuruecksetzen(root, nutzlast.get("fragebogen") or [])
+    _usage_zaehlen(root, "feedback-sent")
+    _fragebogen_zuruecksetzen(root, nutzlast.get("questionnaire") or [])
     bewegt = _nach_sent(root)
-    anzahl = len(nutzlast.get("eintraege") or [])
+    anzahl = len(nutzlast.get("entries") or [])
     nachsatz = ("liegt nur lokal (.gitignore)" if _protokoll_lokal(root)
                 else "gehoert in den naechsten Commit")
     print(f"Rueckmeldung gesendet (HTTP {code}, {anzahl} Eintraege). "
@@ -1461,18 +1535,18 @@ def cmd_direkt(root: Path, text: str, ja: bool) -> int:
     tj = _template_json(root)
     fb = _feedback_block(tj)
     modus = _modus(root)
-    nutzlast = {"schema": SCHEMA_DIREKT, "herkunft": HERKUNFT, "art": "direkt",
-                "datum": time.strftime("%Y-%m-%d"), "text": text}
+    nutzlast = {"schema": SCHEMA_DIREKT, "origin": HERKUNFT, "kind": "direct",
+                "date": time.strftime("%Y-%m-%d"), "text": text}
     # Der Commit-Hash beschreibt die VORLAGE, nicht das Projekt: identisch in jedem Projekt mit demselben
     # Stand, verraet also nichts ueber DIESES Projekt - ist aber die einzige Angabe, ohne die sich eine
     # Meldung keinem Vorlagenstand zuordnen liesse. Deshalb geht er AUCH bei "aus" mit, als einziges
-    # Kontextfeld neben text/datum/schema/herkunft. Fehlt base_commit (kein template.json, keine Herkunft),
+    # Kontextfeld neben text/date/schema/origin. Fehlt base_commit (kein template.json, keine Herkunft),
     # bleibt das Feld ganz weg statt eines leeren Strings.
     if tj.get("base_commit"):
-        nutzlast["template_basis"] = tj["base_commit"]
+        nutzlast["template_base"] = tj["base_commit"]
     if modus != "aus":
-        nutzlast["projekt_id"] = fb.get("projekt_id")
-        for schluessel in ("weg", "ausfuellart"):
+        nutzlast["project_id"] = fb.get("project_id")
+        for schluessel in ("setup_path", "entry_mode"):
             if fb.get(schluessel):
                 nutzlast[schluessel] = fb[schluessel]
         nutzlast = {k: v for k, v in nutzlast.items() if v is not None}

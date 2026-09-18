@@ -46,7 +46,7 @@ Fällt unterwegs ein Fehler der **Vorlage selbst** auf — Script/Skill schlägt
 Update spielt etwas Falsches ein oder lässt etwas Nötiges aus, zwei Regeln der Vorlage widersprechen sich,
 eine Regel/Mechanik greift nachweislich nie —, gilt nicht der übliche Takt: Regel und Begründung stehen in
 `AGENTS.md` § „Freiwillige Rückmeldung an den Template-Autor". Mechanik hier: sofort
-`python .claude/scripts/feedback.py --add --kind fehler --title "<eine Zeile>" --text "<Muster, keine
+`python .claude/scripts/feedback.py --add --kind bug --title "<eine Zeile>" --text "<Muster, keine
 Projektdaten>"`, danach je nach `Feedback`: `automatisch` → gleich `--send --force`; `bestätigen` → `--plan`
 zeigen und {{AUFTRAGGEBER}} fragen; `manuell` → Eintrag bleibt liegen, geht beim nächsten Versand mit;
 `aus` → nichts senden, aber {{AUFTRAGGEBER}} einmal auf den Fund hinweisen, nicht wiederholen.
@@ -96,7 +96,7 @@ gewählt ist.
    und werden danach ins Archiv am Dateiende verschoben. Steht dort nichts, ist das in Ordnung — nachfragen
    höchstens einmal, nie drängen.
 3. **Je Fund einen Eintrag anlegen:**
-   `python .claude/scripts/feedback.py --add --kind <regel|script|skill|ablauf|doku|fehler|mcp|link>
+   `python .claude/scripts/feedback.py --add --kind <rule|script|skill|workflow|docs|bug|mcp|link>
    --title "<eine Zeile>" --text "<zwei bis sechs Sätze>"`
    Für einen Link: `--kind link --url <https://…>` — die Adresse gehört ins eigene Feld, nicht in den Text.
    Geprüft wird sie eigens: nur `http(s)`, keine Zugangsdaten in der URL, kein localhost, keine privaten
@@ -104,7 +104,7 @@ gewählt ist.
    Das Script lehnt sonst Pfade, Mailadressen, IPs und Zugangsdaten-Wörter ab — es ist die letzte Schranke,
    nicht die erste. Steht `Feedback` auf `automatisch` und `Feedback-Takt` auf `sofort`, löst schon dieser
    `--add`-Aufruf den Versand aus (dieselben Prüfungen wie `--send`) — Schritt 5 ist dann bereits erledigt.
-   Bei `--kind fehler` gilt statt Takt und Modus-Reihenfolge hier der Sofort-Auslöser oben.
+   Bei `--kind bug` gilt statt Takt und Modus-Reihenfolge hier der Sofort-Auslöser oben.
 4. **Ansehen:** `--plan` zeigt die vollständige Nutzlast.
 5. **Senden:** `--send --force` (bei Modus `bestätigen` zusätzlich `--yes` nach der Ansicht).
 6. Das geschriebene Protokoll unter `docs/ai/template-feedback/sent/protocols/` **mitcommitten** — es
