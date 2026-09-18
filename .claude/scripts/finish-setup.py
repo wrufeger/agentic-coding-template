@@ -107,6 +107,17 @@ TEMPLATE_JSON_REL = ".claude/template.json"
 SETTINGS_JSON_REL = ".claude/settings.json"
 CHECKLISTS_REL = "docs/ai/checklists.md"
 CHECKLIST_TITLES = ["Neues Projekt", "Projekt nachrüsten", "Einrichtung abschließen"]
+# Englische Ueberschriften nach dem geplanten Sprachwechsel des Templates (siehe
+# docs/project/data/english-rename-map.tsv in template-pflege) - _find_heading()/update_checklists() erkennen
+# BEIDE Fassungen je Titel, damit der Sprachwechsel-Override in update-template.py
+# (_resolve_setup_only_text_conflict) den Setup-Abschnitt auch aus einer bereits komplett englischen
+# Template-Fassung von checklists.md entfernen kann, ohne dass dieses Script selbst schon umbenannt sein
+# muss. CHECKLIST_TITLES bleibt die kanonische (deutsche) Liste fuer Meldungen/Labels.
+CHECKLIST_TITLE_ALIASES = {
+    "Neues Projekt": ("Neues Projekt", "New Project"),
+    "Projekt nachrüsten": ("Projekt nachrüsten", "Apply Template"),
+    "Einrichtung abschließen": ("Einrichtung abschließen", "Complete Setup"),
+}
 FOREIGN_RULE_FILES = [
     ".junie/guidelines.md",
     ".clinerules",
@@ -314,8 +325,15 @@ def remove_finish_setup_hook(root: Path, plan: bool):
 # ---------------------------------------------------------------------------
 
 
-def _find_heading(lines, title):
-    return [i for i, line in enumerate(lines) if HEADING_RE.match(line) and HEADING_RE.match(line).group(2).strip() == title]
+def _find_heading(lines, titles):
+    """titles: ein Titel (str) oder mehrere gleichwertige Titel (Tuple, z.B. deutsch+englisch ueber
+    CHECKLIST_TITLE_ALIASES) - eine Ueberschrift zaehlt, wenn sie zu EINEM davon passt."""
+    if isinstance(titles, str):
+        titles = (titles,)
+    return [
+        i for i, line in enumerate(lines)
+        if HEADING_RE.match(line) and HEADING_RE.match(line).group(2).strip() in titles
+    ]
 
 
 def _section_end(lines, start_idx, level):
@@ -339,7 +357,8 @@ def update_checklists(root: Path, plan: bool):
 
     ranges = {}
     for title in CHECKLIST_TITLES:
-        idxs = _find_heading(lines, title)
+        aliases = CHECKLIST_TITLE_ALIASES.get(title, (title,))
+        idxs = _find_heading(lines, aliases)
         if len(idxs) != 1:
             found = "fehlt" if not idxs else f"{len(idxs)}x vorhanden"
             return None, (
@@ -353,13 +372,12 @@ def update_checklists(root: Path, plan: bool):
     remove_idx = set()
     for start, end in ranges.values():
         remove_idx.update(range(start, end))
+    alle_aliase = [a for title in CHECKLIST_TITLES for a in CHECKLIST_TITLE_ALIASES.get(title, (title,))]
     for i, line in enumerate(lines):
         if i in remove_idx or HEADING_RE.match(line):
             continue
-        for title in CHECKLIST_TITLES:
-            if re.search(r"\[\s*" + re.escape(title) + r"\s*\]\(", line):
-                remove_idx.add(i)
-                break
+        if any(re.search(r"\[\s*" + re.escape(alias) + r"\s*\]\(", line) for alias in alle_aliase):
+            remove_idx.add(i)
 
     if plan:
         return f"{CHECKLISTS_REL}: Abschnitte {', '.join(CHECKLIST_TITLES)} entfernen", None

@@ -49,6 +49,28 @@
 #       darunter wird nach dem Merge wieder entfernt, weil sie gar keinen Konflikt ausloest); Platzhalter in den vom Merge
 #       beruehrten Textdateien (ausser keep_local und no_replace) ersetzen, base_commit/updates fortschreiben,
 #       git add.
+#
+#       Sprachwechsel-Modus (einmalig, siehe --language-switch unten): aktiv, wenn `template_language` in
+#       .claude/template.json auf der Template-Seite (--check-Ref) von der lokalen Fassung abweicht (fehlt
+#       das Feld, gilt "de"). Direkt nach dem Merge und VOR der obigen Platzhalter-Ersetzung bekommt jede vom
+#       Merge beruehrte TEMPLATE-EIGENE Datei (existierte in base_commit; nicht keep_local/template_only/
+#       abgewaehlt/setup_removed) den Inhalt der Template-Seite (MERGE_HEAD, als Bytes), unabhaengig davon,
+#       ob git dort einen Konflikt sieht - aufbereitet wie beim Anlegen: AGENTS.md, CLAUDE.md,
+#       docs/ai/checklists.md, .claude/settings.json und .gitignore mit den NEUEN Bibliotheken
+#       (setup-lib.py-Fassade, finish-setup.py) aus dem Arbeitsbaum: Platzhalter, template-only-Bloecke,
+#       applied_config (Logging, Werkzeuge, Wartung, Modell, Hooks), bei setup_complete die Setup-Abschnitte
+#       (deutsche und englische Titel, eigene Rueckfall-Liste). Schlaegt die Aufbereitung fehl oder bleibt
+#       ein Setup-Rest stehen, wird der Pfad NICHT gestaged, sondern als offener Konflikt markiert (WARNUNG,
+#       Exit 4, weiter mit --continue). keep_local-Dateien behalten ihre Projektfassung byte-genau. Im
+#       Template geloeschte/umbenannte Template-Dateien werden entfernt; eine Projektdatei auf einem Pfad,
+#       den das Template neu anlegt (add/add), bleibt; hat das Projekt eine Template-Datei X nach Y
+#       verschoben, bekommt Y den Template-Stand von X; alles Unsichere bleibt liegen und wird gemeldet.
+#       Jede verworfene lokale Aenderung (Projektstand != wie beim Anlegen aufbereiteter base_commit-Stand)
+#       wird gemeldet, mit Rueckweg ('git show HEAD:<Pfad>', nach dem Commit 'git show ORIG_HEAD:<Pfad>'),
+#       und steht in .claude/language-switch-report.md (wird mit dem Merge-Commit versioniert). Betrifft NIE
+#       den Template-Checkout selbst (is_template). '--language-switch' (nur zusammen mit '--apply') erzwingt
+#       den Modus auch ohne erkannten Sprachunterschied. Regressionstest: scripts/test-language-switch.py
+#       in der Template-Pflege.
 #   python .claude/scripts/update-template.py --continue [--commit]
 #       Nach manueller Konfliktaufloesung: prueft, dass keine Konflikte mehr offen sind, fuehrt den
 #       Abschlussschritt von --apply aus.
@@ -317,6 +339,9 @@ def abgewaehlte_guideline_pfade(cfg: dict, root: Path) -> list:
 #     Ref explizit als `accepted_ref` uebergeben wird (siehe _load_sibling_module) - in der Praxis
 #     pre_merge_head/base_commit (Stand, den das Projekt bereits kennt), NIE MERGE_HEAD/der Template-Ref.
 #     Ist dort keine finish-setup.py vorhanden, bleibt der Konflikt offen statt automatisch geloest zu werden.
+#   - AUSNAHME (Wolfgang 2026-09-18, B27/T10): der einmalige Sprachwechsel im von Hand gestarteten --apply
+#     laedt die Aufbereitungs-Bibliotheken aus dem Arbeitsbaum NACH Uebernahme des Template-Stands
+#     (_load_prep_libs_from_worktree) und meldet das vorher. Nie im --check-Hook.
 # ---------------------------------------------------------------------------
 
 _SIBLING_MODULE_CACHE = {}
@@ -839,6 +864,11 @@ def _conflict_art(code: str) -> str:
 
 
 TEMPLATE_JSON_REL = ".claude/template.json"
+
+# Report des einmaligen Sprachwechsel-Modus (siehe Kopfkommentar) - wird bei jedem aktiven Lauf neu
+# geschrieben und mit dem Merge-Commit versioniert, damit die Liste ueberschriebener lokaler Aenderungen
+# nach dem Lauf nicht verloren geht.
+LANGUAGE_SWITCH_REPORT_REL = ".claude/language-switch-report.md"
 
 _HINWEIS = (
     "Speichert die Herkunft dieses Projekts gegenueber dem Template (Remote, Basis-Commit, eingesetzte "
@@ -1518,6 +1548,17 @@ def _git_show_json(root: Path, revision: str, rel_path: str):
     return data, False
 
 
+def _template_language(data) -> str:
+    """Liest 'template_language' aus einem geparsten template.json-Dict - fehlt das Feld oder ist es kein
+    nicht-leerer String, gilt "de" (Default vor Einfuehrung dieses Felds, siehe Sprachwechsel-Modus im
+    Kopfkommentar)."""
+    if isinstance(data, dict):
+        wert = data.get("template_language")
+        if isinstance(wert, str) and wert.strip():
+            return wert.strip()
+    return "de"
+
+
 # Felder, die bei einem Konflikt auf .claude/template.json IMMER aus der Projektfassung (ours) stammen UND
 # OHNE Rueckfall auf theirs, wenn ours das Feld nicht hat ("fehlt im Projekt" heisst hier "soll fehlen", nicht
 # "aus dem Template nachladen") - je Feld begruendet:
@@ -1601,12 +1642,23 @@ def _merge_template_json_fields(ours, theirs):
     neu_no_replace = [p for p in no_replace_theirs if p not in no_replace_ours]
     neu_template_only = [p for p in template_only_theirs if p not in template_only_ours]
 
+    # template_language: IMMER die Template-Seite, wenn sie das Feld hat - die Sprache der Vorlagen-Mechanik
+    # ist eine Eigenschaft des TEMPLATES, keine Projektentscheidung (Sprachwechsel-Modus, siehe Kopfkommentar).
+    # Bewusst NICHT im generischen "unbekannte Felder"-Zweig unten (dort wuerde ein bereits im Projekt
+    # explizit gesetztes "de" die neue Template-Sprache dauerhaft blockieren, weil ours dort immer gewinnt).
+    # Hat theirs das Feld nicht (aelterer Template-Stand), bleibt die Projektfassung stehen; fehlt es auf
+    # beiden Seiten, bleibt es ganz weg (Default "de" gilt dann implizit, siehe _template_language()).
+    if theirs is not None and "template_language" in theirs:
+        merged["template_language"] = theirs["template_language"]
+    elif ours is not None and "template_language" in ours:
+        merged["template_language"] = ours["template_language"]
+
     # Unbekannte Felder: Projektfassung gewinnt, nur-im-Template-vorhandene Felder werden uebernommen.
     # "values" steht bewusst mit dabei, obwohl es nicht mehr in _TEMPLATE_JSON_OURS_FIELDS steht - es ist
     # oben bereits schluesselweise gemergt (_merge_template_json_values); ohne diesen Eintrag wuerde die
     # Schleife es hier als "unbekanntes Feld" nochmal aus ours ueberschreiben und die frisch ergaenzten
-    # Template-Schluessel wieder verwerfen.
-    known = set(_TEMPLATE_JSON_OURS_FIELDS) | {"keep_local", "no_replace", "template_only", "values"}
+    # Template-Schluessel wieder verwerfen. "template_language" ebenso ausgenommen, siehe direkt oben.
+    known = set(_TEMPLATE_JSON_OURS_FIELDS) | {"keep_local", "no_replace", "template_only", "values", "template_language"}
     for key, value in (ours or {}).items():
         if key not in known:
             merged[key] = value
@@ -1662,7 +1714,690 @@ def _resolve_template_json_merge(root: Path, cfg: dict, ours_ref: str, theirs_re
     return f"immer Projektfassung ({grund})"
 
 
-def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bool) -> int:
+# ---------------------------------------------------------------------------
+# Sprachwechsel-Modus (einmalig, siehe Kopfkommentar) - nur innerhalb von cmd_apply() verwendet.
+# ---------------------------------------------------------------------------
+
+
+def detect_language_switch(root: Path, cfg: dict, ref, forced: bool):
+    """Ermittelt, ob der einmalige Sprachwechsel-Modus fuer dieses '--apply' gilt: aktiv, wenn
+    'template_language' auf der Template-Seite (ref, siehe compare_ref()) von der lokalen template.json
+    abweicht, oder wenn 'forced' (--language-switch) das erzwingt. Rueckgabe: (aktiv, lokale_sprache,
+    fern_sprache). Liest die Template-Seite direkt aus dem noch nicht gemergten Ref, NICHT aus cfg (das
+    traegt bis zum Merge den lokalen Stand)."""
+    lokale_sprache = _template_language(cfg)
+    if not ref:
+        return bool(forced), lokale_sprache, lokale_sprache
+    ref_data, _err = _git_show_json(root, ref, TEMPLATE_JSON_REL)
+    ferne_sprache = _template_language(ref_data) if ref_data is not None else lokale_sprache
+    aktiv = bool(forced) or ferne_sprache != lokale_sprache
+    return aktiv, lokale_sprache, ferne_sprache
+
+
+def _merge_touched_paths(root: Path) -> set:
+    """Alle vom laufenden Merge beruehrten Pfade - Konflikt ODER bereits sauber automatisch gemergt. HEAD
+    steht zu diesem Zeitpunkt noch auf pre_merge_head ('git merge --no-commit' bewegt HEAD nicht), darum
+    vergleicht 'diff --cached' bereits korrekt gegen den Vor-Merge-Stand. '-z' wie bei get_unmerged_status():
+    schuetzt Pfade mit Sonderzeichen vor dem Anfuehrungszeichen-Escaping von 'git status'/'git diff'.
+    '--no-renames': eine Umbenennung soll als geloeschter ALTER und neu angelegter NEUER Pfad erscheinen -
+    mit Rename-Erkennung (git-Default) naennte 'diff --name-only' nur den neuen Pfad, der alte fehlte im
+    Report."""
+    touched = set()
+    res_cached = run_git(root, ["diff", "--cached", "--no-renames", "--name-only", "-z"])
+    if res_cached.returncode == 0:
+        touched.update(p for p in res_cached.stdout.split("\0") if p)
+    res_unstaged = run_git(root, ["diff", "--no-renames", "--name-only", "-z"])
+    if res_unstaged.returncode == 0:
+        touched.update(p for p in res_unstaged.stdout.split("\0") if p)
+    touched.update(get_unmerged_status(root).keys())
+    return touched
+
+
+# Review-Befund 2026-09-18 (T10): Setup-Ueberschriften in docs/ai/checklists.md, die ein abgeschlossenes
+# Projekt NIE zurueckbekommen darf - deutsch UND englisch (verbindlich: english-rename-map.tsv der
+# Template-Pflege). Bewusst HIER als eigene Liste und nicht nur aus finish-setup.py: in einem
+# abgeschlossenen Projekt gibt es lokal keine finish-setup.py mehr, und die Fassung aus pre_merge_head/
+# base_commit ist die ALTE (kennt nur die deutschen Titel). Aus MERGE_HEAD wird finish-setup.py nie
+# ausgefuehrt (Sicherheitsregel B38), sondern nur STATISCH gelesen (_checklist_titles_from_ref) - die
+# Ergebnisse werden mit dieser Liste vereinigt.
+SETUP_CHECKLIST_TITLES_FALLBACK = (
+    "Neues Projekt", "New Project",
+    "Projekt nachrüsten", "Apply Template",
+    "Einrichtung abschließen", "Complete Setup",
+)
+
+# Gleiches Muster wie setup-lib.py:TEMPLATE_ONLY_BLOCK - Rueckfall, falls die neue setup-lib.py nicht ladbar
+# ist. _TEMPLATE_ONLY_MARKER_RE prueft danach, ob noch ein Marker stehen geblieben ist.
+TEMPLATE_ONLY_BLOCK_FALLBACK = re.compile(
+    r"[ \t]*<!--\s*template-only:start\s*-->.*?<!--\s*template-only:end\s*-->[ \t]*\n?",
+    re.DOTALL,
+)
+_TEMPLATE_ONLY_MARKER_RE = re.compile(r"<!--\s*template-only:(?:start|end)\s*-->")
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
+
+# Dateien, die beim Anlegen eines Projekts ueber die Platzhalter hinaus aufbereitet werden (setup-lib.py
+# cmd_apply, sync-config.py, finish-setup.py) - im Sprachwechsel bekommen sie dieselbe Aufbereitung erneut
+# (siehe _prepare_template_text).
+LANGUAGE_SWITCH_PREP_PATHS = ("AGENTS.md", "CLAUDE.md", "docs/ai/checklists.md", ".claude/settings.json", ".gitignore")
+# setup-lib.py laedt diese drei Geschwister beim Import relativ zu __file__ - sie muessen gemeinsam vorliegen.
+PREP_LIB_FILES = ("setup-lib.py", "config-lib.py", "files-lib.py", "claudemd-lib.py")
+
+
+def _rmtree_robust(path) -> None:
+    """shutil.rmtree mit chmod-Rueckfall (schreibgeschuetzte Dateien unter Windows) - nie 'rm -rf'."""
+    def _on_error(func, p, _exc):
+        try:
+            os.chmod(p, 0o700)
+            func(p)
+        except OSError:
+            pass
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_on_error)
+    else:
+        shutil.rmtree(path, onerror=_on_error)
+
+
+def _git_blob_bytes(root: Path, ref, rel_path: str, filters: bool = False):
+    """Inhalt von ref:rel_path als BYTES (None, wenn nicht vorhanden). run_git() liest Text mit
+    errors="replace" und Zeilenende-Umwandlung - fuer Binaerdateien/CRLF-Dateien ungeeignet (Review-Befund
+    T10). filters=True: '--filters' wendet die Arbeitsbaum-Filter (.gitattributes eol/text) an und liefert
+    genau das, was ein Checkout schreiben wuerde - fuer Schreibzugriffe in den Arbeitsbaum. Ohne: Rohinhalt
+    des Blobs - fuer Vergleiche."""
+    if not ref:
+        return None
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    args = ["git", "-c", "core.quotePath=false", "-C", str(root), "cat-file"]
+    args += ["--filters", f"{ref}:{rel_path}"] if filters else ["blob", f"{ref}:{rel_path}"]
+    res = subprocess.run(args, capture_output=True, stdin=subprocess.DEVNULL, env=env)
+    return res.stdout if res.returncode == 0 else None
+
+
+def _git_path_exists(root: Path, ref, rel_path: str) -> bool:
+    return bool(ref) and run_git(root, ["cat-file", "-e", f"{ref}:{rel_path}"]).returncode == 0
+
+
+def _load_module_checked(path: Path, mod_name: str):
+    """(modul, None) oder (None, grund). Anders als _load_sibling_module_from_path() wird der Grund nicht
+    verschluckt, sondern fuer Warnung und Report zurueckgegeben."""
+    try:
+        spec = importlib.util.spec_from_file_location(mod_name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod, None
+    except Exception as exc:  # noqa: BLE001 - Grund wird an den Aufrufer gemeldet, nicht verschluckt
+        return None, f"{path.name}: {type(exc).__name__}: {exc}"
+
+
+def _checklist_titles_from_ref(root: Path, ref) -> set:
+    """CHECKLIST_TITLES/CHECKLIST_TITLE_ALIASES aus finish-setup.py in `ref` - rein STATISCH per `ast`, ohne
+    den Code auszufuehren (Sicherheitsregel B38, derselbe Weg wie _read_finish_setup_constants_from_ref).
+    Leer, wenn die Datei fehlt oder die Konstanten keine einfachen Literale sind."""
+    titles = set()
+    data = _git_blob_bytes(root, ref, ".claude/scripts/finish-setup.py")
+    if not data:
+        return titles
+    try:
+        tree = ast.parse(data.decode("utf-8"))
+    except (SyntaxError, UnicodeDecodeError, ValueError):
+        return titles
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        if node.targets[0].id not in ("CHECKLIST_TITLES", "CHECKLIST_TITLE_ALIASES"):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, TypeError, SyntaxError):
+            continue
+        items = list(value.values()) + list(value.keys()) if isinstance(value, dict) else [value]
+        for item in items:
+            for title in (item if isinstance(item, (list, tuple)) else [item]):
+                if isinstance(title, str) and title.strip():
+                    titles.add(title.strip())
+    return titles
+
+
+def _module_checklist_titles(mod) -> set:
+    titles = set()
+    if mod is None:
+        return titles
+    titles.update(getattr(mod, "CHECKLIST_TITLES", None) or [])
+    for title, aliases in (getattr(mod, "CHECKLIST_TITLE_ALIASES", None) or {}).items():
+        titles.add(title)
+        titles.update(aliases)
+    return titles
+
+
+def _load_prep_libs_from_worktree(root: Path, tag: str) -> dict:
+    """NEUE Aufbereitungs-Bibliotheken fuer den Sprachwechsel: setup-lib.py (mit config-/files-/claudemd-lib.py)
+    und - falls vorhanden - finish-setup.py aus dem ARBEITSBAUM, nachdem die Template-eigenen Dateien dort
+    bereits auf den Template-Stand gebracht wurden (Review-Befund T10: vorher lief die Aufbereitung mit der
+    ALTEN finish-setup.py aus pre_merge_head/base_commit und liess englische Setup-Ueberschriften stehen).
+    Laeuft nur im menschlich gestarteten '--apply' mit Sprachwechsel, nie im --check-Hook - derselbe Stand,
+    den die naechste Sitzung ohnehin ausfuehrt (sync-config.py-Hook). Ein Pfad mit offenem Merge-Konflikt
+    gilt als nicht ladbar (siehe _sibling_path_conflicted)."""
+    libs = {"setup_lib": None, "finish_setup": None, "errors": []}
+    scripts = root / ".claude" / "scripts"
+    # Ausnahme von der SICHERHEITSREGEL oben, freigegeben von Wolfgang 2026-09-18 (B27/T10): nur hier, nur
+    # bei --apply mit Sprachwechsel. Vorher sichtbar machen, welcher Template-Code gleich ausgefuehrt wird.
+    print("Language switch: running preparation code from the new template version: "
+          + ", ".join(n for n in PREP_LIB_FILES if (scripts / n).is_file()))
+    offen = [name for name in PREP_LIB_FILES if _sibling_path_conflicted(root, name)]
+    if offen:
+        libs["errors"].append("Konflikt offen: " + ", ".join(offen))
+    elif not (scripts / "setup-lib.py").is_file():
+        libs["errors"].append("setup-lib.py fehlt im Arbeitsbaum")
+    else:
+        libs["setup_lib"], err = _load_module_checked(scripts / "setup-lib.py", f"_update_template_prep_{tag}_setup_lib")
+        if err:
+            libs["errors"].append(err)
+    fs_path = scripts / "finish-setup.py"
+    if fs_path.is_file() and not _sibling_path_conflicted(root, "finish-setup.py"):
+        libs["finish_setup"], err = _load_module_checked(fs_path, f"_update_template_prep_{tag}_finish_setup")
+        if err:
+            libs["errors"].append(err)
+    return libs
+
+
+def _load_prep_libs_from_refs(root: Path, lib_ref, finish_refs, tag: str) -> dict:
+    """ALTE Aufbereitungs-Bibliotheken (Stand vor dem Merge) aus Git-Refs, die das Projekt bereits kennt
+    (pre_merge_head/base_commit - dieselbe accepted_ref-Regel wie _load_sibling_module). Alle vier Dateien
+    aus PREP_LIB_FILES kommen gemeinsam in ein Temp-Verzeichnis, weil setup-lib.py seine Geschwister relativ
+    zu __file__ laedt. Gebraucht, um den alten Template-Stand (base_commit) genauso aufzubereiten wie beim
+    Anlegen, bevor er mit dem Projektstand verglichen wird (Review-Befund T10: sonst meldet der Report jede
+    Datei mit ersetzten Platzhaltern als lokal geaendert)."""
+    libs = {"setup_lib": None, "finish_setup": None, "errors": []}
+    tmp_dir = tempfile.mkdtemp(prefix="update-template-prep-libs-")
+    try:
+        tmp = Path(tmp_dir)
+        vollstaendig = True
+        for name in PREP_LIB_FILES:
+            data = _git_blob_bytes(root, lib_ref, f".claude/scripts/{name}")
+            if data is None:
+                libs["errors"].append(f"{name} fehlt in {str(lib_ref)[:7]}")
+                vollstaendig = False
+                break
+            (tmp / name).write_bytes(data)
+        if vollstaendig:
+            libs["setup_lib"], err = _load_module_checked(tmp / "setup-lib.py", f"_update_template_prep_{tag}_setup_lib")
+            if err:
+                libs["errors"].append(err)
+        for ref in finish_refs:
+            data = _git_blob_bytes(root, ref, ".claude/scripts/finish-setup.py")
+            if data is None:
+                continue
+            (tmp / "finish-setup.py").write_bytes(data)
+            libs["finish_setup"], err = _load_module_checked(tmp / "finish-setup.py", f"_update_template_prep_{tag}_finish_setup")
+            if err:
+                libs["errors"].append(err)
+            break
+    finally:
+        _rmtree_robust(tmp_dir)
+    return libs
+
+
+def _strip_setup_checklist_sections(text: str, titles) -> str:
+    """Rueckfall-Entfernung der Setup-Abschnitte in docs/ai/checklists.md (gleiche Regel wie
+    finish-setup.py:update_checklists: von der Ueberschrift bis zur naechsten gleich- oder hoeherrangigen,
+    dazu Zeilen mit einem Markdown-Link auf einen der Titel) - anders als dort ohne "alle drei genau einmal":
+    hier geht es darum, dass KEINER stehen bleibt."""
+    titles = set(titles)
+    trailing = text.endswith("\n")
+    lines = text.split("\n")
+    if trailing:
+        lines = lines[:-1]
+    remove = set()
+    for i, line in enumerate(lines):
+        m = _MD_HEADING_RE.match(line.rstrip("\r"))
+        if not m or m.group(2).strip() not in titles:
+            continue
+        level = len(m.group(1))
+        end = len(lines)
+        for j in range(i + 1, len(lines)):
+            m2 = _MD_HEADING_RE.match(lines[j].rstrip("\r"))
+            if m2 and len(m2.group(1)) <= level:
+                end = j
+                break
+        remove.update(range(i, end))
+    for i, line in enumerate(lines):
+        if i in remove or _MD_HEADING_RE.match(line.rstrip("\r")):
+            continue
+        if any(re.search(r"\[\s*" + re.escape(t) + r"\s*\]\(", line) for t in titles):
+            remove.add(i)
+    return "\n".join(l for i, l in enumerate(lines) if i not in remove) + ("\n" if trailing else "")
+
+
+def _setup_residue(norm: str, text: str, strip_template_only: bool, setup_complete: bool, titles) -> list:
+    """Was nach der Aufbereitung NICHT mehr in der Datei stehen darf - leer = in Ordnung."""
+    reste = []
+    if strip_template_only and norm in ("AGENTS.md", "CLAUDE.md") and _TEMPLATE_ONLY_MARKER_RE.search(text):
+        reste.append("template-only-Marker stehen geblieben")
+    if setup_complete and norm == "docs/ai/checklists.md":
+        for line in text.split("\n"):
+            m = _MD_HEADING_RE.match(line.rstrip("\r"))
+            if m and m.group(2).strip() in titles:
+                reste.append(f"Setup-Ueberschrift '{m.group(2).strip()}' stehen geblieben")
+    if setup_complete and norm == ".claude/settings.json" and "finish-setup.py" in text:
+        reste.append("SessionStart-Hook fuer finish-setup.py stehen geblieben")
+    return reste
+
+
+def _prepare_template_text(norm: str, text: str, cfg: dict, libs: dict, strip_template_only: bool, titles):
+    """Bereitet Template-Text so auf, wie ein Projekt ihn beim Anlegen bekommen haette, plus der
+    Konfigurations- und Abschluss-Schritte, die seither liefen (Review-Befunde T10 Nr. 1/3/4). Nutzt dafuer die
+    ECHTEN Funktionen aus `libs` (setup-lib.py-Fassade, finish-setup.py) auf einem Temp-Verzeichnis - keine
+    Nachbildung; nur fuer Setup-Ueberschriften und template-only-Marker gibt es einen Rueckfall hier im
+    Script (SETUP_CHECKLIST_TITLES_FALLBACK/TEMPLATE_ONLY_BLOCK_FALLBACK):
+      - Platzhalter aus cfg["values"] (ausser no_replace und EXCLUDED_FROM_REPLACE), Vorlagen-Statuszeile
+        unter docs/ (wie files-lib.py:replace_placeholders)
+      - template-only-Bloecke in AGENTS.md/CLAUDE.md, wenn `strip_template_only` (das Projekt hat sie nicht mehr)
+      - applied_config: Logging-Schalter und Werkzeug-Tabellenzeilen (AGENTS.md), Wartungs-Verweise (CLAUDE.md
+        bei Wartung aus), Orchestrator-Modell/Wartungs-Hook/Willkommens-Hook (.claude/settings.json),
+        Nur-Template-Zeilen (.gitignore)
+      - setup_complete: Setup-Abschnitte (docs/ai/checklists.md), finish-setup-Hook (.claude/settings.json)
+    Rueckgabe (neuer_text, probleme). `probleme` nicht leer = Aufbereitung unvollstaendig; der Aufrufer darf
+    das Ergebnis dann NICHT stagen. Hier gibt es kein except, das einen Fehler verschweigt - jeder Fehler
+    landet in `probleme`."""
+    probleme = []
+    sl = libs.get("setup_lib")
+    fs = libs.get("finish_setup")
+    applied = cfg.get("applied_config") if isinstance(cfg.get("applied_config"), dict) else {}
+    setup_complete = bool(cfg.get("setup_complete"))
+    lib_grund = "; ".join(libs.get("errors") or []) or "setup-lib.py nicht ladbar"
+
+    no_replace = cfg.get("no_replace") if isinstance(cfg.get("no_replace"), list) else list(DEFAULT_NO_REPLACE)
+    excluded = set(getattr(sl, "EXCLUDED_FROM_REPLACE", None) or ())
+    if norm not in excluded and not matches_keep_local(norm, no_replace):
+        for key, val in (cfg.get("values") or {}).items():
+            if val is not None:
+                text = text.replace("{{" + key + "}}", str(val))
+        if norm.startswith("docs/") and sl is not None and hasattr(sl, "STATUS_VORLAGE"):
+            text = text.replace(sl.STATUS_VORLAGE, sl.STATUS_NACH_SETUP)
+
+    if strip_template_only and norm in ("AGENTS.md", "CLAUDE.md"):
+        pattern = getattr(sl, "TEMPLATE_ONLY_BLOCK", None) or TEMPLATE_ONLY_BLOCK_FALLBACK
+        text, n = pattern.subn("", text)
+        if n:
+            text = re.sub(r"\n{3,}", "\n\n", text)
+
+    wartung_aus = str(applied.get("Wartung") or "").strip().lower() == "aus"
+    schritte = []  # (beschreibung, funktion(tmp_root)) - laufen alle auf derselben Temp-Kopie
+    if norm == "AGENTS.md" and applied.get("Logging") and applied.get("Logging-Tiefe"):
+        schritte.append(("Logging-Schalter", lambda r: sl.set_logging_switch(r, applied["Logging"], applied["Logging-Tiefe"])))
+    if norm == "AGENTS.md" and applied.get("KI-Werkzeuge-entfernt"):
+        schritte.append(("Werkzeug-Zeilen", lambda r: sl.remove_tool_files(r, list(applied["KI-Werkzeuge-entfernt"]))))
+    if norm == "CLAUDE.md" and wartung_aus:
+        schritte.append(("Wartungs-Verweise", lambda r: sl.remove_maintenance_references(r)))
+    if norm == ".claude/settings.json":
+        if applied.get("Orchestrator-Modell"):
+            schritte.append(("Orchestrator-Modell", lambda r: sl.set_orchestrator_model(r, applied["Orchestrator-Modell"])))
+        schritte.append(("Willkommens-Hook", lambda r: sl.remove_welcome_hook(r)))
+        if wartung_aus:
+            schritte.append(("Wartungs-Hook", lambda r: sl.remove_maintenance_hook(r)))
+    if norm == ".gitignore":
+        schritte.append(("Nur-Template-Zeilen", lambda r: sl.remove_welcome_gitignore_lines(r)))
+
+    fs_schritte = []
+    if setup_complete and norm == ".claude/settings.json":
+        fs_schritte.append(("finish-setup-Hook", lambda r: fs.remove_finish_setup_hook(r, plan=False)))
+    if setup_complete and norm == "docs/ai/checklists.md" and fs is not None:
+        fs_schritte.append(("Setup-Abschnitte", lambda r: fs.update_checklists(r, plan=False)))
+
+    if schritte and sl is None:
+        probleme.append(f"Konfigurationsanpassung ({', '.join(s for s, _ in schritte)}) nicht moeglich: {lib_grund}")
+        schritte = []
+    if fs_schritte and fs is None:
+        # nur der settings.json-Hook braucht das Modul zwingend; checklists.md hat den Rueckfall unten
+        probleme.append(f"finish-setup.py nicht ladbar ({', '.join(s for s, _ in fs_schritte)})")
+        fs_schritte = []
+
+    if schritte or fs_schritte:
+        tmp_dir = tempfile.mkdtemp(prefix="update-template-prep-")
+        try:
+            fp = Path(tmp_dir) / norm
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_bytes(text.encode("utf-8"))
+            for beschreibung, fn in schritte + fs_schritte:
+                try:
+                    fn(Path(tmp_dir))
+                except Exception as exc:  # noqa: BLE001 - wird als Problem gemeldet, nicht verschluckt
+                    probleme.append(f"{beschreibung}: {type(exc).__name__}: {exc}")
+            text = fp.read_bytes().decode("utf-8")
+        finally:
+            _rmtree_robust(tmp_dir)
+
+    if setup_complete and norm == "docs/ai/checklists.md" and _setup_residue(norm, text, False, True, titles):
+        text = _strip_setup_checklist_sections(text, titles)
+
+    probleme.extend(_setup_residue(norm, text, strip_template_only, setup_complete, titles))
+    return text, probleme
+
+
+def _normalized_for_compare(data: bytes, values: dict) -> str:
+    """Vergleichsform einer utf-8-Textdatei: Zeilenenden auf LF, Platzhalter ersetzt - damit weder autocrlf
+    noch eine uneinheitlich gelaufene Platzhalter-Ersetzung als lokale Aenderung zaehlen."""
+    text = data.decode("utf-8").replace("\r\n", "\n")
+    for key, val in (values or {}).items():
+        if val is not None:
+            text = text.replace("{{" + key + "}}", str(val))
+    return text
+
+
+def _local_change_vs_base(root: Path, project_rel: str, base_rel: str, pre_merge_head: str, base_commit,
+                          cfg: dict, old_libs: dict, titles) -> bool:
+    """True, wenn die Projektfassung VOR dem Merge (pre_merge_head:project_rel) vom alten Template-Stand
+    (base_commit:base_rel) abweicht - NACHDEM dieser genauso aufbereitet wurde wie beim Anlegen (Platzhalter,
+    template-only, applied_config, Setup-Abschluss; mit den ALTEN Bibliotheken, siehe
+    _load_prep_libs_from_refs). Ohne diese Aufbereitung galt jede Datei mit ersetzten Platzhaltern als lokal
+    geaendert (Review-Befund T10 Nr. 3). Unterschiede, die nur aus der Konfiguration stammen, verschwinden so
+    und werden nicht als Verlust gemeldet."""
+    ours = _git_blob_bytes(root, pre_merge_head, project_rel)
+    if ours is None:
+        return False
+    base = _git_blob_bytes(root, base_commit, base_rel)
+    if base is None:
+        return True
+    try:
+        base.decode("utf-8")
+        ours.decode("utf-8")
+    except UnicodeDecodeError:
+        return base != ours  # Binaerdatei: byteweise, keine Aufbereitung
+    values = cfg.get("values") or {}
+    norm = base_rel.replace("\\", "/")
+    base_text = _normalized_for_compare(base, values)
+    ours_text = _normalized_for_compare(ours, values)
+    strip_to = not _TEMPLATE_ONLY_MARKER_RE.search(ours_text)
+    # Auch fuer Dateien ausserhalb von LANGUAGE_SWITCH_PREP_PATHS: dort bleibt es bei Platzhaltern und der
+    # Vorlagen-Statuszeile unter docs/ - beides hat create-project.py beim Anlegen ersetzt.
+    base_text, _probleme = _prepare_template_text(norm, base_text, cfg, old_libs, strip_to, titles)
+    return base_text.replace("\r\n", "\n") != ours_text
+
+
+def _mark_unresolved(root: Path, rel_path: str, stages) -> bool:
+    """Legt rel_path als ECHTEN, offenen Merge-Konflikt in den Index (Stufen 1/2/3 = base/Projekt/Template,
+    je (stufe, ref, pfad_im_ref); fehlende Seiten entfallen). Damit greifen '--continue' (verweigert, solange
+    'git diff --diff-filter=U' ihn zeigt) und 'git merge --abort' wie bei jedem anderen Konflikt - der Pfad
+    wird erst durch ein bewusstes 'git add' nach der Pruefung aufgeloest."""
+    zeilen = [f"0 {'0' * 40}\t{rel_path}"]
+    for stage, ref, pfad in stages:
+        if not ref:
+            continue
+        res = run_git(root, ["ls-tree", ref, "--", pfad])
+        teile = res.stdout.split() if res.returncode == 0 else []
+        if len(teile) >= 3 and teile[1] == "blob":
+            zeilen.append(f"{teile[0]} {teile[2]} {stage}\t{rel_path}")
+    if len(zeilen) == 1:
+        return False
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    res = subprocess.run(
+        ["git", "-C", str(root), "update-index", "--index-info"],
+        input=("\n".join(zeilen) + "\n").encode("utf-8"), capture_output=True, env=env,
+    )
+    return res.returncode == 0
+
+
+def _write_worktree_bytes(root: Path, rel_path: str, data: bytes) -> None:
+    fp = root / rel_path
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_bytes(data)
+
+
+def _apply_language_switch(root: Path, cfg: dict, pre_merge_head: str, merge_head, touched) -> dict:
+    """Einmaliger Sprachwechsel-Schritt (siehe Kopfkommentar). Fuer jeden vom Merge beruehrten Pfad:
+
+      - template.json, template_only, abgewaehlt/setup_removed: unberuehrt (eigene Wege, wie bisher).
+      - keep_local: Projektfassung (pre_merge_head) byte-genau wiederhergestellt, falls vorhanden - Projekt-
+        inhalte bekommen beim Sprachwechsel auch keine konfliktfrei gemergten Template-Zeilen.
+      - TEMPLATE-EIGEN heisst: existierte in base_commit (Review-Befund T10 Nr. 2). Nur solche Pfade werden
+        ueberschrieben oder geloescht. Im Template neu angelegte Pfade, die das Projekt nicht hat, kommen
+        normal herein.
+      - add/add (Projekt hat eigene Datei, Template legt denselben Pfad neu an): Projektfassung bleibt,
+        gemeldet.
+      - Projekt hat eine Template-Datei X nach Y verschoben (Git-Rename-Erkennung base_commit..pre_merge_head),
+        das Template hat X noch: Y bekommt den aufbereiteten Template-Stand von X, X bleibt weg. Begruendung:
+        Y ist nachweislich dieselbe Template-Datei (Aehnlichkeit >= 40 %), nur umgezogen; eine lokale
+        Aenderung daran wird wie ueberall gemeldet, mit Rueckweg. Hat das Template X selbst geloescht oder
+        verschoben, ist die Zuordnung unsicher: Y bleibt liegen, gemeldet.
+      - Im Projekt geloeschte Template-Datei, die das Template geaendert hat (DU): bleibt der normalen
+        DU-Behandlung ueberlassen (Entscheidung noetig), gemeldet.
+    Inhalte werden als BYTES geschrieben (Binaer/CRLF unveraendert). AGENTS.md, CLAUDE.md, checklists.md,
+    settings.json und .gitignore werden zusaetzlich aufbereitet (_prepare_template_text) - mit den NEUEN
+    Bibliotheken aus dem Arbeitsbaum, nachdem alle uebrigen Dateien dort stehen. Schlaegt das fehl, wird der
+    Pfad NICHT gestaged, sondern als offener Konflikt markiert (_mark_unresolved) - der Merge bleibt fuer
+    '--continue' offen.
+
+    Rueckgabe: dict mit adopted, removed, overwritten_local, kept_project, left, open ([(pfad, grund)]),
+    keep_local_restored (Anzahl), lib_errors."""
+    result = {
+        "adopted": [], "removed": [], "overwritten_local": [], "kept_project": [], "left": [], "open": [],
+        "keep_local_restored": 0, "lib_errors": [],
+    }
+    if cfg.get("is_template") or not merge_head:
+        return result
+
+    keep_local = cfg.get("keep_local") or []
+    template_only = cfg.get("template_only") if isinstance(cfg.get("template_only"), list) else list(DEFAULT_TEMPLATE_ONLY)
+    ausgeschlossen = abgewaehlte_pfade(cfg) + abgewaehlte_guideline_pfade(cfg, root) + setup_removed_paths(cfg, root=root, ref=merge_head)
+    base_commit = cfg.get("base_commit")
+    renames_template = _find_renames(root, base_commit, merge_head)
+    renames_project = _find_renames(root, base_commit, pre_merge_head)
+    conflicts = get_unmerged_status(root)
+
+    titles = set(SETUP_CHECKLIST_TITLES_FALLBACK) | _checklist_titles_from_ref(root, merge_head)
+    old_libs = _load_prep_libs_from_refs(root, pre_merge_head, (pre_merge_head, base_commit), "old")
+    titles |= _module_checklist_titles(old_libs.get("finish_setup"))
+
+    def _ausgenommen(pfad):
+        return any(matches_keep_local(pfad, liste) for liste in (keep_local, template_only, ausgeschlossen))
+
+    plan = []  # (projekt_pfad, template_pfad) fuer die Uebernahme
+    for rel_path in sorted(touched):
+        norm = rel_path.replace("\\", "/")
+        if norm in (TEMPLATE_JSON_REL, LANGUAGE_SWITCH_REPORT_REL):
+            continue
+        if matches_keep_local(rel_path, keep_local):
+            ours = _git_blob_bytes(root, pre_merge_head, rel_path, filters=True)
+            if ours is not None:
+                _write_worktree_bytes(root, rel_path, ours)
+                run_git(root, ["add", "--", rel_path])
+                result["keep_local_restored"] += 1
+            continue
+        if _ausgenommen(rel_path):
+            continue
+
+        in_base = _git_path_exists(root, base_commit, rel_path)
+        in_ours = _git_path_exists(root, pre_merge_head, rel_path)
+        in_theirs = _git_path_exists(root, merge_head, rel_path)
+
+        if in_base:
+            if not in_ours:
+                result["left"].append(f"{rel_path} (im Projekt geloescht, im Template geaendert - normale Konfliktbehandlung)")
+            elif in_theirs:
+                plan.append((rel_path, rel_path))
+            else:
+                ziel = renames_template.get(rel_path)
+                if _local_change_vs_base(root, rel_path, rel_path, pre_merge_head, base_commit, cfg, old_libs, titles):
+                    result["overwritten_local"].append(rel_path)
+                run_git(root, ["rm", "-r", "-f", "--ignore-unmatch", "--", rel_path])
+                if (root / rel_path).is_file():
+                    (root / rel_path).unlink()
+                result["removed"].append(f"{rel_path} (im Template umbenannt zu {ziel[0]})" if ziel else rel_path)
+            continue
+
+        if in_theirs and not in_ours:
+            plan.append((rel_path, rel_path))  # im Template neu, im Projekt nicht vorhanden
+            continue
+        if in_theirs and in_ours:
+            ours = _git_blob_bytes(root, pre_merge_head, rel_path, filters=True)
+            _write_worktree_bytes(root, rel_path, ours)
+            run_git(root, ["add", "--", rel_path])
+            result["kept_project"].append(
+                f"{rel_path} (eigene Datei des Projekts, das Template legt denselben Pfad neu an - "
+                f"Template-Fassung: 'git show {merge_head[:7]}:{rel_path}')"
+            )
+            continue
+        alt = _reverse_rename(renames_project, rel_path)
+        if in_ours and alt and _git_path_exists(root, merge_head, alt) and alt not in renames_template:
+            if _ausgenommen(alt):
+                result["left"].append(f"{rel_path} (Projekt-Umbenennung von {alt}, dort ausgenommen)")
+            else:
+                plan.append((rel_path, alt))
+            continue
+        result["left"].append(
+            f"{rel_path} (keine Template-Datei aus base_commit, Zuordnung unsicher - liegen gelassen"
+            + (f", Konflikt {conflicts[rel_path]} offen" if rel_path in conflicts else "") + ")"
+        )
+
+    # Durchgang 1: alles ausser den aufzubereitenden Dateien schreiben - danach liegen die NEUEN
+    # Bibliotheken im Arbeitsbaum.
+    prep_later, status_later = [], []
+    for rel_path, src in plan:
+        if src.replace("\\", "/") in LANGUAGE_SWITCH_PREP_PATHS:
+            prep_later.append((rel_path, src))
+            continue
+        _write_worktree_bytes(root, rel_path, _git_blob_bytes(root, merge_head, src, filters=True))
+        run_git(root, ["add", "--", rel_path])
+        if rel_path.replace("\\", "/").startswith("docs/"):
+            status_later.append(rel_path)
+        result["adopted"].append(rel_path if src == rel_path else f"{rel_path} (Template-Stand von {src})")
+        if _local_change_vs_base(root, rel_path, src, pre_merge_head, base_commit, cfg, old_libs, titles):
+            result["overwritten_local"].append(rel_path)
+
+    new_libs = {"setup_lib": None, "finish_setup": None, "errors": []}
+    if prep_later or status_later:
+        new_libs = _load_prep_libs_from_worktree(root, "new")
+        result["lib_errors"] = list(new_libs.get("errors") or [])
+    # Vorlagen-Statuszeile unter docs/ wie beim Anlegen ersetzen (files-lib.py:replace_placeholders) -
+    # _finalize() ersetzt spaeter nur Platzhalter. Ohne ladbare Bibliothek bleibt sie stehen (kosmetisch).
+    sl_new = new_libs.get("setup_lib")
+    for rel_path in status_later if sl_new is not None and hasattr(sl_new, "STATUS_VORLAGE") else []:
+        fp = root / rel_path
+        try:
+            text = fp.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if sl_new.STATUS_VORLAGE in text:
+            fp.write_bytes(text.replace(sl_new.STATUS_VORLAGE, sl_new.STATUS_NACH_SETUP).encode("utf-8"))
+            run_git(root, ["add", "--", rel_path])
+    if prep_later:
+        if new_libs.get("finish_setup") is None:
+            # abgeschlossenes Projekt: finish-setup.py fehlt lokal - fuer den (sprachneutralen) Hook-Schritt die
+            # alte Fassung; die Ueberschriften kommen aus `titles` (inkl. statisch gelesener neuer Fassung).
+            new_libs["finish_setup"] = old_libs.get("finish_setup")
+        titles |= _module_checklist_titles(new_libs.get("finish_setup"))
+
+    # Durchgang 2: aufzubereitende Dateien.
+    for rel_path, src in prep_later:
+        norm = src.replace("\\", "/")
+        data = _git_blob_bytes(root, merge_head, src, filters=True)
+        ours = _git_blob_bytes(root, pre_merge_head, rel_path)
+        strip_to = ours is None or not _TEMPLATE_ONLY_MARKER_RE.search(ours.decode("utf-8", errors="replace"))
+        lokal = _local_change_vs_base(root, rel_path, src, pre_merge_head, base_commit, cfg, old_libs, titles)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text, probleme = None, ["keine UTF-8-Textdatei"]
+        else:
+            text, probleme = _prepare_template_text(norm, text, cfg, new_libs, strip_to, titles)
+        if lokal:
+            result["overwritten_local"].append(rel_path)
+        if probleme:
+            # NICHT stagen: Template-Fassung (unaufbereitet) liegt im Arbeitsbaum, der Pfad wird ein offener
+            # Konflikt - '--continue' verweigert, bis er von Hand geprueft und per 'git add' aufgeloest ist.
+            _write_worktree_bytes(root, rel_path, data)
+            _mark_unresolved(root, rel_path, ((1, base_commit, src), (2, pre_merge_head, rel_path), (3, merge_head, src)))
+            result["open"].append((rel_path, "; ".join(probleme)))
+            continue
+        _write_worktree_bytes(root, rel_path, text.encode("utf-8"))
+        run_git(root, ["add", "--", rel_path])
+        result["adopted"].append(rel_path if src == rel_path else f"{rel_path} (Template-Stand von {src})")
+
+    for key in ("adopted", "removed", "overwritten_local", "kept_project", "left"):
+        result[key] = sorted(dict.fromkeys(result[key]))
+    return result
+
+
+def _write_language_switch_report(root: Path, result: dict, lokale_sprache: str, ferne_sprache: str) -> None:
+    """Schreibt den Sprachwechsel-Report nach LANGUAGE_SWITCH_REPORT_REL und staged ihn - Beleg, der nach dem
+    Lauf nicht verloren geht, weil er mit dem Merge-Commit versioniert wird (siehe Kopfkommentar)."""
+    zeilen = [
+        "# Sprachwechsel-Report",
+        "",
+        f"Automatisch erzeugt von `update-template.py --apply` (Sprachwechsel `{lokale_sprache}` -> `{ferne_sprache}`).",
+        "",
+        f"- Template-eigene Dateien uebernommen: {len(result['adopted'])}",
+        f"- lokale Aenderung ueberschrieben oder entfernt: {len(result['overwritten_local'])}",
+        f"- Template-eigene Dateien entfernt (im Template geloescht/umbenannt): {len(result['removed'])}",
+        f"- Aufbereitung fehlgeschlagen, Konflikt offen: {len(result['open'])}",
+        f"- Projektdateien behalten (add/add): {len(result['kept_project'])}",
+        f"- liegen gelassen, von Hand pruefen: {len(result['left'])}",
+        f"- keep_local-Pfade auf Projektfassung gehalten: {result['keep_local_restored']}",
+        "",
+    ]
+    if result["overwritten_local"]:
+        zeilen += [
+            "## Lokale Aenderung ueberschrieben",
+            "",
+            "Rueckweg: vor dem Commit `git show HEAD:<Pfad>`, danach `git show ORIG_HEAD:<Pfad>` "
+            "(bzw. `git show <Merge-Commit>^1:<Pfad>`).",
+            "",
+        ]
+        zeilen += [f"- `{p}` - alte Fassung: `git show HEAD:{p}`" for p in result["overwritten_local"]] + [""]
+    if result["open"]:
+        zeilen += ["## Aufbereitung fehlgeschlagen - nicht uebernommen, Konflikt offen", ""]
+        zeilen += [f"- `{p}`: {grund}" for p, grund in result["open"]]
+        if result["lib_errors"]:
+            zeilen.append(f"- Bibliotheken: {'; '.join(result['lib_errors'])}")
+        zeilen += ["", "Datei pruefen und aufbereiten, dann `git add <Pfad>` und `update-template.py --continue`.", ""]
+    if result["kept_project"]:
+        zeilen += ["## Projektdatei behalten", ""] + [f"- `{p}`" for p in result["kept_project"]] + [""]
+    if result["left"]:
+        zeilen += ["## Liegen gelassen", ""] + [f"- `{p}`" for p in result["left"]] + [""]
+    if result["adopted"]:
+        zeilen += ["## Aus dem Template uebernommen", ""] + [f"- `{p}`" for p in result["adopted"]] + [""]
+    if result["removed"]:
+        zeilen += ["## Im Template geloescht/umbenannt, aus dem Projekt entfernt", ""]
+        zeilen += [f"- `{p}`" for p in result["removed"]] + [""]
+    text = "\n".join(zeilen).rstrip() + "\n"
+    fp = root / LANGUAGE_SWITCH_REPORT_REL
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_bytes(text.encode("utf-8"))
+    run_git(root, ["add", "--", LANGUAGE_SWITCH_REPORT_REL])
+
+
+def _report_language_switch(root: Path, result: dict, lokale_sprache: str, ferne_sprache: str) -> None:
+    """Stdout-Kurzfassung des Sprachwechsel-Schritts plus Report-Datei (siehe _write_language_switch_report)."""
+    print(f"Sprachwechsel-Modus aktiv ({lokale_sprache} -> {ferne_sprache}): Template-eigene Dateien "
+          "gewinnen bei diesem Update.")
+    if result["adopted"]:
+        print("Sprachwechsel, aus dem Template uebernommen: " + ", ".join(result["adopted"]))
+    if result["overwritten_local"]:
+        print(
+            "WARNUNG: lokale Aenderung ueberschrieben/entfernt - alte Fassung: 'git show HEAD:<Pfad>' "
+            "(nach dem Commit 'git show ORIG_HEAD:<Pfad>'): " + ", ".join(result["overwritten_local"])
+        )
+    if result["removed"]:
+        print("Sprachwechsel, im Template geloescht/umbenannt und entfernt: " + ", ".join(result["removed"]))
+    if result["kept_project"]:
+        print("Sprachwechsel, Projektdatei behalten: " + ", ".join(result["kept_project"]))
+    if result["left"]:
+        print("Sprachwechsel, liegen gelassen (von Hand pruefen): " + ", ".join(result["left"]))
+    for rel_path, grund in result["open"]:
+        print(f"WARNUNG: Aufbereitung fehlgeschlagen, NICHT uebernommen, Konflikt bleibt offen: {rel_path} ({grund})")
+    if result["open"] and result["lib_errors"]:
+        print("WARNUNG: Bibliotheken: " + "; ".join(result["lib_errors"]))
+    _write_language_switch_report(root, result, lokale_sprache, ferne_sprache)
+    print(
+        f"Sprachwechsel-Report ({LANGUAGE_SWITCH_REPORT_REL}): {len(result['adopted'])} uebernommen, "
+        f"{len(result['overwritten_local'])} mit lokaler Aenderung, {len(result['removed'])} entfernt, "
+        f"{len(result['open'])} offen, {len(result['kept_project'])} Projektdateien behalten, "
+        f"{len(result['left'])} liegen gelassen, {result['keep_local_restored']} keep_local gehalten."
+    )
+
+
+def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bool, language_switch: bool = False) -> int:
     remote = cfg.get("template_remote") or "template"
     branch = cfg.get("template_branch") or "main"
 
@@ -1696,8 +2431,15 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
                     print(f"Template-Update: aktuell (kein Unterschied zu {ref}) - nichts zu tun.")
                     return 0
 
+        # Sprachwechsel-Erkennung VOR dem Merge (braucht nur 'ref', siehe Kopfkommentar) - 'forced' greift
+        # nur bei diesem direkten '--apply'-Aufruf, nie bei '--continue' (dort ist continuing bereits True).
+        language_switch_active, lokale_sprache, ferne_sprache = detect_language_switch(root, cfg, ref, language_switch)
+
         pre_merge_head = run_git(root, ["rev-parse", "HEAD"]).stdout.strip()
         res_merge = run_git(root, ["merge", "--no-ff", "--no-commit", ref])
+        # HEAD bewegt sich durch '--no-commit' nicht - MERGE_HEAD ist schon jetzt aufloesbar, sobald der
+        # Merge ueberhaupt etwas zu tun hatte (siehe merge_failed_hard-Pruefung gleich danach).
+        merge_head = _merge_head(root)
 
         # Vor dem Aufloesen von TEMPLATE_JSON_REL feststellen, ob es UEBERHAUPT unaufgeloeste Pfade gab -
         # sonst wuerde "danach keine Konflikte mehr offen" (z.B. weil TEMPLATE_JSON_REL der einzige war und
@@ -1722,6 +2464,21 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
         if template_json_note:
             print(f"{TEMPLATE_JSON_REL}: {template_json_note}")
 
+        # Sprachwechsel-Override: NACH dem Merge (touched-Pfade stehen erst jetzt fest) und VOR der
+        # regulaeren Konfliktbehandlung unten - loest dabei alle Konflikte auf Template-eigenen Pfaden
+        # gleich mit auf, unabhaengig vom XY-Code (siehe _apply_language_switch). Laeuft unabhaengig davon,
+        # ob der Merge insgesamt Konflikte hatte (res_merge.returncode) - eine "sauber" automerged Datei muss
+        # ebenso ueberschrieben werden.
+        # Im Template-Checkout selbst (is_template) nie - dort weder Override noch Report (Review-Befund T10).
+        switch_open = set()
+        if language_switch_active and cfg.get("is_template"):
+            print("Sprachwechsel-Modus: Template-Checkout selbst (is_template) - nicht angewandt.")
+        elif language_switch_active:
+            touched = _merge_touched_paths(root)
+            switch_result = _apply_language_switch(root, cfg, pre_merge_head, merge_head, touched)
+            _report_language_switch(root, switch_result, lokale_sprache, ferne_sprache)
+            switch_open = {rel_path for rel_path, _grund in switch_result["open"]}
+
         if res_merge.returncode != 0:
             # get_unmerged_status() erst JETZT (nach _resolve_template_json_merge) neu abfragen: dessen
             # 'git add' hat einen echten Konflikt auf TEMPLATE_JSON_REL bereits aufgeloest (z.B. war es der
@@ -1735,7 +2492,8 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             # uebrigen abgewaehlten Pfade - derselbe "geloescht belassen"-Automatismus im DU-Zweig unten.
             abgewaehlt = abgewaehlte_pfade(cfg) + abgewaehlte_guideline_pfade(cfg, root)
             is_template = bool(cfg.get("is_template"))
-            merge_head = _merge_head(root)
+            # merge_head wurde bereits vor dem Sprachwechsel-Override oben aufgeloest - hier nicht erneut
+            # abfragen (derselbe Wert, MERGE_HEAD aendert sich vor einem 'git commit' nicht).
             # B38: root/ref (=merge_head) durchreichen - finish-setup.py existiert in einem abgeschlossenen
             # Projekt lokal nicht mehr, siehe setup_removed_paths()/_load_sibling_module() oben.
             setup_removed = setup_removed_paths(cfg, root=root, ref=merge_head)
@@ -1745,6 +2503,10 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             setup_removed_removed, setup_only_resolved, setup_only_remaining = [], [], []
             forwarder_template_wins, forwarder_template_wins_changed = [], []
             for rel_path, code in conflicts.items():
+                if rel_path in switch_open:
+                    # Sprachwechsel: Aufbereitung fehlgeschlagen, bewusst als offener Konflikt markiert - keine
+                    # der Automatiken unten darf ihn stillschweigend aufloesen (Review-Befund T10 Nr. 1).
+                    continue
                 if code == "DD":
                     # von beiden geloescht - unstrittig, unabhaengig von keep_local: nichts zu bewahren.
                     res_rm = run_git(root, ["rm", "--", rel_path])
@@ -1863,6 +2625,12 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             if still_open:
                 _print_unresolved(root, still_open, "Fehler: ungeloeste Konflikte - bitte manuell aufloesen und danach '--continue' ausfuehren:")
                 return 4
+        elif switch_open:
+            # Merge selbst war konfliktfrei, aber der Sprachwechsel hat Pfade offen gelassen - ohne diesen Zweig
+            # liefe _finalize() trotzdem durch.
+            _print_unresolved(root, sorted(switch_open), "Fehler: Sprachwechsel-Aufbereitung offen - bitte pruefen, "
+                              "'git add <Pfad>' und danach '--continue' ausfuehren:")
+            return 4
     else:
         res_head = run_git(root, ["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         if res_head.returncode != 0:
@@ -2296,7 +3064,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Template-Updates per Git-Merge einspielen, ohne echte Werte durch Platzhalter zu ersetzen.",
     )
     parser.add_argument("--init", action="store_true", help="Remote/Basis-Commit/Werte initialisieren")
-    parser.add_argument("--set", action="append", default=[], metavar="KEY=WERT", help="Platzhalterwert setzen")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="Platzhalterwert setzen")
     parser.add_argument("--check", action="store_true", help="Auf Template-Updates pruefen (mit fetch)")
     parser.add_argument("--apply", action="store_true", help="Template-Update per Merge einspielen")
     parser.add_argument("--continue", dest="cont", action="store_true", help="Nach manueller Konfliktaufloesung fortsetzen")
@@ -2308,6 +3076,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commit", action="store_true", help="Nur bei --apply/--continue: Merge-Commit direkt erstellen")
     parser.add_argument("--url", default=None, help="Nur bei --init: Remote-URL des Templates")
     parser.add_argument("--base", default=None, help="Nur bei --init: Basis-Commit explizit vorgeben")
+    parser.add_argument(
+        "--language-switch", action="store_true",
+        help="Nur bei --apply: einmaligen Sprachwechsel-Modus erzwingen (Template gewinnt bei allen "
+             "Template-eigenen Dateien, unabhaengig vom erkannten template_language-Unterschied)",
+    )
     return parser
 
 
@@ -2316,6 +3089,10 @@ def _run(argv) -> int:
     args = parser.parse_args(argv)
 
     root = _find_root()
+
+    if args.language_switch and not args.apply:
+        print("Fehler: '--language-switch' nur zusammen mit '--apply'.", file=sys.stderr)
+        return 2
 
     cfg, path = load_template_json(root)
 
@@ -2330,7 +3107,7 @@ def _run(argv) -> int:
     if args.cont:
         return cmd_apply(root, cfg, path, args.commit, continuing=True)
     if args.apply:
-        ergebnis = cmd_apply(root, cfg, path, args.commit, continuing=False)
+        ergebnis = cmd_apply(root, cfg, path, args.commit, continuing=False, language_switch=args.language_switch)
         _count_usage(root, "update-template")
         return ergebnis
     if args.check:

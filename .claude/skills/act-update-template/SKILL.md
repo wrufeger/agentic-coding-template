@@ -18,11 +18,11 @@ Wege, wie bei der Feedback-Erinnerung:
 
 - **a) ansehen und einspielen** — Inhalt von `available-template-update.md` zeigen, danach mit „Ablauf" unten
   weitermachen.
-- **b) verschieben oder Takt ändern** — `python .claude/scripts/update-check.py --verschieben <Tage>` pausiert
-  nur die Erinnerung (die Prüfung selbst läuft weiter); `python .claude/scripts/update-check.py --takt
+- **b) verschieben oder Takt ändern** — `python .claude/scripts/update-check.py --postpone <Tage>` pausiert
+  nur die Erinnerung (die Prüfung selbst läuft weiter); `python .claude/scripts/update-check.py --cadence
   <täglich|wöchentlich|monatlich|sitzungsstart|manuell>` setzt „Template-Update-Erinnerung" in `AI-CONFIG.md`
   dauerhaft um.
-- **c) nicht mehr erinnern** — `python .claude/scripts/update-check.py --takt manuell` (setzt nur die
+- **c) nicht mehr erinnern** — `python .claude/scripts/update-check.py --cadence manuell` (setzt nur die
   Erinnerung still, die Hintergrundprüfung selbst bleibt an; sie ganz abschalten: `Template-Updates` in
   `AI-CONFIG.md` auf `manuell`).
 
@@ -69,6 +69,29 @@ Wege, wie bei der Feedback-Erinnerung:
    `docs/ai/resources.md` ist der umgekehrte Fall: Die Quellensammlung pflegt das Template, nur der Abschnitt
    „Eigene Quellen dieses Projekts“ am Dateiende gehört dem Projekt. Bei einem Konflikt dort also die
    Template-Fassung nehmen und den eigenen Abschnitt anhängen.
+
+   **Sprachwechsel-Modus (einmalig).** Das Script erkennt bei `--apply` selbst, wenn `template_language` in
+   `.claude/template.json` auf der Template-Seite von der lokalen Fassung abweicht (fehlt das Feld, gilt
+   `de`) — z. B. beim einmaligen Umstieg des Templates auf Englisch. Meldung dann direkt zu Beginn:
+   „Sprachwechsel-Modus aktiv (de -> en) …“. In diesem Fall bekommt **jede vom Merge berührte Template-Datei**
+   (existierte im letzten eingespielten Template-Stand; nicht `keep_local`, `template_only`, abgewählt oder
+   `setup_removed`) den Template-Stand — Konflikt oder nicht, unabhängig von der sonst geltenden „beide Seiten
+   einarbeiten“-Regel oben. `AGENTS.md`, `CLAUDE.md`, `docs/ai/checklists.md`, `.claude/settings.json` und
+   `.gitignore` werden dabei wie beim Anlegen aufbereitet (Platzhalter, template-only-Blöcke, Einstellungen aus
+   `AI-CONFIG.md`, bei abgeschlossener Einrichtung die Setup-Abschnitte — deutsche und englische Überschriften).
+   `keep_local`-Dateien bleiben byte-genau, eine eigene Projektdatei auf einem Pfad, den das Template neu
+   anlegt, bleibt ebenfalls; hat das Projekt eine Template-Datei verschoben, bekommt die verschobene Datei den
+   Template-Stand. Im Template gelöschte/umbenannte Dateien werden entfernt. Jede dabei verworfene lokale
+   Änderung steht in der Ausgabe **und** in `.claude/language-switch-report.md` (wird mit committet) —
+   Rückweg zur alten Fassung: `git show HEAD:<Pfad>` (vor dem Commit) bzw. `git show ORIG_HEAD:<Pfad>` (danach).
+   **Meldet das Script „WARNUNG: Aufbereitung fehlgeschlagen“** (Exit 4), ist der Pfad nicht übernommen,
+   sondern als offener Konflikt stehen geblieben: Datei prüfen und aufbereiten, `git add <Pfad>`, dann
+   `--continue`.
+   Diese Liste nach dem Lauf durchsehen: Enthält sie eine Datei mit echtem, noch benötigtem Projektinhalt,
+   die Änderung aus der alten Fassung von Hand in die neue (jetzt englische) Fassung übertragen, dann erneut
+   `git add`. Ein normales Update ohne Sprachunterschied verhält sich unverändert (kein Report, keine
+   Sonderbehandlung); `--language-switch` (nur zusammen mit `--apply`) erzwingt den Modus notfalls auch ohne
+   erkannten Unterschied.
 
    `.claude/template.json` und die `keep_local`-Pfade mit gewöhnlichem Konflikt hat das Script bereits
    zugunsten der Projektfassung gelöst; offen bleiben genau die Fälle, die eine Entscheidung brauchen. Nach dem
