@@ -1,47 +1,21 @@
-# Secrets / lokale Konfiguration
+# machine-local state of the act layer (identity, cache, generated board)
+.act-local/
+
+# secrets and local tool configuration
 .env
 .mcp.json
-.claude/settings.local.json
-.claude/usage.json
 
-# Wartungslogs/-berichte
-.claude/maintenance/reports/
-.claude/maintenance/*.log
-
-# Abhaengigkeiten / Build-Artefakte (Beispiele - beim Zuschneiden des Templates fuer den Stack anpassen)
-node_modules/
-dist/
-build/
-.output/
-.nuxt/
+# Python
 __pycache__/
 *.pyc
 .venv/
 
-# Editor/OS
+# editor and OS
 .idea/
 .vscode/
 *.swp
 .DS_Store
 Thumbs.db
 
-# Agenten-Protokoll (AGENTS.md § Logging) - Mitschnitt, kein Beleg
-ai.log
-ai.log.*
-
-# Logs allgemein
+# logs
 *.log
-
-# Gerenderte Praesentationen (Skill /slides) - die Quelle ist das Markdown unter docs/praesentation/
-build/*.html
-build/*.pdf
-build/*.pptx
-
-# Design-Varianten und Pruef-Screenshots (Wegwerfware der Skills /design-ideas und /design-build)
-.design-varianten/
-
-# Verfuegbares Template-Update (.claude/scripts/update-check.py) - fluechtiger Zustand, kein Projektinhalt
-/available-template-update.md
-
-# machine-local state of the template layer (identity, cache, generated board)
-.act-local/

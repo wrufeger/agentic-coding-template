@@ -104,14 +104,23 @@ BRIDGES: dict[str, BridgeSpec] = {
 }
 
 # Plain skeleton -> docs/ai/ copies (step 6). Placeholders (see CONFIG_TOKENS) are replaced in all
-# of them; files without any placeholder just pass through unchanged.
-SKELETON_FILES = (
-    ("config.md", "docs/ai/config.md"),
-    ("inbox/README.md", "docs/ai/inbox/README.md"),
-    ("local/README.md", "docs/ai/local/README.md"),
-    ("proposals/README.md", "docs/ai/proposals/README.md"),
-    ("work/README.md", "docs/ai/work/README.md"),
-)
+# of them; files without any placeholder just pass through unchanged. The list is read from the
+# tree, not kept here: a file added under .act/skeleton/ ships without touching this script.
+SKELETON_ROOT = "docs/ai"
+
+
+def skeleton_files(skeleton_dir: Path) -> list[tuple[str, str]]:
+    """Every file under .act/skeleton/, as (path relative to skeleton, destination in the project),
+    sorted so a run is reproducible."""
+    if not skeleton_dir.is_dir():
+        return []
+    found = []
+    for path in sorted(skeleton_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(skeleton_dir).as_posix()
+        found.append((rel, f"{SKELETON_ROOT}/{rel}"))
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +466,7 @@ def step_materialize(
     generated: dict[str, Path] = {}  # bridge name -> written path, for cache.json hashing
     touched: list[Path] = []
 
-    for src_name, dest_rel in SKELETON_FILES:
+    for src_name, dest_rel in skeleton_files(skeleton_dir):
         message, created = _write_text_file(skeleton_dir / src_name, root / dest_rel, tokens, plan, root)
         messages.append(message)
         if created or (root / dest_rel).is_file():
