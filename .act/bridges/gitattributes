@@ -1,0 +1,9 @@
+# Generated bridges (build note 1, Stage 1): CLAUDE.md, AGENTS.md, and docs/ai/rules.md are
+# written by `.act/scripts/init.py` from `.act/bridges/`. `merge=ours` is a hint for a custom
+# merge driver (`git config merge.ours.driver`); if none is registered on this machine, git
+# falls back to a normal merge. Either way, `.act/hooks/dispatch.py` re-derives an unchanged
+# bridge at every session start (checked against `.act-local/cache.json`), so a missing driver
+# never leaves a stale file behind.
+/CLAUDE.md merge=ours
+/AGENTS.md merge=ours
+/docs/ai/rules.md merge=ours

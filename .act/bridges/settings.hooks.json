@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; [ -n \"$P\" ] && \"$P\" .act/hooks/dispatch.py SessionStart; true",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py PreToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
