@@ -16,9 +16,11 @@
 # Output format:
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
 #                 harness convention for "block this tool call and show the assistant why".
-#   SessionStart: one or more lines on stdout, ending in the fixed-format status line
-#                 "[act] branch=<name> [· inbox: <n> waiting] · board updated"; exit 0 always —
-#                 a session start must never fail the session over a mechanism error.
+#   SessionStart: one or more lines on stdout — an optional block of orchestrator-only rules
+#                 (main session only, never seen by a sub-agent), then the fixed-format status
+#                 line "[act] branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]";
+#                 exit 0 always — a session start must never fail the session over a mechanism
+#                 error.
 #
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
 # write is NOT swallowed the way a SessionStart error is. Every other check in this template
@@ -33,6 +35,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import actlib  # noqa: E402 (sys.path setup above must run first)
@@ -170,7 +173,8 @@ def check_write_guard(payload: dict) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Check 2 — session start: inbox count, bridge re-derivation, board refresh
+# Check 2 — session start: inbox count, bridge re-derivation, board refresh,
+#           orchestrator-only rules delivered as hook context
 # ---------------------------------------------------------------------------
 
 def _current_branch(root: Path) -> str:
@@ -185,19 +189,18 @@ def _current_branch(root: Path) -> str:
     return name if result.returncode == 0 and name else "unknown"
 
 
-_ANSWERED_RE = re.compile(r"^answered:\s*(\S.*)$", re.IGNORECASE)
+_STATUS_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE)
 
 
 def _count_inbox_waiting(root: Path) -> int:
     """
     Count inbox entries that are "answered, not yet processed": a file in docs/ai/inbox/ (one
-    per entry, "YYYY-MM-DD-<slug>.md" per its README) whose header carries an `answered:` field
-    with a value other than empty/"no"/"false". Stage 1 has no archive step yet — an answered
-    entry simply stays in inbox/ until a later stage adds one — so presence there is enough.
+    per entry, "YYYY-MM-DD-<slug>.md") whose header says `status: answered`.
 
-    Assumption: the inbox entry format beyond `for: <identity>` is not written up yet (skeleton
-    README is one line); this `answered:` field is this script's own placeholder convention
-    until the real format is documented.
+    The header carries three fields: `for:` (who it is addressed to), `status:` and the date in
+    the file name. `status` runs `open` -> `answered` -> `done`: the human (or the assistant, when
+    the answer came up in chat) sets `answered`, and whoever works the entry into its place sets
+    `done`. Only `answered` is counted — `open` is still waiting on a person, `done` is finished.
     """
     inbox_dir = root / "docs" / "ai" / "inbox"
     if not inbox_dir.is_dir():
@@ -211,9 +214,10 @@ def _count_inbox_waiting(root: Path) -> int:
         except OSError:
             continue
         for line in lines[:20]:  # header fields live at the top of the file
-            match = _ANSWERED_RE.match(line.strip())
-            if match and match.group(1).strip().lower() not in ("no", "false"):
-                count += 1
+            match = _STATUS_RE.match(line.strip())
+            if match:
+                if match.group(1).strip().lower() == "answered":
+                    count += 1
                 break
     return count
 
@@ -286,6 +290,166 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
     return changed, refreshed
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator-only rules (.act/rules/orchestrator/) — delivered as SessionStart hook context,
+# never @-imported into docs/ai/rules.md, so a sub-agent (which only ever loads that file) never
+# sees them. See the "Overrides" note on _read_rule_states for the docs/ai/rules.md syntax this
+# reads.
+# ---------------------------------------------------------------------------
+
+_CHECKBOX_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*`(R-[\w-]+)`")
+_OVERRIDE_RE = re.compile(r"^-?\s*replaces\s+`(R-[\w-]+)`\s*:\s*(.+)$", re.IGNORECASE)
+_SECTION_HEADING_RE = re.compile(r"^##\s+(.*)$")
+_RULE_ID_IN_TEXT_RE = re.compile(r"`(R-[\w-]+)`")
+
+
+def _read_rule_states(root: Path) -> tuple[dict[str, bool], dict[str, str]]:
+    """
+    Parse docs/ai/rules.md (the project's own copy, generated from .act/bridges/rules.md and free
+    to be hand-edited afterwards) for two things:
+
+      - enabled: rule id -> False for every "- [ ] `R-id`" checkbox found anywhere in the file.
+        A rule id never mentioned there at all is on by default, so a template update that adds a
+        new rule takes effect without the project having to touch this file.
+      - overrides: rule id -> replacement text, read from a line of the form
+        "replaces `R-id`: <text>" (the skeleton ships this as an HTML-commented example under
+        "## Overrides"; a real override is an uncommented line in that same shape, so any line
+        starting with "<!--" is skipped here rather than matched).
+
+    Returns ({}, {}) if the file is missing or unreadable — nothing found means nothing to filter
+    on, not an error.
+    """
+    path = root / "docs" / "ai" / "rules.md"
+    enabled: dict[str, bool] = {}
+    overrides: dict[str, str] = {}
+    if not path.is_file():
+        return enabled, overrides
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return enabled, overrides
+
+    for line in lines:
+        checkbox_match = _CHECKBOX_RE.match(line)
+        if checkbox_match:
+            mark, rule_id = checkbox_match.groups()
+            enabled[rule_id] = mark.strip().lower() == "x"
+            continue
+        stripped = line.strip()
+        if stripped.startswith("<!--"):
+            continue  # the skeleton's own placeholder example, never a real override
+        override_match = _OVERRIDE_RE.match(stripped)
+        if override_match:
+            rule_id, text = override_match.groups()
+            overrides[rule_id] = text.strip()
+    return enabled, overrides
+
+
+def _filter_orchestrator_file(
+    text: str, enabled: dict[str, str], overrides: dict[str, str]
+) -> tuple[str, int]:
+    """
+    Split one .act/rules/orchestrator/*.md file into its "## " sections. A section whose heading
+    carries a `R-...` id (every actual rule) is dropped when that id is off in `enabled` and has
+    no entry in `overrides`; if it has one, the override text replaces the section body. A
+    section without an id in its heading (the file's title/intro, a plain reference table such as
+    "Role assignment" in 00-role.md) is never gated and always kept.
+
+    Returns (filtered_text, rule_count): the filtered file, and how many gated sections survived
+    (original or overridden) — the caller sums this across files for the status line.
+    """
+    lines = text.splitlines()
+    kept: list[str] = []
+    rule_count = 0
+
+    section_lines: Optional[list[str]] = None
+    section_rule_id: Optional[str] = None
+
+    def _flush() -> None:
+        nonlocal section_lines, section_rule_id, rule_count
+        if section_lines is None:
+            return
+        if section_rule_id is None:
+            kept.extend(section_lines)
+        elif enabled.get(section_rule_id, True):
+            kept.extend(section_lines)
+            rule_count += 1
+        elif section_rule_id in overrides:
+            heading = section_lines[0] if section_lines else f"## `{section_rule_id}`"
+            kept.append(f"{heading} (project override)")
+            kept.append("")
+            kept.append(overrides[section_rule_id])
+            rule_count += 1
+        # else: off, no override on file -> section dropped entirely
+        section_lines = None
+        section_rule_id = None
+
+    preamble: list[str] = []
+    in_section = False
+    for line in lines:
+        heading_match = _SECTION_HEADING_RE.match(line)
+        if heading_match:
+            _flush()
+            in_section = True
+            section_lines = [line]
+            id_match = _RULE_ID_IN_TEXT_RE.search(heading_match.group(1))
+            section_rule_id = id_match.group(1) if id_match else None
+            continue
+        if in_section:
+            section_lines.append(line)
+        else:
+            preamble.append(line)
+    _flush()
+
+    return "\n".join(preamble + kept).rstrip("\n") + "\n", rule_count
+
+
+def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[int]:
+    """
+    Read every .act/rules/orchestrator/*.md file, in ascending filename order, filter it through
+    _read_rule_states/_filter_orchestrator_file, and print what survives as SessionStart hook
+    context — the one channel this template has that reaches only the main session (a sub-agent
+    only ever sees docs/ai/rules.md, and these files are deliberately not @-imported there; see
+    .act/bridges/rules.md).
+
+    Returns None (and prints nothing) if the check is off or the directory does not exist yet —
+    an older checkout, or a build stage before this directory was added, does nothing here rather
+    than erroring. Otherwise returns the number of rules delivered (0 if every one was checked
+    off), for the caller's status line.
+
+    "block" and "warn" behave the same here: unlike the other two checks, this one has no side
+    effect to withhold under "warn" — it only ever prints hook context, never writes a file — so
+    both non-off values simply deliver the filtered rules.
+    """
+    mode = _check_mode(config, "orchestrator-rules", default="block")
+    if mode == "off":
+        return None
+
+    rules_dir = root / ".act" / "rules" / "orchestrator"
+    if not rules_dir.is_dir():
+        return None
+
+    enabled, overrides = _read_rule_states(root)
+    total = 0
+    blocks: list[str] = []
+    for path in sorted(rules_dir.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        filtered, count = _filter_orchestrator_file(text, enabled, overrides)
+        total += count
+        if count:
+            blocks.append(filtered.rstrip("\n"))
+
+    if blocks:
+        print("[act] orchestrator rules (main session only, not seen by sub-agents):")
+        print()
+        print("\n\n".join(blocks))
+        print()
+    return total
+
+
 def refresh_session(payload: dict) -> int:
     """Check 2: runs only for SessionStart. Never fails the session — every sub-step is best
     effort and swallows its own errors; the fixed-format status line is always printed last."""
@@ -324,8 +488,15 @@ def refresh_session(payload: dict) -> int:
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
 
+    rules_delivered: Optional[int] = None
+    try:
+        rules_delivered = _deliver_orchestrator_rules(root, config)
+    except Exception:
+        pass  # a broken rules delivery must not block the session
+
     inbox_part = f" · inbox: {waiting} waiting" if waiting else ""
-    print(f"[act] branch={branch}{inbox_part} · board updated")
+    rules_part = f" · rules: {rules_delivered}" if rules_delivered is not None else ""
+    print(f"[act] branch={branch}{inbox_part} · board updated{rules_part}")
     return 0
 
 

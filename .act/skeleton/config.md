@@ -41,3 +41,4 @@ add more rows to this same table.
 | :--- | :--- | :--- |
 | `template-write-guard` | block | writes under `.act/` — put a project version in `docs/ai/local/<same path>` instead |
 | `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` reports without writing, `off` skips it |
+| `orchestrator-rules` | block | hands the orchestrator-only rules to the main session at session start; `off` skips it |

@@ -1,26 +1,26 @@
 # Core rules
 
-Three rules, placeholders that carry real weight until Stage 2 fills out the rest of
-`rules/shared/`. Every rule keeps a stable ID (`R-<area>-<name>`) that is never reassigned, even
-if its wording changes later. This file is imported by every role, including sub-agents.
+Rules every role loads — orchestrator and every sub-agent. IDs (`R-<area>-<name>`) are stable and
+never reassigned, even if the wording changes later. Companion files in this layer:
+`10-safety.md`, `20-code.md`.
 
 ## `R-work-evidence` — Done only with evidence
 
 "Done" holds only when backed by a test run, a commit hash, or an outside call that shows the
-result. An unbacked result is "not verified", not "done" — say so plainly, and question a plan
-that does not hold up rather than agreeing to be agreeable.
-
-## `R-role-worker` — What a worker may and may not do
-
-A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at most
-40 lines, no raw dumps. It never commits and never writes to `docs/ai/`. It reads git only:
-`status`, `diff`, `log`, `show` — every command that changes the working tree or history (`commit`,
-`add`, `stash`, `checkout`, `reset`, `restore`, `merge`, `rebase`, `clean`, `push`) stays with the
-orchestrator, because the orchestrator may be editing other files while the worker runs. A worker
-never asks the human directly: it hands open questions back with its result.
+result. An unbacked result is "not verified", not "done" — say so plainly, and question a flawed
+plan rather than agreeing to be agreeable.
 
 ## `R-work-override` — The project overrides the template
 
-A rule or file the project has changed always wins over the template's version (`ADR-5`). The
-assistant never edits anything under `.act/` directly; a project-specific version goes into
+A rule or file the project has changed always wins over the template's version (`ADR-5`). Never
+edit anything under `.act/` directly; a project-specific version goes into
 `docs/ai/local/<same path>` instead.
+
+## `R-role-worker` — What a worker may and may not do
+
+A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at
+most 40 lines, no raw dumps. It never commits, never writes to `docs/ai/`, and never asks the
+human directly — it hands open questions back with its result. Asked for status, it answers at
+once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,
+`show`); every command that changes the working tree or history stays with the orchestrator,
+which may be editing other files while the worker runs.
