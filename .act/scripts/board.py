@@ -274,6 +274,15 @@ def render_board(
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
+    # Board content can carry an em dash (ledger entries, commit subjects); on Windows,
+    # stdout/stderr otherwise default to the console's legacy code page instead of UTF-8, which
+    # would corrupt it. Same fix as .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     if argv:
         print("usage: board.py", file=sys.stderr)
         return 2

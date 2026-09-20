@@ -103,6 +103,15 @@ def check_manifest(act_dir: Path) -> int:
 
 
 def main(argv: list[str]) -> int:
+    # Messages here can carry an em dash (e.g. the "missing" message below); on Windows,
+    # stdout/stderr otherwise default to the console's legacy code page instead of UTF-8, which
+    # would corrupt it. Same fix as .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     if len(argv) != 1 or argv[0] not in ("--write", "--check"):
         print("usage: manifest.py --write | --check", file=sys.stderr)
         return 2

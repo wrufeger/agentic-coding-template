@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import actlib
+import rules
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,7 @@ def template_remotes(root):
 BRIDGES: dict[str, BridgeSpec] = {
     "AGENTS.md": {"dest": "AGENTS.md", "tool": None, "kind": "verbatim"},
     "rules.md": {"dest": "docs/ai/rules.md", "tool": None, "kind": "verbatim"},
+    "coding_rules.md": {"dest": "docs/project/coding_rules.md", "tool": None, "kind": "coding-rules"},
     "CLAUDE.md": {"dest": "CLAUDE.md", "tool": "claude-code", "kind": "verbatim"},
     "settings.hooks.json": {"dest": ".claude/settings.json", "tool": "claude-code", "kind": "json-merge"},
 }
@@ -128,6 +130,10 @@ def skeleton_files(skeleton_dir: Path) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+    # In --plan mode the target directory may not exist yet; run git from the nearest existing
+    # parent instead of crashing with NotADirectoryError.
+    while not cwd.is_dir() and cwd != cwd.parent:
+        cwd = cwd.parent
     result = subprocess.run(
         ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8"
     )
@@ -383,6 +389,132 @@ def step_thin_bridges(tools: list[str]) -> tuple[dict[str, BridgeSpec], str]:
 
 
 # ---------------------------------------------------------------------------
+# Step 6 helper — detect coding rule sets (docs/project/coding_rules.md)
+# ---------------------------------------------------------------------------
+
+# Priority order for the directly-detected sets — see docs/project/concepts/ai-dev-app/
+# 03-core-rules.md § "Coding-Regeln — dasselbe Schema" in the template-pflege repo for the exact
+# rules. Only used to order *enabled* sets in the generated file; every set the template actually
+# ships under .act/coding/ is included either way, checked or not, even one missing here.
+CODING_SET_DETECTION_ORDER = [
+    "nuxt", "vue", "typescript", "tailwind", "php", "python", "go", "java", "csharp", "bash", "sql",
+]
+
+
+def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str]:
+    """Direct hits from the target directory, plus the free-text `stack` config value where its
+    text contains a known set's name — before the requires: closure. `known` is every set name
+    the template actually ships, so the stack hint can never turn on a set that does not exist."""
+    detected: set[str] = set()
+
+    deps: dict[str, object] = {}
+    package_json = root / "package.json"
+    if package_json.is_file():
+        try:
+            data = json.loads(package_json.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            for key in ("dependencies", "devDependencies"):
+                section = data.get(key)
+                if isinstance(section, dict):
+                    deps.update(section)
+    if "nuxt" in deps:
+        detected.add("nuxt")
+    if "vue" in deps:
+        detected.add("vue")
+    if "typescript" in deps or (root / "tsconfig.json").is_file():
+        detected.add("typescript")
+    if "tailwindcss" in deps or any(root.glob("tailwind.config.*")):
+        detected.add("tailwind")
+
+    if (root / "composer.json").is_file():
+        detected.add("php")
+    if any((root / name).is_file() for name in ("pyproject.toml", "requirements.txt", "setup.py")):
+        detected.add("python")
+    if (root / "go.mod").is_file():
+        detected.add("go")
+    if (root / "pom.xml").is_file() or any(root.glob("build.gradle*")):
+        detected.add("java")
+    if any(root.glob("*.csproj")) or any(root.glob("*.sln")):
+        detected.add("csharp")
+    scripts_dir = root / "scripts"
+    if any(root.glob("*.sh")) or (scripts_dir.is_dir() and any(scripts_dir.glob("*.sh"))):
+        detected.add("bash")
+    if any(root.glob("*.sql")) or (root / "migrations").is_dir():
+        detected.add("sql")
+
+    stack_lower = stack_hint.lower()
+    for name in known:
+        if name in stack_lower:
+            detected.add(name)
+
+    return {name for name in detected if name in known}
+
+
+def _coding_rules_body(root: Path, cfg: ProjectConfig) -> tuple[str, list[str]]:
+    """Build the checkbox list for docs/project/coding_rules.md: every set the template ships,
+    detected/enabled ones first (CODING_SET_DETECTION_ORDER), each with all of its groups checked;
+    the rest unchecked and without group lines. requires: pulls in further sets (e.g. nuxt pulls
+    in vue and typescript) before the list is built. Returns (markdown, enabled_set_names)."""
+    coding_dir = root / ".act" / "coding"
+    all_names = sorted(p.stem for p in coding_dir.glob("*.md")) if coding_dir.is_dir() else []
+    templates = {
+        name: rules.parse_template_set(coding_dir / f"{name}.md", "template") for name in all_names
+    }
+
+    enabled = _detect_coding_sets(root, cfg["stack"], set(all_names))
+    changed = True
+    while changed:
+        changed = False
+        for name in list(enabled):
+            for required in templates[name].requires:
+                if required in templates and required not in enabled:
+                    enabled.add(required)
+                    changed = True
+
+    ordered_enabled = [name for name in CODING_SET_DETECTION_ORDER if name in enabled]
+    ordered_enabled += sorted(name for name in enabled if name not in CODING_SET_DETECTION_ORDER)
+    ordered_rest = sorted(name for name in all_names if name not in enabled)
+
+    lines: list[str] = []
+    for name in ordered_enabled:
+        lines.append(f"- [x] use: .act/coding/{name}.md")
+        for group_id in templates[name].groups:
+            lines.append(f"  - [x] `{group_id}`")
+    for name in ordered_rest:
+        lines.append(f"- [ ] use: .act/coding/{name}.md")
+
+    return "\n".join(lines) + ("\n" if lines else ""), ordered_enabled
+
+
+_CODING_RULES_MARKER = "<!-- act:coding-rules-sets -->"
+
+
+def _write_coding_rules(
+    src: Path, dest: Path, cfg: ProjectConfig, plan: bool, root: Path
+) -> tuple[str, bool]:
+    """Like _write_text_file, but fills the .act/bridges/coding_rules.md template's rule-set
+    marker with the detected list instead of a fixed token substitution. Never overwrites an
+    existing project file (the dock-onto-an-existing-project case) — same contract as every other
+    generated file in step 6."""
+    label = _relative_label(dest, root)
+    if dest.is_file():
+        return f"{label}: already present, left unchanged", False
+    if plan:
+        return f"{label}: would create", False
+    text = src.read_text(encoding="utf-8")
+    if _CODING_RULES_MARKER not in text:
+        raise RuntimeError(f"{src}: missing marker '{_CODING_RULES_MARKER}'")
+    body, enabled = _coding_rules_body(root, cfg)
+    text = text.replace(_CODING_RULES_MARKER, body.rstrip("\n"))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    summary = ", ".join(enabled) if enabled else "(none detected)"
+    return f"{label}: created — sets enabled: {summary}", True
+
+
+# ---------------------------------------------------------------------------
 # Step 6 — materialize skeleton + selected bridges
 # ---------------------------------------------------------------------------
 
@@ -485,6 +617,13 @@ def step_materialize(
             message, changed = _merge_settings_hooks(bridges_dir / key, dest, plan, root)
             messages.append(message)
             if changed or dest.is_file():
+                touched.append(dest)
+        elif spec["kind"] == "coding-rules":
+            message, created = _write_coding_rules(bridges_dir / key, dest, cfg, plan, root)
+            messages.append(message)
+            if created:
+                generated[spec["dest"]] = dest
+            if created or dest.is_file():
                 touched.append(dest)
 
     return messages, generated, touched
@@ -613,6 +752,15 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
+    # Step output can carry an em dash (e.g. the coding-rules summary in step 6); on Windows,
+    # stdout/stderr otherwise default to the console's legacy code page instead of UTF-8, which
+    # would corrupt it. Same fix as .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(description="Turn a template checkout into a project, or dock onto an existing directory.")
     parser.add_argument("--target", help="create/dock in this directory instead of the current checkout")
     parser.add_argument("--plan", action="store_true", help="show what would happen, change nothing")
