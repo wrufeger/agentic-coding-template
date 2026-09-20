@@ -32,8 +32,33 @@ import sys
 import uuid
 from datetime import date
 from pathlib import Path
+from typing import TypedDict
 
 import actlib
+
+
+# ---------------------------------------------------------------------------
+# Data shapes
+# ---------------------------------------------------------------------------
+
+class ProjectConfig(TypedDict):
+    """Return value of step_config(): the resolved project settings, before templating."""
+    name: str
+    owner: str
+    language: str
+    stack: str
+    lint_cmd: str
+    typecheck_cmd: str
+    test_cmd: str
+    tools: list[str]
+    mode: str
+
+
+class BridgeSpec(TypedDict):
+    """One entry of BRIDGES: where a generated file goes and how step 6/7 writes it."""
+    dest: str
+    tool: str | None
+    kind: str
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +96,7 @@ def template_remotes(root):
 # Every generated bridge, keyed by its name under .act/bridges/. "tool" gates step 5 (None = always
 # written); "kind" picks how step 6/7 writes it. The three "verbatim" bridges are exactly the ones
 # .gitattributes marks `merge=ours` and dispatch.py re-derives — their hashes go into cache.json.
-BRIDGES = {
+BRIDGES: dict[str, BridgeSpec] = {
     "AGENTS.md": {"dest": "AGENTS.md", "tool": None, "kind": "verbatim"},
     "rules.md": {"dest": "docs/ai/rules.md", "tool": None, "kind": "verbatim"},
     "CLAUDE.md": {"dest": "CLAUDE.md", "tool": "claude-code", "kind": "verbatim"},
@@ -164,7 +189,7 @@ def _read_version_file(root: Path) -> tuple[str, str]:
 # Step 1 — config values
 # ---------------------------------------------------------------------------
 
-def step_config(root: Path, interactive: bool, notes: list[str]) -> dict[str, object]:
+def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
     if git_name and not _is_placeholder_name(git_name):
@@ -339,7 +364,7 @@ def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
 # Step 5 — thin bridges down to the chosen tools
 # ---------------------------------------------------------------------------
 
-def step_thin_bridges(tools: list[str]) -> tuple[dict[str, dict], str]:
+def step_thin_bridges(tools: list[str]) -> tuple[dict[str, BridgeSpec], str]:
     selected = {key: spec for key, spec in BRIDGES.items() if spec["tool"] is None or spec["tool"] in tools}
     dropped = sorted(set(BRIDGES) - set(selected))
     summary = f"tools={tools or ['(none)']} -> kept: {', '.join(sorted(selected)) or '(none)'}"
@@ -352,17 +377,17 @@ def step_thin_bridges(tools: list[str]) -> tuple[dict[str, dict], str]:
 # Step 6 — materialize skeleton + selected bridges
 # ---------------------------------------------------------------------------
 
-def _config_tokens(cfg: dict[str, object]) -> dict[str, str]:
+def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
     return {
-        "<name>": str(cfg["name"]),
-        "<owner>": str(cfg["owner"]),
-        "<language>": str(cfg["language"]),
-        "<stack>": str(cfg["stack"]),
-        "<lint-command>": str(cfg["lint_cmd"]) or "(not set)",
-        "<typecheck-command>": str(cfg["typecheck_cmd"]) or "(not set)",
-        "<test-command>": str(cfg["test_cmd"]) or "(not set)",
+        "<name>": cfg["name"],
+        "<owner>": cfg["owner"],
+        "<language>": cfg["language"],
+        "<stack>": cfg["stack"],
+        "<lint-command>": cfg["lint_cmd"] or "(not set)",
+        "<typecheck-command>": cfg["typecheck_cmd"] or "(not set)",
+        "<test-command>": cfg["test_cmd"] or "(not set)",
         "<tool-list>": ", ".join(cfg["tools"]) or "(none)",
-        "<mode>": str(cfg.get("mode", "solo")),
+        "<mode>": cfg["mode"],
     }
 
 
@@ -423,7 +448,7 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
 
 
 def step_materialize(
-    root: Path, plan: bool, cfg: dict[str, object], selected_bridges: dict[str, dict]
+    root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec]
 ) -> tuple[list[str], dict[str, Path], list[Path]]:
     tokens = _config_tokens(cfg)
     bridges_dir = root / ".act" / "bridges"
@@ -634,9 +659,9 @@ def main(argv: list[str]) -> int:
         _print_step(2, summary)
 
     _print_step(3, step_identity(root, plan, interactive, notes))
-    _print_step(4, step_workspace_identity(root, plan, str(cfg["owner"])))
+    _print_step(4, step_workspace_identity(root, plan, cfg["owner"]))
 
-    selected_bridges, thin_summary = step_thin_bridges(list(cfg["tools"]))
+    selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
     materialize_messages, generated, touched_bridges = step_materialize(root, plan, cfg, selected_bridges)
@@ -652,7 +677,7 @@ def main(argv: list[str]) -> int:
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, generated))
 
-    inbox_path = _write_inbox_note(root, str(cfg["owner"]), notes, plan)
+    inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]
     if inbox_path is not None:
         commit_paths.append(inbox_path)
