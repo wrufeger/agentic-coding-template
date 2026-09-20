@@ -73,8 +73,8 @@ def _read_payload() -> dict:
 
 def _check_mode(config: dict[str, str], key: str, default: str) -> str:
     """Look up one row of the Checks table in docs/ai/config.md ("block" | "warn" | "off").
-    Falls back to `default` for a missing key or an unrecognized value — "Vorgabe ist Ablehnen"
-    (default deny) means an unrecognized value is treated the same as an absent row."""
+    Falls back to `default` for a missing key or an unrecognized value: default deny means
+    an unrecognized value is treated the same as an absent row."""
     value = config.get(key, "").strip().lower()
     return value if value in ("block", "warn", "off") else default
 

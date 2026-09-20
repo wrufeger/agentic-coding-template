@@ -198,9 +198,7 @@ def read_config() -> dict[str, str]:
     except OSError:
         return config
 
-    header_keys = {"schlüssel", "schluessel", "key"}
-
-    for line in lines:
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if not stripped.startswith("|") or not stripped.endswith("|"):
             continue
@@ -213,10 +211,24 @@ def read_config() -> dict[str, str]:
             continue
         if _is_separator_cell(key) and _is_separator_cell(value):
             continue
-        if key.lower() in header_keys:
+        if _is_header_row(lines, index):
             continue
         config[key] = value
     return config
+
+
+def _is_header_row(lines: list[str], index: int) -> bool:
+    """True if the table row at `index` is a header row: the next non-empty line is a
+    separator row. Word-free on purpose — the header may be written in any language."""
+    for following in lines[index + 1:]:
+        stripped = following.strip()
+        if not stripped:
+            continue
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            return False
+        cells = [cell.strip() for cell in stripped[1:-1].split("|")]
+        return bool(cells) and all(_is_separator_cell(cell) for cell in cells)
+    return False
 
 
 def _is_separator_cell(cell: str) -> bool:
