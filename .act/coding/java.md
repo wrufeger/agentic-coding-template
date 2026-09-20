@@ -54,17 +54,19 @@ summary: packages by domain, immutability as the default, constructor injection
 
 ## `CR-java-toolchain` — Build and static analysis tools
 
-summary: Maven or Gradle, Spotless/google-java-format, Checkstyle, SpotBugs, Error Prone or PMD
+summary: Maven or Gradle by default; static analysis whichever the project has set up
 
 - Build with Maven or Gradle — the project decides which.
 - Enforce formatting and static analysis in CI: Spotless or google-java-format for formatting, plus
-  Checkstyle, SpotBugs, Error Prone or PMD.
+  Checkstyle, SpotBugs, Error Prone or PMD — the template's usual choice; run whatever the project
+  actually has set up (see `R-code-tools`).
 
-## `CR-java-tests` — JUnit 5 with AssertJ
+## `CR-java-tests` — JUnit 5 with AssertJ by default
 
-summary: JUnit 5, AssertJ, behavior-describing names, no unseeded randomness, no Thread.sleep
+summary: JUnit 5/AssertJ by default, behavior-describing names, no unseeded randomness, no Thread.sleep
 
-- Write tests with JUnit 5 and AssertJ.
+- Write tests with JUnit 5 and AssertJ — the template's usual choice; use the test framework the
+  project actually has set up instead (see `R-code-tools`).
 - Name tests after the expected behavior, not after the method under test.
 - Never use randomness without a fixed seed.
 - Never wait with `Thread.sleep`; wait on the actual condition instead.

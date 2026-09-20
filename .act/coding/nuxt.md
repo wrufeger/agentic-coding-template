@@ -1,6 +1,6 @@
 # Coding rules — Nuxt
 
-summary: directory conventions, data fetching, runtime config, tooling
+summary: directory conventions, data fetching, runtime config, SSR mode, tooling
 requires: vue, typescript
 
 Rules for Nuxt projects. Group IDs (`CR-nuxt-<name>`) are stable and never reassigned; a group
@@ -65,17 +65,40 @@ summary: /types, /constants and /server at the repo root, each the only place of
 - Import types and constants from there instead of duplicating them in components. A second type folder
   under `app/types/` is a mistake, not an addition.
 
+## `CR-nuxt-ssr` — Choose the SSR mode on purpose
+
+summary: ask before assuming SSR, know the hydration cost, check for mismatches after SSR work
+
+- `ssr: false` or a plain SPA is often the simpler choice for a purely local UI with no SEO or
+  first-paint requirement (e.g. an admin tool). Ask the user once, when scaffolding or restructuring
+  the app, instead of defaulting to SSR without asking.
+- Know what SSR costs: every page render runs twice, once on the server and once on the client.
+  Anything that only exists in the browser or differs between the two runs — timestamps, random
+  values, `window`, `localStorage`, locale or timezone detection — produces a hydration mismatch.
+- After working on a component that renders server-side, check for hydration errors on purpose:
+  load the page in the browser and read the console warning "Hydration ... mismatch" — it names the
+  component and the node. Treat that warning as a finding, not a footnote.
+- Known causes and their fix, in short: gate browser-only values behind `onMounted`/
+  `import.meta.client`; share request-scoped state through `useState`, never a module-level `ref`;
+  fix invalid HTML nesting (e.g. a block element inside a `<p>`); reach for `<ClientOnly>` only as
+  the last resort.
+- Copying a `useFetch`/`useAsyncData` result into your own `ref` is a common hydration-mismatch
+  cause too — see `CR-nuxt-basics` for why and the fix, not repeated here.
+
 ## `CR-nuxt-toolchain` — Lint and format tooling
 
-summary: ESLint with @nuxt/eslint plus Prettier
+summary: ESLint with @nuxt/eslint plus Prettier, whichever the project has set up
 
-- ESLint with `@nuxt/eslint`, configured in `eslint.config.mjs`.
-- Prettier for formatting.
+- ESLint with `@nuxt/eslint`, configured in `eslint.config.mjs`, and Prettier for formatting are the
+  template's usual choice; what the project actually has installed and configured governs
+  (see `R-code-tools`).
 
 ## `CR-nuxt-tests` — Unit and end-to-end tests
 
-summary: vitest for unit tests, Playwright for end-to-end tests
+summary: vitest/Playwright by default, but whichever suite the project runs must pass
 
-- Unit and component tests with `vitest` (`vitest.config.ts`).
-- End-to-end tests with `@playwright/test` (`playwright.config.ts`).
-- Both test suites exist and run; a change that breaks them is not done.
+- `vitest` (`vitest.config.ts`) for unit and component tests, `@playwright/test`
+  (`playwright.config.ts`) for end-to-end tests — the template's usual choice; if the project has a
+  different test runner installed and configured (e.g. Selenium, Nightwatch, Cypress), use that one
+  instead (see `R-code-tools`).
+- Whichever test suites the project actually has exist and run; a change that breaks them is not done.

@@ -22,6 +22,8 @@ area, add your own below (`R-work-override`).
 @.act/rules/shared/20-code.md
   - [x] `R-code-language`
   - [x] `R-code-encoding`
+  - [x] `R-code-tools`
+  - [x] `R-code-version`
 
 ## Orchestrator only — the main session
 

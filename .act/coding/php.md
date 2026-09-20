@@ -37,7 +37,7 @@ summary: arrow functions and closures instead of global callback functions
 
 ## `CR-php-toolchain` — Formatter and static analysis tooling
 
-summary: PHP-CS-Fixer or PHP_CodeSniffer, PHPStan or Psalm
+summary: PHP-CS-Fixer/PHP_CodeSniffer plus PHPStan/Psalm by default, or what the project has set up
 
-- PHP-CS-Fixer or PHP_CodeSniffer, configured for PSR-12.
-- PHPStan or Psalm for static analysis.
+- PHP-CS-Fixer or PHP_CodeSniffer, configured for PSR-12, and PHPStan or Psalm for static analysis —
+  the template's usual choice; run whatever the project actually has set up (see `R-code-tools`).

@@ -46,13 +46,15 @@ summary: module boundaries, no circular imports
 
 ## `CR-python-toolchain` — Lint and format tooling
 
-summary: ruff for lint and formatting
+summary: ruff by default for lint and formatting, or what the project has set up
 
-- `ruff` for both linting and formatting, configured in the project; `black` remains a common alternative
-  for formatting in existing projects.
+- `ruff` for both linting and formatting is the template's usual choice; `black` remains a common
+  alternative for formatting in existing projects — either way, run what the project actually has
+  configured (see `R-code-tools`).
 
 ## `CR-python-tests` — Unit tests
 
-summary: pytest with fixtures
+summary: pytest by default, or the test runner the project has set up
 
-- `pytest`, with fixtures instead of repeating setup code in every test module.
+- `pytest` is the template's usual choice, with fixtures instead of repeating setup code in every
+  test module; use the test runner the project actually has configured (see `R-code-tools`).

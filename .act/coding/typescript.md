@@ -44,7 +44,7 @@ summary: shared types in one place, public exports through an index
 
 ## `CR-typescript-toolchain` — Lint and format tooling
 
-summary: ESLint with @typescript-eslint plus Prettier
+summary: ESLint with @typescript-eslint plus Prettier by default, or what the project has set up
 
-- ESLint with `@typescript-eslint`.
-- Prettier for formatting.
+- ESLint with `@typescript-eslint` and Prettier for formatting are the template's usual choice; what
+  the project actually has installed and configured governs (see `R-code-tools`).

@@ -47,7 +47,7 @@ summary: Pinia store instead of provide/inject
 
 ## `CR-vue-toolchain` — Lint and format tooling
 
-summary: ESLint with eslint-plugin-vue plus Prettier
+summary: ESLint with eslint-plugin-vue plus Prettier by default, or what the project has set up
 
-- ESLint with `eslint-plugin-vue`.
-- Prettier for formatting.
+- ESLint with `eslint-plugin-vue` and Prettier for formatting are the template's usual choice; what
+  the project actually has installed and configured governs (see `R-code-tools`).
