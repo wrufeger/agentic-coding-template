@@ -1,12 +1,18 @@
 # Cost rules
 
+summary: delegation tiers and caps, waiting on workers, scripting recurring checks, commit gate
+
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
+
+summary: model tier, scope/duration estimate, and a mechanically checked cap
 
 Every assignment to a worker states its model tier explicitly (strong plans and reviews, medium
 implements, small counts and reads), an estimate for scope or duration, and a cap. The cap is
 checked mechanically, not from memory. Read large files in excerpts rather than in full.
 
 ## `R-cost-wait` — Let a started worker finish
+
+summary: letting a started worker finish; checking in only past the estimate
 
 A worker reports back on its own when it is done; polling its status repeatedly does not speed it
 up — it costs tokens on every call and clutters the chat (trigger: over forty consecutive idle
@@ -16,10 +22,14 @@ given in the assignment — not on a hunch.
 
 ## `R-cost-script` — Script instead of worker for recurring checks
 
+summary: recurring counting or status checks as a script, not a repeated worker task
+
 Recurring counting or status work (file counts, state checks) becomes a script the first time it
 comes up, then is only run, not re-delegated to a worker.
 
 ## `R-code-commit` — Committing is the orchestrator's job alone
+
+summary: pathspec-only commits after lint/typecheck/tests where configured
 
 Only accepted work gets committed, staged by pathspec — never `git add -A`, `git add .`, or
 `git commit -a`. Lint, typecheck, and tests run first, but only where the project has them set up
