@@ -13,6 +13,14 @@ here needs a rebuild; `.act/hooks/dispatch.py` reads this file at session start.
 | `stack` | <stack> |
 | `commands` | <lint-command>, <typecheck-command>, <test-command> |
 | `tools` | <tool-list> |
+| `mode` | <mode> |
+
+`mode` is `solo` or `team`, and it changes **one** thing: when an entry gets its short ID. In
+`solo` the assistant assigns it right away (`Q66`, `T19`, `B99`) and carries on. In `team` only
+whoever files the entry on the default branch assigns it, so two people can never hand out the
+same number; until then the file name is what you cite. File name, location and format are the
+same either way, so you can switch back and forth at any time — IDs already assigned stay as they
+are, only later ones follow the new value.
 
 ## Output depth
 

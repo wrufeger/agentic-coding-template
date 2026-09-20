@@ -192,6 +192,8 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> dict[str, ob
                 "Project config uses defaults for: " + ", ".join(missing) + " — review docs/ai/config.md."
             )
 
+    mode = _suggest_mode(root)
+
     return {
         "name": name,
         "owner": owner,
@@ -201,7 +203,21 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> dict[str, ob
         "typecheck_cmd": typecheck_cmd,
         "test_cmd": test_cmd,
         "tools": tools,
+        "mode": mode,
     }
+
+
+def _suggest_mode(root: Path) -> str:
+    """Suggest 'solo' or 'team' from the existing history: more than one author means team.
+
+    Only the *timing* of ID assignment depends on this (see docs/ai/config.md); the layout is the
+    same either way, so a wrong guess costs nothing but a line in config.md.
+    """
+    result = _git(["log", "--format=%ae", "-n", "200"], cwd=root, check=False)
+    if result.returncode != 0:
+        return "solo"
+    authors = {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
+    return "team" if len(authors) > 1 else "solo"
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +363,7 @@ def _config_tokens(cfg: dict[str, object]) -> dict[str, str]:
         "<typecheck-command>": str(cfg["typecheck_cmd"]) or "(not set)",
         "<test-command>": str(cfg["test_cmd"]) or "(not set)",
         "<tool-list>": ", ".join(cfg["tools"]) or "(none)",
+        "<mode>": str(cfg.get("mode", "solo")),
     }
 
 
@@ -603,7 +620,12 @@ def main(argv: list[str]) -> int:
     notes: list[str] = []
 
     cfg = step_config(root, interactive, notes)
-    _print_step(1, f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language={cfg['language']!r}, stack={cfg['stack']!r}, tools={cfg['tools']}")
+    _print_step(
+        1,
+        f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language={cfg['language']!r}, "
+        f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r} (suggested, change it "
+        f"in docs/ai/config.md)",
+    )
 
     if is_target:
         _print_step(2, step_git_target(root, plan))
