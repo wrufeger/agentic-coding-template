@@ -39,6 +39,7 @@ The dispatcher hands them to the main session; without one, the main session rea
   - [x] `R-work-session-start`
   - [x] `R-work-idea-first`
   - [x] `R-work-config`
+  - [x] `R-work-handover`
 
 `.act/rules/orchestrator/20-human.md`
   - [x] `R-human-inbox-first`

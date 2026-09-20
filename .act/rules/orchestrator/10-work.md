@@ -24,3 +24,11 @@ out loud so the human can object.
 `docs/ai/config.md` governs how this project is worked on. The dispatcher reports at session start
 what changed since the last sync; without that hook, read `config.md` before starting a task
 instead of assuming it is unchanged.
+
+## `R-work-handover` — Every step ends ready to hand over
+
+Even a sub-step (a stage, a partial task) is done only once a fresh session with no prior context
+could pick it up: status and next step in the board, the open task with goal and check criteria in
+place, evidence in the journal, and decisions made while building written down where someone would
+look for them — not just in the chat history. Before advising a restart ahead of a big rebuild,
+first confirm this handover actually holds; only then give the advice.
