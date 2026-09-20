@@ -42,3 +42,6 @@ build/*.pptx
 
 # Verfuegbares Template-Update (.claude/scripts/update-check.py) - fluechtiger Zustand, kein Projektinhalt
 /available-template-update.md
+
+# machine-local state of the template layer (identity, cache, generated board)
+.act-local/
