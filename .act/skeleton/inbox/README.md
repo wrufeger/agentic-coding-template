@@ -10,5 +10,5 @@ status: open        # open -> answered -> done
 ```
 
 `open` waits on a person. `answered` means a person replied but nobody has worked the answer
-into its place yet — that is the number the session start reports. `done` is finished and can be
-archived.
+into its place yet — that is the number the session start reports. `done` is finished and
+can be moved to `docs/ai/work/archive/`.
