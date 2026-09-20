@@ -52,7 +52,6 @@ PLACEHOLDER_EMAIL_SUFFIXES = ("@example.com",)
 # template itself maintains; a fork or mirror updates it there instead of patching this script.
 KNOWN_TEMPLATE_REMOTES = (
     "github.com/wrufeger/agentic-coding-template",
-    "git.rufeger.de/tools/template-agentic-coding-project",
 )
 
 
