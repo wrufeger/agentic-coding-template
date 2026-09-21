@@ -7,3 +7,6 @@
 /CLAUDE.md merge=ours
 /AGENTS.md merge=ours
 /docs/ai/rules.md merge=ours
+# .act/MANIFEST.json hashes the bytes on disk: without a fixed line ending, a checkout with
+# core.autocrlf=true would report every text file under .act/ as changed by hand.
+/.act/** text=auto eol=lf

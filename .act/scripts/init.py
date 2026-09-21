@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TypedDict
 
 import actlib
+import manifest
 import rules
 
 
@@ -704,11 +705,22 @@ def step_own_files(root: Path, plan: bool, interactive: bool, notes: list[str]) 
 def step_lock_and_cache(root: Path, plan: bool, template_origin: str, generated: dict[str, Path]) -> str:
     version, commit = _read_version_file(root)
     if not plan:
-        actlib.write_lock({"template": {"version": version, "commit": commit, "source": template_origin}})
+        # "copies" starts empty: nothing the template materializes today outlives .act/ the way
+        # a future skill copy would (see .act/scripts/update.py step 6) - dispatch.py re-derives
+        # the "verbatim" bridges every session, and the other kinds only ever merge into a
+        # project file. update.py fills this key in on the first update that ships a "copy".
+        actlib.write_lock({
+            "template": {"version": version, "commit": commit, "source": template_origin},
+            "copies": {},
+        })
     hashes = {rel: actlib.sha256_file(path) for rel, path in generated.items() if path.is_file()}
     if not plan:
         actlib.write_cache({"generated": hashes})
-    return f"lock written (version '{version}'), cache with {len(hashes)} generated bridge(s)"
+        # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
+        # go unnoticed and be overwritten by the first update.
+        manifest.write_manifest(root / ".act")
+    return (f"lock written (version '{version}'), cache with {len(hashes)} generated bridge(s), "
+            "MANIFEST.json written")
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +797,8 @@ def main(argv: list[str]) -> int:
             else:
                 print("  copying .act/ into target" + (" (plan)" if plan else ""))
                 if not plan:
-                    shutil.copytree(source_act, act_dest)
+                    shutil.copytree(source_act, act_dest,
+                                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
         if not plan:
             os.chdir(root)
         elif not act_dest.exists():

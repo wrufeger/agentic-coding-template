@@ -14,11 +14,14 @@
 #            "added"), relative to .act/ with forward slashes; prints "MANIFEST.json: no
 #            differences" and exits 0 if there are none, exits 1 if there are any differences.
 #
-# MANIFEST.json itself and this script are excluded from both the written manifest and the
-# comparison, since neither is meaningful to hash against itself.
+# MANIFEST.json itself is excluded from both the written manifest and the comparison, since it
+# cannot hash itself. This script is included like any other file: excluding it by its own
+# location made the result depend on which copy of .act/ ran it (init from the template checkout
+# vs. the project's own copy).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -34,17 +37,12 @@ def _manifest_path(act_dir: Path) -> Path:
     return act_dir / "MANIFEST.json"
 
 
-def _self_path() -> Path:
-    return Path(__file__).resolve()
-
-
 def collect_files(act_dir: Path) -> dict[str, str]:
-    """Return {relative_path: sha256} for every file under `act_dir`, excluding MANIFEST.json,
-    this script itself, and Python bytecode caches (__pycache__/, *.pyc, *.pyo — generated locally,
+    """Return {relative_path: sha256} for every file under `act_dir`, excluding MANIFEST.json
+    and Python bytecode caches (__pycache__/, *.pyc, *.pyo — generated locally,
     not part of the template's tracked content). Relative paths use forward slashes for a
     platform-independent manifest."""
     manifest_path = _manifest_path(act_dir).resolve()
-    self_path = _self_path()
     files: dict[str, str] = {}
     for path in sorted(act_dir.rglob("*")):
         if not path.is_file():
@@ -52,22 +50,31 @@ def collect_files(act_dir: Path) -> dict[str, str]:
         if "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo"):
             continue
         resolved = path.resolve()
-        if resolved == manifest_path or resolved == self_path:
+        if resolved == manifest_path:
             continue
         rel = path.relative_to(act_dir).as_posix()
-        files[rel] = actlib.sha256_file(path)
+        files[rel] = content_hash(path)
     return files
 
 
+def content_hash(path: Path) -> str:
+    """SHA-256 of the file with CRLF folded to LF — unless it holds a NUL byte (binary). A checkout
+    with core.autocrlf=true or a template committed with CRLF must not look like a hand edit."""
+    data = path.read_bytes()
+    if b"\x00" not in data:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
 def write_manifest(act_dir: Path) -> int:
+    """Write .act/MANIFEST.json from disk and return the number of files it lists."""
     files = collect_files(act_dir)
     manifest_path = _manifest_path(act_dir)
     manifest_path.write_text(
         json.dumps(files, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(f"MANIFEST.json: wrote {len(files)} file(s)")
-    return 0
+    return len(files)
 
 
 def check_manifest(act_dir: Path) -> int:
@@ -118,7 +125,8 @@ def main(argv: list[str]) -> int:
 
     act_dir = _act_dir()
     if argv[0] == "--write":
-        return write_manifest(act_dir)
+        print(f"MANIFEST.json: wrote {write_manifest(act_dir)} file(s)")
+        return 0
     return check_manifest(act_dir)
 
 

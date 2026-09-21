@@ -184,8 +184,10 @@ def write_cache(data: dict) -> dict:
 
 def read_config() -> dict[str, str]:
     """
-    Read docs/ai/config.md as a simple key/value table: any Markdown table row with exactly two
-    cells is taken as (key, value); the header row and the "---" separator row are skipped.
+    Read docs/ai/config.md as a simple key/value table: the first two cells of any Markdown table
+    row are taken as (key, value), so a third column such as "Guards" in the Checks table is
+    ignored; backticks around the key are dropped. The header row and the "---" separator row are
+    skipped.
     Robust against a missing file and against lines that are not a two-cell table row — those are
     silently ignored rather than raising.
     """
@@ -204,9 +206,9 @@ def read_config() -> dict[str, str]:
             continue
         inner = stripped[1:-1]
         cells = [cell.strip() for cell in inner.split("|")]
-        if len(cells) != 2:
+        if len(cells) < 2:
             continue
-        key, value = cells
+        key, value = cells[0].strip("`").strip(), cells[1]
         if not key:
             continue
         if _is_separator_cell(key) and _is_separator_cell(value):

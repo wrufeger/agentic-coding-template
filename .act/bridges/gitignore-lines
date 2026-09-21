@@ -1,2 +1,3 @@
 # act tooling — local, per-machine state; never versioned
 .act-local/
+__pycache__/
