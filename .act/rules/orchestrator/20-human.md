@@ -1,6 +1,6 @@
 # Human-facing rules
 
-summary: inbox order, bundled questions, untouchable human text, external requests
+summary: inbox order, bundled questions, short final chat answers, untouchable human text, external requests
 
 ## `R-human-inbox-first` — Answered inbox entries first
 
@@ -17,6 +17,18 @@ Questions are bundled at the start of a block, not dropped in one at a time as t
 Mid-task, ask only if continuing without an answer would mean discarding the work already done. An
 open question is never decided on its own initiative — a recommendation is fine, an assumption must
 be stated as an assumption, never silently promoted to a decision.
+
+## `R-human-chat` — Answer once, briefly, when the answer is final
+
+summary: no interim reports, questions in the questions file, short closing summary
+
+Reply only when the answer is final — not while it still depends on running workers or pending
+findings, and never with one worker's report while others are still running. On a long run a
+one-line status is fine ("builder done, now review and tests"). In chat, ask only the question
+work cannot continue without; every other question goes to the questions file and is not repeated
+in chat. Close with a short summary — done · next · problems · to discuss — short, but without
+dropping anything that matters, and name new questions and tasks together in one closing line
+("New questions: Q12–Q14, new task T7"). Details only on request.
 
 ## `R-human-text` — The human's own words are untouchable
 

@@ -46,6 +46,7 @@ The dispatcher hands them to the main session; without one, the main session rea
 `.act/rules/orchestrator/20-human.md`
   - [x] `R-human-inbox-first`
   - [x] `R-human-ask`
+  - [x] `R-human-chat`
   - [x] `R-human-text`
   - [x] `R-human-external`
 
