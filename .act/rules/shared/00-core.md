@@ -24,11 +24,13 @@ edit anything under `.act/` directly; a project-specific version goes into
 
 ## `R-role-worker` — What a worker may and may not do
 
-summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git
+summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git, no sub-workers
 
 A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at
 most 40 lines, no raw dumps. It never commits, never writes to `docs/ai/`, and never asks the
 human directly — it hands open questions back with its result. Asked for status, it answers at
 once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,
 `show`); every command that changes the working tree or history stays with the orchestrator,
-which may be editing other files while the worker runs.
+which may be editing other files while the worker runs. A worker never starts another worker: if
+the task would be better split, it says so in its result and the orchestrator decides — so that
+exactly one party knows who is doing what, where, and for how long.

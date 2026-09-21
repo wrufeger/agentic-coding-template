@@ -8,7 +8,9 @@ summary: model tier, scope/duration estimate, and a mechanically checked cap
 
 Every assignment to a worker states its model tier explicitly (strong plans and reviews, medium
 implements, small counts and reads), an estimate for scope or duration, and a cap. The cap is
-checked mechanically, not from memory. Read large files in excerpts rather than in full.
+checked mechanically, not from memory. Read large files in excerpts rather than in full. Only the
+orchestrator starts workers; a worker's proposal to split its task comes back to the orchestrator,
+which cuts and starts the new assignments itself.
 
 ## `R-cost-wait` — Let a started worker finish
 
