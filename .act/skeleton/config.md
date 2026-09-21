@@ -31,6 +31,16 @@ are, only later ones follow the new value.
 `verbose` \| `normal` \| `sparse`. Controls what the assistant *writes* in chat, not what the
 tool's own interface displays — see `docs/README.md` for the per-tool display settings.
 
+## Dependencies
+
+| Key | Value |
+| :--- | :--- |
+| `dependency-check` | once |
+
+`never` \| `once` \| `regularly`. `once` runs the `act-deps` check during setup and afterwards only
+on request; `regularly` repeats it on the periodic review; `never` skips it. Today only the
+`act-deps` skill itself reads this key — no mechanism runs it automatically yet.
+
 ## Checks
 
 Each check below runs before the action it names; `block` refuses the action, `warn` allows it

@@ -31,6 +31,8 @@ already ruled out).
 | `explorer` | read-only, multi-file research; findings as `<path>:<line>` |
 | `reviewer` | adversarial review before acceptance; ALLOW/BLOCK |
 | `doc-writer` | edits to `docs/project/`; never `docs/ai/` |
-| `test-writer` | writes new tests for existing code, where the project has this role — otherwise `builder` covers it |
+| `test-writer` | writes tests for existing code, or test-first from a concept or interface alone, where the project has this role — otherwise `builder` covers it |
 | `quick-check` | fixed, read-only lookups without judgment |
+| `debugger` | finds a bug's cause by hypothesis, read-only; called from `act-bug` |
+| `optimizer` | polishes freshly written code for brevity and readability, optional |
 | `expert-solver` | escalation per `R-role-escalate` |
