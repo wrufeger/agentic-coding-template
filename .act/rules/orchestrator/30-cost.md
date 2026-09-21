@@ -37,4 +37,6 @@ Only accepted work gets committed, staged by pathspec — never `git add -A`, `g
 `git commit -a`. Lint, typecheck, and tests run first, but only where the project has them set up
 (an IDE's own check counts as evidence, not as a configured lint) and no rule suspends the check for
 this case. A missing tool is not a reason to install one or add tests on the spot — at most a
-one-time note that it is missing.
+one-time note that it is missing. The `reviewer` runs once per task before acceptance, not after
+every step; for a trivial change (typo, docs only) the orchestrator skips it and says so. After a
+BLOCK the orchestrator checks the fixes itself — a second review only for a critical finding.
