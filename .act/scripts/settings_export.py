@@ -80,17 +80,10 @@ def _template_version(root: Path) -> tuple[str, str]:
     return values.get("version", ""), values.get("commit", "")
 
 
-def _source(root: Path) -> str:
-    config = actlib.read_config()
-    name = config.get("name") or config.get("`name`") or ""
-    if name and not name.startswith("<"):
-        return name
-    return root.name
-
-
 def build_header(root: Path) -> sf.SettingsHeader:
     version, commit = _template_version(root)
-    return sf.SettingsHeader(version=version, commit=commit, date=date.today().isoformat(), source=_source(root))
+    return sf.SettingsHeader(version=version, commit=commit, date=date.today().isoformat())
+    # No "source": the file is meant to be shared, and the project name is not the reader's business.
 
 
 # ---------------------------------------------------------------------------

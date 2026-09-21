@@ -945,7 +945,7 @@ def write_inbox(
             except OSError:
                 continue
 
-    slug = re.sub(r"[^a-z0-9]+", "-", (sources[0].settings.header.source or "import").lower()).strip("-") or "import"
+    slug = "import"
     dest = base / f"{date.today().isoformat()}-settings-{slug}.md"
     n = 2
     while dest.is_file():
