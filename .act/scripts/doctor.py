@@ -14,8 +14,9 @@
 #            5. (info, not a finding) the list of currently effective overrides/off-switches;
 #            6. broken references: `act:ref` comments under docs/, and — where they exist —
 #               bridge files under .claude/agents|skills/ pointing at a missing .act/ file;
-#            7. the same script/agent/skill name present at more than one location, unless it is
-#               the intended docs/ai/local/ overlay of the matching .act/ file;
+#            7. a script/agent/skill name under docs/ai/local/ or .claude/ that is not explained
+#               by a generated skill copy, a role bridge, or the docs/ai/local/ overlay of the
+#               matching .act/ file;
 #            8. hook entries .act/bridges/settings.hooks.json defines that .claude/settings.json
 #               is missing (only checked when "claude-code" is one of the project's configured
 #               tools, per docs/ai/config.md).
@@ -55,6 +56,7 @@ from pathlib import Path
 from typing import Optional
 
 import actlib
+import init
 import rules
 
 
@@ -362,7 +364,8 @@ def check_bridge_files(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# 7. Duplicate units — same script/agent/skill name at more than one location
+# 7. Duplicate units — a project-side script/agent/skill file not explained by generation, a role
+#    bridge, or the docs/ai/local/ overlay of the matching .act/ file
 # ---------------------------------------------------------------------------
 
 # (label, sub-directory) pairs this template treats as holding "units": .act/'s own copies, the
@@ -393,26 +396,62 @@ def _scan_units(root: Path) -> list[tuple[str, str, Path]]:
 
 
 def check_duplicate_units(root: Path) -> list[Finding]:
-    units = _scan_units(root)
+    """A file under docs/ai/local/ or .claude/ is legitimate — no finding — when it is: a skill
+    copy init.copy_targets() would (re)write for the project's configured tools, or one already
+    recorded under .act-lock.json's "copies" (covers a copy the template stopped shipping that the
+    project has since edited — update.py's step 6 keeps exactly that case in the lock and deletes
+    the rest, see step_refresh_copies()'s docstring); a role bridge init.agent_bridge_targets()
+    names (bridges are never recorded in the lock, see agent_bridge_targets()'s docstring); or,
+    for docs/ai/local/, the intended override of a .act/ file at the same relative path (the
+    existing overlay rule). README.md files are documentation, never a unit, and skipped outright.
+    .act/ itself is always the source and never the finding.
+
+    What remains — grouped by bare filename, since that is what a human would recognize as "the
+    same skill/role/script" — is only a finding once **two or more** locations remain unexplained
+    for that name: an own role (.claude/agents/db-expert.md) or an own script
+    (docs/ai/local/scripts/my_tool.py) with no .act/ counterpart is a single such file by itself
+    and not reported; docs/ai/local/skills/x/SKILL.md next to .claude/skills/x/SKILL.md, both
+    hand-made with no .act/ template and no copy/bridge/override behind either, is two — that one
+    is reported."""
+    tools = _configured_tools(actlib.read_config())
+    lock = actlib.read_lock()
+    copy_dests = set(init.copy_targets(root, tools).keys()) | set(lock.get("copies", {}).keys())
+    bridge_dests = set(init.agent_bridge_targets(root, tools).keys())
+
+    units = [u for u in _scan_units(root) if u[2].name.lower() != "readme.md"]
+    act_base = root / dict(_UNIT_BASES)["act"]
+    local_base = root / dict(_UNIT_BASES)["local"]
+    act_rels = {
+        (sub, path.relative_to(act_base / sub).as_posix())
+        for label, sub, path in units if label == "act"
+    }
+
     by_name: dict[str, list[tuple[str, str, Path]]] = defaultdict(list)
     for label, sub, path in units:
         by_name[path.name].append((label, sub, path))
 
     findings = []
     for name, entries in sorted(by_name.items()):
-        if len(entries) < 2:
+        unexplained: list[Path] = []
+        for label, sub, path in entries:
+            if label == "act":
+                continue  # the template's own file — always the source, never the finding
+            rel = _rel(path, root)
+            if label == "claude" and (rel in copy_dests or rel in bridge_dests):
+                continue  # generated skill copy or role bridge — expected
+            if label == "local":
+                own_rel = path.relative_to(local_base / sub).as_posix()
+                if (sub, own_rel) in act_rels:
+                    continue  # the intended docs/ai/local/ override of a template file
+            unexplained.append(path)
+        if len(unexplained) < 2:
+            # a single project-owned file under this bare filename (an own role, an own script) is
+            # not a duplicate of anything — only two or more remaining locations are one
             continue
-        if len(entries) == 2:
-            (label_a, sub_a, path_a), (label_b, sub_b, path_b) = entries
-            rel_a = path_a.relative_to(root / dict(_UNIT_BASES)[label_a] / sub_a).as_posix()
-            rel_b = path_b.relative_to(root / dict(_UNIT_BASES)[label_b] / sub_b).as_posix()
-            is_overlay = {label_a, label_b} == {"act", "local"} and sub_a == sub_b and rel_a == rel_b
-            if is_overlay:
-                continue  # the intended docs/ai/local/ override of a template file — info, not a finding
-        locations = ", ".join(_rel(path, root) for _, _, path in entries)
+        locations = ", ".join(_rel(path, root) for path in unexplained)
         findings.append(Finding(
             path=locations, line=None, kind="duplicate-unit",
-            message=f"'{name}' found at more than one location",
+            message=f"'{name}' present without a matching .act/ source, generated copy, or role bridge",
         ))
     return findings
 

@@ -5,7 +5,8 @@
 #          an existing/empty directory ("--target"). Ten steps, always in the same order: collect
 #          config values, resolve git (origin/branch), check git identity, write the per-checkout
 #          workspace identity, thin the bridges down to the chosen tools, materialize skeleton +
-#          bridges, append .gitattributes/.gitignore, handle the template's own LICENSE, write the
+#          bridges (plus skill copies and role bridges, see copy_targets()/agent_bridge_targets()),
+#          append .gitattributes/.gitignore, handle the template's own LICENSE, write the
 #          lock/cache state, and make the first commit. Never overwrites a file the project already
 #          has; anything that needs a decision but can't be asked (non-interactive run) is written
 #          to docs/ai/inbox/ instead of guessed. Stdlib only.
@@ -32,7 +33,7 @@ import sys
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 import actlib
 import manifest
@@ -516,6 +517,98 @@ def _write_coding_rules(
 
 
 # ---------------------------------------------------------------------------
+# Step 6 helper — skill copies (.act/skills/<name>/** -> project copies)
+# ---------------------------------------------------------------------------
+
+# Destination root -> tool gate (None = always written), one entry per tool a skill copy can
+# land in. A further tool that wants its own skills folder needs one more line here, nothing
+# else — copy_targets() below stays unchanged.
+SKILL_TARGET_DIRS: list[tuple[str, Optional[str]]] = [
+    (".claude/skills", "claude-code"),
+    (".agents/skills", None),
+]
+
+
+def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+    """Every skill-copy destination -> its source file, for the given tools. Enumerates
+    .act/skills/<name>/** dynamically — a subdirectory is a skill, a plain file right under
+    .act/skills/ (such as README.md) is not — so adding a skill needs no change here. Each file
+    gets one destination per SKILL_TARGET_DIRS entry whose tool gate passes, so a skill lands in
+    every configured tool's own skills folder plus the tool-neutral .agents/ mirror.
+
+    A project override at docs/ai/local/skills/<name>/<file> wins over the template's own copy of
+    that file (actlib.resolve(), same rule as everywhere else in this template) — the returned
+    source path is the resolved one, not necessarily the .act/ file."""
+    skills_dir = root / ".act" / "skills"
+    targets: dict[str, Path] = {}
+    if not skills_dir.is_dir():
+        return targets
+    for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        for src in sorted(skill_dir.rglob("*")):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(skills_dir).as_posix()  # "<name>/<file>"
+            resolved = actlib.resolve(f"skills/{rel}")
+            source_path = resolved[0] if resolved is not None else src
+            for dest_root, tool in SKILL_TARGET_DIRS:
+                if tool is not None and tool not in tools:
+                    continue
+                targets[f"{dest_root}/{rel}"] = source_path
+    return targets
+
+
+# ---------------------------------------------------------------------------
+# Step 6 helper — role bridges (.act/agents/<name>.md + .act/bridges/agents/<name>.md -> project)
+# ---------------------------------------------------------------------------
+
+def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+    """Every role-bridge destination -> its .act/bridges/agents/ source, for the given tools.
+    Enumerates .act/agents/<name>.md role files dynamically (README.md is documentation, not a
+    role) and only includes a role once its bridge under .act/bridges/agents/ exists too — a role
+    with no bridge yet has nothing written. Only "claude-code" has a bridge format today; a tool
+    without one is simply never a target.
+
+    Unlike copy_targets(), the result is never replaced once written (see step_materialize below
+    and update.py's step 6): init creates it once, update only adds bridges for roles new since
+    the last run, and an existing bridge is the project's own from that point on — R-role-worker
+    forbids `Agent`/`Task` in a role's own `tools` frontmatter, so nothing here ever needs to
+    change that after the fact."""
+    agents_dir = root / ".act" / "agents"
+    bridges_dir = root / ".act" / "bridges" / "agents"
+    targets: dict[str, Path] = {}
+    if "claude-code" not in tools or not agents_dir.is_dir():
+        return targets
+    for role_path in sorted(agents_dir.glob("*.md")):
+        if role_path.name.lower() == "readme.md":
+            continue
+        bridge_src = bridges_dir / role_path.name
+        if bridge_src.is_file():
+            targets[f".claude/agents/{role_path.name}"] = bridge_src
+    return targets
+
+
+def _copy_source_label(root: Path, src: Path) -> str:
+    """Project-relative path for a copy's "source" field in .act-lock.json — usually under
+    .act/ (e.g. ".act/skills/probe-skill/SKILL.md"), or under docs/ai/local/ when the project
+    overrides that file (actlib.resolve(), see copy_targets() above)."""
+    return src.relative_to(root).as_posix()
+
+
+def _write_copy_file(src: Path, dest: Path, plan: bool, root: Optional[Path] = None) -> tuple[str, bool]:
+    """Like _write_text_file, but copies bytes verbatim (no token substitution — a skill or role
+    bridge is authored complete under .act/ already) and never overwrites an existing project
+    file. Used for skill copies and role bridges alike. Returns (message, created)."""
+    label = _relative_label(dest, root)
+    if dest.is_file():
+        return f"{label}: already present, left unchanged", False
+    if plan:
+        return f"{label}: would create", False
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(src.read_bytes())
+    return f"{label}: created", True
+
+
+# ---------------------------------------------------------------------------
 # Step 6 — materialize skeleton + selected bridges
 # ---------------------------------------------------------------------------
 
@@ -591,13 +684,14 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
 
 def step_materialize(
     root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec]
-) -> tuple[list[str], dict[str, Path], list[Path]]:
+) -> tuple[list[str], dict[str, Path], list[Path], dict[str, dict]]:
     tokens = _config_tokens(cfg)
     bridges_dir = root / ".act" / "bridges"
     skeleton_dir = root / ".act" / "skeleton"
     messages: list[str] = []
     generated: dict[str, Path] = {}  # bridge name -> written path, for cache.json hashing
     touched: list[Path] = []
+    copies: dict[str, dict] = {}  # dest -> {"source", "sha256"}, for .act-lock.json § copies
 
     for src_name, dest_rel in skeleton_files(skeleton_dir):
         message, created = _write_text_file(skeleton_dir / src_name, root / dest_rel, tokens, plan, root)
@@ -627,7 +721,23 @@ def step_materialize(
             if created or dest.is_file():
                 touched.append(dest)
 
-    return messages, generated, touched
+    for dest_rel, src in copy_targets(root, cfg["tools"]).items():
+        dest = root / dest_rel
+        message, created = _write_copy_file(src, dest, plan, root)
+        messages.append(message)
+        if created or dest.is_file():
+            touched.append(dest)
+        if not plan and dest.is_file():
+            copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.sha256_file(dest)}
+
+    for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
+        dest = root / dest_rel
+        message, created = _write_copy_file(src, dest, plan, root)
+        messages.append(message)
+        if created or dest.is_file():
+            touched.append(dest)
+
+    return messages, generated, touched, copies
 
 
 # ---------------------------------------------------------------------------
@@ -702,16 +812,19 @@ def step_own_files(root: Path, plan: bool, interactive: bool, notes: list[str]) 
 # Step 9 — .act-lock.json + .act-local/cache.json
 # ---------------------------------------------------------------------------
 
-def step_lock_and_cache(root: Path, plan: bool, template_origin: str, generated: dict[str, Path]) -> str:
+def step_lock_and_cache(
+    root: Path, plan: bool, template_origin: str, generated: dict[str, Path], copies: dict[str, dict]
+) -> str:
     version, commit = _read_version_file(root)
     if not plan:
-        # "copies" starts empty: nothing the template materializes today outlives .act/ the way
-        # a future skill copy would (see .act/scripts/update.py step 6) - dispatch.py re-derives
-        # the "verbatim" bridges every session, and the other kinds only ever merge into a
-        # project file. update.py fills this key in on the first update that ships a "copy".
+        # "copies" holds every skill-copy destination materialized in step 6 (copy_targets()),
+        # each with its .act/ (or docs/ai/local/ override) source and sha256 — update.py's step 6
+        # compares against this hash to tell an unchanged copy from one the project edited. Role
+        # bridges (agent_bridge_targets()) are not tracked here: they are never replaced once
+        # written, so there is nothing to compare against later.
         actlib.write_lock({
             "template": {"version": version, "commit": commit, "source": template_origin},
-            "copies": {},
+            "copies": copies,
         })
     hashes = {rel: actlib.sha256_file(path) for rel, path in generated.items() if path.is_file()}
     if not plan:
@@ -719,8 +832,10 @@ def step_lock_and_cache(root: Path, plan: bool, template_origin: str, generated:
         # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
         # go unnoticed and be overwritten by the first update.
         manifest.write_manifest(root / ".act")
-    return (f"lock written (version '{version}'), cache with {len(hashes)} generated bridge(s), "
-            "MANIFEST.json written")
+    return (
+        f"lock written (version '{version}'), {len(copies)} skill-copy hash(es), "
+        f"cache with {len(hashes)} generated bridge(s), MANIFEST.json written"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +949,7 @@ def main(argv: list[str]) -> int:
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
-    materialize_messages, generated, touched_bridges = step_materialize(root, plan, cfg, selected_bridges)
+    materialize_messages, generated, touched_bridges, copies = step_materialize(root, plan, cfg, selected_bridges)
     _print_step(6, "; ".join(materialize_messages))
 
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)
@@ -845,7 +960,7 @@ def main(argv: list[str]) -> int:
     else:
         _print_step(8, step_own_files(root, plan, interactive, notes))
 
-    _print_step(9, step_lock_and_cache(root, plan, template_origin, generated))
+    _print_step(9, step_lock_and_cache(root, plan, template_origin, generated, copies))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]

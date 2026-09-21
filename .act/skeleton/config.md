@@ -42,4 +42,5 @@ add more rows to this same table.
 | `template-write-guard` | block | writes under `.act/` — put a project version in `docs/ai/local/<same path>` instead |
 | `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` reports without writing, `off` skips it |
 | `orchestrator-rules` | block | hands the orchestrator-only rules to the main session at session start; `off` skips it |
+| `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |

@@ -419,35 +419,41 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Step 6 — refresh template-owned "copies" living outside .act/
+# Step 6 — refresh template-owned skill copies, create bridges for new roles
 # ---------------------------------------------------------------------------
 
-# A BridgeSpec with kind "copy" is a file the template writes once into the project and keeps
-# owning afterwards (unlike "verbatim" bridges, which .act/hooks/dispatch.py re-derives every
-# session, and "json-merge"/"coding-rules" bridges, which only ever merge into a project file).
-# Today's BRIDGES in init.py has no such entry (no skills shipped yet, per
-# docs/project/concepts/ai-dev-app/05-update-and-overrides.md), so this mechanism is exercised
-# only by this script's own test fixtures until the template adds its first one.
-_COPY_KIND = "copy"
+# Skill copies (.act/skills/<name>/**, materialized under .claude/skills/ and .agents/skills/ by
+# init.py's copy_targets()) go through all four cases the spec asks for — handled below in
+# step_refresh_copies(). Role bridges (.act/agents/<name>.md paired with
+# .act/bridges/agents/<name>.md, init.py's agent_bridge_targets()) are simpler and handled
+# separately in step_new_role_bridges(): an existing one is never touched again, only a role new
+# since the last update gets a bridge created.
 _PROBE_MODULE_NAMES = ("actlib", "rules", "init")
 
 
-def _load_new_bridges(new_scripts_dir: Path) -> dict[str, dict]:
+def _project_tools(root: Path) -> list[str]:
+    """The project's configured tools (docs/ai/config.md § Project, key "tools"), lowercased —
+    the same gate copy_targets()/agent_bridge_targets() use to decide which destinations apply."""
+    raw = actlib.read_config().get("tools", "")
+    return sorted({t.strip().lower() for t in raw.split(",") if t.strip()})
+
+
+def _import_fresh_init(new_scripts_dir: Path):
     """
-    Read the BRIDGES constant straight from the just-installed (step 5 already ran) .act/scripts/
-    init.py. Safe to import at this point: step 4 already got the user's consent to trust this
-    template state, and by step 5 it is the project's own .act/ on disk, not code sitting in the
-    temp checkout. Imported in isolation — the module cache entries for actlib/rules/init are
-    swapped out before the import and restored afterwards, so the rest of this run keeps using
-    the (older) actlib/rules it already loaded at start-up.
+    Import .act/scripts/init.py fresh from the just-installed (step 5 already ran) template, to
+    call its copy_targets()/agent_bridge_targets(). Safe to import at this point: step 4 already
+    got the user's consent to trust this template state, and by step 5 it is the project's own
+    .act/ on disk, not code sitting in the temp checkout. Imported in isolation — the module cache
+    entries for actlib/rules/init are swapped out before the import and restored afterwards, so
+    the rest of this run keeps using the (older) actlib/rules it already loaded at start-up.
+    Returns None on any import error (e.g. an init.py that predates these functions).
     """
     saved = {name: sys.modules.pop(name, None) for name in _PROBE_MODULE_NAMES}
     sys.path.insert(0, str(new_scripts_dir))
     try:
-        new_init = importlib.import_module("init")
-        return dict(getattr(new_init, "BRIDGES", {}))
+        return importlib.import_module("init")
     except Exception:
-        return {}
+        return None
     finally:
         try:
             sys.path.remove(str(new_scripts_dir))
@@ -460,12 +466,46 @@ def _load_new_bridges(new_scripts_dir: Path) -> dict[str, dict]:
                 sys.modules[name] = module
 
 
+def _copy_source_label(root: Path, src: Path) -> str:
+    """Project-relative path for a copy's "source" field in .act-lock.json — usually under
+    .act/ (e.g. ".act/skills/probe-skill/SKILL.md"), or under docs/ai/local/ when the project
+    overrides that file (actlib.resolve(), see init.py's copy_targets())."""
+    return src.relative_to(root).as_posix()
+
+
+def _prune_empty_copy_dirs(start: Path, bases: set[Path], root: Path) -> None:
+    """Removes `start`'s parent directory chain while it is empty, stopping at (and never
+    removing) one of `bases` — the skill-copy target roots (.claude/skills, .agents/skills, ...).
+    Used after deleting a no-longer-shipped copy, so an emptied skill folder does not linger.
+    Never climbs above `root` or outside `bases` — if `bases` is empty (no SKILL_TARGET_DIRS found
+    on the imported module) or `start` sits outside every base, nothing is removed."""
+    if not any(base in start.parents for base in bases):
+        return
+    current = start.parent
+    while current not in bases and current != root and current.is_dir():
+        try:
+            next(current.iterdir())
+            return  # not empty
+        except StopIteration:
+            pass
+        parent = current.parent
+        current.rmdir()
+        current = parent
+
+
 def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
-    """Four cases per template-owned copy, exactly as the spec lists them: unchanged -> replaced;
-    user-edited -> kept, reported; user-deleted -> left deleted (tracked in removed_by_user, same
-    field init.py's lock skeleton already reserves for this); new in the template -> created.
-    Returns (summary, new_copies) where new_copies is what .act-lock.json's "copies" key should
-    become."""
+    """Five cases per template-owned skill copy, exactly as the spec lists them: unchanged ->
+    replaced; user-edited -> kept, reported; user-deleted -> left deleted (tracked in
+    removed_by_user, same field init.py's lock skeleton already reserves for this); no longer
+    shipped by the template (removed or renamed there) -> the project's copy is deleted if it
+    still matches what the template last shipped (the project never edited it), or kept and
+    reported "no longer shipped, kept (edited)" if the project changed it since; new in the
+    template -> created. Returns (summary, new_copies) where new_copies is what .act-lock.json's
+    "copies" key should become.
+
+    If the updated template's init.py cannot be imported (see _import_fresh_init()), this step is
+    aborted entirely rather than silently treating every copy as "no longer shipped" — that would
+    drop every copy out of the lock and stop them from ever being refreshed again."""
     if plan:
         return "would replace unchanged copies, keep edited ones (reported), leave deleted ones deleted, create new ones", {}
 
@@ -473,20 +513,32 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
     old_copies: dict[str, dict] = dict(lock.get("copies", {}))
     removed_by_user: list[str] = list(lock.get("removed_by_user", []))
 
-    new_specs = {
-        spec["dest"]: root / ".act" / "bridges" / key
-        for key, spec in _load_new_bridges(root / ".act" / "scripts").items()
-        if spec.get("kind") == _COPY_KIND
-    }
+    new_init = _import_fresh_init(root / ".act" / "scripts")
+    if new_init is None:
+        return "could not load copy_targets() from the updated template; copies left untouched", old_copies
+    new_specs: dict[str, Path] = dict(new_init.copy_targets(root, _project_tools(root)))
+    copy_bases = {root / dest_root for dest_root, _ in getattr(new_init, "SKILL_TARGET_DIRS", ())}
 
     new_copies: dict[str, dict] = {}
     replaced, kept, left_deleted, created = [], [], [], []
+    no_longer_shipped_removed, no_longer_shipped_kept = [], []
+    present_not_taken_over = []
 
     for dest_rel, old_entry in old_copies.items():
         source_path = new_specs.pop(dest_rel, None)
         dest_path = root / dest_rel
         if source_path is None:
-            # the template stopped shipping this copy — leave the project's file as its own
+            # the template stopped shipping this copy (removed, or renamed to a different path)
+            if not dest_path.is_file():
+                continue  # already gone — nothing to remove, nothing left to track
+            current_hash = actlib.sha256_file(dest_path)
+            if current_hash == old_entry.get("sha256"):
+                dest_path.unlink()
+                _prune_empty_copy_dirs(dest_path, copy_bases, root)
+                no_longer_shipped_removed.append(dest_rel)
+            else:
+                new_copies[dest_rel] = old_entry
+                no_longer_shipped_kept.append(dest_rel)
             continue
         if not dest_path.is_file():
             if dest_rel not in removed_by_user:
@@ -498,7 +550,7 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
             data = source_path.read_bytes()
             dest_path.write_bytes(data)
             new_hash = hashlib.sha256(data).hexdigest()
-            new_copies[dest_rel] = {"source": f".act/bridges/{source_path.name}", "sha256": new_hash}
+            new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": new_hash}
             replaced.append(dest_rel)
         else:
             new_copies[dest_rel] = old_entry
@@ -509,11 +561,13 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
             continue  # the project deliberately removed this one before; do not resurrect it
         dest_path = root / dest_rel
         if dest_path.is_file():
-            continue  # something is already there that this run did not put there — leave it
+            # something is already there that this run did not put there — leave it, but say so
+            present_not_taken_over.append(dest_rel)
+            continue
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         data = source_path.read_bytes()
         dest_path.write_bytes(data)
-        new_copies[dest_rel] = {"source": f".act/bridges/{source_path.name}", "sha256": hashlib.sha256(data).hexdigest()}
+        new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": hashlib.sha256(data).hexdigest()}
         created.append(dest_rel)
 
     actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
@@ -525,9 +579,42 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
         parts.append(f"kept (edited locally): {', '.join(kept)}")
     if left_deleted:
         parts.append(f"left deleted: {', '.join(left_deleted)}")
+    if no_longer_shipped_removed:
+        parts.append(f"no longer shipped, removed: {', '.join(no_longer_shipped_removed)}")
+    if no_longer_shipped_kept:
+        parts.append(f"no longer shipped, kept (edited): {', '.join(no_longer_shipped_kept)}")
     if created:
         parts.append(f"created: {', '.join(created)}")
+    if present_not_taken_over:
+        parts.append(f"present, not taken over: {', '.join(present_not_taken_over)}")
     return ("; ".join(parts) if parts else "no template-owned copies"), new_copies
+
+
+def step_new_role_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]:
+    """Creates a bridge for any role new since the last update; an existing
+    .claude/agents/<name>.md is never touched, matching the rule for role bridges (unlike a skill
+    copy, never replaced once written — see step_refresh_copies() above and init.py's
+    agent_bridge_targets()). Returns (summary, touched_paths)."""
+    if plan:
+        return "would create bridges for roles new since the last update, leave existing ones untouched", []
+
+    new_init = _import_fresh_init(root / ".act" / "scripts")
+    if new_init is None:
+        return "could not load agent_bridge_targets() from the updated template", []
+    targets = dict(new_init.agent_bridge_targets(root, _project_tools(root)))
+
+    created: list[str] = []
+    touched: list[Path] = []
+    for dest_rel, source_path in sorted(targets.items()):
+        dest_path = root / dest_rel
+        if dest_path.is_file():
+            continue  # existing role bridge — the project's own from here on, never touched
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_bytes(source_path.read_bytes())
+        created.append(dest_rel)
+        touched.append(dest_path)
+
+    return (f"created: {', '.join(created)}" if created else "no new roles"), touched
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +870,7 @@ def main(argv: list[str]) -> int:
 
         if plan:
             print("[act]   [5/9] " + step_replace(root, new_act_dir, True))
-            print("[act]   [6/9] " + step_refresh_copies(root, True)[0])
+            print("[act]   [6/9] " + step_refresh_copies(root, True)[0] + "; roles: " + step_new_role_bridges(root, True)[0])
             print("[act]   [7/9] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [8/9] " + step_doctor(root, True)[0])
             print("[act]   [9/9] " + step_lock(root, True, source, {}))
@@ -826,7 +913,8 @@ def main(argv: list[str]) -> int:
         _print_step(5, step_replace(root, new_act_dir, False))
 
         copies_summary, new_copies = step_refresh_copies(root, False)
-        _print_step(6, copies_summary)
+        role_summary, role_touched = step_new_role_bridges(root, False)
+        _print_step(6, f"{copies_summary}; roles: {role_summary}")
 
         migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
         _print_step(7, migrate_summary)
@@ -840,6 +928,7 @@ def main(argv: list[str]) -> int:
 
         commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
         commit_paths.extend(root / rel for rel in new_copies)
+        commit_paths.extend(role_touched)
         if doctor_inbox is not None:
             commit_paths.append(doctor_inbox)
         rescue_dir = root / "docs" / "ai" / "local"
