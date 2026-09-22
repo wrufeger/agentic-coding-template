@@ -67,14 +67,35 @@ def content_hash(path: Path) -> str:
 
 
 def write_manifest(act_dir: Path) -> int:
-    """Write .act/MANIFEST.json from disk and return the number of files it lists."""
+    """Write .act/MANIFEST.json from disk and return the number of files it lists.
+
+    `newline="\\n"` pins the file itself to LF regardless of platform: without it, `write_text`
+    on Windows translates "\\n" to "\\r\\n" on write, so a manifest generated there would carry
+    CRLF while `.gitattributes` (`eol=lf`) stores it as LF in git -- every checkout/clone would
+    then see a raw byte difference and `manifest_fingerprint()` below exists to fold that away,
+    but only if the file on disk was written the same way it is compared."""
     files = collect_files(act_dir)
     manifest_path = _manifest_path(act_dir)
     manifest_path.write_text(
         json.dumps(files, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
     return len(files)
+
+
+def manifest_fingerprint(act_dir: Path) -> str:
+    """SHA-256 fingerprint of `act_dir`/MANIFEST.json itself, CRLF-folded via `content_hash()` --
+    the same folding every entry inside the manifest already gets. Used for
+    .act-lock.json's `template.manifest_sha256` (init.py, update.py) and by dispatch.py to notice
+    a project .act/ that came from somewhere other than update.py: without the folding, a manifest
+    written on Windows (CRLF, see `write_manifest()`) compared against one recorded from a Linux
+    write (LF) would look tampered with even though `--check` above finds no differences. Returns
+    "" if the manifest does not exist (a fresh checkout with no lock yet)."""
+    manifest_path = _manifest_path(act_dir)
+    if not manifest_path.is_file():
+        return ""
+    return content_hash(manifest_path)
 
 
 def check_manifest(act_dir: Path) -> int:

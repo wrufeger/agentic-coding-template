@@ -19,13 +19,28 @@
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
 #                 harness convention for "block this tool call and show the assistant why".
 #   SessionStart: one or more lines on stdout — an optional block of orchestrator-only rules
-#                 (main session only, never seen by a sub-agent), then the fixed-format status
-#                 line "[act] branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]
-#                 [· role-bridges refreshed: <n>]"; also re-derives the model/effort frontmatter
-#                 of every existing .claude/agents/*.md role bridge (tiers.py), leaving the rest
-#                 of each file untouched;
+#                 (main session only, never seen by a sub-agent), zero or more "[act] note: ..."
+#                 lines (a changed/unrefreshable bridge, an unresolvable tier/reasoning value, a
+#                 project .act/ pulled in without update.py — each best-effort and independently
+#                 gated, see refresh_session()), then the fixed-format status line "[act]
+#                 branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]
+#                 [· role-bridges refreshed: <n>]", and finally, as a deliberate postscript after
+#                 that status line, an optional "a template update is available" note — always a
+#                 *previous* SessionStart's finding, consumed from .act-local/update-check-
+#                 result.json, never something looked up during this run (see
+#                 _spawn_update_check_worker: the actual `git ls-remote` runs detached, in the
+#                 background, so it can never delay this session — a SessionStart hook has a
+#                 fixed timeout, and an unreachable template source measured at 21s against a
+#                 5s subprocess timeout before this fix, see that function's docstring). Also
+#                 re-derives the model/effort frontmatter of every existing .claude/agents/*.md
+#                 role bridge (tiers.py), leaving the rest of each file untouched;
 #                 exit 0 always — a session start must never fail the session over a mechanism
 #                 error.
+#
+#   "_update-check-worker" <root>: internal only, never a real harness hook event — this is what
+#                 _spawn_update_check_worker() launches as a detached background process (see
+#                 main() below). Not documented to the harness, not something a hook config ever
+#                 names.
 #
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
 # write is NOT swallowed the way a SessionStart error is. Every other check in this template
@@ -36,14 +51,18 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import actlib  # noqa: E402 (sys.path setup above must run first)
+import manifest  # noqa: E402
 import tiers  # noqa: E402
 
 # Force UTF-8 on stdout/stderr: on Windows, Python otherwise picks the console's legacy code
@@ -384,6 +403,231 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Check 2b — template awareness at session start: a project .act/ that was brought to a clean
+# template state by something other than update.py (e.g. a plain `git pull` of the shared history
+# some projects still keep from before Q73a), and, at most once a day, whether the template's own
+# remote has moved past what .act-lock.json last recorded. Both read-only, both best-effort — see
+# refresh_session()'s try/except around each call; neither ever raises out of this function.
+# ---------------------------------------------------------------------------
+
+def _manifest_fingerprint(act_dir: Path) -> str:
+    """CRLF-folded fingerprint of act_dir/MANIFEST.json, matching what .act-lock.json's
+    template.manifest_sha256 is meant to record (Q73a) -- unlike a raw `actlib.sha256_file()` of
+    the file, this is unaffected by the checkout's line endings (core.autocrlf), so a MANIFEST.json
+    checked out with CRLF on Windows still fingerprints the same as the LF copy that produced the
+    recorded hash. Prefers manifest.py's own `manifest_fingerprint()` (added alongside this fix);
+    falls back to manifest.py's existing `content_hash()` — which already does the same CRLF
+    folding for every other file under .act/ — applied to MANIFEST.json directly, in case that
+    function has not landed yet. Returns "" if MANIFEST.json cannot be read at all."""
+    fingerprint_fn = getattr(manifest, "manifest_fingerprint", None)
+    if callable(fingerprint_fn):
+        try:
+            return fingerprint_fn(act_dir)
+        except Exception:
+            pass  # fall through to the content_hash() fallback below
+    try:
+        return manifest.content_hash(act_dir / "MANIFEST.json")
+    except OSError:
+        return ""
+
+
+def _pulled_without_update(root: Path) -> bool:
+    """True when .act/ matches its own MANIFEST.json exactly (so not a hand-edit — that is a
+    different, already-covered concern, see doctor.py's manifest-drift check) but the fingerprint
+    of that MANIFEST.json does not match the one .act-lock.json recorded at the last
+    update.py/init.py run (`template.manifest_sha256`, Q73a) -- the fingerprint that tells a
+    project's own regular state apart from one a plain `git pull` (or any other means outside
+    update.py) just landed."""
+    manifest_path = root / ".act" / "MANIFEST.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        recorded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(recorded, dict) or manifest.collect_files(root / ".act") != recorded:
+        return False  # hand-edited (or unreadable) -- not what this check is looking for
+    lock = actlib.read_lock()
+    expected = (lock.get("template") or {}).get("manifest_sha256") or ""
+    return _manifest_fingerprint(root / ".act") != expected
+
+
+def _update_check_state_path(root: Path) -> Path:
+    return root / ".act-local" / "update-check.json"
+
+
+def _already_checked_today(root: Path) -> bool:
+    try:
+        data = json.loads(_update_check_state_path(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("last_checked") == date.today().isoformat()
+
+
+def _mark_checked_today(root: Path) -> None:
+    path = _update_check_state_path(root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"last_checked": date.today().isoformat()}) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _remote_update_available(root: Path) -> Optional[bool]:
+    """None if the check could not be made at all (no source/commit recorded, no network, the
+    source is not a git remote/repo, or it took too long) -- always silent in that case, never a
+    reported error (module docstring: a SessionStart check fails open). True/False otherwise.
+
+    Only ever called from _run_update_check_worker(), i.e. inside the detached background
+    process _spawn_update_check_worker() starts -- never directly from the SessionStart hook, so
+    however long `git ls-remote` actually takes here never delays a session (see the header
+    comment above _pulled_without_update).
+
+    stdout/stderr go to a real temp file, not a pipe: `subprocess.run(capture_output=True, ...)`
+    was measured at 21s against an unreachable address on Windows even with `timeout=5`, because
+    a grandchild process git spawns (e.g. for the ssh transport) can keep the write end of the
+    pipe open past the point `timeout` kills the immediate `git` process, and `communicate()`
+    then blocks reading from that still-open pipe until the grandchild itself gives up. Waiting
+    on a real file's process exit status has no such pipe to drain, so the timeout is enforced
+    as written. GIT_TERMINAL_PROMPT/GCM_INTERACTIVE/GIT_SSH_COMMAND keep git from ever pausing
+    for a credential prompt or a slow ssh handshake in an unattended background process."""
+    lock = actlib.read_lock()
+    template = lock.get("template") or {}
+    source = template.get("source") or ""
+    commit = template.get("commit") or ""
+    if not source or not commit:
+        return None
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3")
+    try:
+        with tempfile.TemporaryDirectory(prefix="act-update-check-") as tmp_dir:
+            out_path = Path(tmp_dir) / "ls-remote.out"
+            with open(out_path, "wb") as out_file:
+                result = subprocess.run(
+                    ["git", "ls-remote", "--", source, "HEAD"],
+                    cwd=root, stdout=out_file, stderr=subprocess.DEVNULL,
+                    timeout=5, env=env,
+                    # no console window for git.exe on Windows, where the worker has none
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            if result.returncode != 0:
+                return None
+            output = out_path.read_text(encoding="utf-8", errors="replace").strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not output:
+        return None
+    remote_commit = output.split()[0].strip()
+    return bool(remote_commit) and remote_commit != commit
+
+
+def _update_check_result_path(root: Path) -> Path:
+    return root / ".act-local" / "update-check-result.json"
+
+
+def _consume_pending_update_note(root: Path) -> Optional[str]:
+    """Reads and deletes .act-local/update-check-result.json, written by a previous
+    _run_update_check_worker() run (see _spawn_update_check_worker) -- consuming it means the
+    note surfaces exactly once, on the first SessionStart after the background check finished,
+    same as the old synchronous check only ever reported it once (the run that found it). Silent
+    on any I/O problem; a missing file (nothing pending) is the common case, not an error."""
+    path = _update_check_result_path(root)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    if isinstance(data, dict) and data.get("available"):
+        return "[act] note: a template update is available -- run `python .act/scripts/update.py`"
+    return None
+
+
+def _run_update_check_worker(root: Path) -> int:
+    """Body of the detached background process _spawn_update_check_worker() launches: the actual
+    network lookup, isolated from the SessionStart hook so its result can only ever help the
+    *next* session, never delay this one. Writes update-check-result.json on a conclusive
+    True/False; leaves any existing file alone on None (inconclusive), so a stale-but-valid
+    earlier result is not clobbered by a run that itself couldn't tell. Always exits 0 -- nothing
+    reads this process's own exit code, and every exception here must stay inside this process."""
+    try:
+        available = _remote_update_available(root)
+    except Exception:
+        return 0
+    if available is None:
+        return 0
+    try:
+        path = _update_check_result_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"available": bool(available)}) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    return 0
+
+
+def _spawn_update_check_worker(root: Path) -> None:
+    """Fire-and-forget: launches this same script as a fully detached background process running
+    _run_update_check_worker(root) (dispatched via main()'s "_update-check-worker" internal
+    event, never a real harness hook event) and returns immediately without waiting on it. Its
+    stdin/stdout/stderr all go to DEVNULL, never a pipe back to this process -- a pipe here would
+    reintroduce exactly the blocking this exists to avoid, just one level up. Best-effort: a
+    failure to spawn is silent, same as every other note in this check."""
+    script = Path(__file__).resolve()
+    args = [sys.executable, str(script), "_update-check-worker", str(root)]
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        else:
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, close_fds=True,
+            )
+    except OSError:
+        pass
+
+
+def _check_update_awareness(root: Path, config: dict[str, str]) -> tuple[list[str], list[str]]:
+    """Check 2b's two notes, gated by the single `update-check` row (docs/ai/config.md § Checks,
+    default "block" == on; "off" skips both notes and never spawns the background worker below).
+
+    Returns (pre_notes, post_notes) -- pre_notes belong before the fixed-format status line,
+    post_notes after it (module docstring / SessionStart output format): the pulled-without-
+    update note is local, cheap and synchronous, so it stays a pre_note like before; the remote
+    "update available" note is now always a *previous* run's finding (see _spawn_update_check_
+    worker below), so it prints as a postscript after the status line rather than ahead of it.
+
+    The remote lookup itself is throttled to once a day via .act-local/update-check.json
+    (gitignored, per-checkout): when not yet checked today, this kicks off a detached background
+    process (_spawn_update_check_worker) and marks today as checked immediately, without waiting
+    for that process -- its result, if any, is picked up by _consume_pending_update_note() on a
+    later SessionStart. Never raises."""
+    mode = _check_mode(config, "update-check", default="block")
+    if mode == "off":
+        return [], []
+    pre_notes: list[str] = []
+    post_notes: list[str] = []
+    if _pulled_without_update(root):
+        pre_notes.append("[act] note: .act/ was pulled in without update.py -- run `python .act/scripts/update.py` (or --catch-up) to finish it")
+    pending = _consume_pending_update_note(root)
+    if pending:
+        post_notes.append(pending)
+    if not _already_checked_today(root):
+        _mark_checked_today(root)
+        _spawn_update_check_worker(root)
+    return pre_notes, post_notes
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator-only rules (.act/rules/orchestrator/) — delivered as SessionStart hook context,
 # never @-imported into docs/ai/rules.md, so a sub-agent (which only ever loads that file) never
 # sees them. See the "Overrides" note on _read_rule_states for the docs/ai/rules.md syntax this
@@ -545,7 +789,10 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[
 
 def refresh_session(payload: dict) -> int:
     """Check 2: runs only for SessionStart. Never fails the session — every sub-step is best
-    effort and swallows its own errors; the fixed-format status line is always printed last."""
+    effort and swallows its own errors; the fixed-format status line always comes right after
+    every other note except one deliberate postscript: an "update available" note, which is
+    always a previous run's background finding and prints after the status line (see
+    _check_update_awareness's pre_notes/post_notes split)."""
     config = actlib.read_config()
     mode = _check_mode(config, "session-start-refresh", default="block")
     if mode == "off":
@@ -586,13 +833,27 @@ def refresh_session(payload: dict) -> int:
     # 13-model-tiers.md § "Pflege der Zuordnungstabelle" for why this differs from _refresh_bridges
     # above, which replaces a whole file or leaves it alone.
     role_frontmatter_changed: list[str] = []
+    tier_notes: list[str] = []
     try:
-        role_frontmatter_changed = tiers.refresh_project_bridge_frontmatter(root, apply=(mode == "block"))
+        role_frontmatter_changed = tiers.refresh_project_bridge_frontmatter(root, apply=(mode == "block"), notes=tier_notes)
     except Exception:
         pass
     if mode == "warn":
         for dest_rel in role_frontmatter_changed:
             print(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")
+    # An unknown tier/reasoning value (config.md § Roles or tiers.json) is reported once here as a
+    # single line, whatever the role count — previously this only ever surfaced in init.py/
+    # update.py's own notes, never at session start (Q29).
+    if tier_notes:
+        print("[act] note: " + "; ".join(tier_notes))
+
+    post_update_notes: list[str] = []
+    try:
+        pre_update_notes, post_update_notes = _check_update_awareness(root, config)
+        for note in pre_update_notes:
+            print(note)
+    except Exception:
+        pass  # template-awareness is informational only, must never block the session
 
     rules_delivered: Optional[int] = None
     try:
@@ -604,6 +865,11 @@ def refresh_session(payload: dict) -> int:
     rules_part = f" · rules: {rules_delivered}" if rules_delivered is not None else ""
     roles_part = f" · role-bridges refreshed: {len(role_frontmatter_changed)}" if mode == "block" and role_frontmatter_changed else ""
     print(f"[act] branch={branch}{inbox_part} · board updated{rules_part}{roles_part}")
+    # Printed after the status line, not before: an "update available" note here is always a
+    # previous SessionStart's background finding (_consume_pending_update_note), never something
+    # this run just checked, so it reads as a postscript rather than part of this run's status.
+    for note in post_update_notes:
+        print(note)
     return 0
 
 
@@ -612,6 +878,13 @@ def refresh_session(payload: dict) -> int:
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
+    # "_update-check-worker" is the one exception to the "exactly one arg" harness contract
+    # below: it is never a harness hook event, only what _spawn_update_check_worker() launches
+    # (argv[1] is the project root as a string). Checked first so a stray extra argv entry here
+    # can never fall through to "no event named".
+    if len(argv) == 2 and argv[0] == "_update-check-worker":
+        return _run_update_check_worker(Path(argv[1]))
+
     if len(argv) != 1:
         return 0  # no event named — nothing to dispatch, never an error for the caller
 

@@ -10,19 +10,30 @@
 #          docs/project/concepts/ai-dev-app/05-update-and-overrides.md § "Ablauf eines Updates"
 #          in the template-pflege repo for the full spec this implements. Stdlib only.
 #
+#          There is no "template" git remote to update from (Q73a) — the template's address lives
+#          only in .act-lock.json's `template.source`, set by init.py. A project .act/ that got
+#          replaced by something *other* than this script (e.g. a plain `git pull` of the shared
+#          history some projects still keep from before Q73a) looks, once it lands, exactly like
+#          an update.py run that crashed between step 5 and step 9: .act/ already matches a clean
+#          template state, but .act-lock.json/copies/role bridges/migrations are still behind. A
+#          normal run notices this itself (step 3 finds no diff, then resumes instead of reporting
+#          "nothing to update"); --catch-up does the same without a fetch, for when there is
+#          nothing new to fetch in the first place.
+#
 # Usage:
-#   python .act/scripts/update.py                       # update from the "template" remote / lock source
+#   python .act/scripts/update.py                       # update from .act-lock.json's recorded source
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
 #   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-9, write nothing
 #   python .act/scripts/update.py --yes                  # skip the interactive consent prompt (step 4)
 #   python .act/scripts/update.py --on-local-changes rescue|discard|abort   # skip the step-2 prompt
 #   python .act/scripts/update.py --non-interactive       # never prompt (implies a default answer)
 #   python .act/scripts/update.py --no-commit             # do everything except the final commit
+#   python .act/scripts/update.py --catch-up              # no fetch; finish steps 6-9 from .act/ as-is
 #
 # Output format: one numbered line per step ("[n/9] ..."), 1..9 (--plan stops after 3, then one
 #   descriptive line each for 5-9), plus a closing "[act] done" line. Exit 0 on success or a clean
 #   --plan/abort, 1 if a fatal precondition is not met (no source resolvable, fetch failed, the
-#   user chose abort at step 2 or declined at step 4).
+#   user chose abort at step 2 or declined at step 4, or --catch-up found .act/ hand-edited).
 
 from __future__ import annotations
 
@@ -120,8 +131,9 @@ def _read_version_file(act_dir: Path) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def _default_source(root: Path) -> str:
-    """The "template" remote if the repo has one, else the source recorded in .act-lock.json
-    from the last update/init — never a guess."""
+    """The source recorded in .act-lock.json from the last update/init — never a guess. init.py no
+    longer leaves a "template" remote behind (Q73a), but a manually-added one still wins if
+    someone set it up by hand."""
     result = _git(["remote", "get-url", "template"], cwd=root, check=False)
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
@@ -138,13 +150,20 @@ def _reject_symlinks(act_dir: Path) -> None:
             raise RuntimeError(f"fetched .act/ contains a symlink, refusing: {path}")
 
 
-def step_fetch(source: str, ref: Optional[str], dest: Path, notes: list[str]) -> Path:
+def step_fetch(
+    source: str, ref: Optional[str], dest: Path, notes: list[str]
+) -> tuple[Path, Optional[str]]:
     """Fetch `source` (a local directory or a git URL/local repo) into `dest`, at `ref` if given.
-    Returns the fetched checkout's .act/ directory. Nothing under `dest` is ever executed here —
-    only copied or cloned. A plain local directory (no .git) has only its .act/ copied, matching
-    the test fixtures used for this script and so that `--source .` (the project itself) does not
-    try to copy itself into itself; a git source (local repo or remote URL) is cloned in full."""
+    Returns (the fetched checkout's .act/ directory, its git commit if one is known). Nothing
+    under `dest` is ever executed here — only copied or cloned. A plain local directory (no .git)
+    has only its .act/ copied and no commit to report (matching the test fixtures used for this
+    script, and so that `--source .` — the project itself — does not try to copy itself into
+    itself); a git source (local repo or remote URL) is cloned in full and its HEAD's commit is
+    read back, so `step_lock`/`_resume_needed` have the actual fetched commit to record and
+    compare against, instead of whatever `.act/VERSION`'s own (often unmaintained) "commit=" line
+    says (Q73a)."""
     src_path = Path(source)
+    commit: Optional[str] = None
     if src_path.is_dir() and not (src_path / ".git").exists():
         if ref:
             notes.append(f"--ref '{ref}' ignored: source '{source}' is a plain directory, not a git checkout")
@@ -159,11 +178,14 @@ def step_fetch(source: str, ref: Optional[str], dest: Path, notes: list[str]) ->
         _git(["clone", "--quiet", "--", str(source), str(dest)], cwd=dest.parent)
         if ref:
             _git(["checkout", "--quiet", ref], cwd=dest)
+        rev = _git(["rev-parse", "HEAD"], cwd=dest, check=False)
+        if rev.returncode == 0 and rev.stdout.strip():
+            commit = rev.stdout.strip()
     act_dir = dest / ".act"
     if not act_dir.is_dir():
         raise RuntimeError(f"fetched checkout has no .act/ directory: {dest}")
     _reject_symlinks(act_dir)
-    return act_dir
+    return act_dir, commit
 
 
 # ---------------------------------------------------------------------------
@@ -700,6 +722,18 @@ def _load_migration(path: Path):
     return module
 
 
+def _due_migration_ids(migrations_dir: Path) -> list[str]:
+    """Migration ids (file stems) under `migrations_dir` not yet recorded as applied in the lock,
+    sorted. Shared by the --plan preview and the consent-prompt note below, so a run that skips
+    showing a diff (resume mode, --catch-up) still names which migrations it is about to apply
+    instead of hiding them behind a plain "apply?"."""
+    if not migrations_dir.is_dir():
+        return []
+    lock = actlib.read_lock()
+    applied = set(lock.get("migrations_applied", []))
+    return sorted(p.stem for p in migrations_dir.glob("[0-9][0-9][0-9]-*.py") if p.stem not in applied)
+
+
 def _plan_migrations_summary(new_act_dir: Path) -> str:
     """`--plan` preview of step 7: which migrations the fetched checkout would apply, listed by
     filename only. Never imports them — this script never runs code from a freshly fetched ref
@@ -708,12 +742,22 @@ def _plan_migrations_summary(new_act_dir: Path) -> str:
     migrations_dir = new_act_dir / "migrations"
     if not migrations_dir.is_dir():
         return "no .act/migrations/ directory"
-    lock = actlib.read_lock()
-    applied = set(lock.get("migrations_applied", []))
-    due = sorted(p.stem for p in migrations_dir.glob("[0-9][0-9][0-9]-*.py") if p.stem not in applied)
+    due = _due_migration_ids(migrations_dir)
     if not due:
         return "no due migrations"
     return "would run: " + ", ".join(due)
+
+
+def _due_migrations_note(migrations_dir: Path) -> str:
+    """Parenthetical for a consent prompt: which migrations this run would apply. Resume mode (no
+    .act/ diff left to show — it already matches the fetched template) and --catch-up both skip
+    straight to a bare "apply?"/"catch up?" question; without this, approving either one would be
+    a blind yes on migrations that a normal update's diff (step 3) would otherwise have surfaced.
+    Empty string if none are due, so the prompt text is unchanged in the common case."""
+    due = _due_migration_ids(migrations_dir)
+    if not due:
+        return ""
+    return f" ({len(due)} migration(s) due: {', '.join(due)})"
 
 
 def step_migrate(root: Path, plan: bool) -> tuple[str, list[str], list[Path]]:
@@ -795,12 +839,20 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path]]:
 # Step 9 — .act-lock.json + commit
 # ---------------------------------------------------------------------------
 
-def step_lock(root: Path, plan: bool, source: str, new_copies: dict[str, dict]) -> str:
+def step_lock(
+    root: Path, plan: bool, source: str, new_copies: dict[str, dict], fetched_commit: Optional[str],
+) -> str:
+    """`fetched_commit` is what step_fetch actually cloned (None for a plain-directory source, or
+    when this is a catch-up run with no fetch at all) — recorded as-is when known, so a later
+    session's `git ls-remote` comparison (dispatch.py) has something real to compare against;
+    falls back to .act/VERSION's own "commit=" line otherwise, same as before Q73a."""
     if plan:
         return "would update .act-lock.json (template.version/commit/source, copies, migrations)"
-    version, commit = _read_version_file(root / ".act")
+    version, disk_commit = _read_version_file(root / ".act")
+    commit = fetched_commit if fetched_commit is not None else disk_commit
+    manifest_hash = manifest.manifest_fingerprint(root / ".act")
     actlib.write_lock({
-        "template": {"version": version, "commit": commit, "source": source},
+        "template": {"version": version, "commit": commit, "source": source, "manifest_sha256": manifest_hash},
         "copies": new_copies,
     })
     return f"lock updated (version '{version}')"
@@ -860,21 +912,138 @@ def _maybe_print_branch_hint(root: Path, notes: list[str]) -> None:
 # between step 5 (replace) and step 9 (lock write)
 # ---------------------------------------------------------------------------
 
-def _resume_needed(root: Path) -> bool:
-    """True when .act/ already matches the fetched template (step_show_diff found nothing) but
-    the lock's recorded template version/commit does not match what's on disk, or a migration
-    under .act/migrations/ is still due — both signs of a run that got as far as step 5 but never
-    reached step 9. Steps 6-9 then still need to run instead of reporting "nothing to update"."""
-    lock = actlib.read_lock()
-    template = lock.get("template", {})
-    disk_version, disk_commit = _read_version_file(root / ".act")
-    if disk_version != template.get("version", "") or disk_commit != template.get("commit", ""):
-        return True
+def _migrations_due(root: Path, lock: dict) -> bool:
     migrations_dir = root / ".act" / "migrations"
     if not migrations_dir.is_dir():
         return False
     applied = set(lock.get("migrations_applied", []))
     return any(p.stem not in applied for p in migrations_dir.glob("[0-9][0-9][0-9]-*.py"))
+
+
+def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
+    """True when .act/ already matches the fetched template (step_show_diff found nothing) but the
+    run that put it there never finished going through update.py — either an update.py run that
+    crashed between step 5 and step 9, or a project's .act/ having been brought to that state by
+    something other than update.py entirely (e.g. a plain `git pull` of the shared history, Q73a:
+    both look identical from here, and both need the same catch-up). Steps 6-9 then still need to
+    run instead of reporting "nothing to update".
+
+    When `fetched_commit` is known (a git source), it is compared directly against the lock's
+    recorded commit — the correct, unambiguous signal. For a plain-directory source (no git commit
+    to compare, e.g. this script's own test fixtures) this falls back to the previous check: the
+    disk .act/VERSION text against what the lock recorded."""
+    lock = actlib.read_lock()
+    template = lock.get("template", {})
+    if fetched_commit is not None:
+        if fetched_commit != template.get("commit", ""):
+            return True
+        return _migrations_due(root, lock)
+    disk_version, disk_commit = _read_version_file(root / ".act")
+    if disk_version != template.get("version", "") or disk_commit != template.get("commit", ""):
+        return True
+    return _migrations_due(root, lock)
+
+
+# ---------------------------------------------------------------------------
+# Steps 6-9 + commit — shared by the normal flow (after step 5 replaces .act/) and --catch-up
+# (which skips fetch/diff/replace because .act/ is already a clean, fetched-equivalent state)
+# ---------------------------------------------------------------------------
+
+def _finish_update(
+    root: Path, no_commit: bool, source: str, notes: list[str],
+    fetched_commit: Optional[str], rescue_active: bool,
+) -> int:
+    copies_summary, new_copies = step_refresh_copies(root, False)
+    role_summary, role_touched = step_new_role_bridges(root, False, notes)
+    frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
+    _print_step(6, f"{copies_summary}; roles: {role_summary}; role frontmatter: {frontmatter_summary}")
+
+    migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
+    _print_step(7, migrate_summary)
+
+    doctor_summary, doctor_inbox = step_doctor(root, False)
+    _print_step(8, doctor_summary)
+
+    _print_step(9, step_lock(root, False, source, new_copies, fetched_commit))
+
+    _maybe_print_branch_hint(root, notes)
+
+    commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
+    commit_paths.extend(root / rel for rel in new_copies)
+    commit_paths.extend(role_touched)
+    commit_paths.extend(frontmatter_touched)
+    if doctor_inbox is not None:
+        commit_paths.append(doctor_inbox)
+    rescue_dir = root / "docs" / "ai" / "local"
+    if rescue_active and rescue_dir.is_dir():
+        commit_paths.append(rescue_dir)
+    commit_summary = step_commit(root, False, no_commit, commit_paths)
+    print(f"[act]   commit: {commit_summary}")
+
+    if notes:
+        print(f"[act] done - {len(notes)} open point(s)")
+        for note in notes:
+            print(f"[act]   note: {note}")
+    else:
+        print("[act] done")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# --catch-up — .act/ was already brought to a clean template state by something other than
+# update.py (e.g. a plain `git pull` of the shared history, Q73a); no fetch, no diff, no replace
+# needed, only .act-lock.json/copies/role bridges/migrations are behind.
+# ---------------------------------------------------------------------------
+
+def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, notes: list[str]) -> int:
+    act_dir = root / ".act"
+    manifest_path = act_dir / "MANIFEST.json"
+    if not manifest_path.is_file():
+        print(
+            "update.py: --catch-up needs .act/MANIFEST.json on disk (none found) -- run a normal update instead",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        recorded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        recorded = None
+    if recorded is None or manifest.collect_files(act_dir) != recorded:
+        print(
+            "update.py: --catch-up refused -- .act/ does not match its own MANIFEST.json "
+            "(looks hand-edited; run a normal update to resolve that first)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("[act] catch-up: .act/ already matches a clean template state -- only .act-lock.json/copies/roles/migrations are behind")
+
+    if plan:
+        print(
+            "[act]   [6/9] " + step_refresh_copies(root, True)[0]
+            + "; roles: " + step_new_role_bridges(root, True)[0]
+            + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
+        )
+        print("[act]   [7/9] " + _plan_migrations_summary(act_dir))
+        print("[act]   [8/9] " + step_doctor(root, True)[0])
+        print("[act]   [9/9] " + step_lock(root, True, source, {}, None))
+        print("[act] done - --plan: nothing was written")
+        return 0
+
+    if args.yes:
+        consented = True
+    elif interactive:
+        consented = _ask_choice(
+            f"[act] Catch .act-lock.json up to the .act/ already on disk?{_due_migrations_note(act_dir / 'migrations')}",
+            ("y", "n"), "n",
+        ) == "y"
+    else:
+        consented = False
+    if not consented:
+        print("[act] catch-up aborted: no consent")
+        return 1
+
+    return _finish_update(root, args.no_commit, source, notes, None, False)
 
 
 # ---------------------------------------------------------------------------
@@ -897,6 +1066,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--plan", action="store_true", help="show steps 1-3, describe 5-9, change nothing")
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt")
+    parser.add_argument("--catch-up", action="store_true", help=(
+        "skip the fetch/diff/replace; finish steps 6-9 from the .act/ already on disk (e.g. after "
+        "a plain 'git pull' of the template outside update.py, Q73a) -- refuses unless that tree "
+        "still matches its own MANIFEST.json"
+    ))
     args = parser.parse_args(argv)
 
     plan = args.plan
@@ -909,11 +1083,14 @@ def main(argv: list[str]) -> int:
         print("update.py: no --source given, no 'template' remote, and no source in .act-lock.json", file=sys.stderr)
         return 1
 
+    if args.catch_up:
+        return _run_catch_up(root, plan, interactive, args, source, notes)
+
     tmp_root = Path(root) / ".act-local" / "update-tmp"
     _rmtree_robust(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
     try:
-        new_act_dir = step_fetch(source, args.ref, tmp_root / "checkout", notes)
+        new_act_dir, fetched_commit = step_fetch(source, args.ref, tmp_root / "checkout", notes)
         _print_step(1, f"fetched '{source}'" + (f" @ {args.ref}" if args.ref else "") + f" -> {new_act_dir}")
 
         check_summary, decision, differences = step_check_local_changes(root, args.on_local_changes, interactive, plan)
@@ -934,15 +1111,21 @@ def main(argv: list[str]) -> int:
             )
             print("[act]   [7/9] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [8/9] " + step_doctor(root, True)[0])
-            print("[act]   [9/9] " + step_lock(root, True, source, {}))
+            print("[act]   [9/9] " + step_lock(root, True, source, {}, fetched_commit))
             print("[act] done - --plan: nothing was written")
             return 0
 
+        resume_migrations_note = ""
         if not has_changes:
-            if _resume_needed(root):
+            if _resume_needed(root, fetched_commit):
+                # No .act/ diff to show (step 3 already said so) — name the due migrations here
+                # instead, so this prompt is not a blind yes on them (they would otherwise only
+                # have been visible in a normal update's diff).
+                resume_migrations_note = _due_migrations_note(new_act_dir / "migrations")
                 print(
                     "[act]   .act/ already matches the fetched template; resuming an interrupted "
-                    "update (stale lock or migrations still due)"
+                    "update (stale lock, e.g. a crashed update or a plain 'git pull' outside "
+                    "update.py, or migrations still due)"
                 )
             else:
                 print("[act] done - nothing to update")
@@ -951,7 +1134,7 @@ def main(argv: list[str]) -> int:
         if args.yes:
             consented = True
         elif interactive:
-            consented = _ask_choice("[act] Apply this update?", ("y", "n"), "n") == "y"
+            consented = _ask_choice(f"[act] Apply this update?{resume_migrations_note}", ("y", "n"), "n") == "y"
         else:
             consented = False
         _print_step(4, "consent given" if consented else "consent not given (pass --yes to apply non-interactively)")
@@ -973,40 +1156,7 @@ def main(argv: list[str]) -> int:
 
         _print_step(5, step_replace(root, new_act_dir, False))
 
-        copies_summary, new_copies = step_refresh_copies(root, False)
-        role_summary, role_touched = step_new_role_bridges(root, False, notes)
-        frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
-        _print_step(6, f"{copies_summary}; roles: {role_summary}; role frontmatter: {frontmatter_summary}")
-
-        migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
-        _print_step(7, migrate_summary)
-
-        doctor_summary, doctor_inbox = step_doctor(root, False)
-        _print_step(8, doctor_summary)
-
-        _print_step(9, step_lock(root, False, source, new_copies))
-
-        _maybe_print_branch_hint(root, notes)
-
-        commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
-        commit_paths.extend(root / rel for rel in new_copies)
-        commit_paths.extend(role_touched)
-        commit_paths.extend(frontmatter_touched)
-        if doctor_inbox is not None:
-            commit_paths.append(doctor_inbox)
-        rescue_dir = root / "docs" / "ai" / "local"
-        if decision == "rescue" and rescue_dir.is_dir():
-            commit_paths.append(rescue_dir)
-        commit_summary = step_commit(root, plan, args.no_commit, commit_paths)
-        print(f"[act]   commit: {commit_summary}")
-
-        if notes:
-            print(f"[act] done - {len(notes)} open point(s)")
-            for note in notes:
-                print(f"[act]   note: {note}")
-        else:
-            print("[act] done")
-        return 0
+        return _finish_update(root, args.no_commit, source, notes, fetched_commit, decision == "rescue")
     finally:
         try:
             _rmtree_robust(tmp_root)

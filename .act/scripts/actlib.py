@@ -106,7 +106,14 @@ def _write_json_merged(path: Path, data: dict) -> dict:
 
 def _default_lock() -> dict:
     return {
-        "template": {"version": "", "commit": "", "source": ""},
+        # "source": the template's own address (its git remote URL at the time this project last
+        # fetched from it, or a local path if it had none) -- never a git remote in the project
+        # itself; see init.py's _checkout_source()/step_git_in_place() and Q73a.
+        # "manifest_sha256": sha256 of the .act/MANIFEST.json this project last applied -- lets
+        # dispatch.py tell a project .act/ that was pulled in by some other means (e.g. a plain
+        # `git pull` of the shared history) from one update.py actually applied, even though both
+        # leave .act/ matching its own MANIFEST.json (Q73a).
+        "template": {"version": "", "commit": "", "source": "", "manifest_sha256": ""},
         "migrations_applied": [],
         "removed_by_user": [],
     }

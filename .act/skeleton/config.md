@@ -54,6 +54,7 @@ add more rows to this same table.
 | `orchestrator-rules` | block | hands the orchestrator-only rules to the main session at session start; `off` skips it |
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
+| `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — at most once a day — a note if the template has moved on; never refuses, `off` skips both |
 
 ## Roles
 

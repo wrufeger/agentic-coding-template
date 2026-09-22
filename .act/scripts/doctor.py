@@ -20,6 +20,10 @@
 #            8. hook entries .act/bridges/settings.hooks.json defines that .claude/settings.json
 #               is missing (only checked when "claude-code" is one of the project's configured
 #               tools, per docs/ai/config.md).
+#            9. .act/MANIFEST.json drift against the .act/ tree on disk, wherever a MANIFEST.json
+#               exists to compare against — a project that hand-edited .act/ since its last
+#               update, or the template's own checkout if its maintainer forgot `manifest.py
+#               --write` before committing an .act/ change (Q73a).
 #          The content-based half of the Abgleich-Skill (contradictions, near-duplicate rules,
 #          the template-vs-project cross-check after an update) is a separate, model-driven step
 #          and out of scope here. Stdlib only.
@@ -57,6 +61,7 @@ from typing import Optional
 
 import actlib
 import init
+import manifest as manifest_mod
 import rules
 
 
@@ -97,6 +102,7 @@ KIND_LABELS: dict[str, str] = {
     "ref-missing": "Broken references",
     "duplicate-unit": "Duplicate scripts/agents/skills",
     "hook": "Missing hook entries",
+    "manifest": ".act/MANIFEST.json drift",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -498,6 +504,53 @@ def check_hooks(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
+#    template's own checkout, .act/ changed without re-running `manifest.py --write` before
+#    committing (Q73a: the template ships its own MANIFEST.json now, so this same comparison
+#    that update.py's step 2 already runs against a project's copy also catches the template
+#    maintainer's own checkout going stale — one comparison, reused, no separate git-hook wiring
+#    to install and keep working across clones/worktrees).
+# ---------------------------------------------------------------------------
+
+def check_manifest_drift(root: Path) -> list[Finding]:
+    manifest_path = root / ".act" / "MANIFEST.json"
+    if not manifest_path.is_file():
+        return []
+    try:
+        recorded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return [Finding(path=_rel(manifest_path, root), line=None, kind="manifest",
+                         message="not valid JSON, cannot compare against .act/")]
+    if not isinstance(recorded, dict):
+        return [Finding(path=_rel(manifest_path, root), line=None, kind="manifest",
+                         message="not a JSON object, cannot compare against .act/")]
+    # A project (has .act-lock.json) reaches this state through update.py, which rescues a hand
+    # edit under .act/ to docs/ai/local/ before overwriting it. Pointing it at `manifest.py
+    # --write` instead -- as before -- would make the very next update.py run accept the edit
+    # silently, no rescue, no re-review; that advice belongs only to the template's own checkout,
+    # which is never a project and so has no lock file.
+    is_project = (root / ".act-lock.json").is_file()
+    resolve_hint = (
+        "run `update.py` to reconcile it (rescues a hand edit to docs/ai/local/); to keep a "
+        "change, put it in docs/ai/local/ as an override - never rewrite the manifest here"
+    ) if is_project else "run `manifest.py --write`"
+    current = manifest_mod.collect_files(root / ".act")
+    findings = []
+    for path, recorded_hash in sorted(recorded.items()):
+        if path not in current:
+            findings.append(Finding(path=f".act/{path}", line=None, kind="manifest",
+                                     message="missing on disk, still listed in MANIFEST.json"))
+        elif current[path] != recorded_hash:
+            findings.append(Finding(path=f".act/{path}", line=None, kind="manifest",
+                                     message=f"modified since MANIFEST.json was written ({resolve_hint})"))
+    for path in sorted(current):
+        if path not in recorded:
+            findings.append(Finding(path=f".act/{path}", line=None, kind="manifest",
+                                     message=f"added since MANIFEST.json was written ({resolve_hint})"))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Inbox
 # ---------------------------------------------------------------------------
 
@@ -550,6 +603,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_bridge_files(root)
     findings += check_duplicate_units(root)
     findings += check_hooks(root)
+    findings += check_manifest_drift(root)
 
     return findings, effective
 

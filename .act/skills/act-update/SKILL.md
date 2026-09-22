@@ -35,6 +35,18 @@ The mechanism itself warns and does not refuse (`update-branch-hint` in `docs/ai
 Checks); teams still prefer one person pulling the update and opening a PR over two people pulling
 it on separate branches the same day.
 
+## `.act/` pulled in some other way
+
+There is no "template" git remote to update from — its address lives only in `.act-lock.json`'s
+`template.source` (set by `init.py`, never a remote in the project itself). If `.act/` ever got
+replaced by something other than this script (a plain `git pull` of the shared history some older
+projects still keep, or a manual copy), a normal run notices it on its own — step 3 finds no diff,
+then it resumes instead of reporting "nothing to update", no rescue question. `--catch-up` does the
+same without a fetch, for when there is nothing new to pull first; it refuses if `.act/` no longer
+matches its own `MANIFEST.json` (a genuine hand edit, not this case). `dispatch.py` also flags this
+state at session start ("pulled in without update.py") — see `update-check` in `docs/ai/config.md`
+§ Checks, which also runs a throttled, best-effort daily check for whether the template moved on.
+
 ## When not
 
 A task is mid-flight with uncommitted changes: finish it first (`act-commit`), then update.

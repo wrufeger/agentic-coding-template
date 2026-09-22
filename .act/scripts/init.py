@@ -74,7 +74,8 @@ PLACEHOLDER_NAMES = {"test", "your name", "user"}
 PLACEHOLDER_EMAIL_SUFFIXES = ("@example.com",)
 
 # Known origins of the template itself (step 2). A repo whose "origin" normalizes to one of these
-# is the template clone itself, not a project's own remote, so it gets renamed to "template".
+# is the template clone itself, not a project's own remote, so "origin" gets removed outright
+# (its address survives only in .act-lock.json's `template.source`, see step_git_in_place — Q73a).
 # Extend this list if the template is ever published under another URL; anything not listed here
 # is always treated as the project's own remote and left untouched.
 # Fallback only. The authoritative source is the "source=" line in .act/VERSION, which the
@@ -192,6 +193,15 @@ def _get_remote_url(root: Path, name: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _checkout_source(checkout_root: Path) -> str:
+    """The address of the template checkout `init.py` is running from: its own "origin" remote
+    URL if it has one, else its absolute local path. Used for `--target` mode (step 2), where
+    there is no project "origin" to inspect -- the checkout running init.py *is* the template, so
+    its own address is what .act-lock.json's `template.source` needs (Q73a, backlog B105)."""
+    origin = _get_remote_url(checkout_root, "origin")
+    return origin if origin else str(checkout_root.resolve())
+
+
 def _read_version_file(root: Path) -> tuple[str, str]:
     data = {"version": "", "commit": ""}
     path = root / ".act" / "VERSION"
@@ -266,8 +276,19 @@ def _suggest_mode(root: Path) -> str:
 # Step 2 — resolve git (origin, branch)
 # ---------------------------------------------------------------------------
 
-def step_git_in_place(root: Path, plan: bool) -> tuple[str, str]:
-    """Returns (summary, origin_url_if_it_was_the_template_else_empty)."""
+def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
+    """Returns (summary, template_source, template_commit). template_source is the template's own
+    address (its "origin" remote URL, before it gets removed below) if that's what "origin"
+    pointed at, else empty -- always recorded into .act-lock.json's `template.source`, never left
+    implicit in a remote (Q73a): a `git remote rename origin template` used to leave the project
+    with a live remote a plain `git pull template main` could update `.act/` through without going
+    anywhere near update.py's copies/bridges/migrations/lock -- see backlog Q73a for the incident
+    this fixes. `origin` is now removed outright instead, and nothing takes its place.
+    template_commit is HEAD of the template checkout *before* the orphan branch below moves it --
+    the commit this project was initialized from -- so .act-lock.json's `template.commit` is set
+    even when .act/VERSION's own "commit=" line is empty (a template built without that line filled
+    in leaves the daily-update check silent until the first update, see the fix this replaces).
+    Empty if there is no commit to read (fresh/empty repository)."""
     git_dir = root / ".git"
     if not git_dir.exists():
         if not plan:
@@ -277,33 +298,35 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str]:
             # explicitly so the outcome does not depend on that setting. Safe before the first
             # commit: it only moves the unborn HEAD, nothing is renamed or rewritten.
             _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
-            return "no repository found -> ran 'git init' (branch 'main')", ""
-        return "no repository found -> would run 'git init' (branch 'main')", ""
+            return "no repository found -> ran 'git init' (branch 'main')", "", ""
+        return "no repository found -> would run 'git init' (branch 'main')", "", ""
 
     parts = ["repository already present"]
-    template_origin = ""
+    template_source = ""
     origin_url = _get_remote_url(root, "origin")
     if origin_url is None:
         parts.append("no 'origin' remote")
     elif _is_template_remote(origin_url, root):
         if not plan:
-            _git(["remote", "rename", "origin", "template"], cwd=root)
-            parts.append(f"'origin' ({origin_url}) is the template -> renamed to 'template'")
+            _git(["remote", "remove", "origin"], cwd=root)
+            parts.append(f"'origin' ({origin_url}) is the template -> removed (address kept in .act-lock.json only)")
         else:
-            parts.append(f"'origin' ({origin_url}) is the template -> would rename to 'template'")
-        template_origin = origin_url
+            parts.append(f"'origin' ({origin_url}) is the template -> would remove (address kept in .act-lock.json only)")
+        template_source = origin_url
     else:
         parts.append(f"'origin' ({origin_url}) points elsewhere -> left unchanged")
 
     has_commit = _git(["rev-parse", "--verify", "-q", "HEAD"], cwd=root, check=False).returncode == 0
     if not has_commit:
         parts.append("no commits yet -> branch left as-is")
-        return "; ".join(parts), template_origin
+        return "; ".join(parts), template_source, ""
+
+    template_commit = _git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
 
     current = _git(["branch", "--show-current"], cwd=root).stdout.strip()
     if not current:
         parts.append("HEAD is detached -> branch left as-is")
-        return "; ".join(parts), template_origin
+        return "; ".join(parts), template_source, template_commit
     if current == "template":
         parts.append("current branch already named 'template'")
     else:
@@ -318,16 +341,25 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str]:
         parts.append("new orphan branch 'main' created")
     else:
         parts.append("would create new orphan branch 'main'")
-    return "; ".join(parts), template_origin
+    return "; ".join(parts), template_source, template_commit
 
 
-def step_git_target(root: Path, plan: bool) -> str:
+def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str, str]:
+    """Returns (summary, template_source, template_commit) -- unlike step_git_in_place, `root` has
+    no "origin" of its own to inspect (it is brand new or foreign), so `template_source` instead
+    comes from the checkout init.py is *running from* (source_act.parent): that checkout is the
+    template, by definition of being the one docking .act/ onto `root` (Q73a, backlog B105).
+    `template_commit` is that same checkout's HEAD (empty if it has none/is not a git repo) --
+    same reasoning as step_git_in_place's template_commit, just read from a different repo since
+    `root` itself has no history yet to read it from."""
+    template_source = _checkout_source(source_act.parent)
+    template_commit = _git(["rev-parse", "HEAD"], cwd=source_act.parent, check=False).stdout.strip()
     if (root / ".git").exists():
-        return "target already has a repository, left unchanged"
+        return "target already has a repository, left unchanged", template_source, template_commit
     if plan:
-        return "would run 'git init' in target"
+        return "would run 'git init' in target", template_source, template_commit
     _git(["init"], cwd=root)
-    return "ran 'git init' in target"
+    return "ran 'git init' in target", template_source, template_commit
 
 
 # ---------------------------------------------------------------------------
@@ -938,25 +970,35 @@ def step_own_files(root: Path, plan: bool, interactive: bool, notes: list[str]) 
 # ---------------------------------------------------------------------------
 
 def step_lock_and_cache(
-    root: Path, plan: bool, template_origin: str, generated: dict[str, Path], copies: dict[str, dict]
+    root: Path, plan: bool, template_origin: str, template_commit: str,
+    generated: dict[str, Path], copies: dict[str, dict],
 ) -> str:
-    version, commit = _read_version_file(root)
+    version, disk_commit = _read_version_file(root)
+    # Prefer the commit read straight from the template checkout's own git history
+    # (step_git_in_place/step_git_target); .act/VERSION's "commit=" line is only the fallback for
+    # when there is no git to read it from at all.
+    commit = template_commit or disk_commit
+    manifest_hash = ""
     if not plan:
+        # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
+        # go unnoticed and be overwritten by the first update. Written before the lock below so
+        # its hash (manifest_sha256) can go in the same lock write, not a second one (Q73a: this
+        # is the fingerprint dispatch.py compares against to notice a project .act/ that came from
+        # somewhere other than update.py, e.g. a plain `git pull` of the shared history).
+        manifest.write_manifest(root / ".act")
+        manifest_hash = manifest.manifest_fingerprint(root / ".act")
         # "copies" holds every skill-copy destination materialized in step 6 (copy_targets()),
         # each with its .act/ (or docs/ai/local/ override) source and sha256 — update.py's step 6
         # compares against this hash to tell an unchanged copy from one the project edited. Role
         # bridges (agent_bridge_targets()) are not tracked here: they are never replaced once
         # written, so there is nothing to compare against later.
         actlib.write_lock({
-            "template": {"version": version, "commit": commit, "source": template_origin},
+            "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash},
             "copies": copies,
         })
     hashes = {rel: actlib.sha256_file(path) for rel, path in generated.items() if path.is_file()}
     if not plan:
         actlib.write_cache({"generated": hashes})
-        # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
-        # go unnoticed and be overwritten by the first update.
-        manifest.write_manifest(root / ".act")
     return (
         f"lock written (version '{version}'), {len(copies)} skill-copy hash(es), "
         f"cache with {len(hashes)} generated bridge(s), MANIFEST.json written"
@@ -1062,10 +1104,10 @@ def main(argv: list[str]) -> int:
     )
 
     if is_target:
-        _print_step(2, step_git_target(root, plan))
-        template_origin = ""
+        summary, template_origin, template_commit = step_git_target(root, plan, source_act)
+        _print_step(2, summary)
     else:
-        summary, template_origin = step_git_in_place(root, plan)
+        summary, template_origin, template_commit = step_git_in_place(root, plan)
         _print_step(2, summary)
 
     _print_step(3, step_identity(root, plan, interactive, notes))
@@ -1085,7 +1127,7 @@ def main(argv: list[str]) -> int:
     else:
         _print_step(8, step_own_files(root, plan, interactive, notes))
 
-    _print_step(9, step_lock_and_cache(root, plan, template_origin, generated, copies))
+    _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]
