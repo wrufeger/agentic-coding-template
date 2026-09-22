@@ -42,7 +42,7 @@
   "rules/orchestrator/10-work.md": "1628ab503c2df95aaef11ce354a9e6e0c843e11fd866d4ad6d1cbbcda2d402d4",
   "rules/orchestrator/20-human.md": "93e8f6470455cd4995bd0fffa38120439cf8ff772ba4dcdc8c8fb38302a366d6",
   "rules/orchestrator/30-cost.md": "4a87ab62c94d3dce70dbc48df6dbc3846852de3691584406d288d04ddc606c56",
-  "rules/shared/00-core.md": "965234e228b3afd48ed1b4587b2dde6d579680bc47b911eb16e722294a6ab7f0",
+  "rules/shared/00-core.md": "a27c9afe4fc4cce078178612c49202594af29fefb8feceef04444f76cb09c1d3",
   "rules/shared/10-safety.md": "6ae4b761dfc26767789d41a906bdc368dffe76e00a4f001d0ba35cfede1e46a2",
   "rules/shared/20-code.md": "e59e8e926229e1a6586ed97313d3c9b61da0511cfdf3e71275309c94173ed094",
   "scripts/actlib.py": "d35e869226b7576e0cf53883c3ee6ed2bdc92839a5bd08f4a3c870796158ab0e",

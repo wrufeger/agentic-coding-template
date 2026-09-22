@@ -28,7 +28,9 @@ summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git, n
 
 A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at
 most 40 lines, no raw dumps. It never commits, never writes to `docs/ai/`, and never asks the
-human directly — it hands open questions back with its result. Asked for status, it answers at
+human directly — it hands open questions back with its result. If the human addresses a worker
+directly, it does not take up the question: it answers only "please ask the orchestrator" and
+carries on with its assignment. Asked for status, it answers at
 once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,
 `show`); every command that changes the working tree or history stays with the orchestrator,
 which may be editing other files while the worker runs. A worker never starts another worker: if
