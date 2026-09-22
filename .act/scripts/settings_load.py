@@ -32,8 +32,12 @@
 #       candidate-pair list for a model to judge (see "Candidates JSON" below) to that path.
 #   python .act/scripts/settings_load.py apply <file...> [--judgments PATH] [--yes] [--non-interactive]
 #       Same analysis, then writes: new/identical/judged-non-contradicting rules into
-#       docs/ai/rules.md / docs/project/coding_rules.md, mitgegebene scripts/checklists into
-#       docs/ai/local/<area>/<name> (shown before writing unless --yes), "## setup-required" lines
+#       docs/ai/rules.md / docs/project/coding_rules.md, mitgegebene scripts/checklists/agents/
+#       skills into docs/ai/local/<area>/<name> (shown before writing unless --yes) — an
+#       agent/skill whose name matches a template role/skill is never written, only reported (it
+#       would otherwise start overriding the template unit); a written own agent/skill then gets
+#       the tool bridge the target project needs (.claude/agents/<name>.md, skill copies), via the
+#       same mechanism init.py/update.py use for a template one — "## setup-required" lines
 #       and every unresolved finding into one docs/ai/inbox/<date>-settings-<slug>.md. --judgments
 #       supplies verdicts for the candidate pairs `plan --candidates-out` produced (see "Judgments
 #       JSON" below); a candidate with no verdict stays unapplied and unreviewed in the inbox. A
@@ -77,8 +81,10 @@ from typing import Optional
 
 import actlib
 import doctor
+import init
 import rules
 import settings_format as sf
+import tiers
 import update
 
 
@@ -95,7 +101,7 @@ import update
 _MAX_ZIP_ENTRIES = 200
 _MAX_ZIP_ENTRY_BYTES = 5 * 1024 * 1024
 _MAX_ZIP_TOTAL_BYTES = 20 * 1024 * 1024
-_ALLOWED_FILE_AREAS = ("scripts", "checklists")
+_ALLOWED_FILE_AREAS = ("scripts", "checklists", "agents", "skills")
 _UNSAFE_RELPATH_CHARS = re.compile(r"[:\\]")
 
 
@@ -142,9 +148,10 @@ def _safe_member_relpath(name: str, path: Path) -> tuple[str, str]:
 
 
 def _declared_file_ids(settings: sf.SettingsFile) -> dict[str, set[str]]:
-    """The relpaths settings.md itself lists as a "[+] <relpath>" entry, per scripts/checklists
-    area — a zip member not named here is never written, even if it otherwise passed
-    _safe_member_relpath() (spec: only write what the settings file itself declares)."""
+    """The relpaths settings.md itself lists as a "[+] <relpath>" entry, per
+    scripts/checklists/agents/skills area — a zip member not named here is never written, even if
+    it otherwise passed _safe_member_relpath() (spec: only write what the settings file itself
+    declares)."""
     out: dict[str, set[str]] = {}
     for area_name in _ALLOWED_FILE_AREAS:
         area = settings.area(area_name)
@@ -267,12 +274,18 @@ KIND_LABELS: dict[str, str] = {
     "same": "Judged to already say the same thing as a project rule (not applied)",
     "setup-required": "Needs configuration before use",
     "file-collision": "A mitgegebene file has the same name as an existing one (not written)",
-    "template-shadowed": "A mitgegebene file has the same name as a template file (would shadow it)",
+    "template-shadowed": "A mitgegebene agent/skill matches a template role/skill name (would shadow it)",
+    "name-mismatch": "Frontmatter name does not match the file/folder name (not imported)",
+    "invalid-unit-path": "Agent/skill path does not have the required shape (not imported)",
+    "risky-frontmatter": "Frontmatter would grant elevated permissions (not imported, add by hand if wanted)",
+    "frontmatter-hint": "Frontmatter sets tools/model — kept, review before use",
     "not-supported": "Area not supported yet by this build",
     "unresolved-off": "Switched-off entry has no matching set/group in this project (not applied)",
     "set-switch-declined": "Import wants to switch off a coding set that is active here (kept on, not applied)",
     "invalid-id": "Own-rule identifier uses characters a project file cannot render (not applied)",
     "flattened-content": "Multi-line text contains a code fence that flattening would lose (review by hand)",
+    "unparsable-frontmatter": "Frontmatter block never closes cleanly or has a line the parser cannot trust (not imported)",
+    "missing-definition": "Skill has no correctly-cased SKILL.md definition file (not imported)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -467,7 +480,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
 
     # Areas this build does not write at all yet.
     for entry in all_entries:
-        if entry.area not in ("rules", "coding", "scripts", "checklists"):
+        if entry.area not in ("rules", "coding", "scripts", "checklists", "agents", "skills"):
             result.not_supported.add(entry.area)
 
     # --- cross-file collisions: same (area, id) from >1 file, different symbol or text ---------
@@ -515,8 +528,8 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
         if entry.symbol == "=":
             continue  # unchanged from the template — nothing to write, not a finding
 
-        if area_name in ("scripts", "checklists"):
-            continue  # handled separately, in plan_files()
+        if area_name in ("scripts", "checklists", "agents", "skills"):
+            continue  # handled separately, in plan_files()/plan_units()
 
         if area_name not in ("rules", "coding"):
             continue  # reported once via not_supported above
@@ -838,6 +851,8 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
     local_root = (root / "docs" / "ai" / "local").resolve()
     for source in sources:
         for area_name, contents in source.payload.items():
+            if area_name in ("agents", "skills"):
+                continue  # handled separately, in plan_units() below (different collision rules)
             area_root = local_root / area_name
             for relpath, text in contents.items():
                 dest = root / "docs" / "ai" / "local" / area_name / relpath
@@ -869,6 +884,334 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                     "file": source.label, "area": area_name, "path": relpath,
                     "dest": f"docs/ai/local/{area_name}/{relpath}", "status": status, "text": text,
                 })
+
+
+# ---------------------------------------------------------------------------
+# Mitgegebene Dateien (agents / skills) — same new/same/collision shape as plan_files() above, but
+# with rules a bare scripts/checklists file does not need:
+#
+#  - shape: an agent must be a flat "<name>.md" (Claude Code registers a role by that file, not a
+#    subdirectory); a skill must be "<name>/<file...>" (a Skill.md lives inside its own folder).
+#    Anything else is refused before anything is planned to be written — a nested "sub/x.md" used
+#    to slip past the name check below (wrong `unit_name`) and then crash write_unit_bridges()
+#    once write_files() had *already* written it (Errno 2 reading a bridge source that was never at
+#    the path the crash assumed) — planning now happens for every unit before any of them is
+#    allowed to write, and a shape violation is a finding, not a partial write.
+#  - name check: Claude Code registers an agent/skill under its frontmatter `name`, not its file or
+#    folder name — so both are checked against the template's own role/skill names (and, for
+#    agents, their generated "-high" bump variants), case-insensitively, and a mismatch between the
+#    frontmatter `name` and the file/folder name is refused too (a mismatch is confusing at best,
+#    and would otherwise dodge the shadow check by picking an innocuous file name for a
+#    template-shadowing frontmatter `name`, or vice versa).
+#  - risky frontmatter: `permissionMode`/`hooks`/`mcpServers` on an agent, `allowed-tools`/`hooks`
+#    on a skill — never written silently, even with `--yes`; reported so a human adds it by hand
+#    if actually wanted. `tools`/`model` are only a review hint, not refused.
+#
+# A name colliding with a *template* unit is never written at all: docs/ai/local/agents/<name>.md
+# and docs/ai/local/skills/<name>/ both already mean "override this template file/skill" elsewhere
+# in this template (actlib.resolve(), init.py's copy_targets()) — silently placing an imported
+# own agent/skill there under a template name would start overriding it, exactly what the spec's
+# "nie still überschreiben" forbids (05-update-and-overrides.md § "Mitgegebene Dateien").
+# ---------------------------------------------------------------------------
+
+_AGENT_RISKY_KEYS = ("permissionMode", "hooks", "mcpServers")
+_SKILL_RISKY_KEYS = ("allowed-tools", "hooks")
+_HINT_KEYS = ("tools", "model")
+
+
+def _strip_quotes(raw: str) -> str:
+    """Trim whitespace and, if the whole (trimmed) string is wrapped in one matching pair of
+    quotes, remove them. Used for both a frontmatter key (before lowercasing it) and the "name"
+    value below, so a quoted key ('"hooks":') or a quoted value (name: "builder") cannot dodge the
+    checks that follow by hiding behind a quote mark."""
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1].strip()
+    return value
+
+
+def _strict_frontmatter(text: str) -> tuple[dict[str, str], bool]:
+    """A frontmatter reader strict enough for the risky-key/name checks in plan_units() to trust.
+    tiers.split_frontmatter() is built only for the template's own single-line bridge files (see
+    that module's docstring) and is too permissive to gate an import on: a BOM before the opening
+    '---', CRLF line endings, a quoted key, whitespace before the colon, or a closing '---' with no
+    trailing newline at EOF all make it silently see no frontmatter at all -- exactly the shape a
+    mitgegebene file would need to hide a risky key or a name-shadow attempt from plan_units().
+    This function instead treats each of those as still-valid frontmatter (so the fields inside are
+    still checked) and only gives up -- signalling the caller to reject the whole unit -- when a
+    '---' block is opened but never closes cleanly, or a line inside it is neither 'key: value', an
+    indented continuation/list line, nor blank.
+
+    Returns (fields, True) on success, with every key quote-stripped and lowercased (callers must
+    compare against lowercased key names too) and the "name" value quote-stripped as well. Returns
+    ({}, True) -- same as tiers.split_frontmatter()'s fallback -- when the file has no frontmatter
+    block at all; that is not an error, an agent without frontmatter is allowed (docstring of
+    plan_units() below). Returns ({}, False) when a frontmatter block was opened but could not be
+    parsed with confidence."""
+    body = text.lstrip("﻿")
+    lines = body.splitlines()
+    start = 0
+    while start < len(lines) and lines[start].strip() == "":
+        start += 1
+    if start >= len(lines) or lines[start].strip() != "---":
+        return {}, True
+    fields: dict[str, str] = {}
+    i = start + 1
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() == "---":
+            return fields, True
+        if line.strip() == "" or line[:1] in (" ", "\t"):
+            i += 1
+            continue
+        if ":" not in line:
+            return {}, False
+        raw_key, _, raw_value = line.partition(":")
+        key = _strip_quotes(raw_key).lower()
+        if not key:
+            return {}, False
+        fields[key] = _strip_quotes(raw_value)
+        i += 1
+    return {}, False  # opened with '---' but EOF arrived before a closing '---'
+
+
+def _agent_unit_name(relpath: str) -> Optional[str]:
+    """A relpath valid as an agent unit is a flat "<name>.md" — no nested directory. None
+    otherwise (caller reports it as invalid-unit-path, never writes it)."""
+    if "/" in relpath or not relpath.endswith(".md"):
+        return None
+    return relpath[:-3]
+
+
+def _skill_unit_name(relpath: str) -> Optional[str]:
+    """A relpath valid as a skill unit lives under "<name>/..." — the first path segment. None for
+    a flat file with no folder of its own."""
+    if "/" not in relpath:
+        return None
+    name = relpath.split("/", 1)[0]
+    return name or None
+
+
+def _template_agent_names(root: Path) -> set[str]:
+    """Every template role's file stem, lowercased, plus each one's "-high" bump-variant name
+    (init.py's agent_bridge_variant_targets() generates those from the same role — they are never
+    a role of their own to import as)."""
+    agents_dir = root / ".act" / "agents"
+    names: set[str] = set()
+    if agents_dir.is_dir():
+        for path in agents_dir.glob("*.md"):
+            if path.name.lower() != "readme.md":
+                names.add(path.stem.lower())
+    names.update(f"{n}-high" for n in list(names))
+    return names
+
+
+def _template_skill_names(root: Path) -> set[str]:
+    skills_dir = root / ".act" / "skills"
+    if not skills_dir.is_dir():
+        return set()
+    return {p.name.lower() for p in skills_dir.iterdir() if p.is_dir()}
+
+
+def plan_units(root: Path, sources: list[SourceFile], result: Analysis) -> None:
+    local_root = (root / "docs" / "ai" / "local").resolve()
+    template_names = {"agents": _template_agent_names(root), "skills": _template_skill_names(root)}
+    definition_relpath = {  # the one file per unit whose frontmatter decides name/risk, area -> fn
+        "agents": lambda unit_name: f"{unit_name}.md",
+        "skills": lambda unit_name: f"{unit_name}/SKILL.md",
+    }
+    risky_keys = {"agents": _AGENT_RISKY_KEYS, "skills": _SKILL_RISKY_KEYS}
+
+    for source in sources:
+        for area_name, contents in source.payload.items():
+            if area_name not in ("agents", "skills"):
+                continue
+            area_root = local_root / area_name
+            unit_of = _agent_unit_name if area_name == "agents" else _skill_unit_name
+
+            # Group every relpath of this payload into its unit first — nothing is written until
+            # every unit has been checked, so a later relpath turning out invalid never leaves an
+            # earlier one of the same import half-written.
+            units: dict[str, list[str]] = {}
+            for relpath in contents:
+                unit_name = unit_of(relpath)
+                if unit_name is None:
+                    result.findings.append(Finding(
+                        kind="invalid-unit-path",
+                        area=area_name,
+                        message=(f"files/{area_name}/{relpath} — an agent must be a flat "
+                                 "'<name>.md' file, not nested in a folder" if area_name == "agents"
+                                 else f"files/{area_name}/{relpath} — a skill must live under "
+                                      "'<name>/...', not as a flat file") + "; not imported",
+                    ))
+                    continue
+                units.setdefault(unit_name, []).append(relpath)
+
+            for unit_name, relpaths in sorted(units.items()):
+                def _reject(kind: str, message: str) -> None:
+                    result.findings.append(Finding(kind=kind, area=area_name, message=message))
+                    for rp in relpaths:
+                        result.file_plan.append({"file": source.label, "area": area_name, "path": rp,
+                                                  "dest": f"docs/ai/local/{area_name}/{rp}", "status": "collision",
+                                                  "text": contents[rp]})
+
+                def_relpath = definition_relpath[area_name](unit_name)
+                def_text = contents.get(def_relpath)
+                if def_text is None and area_name == "skills":
+                    # An exact "<name>/SKILL.md" is required for a skill -- unlike agents (whose
+                    # def_relpath is reconstructed from the very relpath it was derived from, so it
+                    # always matches), a skill may ship several files and the one actually named
+                    # differently ("skill.md", "Skill.md", ...) would otherwise never be read for
+                    # its frontmatter at all, letting a risky key or a name-shadow attempt through
+                    # unchecked. Found under a different case: reported, not imported. Not found at
+                    # all: reported, not imported.
+                    lowered_target = def_relpath.lower()
+                    wrong_case = next((rp for rp in relpaths if rp.lower() == lowered_target), None)
+                    want_name = def_relpath.rsplit("/", 1)[-1]
+                    if wrong_case is not None:
+                        _reject("missing-definition",
+                                f"docs/ai/local/{area_name}/{unit_name} — definition file found as "
+                                f"'{wrong_case}', not '{want_name}' (case must match exactly) — not imported")
+                    else:
+                        _reject("missing-definition",
+                                f"docs/ai/local/{area_name}/{unit_name} — no {want_name} definition "
+                                "file — not imported")
+                    continue
+                frontmatter_name: Optional[str] = None
+                dangerous: list[str] = []
+                hints: list[str] = []
+                if def_text is not None:
+                    fields, parsed_ok = _strict_frontmatter(def_text)
+                    if not parsed_ok:
+                        _reject("unparsable-frontmatter",
+                                f"docs/ai/local/{area_name}/{unit_name} — {def_relpath} has a "
+                                "malformed '---' frontmatter block (opener that never closes cleanly, "
+                                "or a line that is neither 'key: value', an indented continuation, nor "
+                                "blank) — not imported")
+                        continue
+                    frontmatter_name = fields.get("name")
+                    dangerous = [k for k in risky_keys[area_name] if k.lower() in fields]
+                    hints = [k for k in _HINT_KEYS if k.lower() in fields]
+
+                shadow_hit = None
+                if unit_name.lower() in template_names[area_name]:
+                    shadow_hit = unit_name
+                elif frontmatter_name and frontmatter_name.lower() in template_names[area_name]:
+                    shadow_hit = frontmatter_name
+                if shadow_hit is not None:
+                    kind_label = "role" if area_name == "agents" else "skill"
+                    _reject("template-shadowed",
+                            f"docs/ai/local/{area_name}/{unit_name} — matches a template {kind_label} "
+                            f"name ('{shadow_hit}', case-insensitive, '-high' variants included) — "
+                            "not imported, would silently start overriding it")
+                    continue
+
+                if frontmatter_name is not None and frontmatter_name != unit_name:
+                    _reject("name-mismatch",
+                            f"docs/ai/local/{area_name}/{unit_name} — frontmatter name "
+                            f"'{frontmatter_name}' does not match the file/folder name '{unit_name}'")
+                    continue
+
+                if dangerous:
+                    _reject("risky-frontmatter",
+                            f"docs/ai/local/{area_name}/{unit_name} — frontmatter has "
+                            f"{', '.join(dangerous)}")
+                    continue
+
+                for relpath in relpaths:
+                    text = contents[relpath]
+                    dest = root / "docs" / "ai" / "local" / area_name / relpath
+                    # Same containment re-check as plan_files() — belt (load_source()'s
+                    # _safe_member_relpath()) and suspenders (here, on the resolved filesystem
+                    # path).
+                    if dest.resolve() != area_root and area_root not in dest.resolve().parents:
+                        raise ValueError(f"{source.label}: {relpath}: resolves outside docs/ai/local/{area_name}/ — refused")
+                    if dest.is_file():
+                        existing = dest.read_text(encoding="utf-8")
+                        if existing == text:
+                            status = "same"
+                        else:
+                            status = "collision"
+                            result.findings.append(Finding(
+                                kind="file-collision", area=area_name,
+                                message=f"docs/ai/local/{area_name}/{relpath} already exists with different content — not written",
+                            ))
+                    else:
+                        status = "new"
+                    result.file_plan.append({"file": source.label, "area": area_name, "path": relpath,
+                                              "dest": f"docs/ai/local/{area_name}/{relpath}", "status": status, "text": text})
+
+                if hints:
+                    result.findings.append(Finding(
+                        kind="frontmatter-hint",
+                        area=area_name,
+                        message=f"docs/ai/local/{area_name}/{unit_name} — frontmatter sets {', '.join(hints)}",
+                    ))
+
+
+def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
+    """After write_files() has written every "new" agents/skills file plan_units() approved, this
+    generates the tool bridges for them — reusing exactly the mechanism init.py's own
+    step_materialize()/update.py's step_refresh_copies() use, not a second implementation of it:
+    init.write_agent_bridge_file() for an own role (resolves a tier/reasoning frontmatter into
+    model/effort via tiers.py, or copies a fixed-model file verbatim — same rule as any template
+    role bridge) and init._write_copy_file() for an own skill's files, once per SKILL_TARGET_DIRS
+    entry whose tool is configured. Only items write_files() actually wrote (checked by the
+    destination file now existing — a "new" item can still have been declined interactively)
+    are bridged. Own-skill copies are also recorded in .act-lock.json's "copies", the same
+    tracking init.py/update.py give a template-owned copy, so a later `update` refreshes or rescues
+    them like any other (docstring of init.py's copy_targets())."""
+    messages: list[str] = []
+    written = [item for item in result.file_plan
+               if item["area"] in ("agents", "skills") and item["status"] == "new" and (root / item["dest"]).is_file()]
+    if not written:
+        return messages
+
+    tools = [t.strip().lower() for t in actlib.read_config().get("tools", "").split(",") if t.strip()]
+
+    agent_names = sorted({Path(item["path"]).stem for item in written if item["area"] == "agents"})
+    if agent_names and "claude-code" in tools:
+        tiers_data = tiers.load_tiers(root)
+        overrides = tiers.read_role_overrides(root)
+        for name in agent_names:
+            bridge_src = root / "docs" / "ai" / "local" / "agents" / f"{name}.md"
+            dest = root / ".claude" / "agents" / f"{name}.md"
+            message, _created = init.write_agent_bridge_file(
+                name, bridge_src, dest, False, root, tiers_data, overrides, False,
+            )
+            messages.append(f"agents: {message}")
+
+    skill_items = [item for item in written if item["area"] == "skills"]
+    if skill_items:
+        lock = actlib.read_lock()
+        copies = dict(lock.get("copies", {}))
+        for item in skill_items:
+            src = root / item["dest"]
+            for dest_root, tool in init.SKILL_TARGET_DIRS:
+                if tool is not None and tool not in tools:
+                    continue
+                copy_dest = root / dest_root / item["path"]
+                message, created = init._write_copy_file(src, copy_dest, False, root)
+                messages.append(f"skills: {message}")
+                copy_key = f"{dest_root}/{item['path']}"
+                if created:
+                    copies[copy_key] = {
+                        "source": src.relative_to(root).as_posix(),
+                        "sha256": actlib.sha256_file(copy_dest),
+                    }
+                elif copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == src.read_bytes():
+                    # A hand-placed copy already sitting there, byte-identical to what this import
+                    # just wrote as the own skill's source — not created just now, but legitimate:
+                    # tracked in the lock the same as init.py/update.py would for one of theirs, so
+                    # a later `update`/doctor.py does not flag it as an untracked duplicate.
+                    copies[copy_key] = {
+                        "source": src.relative_to(root).as_posix(),
+                        "sha256": actlib.sha256_file(copy_dest),
+                    }
+        if copies != lock.get("copies", {}):
+            actlib.write_lock({"copies": copies})
+
+    return messages
 
 
 def write_files(root: Path, result: Analysis, yes: bool) -> list[str]:
@@ -1008,6 +1351,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     sources = [load_source(Path(p)) for p in args.files]
     result = analyze(root, sources)
     plan_files(root, sources, result)
+    plan_units(root, sources, result)
     mark_unreviewed_without_judgments(result)
 
     if args.candidates_out:
@@ -1058,6 +1402,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     sources = [load_source(Path(p)) for p in args.files]
     result = analyze(root, sources)
     plan_files(root, sources, result)
+    plan_units(root, sources, result)
 
     judgments: dict[str, str] = {}
     if args.judgments:
@@ -1071,9 +1416,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     rule_messages = write_resolutions(root, result)
     file_messages = write_files(root, result, args.yes)
+    bridge_messages = write_unit_bridges(root, result)
     for message, _applied in rule_messages:
         print(f"settings_load.py: {message}")
     for message in file_messages:
+        print(f"settings_load.py: {message}")
+    for message in bridge_messages:
         print(f"settings_load.py: {message}")
 
     inbox_path, inbox_is_new = write_inbox(root, result.findings, result.setup_required, sources)

@@ -571,7 +571,16 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
 
     A project override at docs/ai/local/skills/<name>/<file> wins over the template's own copy of
     that file (actlib.resolve(), same rule as everywhere else in this template) — the returned
-    source path is the resolved one, not necessarily the .act/ file."""
+    source path is the resolved one, not necessarily the .act/ file.
+
+    Deliberately does *not* enumerate a project's own skill (a docs/ai/local/skills/<name>/
+    directory with no .act/skills/<name> counterpart) — unlike a role bridge (see
+    agent_bridge_targets()), a skill copy's legitimacy in doctor.py's check_duplicate_units() comes
+    from being recorded in .act-lock.json's "copies", not from this function alone; two hand-placed
+    files of the same name with no such record is exactly the mistake that check exists to catch
+    (T25a). `act-load-settings` writes both the docs/ai/local/ file and its .claude/.agents/ copies
+    itself (settings_load.py's write_unit_bridges()), recording the copy in the lock as it goes —
+    this function is not in that path."""
     skills_dir = root / ".act" / "skills"
     targets: dict[str, Path] = {}
     if not skills_dir.is_dir():
@@ -608,18 +617,49 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     below the frontmatter never needs to change after the fact. The one exception, handled by
     write_agent_bridge_file() below rather than here, is the `model`/`effort` frontmatter pair
     itself: re-derived from `.act/tiers.json`/`docs/ai/config.md` § Roles on every `update` and at
-    every session start (13-model-tiers.md § "Pflege der Zuordnungstabelle")."""
+    every session start (13-model-tiers.md § "Pflege der Zuordnungstabelle").
+
+    A project's *own* role — a docs/ai/local/agents/<name>.md file with no .act/agents/<name>.md
+    counterpart, e.g. one `act-load-settings` just wrote from an imported settings file — is a
+    target here too, straight from that file: unlike a template role it has no separate rules file
+    to reference, so the docs/ai/local/ file itself doubles as its own bridge source (already
+    frontmatter + body, see write_agent_bridge_file()). A name that matches a template role instead
+    is that role's docs/ai/local/ override (a different file shape — plain rules text, no
+    frontmatter) and is not a bridge source in its own right — and neither is a name matching a
+    template role's generated "-high" variant (agent_bridge_variant_targets() below), reserved the
+    same way and compared case-insensitively, so an own role can never alias what should be a
+    template variant's bridge target."""
     agents_dir = root / ".act" / "agents"
     bridges_dir = root / ".act" / "bridges" / "agents"
     targets: dict[str, Path] = {}
-    if "claude-code" not in tools or not agents_dir.is_dir():
+    if "claude-code" not in tools:
         return targets
-    for role_path in sorted(agents_dir.glob("*.md")):
-        if role_path.name.lower() == "readme.md":
-            continue
-        bridge_src = bridges_dir / role_path.name
-        if bridge_src.is_file():
-            targets[f".claude/agents/{role_path.name}"] = bridge_src
+    template_role_names: set[str] = set()
+    if agents_dir.is_dir():
+        for role_path in sorted(agents_dir.glob("*.md")):
+            if role_path.name.lower() == "readme.md":
+                continue
+            template_role_names.add(role_path.stem)
+            bridge_src = bridges_dir / role_path.name
+            if bridge_src.is_file():
+                targets[f".claude/agents/{role_path.name}"] = bridge_src
+
+    # Case-insensitive, and reserved for a template role's generated "-high" variant name too
+    # (agent_bridge_variant_targets() below writes ".claude/agents/<role>-high.md" for those) —
+    # otherwise a docs/ai/local/agents/<role>-high.md would slip through as an "own role" here
+    # and end up aliased onto what should be the template variant's bridge target instead
+    # (belegt am 2026-09-22, review of T24).
+    reserved_role_names = {name.lower() for name in template_role_names}
+    reserved_role_names |= {f"{name}-high" for name in reserved_role_names}
+
+    local_agents_dir = root / "docs" / "ai" / "local" / "agents"
+    if local_agents_dir.is_dir():
+        for role_path in sorted(local_agents_dir.glob("*.md")):
+            if role_path.name.lower() == "readme.md":
+                continue
+            if role_path.stem.lower() in reserved_role_names:
+                continue  # the role's docs/ai/local/ override, or a reserved "-high" name, not an own role's bridge source
+            targets[f".claude/agents/{role_path.name}"] = role_path
     return targets
 
 

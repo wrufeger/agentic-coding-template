@@ -412,47 +412,59 @@ def check_duplicate_units(root: Path) -> list[Finding]:
     existing overlay rule). README.md files are documentation, never a unit, and skipped outright.
     .act/ itself is always the source and never the finding.
 
-    What remains — grouped by bare filename, since that is what a human would recognize as "the
-    same skill/role/script" — is only a finding once **two or more** locations remain unexplained
-    for that name: an own role (.claude/agents/db-expert.md) or an own script
-    (docs/ai/local/scripts/my_tool.py) with no .act/ counterpart is a single such file by itself
-    and not reported; docs/ai/local/skills/x/SKILL.md next to .claude/skills/x/SKILL.md, both
-    hand-made with no .act/ template and no copy/bridge/override behind either, is two — that one
-    is reported."""
+    What remains — grouped **by unit**, since that is what a human would recognize as "the same
+    skill/role/script": a skill's unit is its directory name (every file inside one skill
+    directory, e.g. SKILL.md plus a reference file, is the same unit — matching how a skill is
+    identified everywhere else in this template), an agent's or a script's unit is its bare
+    filename (each is a single flat file, no directory of its own) — is only a finding once **two
+    or more** locations remain unexplained for that unit: an own role (.claude/agents/db-expert.md)
+    or an own script (docs/ai/local/scripts/my_tool.py) with no .act/ counterpart is a single such
+    file by itself and not reported; docs/ai/local/skills/x/SKILL.md next to
+    .claude/skills/x/SKILL.md, both hand-made with no .act/ template and no copy/bridge/override
+    behind either, is two — that one is reported. Grouping by bare filename alone would have
+    falsely flagged two unrelated, legitimately hand-made skills as duplicates of each other, since
+    every skill's file is named SKILL.md (belegt am 2026-09-22, review of T24)."""
     tools = _configured_tools(actlib.read_config())
     lock = actlib.read_lock()
     copy_dests = set(init.copy_targets(root, tools).keys()) | set(lock.get("copies", {}).keys())
     bridge_dests = set(init.agent_bridge_targets(root, tools).keys())
 
     units = [u for u in _scan_units(root) if u[2].name.lower() != "readme.md"]
-    act_base = root / dict(_UNIT_BASES)["act"]
-    local_base = root / dict(_UNIT_BASES)["local"]
+    unit_base_dirs = dict(_UNIT_BASES)
+    act_base = root / unit_base_dirs["act"]
+    local_base = root / unit_base_dirs["local"]
     act_rels = {
         (sub, path.relative_to(act_base / sub).as_posix())
         for label, sub, path in units if label == "act"
     }
 
-    by_name: dict[str, list[tuple[str, str, Path]]] = defaultdict(list)
+    def unit_key(label: str, sub: str, path: Path) -> tuple[str, str]:
+        if sub == "skills":
+            sub_dir = root / unit_base_dirs[label] / sub
+            return (sub, path.relative_to(sub_dir).parts[0])  # the skill's directory name
+        return (sub, path.name)  # a script/agent is a single flat file — its own unit
+
+    by_unit: dict[tuple[str, str], list[tuple[str, str, Path]]] = defaultdict(list)
     for label, sub, path in units:
-        by_name[path.name].append((label, sub, path))
+        by_unit[unit_key(label, sub, path)].append((label, sub, path))
 
     findings = []
-    for name, entries in sorted(by_name.items()):
+    for (sub, name), entries in sorted(by_unit.items()):
         unexplained: list[Path] = []
-        for label, sub, path in entries:
+        for label, sub_, path in entries:
             if label == "act":
                 continue  # the template's own file — always the source, never the finding
             rel = _rel(path, root)
             if label == "claude" and (rel in copy_dests or rel in bridge_dests):
                 continue  # generated skill copy or role bridge — expected
             if label == "local":
-                own_rel = path.relative_to(local_base / sub).as_posix()
-                if (sub, own_rel) in act_rels:
+                own_rel = path.relative_to(local_base / sub_).as_posix()
+                if (sub_, own_rel) in act_rels:
                     continue  # the intended docs/ai/local/ override of a template file
             unexplained.append(path)
         if len(unexplained) < 2:
-            # a single project-owned file under this bare filename (an own role, an own script) is
-            # not a duplicate of anything — only two or more remaining locations are one
+            # a single project-owned unit (an own role, an own script, an own skill) is not a
+            # duplicate of anything — only two or more remaining locations are one
             continue
         locations = ", ".join(_rel(path, root) for path in unexplained)
         findings.append(Finding(

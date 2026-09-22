@@ -525,6 +525,16 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
     template -> created. Returns (summary, new_copies) where new_copies is what .act-lock.json's
     "copies" key should become.
 
+    A sixth case sits outside that list: a project's *own* skill (settings_load.py's
+    write_unit_bridges() recorded its copies in the lock the same way, but init.py's
+    copy_targets() deliberately never enumerates them — see that function's docstring). Such a
+    copy has no entry in new_specs, but its lock "source" still points at a live
+    docs/ai/local/skills/<name>/<file> — that is what tells it apart from a copy the template
+    truly stopped shipping, and it is refreshed from that source below instead of being deleted
+    as "no longer shipped" (belegt am 2026-09-22: without this check the first `update` after
+    importing an own skill deleted it outright, because an unedited own copy's hash still matched
+    the lock).
+
     If the updated template's init.py cannot be imported (see _import_fresh_init()), this step is
     aborted entirely rather than silently treating every copy as "no longer shipped" — that would
     drop every copy out of the lock and stop them from ever being refreshed again."""
@@ -550,18 +560,38 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
         source_path = new_specs.pop(dest_rel, None)
         dest_path = root / dest_rel
         if source_path is None:
-            # the template stopped shipping this copy (removed, or renamed to a different path)
-            if not dest_path.is_file():
-                continue  # already gone — nothing to remove, nothing left to track
-            current_hash = actlib.sha256_file(dest_path)
-            if current_hash == old_entry.get("sha256"):
-                dest_path.unlink()
-                _prune_empty_copy_dirs(dest_path, copy_bases, root)
-                no_longer_shipped_removed.append(dest_rel)
+            # copy_targets() never enumerates a project's own skill (see its docstring) — a
+            # tracked copy whose lock "source" still points at a live docs/ai/local/ file is one
+            # of those, not something the template stopped shipping, and is refreshed from that
+            # source below like any other tracked copy instead of being deleted as orphaned.
+            own_source_rel = old_entry.get("source", "")
+            own_source_path: Optional[Path] = None
+            if own_source_rel and own_source_rel.startswith("docs/ai/local/") and not Path(own_source_rel).is_absolute():
+                # A relative-looking "docs/ai/local/..." string can still escape that folder via
+                # "..", or (on Windows) via a second drive-absolute segment such as "C:/evil/path"
+                # silently replacing `root` in the "/" join below (belegt: pathlib's Path.__truediv__
+                # drops the left side when the right side is absolute) -- resolve first and check
+                # the result actually landed under docs/ai/local/, not just that its *string* started
+                # with that prefix.
+                local_root = (root / "docs" / "ai" / "local").resolve()
+                candidate = (root / own_source_rel).resolve()
+                if candidate == local_root or local_root in candidate.parents:
+                    own_source_path = candidate
+            if own_source_path is not None and own_source_path.is_file():
+                source_path = own_source_path
             else:
-                new_copies[dest_rel] = old_entry
-                no_longer_shipped_kept.append(dest_rel)
-            continue
+                # the template stopped shipping this copy (removed, or renamed to a different path)
+                if not dest_path.is_file():
+                    continue  # already gone — nothing to remove, nothing left to track
+                current_hash = actlib.sha256_file(dest_path)
+                if current_hash == old_entry.get("sha256"):
+                    dest_path.unlink()
+                    _prune_empty_copy_dirs(dest_path, copy_bases, root)
+                    no_longer_shipped_removed.append(dest_rel)
+                else:
+                    new_copies[dest_rel] = old_entry
+                    no_longer_shipped_kept.append(dest_rel)
+                continue
         if not dest_path.is_file():
             if dest_rel not in removed_by_user:
                 removed_by_user.append(dest_rel)

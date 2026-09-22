@@ -12,10 +12,8 @@
 #          template-pflege repo for the full spec.
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
-#          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts` and
-#          `checklists` from docs/ai/local/. `agents`/`skills` are a later stage — nothing here
-#          writes them, but settings_format.parse() already reads them if a hand-edited or
-#          later-stage file has them.
+#          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts`,
+#          `checklists`, `agents` and `skills` from docs/ai/local/.
 #
 # Usage:
 #   python .act/scripts/settings_export.py
@@ -23,12 +21,13 @@
 #       settings.md written to ./act-settings-<date>.md.
 #   python .act/scripts/settings_export.py --all
 #       Same, but every included rule/group is listed, "=" ones included.
-#   python .act/scripts/settings_export.py --with-scripts --with-checklists
-#       Also includes docs/ai/local/scripts/ and docs/ai/local/checklists/ (each file shown
-#       individually before being written). Either switch forces --with-files.
+#   python .act/scripts/settings_export.py --with-scripts --with-checklists --with-agents --with-skills
+#       Also includes docs/ai/local/scripts/, docs/ai/local/checklists/, docs/ai/local/agents/ (the
+#       project's own roles) and docs/ai/local/skills/ (its own skills) — each file shown
+#       individually before being written on import. Any of the four switches forces --with-files.
 #   python .act/scripts/settings_export.py --with-files
 #       Writes a .zip (settings.md at its root + files/<area>/<name>) instead of a plain .md, even
-#       without local scripts/checklists.
+#       without local scripts/checklists/agents/skills.
 #   python .act/scripts/settings_export.py --strict
 #       Abort with exit 1 and the finding list instead of substituting placeholders — for "goes
 #       out to strangers". Without it, a finding becomes a visible "<setup:KIND>" placeholder plus
@@ -54,6 +53,7 @@ from typing import Optional
 import actlib
 import rules
 import settings_format as sf
+import tiers
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +202,54 @@ def build_coding_area(root: Path, show_all: bool) -> Optional[sf.SettingsArea]:
 
 
 # ---------------------------------------------------------------------------
-# scripts / checklists — plain files under docs/ai/local/, only with their switch
+# agents — one entry per own role, header fields as body, full file in the zip
+# ---------------------------------------------------------------------------
+
+def build_agents_area(root: Path) -> tuple[Optional[sf.SettingsArea], dict[str, str]]:
+    """Every docs/ai/local/agents/<name>.md (the project's own roles — see init.py's
+    agent_bridge_targets(); README.md is documentation, not a role) as one "[+] <name>.md" entry
+    whose body lists the file's own frontmatter fields in order (model, or tier/reasoning, plus
+    tools/description/...) — readable in settings.md without opening the zip. The entry id carries
+    the ".md" suffix so it equals the zip member's relpath under files/agents/, the same "id ==
+    relpath" contract build_local_files_area() below uses for scripts/checklists/skills.
+    Returns (area_or_None, {id: full file text}) — the caller scans/redacts the file text
+    separately, same as build_local_files_area()."""
+    base = root / "docs" / "ai" / "local" / "agents"
+    if not base.is_dir():
+        return None, {}
+    template_agents_dir = root / ".act" / "agents"
+    entries: list[sf.SettingsEntry] = []
+    contents: dict[str, str] = {}
+    for path in sorted(base.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        if path.is_symlink():
+            print(f"settings_export.py: skipped symlink {path.name} under docs/ai/local/agents/", file=sys.stderr)
+            continue
+        if (template_agents_dir / path.name).is_file():
+            # A docs/ai/local/agents/<name>.md whose name matches a template role is that role's
+            # override text (actlib.resolve()), not an own role of its own — exporting it as one
+            # would hand the next project a "[+] <name>.md" own-agent entry that silently starts
+            # overriding the very same template role there too (settings_load.py's plan_units()
+            # now refuses exactly that on import; not shipping it in the first place is the other
+            # half of the same fix).
+            print(f"settings_export.py: skipped override {path.stem} (template role) — not exported as an own role", file=sys.stderr)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fields, _, order = tiers.split_frontmatter(text)
+        body_lines = [f"{key}: {fields[key]}" for key in order if key != "name" and key in fields]
+        contents[path.name] = text
+        entries.append(sf.SettingsEntry(symbol="+", id=path.name, body="\n".join(body_lines) or None))
+    if not entries:
+        return None, {}
+    return sf.SettingsArea(name="agents", groups=[sf.SettingsGroup(label=None, entries=entries)]), contents
+
+
+# ---------------------------------------------------------------------------
+# scripts / checklists / skills — plain files under docs/ai/local/, only with their switch
 # ---------------------------------------------------------------------------
 
 def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Optional[sf.SettingsArea], dict[str, str]]:
@@ -213,6 +260,8 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
     base = root / "docs" / "ai" / "local" / subdir
     if not base.is_dir():
         return None, {}
+    template_skills_dir = root / ".act" / "skills"
+    skipped_skill_overrides: set[str] = set()
     entries: list[sf.SettingsEntry] = []
     contents: dict[str, str] = {}
     for path in sorted(base.rglob("*")):
@@ -223,6 +272,16 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
         if not path.is_file() or "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo"):
             continue
         rel = path.relative_to(base).as_posix()
+        if area_name == "skills":
+            skill_name = rel.split("/", 1)[0]
+            if (template_skills_dir / skill_name).is_dir():
+                # Same "override, not own" case as build_agents_area() above, for a
+                # docs/ai/local/skills/<name>/ whose name matches a template skill.
+                if skill_name not in skipped_skill_overrides:
+                    skipped_skill_overrides.add(skill_name)
+                    print(f"settings_export.py: skipped override {skill_name} (template skill) — "
+                          "not exported as an own skill", file=sys.stderr)
+                continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -299,7 +358,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--all", action="store_true", help="include unchanged ('=') rules/groups too")
     parser.add_argument("--with-scripts", action="store_true", help="include docs/ai/local/scripts/ (forces --with-files)")
     parser.add_argument("--with-checklists", action="store_true", help="include docs/ai/local/checklists/ (forces --with-files)")
-    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists")
+    parser.add_argument("--with-agents", action="store_true", help="include docs/ai/local/agents/, the project's own roles (forces --with-files)")
+    parser.add_argument("--with-skills", action="store_true", help="include docs/ai/local/skills/, the project's own skills (forces --with-files)")
+    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills")
     parser.add_argument("--strict", action="store_true", help="abort on any finding instead of substituting a placeholder")
     parser.add_argument("--out", metavar="PATH", default=None, help="output path (default: ./act-settings-<date>.md|.zip)")
     return parser
@@ -327,7 +388,7 @@ def main(argv: list[str]) -> int:
         print(f"settings_export.py: {exc}", file=sys.stderr)
         return 2
 
-    with_files = args.with_files or args.with_scripts or args.with_checklists
+    with_files = args.with_files or args.with_scripts or args.with_checklists or args.with_agents or args.with_skills
 
     areas: list[sf.SettingsArea] = []
     for area in (build_rules_area(root, args.all), build_coding_area(root, args.all)):
@@ -345,6 +406,16 @@ def main(argv: list[str]) -> int:
         if area is not None:
             areas.append(area)
             file_payload["checklists"] = contents
+    if args.with_agents:
+        area, contents = build_agents_area(root)
+        if area is not None:
+            areas.append(area)
+            file_payload["agents"] = contents
+    if args.with_skills:
+        area, contents = build_local_files_area(root, "skills", "skills")
+        if area is not None:
+            areas.append(area)
+            file_payload["skills"] = contents
 
     settings = sf.SettingsFile(header=build_header(root), areas=areas)
     redacted, located = sf.redact(settings)
