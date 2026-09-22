@@ -54,3 +54,11 @@ add more rows to this same table.
 | `orchestrator-rules` | block | hands the orchestrator-only rules to the main session at session start; `off` skips it |
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
+
+## Roles
+
+| Role | Tier | Reasoning | Model |
+| :--- | :--- | :--- | :--- |
+
+Empty by default: every role runs the tier/reasoning the template ships. Fill a row to override
+one role's tier and/or reasoning, or set `Model` outright — a filled `Model` wins over `Tier`.

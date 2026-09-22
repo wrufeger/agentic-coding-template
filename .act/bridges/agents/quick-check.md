@@ -1,7 +1,8 @@
 ---
 name: quick-check
 description: Fixed, read-only lookups without judgment (git status, tests, files, line counts).
-model: haiku
+tier: light
+reasoning: none
 tools: Read, Grep, Glob, Bash
 ---
 

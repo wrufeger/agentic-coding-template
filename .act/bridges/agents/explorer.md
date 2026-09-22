@@ -1,7 +1,8 @@
 ---
 name: explorer
 description: Read-only codebase research across multiple files and directories; reports findings backed by path:line.
-model: sonnet
+tier: standard
+reasoning: low
 tools: Read, Grep, Glob, Bash
 ---
 

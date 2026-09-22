@@ -428,7 +428,7 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # .act/bridges/agents/<name>.md, init.py's agent_bridge_targets()) are simpler and handled
 # separately in step_new_role_bridges(): an existing one is never touched again, only a role new
 # since the last update gets a bridge created.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init")
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers")
 
 
 def _project_tools(root: Path) -> list[str]:
@@ -590,31 +590,88 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
     return ("; ".join(parts) if parts else "no template-owned copies"), new_copies
 
 
-def step_new_role_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]:
-    """Creates a bridge for any role new since the last update; an existing
-    .claude/agents/<name>.md is never touched, matching the rule for role bridges (unlike a skill
-    copy, never replaced once written — see step_refresh_copies() above and init.py's
-    agent_bridge_targets()). Returns (summary, touched_paths)."""
+def step_new_role_bridges(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
+    """Creates a bridge for any role new since the last update, and a "-high" variant for any
+    applicable role — new or already existing — that does not have one yet (13-model-tiers.md §
+    4/`Q71`, introduced together with the tier/reasoning scheme: an existing project may already
+    have base role bridges from before this existed). An existing .claude/agents/<name>.md (base
+    or variant) is never re-created here, matching the rule for role bridges (unlike a skill copy,
+    never replaced once written — see step_refresh_copies() above and init.py's
+    agent_bridge_targets()); its `model`/`effort` frontmatter is refreshed separately, by
+    step_refresh_role_frontmatter() below. `notes`, if given, collects messages the same way
+    step_fetch() above does (e.g. a role tiers.json/config.md cannot resolve, § "Pflege der
+    Zuordnungstabelle"). Returns (summary, touched_paths)."""
     if plan:
-        return "would create bridges for roles new since the last update, leave existing ones untouched", []
+        return (
+            "would create bridges for roles new since the last update, and any missing "
+            "'-high' variant, leaving existing files untouched",
+            [],
+        )
 
     new_init = _import_fresh_init(root / ".act" / "scripts")
     if new_init is None:
         return "could not load agent_bridge_targets() from the updated template", []
-    targets = dict(new_init.agent_bridge_targets(root, _project_tools(root)))
+    tools = _project_tools(root)
+    targets: dict[str, Path] = dict(new_init.agent_bridge_targets(root, tools))
+    targets.update(new_init.agent_bridge_variant_targets(root, tools))
+    tiers_data = new_init.tiers.load_tiers(root)
+    overrides = new_init.tiers.read_role_overrides(root, notes=notes)
 
     created: list[str] = []
     touched: list[Path] = []
     for dest_rel, source_path in sorted(targets.items()):
         dest_path = root / dest_rel
         if dest_path.is_file():
-            continue  # existing role bridge — the project's own from here on, never touched
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        dest_path.write_bytes(source_path.read_bytes())
-        created.append(dest_rel)
-        touched.append(dest_path)
+            continue  # existing role bridge (base or variant) — never re-created, only refreshed
+        role = Path(dest_rel).stem
+        variant = role.endswith("-high")
+        base_role = role[: -len("-high")] if variant else role
+        try:
+            message, ok = new_init.write_agent_bridge_file(
+                base_role, source_path, dest_path, False, root, tiers_data, overrides, variant, notes,
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            if notes is not None:
+                notes.append(f"{dest_rel}: skipped, could not create ({exc.__class__.__name__})")
+            continue
+        if ok:
+            created.append(dest_rel)
+            touched.append(dest_path)
 
-    return (f"created: {', '.join(created)}" if created else "no new roles"), touched
+    return (f"created: {', '.join(created)}" if created else "no new roles or variants"), touched
+
+
+def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
+    """Re-derives the `model`/`effort` frontmatter of every already-materialized role bridge (base
+    and "-high" variant alike, template role or a project's own named in docs/ai/config.md §
+    Roles) from the updated .act/tiers.json and that Roles table — the one part of a role bridge
+    that *does* change on every update, per 13-model-tiers.md § "Pflege der Zuordnungstabelle".
+    Everything else in the file, including a project's own text below the frontmatter, is left
+    exactly as it is (tiers.py's refresh_project_bridge_frontmatter() carries that guarantee, and
+    also never lets a single unreadable/unwritable file abort this step — it is skipped with a note
+    instead, so the update still completes even though `.act/` was already replaced by step 5).
+    `notes`, if given, collects those messages. Returns (summary, touched_paths)."""
+    if plan:
+        return (
+            "would refresh model/effort frontmatter on every existing role bridge from the "
+            "updated tiers table",
+            [],
+        )
+
+    new_init = _import_fresh_init(root / ".act" / "scripts")
+    if new_init is None or not hasattr(new_init, "tiers"):
+        return "could not load tiers.py from the updated template; role bridge frontmatter left untouched", []
+    try:
+        changed = new_init.tiers.refresh_project_bridge_frontmatter(root, notes=notes)
+    except (OSError, UnicodeDecodeError) as exc:
+        # Belt and suspenders: refresh_project_bridge_frontmatter() already catches these per file
+        # and never lets one bad file raise, but this step must not be able to abort the update
+        # (already past step 5 -- .act/ is already replaced) even if that guarantee ever slips.
+        if notes is not None:
+            notes.append(f"role bridge frontmatter refresh failed ({exc.__class__.__name__}); left as it was")
+        return "role bridge frontmatter refresh failed, left untouched", []
+    touched = [root / rel for rel in changed]
+    return (f"refreshed {len(changed)} role bridge(s)" if changed else "no role bridge frontmatter changes"), touched
 
 
 # ---------------------------------------------------------------------------
@@ -870,7 +927,11 @@ def main(argv: list[str]) -> int:
 
         if plan:
             print("[act]   [5/9] " + step_replace(root, new_act_dir, True))
-            print("[act]   [6/9] " + step_refresh_copies(root, True)[0] + "; roles: " + step_new_role_bridges(root, True)[0])
+            print(
+                "[act]   [6/9] " + step_refresh_copies(root, True)[0]
+                + "; roles: " + step_new_role_bridges(root, True)[0]
+                + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
+            )
             print("[act]   [7/9] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [8/9] " + step_doctor(root, True)[0])
             print("[act]   [9/9] " + step_lock(root, True, source, {}))
@@ -913,8 +974,9 @@ def main(argv: list[str]) -> int:
         _print_step(5, step_replace(root, new_act_dir, False))
 
         copies_summary, new_copies = step_refresh_copies(root, False)
-        role_summary, role_touched = step_new_role_bridges(root, False)
-        _print_step(6, f"{copies_summary}; roles: {role_summary}")
+        role_summary, role_touched = step_new_role_bridges(root, False, notes)
+        frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
+        _print_step(6, f"{copies_summary}; roles: {role_summary}; role frontmatter: {frontmatter_summary}")
 
         migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
         _print_step(7, migrate_summary)
@@ -929,6 +991,7 @@ def main(argv: list[str]) -> int:
         commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
         commit_paths.extend(root / rel for rel in new_copies)
         commit_paths.extend(role_touched)
+        commit_paths.extend(frontmatter_touched)
         if doctor_inbox is not None:
             commit_paths.append(doctor_inbox)
         rescue_dir = root / "docs" / "ai" / "local"

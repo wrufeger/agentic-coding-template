@@ -4,13 +4,16 @@ summary: delegation tiers and caps, waiting on workers, scripting recurring chec
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: model tier, scope/duration estimate, and a mechanically checked cap
+summary: tier, scope/duration estimate, and a mechanically checked cap
 
-Every assignment to a worker states its model tier explicitly (strong plans and reviews, medium
-implements, small counts and reads), an estimate for scope or duration, and a cap. The cap is
-checked mechanically, not from memory. Read large files in excerpts rather than in full. Only the
-orchestrator starts workers; a worker's proposal to split its task comes back to the orchestrator,
-which cuts and starts the new assignments itself.
+Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
+implementation, `elevated` for review/security judgment, `expert` only for an escalation after two
+failed attempts on the same task — an estimate for scope or duration, and a cap. The cap is checked
+mechanically, not from memory. Need more reasoning for one assignment without raising the role's
+tier itself: name its `-high` variant instead (same tier, one reasoning step further — see
+`docs/ai/config.md` § Roles for a permanent override). Read large files in excerpts rather than in
+full. Only the orchestrator starts workers; a worker's proposal to split its task comes back to the
+orchestrator, which cuts and starts the new assignments itself.
 
 ## `R-cost-wait` — Let a started worker finish
 

@@ -38,6 +38,7 @@ from typing import Optional, TypedDict
 import actlib
 import manifest
 import rules
+import tiers
 
 
 # ---------------------------------------------------------------------------
@@ -568,11 +569,14 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     with no bridge yet has nothing written. Only "claude-code" has a bridge format today; a tool
     without one is simply never a target.
 
-    Unlike copy_targets(), the result is never replaced once written (see step_materialize below
-    and update.py's step 6): init creates it once, update only adds bridges for roles new since
-    the last run, and an existing bridge is the project's own from that point on — R-role-worker
-    forbids `Agent`/`Task` in a role's own `tools` frontmatter, so nothing here ever needs to
-    change that after the fact."""
+    Unlike copy_targets(), the destination file is never replaced once written (see
+    step_materialize below and update.py's step 6): init creates it once, update only adds bridges
+    for roles new since the last run, and an existing bridge is the project's own from that point
+    on — R-role-worker forbids `Agent`/`Task` in a role's own `tools` frontmatter, so the body
+    below the frontmatter never needs to change after the fact. The one exception, handled by
+    write_agent_bridge_file() below rather than here, is the `model`/`effort` frontmatter pair
+    itself: re-derived from `.act/tiers.json`/`docs/ai/config.md` § Roles on every `update` and at
+    every session start (13-model-tiers.md § "Pflege der Zuordnungstabelle")."""
     agents_dir = root / ".act" / "agents"
     bridges_dir = root / ".act" / "bridges" / "agents"
     targets: dict[str, Path] = {}
@@ -585,6 +589,112 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
         if bridge_src.is_file():
             targets[f".claude/agents/{role_path.name}"] = bridge_src
     return targets
+
+
+def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+    """Every applicable role's "-high" variant destination -> the same .act/bridges/agents/
+    source agent_bridge_targets() uses for its base file — the runtime choice of "give this one
+    assignment more reasoning" without ever writing a real model ID into an assignment
+    (13-model-tiers.md § "Entscheidungen", `Q71`). Only a role whose template bridge declares a
+    `tier`/`reasoning` pair gets one (a pre-13-model-tiers or hand-authored bridge with a fixed
+    `model:` already has nothing to bump); skipped outright for `tier: expert` or a `reasoning`
+    already at the top of the tool's reasoning scale — one step further does not exist there."""
+    base_targets = agent_bridge_targets(root, tools)
+    if not base_targets:
+        return {}
+    tiers_data = tiers.load_tiers(root)
+    overrides = tiers.read_role_overrides(root)
+    scale = (tiers_data.get("claude-code") or {}).get("reasoning_scale") or []
+    targets: dict[str, Path] = {}
+    for dest_rel, bridge_src in base_targets.items():
+        role = Path(dest_rel).stem
+        tmpl_fields, _, _ = tiers.split_frontmatter(bridge_src.read_text(encoding="utf-8"))
+        if "tier" not in tmpl_fields:
+            continue
+        template_tier = tmpl_fields.get("tier", "")
+        template_reasoning = tmpl_fields.get("reasoning", "")
+        # the *effective* tier/reasoning (a project's own override wins, same as
+        # effective_model_effort() would apply) decides whether a further bump makes sense — a
+        # role overridden to reasoning "max" needs no "-high" file even if the template's own
+        # default is lower, and a fixed-model override has no "tier" to be "expert" about.
+        override = overrides.get(role, {})
+        effective_tier = override.get("tier", template_tier)
+        effective_reasoning = override.get("reasoning", template_reasoning)
+        if "model" not in override and effective_tier == "expert":
+            continue
+        if scale and effective_reasoning == scale[-1]:
+            continue
+        targets[f".claude/agents/{role}-high.md"] = bridge_src
+    return targets
+
+
+def _write_new_file(dest: Path, text: str) -> None:
+    """Write a brand-new file with `\\n` line endings, regardless of platform default -- unlike
+    `Path.write_text(..., newline=...)` (Python 3.10+), `open()`'s own `newline` parameter has
+    always accepted this, so this stays usable on this project's older Python floor too."""
+    with open(dest, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
+def write_agent_bridge_file(
+    role: str, bridge_src: Path, dest: Path, plan: bool, root: Path,
+    tiers_data: dict, overrides: dict[str, dict[str, str]], variant: bool,
+    notes: Optional[list[str]] = None,
+) -> tuple[str, bool]:
+    """Like _write_copy_file, but for a role bridge (base or "-high" variant): resolves the
+    .act/bridges/agents/<role>.md template's `tier`/`reasoning` frontmatter into a concrete
+    `model`/`effort` pair via tiers.py instead of copying bytes verbatim. A bridge that already
+    carries a fixed `model:` (no `tier:` field — a pre-13-model-tiers or hand-authored bridge) has
+    nothing to resolve and is copied verbatim, same as before. A variant additionally gets its
+    `name`/`description` reworded for the "-high" file and a `variant-of: <role>` frontmatter field
+    -- the one thing that later tells tiers.py's refresh (and this module's own
+    agent_bridge_variant_targets(), indirectly, via the destination already existing) that this
+    particular "...-high.md" really is a template-generated bump, not a project's own role that
+    merely happens to share the suffix. Never overwrites an existing project file, same contract as
+    every other generated file here. A freshly created file always gets `\\n` line endings,
+    regardless of platform -- see tiers.py's refresh, which instead preserves whatever a file
+    already has once one exists. `notes`, if given, collects one message (deduplicated) whenever
+    tiers.json/config.md leave `model`/`effort` unresolvable for a *reportable* reason (see
+    resolve_tier()); the pre-13-model-tiers/unresearched-tool cases stay silent, same as before.
+    Returns (message, created)."""
+    label = _relative_label(dest, root)
+    if dest.is_file():
+        return f"{label}: already present, left unchanged", False
+    if plan:
+        return f"{label}: would create", False
+    bridge_text = bridge_src.read_text(encoding="utf-8")
+    tmpl_fields, _, _ = tiers.split_frontmatter(bridge_text)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if "tier" not in tmpl_fields:
+        _write_new_file(dest, bridge_text)
+        return f"{label}: created", True
+    template_tier = tmpl_fields.get("tier", "")
+    template_reasoning = tmpl_fields.get("reasoning", "")
+    model, effort, problem, eff_tier, eff_reasoning = tiers.effective_model_effort(
+        root, role, template_tier, template_reasoning, tiers_data, overrides,
+        tool="claude-code", bump_variant=variant,
+    )
+    if model is None:
+        _write_new_file(dest, bridge_text)
+        if problem and notes is not None:
+            message = tiers.describe_unresolved_tier(role, "claude-code", eff_tier, eff_reasoning, problem)
+            if message not in notes:
+                notes.append(message)
+        return f"{label}: created (tier/reasoning left unresolved)", True
+    text = tiers.render_generated_bridge(bridge_text, model, effort)
+    if variant:
+        fields, body, order = tiers.split_frontmatter(text)
+        if "name" in fields:
+            fields["name"] = f"{role}-high"
+        if "description" in fields:
+            fields["description"] = f"Same as {role}, one reasoning step higher - use only when named explicitly."
+        fields["variant-of"] = role
+        if "variant-of" not in order:
+            insert_at = order.index("name") + 1 if "name" in order else len(order)
+            order = order[:insert_at] + ["variant-of"] + order[insert_at:]
+        text = tiers.render_frontmatter(fields, order, body)
+    _write_new_file(dest, text)
+    return f"{label}: created", True
 
 
 def _copy_source_label(root: Path, src: Path) -> str:
@@ -683,7 +793,8 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
 
 
 def step_materialize(
-    root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec]
+    root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec],
+    notes: Optional[list[str]] = None,
 ) -> tuple[list[str], dict[str, Path], list[Path], dict[str, dict]]:
     tokens = _config_tokens(cfg)
     bridges_dir = root / ".act" / "bridges"
@@ -730,12 +841,26 @@ def step_materialize(
         if not plan and dest.is_file():
             copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.sha256_file(dest)}
 
+    tiers_data = tiers.load_tiers(root)
+    overrides = tiers.read_role_overrides(root)
+
     for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
-        dest = root / dest_rel
-        message, created = _write_copy_file(src, dest, plan, root)
+        role = Path(dest_rel).stem
+        message, created = write_agent_bridge_file(
+            role, src, root / dest_rel, plan, root, tiers_data, overrides, False, notes,
+        )
         messages.append(message)
-        if created or dest.is_file():
-            touched.append(dest)
+        if created or (root / dest_rel).is_file():
+            touched.append(root / dest_rel)
+
+    for dest_rel, src in agent_bridge_variant_targets(root, cfg["tools"]).items():
+        role = Path(dest_rel).stem[: -len("-high")]
+        message, created = write_agent_bridge_file(
+            role, src, root / dest_rel, plan, root, tiers_data, overrides, True, notes,
+        )
+        messages.append(message)
+        if created or (root / dest_rel).is_file():
+            touched.append(root / dest_rel)
 
     return messages, generated, touched, copies
 
@@ -949,7 +1074,7 @@ def main(argv: list[str]) -> int:
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
-    materialize_messages, generated, touched_bridges, copies = step_materialize(root, plan, cfg, selected_bridges)
+    materialize_messages, generated, touched_bridges, copies = step_materialize(root, plan, cfg, selected_bridges, notes)
     _print_step(6, "; ".join(materialize_messages))
 
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)

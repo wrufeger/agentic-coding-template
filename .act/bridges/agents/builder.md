@@ -1,7 +1,8 @@
 ---
 name: builder
 description: Implements a bounded assignment - code, migration, tests, configuration - and returns a result plus evidence; never commits.
-model: sonnet
+tier: standard
+reasoning: medium
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 

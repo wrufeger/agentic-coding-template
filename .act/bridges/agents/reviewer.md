@@ -1,7 +1,8 @@
 ---
 name: reviewer
 description: Adversarial review before a commit — bugs, style, and task fidelity — plus ALLOW/BLOCK on a flagged safeguard call.
-model: opus
+tier: elevated
+reasoning: high
 tools: Read, Bash, Grep, Glob
 ---
 

@@ -20,7 +20,10 @@
 #                 harness convention for "block this tool call and show the assistant why".
 #   SessionStart: one or more lines on stdout — an optional block of orchestrator-only rules
 #                 (main session only, never seen by a sub-agent), then the fixed-format status
-#                 line "[act] branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]";
+#                 line "[act] branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]
+#                 [· role-bridges refreshed: <n>]"; also re-derives the model/effort frontmatter
+#                 of every existing .claude/agents/*.md role bridge (tiers.py), leaving the rest
+#                 of each file untouched;
 #                 exit 0 always — a session start must never fail the session over a mechanism
 #                 error.
 #
@@ -41,6 +44,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import actlib  # noqa: E402 (sys.path setup above must run first)
+import tiers  # noqa: E402
 
 # Force UTF-8 on stdout/stderr: on Windows, Python otherwise picks the console's legacy code
 # page (e.g. cp1252), which silently mangles the em dash in _WRITE_GUARD_MESSAGE below into a
@@ -577,6 +581,19 @@ def refresh_session(payload: dict) -> int:
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
 
+    # Role bridges (.claude/agents/*.md): only the `model`/`effort` frontmatter pair is refreshed
+    # here, never the rest of the file — see tiers.py's refresh_project_bridge_frontmatter() and
+    # 13-model-tiers.md § "Pflege der Zuordnungstabelle" for why this differs from _refresh_bridges
+    # above, which replaces a whole file or leaves it alone.
+    role_frontmatter_changed: list[str] = []
+    try:
+        role_frontmatter_changed = tiers.refresh_project_bridge_frontmatter(root, apply=(mode == "block"))
+    except Exception:
+        pass
+    if mode == "warn":
+        for dest_rel in role_frontmatter_changed:
+            print(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")
+
     rules_delivered: Optional[int] = None
     try:
         rules_delivered = _deliver_orchestrator_rules(root, config)
@@ -585,7 +602,8 @@ def refresh_session(payload: dict) -> int:
 
     inbox_part = f" · inbox: {waiting} waiting" if waiting else ""
     rules_part = f" · rules: {rules_delivered}" if rules_delivered is not None else ""
-    print(f"[act] branch={branch}{inbox_part} · board updated{rules_part}")
+    roles_part = f" · role-bridges refreshed: {len(role_frontmatter_changed)}" if mode == "block" and role_frontmatter_changed else ""
+    print(f"[act] branch={branch}{inbox_part} · board updated{rules_part}{roles_part}")
     return 0
 
 
