@@ -83,13 +83,13 @@ project root (not versioned) — to follow along live, e.g. in a second terminal
 | `feedback` | off |
 | `feedback-cadence` | weekly |
 | `feedback-scope` | a,b,c |
-| `feedback-protocol` | versioned |
 
 Voluntary feedback to the template author about the working method, never about the project.
 `feedback`: `off` \| `confirm` \| `automatic` \| `manual`. `feedback-cadence` is an upper limit:
 `manual` \| `immediate` \| `hourly` \| `daily` \| `weekly` \| `adaptive`. `feedback-scope`: `a`
-metrics, `b` rule and structure changes, `c` tool usage. `feedback-protocol`: `versioned` keeps every sent
-payload under `docs/ai/feedback/` in git as proof, `local` keeps it under `.act-local/feedback/` only. A message you write yourself
+metrics, `b` rule and structure changes, `c` tool usage. Every sent payload's full copy stays
+local (`.act-local/feedback/sent/`, gitignored) — each send also gets one line in the journal
+(date, kind, entry count, schema version, never content). A message you write yourself
 (`feedback: <text>`) always goes out, even with `off`. Details: `.act/rules/topics/feedback.md`.
 
 ## Tips

@@ -13,8 +13,10 @@
 #               Never a project name, a path, a number from the project, or a quote.
 #            2. Nothing is ever sent without consent (docs/ai/config.md § Feedback, key
 #               `feedback`) — except a hand-written message via --direct, see there.
-#            3. Every send is LOGGED: the full payload lands under docs/ai/feedback/ (versioned,
-#               default) or .act-local/feedback/sent/ (gitignored, `feedback-protocol: local`).
+#            3. Every send is LOGGED, in two places: the full payload lands under
+#               .act-local/feedback/sent/ (gitignored, never versioned — Q65b) and, additionally,
+#               a one-line journal entry (date, kind, entry count, schema version — never the
+#               content) is written to docs/ai/work/ledger/ via entries.py.
 #            4. At most as often as `feedback-cadence` allows; --force lifts that gate for a
 #               manual send (the skill act-feedback does this after showing --plan).
 #
@@ -26,7 +28,9 @@
 #              the old script's dual old/new front-matter parsing is dropped outright.
 #            - Pending entries and small bookkeeping (project id, cadence counters) live under
 #              .act-local/feedback/ (gitignored, per checkout) instead of a versioned entry file
-#              per finding — only the finished protocol of an actual send is optionally versioned.
+#              per finding — the finished protocol of an actual send lives there too now (Q65b: no
+#              versioned copy of a send's full payload at all; a one-line journal entry via
+#              entries.py is the in-repo proof instead, see _write_journal_entry()).
 #              A team therefore gets one project id per checkout, not one per project. The id is
 #              created lazily wherever a batch payload is actually built (_build_payload, so both
 #              --plan and --send cover it) and persisted right away — not only on --enable, since
@@ -54,11 +58,8 @@
 #   python .act/scripts/feedback.py --status
 #       Consent, target URL, how many entries are waiting, when last sent. Writes nothing.
 #   python .act/scripts/feedback.py --enable [--mode confirm|automatic|manual] [--repo-url <url>]
-#                                    [--protocol versioned|local]
 #       Sets `feedback` in docs/ai/config.md (default: automatic). --repo-url is only sent if it
-#       is public (https://); without it, a message carries no project identity. --protocol local
-#       makes every future send's protocol land under .act-local/feedback/sent/ (gitignored)
-#       instead of docs/ai/feedback/ (versioned, default).
+#       is public (https://); without it, a message carries no project identity.
 #   python .act/scripts/feedback.py --disable
 #       Sets `feedback` to `off`. Collecting stops; a hand-written --direct message still goes out.
 #   python .act/scripts/feedback.py --add --kind <rule|script|skill|workflow|docs|bug|mcp|link>
@@ -146,8 +147,10 @@ ORIGIN = "agentic-coding-template/1"
 STATE_DIR_REL = ".act-local/feedback"
 STATE_FILE_REL = ".act-local/feedback/state.json"
 ENTRIES_DIR_REL = ".act-local/feedback/entries"
-LOCAL_PROTOCOL_DIR_REL = ".act-local/feedback/sent"
-VERSIONED_PROTOCOL_DIR_REL = "docs/ai/feedback"
+# Q65b: the full payload of every send stays local (gitignored) — never versioned, no choice to
+# make. The proof for a stranger reading the project's own history is the one-line journal entry
+# _write_journal_entry() adds to docs/ai/work/ledger/, not this file.
+PROTOCOL_DIR_REL = ".act-local/feedback/sent"
 
 MODE_VALUES = ("off", "confirm", "automatic", "manual")
 # Minimum gap per cadence, in hours (None: no fixed interval — needs --force). Same table as
@@ -232,12 +235,8 @@ def _scope(config: dict[str, str]) -> set[str]:
     return {t.strip().lower() for t in raw.split(",") if t.strip().lower() in {"a", "b", "c"}}
 
 
-def _protocol_local(config: dict[str, str]) -> bool:
-    return (config.get("feedback-protocol") or "versioned").strip().lower() == "local"
-
-
-def _protocol_dir(root: Path, config: dict[str, str]) -> Path:
-    return root / (LOCAL_PROTOCOL_DIR_REL if _protocol_local(config) else VERSIONED_PROTOCOL_DIR_REL)
+def _protocol_dir(root: Path) -> Path:
+    return root / PROTOCOL_DIR_REL
 
 
 _GITHUB_SOURCE_RE = re.compile(
@@ -613,14 +612,27 @@ def _post(endpoint: str, payload: dict) -> tuple[Optional[int], Optional[str]]:
         return None, f"unreachable ({exc})."
 
 
-def _write_protocol(root: Path, config: dict[str, str], payload: dict, endpoint: str) -> Path:
-    directory = _protocol_dir(root, config)
+def _write_protocol(root: Path, payload: dict, endpoint: str) -> Path:
+    directory = _protocol_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
     path = _free_path(directory, time.strftime("%Y-%m-%d_%H%M%S"), ".json")
     path.write_text(json.dumps(
         {"sent_to": endpoint, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "payload": payload},
         indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
+
+def _write_journal_entry(root: Path, title: str) -> None:
+    """One journal entry per successful send (docs/ai/work/ledger/, via entries.py's own `new`) —
+    date, kind (batch/direct), entry count and schema version only, in `title`; NEVER the sent
+    content or an entry's own title (Q65b — the local protocol under .act-local/feedback/sent/ is
+    the full record; this is only the project's own note that a send happened). A failure here is
+    reported on stderr but never turns an already-successful send into a failure."""
+    try:
+        import entries
+        entries.cmd_new(root, "ledger", [title])
+    except Exception as exc:  # noqa: BLE001 - a journal-entry failure must never fail the send
+        print(f"feedback: could not write journal entry ({exc})", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -635,10 +647,10 @@ def cmd_status(root: Path) -> int:
     print(f"target:     {_endpoint()}")
     print(f"project id: {state.get('project_id') or '- (created on --enable)'}")
     print(f"waiting:    {len(_read_entries(root))} entries ({ENTRIES_DIR_REL}/)")
-    protocol_dir = _protocol_dir(root, config)
+    protocol_dir = _protocol_dir(root)
     sent = list(protocol_dir.glob("*.json")) if protocol_dir.is_dir() else []
-    where = "local, kept out of git" if _protocol_local(config) else "versioned (visible in the diff)"
-    print(f"protocol:   {len(sent)} send(s) ({protocol_dir.relative_to(root).as_posix()}/) - {where}")
+    print(f"protocol:   {len(sent)} send(s) ({protocol_dir.relative_to(root).as_posix()}/) - "
+          f"local, kept out of git")
     print(f"last sent:  {state.get('last_sent') or 'never'}")
     if state.get("repo_url"):
         print(f"repo url:   {state['repo_url']}")
@@ -648,14 +660,10 @@ def cmd_status(root: Path) -> int:
     return 0
 
 
-def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str],
-               protocol: Optional[str]) -> int:
+def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str]) -> int:
     mode = (mode or "automatic").strip().lower()
     if mode not in MODE_VALUES:
         print(f"error: --mode must be one of {', '.join(MODE_VALUES)}.", file=sys.stderr)
-        return 2
-    if protocol is not None and protocol not in ("versioned", "local"):
-        print("error: --protocol must be versioned or local.", file=sys.stderr)
         return 2
     if not _set_config_value(root, "feedback", mode):
         print("error: row 'feedback' not found in docs/ai/config.md — set it there by hand.",
@@ -680,15 +688,10 @@ def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str],
             return 2
         state["repo_url"] = repo_url
     _write_state(root, state)
-    if protocol is not None:
-        _set_config_value(root, "feedback-protocol", protocol)
     print(f"docs/ai/config.md: feedback = {mode}   (cadence: {_cadence(actlib.read_config())})")
-    if protocol is not None:
-        print(f"protocol: {protocol}")
     if mode != "off":
-        where = "local, kept out of git" if _protocol_local(actlib.read_config()) else "versioned"
         print(f"target: {_endpoint()} - protocol of every send under "
-              f"{_protocol_dir(root, actlib.read_config()).relative_to(root).as_posix()}/ ({where})")
+              f"{_protocol_dir(root).relative_to(root).as_posix()}/ (local, kept out of git)")
     return 0
 
 
@@ -870,7 +873,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
             sent_so_far = f" ({len(protocol_paths)} of {len(entry_chunks)} chunk(s) already sent)" if protocol_paths else ""
             print(f"aborted: {error}{sent_so_far} The remaining outbox is kept.", file=sys.stderr)
             return 2
-        protocol_paths.append(_write_protocol(root, config, chunk_payload, endpoint))
+        protocol_paths.append(_write_protocol(root, chunk_payload, endpoint))
 
     state["last_sent"] = time.strftime("%Y-%m-%d %H:%M")
     state["reminders_without_reaction"] = 0
@@ -879,6 +882,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
     state.pop("last_reminder", None)
     _write_state(root, state)
     _clear_outbox(root)
+    _write_journal_entry(root, f"Feedback sent: batch ({len(entries)} entries, schema {SCHEMA_BATCH})")
     protocol_list = ", ".join(p.relative_to(root).as_posix() for p in protocol_paths)
     print(f"feedback sent ({len(entry_chunks)} send(s), {len(entries)} entries). "
           f"Protocol: {protocol_list}.")
@@ -940,7 +944,8 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
         print(f"aborted: {error}", file=sys.stderr)
         return 2
 
-    protocol_path = _write_protocol(root, config, payload, endpoint)
+    protocol_path = _write_protocol(root, payload, endpoint)
+    _write_journal_entry(root, f"Feedback sent: direct message (schema {SCHEMA_DIRECT})")
     print(f"message sent (HTTP {code}). Protocol: {protocol_path.relative_to(root).as_posix()}.")
     return 0
 
@@ -1019,8 +1024,7 @@ def cmd_postpone(root: Path, days: Optional[int]) -> int:
 
 def cmd_clear(root: Path) -> int:
     """Discards every waiting entry, without sending. What is already in a protocol under
-    docs/ai/feedback/ or .act-local/feedback/sent/ stays there — that is the proof and is never
-    cleared here."""
+    .act-local/feedback/sent/ stays there — that is the proof and is never cleared here."""
     count = len(_read_entries(root))
     _clear_outbox(root)
     print(f"outbox cleared ({count} entr{'y' if count == 1 else 'ies'} discarded). "
@@ -1110,8 +1114,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text", default=None, help="with --add: two to six sentences")
     parser.add_argument("--url", default=None, help="with --add --kind link: the public address")
     parser.add_argument("--repo-url", default=None, help="with --enable: public repo URL (optional)")
-    parser.add_argument("--protocol", choices=("versioned", "local"), default=None,
-                         help="with --enable: version the send protocol (default) or keep it local")
     parser.add_argument("--mode", choices=MODE_VALUES, default=None,
                          help="with --enable: off, confirm, automatic (default), manual")
     parser.add_argument("--force", action="store_true",
@@ -1128,7 +1130,7 @@ def main(argv: list[str]) -> int:
     if args.status:
         return cmd_status(root)
     if args.enable:
-        return cmd_enable(root, args.repo_url, args.mode, args.protocol)
+        return cmd_enable(root, args.repo_url, args.mode)
     if args.disable:
         return cmd_disable(root)
     if args.add:

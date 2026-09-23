@@ -129,7 +129,7 @@ Call: skill `act-feedback` (`--status`/`--due` alone are direct)
 usage: feedback.py [-h] [--status | --enable | --disable | --add | --plan | --send |
                    --direct TEXT | --due | --postpone DAYS | --clear]
                    [--kind {rule,script,skill,workflow,docs,bug,mcp,link}] [--title TITLE]
-                   [--text TEXT] [--url URL] [--repo-url REPO_URL] [--protocol {versioned,local}]
+                   [--text TEXT] [--url URL] [--repo-url REPO_URL]
                    [--mode {off,confirm,automatic,manual}] [--force] [--yes]
 
 Voluntary feedback to the template author - never without consent, never unseen.
@@ -152,8 +152,6 @@ options:
   --text TEXT           with --add: two to six sentences
   --url URL             with --add --kind link: the public address
   --repo-url REPO_URL   with --enable: public repo URL (optional)
-  --protocol {versioned,local}
-                        with --enable: version the send protocol (default) or keep it local
   --mode {off,confirm,automatic,manual}
                         with --enable: off, confirm, automatic (default), manual
   --force               with --send: lift the cadence gate (not the consent gate)

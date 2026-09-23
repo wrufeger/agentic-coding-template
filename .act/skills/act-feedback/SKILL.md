@@ -11,8 +11,8 @@ a project fact. The test for every entry: would this help someone who will never
 Mechanism: `.act/scripts/feedback.py` (`--status`, `--enable`/`--disable`, `--add`, `--plan`,
 `--send`, `--direct`, `--due`, `--postpone <days>`, `--clear`), privacy checks in
 `.act/scripts/feedback_privacy.py`. Full policy, including the
-`feedback`/`feedback-cadence`/`feedback-scope`/`feedback-protocol` keys and the immediate-trigger
-rule for a template bug: `.act/rules/topics/feedback.md`.
+`feedback`/`feedback-cadence`/`feedback-scope` keys and the immediate-trigger rule for a template
+bug: `.act/rules/topics/feedback.md`.
 
 ## Two paths — do not conflate them
 
