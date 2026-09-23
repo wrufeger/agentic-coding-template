@@ -72,7 +72,7 @@ import re
 import actlib
 import usage
 
-from .common import _SHELL_TOOL_NAMES, _WORKER_TOOL_NAMES
+from .common import _SHELL_TOOL_NAMES, _WORKER_TOOL_NAMES, _is_harness_message
 
 __all__ = [
     "_TIER_RE", "_SCRIPT_CALL_RE", "_CHECKLIST_PATH_RE", "_SLASH_COMMAND_TOKEN_RE",
@@ -221,6 +221,12 @@ def _observe_pre_tool_use(root, payload: dict) -> None:
 def _observe_user_prompt(root, payload: dict) -> None:
     prompt = payload.get("prompt")
     if not isinstance(prompt, str):
+        return
+    if _is_harness_message(prompt):
+        # A worker's report or a task-finished notice never starts with "/" anyway (it opens with
+        # "<...", T44 live probe), so _slash_command already falls through to None below without
+        # this — kept explicit rather than relying on that shape, the same defense-in-depth
+        # checks.event_log/checks.tips apply for the same payload field (2026-09-23).
         return
     command = _slash_command(prompt)
     if command:

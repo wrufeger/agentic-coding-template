@@ -39,6 +39,29 @@
 #          PreToolUse (exit 2 + stderr, the only channel confirmed to reach the model for that
 #          event) — PostToolUse's notes are for the non-blocking half of the same checks only.
 #
+#          PostToolUseFailure runs the very same _POST_TOOL_USE_NOTES list, the same way (2026-09-
+#          23, T44 live probe): when every one of a worker's tool calls fails (e.g. every Read
+#          errors because the file does not exist), the harness only ever fires PostToolUseFailure,
+#          never PostToolUse — a worker that never gets a single successful call also never got its
+#          cap-reached hint under the old PostToolUse-only wiring, silently. Confirmed against the
+#          hook docs (code.claude.com/docs/en/hooks, fetched 2026-09-23): PostToolUseFailure's
+#          hookSpecificOutput does support additionalContext, hookEventName "PostToolUseFailure".
+#          Deliberately NOT given the same pre-import, pre-observer fast exit that PostToolUse's
+#          early block above has (see that block's own comment): that exit runs before
+#          _run_observers, which is safe for PostToolUse only because none of _OBSERVERS reacts to
+#          a plain "PostToolUse" event — but checks.event_log.observe *does* have a dedicated
+#          PostToolUseFailure branch (the "[error]" log line, every failure, any tool, worker or
+#          not) that must keep firing regardless of which tool failed. Skipping straight past that
+#          would silently drop failure logging for every tool outside _POST_TOOL_USE_TOOLS (Read,
+#          Grep, Glob, WebFetch, ...) — the opposite of what this fix is for. PostToolUseFailure
+#          therefore always goes through the normal event path (imports, observers, then notes);
+#          only the notes themselves stay as cheap as PostToolUse's (each note_<name> already
+#          returns None fast for a call it does not care about, see worker_cap.note_worker_cap et
+#          al.). .act/bridges/settings.hooks.json's PostToolUseFailure entry was `async: true`
+#          (needed only for the event-log write, which never needs to reach the model) — switched
+#          to synchronous here so the JSON this now also prints is reliably delivered, one hook
+#          entry doing both jobs rather than a second one added alongside it.
+#
 #          The PreToolUse hook fires for every tool (settings.hooks.json: the Edit/Write/Bash
 #          entry, the Agent|Task entry and a third entry for all other tool names, e.g.
 #          PowerShell, Read, MCP tools) — each check filters the tool names it cares about.
@@ -57,18 +80,20 @@
 #   python .act/hooks/dispatch.py <event>
 #   ... with the hook's JSON payload piped in on stdin (may be empty or malformed; handled).
 #
-#   <event> is the hook event name. "PreToolUse" runs the checks, "PostToolUse" runs the notes,
-#   "SessionStart" the session handler; every event (these three and e.g. SubagentStart,
-#   SubagentStop, UserPromptSubmit, PostToolUseFailure, Notification, SessionEnd) first goes to
-#   the observers. Anything else exits 0 — an unknown event must never break the caller's hook
-#   chain.
+#   <event> is the hook event name. "PreToolUse" runs the checks, "PostToolUse" and
+#   "PostToolUseFailure" both run the notes, "SessionStart" the session handler; every event
+#   (these four and e.g. SubagentStart, SubagentStop, UserPromptSubmit, Notification, SessionEnd)
+#   first goes to the observers. Anything else exits 0 — an unknown event must never break the
+#   caller's hook chain.
 #
 # Output format:
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
 #                 harness convention for "block this tool call and show the assistant why".
-#   PostToolUse:  exit 0 always (notes never block); if at least one note module returned text,
-#                 one line on stdout: {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-#                 "additionalContext": "<note>\n<note>..."}} — multiple notes joined with "\n".
+#   PostToolUse / PostToolUseFailure: exit 0 always (notes never block); if at least one note
+#                 module returned text, one line on stdout: {"hookSpecificOutput": {"hookEventName":
+#                 "PostToolUse"|"PostToolUseFailure", "additionalContext": "<note>\n<note>..."}} —
+#                 multiple notes joined with "\n", hookEventName matching whichever of the two
+#                 events this run is for.
 #                 Nothing printed at all when no note module had anything to say.
 #   SessionStart: one or more lines on stdout — an optional block of orchestrator-only rules
 #                 (main session only, never seen by a sub-agent), zero or more "[act] note: ..."
@@ -135,9 +160,15 @@ _POST_TOOL_USE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "P
 _early_payload = None
 if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
     try:
-        _raw = sys.stdin.read()
+        # Read raw bytes and decode as UTF-8 explicitly — sys.stdin.read() picks the console's
+        # legacy code page on Windows (e.g. cp1252), which silently mangles non-ASCII bytes in
+        # the payload (a prompt or path with an umlaut) before json.loads ever sees them (live
+        # probe T44, 2026-09-23: "wörtlich" arrived as "wÃ¶rtlich"). errors="replace" keeps a
+        # genuinely undecodable byte from crashing the hook — same "never grounds to crash"
+        # stance as the except clause below.
+        _raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         _early_payload = json.loads(_raw) if _raw.strip() else {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, AttributeError):
         _early_payload = {}
     if not isinstance(_early_payload, dict):
         _early_payload = {}
@@ -204,10 +235,11 @@ _PRE_TOOL_USE_CHECKS = (
     ("encoding_hint", "check_encoding_hint"),             # non-UTF-8 target, note only (R-code-encoding)
 )
 
-# PostToolUse notes, all of them run every time (no "first wins" — unlike _PRE_TOOL_USE_CHECKS,
-# these never block, so there is nothing to short-circuit). Each entry is (module under checks/,
-# function name); signature note_<name>(payload: dict) -> str | None. Same skip-if-missing rule as
-# _PRE_TOOL_USE_CHECKS. See the header comment above for the full contract.
+# PostToolUse / PostToolUseFailure notes, all of them run every time for either event (no "first
+# wins" — unlike _PRE_TOOL_USE_CHECKS, these never block, so there is nothing to short-circuit).
+# Each entry is (module under checks/, function name); signature note_<name>(payload: dict) -> str
+# | None. Same skip-if-missing rule as _PRE_TOOL_USE_CHECKS. See the header comment above for the
+# full contract, and for why PostToolUseFailure shares this exact list instead of its own.
 _POST_TOOL_USE_NOTES = (
     ("worker_cap", "note_worker_cap"),        # cap-reached / cap-exceeded hints (R-cost-delegate)
     ("encoding_hint", "note_encoding_hint"),  # `warn` mode's one-time non-UTF-8 note (R-code-encoding)
@@ -316,6 +348,21 @@ def _run_post_tool_use_notes(payload: dict) -> list[str]:
     return notes
 
 
+def _emit_post_tool_use_notes(event: str, payload: dict) -> None:
+    """Shared by the "PostToolUse" and "PostToolUseFailure" branches of main(): run
+    _POST_TOOL_USE_NOTES and, only if at least one note came back, print the single
+    hookSpecificOutput JSON object both events use, with hookEventName set to whichever of the two
+    this call is for (see this module's header, "Output format")."""
+    notes = _run_post_tool_use_notes(payload)
+    if notes:
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": event,
+                "additionalContext": "\n".join(notes),
+            }
+        }))
+
+
 def main(argv: list[str]) -> int:
     # "_update-check-worker" is the one exception to the "exactly one arg" harness contract
     # below: it is never a harness hook event, only what checks.session._spawn_update_check_
@@ -333,15 +380,8 @@ def main(argv: list[str]) -> int:
 
     if event == "PreToolUse":
         return _run_checks(payload)
-    if event == "PostToolUse":
-        notes = _run_post_tool_use_notes(payload)
-        if notes:
-            print(json.dumps({
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUse",
-                    "additionalContext": "\n".join(notes),
-                }
-            }))
+    if event in ("PostToolUse", "PostToolUseFailure"):
+        _emit_post_tool_use_notes(event, payload)
         return 0  # notes never block
     if event == "SessionStart":
         return refresh_session(payload)

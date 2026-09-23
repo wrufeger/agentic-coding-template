@@ -35,10 +35,45 @@ from typing import Optional
 
 import log
 
+from .common import _is_harness_message
+
 __all__ = [
     "_strip_plugin_prefix", "_clean_agent_type", "_first_str", "_short_arg_for_tool",
-    "_resolve_label", "observe",
+    "_resolve_label", "_TASK_NOTIFICATION_STATUS_RE", "_TASK_NOTIFICATION_SUMMARY_RE",
+    "_harness_message_summary", "observe",
 ]
+
+# <task-notification>'s own child elements (see checks.common._HARNESS_MESSAGE_PREFIXES's
+# docstring for a real captured sample) — DOTALL because <summary> can in principle wrap, though
+# every sample seen so far kept it on one line.
+_TASK_NOTIFICATION_STATUS_RE = re.compile(r"<status>(.*?)</status>", re.DOTALL)
+_TASK_NOTIFICATION_SUMMARY_RE = re.compile(r"<summary>(.*?)</summary>", re.DOTALL)
+_OPENING_TAG_RE = re.compile(r"^<([a-zA-Z-]+)")
+
+
+def _harness_message_summary(prompt: str) -> str:
+    """The text logged for a harness-fed UserPromptSubmit (see checks.common._is_harness_message)
+    instead of the raw prompt — write_line()/clean_text() still normalize whitespace and cut to
+    the usual 200-char budget on top of this, so nothing here needs to enforce that itself.
+
+    <task-notification>'s own body is a worker's entire final report, repeated in full nowhere
+    here on purpose: that text already gets its own [end] line the moment the same worker's
+    SubagentStop fires (this module's own SubagentStop branch) — logging it a second time, cut off
+    mid-sentence at 200 characters, would just be noise. Only the two child elements that carry the
+    outcome without the body — <status> and <summary> — are kept. Every other harness tag
+    (agent-message, cross-session-message, system-reminder) keeps its full text, tagged with its
+    own element name, same as any other logged text."""
+    stripped = prompt.lstrip()
+    if stripped.startswith("<task-notification"):
+        status_match = _TASK_NOTIFICATION_STATUS_RE.search(stripped)
+        summary_match = _TASK_NOTIFICATION_SUMMARY_RE.search(stripped)
+        parts = [
+            m.group(1).strip() for m in (status_match, summary_match) if m and m.group(1).strip()
+        ]
+        return "task-notification: " + " · ".join(parts) if parts else "task-notification"
+    tag_match = _OPENING_TAG_RE.match(stripped)
+    tag = tag_match.group(1) if tag_match else "harness-message"
+    return f"{tag}: {stripped}"
 
 
 def _strip_plugin_prefix(name) -> str:
@@ -112,7 +147,15 @@ def observe(event: str, payload: dict) -> None:
     now = time.time()
 
     if event == "UserPromptSubmit":
-        log.write_line(cfg, "INFO", "user", "prompt", payload.get("prompt", ""))
+        prompt = payload.get("prompt", "")
+        if _is_harness_message(prompt):
+            # A worker's report, a task-finished notice, or similar — fed in by the harness
+            # itself, not typed by Wolfgang (checks.common._is_harness_message). Logged as a
+            # system result, never as "[user] [prompt]" — see _harness_message_summary for what
+            # each tag keeps.
+            log.write_line(cfg, "INFO", "system", "result", _harness_message_summary(prompt))
+            return
+        log.write_line(cfg, "INFO", "user", "prompt", prompt)
         return
 
     if event == "PreToolUse":

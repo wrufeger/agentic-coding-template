@@ -83,7 +83,7 @@ import sys
 
 import actlib
 
-from .common import _check_mode, _is_worker
+from .common import _check_mode, _is_harness_message, _is_worker
 from .worker_cap import _atomic_write_json
 from .write_scope import _SAFE_ID_RE, _entry_is_fresh, _read_json_object
 
@@ -215,8 +215,16 @@ def observe(event: str, payload: dict) -> None:
     harmless, since _STREAK_TTL_SECONDS still bounds a stale streak's life on its own. Observers
     never block (dispatch.py already swallows any exception here) and never raise past this
     function on their own account; every failure path below is a silent no-op for the same
-    reason every other best-effort write in this module is."""
-    if event != "UserPromptSubmit":
+    reason every other best-effort write in this module is.
+
+    A harness-fed UserPromptSubmit (a worker's report, a task-finished notice — see
+    checks.common._is_harness_message, T44 live probe 2026-09-23) is deliberately NOT treated as
+    "something else happened": it is not the orchestrator doing real work in between two polls,
+    just the harness relaying a message the orchestrator did not ask for and may not even act on
+    yet — resetting the streak on it would let a poll/poll/(worker message)/poll sequence dodge
+    the second-in-a-row denial for free. Only a prompt Wolfgang actually typed resets it early;
+    everything else still ages out via _STREAK_TTL_SECONDS on its own."""
+    if event != "UserPromptSubmit" or _is_harness_message(payload.get("prompt")):
         return
     try:
         root = actlib.repo_root()

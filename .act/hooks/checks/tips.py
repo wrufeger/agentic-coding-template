@@ -104,6 +104,8 @@ from typing import Optional
 
 import actlib
 
+from .common import _is_harness_message
+
 __all__ = [
     "session_line", "observe", "is_feedback_due",
     "_eval_when", "_is_older_than", "_load_tips", "_read_reminders",
@@ -591,6 +593,11 @@ def observe(event: str, payload: dict) -> None:
     UserPromptSubmit observer (event_log, usage, status_poll) prints nothing, so this stays the
     only stdout output for that event — the JSON below is not competing with anything else."""
     if event != "UserPromptSubmit" or payload.get("agent_id"):
+        return
+    if _is_harness_message(payload.get("prompt")):
+        # A worker's report or a task-finished notice, not a real user turn (T44 live probe,
+        # 2026-09-23, checks.common._is_harness_message) — a minute/hour reminder nudging Wolfgang
+        # about something makes no sense attached to text he never typed.
         return
     try:
         root = actlib.repo_root()

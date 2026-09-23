@@ -16,16 +16,24 @@ from pathlib import Path
 __all__ = [
     "_read_payload", "_check_mode", "_TOOL_PATH_FIELDS", "_WORKER_TOOL_NAMES",
     "_SHELL_TOOL_NAMES", "_shell_command", "_is_worker",
+    "_HARNESS_MESSAGE_PREFIXES", "_is_harness_message",
     "_load_pending_notes", "_queue_pending_note", "_pop_pending_notes",
 ]
 
 
 def _read_payload() -> dict:
     """Read the hook's JSON payload from stdin. Returns {} for empty/malformed input — a
-    payload we cannot parse is never grounds to crash, only to fall back to defaults."""
+    payload we cannot parse is never grounds to crash, only to fall back to defaults.
+
+    Reads raw bytes and decodes as UTF-8 explicitly, mirroring dispatch.py's own early
+    PostToolUse read — sys.stdin.read() alone picks the console's legacy code page on Windows
+    (e.g. cp1252), which silently mangles non-ASCII bytes in the payload before json.loads ever
+    sees them (live probe T44, 2026-09-23: a prompt's "wörtlich" arrived as "wÃ¶rtlich" in
+    ai.log, and a project path with an umlaut made the .act/ write-guard compare against the
+    wrong path). errors="replace" keeps a genuinely undecodable byte from crashing the hook."""
     try:
-        raw = sys.stdin.read()
-    except (OSError, ValueError):
+        raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    except (OSError, ValueError, AttributeError):
         return {}
     if not raw.strip():
         return {}
@@ -80,6 +88,30 @@ def _is_worker(payload: dict) -> bool:
     """True when the call comes from a sub-agent: the harness adds agent_id (and agent_type) to a
     worker's hook payloads and to none of the main session's (live probe T30)."""
     return bool(payload.get("agent_id"))
+
+
+# UserPromptSubmit fires the same way for text Wolfgang actually typed and for several things the
+# harness itself feeds into the conversation — a worker's SubagentHandback relayed to its caller
+# ("<agent-message from=\"...\">...</agent-message>"), a finished-task notice
+# ("<task-notification>...</task-notification>"), a message from another session, or a system
+# reminder block — confirmed against real payloads, T44 live probe (2026-09-23,
+# D:/dev/rufeger/act-live-probe3/.act-local/probe/payloads.jsonl): both agent-message and
+# task-notification observed verbatim, opening the prompt right after leading whitespace, no other
+# text before the tag. Neither is something a user "typed" (usage counting, the [user][prompt] log
+# line, and a reminder/tip nudge all assume that), so every consumer of payload.prompt on
+# UserPromptSubmit checks this first. cross-session-message and system-reminder share the same
+# wrapper shape by the harness's own naming convention but were not present in the captured
+# session; included defensively, at no cost to the confirmed two.
+_HARNESS_MESSAGE_PREFIXES = (
+    "<agent-message", "<task-notification", "<cross-session-message", "<system-reminder",
+)
+
+
+def _is_harness_message(prompt: object) -> bool:
+    """True when `prompt` (UserPromptSubmit's payload["prompt"]) is harness-fed rather than typed
+    by Wolfgang — see the prefixes above. A non-string prompt (missing/malformed payload) is never
+    a harness message either, just not a match."""
+    return isinstance(prompt, str) and prompt.lstrip().startswith(_HARNESS_MESSAGE_PREFIXES)
 
 
 # --- PostToolUse note queues -------------------------------------------------------------------
