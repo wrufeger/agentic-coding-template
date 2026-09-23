@@ -8,12 +8,18 @@ summary: tier, scope/duration estimate, and a mechanically checked cap
 
 Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
 implementation, `elevated` for review/security judgment, `expert` only for an escalation after two
-failed attempts on the same task — an estimate for scope or duration, and a cap. The cap is checked
-mechanically, not from memory. Need more reasoning for one assignment without raising the role's
-tier itself: name its `-high` variant instead (same tier, one reasoning step further — see
-`docs/ai/config.md` § Roles for a permanent override). Read large files in excerpts rather than in
-full. Only the orchestrator starts workers; a worker's proposal to split its task comes back to the
-orchestrator, which cuts and starts the new assignments itself.
+failed attempts on the same task — an estimate for scope or duration, and a cap. Name the cap as its
+own `Cap: <n>`, checked mechanically, not from memory (`worker-cap`, `docs/ai/config.md` § Checks).
+`Cap:` is recognized either on its own line or right after a `·`/`|`/`;`/`,` further into a line, so
+a compact header works too, e.g. `Tier: standard · Schätzung: 45–65 tool calls, ~30 minutes · Cap:
+95.` Leaving the line out falls back to the tier's own default: `light` 10, `standard` 40, `elevated`
+60, `high`/`expert` 80; with neither a `Cap:` nor a `Tier:` line, `standard`. The worker gets one
+note on reaching the cap ("cap reached — deliver your current state now") and is refused from 1.5×
+the cap onward — wrap up and report rather than push past it. Need more reasoning for one assignment
+without raising the role's tier itself: name its `-high` variant instead (same tier, one reasoning
+step further — see `docs/ai/config.md` § Roles for a permanent override). Read large files in
+excerpts rather than in full. Only the orchestrator starts workers; a worker's proposal to split its
+task comes back to the orchestrator, which cuts and starts the new assignments itself.
 
 Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
 patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`
@@ -33,7 +39,8 @@ A worker reports back on its own when it is done; polling its status repeatedly 
 up — it costs tokens on every call and clutters the chat (trigger: over forty consecutive idle
 status checks in one real case, none of them changing anything). Start the assignment, then either
 work on something independent or wait; check in only once runtime clearly exceeds the estimate
-given in the assignment — not on a hunch.
+given in the assignment — not on a hunch. Mechanically refused from the second status query in a
+row (`status-poll`, `docs/ai/config.md` § Checks) — any other tool use in between resets it.
 
 ## `R-cost-script` — Script instead of worker for recurring checks
 

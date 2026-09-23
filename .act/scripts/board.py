@@ -3,8 +3,8 @@
 #
 # Purpose: Generate the per-branch board at .act-local/board-<branch>.md — a fully derived
 #          snapshot (current branch, last commit, dirty state, recent journal entries, waiting
-#          inbox items, open tasks). Nothing here is hand-maintained; every run overwrites the
-#          file from scratch. Stdlib only.
+#          inbox items plus open questions, open tasks, backlog items). Nothing here is
+#          hand-maintained; every run overwrites the file from scratch. Stdlib only.
 #
 # Usage:
 #   python .act/scripts/board.py
@@ -41,10 +41,16 @@ LEDGER_FALLBACK = Path("docs/ai/work/ledger.md")
 LEDGER_FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)\.md$")
 INBOX_DIR = Path("docs/ai/inbox")
 TASKS_DIR = Path("docs/ai/work/tasks")
+BACKLOG_DIR = Path("docs/ai/work/backlog")
+QUESTIONS_DIR = Path("docs/ai/questions")
 FOR_RE = re.compile(r"(?im)^for:\s*(.+?)\s*$")
+STATUS_RE = re.compile(r"(?im)^status:\s*(\S+)\s*$")
+ID_RE = re.compile(r"(?im)^id:\s*(\S+)\s*$")
 
 LEDGER_LIMIT = 10
 TASKS_LIMIT = 5
+BACKLOG_LIMIT = 5
+QUESTIONS_LIMIT = 10
 
 
 # ---------------------------------------------------------------------------
@@ -114,10 +120,10 @@ def has_changes(root: Path) -> Optional[bool]:
 
 def _first_heading(path: Path) -> Optional[str]:
     """Return the text of the first Markdown heading ("# ...") in `path`, or None if there is
-    none (or the file cannot be read)."""
+    none (or the file cannot be read, or is not valid UTF-8)."""
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     for line in text.splitlines():
         stripped = line.strip()
@@ -159,7 +165,7 @@ def read_ledger_entries(root: Path, limit: int = LEDGER_LIMIT) -> Optional[list[
     if fallback.is_file():
         try:
             lines = fallback.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return []
         non_blank = [line.strip() for line in lines if line.strip()]
         return non_blank[:limit]
@@ -190,9 +196,9 @@ def read_inbox_counts(root: Path, identity: Optional[str]) -> Optional[dict[str,
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
-        match = FOR_RE.search(text)
+        match = FOR_RE.search(actlib.header_block(text))
         target = match.group(1).strip() if match else None
         if target and target.lower() == "all":
             counts["all"] += 1
@@ -204,14 +210,62 @@ def read_inbox_counts(root: Path, identity: Optional[str]) -> Optional[dict[str,
 
 
 def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]]:
-    """Return up to `limit` task titles from docs/ai/work/tasks/ (filename order — task ids are
-    expected to sort meaningfully, e.g. T01-..., T02-...), or None if the directory does not
-    exist. Title is the file's first Markdown heading, or the filename stem if there is none."""
+    """Return up to `limit` task titles from docs/ai/work/tasks/ (filename order, oldest first —
+    the date prefix already sorts them chronologically), or None if the directory does not exist.
+    Title is the file's first Markdown heading, or the filename stem if there is none."""
     tasks_dir = root / TASKS_DIR
     if not tasks_dir.is_dir():
         return None
     files = sorted(p for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md")
     return [(_first_heading(path) or path.stem) for path in files[:limit]]
+
+
+def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list[str]]:
+    """Same idea as read_task_titles(), for docs/ai/work/backlog/."""
+    backlog_dir = root / BACKLOG_DIR
+    if not backlog_dir.is_dir():
+        return None
+    files = sorted(p for p in backlog_dir.glob("*.md") if p.name.lower() != "readme.md")
+    return [(_first_heading(path) or path.stem) for path in files[:limit]]
+
+
+def read_questions(
+    root: Path, limit: int = QUESTIONS_LIMIT,
+) -> tuple[Optional[list[str]], Optional[list[str]]]:
+    """
+    Return (open, answered) — each up to `limit` "<id or filename> — <title>" strings from
+    docs/ai/questions/, newest first — or (None, None) if that directory does not exist.
+
+    An entry counts as open unless its "status:" header field reads "answered" (case-insensitive)
+    — a missing status field is treated as open too, so a question filed but not yet marked still
+    shows up. An answered question is still shown, in its own list — R-work-record-now says the
+    assistant processes it, not that it vanishes from the board. The id shown is the assigned
+    "id:" field if there is one, else the filename stem (an entry not yet integrated has no id —
+    Q65c/Q66).
+    """
+    questions_dir = root / QUESTIONS_DIR
+    if not questions_dir.is_dir():
+        return None, None
+    open_entries: list[str] = []
+    answered_entries: list[str] = []
+    for path in sorted(questions_dir.glob("*.md"), reverse=True):
+        if path.name.lower() == "readme.md":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        header = actlib.header_block(text)
+        status_match = STATUS_RE.search(header)
+        answered = bool(status_match and status_match.group(1).strip().lower() == "answered")
+        id_match = ID_RE.search(header)
+        label = id_match.group(1) if id_match else path.stem
+        title = _first_heading(path) or path.stem
+        entry = f"{label} — {title}"
+        target = answered_entries if answered else open_entries
+        if len(target) < limit:
+            target.append(entry)
+    return open_entries, answered_entries
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +278,10 @@ def render_board(
     dirty: Optional[bool],
     ledger_entries: Optional[list[str]],
     inbox_counts: Optional[dict[str, int]],
+    open_questions: Optional[list[str]],
+    answered_questions: Optional[list[str]],
     task_titles: Optional[list[str]],
+    backlog_titles: Optional[list[str]],
     generated_at: str,
 ) -> str:
     lines: list[str] = [f"# Board — {branch_label}", ""]
@@ -248,17 +305,32 @@ def render_board(
             lines.append("- (none yet)")
         lines.append("")
 
-    if inbox_counts is not None:
+    if inbox_counts is not None or open_questions is not None:
         lines.append("## Waiting")
-        lines.append(f"- For me: {inbox_counts['mine']}")
-        lines.append(f"- For everyone: {inbox_counts['all']}")
-        lines.append(f"- For others: {inbox_counts['other']}")
+        if inbox_counts is not None:
+            lines.append(f"- For me: {inbox_counts['mine']}")
+            lines.append(f"- For everyone: {inbox_counts['all']}")
+            lines.append(f"- For others: {inbox_counts['other']}")
+        if open_questions is not None:
+            lines.append(f"- Open questions: {len(open_questions)}")
+            lines.extend(f"  - {entry}" for entry in open_questions)
+        if answered_questions is not None:
+            lines.append(f"- Answered — the assistant processes these: {len(answered_questions)}")
+            lines.extend(f"  - {entry}" for entry in answered_questions)
         lines.append("")
 
     if task_titles is not None:
         lines.append("## Open tasks")
         if task_titles:
             lines.extend(f"- {title}" for title in task_titles)
+        else:
+            lines.append("- (none)")
+        lines.append("")
+
+    if backlog_titles is not None:
+        lines.append("## Backlog")
+        if backlog_titles:
+            lines.extend(f"- {title}" for title in backlog_titles)
         else:
             lines.append("- (none)")
         lines.append("")
@@ -300,11 +372,14 @@ def main(argv: list[str]) -> int:
 
     ledger_entries = read_ledger_entries(root)
     inbox_counts = read_inbox_counts(root, my_identity)
+    open_questions, answered_questions = read_questions(root)
     task_titles = read_task_titles(root)
+    backlog_titles = read_backlog_titles(root)
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     content = render_board(
-        branch_label, commit, dirty, ledger_entries, inbox_counts, task_titles, generated_at,
+        branch_label, commit, dirty, ledger_entries, inbox_counts, open_questions,
+        answered_questions, task_titles, backlog_titles, generated_at,
     )
 
     board_path = root / ".act-local" / filename
@@ -313,11 +388,14 @@ def main(argv: list[str]) -> int:
 
     ledger_count = len(ledger_entries) if ledger_entries is not None else 0
     waiting_total = sum(inbox_counts.values()) if inbox_counts is not None else 0
+    questions_count = len(open_questions) if open_questions is not None else 0
     task_count = len(task_titles) if task_titles is not None else 0
+    backlog_count = len(backlog_titles) if backlog_titles is not None else 0
     rel = board_path.relative_to(root).as_posix()
     print(
         f"board: wrote {rel} (branch={branch_label}, ledger={ledger_count}, "
-        f"waiting={waiting_total}, tasks={task_count})"
+        f"waiting={waiting_total}, questions={questions_count}, tasks={task_count}, "
+        f"backlog={backlog_count})"
     )
     return 0
 

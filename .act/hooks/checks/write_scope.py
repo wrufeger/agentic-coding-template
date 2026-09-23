@@ -1,0 +1,471 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Purpose: Check 1c — per-worker write scope (R-cost-delegate, PreToolUse).
+#
+# R-cost-delegate (.act/rules/orchestrator/30-cost.md) has the orchestrator name a `Write scope:`
+# line in every assignment — one or more comma-separated glob patterns (project-root-relative,
+# "/" as the separator; a bullet prefix and backticks around a pattern are both tolerated, see
+# _parse_write_scope), or the literal `none` for a read-only assignment. Missing the line at all
+# means "unrestricted" (no scope beyond the template's own .act/ write-guard, check 1) — a
+# project that never writes the line never sees this check do anything beyond bookkeeping.
+#
+# Binding a worker's tool call back to the scope its assignment named runs through the harness's
+# own bookkeeping (2026-09-23 live-probe, see the comment above _WORKER_TOOL_NAMES in
+# checks/nesting_guard.py for the file): the orchestrator's PreToolUse for "Agent"/"Task" carries
+# "tool_use_id" and "tool_input.prompt"; the harness then writes <transcript_path-without-
+# ".jsonl">/subagents/agent-<agent_id>.meta.json for that spawned worker, whose "toolUseId" field
+# is exactly that same tool_use_id, and agent-<agent_id>.jsonl, whose first line is the worker's
+# own initial user message (message.content == the assignment prompt verbatim). So: record the
+# scope parsed from the assignment prompt, in its own file keyed by tool_use_id (see
+# _worker_scope_file — one file per id, not a shared JSON document, so N parallel Agent/Task
+# starts never race each other into a lost update), when the orchestrator starts a worker; look
+# it up again, keyed by agent_id -> meta.json -> toolUseId, when that worker later tries to write
+# something. A second path (reading the assignment prompt straight out of the worker's own first
+# transcript line) covers a missing/unreadable meta.json. If neither works, the binding is
+# unresolved for *this* call — see _resolve_worker_scope and check_worker_write_scope's docstring
+# for what happens then (it is fail-closed only when scoping is demonstrably in use nearby, not
+# unconditionally).
+
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Optional
+
+import actlib
+
+from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode
+from .powershell_targets import _powershell_write_targets, _ps_raw_redirect_targets
+from .shell_targets import (
+    _GIT_WRITES_WORKER_SCOPE,
+    _bash_write_targets,
+    _is_absolute_target,
+    _is_dynamic_target,
+    _to_native_path,
+)
+
+__all__ = [
+    "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE",
+    "_strip_backticks", "_parse_write_scope", "_worker_scopes_dir", "_worker_scope_file",
+    "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files", "_record_worker_scope",
+    "_read_worker_scope_entry", "_recent_restricted_scope_registered", "_scope_via_meta",
+    "_scope_via_transcript", "_resolve_worker_scope", "_normalize_candidate_path",
+    "_within_scratchpad", "_matches_scope", "_write_scope_message", "check_worker_write_scope",
+]
+
+_WORKER_SCOPES_DIRNAME = "worker-scopes"
+_SCOPE_ENTRY_TTL = timedelta(hours=24)
+
+# A tool_use_id becomes an entry's filename (see _worker_scope_file), so it is validated first —
+# the harness's own ids look like "toolu_01Ab...", but nothing here may assume that without
+# checking, since the string ultimately lands in a Path().
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# "Write scope: <patterns>" — one line, read top to bottom (first match wins, same as a human
+# skimming the assignment). An optional leading "- "/"* " bullet is tolerated (assignments are
+# often written as a bulleted list), and so is Markdown bold around the key (`**Write scope:**`,
+# `**Write scope**:`, also with `__`). "none" (case-insensitive) means read-only; anything else is a
+# comma-separated pattern list, each pattern optionally wrapped in backticks (`` `src/**` ``) and/or
+# ending in "/" (read as "/**", i.e. a bare directory name means "everything under it"). A prompt
+# with no such line at all is "unrestricted", which is deliberately a different value than an
+# (impossible) empty pattern list — see _parse_write_scope.
+_SCOPE_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*]\s+)?(?:\*\*|__)?Write scope(?:\*\*|__)?:(?:\*\*|__)?\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_backticks(text: str) -> str:
+    if len(text) >= 2 and text[0] == "`" and text[-1] == "`":
+        return text[1:-1].strip()
+    return text
+
+
+def _parse_write_scope(prompt: str) -> Optional[dict]:
+    """Parse the first `Write scope: ...` line out of an assignment prompt (see _SCOPE_LINE_RE for
+    the accepted line shapes: an optional bullet, patterns optionally backtick-wrapped and/or
+    ending in "/"). Returns None if no such line is present at all ("unrestricted" — deliberately
+    distinct from a scope that names zero patterns, which cannot happen: an empty pattern list
+    falls back to None too). Otherwise {"mode": "none"} or {"mode": "patterns", "patterns": [...]}.
+    """
+    match = _SCOPE_LINE_RE.search(prompt)
+    if not match:
+        return None
+    raw = match.group(1).strip()
+    parts = [_strip_backticks(p.strip()) for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+    if len(parts) == 1 and parts[0].lower() == "none":
+        return {"mode": "none"}
+    patterns = []
+    for part in parts:
+        pattern = part.replace("\\", "/")
+        if pattern.endswith("/"):
+            pattern += "**"
+        patterns.append(pattern)
+    return {"mode": "patterns", "patterns": patterns}
+
+
+def _worker_scopes_dir(root: Path) -> Path:
+    return root / ".act-local" / _WORKER_SCOPES_DIRNAME
+
+
+def _worker_scope_file(root: Path, tool_use_id: str) -> Optional[Path]:
+    """Path for one worker's recorded scope — one file per tool_use_id, so N parallel Agent/Task
+    starts each own their own file and never race each other into a lost update the way a single
+    shared JSON file did under concurrent read-modify-write (2026-09-23 review, t26_race.py: 8
+    parallel starts lost 6 of 8 entries against the old single-file scheme). None if `tool_use_id`
+    is not a safe filename (see _SAFE_ID_RE) — such an id is simply never recorded, not written
+    somewhere unsafe."""
+    if not isinstance(tool_use_id, str) or not _SAFE_ID_RE.match(tool_use_id):
+        return None
+    return _worker_scopes_dir(root) / f"{tool_use_id}.json"
+
+
+def _read_json_object(path: Path) -> Optional[dict]:
+    """Local, minimal twin of actlib._read_json — kept in this module rather than imported since
+    that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object."""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _entry_is_fresh(entry: dict) -> bool:
+    ts = entry.get("ts")
+    try:
+        when = datetime.fromisoformat(ts) if isinstance(ts, str) else None
+    except ValueError:
+        when = None
+    return when is not None and when >= datetime.now(timezone.utc) - _SCOPE_ENTRY_TTL
+
+
+def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
+    """Delete every scope file older than _SCOPE_ENTRY_TTL, or unreadable/malformed — run
+    opportunistically on each write rather than on a schedule, so no separate cleanup process is
+    needed. `skip` is the file just written in this same call, left alone unconditionally (it
+    cannot be stale — it was just stamped with the current time)."""
+    try:
+        candidates = list(dir_path.glob("*.json"))
+    except OSError:
+        return
+    for path in candidates:
+        if path == skip:
+            continue
+        entry = _read_json_object(path)
+        if entry is None or not _entry_is_fresh(entry):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
+    """Record one Agent/Task start's write scope in its own file (see _worker_scope_file), so a
+    worker's later call can look it up via its meta.json's "toolUseId" (_scope_via_meta). Always
+    called — even for "unrestricted" — so _recent_restricted_scope_registered can tell "a start was
+    registered here and named no restriction" from "nothing has run against this check yet" (see
+    that function and check_worker_write_scope's fail-closed fallback). Best-effort: a failed write
+    here only weakens that fallback, it never blocks the orchestrator's own call.
+
+    Written via a temp file plus os.replace in the same directory, so a concurrent reader never
+    observes a partially written file — os.replace is an atomic rename on both POSIX and Windows."""
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None:
+        return  # unsafe id -- never recorded, not an error
+    entry = dict(scope)
+    entry["ts"] = datetime.now(timezone.utc).isoformat()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # suffix ".tmp", not ".json": _prune_worker_scope_files globs "*.json", and a temp file
+        # that matched that pattern was briefly visible (between creation and the os.replace
+        # below) to a *concurrent* writer's own prune pass — which could delete it before this
+        # replace runs, dropping this write silently (2026-09-23 review, t26_race.py: 8 parallel
+        # starts sometimes wrote as few as 4 of 8 files under the old ".json"-suffixed temp name).
+        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".tmp", dir=str(path.parent))
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp_name, path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        return
+    _prune_worker_scope_files(path.parent, skip=path)
+
+
+def _read_worker_scope_entry(root: Path, tool_use_id: str) -> Optional[dict]:
+    """The scope recorded for one tool_use_id, or None if it was never recorded, is unreadable, or
+    has aged past _SCOPE_ENTRY_TTL."""
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None:
+        return None
+    entry = _read_json_object(path)
+    if entry is None or not _entry_is_fresh(entry):
+        return None
+    return entry
+
+
+def _recent_restricted_scope_registered(root: Path) -> bool:
+    """True if any worker-scopes file, within _SCOPE_ENTRY_TTL, holds an entry whose mode is "none"
+    or "patterns" (i.e. an assignment actually named a restriction) — as opposed to only
+    "unrestricted" entries or none at all. Used by check_worker_write_scope's fail-closed fallback:
+    a binding failure is only treated as suspicious when scoping is demonstrably in active use
+    nearby.
+
+    A damaged file (unreadable, not JSON, no usable "mode") does not count as "restricted" — so if
+    such files are all there is, an unbound worker is allowed. Deliberate: a broken bookkeeping file
+    must not lock every worker out; it is pruned on the orchestrator's next Agent/Task start
+    (_prune_worker_scope_files), and a bound worker is unaffected either way."""
+    try:
+        candidates = list(_worker_scopes_dir(root).glob("*.json"))
+    except OSError:
+        return False
+    for path in candidates:
+        entry = _read_json_object(path)
+        if entry is None or entry.get("mode") not in ("none", "patterns"):
+            continue
+        if _entry_is_fresh(entry):
+            return True
+    return False
+
+
+def _scope_via_meta(root: Path, transcript_path: object, agent_id: str) -> Optional[dict]:
+    """Look up the scope recorded for this worker via <session>/subagents/agent-<id>.meta.json's
+    "toolUseId" (see this module's docstring). None if the meta.json is missing/unreadable, has
+    no usable "toolUseId", or nothing was ever recorded under that id."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    meta_path = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.meta.json"
+    meta = _read_json_object(meta_path)
+    if not meta:
+        return None
+    tool_use_id = meta.get("toolUseId")
+    if not isinstance(tool_use_id, str) or not tool_use_id:
+        return None
+    return _read_worker_scope_entry(root, tool_use_id)
+
+
+def _scope_via_transcript(transcript_path: object, agent_id: str) -> Optional[dict]:
+    """Fallback for _scope_via_meta: read the assignment prompt straight out of the worker's own
+    first transcript line (<session>/subagents/agent-<id>.jsonl, message.content of the first
+    record) and parse a `Write scope:` line out of it directly — no tool_use_id round-trip needed.
+    None if the file is missing/unreadable or its first line has no usable message content."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    agent_transcript = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+    if not agent_transcript.is_file():
+        return None
+    try:
+        with open(agent_transcript, "r", encoding="utf-8") as handle:
+            first_line = handle.readline()
+    except OSError:
+        return None
+    try:
+        record = json.loads(first_line)
+    except json.JSONDecodeError:
+        return None
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        return None
+    return _parse_write_scope(content) or {"mode": "unrestricted"}
+
+
+def _resolve_worker_scope(root: Path, payload: dict) -> Optional[dict]:
+    """Bind this PreToolUse call's agent_id to the scope its assignment named: meta.json first,
+    the worker's own transcript as fallback (see this module's docstring). None if neither
+    resolves — a genuinely unbound call, handled by the fail-closed fallback in the caller."""
+    agent_id = payload.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    transcript_path = payload.get("transcript_path")
+    try:
+        entry = _scope_via_meta(root, transcript_path, agent_id)
+    except Exception:
+        entry = None
+    if entry is not None:
+        return entry
+    try:
+        entry = _scope_via_transcript(transcript_path, agent_id)
+    except Exception:
+        entry = None
+    return entry
+
+
+def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
+    """Turn a write-target path (absolute Windows, forward-slash, or Git-Bash `/d/...` form, or
+    one already relative — resolved against `base`, not always `root`: a Bash target is relative to
+    the tool call's own `cwd`, tracked forward through any `cd` the command made, see
+    shell_targets._bash_write_targets) into a project-root-relative POSIX path for glob matching.
+    None if it cannot be placed under `root` at all — an out-of-root target never matches any
+    pattern (it is out of scope by definition, shell_targets' module docstring step 4), except the
+    worker's own scratchpad, which the caller checks separately before ever calling this."""
+    if not raw:
+        return None
+    candidate = _to_native_path(raw)
+    try:
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = Path(_to_native_path(base)) / candidate
+        rel = path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return rel.as_posix()
+
+
+def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
+    """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload) —
+    exempt from write-scope enforcement per shell_targets' module docstring step 4 (a worker's temp
+    files are never "the project" in the sense a Write scope line means)."""
+    try:
+        target = Path(_to_native_path(raw))
+        if not target.is_absolute():
+            return False
+        target = target.resolve()
+        target.relative_to(Path(scratchpad_dir).resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(rel_posix, pattern) for pattern in patterns)
+
+
+def _write_scope_message(target: str, scope: dict) -> str:
+    if scope.get("mode") == "none":
+        allowed = "none (read-only assignment)"
+    else:
+        allowed = ", ".join(scope.get("patterns") or []) or "none"
+    return f"[act] outside this assignment's write scope: {target} (allowed: {allowed})"
+
+
+def check_worker_write_scope(payload: dict) -> int:
+    """Check 1c: a worker may only write where its assignment's `Write scope:` line allows
+    (R-cost-delegate). See this module's docstring for the binding mechanism. Unlike check 1
+    (the template write-guard), this one is *not* unconditionally fail-closed: when a call's
+    agent_id cannot be bound to a recorded scope at all, it is denied only if a restricted scope
+    was demonstrably registered recently (_recent_restricted_scope_registered) — i.e. only when
+    scoping is in active use nearby. With no restricted scope registered anywhere recently (the
+    common case for a project that never writes a `Write scope:` line), an unresolved binding is
+    allowed, same as an explicit "unrestricted" scope would be."""
+    config = actlib.read_config()
+    mode = _check_mode(config, "worker-write-scope", default="block")
+    if mode == "off":
+        return 0
+
+    tool_name = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
+        return 0
+
+    try:
+        root = actlib.repo_root()
+    except RuntimeError:
+        return 0  # not inside a template-managed project — nothing to enforce against
+
+    if not payload.get("agent_id"):
+        # The orchestrator's own call: never write-scope-restricted itself (check 1 already
+        # guards .act/). If this is an Agent/Task start, record the scope it names for the
+        # worker it is about to spawn.
+        if tool_name in _WORKER_TOOL_NAMES:
+            tool_use_id = payload.get("tool_use_id")
+            prompt = tool_input.get("prompt")
+            if isinstance(tool_use_id, str) and tool_use_id and isinstance(prompt, str):
+                scope = _parse_write_scope(prompt) or {"mode": "unrestricted"}
+                _record_worker_scope(root, tool_use_id, scope)
+        return 0
+
+    write_targets: list[tuple[str, Optional[str]]] = []
+    if tool_name in _TOOL_PATH_FIELDS:
+        for field in _TOOL_PATH_FIELDS[tool_name]:
+            value = tool_input.get(field)
+            if isinstance(value, str) and value:
+                write_targets.append((value, str(root)))
+    elif tool_name == "Bash":
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            cwd_raw = payload.get("cwd")
+            base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+            write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+    elif tool_name == "PowerShell":
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            cwd_raw = payload.get("cwd")
+            base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+            ps_targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+            if ps_targets is None:
+                ps_targets = _ps_raw_redirect_targets(command)
+            # powershell_targets already resolves what it can to an absolute path itself (a
+            # PowerShell script has exactly one current directory at any point, unlike Bash's
+            # possibly-several); pairing every target with base=None below still resolves
+            # correctly in the loop further down — an absolute target ignores `base` entirely
+            # (_normalize_candidate_path), and a non-absolute one (unresolved/dynamic) falls into
+            # the same "base is None and not absolute -> offending" branch a Bash target with an
+            # unknown base would.
+            write_targets = [(target, None) for target in ps_targets]
+    if not write_targets:
+        return 0  # not a tool/shape this check understands as a write
+
+    scope = _resolve_worker_scope(root, payload)
+    if scope is None:
+        if not _recent_restricted_scope_registered(root):
+            return 0  # scoping is not demonstrably in use nearby — nothing to fail closed against
+        message = (
+            "[act] could not bind this worker to its assignment's write scope, and a restricted "
+            "scope was registered recently — denying as a precaution (R-cost-delegate)"
+        )
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+
+    if scope.get("mode") == "unrestricted":
+        return 0
+
+    scratchpad_dir = payload.get("scratchpad_dir")
+    for raw_target, base in write_targets:
+        dynamic = _is_dynamic_target(raw_target)
+        if (
+            not dynamic
+            and isinstance(scratchpad_dir, str)
+            and scratchpad_dir
+            and _within_scratchpad(raw_target, scratchpad_dir)
+        ):
+            continue
+        if scope.get("mode") == "none":
+            offending = raw_target
+        elif dynamic or (base is None and not _is_absolute_target(raw_target)):
+            # The shell still expands this target ($VAR, $(...), ~, {a,b}), or it is relative and
+            # the directory it resolves against is unknown (pushd, a subshell `cd`, `cd $X`, ...,
+            # see shell_targets._scan_tokens) — deny rather than check it against a guessed path.
+            offending = raw_target
+        else:
+            rel = _normalize_candidate_path(raw_target, root, base if base is not None else str(root))
+            if rel is not None and _matches_scope(rel, scope.get("patterns") or []):
+                continue
+            offending = raw_target
+        message = _write_scope_message(offending, scope)
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+    return 0

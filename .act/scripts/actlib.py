@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -249,6 +250,23 @@ def _is_separator_cell(cell: str) -> bool:
 # ---------------------------------------------------------------------------
 # Misc helpers
 # ---------------------------------------------------------------------------
+
+_HEADER_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")
+
+
+def header_block(text: str) -> str:
+    """The file's leading run of "key: value" header lines (e.g. "id:", "status:", "for:",
+    "created:") — stops at the first blank line or any line that is not itself a header field,
+    typically the first Markdown heading. Every place that reads such a field searches this
+    substring, never the whole file, so a value can never be spoofed by an example, a fenced code
+    block, or another file's header merely quoted in a journal entry (`entries.py`, `board.py`)."""
+    lines: list[str] = []
+    for line in text.splitlines():
+        if not line.strip() or not _HEADER_FIELD_RE.match(line):
+            break
+        lines.append(line)
+    return "\n".join(lines)
+
 
 def sha256_file(path: Path) -> str:
     """Return the hex SHA-256 digest of the file at `path`, read in chunks."""

@@ -25,10 +25,11 @@ summary: no interim reports, questions in the inbox, short closing summary
 Reply only when the answer is final — not while it still depends on running workers or pending
 findings, and never with one worker's report while others are still running. On a long run a
 one-line status is fine ("builder done, now review and tests"). In chat, ask only the question
-work cannot continue without; every other question goes to the inbox (`docs/ai/inbox/`) and is
-not repeated in chat. Close with a short summary — done · next · problems · to discuss — short,
-but without dropping anything that matters, and name new questions and tasks together in one
-closing line ("New questions: Q12–Q14, new task T7"). Details only on request.
+work cannot continue without; every other question goes to `docs/ai/questions/` (one file per
+question, `entries.py new question <title>`) and is not repeated in chat. Close with a short
+summary — done · next · problems · to discuss — short, but without dropping anything that
+matters, and name new questions and tasks together in one closing line ("New questions: Q12–Q14,
+new task T7"). Details only on request.
 
 ## `R-human-text` — The human's own words are untouchable
 

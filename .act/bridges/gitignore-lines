@@ -1,3 +1,5 @@
 # act tooling — local, per-machine state; never versioned
 .act-local/
 __pycache__/
+ai.log
+ai.log.*.bak

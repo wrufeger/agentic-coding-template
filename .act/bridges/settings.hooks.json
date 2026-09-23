@@ -34,6 +34,106 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "^(?!(Edit|MultiEdit|NotebookEdit|Write|Bash|Agent|Task)$).*",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py PreToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py PostToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py SubagentStart",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py SubagentStop",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py UserPromptSubmit",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py PostToolUseFailure",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py Notification",
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py SessionEnd",
+            "timeout": 10,
+            "async": true
+          }
+        ]
       }
     ]
   }

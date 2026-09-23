@@ -9,7 +9,11 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/ 05-update-and-overrides.md § "Abgleich-Skill" in the… | direct (judging the findings: skill `act-doctor`) |
+| `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and questions, one file per entry… | direct |
+| `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
+| `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
+| `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
@@ -18,10 +22,12 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see… | library |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Nine steps, always in the same order: fetch the template into a… | skill `act-update` (`--plan` alone is direct) |
+| `usage.py` | Local usage counter (T41) — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is… | direct |
 
 ## Libraries (no CLI, imported only)
 
 - `actlib.py` — Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project…
+- `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see…
 
@@ -50,6 +56,110 @@ options:
   --accept-all  accept the current template text for every stale override/off
 ```
 
+## `entries.py`
+
+Call: direct
+
+```text
+usage: entries.py [-h] {new,assign,list,check} ...
+
+Create and account for docs/ai/'s per-entry task/backlog/ledger/question files.
+
+positional arguments:
+  {new,assign,list,check}
+    new                 create a new entry file
+    assign              hand out ids still missing ('team' mode: only on the default branch)
+    list                list entries, optionally filtered by kind
+    check               report a duplicate id or an entry file that isn't valid UTF-8
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### `entries.py new`
+
+```text
+usage: entries.py new [-h] {backlog,ledger,question,task} title [title ...]
+
+positional arguments:
+  {backlog,ledger,question,task}
+                        task | backlog | ledger | question
+  title                 entry title — becomes the file's heading
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### `entries.py assign`
+
+```text
+usage: entries.py assign [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `entries.py list`
+
+```text
+usage: entries.py list [-h] [{backlog,ledger,question,task}]
+
+positional arguments:
+  {backlog,ledger,question,task}
+                        task | backlog | ledger | question
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### `entries.py check`
+
+```text
+usage: entries.py check [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## `feedback.py`
+
+Call: skill `act-feedback` (`--status`/`--due` alone are direct)
+
+```text
+usage: feedback.py [-h] [--status | --enable | --disable | --add | --plan | --send |
+                   --direct TEXT | --due | --postpone DAYS | --clear]
+                   [--kind {rule,script,skill,workflow,docs,bug,mcp,link}] [--title TITLE]
+                   [--text TEXT] [--url URL] [--repo-url REPO_URL] [--protocol {versioned,local}]
+                   [--mode {off,confirm,automatic,manual}] [--force] [--yes]
+
+Voluntary feedback to the template author - never without consent, never unseen.
+
+options:
+  -h, --help            show this help message and exit
+  --status              show the current state
+  --enable              set consent
+  --disable             revoke consent
+  --add                 store a finding in the outbox
+  --plan                show the payload, send nothing (default)
+  --send                send if consent, the privacy check and the cadence gate all allow it
+  --direct TEXT         send a hand-written message at once - works even with feedback off
+  --due                 report whether a reminder is due under the current cadence
+  --postpone DAYS       pause the due reminder for this many days and count it as a postponement
+  --clear               discard every waiting entry, send nothing
+  --kind {rule,script,skill,workflow,docs,bug,mcp,link}
+                        with --add
+  --title TITLE         with --add: one line
+  --text TEXT           with --add: two to six sentences
+  --url URL             with --add --kind link: the public address
+  --repo-url REPO_URL   with --enable: public repo URL (optional)
+  --protocol {versioned,local}
+                        with --enable: version the send protocol (default) or keep it local
+  --mode {off,confirm,automatic,manual}
+                        with --enable: off, confirm, automatic (default), manual
+  --force               with --send: lift the cadence gate (not the consent gate)
+  --yes                 with --send and mode 'confirm': actually send after showing the payload
+```
+
 ## `init.py`
 
 Call: direct
@@ -64,6 +174,33 @@ options:
   --target TARGET    create/dock in this directory instead of the current checkout
   --plan             show what would happen, change nothing
   --non-interactive  never prompt; take defaults, log open points to the inbox
+```
+
+## `log.py`
+
+Call: direct
+
+```text
+usage: log.py [-h] [--tail] [--grep PATTERN] [--lines N] [--no-color] [--status] [--reset]
+              [LEVEL] [AGENT] [TOPIC] ...
+
+Write one line to ai.log (LEVEL agent topic text...), or --tail/--status/--reset it. See
+.act/rules/topics/logging.md for when this runs and what a line looks like.
+
+positional arguments:
+  LEVEL           DEBUG|INFO|WARN|ERROR
+  AGENT           who acted, e.g. orchestrator, builder#2
+  TOPIC           one word, e.g. decision, commit, result
+  TEXT            the line's message, joined with spaces (may itself start with '-')
+
+options:
+  -h, --help      show this help message and exit
+  --tail          print the last lines of ai.log, then follow it
+  --grep PATTERN  with --tail: only lines matching this pattern
+  --lines N       with --tail: how many existing lines to print first (default: 20)
+  --no-color      with --tail: plain text, no ANSI colors
+  --status        show the effective config and label counters
+  --reset         rename ai.log to ai.log.<timestamp>.bak
 ```
 
 ## `manifest.py`
@@ -213,4 +350,23 @@ options:
   --catch-up            skip the fetch/diff/replace; finish steps 6-9 from the .act/ already on
                         disk (e.g. after a plain 'git pull' of the template outside update.py,
                         Q73a) -- refuses unless that tree still matches its own MANIFEST.json
+```
+
+## `usage.py`
+
+Call: direct
+
+```text
+usage: usage.py [-h] [--show | --outcome ROLE TIER OUTCOME | --unused KEY | --reset]
+
+Local usage counter: worker starts by role/tier/model, skill/command/script/checklist calls,
+worker outcomes.
+
+options:
+  -h, --help            show this help message and exit
+  --show                readable overview (default)
+  --outcome ROLE TIER OUTCOME
+                        record accepted|reworked|escalated for one role/tier
+  --unused KEY          exit 0 if KEY was never recorded, 1 if it was (see is_unused())
+  --reset               delete every recorded count
 ```

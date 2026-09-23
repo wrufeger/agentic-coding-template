@@ -17,12 +17,14 @@ code already answers, so research comes before the question round, never after.
 3. **Cut it into tasks or stories.** Each task: one-sentence goal, checkable acceptance criterion,
    steps as bullets. Something bigger with its own justification becomes a story
    (`docs/project/stories/`, where the project uses them); the rest is a task under
-   `docs/ai/work/tasks/`.
+   `docs/ai/work/tasks/` (`python .act/scripts/entries.py new task <title>`).
 4. **Check readiness** — goal unambiguous, acceptance checkable, decisions made, preconditions
    met, unknowns researched. Anything failing this stays marked open and **doesn't start**.
 5. **One bundled question round.** Numbered, answer options, a marked recommendation where there
    is one, ordered by how much each blocks, with one line on what happens if it stays unanswered.
-   File the same questions under `docs/ai/inbox/` so the answer has somewhere to land.
+   File the same questions under `docs/ai/questions/` (`entries.py new question <title>` per
+   question) so the answer has somewhere to land — the board's Waiting section already surfaces
+   them, no separate inbox entry needed.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked
    ready. A question left open keeps its task on hold — never started "on best guess".
 7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration — the plan

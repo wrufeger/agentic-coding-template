@@ -24,6 +24,12 @@
 #               exists to compare against — a project that hand-edited .act/ since its last
 #               update, or the template's own checkout if its maintainer forgot `manifest.py
 #               --write` before committing an .act/ change (Q73a).
+#           10. a short id (T<n>/B<n>/Q<n>) assigned to more than one entry file under
+#               docs/ai/work/ or docs/ai/questions/ — the merge-safety net Q62a/Q65c call for,
+#               reusing entries.py's own scan (entries.find_duplicate_ids()) rather than repeating
+#               it here; plus, from the same scan, an entry file that isn't valid UTF-8 at all
+#               (entries.find_unreadable_entries()) — this template never lets a decode failure
+#               abort a run, here or in entries.py itself.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
 #          the template-vs-project cross-check after an update) is a separate, model-driven step
 #          and out of scope here. Stdlib only.
@@ -60,6 +66,7 @@ from pathlib import Path
 from typing import Optional
 
 import actlib
+import entries
 import init
 import manifest as manifest_mod
 import rules
@@ -102,6 +109,8 @@ KIND_LABELS: dict[str, str] = {
     "override-stale": "Overridden rule whose template text has changed",
     "ref-missing": "Broken references",
     "duplicate-unit": "Duplicate scripts/agents/skills",
+    "duplicate-id": "Duplicate entry ids (task/backlog/question)",
+    "entry-unreadable": "Entry files that cannot be read as UTF-8",
     "hook": "Missing hook entries",
     "manifest": ".act/MANIFEST.json drift",
     "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
@@ -126,7 +135,7 @@ def _parse_area(root: Path, area: rules.Area) -> Optional[rules.ProjectFile]:
         return None
     try:
         return rules.parse_project_file(path, area)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
 
@@ -163,7 +172,7 @@ def _read_retired_ids(path: Path) -> list[str]:
     everything before the first '## `ID`' heading."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return []
     for raw in lines:
         if rules.RE_HEADING.match(raw):
@@ -332,7 +341,7 @@ def check_act_refs(root: Path) -> list[Finding]:
     for path in sorted(docs_dir.rglob("*.md")):
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
         for i, line in enumerate(lines, start=1):
             for match in RE_ACT_REF.finditer(line):
@@ -358,7 +367,7 @@ def check_bridge_files(root: Path) -> list[Finding]:
         for path in sorted(bridge_dir.glob("*.md")):
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()
-            except OSError:
+            except (OSError, UnicodeDecodeError):
                 continue
             for i, line in enumerate(lines, start=1):
                 for match in RE_ACT_PATH.finditer(line):
@@ -474,6 +483,33 @@ def check_duplicate_units(root: Path) -> list[Finding]:
             message=f"'{name}' present without a matching .act/ source, generated copy, or role bridge",
         ))
     return findings
+
+
+# ---------------------------------------------------------------------------
+# 10. Duplicate entry ids — thin wrapper around entries.find_duplicate_ids(), the merge-safety net
+#     Q62a/Q65c call for on top of the filename-as-identity scheme itself.
+# ---------------------------------------------------------------------------
+
+def check_duplicate_entry_ids(root: Path) -> list[Finding]:
+    findings = []
+    for entry_id, paths in entries.find_duplicate_ids(root):
+        locations = ", ".join(_rel(path, root) for path in paths)
+        findings.append(Finding(
+            path=locations, line=None, kind="duplicate-id",
+            message=f"id '{entry_id}' assigned to more than one entry file",
+        ))
+    return findings
+
+
+def check_unreadable_entries(root: Path) -> list[Finding]:
+    """A file under an id-bearing entry directory that isn't valid UTF-8 — entries.py itself
+    already skips it everywhere rather than crashing (find_unreadable_entries()), but a file that
+    can never be scanned for its id is worth a finding of its own, not silence."""
+    return [
+        Finding(path=_rel(path, root), line=None, kind="entry-unreadable",
+                message="not valid UTF-8 — cannot be scanned for its id")
+        for path in entries.find_unreadable_entries(root)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +670,8 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_act_refs(root)
     findings += check_bridge_files(root)
     findings += check_duplicate_units(root)
+    findings += check_duplicate_entry_ids(root)
+    findings += check_unreadable_entries(root)
     findings += check_hooks(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)

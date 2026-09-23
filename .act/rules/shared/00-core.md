@@ -20,7 +20,11 @@ summary: project changes beat template defaults; overrides live under docs/ai/lo
 
 A rule or file the project has changed always wins over the template's version (`ADR-5`). Never
 edit anything under `.act/` directly; a project-specific version goes into
-`docs/ai/local/<same path>` instead.
+`docs/ai/local/<same path>` instead. A bug IN the template itself — a script, skill or rule under
+`.act/` that fails, contradicts another, or provably never fires — is reported at once via
+`feedback.py --add --kind bug`, and with `feedback: automatic` the assistant also files the
+recurring events that pattern covers (a rule/format proving impractical, a missing workflow, a
+needed workaround) itself; details in `topics/feedback.md`.
 
 ## `R-role-worker` — What a worker may and may not do
 

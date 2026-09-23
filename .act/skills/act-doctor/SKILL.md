@@ -15,8 +15,10 @@ there are findings; `--json` for machine output; `--accept ID [...]` / `--accept
 stale override's current template text as the accepted baseline). Runs `rules.py --validate` for
 both areas plus: dead override/off IDs, a disabled coding set whose `use:` target is gone, an
 override/off whose template text changed since it was last accepted, duplicate skills/agents/
-scripts from earlier updates, broken `act:ref` references and bridge targets, and a script/agent/
-skill under `docs/ai/local/` or `.claude/` that no generated copy or bridge explains. `update.py`
+scripts from earlier updates, a short id (`T`/`B`/`Q`) assigned to more than one entry file under
+`docs/ai/work/` or `docs/ai/questions/` (or one that isn't valid UTF-8 and so can't be scanned at
+all), broken `act:ref` references and bridge targets, and a script/agent/skill under
+`docs/ai/local/` or `.claude/` that no generated copy or bridge explains. `update.py`
 calls this itself as its step 8 — running it again by hand afterward is redundant unless something
 was fixed in between.
 
