@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Mechanical half of the "Abgleich-Skill" (docs/project/concepts/ai-dev-app/
+# Purpose: Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/
 #          05-update-and-overrides.md § "Abgleich-Skill" in the template-pflege repo) — the cheap
 #          checks that run after every update and on demand, without a model in the loop. Finds:
 #            1. everything rules.py --validate already reports, for both areas (core, coding);
@@ -24,7 +24,7 @@
 #               exists to compare against — a project that hand-edited .act/ since its last
 #               update, or the template's own checkout if its maintainer forgot `manifest.py
 #               --write` before committing an .act/ change (Q73a).
-#          The content-based half of the Abgleich-Skill (contradictions, near-duplicate rules,
+#          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
 #          the template-vs-project cross-check after an update) is a separate, model-driven step
 #          and out of scope here. Stdlib only.
 #
@@ -63,6 +63,7 @@ import actlib
 import init
 import manifest as manifest_mod
 import rules
+import script_docs
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,7 @@ KIND_LABELS: dict[str, str] = {
     "duplicate-unit": "Duplicate scripts/agents/skills",
     "hook": "Missing hook entries",
     "manifest": ".act/MANIFEST.json drift",
+    "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -562,6 +564,24 @@ def check_manifest_drift(root: Path) -> list[Finding]:
     return findings
 
 
+def check_script_docs(root: Path) -> list[Finding]:
+    # The generated README.md embeds each script's own `--help` text, whose exact wording depends
+    # on the interpreter's argparse (Python 3.9: "optional arguments:", 3.10+: "options:") — a
+    # project running a different Python than whatever generated its .act/ could never make this
+    # check pass, and the only "fix" available to it would be rewriting a file under .act/, which
+    # is exactly what a project is not supposed to hand-edit (.act/MANIFEST.json already guards
+    # that via check_manifest_drift() above). So this check only runs in the template's own
+    # checkout — recognized the same way check_manifest_drift() tells a project apart from the
+    # template above: a project always has .act-lock.json, the template checkout never does.
+    if (root / ".act-lock.json").is_file():
+        return []
+    problems = script_docs.check(root)
+    return [
+        Finding(path=".act/scripts/README.md", line=None, kind="script-docs", message=problem)
+        for problem in problems
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Inbox
 # ---------------------------------------------------------------------------
@@ -616,6 +636,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_duplicate_units(root)
     findings += check_hooks(root)
     findings += check_manifest_drift(root)
+    findings += check_script_docs(root)
 
     return findings, effective
 
@@ -647,7 +668,7 @@ def render_human(findings: list[Finding], effective: list[EffectiveOverride]) ->
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="doctor.py",
-        description="Mechanical project/template abgleich — see the header comment for the full list of checks.",
+        description="Mechanical project/template reconciliation — see the header comment for the full list of checks.",
     )
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/<date>-doctor.md if there are findings")

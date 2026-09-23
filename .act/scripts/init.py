@@ -397,7 +397,7 @@ def step_identity(root: Path, plan: bool, interactive: bool, notes: list[str]) -
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — .act-local/identity.json
+# Step 4 — .act-local/identity.json, .act-local/import/
 # ---------------------------------------------------------------------------
 
 def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
@@ -408,6 +408,44 @@ def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
     if not plan:
         actlib.write_identity({"identity": slug, "workspace": workspace, "created": date.today().isoformat()})
     return f"identity '{slug}', workspace '{workspace}'" + (" (plan)" if plan else "")
+
+
+_IMPORT_README_TEXT = """\
+# .act-local/import/
+
+Drop a settings file here (`act-export-settings`' output: `act-settings-<date>.md` or `.zip`) and
+run `python .act/scripts/settings_load.py apply` with no arguments — it picks up every `.md`/
+`.zip` directly in this folder (not this README, not `done/`), sorted by name, and imports them
+the same way as `settings_load.py apply <file>` would. `plan` (no arguments) works the same way
+for a dry run — it writes nothing and moves nothing.
+
+A file `apply` managed to process is moved to `done/` afterwards (a name collision there gets a
+timestamp appended). A file it could not even load (bad zip, unparsable settings.md) is reported
+and left here.
+
+This whole folder is machine-local — gitignored via `.act-local/`, never committed. Give a file an
+explicit path (`settings_load.py apply <path>`) instead if it should not move.
+
+`act-export-settings` writes its own output to `.act-local/export/` by default (also gitignored) —
+the natural place to hand it on to `.act-local/import/` of another checkout.
+"""
+
+
+def step_import_folder(root: Path, plan: bool) -> str:
+    """Ensures `.act-local/import/` exists with a short README (Q74b) — created once, never
+    overwritten if the README is already there (same "never overwrite" contract as every other
+    generated file in this script). settings_load.py also creates this folder on demand itself
+    (so a project that predates this step still works without a migration), but init'ing a fresh
+    project should not leave the human to discover that only once they first try an import."""
+    import_dir = root / ".act-local" / "import"
+    readme = import_dir / "README.md"
+    if readme.is_file():
+        return "import/: .act-local/import/README.md already present, left unchanged"
+    if plan:
+        return "import/: would create .act-local/import/ + README.md"
+    import_dir.mkdir(parents=True, exist_ok=True)
+    _write_new_file(readme, _IMPORT_README_TEXT)
+    return "import/: .act-local/import/ + README.md created"
 
 
 # ---------------------------------------------------------------------------
@@ -1151,7 +1189,7 @@ def main(argv: list[str]) -> int:
         _print_step(2, summary)
 
     _print_step(3, step_identity(root, plan, interactive, notes))
-    _print_step(4, step_workspace_identity(root, plan, cfg["owner"]))
+    _print_step(4, f"{step_workspace_identity(root, plan, cfg['owner'])}; {step_import_folder(root, plan)}")
 
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)

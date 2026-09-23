@@ -18,7 +18,8 @@
 # Usage:
 #   python .act/scripts/settings_export.py
 #       Only [~]/[-]/[+] deviations (the "=" default is left out) for rules + coding, as a single
-#       settings.md written to ./act-settings-<date>.md.
+#       settings.md written to .act-local/export/act-settings-<date>.md (machine-local, gitignored;
+#       the folder is created if it does not exist yet).
 #   python .act/scripts/settings_export.py --all
 #       Same, but every included rule/group is listed, "=" ones included.
 #   python .act/scripts/settings_export.py --with-scripts --with-checklists --with-agents --with-skills
@@ -33,7 +34,7 @@
 #       out to strangers". Without it, a finding becomes a visible "<setup:KIND>" placeholder plus
 #       a "## setup-required" line, and the run still succeeds.
 #   python .act/scripts/settings_export.py --out <path>
-#       Write there instead of the default ./act-settings-<date>.md|.zip.
+#       Write there instead of the default .act-local/export/act-settings-<date>.md|.zip.
 #
 # Output format: one line on stdout naming the file written and the number of placeholders
 #   inserted ("review before sharing"). --strict prints "<location> — <hint>" per finding to
@@ -117,7 +118,7 @@ def _entry_for_group(symbol: str, group_id: str, project_group: Optional["rules.
         return sf.SettingsEntry(symbol="~", id=group_id, inline=f"replaces: {override.text}")
     if symbol == "-":
         reason = project_group.reason if project_group else None
-        inline = f"Begründung: {reason}" if reason else None
+        inline = f"reason: {reason}" if reason else None
         return sf.SettingsEntry(symbol="-", id=group_id, inline=inline)
     return sf.SettingsEntry(symbol="=", id=group_id)
 
@@ -362,7 +363,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--with-skills", action="store_true", help="include docs/ai/local/skills/, the project's own skills (forces --with-files)")
     parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills")
     parser.add_argument("--strict", action="store_true", help="abort on any finding instead of substituting a placeholder")
-    parser.add_argument("--out", metavar="PATH", default=None, help="output path (default: ./act-settings-<date>.md|.zip)")
+    parser.add_argument("--out", metavar="PATH", default=None,
+                         help="output path (default: .act-local/export/act-settings-<date>.md|.zip)")
     return parser
 
 
@@ -437,8 +439,10 @@ def main(argv: list[str]) -> int:
     redacted.setup_required = sf.setup_required_lines(located)
     text = sf.serialize(redacted)
 
-    out_default = f"./act-settings-{settings.header.date}.{'zip' if with_files else 'md'}"
-    out_path = Path(args.out) if args.out else Path(out_default)
+    # No --out: the machine-local, gitignored .act-local/export/ (Q74b) — never the project root,
+    # so a forgotten export never ends up staged for a commit. --out is used exactly as given.
+    ext = "zip" if with_files else "md"
+    out_path = Path(args.out) if args.out else root / ".act-local" / "export" / f"act-settings-{settings.header.date}.{ext}"
 
     if with_files:
         out_path.parent.mkdir(parents=True, exist_ok=True)

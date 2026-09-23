@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: `act-load-settings` — import a portable settings file (or several) into this project:
-#          the counterpart to settings_export.py. Runs the same three-way check the Abgleich-Skill
+#          the counterpart to settings_export.py. Runs the same three-way check the reconcile skill
 #          runs after a template update (docs/project/concepts/ai-dev-app/05-update-and-overrides.md
 #          § "Gegenseite act-load-settings" in the template-pflege repo), except the "other side" is
-#          a settings file instead of a new template state: deckungsgleich -> nichts doppelt,
-#          neu -> übernehmen, widersprüchlich -> Inbox (or a config-key resolution).
+#          a settings file instead of a new template state: identical -> nothing twice,
+#          new -> adopt, contradicting -> inbox (or a config-key resolution).
 #
 #          Split as decided (`Q69a`): this script does every *mechanical* judgement itself (new,
 #          identical, dead/retired/stale identifiers, cross-file collisions, an own rule repeated
@@ -26,13 +26,14 @@
 #          Import" in the template-pflege repo for the full spec.
 #
 # Usage:
-#   python .act/scripts/settings_load.py plan <file...> [--candidates-out PATH] [--json]
+#   python .act/scripts/settings_load.py plan [<file...>] [--candidates-out PATH] [--json]
 #       Parse and mechanically check every given file (order = argument order) against the current
 #       project and against each other. Writes nothing to the project; --candidates-out writes the
 #       candidate-pair list for a model to judge (see "Candidates JSON" below) to that path.
-#   python .act/scripts/settings_load.py apply <file...> [--judgments PATH] [--yes] [--non-interactive]
+#   python .act/scripts/settings_load.py apply [<file...>] [--judgments PATH] [--yes] [--non-interactive]
+#                                               [--resolve FILE=ACTION ...]
 #       Same analysis, then writes: new/identical/judged-non-contradicting rules into
-#       docs/ai/rules.md / docs/project/coding_rules.md, mitgegebene scripts/checklists/agents/
+#       docs/ai/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/agents/
 #       skills into docs/ai/local/<area>/<name> (shown before writing unless --yes) — an
 #       agent/skill whose name matches a template role/skill is never written, only reported (it
 #       would otherwise start overriding the template unit); a written own agent/skill then gets
@@ -43,7 +44,49 @@
 #       JSON" below); a candidate with no verdict stays unapplied and unreviewed in the inbox. A
 #       contradiction is resolved automatically, without --judgments, only when
 #       docs/ai/config.md sets `settings-conflict-<area>` to `project` or `import` — resolved
-#       either way, but always reported, never silent.
+#       either way, but always reported, never silent. --resolve FILE=ACTION switches to an
+#       entirely different mode that skips all of the above — see "Not fully processed files"
+#       below.
+#
+# No <file...> given (either command): every `.md`/`.zip` directly under `.act-local/import/`
+#   (machine-local, gitignored; created if it does not exist yet — README.md there is skipped),
+#   sorted by name, is used instead. A file that fails to load (bad zip, unparsable settings.md) is
+#   reported and left in place; the rest are still processed together, same as several files given
+#   explicitly. `apply` (never `plan` — a dry run moves nothing) then moves every file it did manage
+#   to load *and* fully resolve to `.act-local/import/done/`, appending a timestamp on a name
+#   collision. "Fully resolve" means nothing from that file was left open (see "Not fully processed
+#   files" below) — such a file stays in `.act-local/import/` instead (T32). An empty or missing
+#   import folder is a clean "nothing to do", exit 0. Explicit `<file...>` paths on the command line
+#   are read from wherever given and are never moved, never offered to --resolve.
+#
+# Not fully processed files (T33): a file stays in `.act-local/import/` when a plain `apply` (no
+#   --resolve) left something of it open — a bundled script/checklist/agent/skill that needed --yes
+#   or was declined or refused outright (risky frontmatter, shadowing, a bad path, ...), a candidate
+#   pair nobody judged, or a name/id collision with something already in the project. `apply` prints
+#   what is open (one line per item, with the reason) and what already applied, then either follows
+#   `--resolve FILE=ACTION` (repeatable; FILE is the file's name in `.act-local/import/`; an unknown
+#   FILE is a fatal error listing the files actually pending, nothing moved) or, on an interactive
+#   run with no matching --resolve, asks the same question with `keep` as the default answer.
+#
+#   --resolve is a pure filing run (T33 review), not a second attempt at applying anything: as soon
+#   as it is given, every file in `.act-local/import/` not named in a --resolve is left completely
+#   alone — not analyzed, not moved, not touched at all — and even a named file only gets the one
+#   action asked for, nothing from it is applied. No TTY prompt ever happens in this mode (the whole
+#   point of --resolve is to answer without one). --resolve together with an explicit <file...> on
+#   the command line is a fatal error (there is nothing in `.act-local/import/` to file away).
+#   ACTION is one of:
+#     keep     (the default either way) — leave the file where it is, offered again next run.
+#     partial  — close the file now. Nothing from it applies in this run (nothing does, in this
+#                mode) — what it would still leave open is instead worked out with a read-only
+#                check (the same analysis `plan` runs, against this file alone), and the file moves
+#                to `.act-local/import/done/` with a `<name>.skipped.md` note next to it that names
+#                those items, why, and the date of the decision. A file that fails to load at all
+#                (bad zip, unparsable settings.md) cannot be given `partial` — there is nothing to
+#                analyze — and is refused with a message pointing at keep/ignore/delete instead.
+#     ignore   — move the file to `.act-local/import/ignored/`; files there are never offered again.
+#                Works for a file that fails to load too.
+#     delete   — remove the file outright. Only ever happens via an explicit `--resolve`/interactive
+#                answer, never as a default. Works for a file that fails to load too.
 #
 # Candidates JSON (--candidates-out, and the "candidates" key of `plan --json`):
 #   {"candidates": [{"key": "<area>:<import_id>::<target_id>", "area": "rules"|"coding",
@@ -71,11 +114,12 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import stat
 import sys
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -191,6 +235,159 @@ def load_source(path: Path) -> SourceFile:
 
 
 # ---------------------------------------------------------------------------
+# Auto-discovery from .act-local/import/ (Q74b) — used when no <file...> is given on the command
+# line. Machine-local and gitignored (same folder .gitignore already excludes via ".act-local/"),
+# created on demand here rather than depending on init.py/update.py having done it already, so an
+# older project that predates this feature still works without a migration step.
+# ---------------------------------------------------------------------------
+
+_LOAD_ERRORS = (RuntimeError, ValueError, OSError, zipfile.BadZipFile, json.JSONDecodeError)
+
+
+def _import_dir(root: Path) -> Path:
+    return root / ".act-local" / "import"
+
+
+def _discover_import_files(root: Path) -> list[Path]:
+    """Every `.md`/`.zip` file directly under `.act-local/import/` (not its own `done/` or
+    `ignored/` subfolder, and not `README.md`), sorted by name for a reproducible order. `iterdir()`
+    only lists direct children, so a subfolder is skipped anyway — the `is_file()` filter below is
+    what actually excludes `done/`/`ignored/` themselves, not their names."""
+    import_dir = _import_dir(root)
+    if not import_dir.is_dir():
+        return []
+    return sorted(
+        p for p in import_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in (".md", ".zip") and p.name.lower() != "readme.md"
+    )
+
+
+def _resolve_input_files(root: Path, args: argparse.Namespace) -> tuple[list[Path], bool]:
+    """(paths, auto_discovered). Explicit files on the command line are used exactly as given —
+    `auto_discovered` False, same all-or-nothing load behavior as before a bad one aborts the
+    whole run (see cmd_plan/cmd_apply). With none given, `.act-local/import/` is used instead (and
+    created if missing) — `auto_discovered` True, which also gates the lenient per-file loading and
+    (for `apply` only) the move to `done/` below."""
+    if args.files:
+        return [Path(p) for p in args.files], False
+    _import_dir(root).mkdir(parents=True, exist_ok=True)
+    return _discover_import_files(root), True
+
+
+def _load_sources_lenient(paths: list[Path]) -> tuple[list[SourceFile], list[Path], list[tuple[Path, str]]]:
+    """Like `[load_source(p) for p in paths]`, except one bad file (unparsable settings.md, a
+    refused zip) is reported and skipped instead of aborting every other file in the batch — the
+    auto-discovery behavior Q74b asks for ("failed ones stay in place, with a message"). Explicit
+    command-line paths keep the old all-or-nothing behavior (load_source() called directly, letting
+    main()'s outer handler turn a failure into exit 2) — this is only used for auto-discovered
+    files. Returns (sources, the paths that produced them — same order, for the done/ move below,
+    failures)."""
+    sources: list[SourceFile] = []
+    loaded_paths: list[Path] = []
+    failures: list[tuple[Path, str]] = []
+    for path in paths:
+        try:
+            sources.append(load_source(path))
+            loaded_paths.append(path)
+        except _LOAD_ERRORS as exc:
+            failures.append((path, str(exc)))
+    return sources, loaded_paths, failures
+
+
+def _move_to_done(root: Path, path: Path) -> Path:
+    """Move an auto-discovered file that was processed into `.act-local/import/done/`, appending a
+    timestamp on a name collision rather than overwriting an earlier run's file of the same name."""
+    done_dir = _import_dir(root) / "done"
+    done_dir.mkdir(parents=True, exist_ok=True)
+    dest = done_dir / path.name
+    if dest.exists():
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = done_dir / f"{path.stem}-{stamp}{path.suffix}"
+    shutil.move(str(path), str(dest))
+    return dest
+
+
+def _move_to_ignored(root: Path, path: Path) -> Path:
+    """Move a file the human chose `ignore` for into `.act-local/import/ignored/` — same
+    collision handling as `_move_to_done`. Files there are never re-discovered
+    (`_discover_import_files` only looks at direct children of `import/`, `ignored/` is a
+    subfolder just like `done/`)."""
+    ignored_dir = _import_dir(root) / "ignored"
+    ignored_dir.mkdir(parents=True, exist_ok=True)
+    dest = ignored_dir / path.name
+    if dest.exists():
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        dest = ignored_dir / f"{path.stem}-{stamp}{path.suffix}"
+    shutil.move(str(path), str(dest))
+    return dest
+
+
+def _write_skipped_note(done_path: Path, file_label: str, items: list["OpenItem"],
+                         applied: Optional[int]) -> Path:
+    """`partial` resolution: the source file moves to done/ even though something was left open —
+    this note (next to it) records what was discarded and why, so the decision stays readable
+    later instead of just vanishing once the source file is out of import/. `applied` is the
+    number of rule/file entries this same run actually applied for this file before the partial
+    decision — known in the normal apply flow, where write_resolutions()/write_files() ran first.
+    In the pure --resolve filing run nothing is ever applied (T33 review), so that count cannot
+    honestly be reported; pass None there and the line is left out instead of printing a number
+    that was never determined."""
+    note_path = done_path.parent / f"{done_path.name}.skipped.md"
+    lines = [f"# Discarded on partial import of {file_label}", ""]
+    if applied is not None:
+        lines.append(f"Applied before this decision: {applied} item(s).")
+        lines.append("")
+    lines.append(f"Decision date: {date.today().isoformat()}.")
+    lines.append("")
+    lines.append("Discarded (not applied, will not be retried):")
+    lines.append("")
+    lines.extend(f"- `{item.ref}` — {item.reason}" for item in items)
+    note_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return note_path
+
+
+_RESOLVE_ACTIONS = ("keep", "partial", "ignore", "delete")
+
+
+def _parse_resolve_args(raw: list[str]) -> dict[str, str]:
+    """--resolve FILE=ACTION, repeatable. Raises ValueError (caught by main(), turned into exit 2)
+    for a malformed entry or an unknown action — the same treatment _load_judgments() gives a bad
+    --judgments file. A file name given more than once: the last one wins, same as argparse would
+    for a single-valued option."""
+    out: dict[str, str] = {}
+    for raw_item in raw:
+        if "=" not in raw_item:
+            raise ValueError(f"--resolve {raw_item!r}: expected FILE=ACTION")
+        # rpartition, not partition: the action is always the last "="-separated segment, so a
+        # file name that itself contains "=" (e.g. "a=b.md") still splits correctly.
+        file_name, _, action = raw_item.rpartition("=")
+        file_name, action = file_name.strip(), action.strip().lower()
+        if not file_name:
+            raise ValueError(f"--resolve {raw_item!r}: missing file name")
+        if action not in _RESOLVE_ACTIONS:
+            raise ValueError(f"--resolve {raw_item!r}: unknown action {action!r} — expected one of {list(_RESOLVE_ACTIONS)}")
+        out[file_name] = action
+    return out
+
+
+def _prompt_resolve(file_name: str, items: list["OpenItem"], applied: int) -> str:
+    """Interactive follow-up (TTY, not --non-interactive): the same summary render_incomplete_file
+    produces, then one input() for the decision. Default 'keep' on empty input or anything not
+    recognized — never defaults to 'delete'."""
+    print()
+    print(render_incomplete_file(file_name, items, applied))
+    try:
+        answer = input(f"{file_name}: keep/partial/ignore/delete [keep]: ").strip().lower()
+    except (EOFError, OSError):
+        # A tty that turns out to have nothing to read from (seen on some shells — isatty() can
+        # say yes right up until the read itself) — same safe fallback as no answer at all.
+        return "keep"
+    mapping = {"": "keep", "k": "keep", "keep": "keep", "p": "partial", "partial": "partial",
+               "i": "ignore", "ignore": "ignore", "d": "delete", "delete": "delete"}
+    return mapping.get(answer, "keep")
+
+
+# ---------------------------------------------------------------------------
 # One line of a settings file, flattened to a comparable shape
 # ---------------------------------------------------------------------------
 
@@ -262,6 +459,46 @@ class Finding:
         return f"[{self.area}] {self.message}"
 
 
+# ---------------------------------------------------------------------------
+# Open items — one entry per thing a source file left unresolved: the basis for the end-of-apply
+# summary and the `--resolve`/interactive follow-up below (T33). Deliberately a narrower set than
+# `findings` above: a dead id, a judged contradiction, a set-switch decline etc. need a source-file
+# edit to ever change, so they are reported but do not keep a file "open" — the reasons below do, because
+# a rerun (with --yes/--judgments) or a `--resolve` decision can actually resolve them.
+# ---------------------------------------------------------------------------
+
+REASON_DECLINED = "declined by you"
+REASON_NEEDS_YES = "needs --yes"
+REASON_NEEDS_JUDGMENT = "needs a judgment (content overlap)"
+REASON_NAME_COLLISION = "name collision"
+
+
+def reason_rejected(kind: str) -> str:
+    """Open-item reason for a bundled agent/skill the import refused (risky frontmatter, shadowing,
+    bad path, ...): named by its finding, not lumped in with a plain name collision. A rerun gives
+    the same verdict, so only `partial`, `ignore` or `delete` settle such a file."""
+    return f"rejected: {KIND_LABELS.get(kind, kind)}"
+
+
+@dataclass
+class OpenItem:
+    file_label: str
+    ref: str      # an id, or a docs/ai/local/... path — whatever identifies the item to a human
+    reason: str   # one of the REASON_* constants above
+
+
+# Which open-item reasons a plain rerun (with --yes and/or --judgments) can actually turn into
+# "applied" — used by the "kept" message in cmd_apply() (review point 7) so it only suggests a
+# rerun when one could really help. REASON_NAME_COLLISION and a reason_rejected(...) result need a
+# source-file edit (or partial/ignore/delete) instead: a plain rerun reproduces the exact same
+# collision/refusal every time.
+_RERUN_HELPS_REASONS = {REASON_NEEDS_YES, REASON_NEEDS_JUDGMENT, REASON_DECLINED}
+
+
+def _rerun_can_help(items: list[OpenItem]) -> bool:
+    return any(item.reason in _RERUN_HELPS_REASONS for item in items)
+
+
 KIND_LABELS: dict[str, str] = {
     "dead-id": "Dead or retired identifiers (not applied)",
     "changed-since-export": "Template text changed since the export (not applied, review by hand)",
@@ -273,8 +510,8 @@ KIND_LABELS: dict[str, str] = {
     "conflict-resolved": "Contradiction resolved via docs/ai/config.md `settings-conflict-<area>`",
     "same": "Judged to already say the same thing as a project rule (not applied)",
     "setup-required": "Needs configuration before use",
-    "file-collision": "A mitgegebene file has the same name as an existing one (not written)",
-    "template-shadowed": "A mitgegebene agent/skill matches a template role/skill name (would shadow it)",
+    "file-collision": "A bundled file has the same name as an existing one (not written)",
+    "template-shadowed": "A bundled agent/skill matches a template role/skill name (would shadow it)",
     "name-mismatch": "Frontmatter name does not match the file/folder name (not imported)",
     "invalid-unit-path": "Agent/skill path does not have the required shape (not imported)",
     "risky-frontmatter": "Frontmatter would grant elevated permissions (not imported, add by hand if wanted)",
@@ -377,6 +614,7 @@ class Analysis:
     setup_required: list[str] = field(default_factory=list)   # "<file>: <line>"
     file_plan: list[dict] = field(default_factory=list)        # scripts/checklists to write
     not_supported: set[str] = field(default_factory=set)
+    open_items: list[OpenItem] = field(default_factory=list)
 
 
 # A handful of very common words, so the candidate-pair fallback keyword filter (only used when a
@@ -586,6 +824,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
                         message=f"`{entry.id}` — project already overrides this with different text",
                     ))
                     result.resolutions.append(Resolution(entry, "skip", "id-collision"))
+                    result.open_items.append(OpenItem(entry.file_label, entry.id, REASON_NAME_COLLISION))
                 continue
             # new override — subject to candidate pairing against the project's own rules/overrides
         elif entry.symbol == "+":
@@ -607,6 +846,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
                     message=f"`{entry.id}` — project already has an own rule with this id and different text",
                 ))
                 result.resolutions.append(Resolution(entry, "skip", "id-collision"))
+                result.open_items.append(OpenItem(entry.file_label, entry.id, REASON_NAME_COLLISION))
                 continue
             same_text = next((tid for tid, ttext in ta.own_texts if ttext.strip() == entry.flat_text().strip()), None)
             if same_text is not None:
@@ -701,6 +941,7 @@ def apply_judgments(root: Path, result: Analysis, judgments: dict[str, str]) -> 
                 kind="unreviewed-candidate", area=res.entry.area,
                 message=f"`{res.entry.id}` — content overlap with {keys}, not yet judged, not applied",
             ))
+            result.open_items.append(OpenItem(res.entry.file_label, res.entry.id, REASON_NEEDS_JUDGMENT))
         # "extends"/"unrelated" and everything already judged and not contradicting/same: applied as-is
 
 
@@ -708,6 +949,20 @@ def mark_unreviewed_without_judgments(result: Analysis) -> None:
     """No --judgments at all: every candidate pair stays unreviewed — same effect as
     apply_judgments() with an empty dict, kept separate so `plan` never has to build one."""
     apply_judgments(Path("."), result, {})
+
+
+def mark_new_files_pending(result: Analysis) -> None:
+    """Read-only stand-in for what write_files() would report for every "new" bundled-file/unit
+    plan item (scripts, checklists, agents, skills — plan_files()/plan_units() fill result.file_plan
+    for all four the same way), without writing anything or prompting: used by
+    `apply --resolve FILE=partial`'s single-file analysis (T33), which must never write. A "new"
+    item always needs --yes (or an interactive yes) to actually land, so from a read-only vantage
+    point it is exactly as "open" as write_files() would find it — without this, such an item was
+    silently dropped from the partial decision's discarded list instead of being reported (found via
+    the rev33 probe: hi.py vanished from S.zip.skipped.md)."""
+    for item in result.file_plan:
+        if item["status"] == "new":
+            result.open_items.append(OpenItem(item["file"], item["dest"], REASON_NEEDS_YES))
 
 
 # ---------------------------------------------------------------------------
@@ -844,7 +1099,7 @@ def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
 
 
 # ---------------------------------------------------------------------------
-# Mitgegebene Dateien (scripts / checklists)
+# Bundled files (scripts / checklists)
 # ---------------------------------------------------------------------------
 
 def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
@@ -872,6 +1127,9 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                             kind="file-collision", area=area_name,
                             message=f"docs/ai/local/{area_name}/{relpath} already exists with different content — not written",
                         ))
+                        result.open_items.append(OpenItem(
+                            source.label, f"docs/ai/local/{area_name}/{relpath}", REASON_NAME_COLLISION,
+                        ))
                 else:
                     status = "new"
                 if (root / ".act" / area_name / relpath).is_file():
@@ -887,7 +1145,7 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Mitgegebene Dateien (agents / skills) — same new/same/collision shape as plan_files() above, but
+# Bundled files (agents / skills) — same new/same/collision shape as plan_files() above, but
 # with rules a bare scripts/checklists file does not need:
 #
 #  - shape: an agent must be a flat "<name>.md" (Claude Code registers a role by that file, not a
@@ -936,7 +1194,7 @@ def _strict_frontmatter(text: str) -> tuple[dict[str, str], bool]:
     that module's docstring) and is too permissive to gate an import on: a BOM before the opening
     '---', CRLF line endings, a quoted key, whitespace before the colon, or a closing '---' with no
     trailing newline at EOF all make it silently see no frontmatter at all -- exactly the shape a
-    mitgegebene file would need to hide a risky key or a name-shadow attempt from plan_units().
+    bundled file would need to hide a risky key or a name-shadow attempt from plan_units().
     This function instead treats each of those as still-valid frontmatter (so the fields inside are
     still checked) and only gives up -- signalling the caller to reject the whole unit -- when a
     '---' block is opened but never closes cleanly, or a line inside it is neither 'key: value', an
@@ -1044,6 +1302,7 @@ def plan_units(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                                  else f"files/{area_name}/{relpath} — a skill must live under "
                                       "'<name>/...', not as a flat file") + "; not imported",
                     ))
+                    result.open_items.append(OpenItem(source.label, f"files/{area_name}/{relpath}", reason_rejected("invalid-unit-path")))
                     continue
                 units.setdefault(unit_name, []).append(relpath)
 
@@ -1054,6 +1313,7 @@ def plan_units(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                         result.file_plan.append({"file": source.label, "area": area_name, "path": rp,
                                                   "dest": f"docs/ai/local/{area_name}/{rp}", "status": "collision",
                                                   "text": contents[rp]})
+                        result.open_items.append(OpenItem(source.label, f"docs/ai/local/{area_name}/{rp}", reason_rejected(kind)))
 
                 def_relpath = definition_relpath[area_name](unit_name)
                 def_text = contents.get(def_relpath)
@@ -1135,6 +1395,9 @@ def plan_units(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                             result.findings.append(Finding(
                                 kind="file-collision", area=area_name,
                                 message=f"docs/ai/local/{area_name}/{relpath} already exists with different content — not written",
+                            ))
+                            result.open_items.append(OpenItem(
+                                source.label, f"docs/ai/local/{area_name}/{relpath}", REASON_NAME_COLLISION,
                             ))
                     else:
                         status = "new"
@@ -1231,17 +1494,71 @@ def write_files(root: Path, result: Analysis, yes: bool) -> list[str]:
                         kind="file-collision", area=item["area"],
                         message=f"{item['dest']} — declined interactively, not written",
                     ))
+                    result.open_items.append(OpenItem(item["file"], item["dest"], REASON_DECLINED))
                     continue
             else:
                 result.findings.append(Finding(
                     kind="file-collision", area=item["area"],
                     message=f"{item['dest']} — needs --yes or an interactive run, not written",
                 ))
+                result.open_items.append(OpenItem(item["file"], item["dest"], REASON_NEEDS_YES))
                 continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(item["text"], encoding="utf-8")
+        item["written"] = True
         messages.append(f"{item['dest']}: written")
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Per-source-file completeness (T32, widened by T33) — a source file may only move to
+# .act-local/import/done/ once nothing it contributed is still open. "Open" is exactly what
+# result.open_items records: a bundled file write that needs --yes or was declined, a candidate
+# pair nobody judged, or a name/id collision with something already in the project. Those are
+# "come back and finish this" — unlike a dead id, a cross-file disagreement or a judged
+# contradiction, which are final outcomes (fixable only by editing the source file itself, not by
+# a rerun or a `--resolve` decision) and so do not block the move. See analyze()/apply_judgments()/
+# plan_files()/plan_units()/write_files() for where open_items entries are added.
+# ---------------------------------------------------------------------------
+
+def incomplete_source_labels(result: Analysis) -> set[str]:
+    return {item.file_label for item in result.open_items}
+
+
+def open_items_by_file(result: Analysis) -> dict[str, list[OpenItem]]:
+    """Every open item, grouped by the source file it came from, in the order they were found."""
+    out: dict[str, list[OpenItem]] = {}
+    for item in result.open_items:
+        out.setdefault(item.file_label, []).append(item)
+    return out
+
+
+def applied_count_by_file(result: Analysis) -> dict[str, int]:
+    """How many rule/coding entries and bundled files were actually applied/written, per source
+    file — the "was bereits übernommen wurde (Anzahl)" half of the end-of-apply summary."""
+    counts: dict[str, int] = {}
+    for res in result.resolutions:
+        if res.action == "apply":
+            counts[res.entry.file_label] = counts.get(res.entry.file_label, 0) + 1
+    for item in result.file_plan:
+        if item.get("written"):
+            counts[item["file"]] = counts.get(item["file"], 0) + 1
+    return counts
+
+
+def render_incomplete_file(file_name: str, items: list[OpenItem], applied: int) -> str:
+    """The end-of-apply message for one not-fully-processed file: what is open (one line per
+    item, with the reason in plain text), what was already applied, and the four `--resolve`
+    options with the matching invocation."""
+    lines = [f"{file_name}: {applied} item(s) already applied, {len(items)} still open:"]
+    for item in items:
+        lines.append(f"  - {item.ref} · {item.reason}")
+    lines.append("  Options:")
+    lines.append("    keep     (default) leave it, offered again next run")
+    lines.append(f"    partial  keep what applied, discard the rest -> apply --resolve {file_name}=partial")
+    lines.append(f"    ignore   never offer this file again -> apply --resolve {file_name}=ignore")
+    lines.append(f"    delete   remove the file -> apply --resolve {file_name}=delete")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1326,7 +1643,7 @@ def render_plan(result: Analysis) -> str:
             lines.append(f"[{r.entry.area}] {r.entry.symbol} `{r.entry.id}`{note}")
         lines.append("")
     if result.file_plan:
-        lines.append("== Mitgegebene Dateien ==")
+        lines.append("== Bundled files ==")
         for item in result.file_plan:
             lines.append(f"[{item['area']}] {item['dest']} — {item['status']}")
         lines.append("")
@@ -1348,7 +1665,19 @@ def render_plan(result: Analysis) -> str:
 
 def cmd_plan(args: argparse.Namespace) -> int:
     root = actlib.repo_root()
-    sources = [load_source(Path(p)) for p in args.files]
+    paths, auto = _resolve_input_files(root, args)
+    if auto and not paths:
+        print("settings_load.py: .act-local/import/ is empty — nothing to do")
+        return 0
+    if auto:
+        sources, _loaded_paths, failures = _load_sources_lenient(paths)
+        for path, message in failures:
+            print(f"settings_load.py: {path.name}: {message} — left in place", file=sys.stderr)
+        if not sources:
+            print("settings_load.py: every file in .act-local/import/ failed to load — nothing to do")
+            return 0
+    else:
+        sources = [load_source(p) for p in paths]
     result = analyze(root, sources)
     plan_files(root, sources, result)
     plan_units(root, sources, result)
@@ -1397,9 +1726,111 @@ def _load_judgments(path: Path) -> dict[str, str]:
     return data
 
 
+def _cmd_resolve_only(root: Path, paths: list[Path], resolve_map: dict[str, str]) -> int:
+    """`apply --resolve FILE=ACTION ...`: a pure filing run (T33 review), not a second attempt at
+    applying anything. Only the files named in `resolve_map` are touched at all — every other file
+    under `.act-local/import/`, named or not in this call's discovery, is left exactly where it is.
+    Nothing is analyzed against the project and nothing is written/applied; `partial` is the only
+    action that looks at a file's content at all, and only to work out what it would still leave
+    open (read-only, single-file — the same analysis `plan` runs). No TTY prompt happens here
+    regardless of `--non-interactive` (the point of `--resolve` is to answer without one).
+    `partial` on a file that fails to load is refused, not attempted: with no successful analysis,
+    "what was discarded" cannot be reported honestly, so keep/ignore/delete are pointed at instead.
+    Returns a nonzero exit code if any single resolution failed (an OSError moving/deleting a file,
+    or a refused `partial`) — the ones that succeeded still happened, this only signals that not
+    everything asked for did."""
+    by_name = {p.name: p for p in paths}
+    had_error = False
+    ignored_count = 0
+
+    for name in sorted(resolve_map):
+        path = by_name[name]
+        action = resolve_map[name]
+
+        if action == "keep":
+            print(f"settings_load.py: {name}: kept — untouched")
+            continue
+
+        if action == "delete":
+            try:
+                path.unlink()
+            except OSError as exc:
+                print(f"settings_load.py: {name}: could not delete ({exc}) — left in place", file=sys.stderr)
+                had_error = True
+                continue
+            print(f"settings_load.py: {name}: deleted")
+            continue
+
+        if action == "ignore":
+            try:
+                dest = _move_to_ignored(root, path)
+            except OSError as exc:
+                print(f"settings_load.py: {name}: could not move to ignored/ ({exc}) — left in place", file=sys.stderr)
+                had_error = True
+                continue
+            ignored_count += 1
+            print(f"settings_load.py: {name}: ignored -> {dest.relative_to(root).as_posix()}")
+            continue
+
+        # partial: load this one file, read-only-analyze it alone (like `plan`), then file it away.
+        try:
+            source = load_source(path)
+        except _LOAD_ERRORS as exc:
+            print(f"settings_load.py: {name}: cannot use partial — the file failed to load ({exc}); "
+                  f"use keep, ignore or delete instead", file=sys.stderr)
+            had_error = True
+            continue
+        result = analyze(root, [source])
+        plan_files(root, [source], result)
+        plan_units(root, [source], result)
+        mark_unreviewed_without_judgments(result)
+        mark_new_files_pending(result)
+        items = open_items_by_file(result).get(name, [])
+        try:
+            dest = _move_to_done(root, path)
+        except OSError as exc:
+            print(f"settings_load.py: {name}: could not move to done/ ({exc}) — left in place", file=sys.stderr)
+            had_error = True
+            continue
+        note = _write_skipped_note(dest, name, items, applied=None)
+        print(f"settings_load.py: {name}: partial import closed -> "
+              f"{dest.relative_to(root).as_posix()} ({len(items)} discarded, see {note.name})")
+
+    if ignored_count:
+        print(f"settings_load.py: {ignored_count} file(s) ignored in .act-local/import/ignored/")
+
+    return 2 if had_error else 0
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
     root = actlib.repo_root()
-    sources = [load_source(Path(p)) for p in args.files]
+    paths, auto = _resolve_input_files(root, args)
+
+    resolve_map = _parse_resolve_args(args.resolve)
+    if resolve_map:
+        if not auto:
+            raise ValueError("--resolve only applies to the default .act-local/import/ discovery "
+                              "(no explicit file given on the command line)")
+        pending_names = {p.name for p in paths}
+        unknown = sorted(name for name in resolve_map if name not in pending_names)
+        if unknown:
+            listing = ", ".join(sorted(pending_names)) if pending_names else "(none)"
+            raise ValueError(f"--resolve: unknown file(s) {', '.join(unknown)} — "
+                              f"files currently in .act-local/import/: {listing}")
+        return _cmd_resolve_only(root, paths, resolve_map)
+
+    if auto and not paths:
+        print("settings_load.py: .act-local/import/ is empty — nothing to do")
+        return 0
+    if auto:
+        sources, loaded_paths, failures = _load_sources_lenient(paths)
+        for path, message in failures:
+            print(f"settings_load.py: {path.name}: {message} — left in place", file=sys.stderr)
+        if not sources:
+            print("settings_load.py: every file in .act-local/import/ failed to load — nothing to do")
+            return 0
+    else:
+        sources = [load_source(p) for p in paths]
     result = analyze(root, sources)
     plan_files(root, sources, result)
     plan_units(root, sources, result)
@@ -1438,11 +1869,96 @@ def cmd_apply(args: argparse.Namespace) -> int:
             print(f"settings_load.py: area '{area_name}' — not supported yet, entries left unread")
 
     applied_rules = sum(1 for _message, applied in rule_messages if applied)
+    applied_total = applied_rules + len(file_messages)
     print(
-        f"settings_load.py: {applied_rules} rule(s), {len(file_messages)} file(s) applied; "
+        f"settings_load.py: {applied_total} item(s) applied in this run "
+        f"({applied_rules} rule(s), {len(file_messages)} file(s)); "
         f"{len(result.findings)} finding(s) in the inbox."
     )
-    return 0
+
+    had_error = False
+
+    if auto:
+        # Only the auto-discovered path moves files — never for explicit <file...> paths, and
+        # never for `plan` (a dry run moves nothing, see the module docstring's "No <file...>
+        # given" section). A file this run could not even load (already reported above, via
+        # `failures`) stays where it is, not in `loaded_paths`. A file that loaded fine but left
+        # something open (needs --yes, an unjudged candidate pair, a name/id collision) also
+        # stays by default — moving it to done/ would read as "nothing left to do" next time
+        # (T32) — unless an interactive answer says otherwise here, or a separate
+        # `apply --resolve` call later (T33; see _cmd_resolve_only — this function no longer
+        # handles --resolve at all, it always exits above before reaching this point).
+        incomplete = incomplete_source_labels(result)
+        by_file = open_items_by_file(result)
+        applied_by_file = applied_count_by_file(result)
+        interactive = actlib.is_interactive()
+        ignored_count = 0
+        for path in loaded_paths:
+            if path.name not in incomplete:
+                try:
+                    dest = _move_to_done(root, path)
+                except OSError as exc:
+                    print(f"settings_load.py: {path.name}: could not move to done/ ({exc}) — left in place", file=sys.stderr)
+                    had_error = True
+                    continue
+                print(f"settings_load.py: {path.name} -> {dest.relative_to(root).as_posix()}")
+                continue
+
+            items = by_file.get(path.name, [])
+            applied = applied_by_file.get(path.name, 0)
+
+            # render_incomplete_file's summary is printed exactly once: _prompt_resolve() already
+            # prints it itself (right before asking), so an interactive run must not print it here
+            # too — only the non-interactive branch (which never calls _prompt_resolve) does.
+            if interactive:
+                action = _prompt_resolve(path.name, items, applied)
+            else:
+                print(render_incomplete_file(path.name, items, applied))
+                action = "keep"
+
+            if action == "keep":
+                if _rerun_can_help(items):
+                    print(f"settings_load.py: {path.name}: kept — offered again next run "
+                          f"(rerun apply with --yes/--judgments, or use --resolve {path.name}=partial|ignore|delete)",
+                          file=sys.stderr)
+                else:
+                    print(f"settings_load.py: {path.name}: kept — a rerun gives the same result, "
+                          f"choose partial, ignore or delete (--resolve {path.name}=partial|ignore|delete)",
+                          file=sys.stderr)
+                continue
+            if action == "partial":
+                try:
+                    dest = _move_to_done(root, path)
+                except OSError as exc:
+                    print(f"settings_load.py: {path.name}: could not move to done/ ({exc}) — left in place", file=sys.stderr)
+                    had_error = True
+                    continue
+                note = _write_skipped_note(dest, path.name, items, applied)
+                print(f"settings_load.py: {path.name}: partial import closed -> "
+                      f"{dest.relative_to(root).as_posix()} ({applied} applied, "
+                      f"{len(items)} discarded, see {note.name})")
+            elif action == "ignore":
+                try:
+                    dest = _move_to_ignored(root, path)
+                except OSError as exc:
+                    print(f"settings_load.py: {path.name}: could not move to ignored/ ({exc}) — left in place", file=sys.stderr)
+                    had_error = True
+                    continue
+                ignored_count += 1
+                print(f"settings_load.py: {path.name}: ignored -> {dest.relative_to(root).as_posix()}")
+            elif action == "delete":
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    print(f"settings_load.py: {path.name}: could not delete ({exc}) — left in place", file=sys.stderr)
+                    had_error = True
+                    continue
+                print(f"settings_load.py: {path.name}: deleted")
+
+        if ignored_count:
+            print(f"settings_load.py: {ignored_count} file(s) ignored in .act-local/import/ignored/")
+
+    return 2 if had_error else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1457,15 +1973,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     plan = sub.add_parser("plan", help="check only, write nothing to the project")
-    plan.add_argument("files", nargs="+", help="settings.md or settings.zip file(s), in order")
+    plan.add_argument("files", nargs="*", default=[],
+                       help="settings.md or settings.zip file(s), in order; default: every "
+                            ".md/.zip in .act-local/import/")
     plan.add_argument("--candidates-out", metavar="PATH", help="write the candidate-pair list here as JSON")
     plan.add_argument("--json", action="store_true", help="machine-readable output")
 
     apply_p = sub.add_parser("apply", help="check, then write what is mechanically clear or judged")
-    apply_p.add_argument("files", nargs="+", help="settings.md or settings.zip file(s), in order")
+    apply_p.add_argument("files", nargs="*", default=[],
+                          help="settings.md or settings.zip file(s), in order; default: every "
+                               ".md/.zip in .act-local/import/ (moved to .act-local/import/done/ "
+                               "once processed)")
     apply_p.add_argument("--judgments", metavar="PATH", help="JSON verdicts for plan --candidates-out's pairs")
-    apply_p.add_argument("--yes", action="store_true", help="write mitgegebene Dateien without asking first")
+    apply_p.add_argument("--yes", action="store_true", help="write bundled files without asking first")
     apply_p.add_argument("--non-interactive", action="store_true", help="never prompt (same effect as omitting --yes when stdin is not a terminal)")
+    apply_p.add_argument("--resolve", action="append", default=[], metavar="FILE=ACTION",
+                          help="decide what happens to a not-fully-processed .act-local/import/ file "
+                               "(repeatable); ACTION is keep (default, offered again), partial (close it, "
+                               "keep what applied, discard the rest), ignore (move to import/ignored/, "
+                               "never offered again), or delete (remove the file) — only with the default "
+                               "no-argument .act-local/import/ discovery")
 
     return parser
 

@@ -4,9 +4,11 @@
 # Purpose: Single entry point for every hook event this template wires into the assistant's
 #          harness (currently PreToolUse and SessionStart). One script per event would scatter
 #          the same "read stdin, load actlib, check config" boilerplate across files; dispatch.py
-#          does that once and hands off to one handler per event. PreToolUse runs two checks: the
-#          template write-guard (check_write_guard) and the no-sub-sub-agents guard
-#          (check_worker_nesting_guard, R-role-worker) — the first block wins.
+#          does that once and hands off to one handler per event. PreToolUse runs three checks, in
+#          order, the first block wins: the template write-guard (check_write_guard), the
+#          no-sub-sub-agents guard (check_worker_nesting_guard, R-role-worker), and the per-worker
+#          write-scope guard (check_worker_write_scope, R-cost-delegate) — a worker may only write
+#          where its assignment's `Write scope:` line allows.
 #
 # Usage:
 #   python .act/hooks/dispatch.py <event>
@@ -50,13 +52,16 @@
 
 from __future__ import annotations
 
+import fnmatch
+import io
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -105,6 +110,615 @@ def _check_mode(config: dict[str, str], key: str, default: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Bash write targets — shared by check 1 (template write-guard) and check 1c (write scope)
+# ---------------------------------------------------------------------------
+#
+# Both checks need the same answer for a Bash command: which paths does it write to, and against
+# which directory is a relative one resolved. Two earlier versions answered that with regexes over
+# the raw text and failed review both times (2026-09-23): the first read a `>` inside quotes or a
+# heredoc body as a redirection, the second masked quotes and heredocs by regex and thereby hid
+# real redirections (`echo \" > f \"`, `echo don\'t > f`, a quoted "<<EOF", ...). This version
+# tokenizes instead — shlex in POSIX mode with the operator characters as their own tokens — so
+# quoting and escaping are decided by one tokenizer, and operators are read from the token stream,
+# never from raw text. Steps (_scan_command):
+#   1. backslash-newline continuations are joined (_LINE_CONTINUATION_RE);
+#   2. line mode: every line is tokenized on its own; a line whose token stream carries a real
+#      `<<`/`<<-` operator plus delimiter has the heredoc body skipped up to its terminator line —
+#      several heredocs on one line in turn, and nothing at all if a terminator line is missing
+#      (_line_mode_tokens); the `$(...)`/backtick parts of an unquoted-delimiter body, which bash
+#      does run, are kept as commands of their own;
+#   3. conservative fallback when a line does not tokenize on its own (an unclosed quote, typically
+#      a string spanning lines) or the command uses ANSI-C quoting `$'...'`, which shlex does not
+#      know: the whole command is tokenized in one go (newline as an operator, a multi-line string
+#      becomes one token, no heredoc skipping); if that fails too, or for `$'...'` in any case,
+#      every word after a `>`-style operator in the raw text also counts as a target
+#      (_raw_redirect_targets) — over-blocking is the accepted price there;
+#   4. the token stream is walked command by command (_scan_tokens): redirections, the write
+#      commands of _simple_command_targets, `cd` for the base directory, and the contents of
+#      `sh -c "..."`, `eval`, `$(...)` and backticks scanned recursively.
+#
+# Known limits (a target missed here is simply not checked — resolved toward over-blocking wherever
+# the command itself is ambiguous):
+#   - writes made from inside a program are invisible: `python -c "open(...)"`, a script file,
+#     `find -exec`, `xargs` fed from stdin, an alias or shell function;
+#   - a target containing a variable, a command substitution, a brace expansion or a leading `~` is
+#     never resolved (_is_dynamic_target): check 1c denies it, check 1 passes it unless its text
+#     names .act/;
+#   - an fd number glued to a redirection (`2>`) cannot be told apart from a separate word (`echo
+#     2 > f`) once tokenized, so a bare number right before a redirection is dropped as fd;
+#   - only the directory changes listed in _scan_tokens are followed; anything else there makes
+#     the base unknown rather than guessed.
+
+_SHELL_OPERATOR_CHARS = "();<>|&"
+# Longest first: a run of operator characters from shlex ("2>&1" yields ">&", "x;>f" yields ";>")
+# is split greedily into these (_split_operator_run).
+_SHELL_OPERATORS = (
+    "&>>", "<<<", ";;&", ">>", ">|", "&>", ">&", "<&", "<>", "<<", "&&", "||", "|&", ";;", ";&",
+    ">", "<", "|", "&", ";", "(", ")", "\n",
+)
+_LIST_END_OPS = frozenset({";", "&", "\n", ";;", ";&", ";;&"})
+_PIPE_OPS = frozenset({"|", "|&"})
+_SEPARATOR_OPS = _LIST_END_OPS | _PIPE_OPS | {"&&", "||", "(", ")"}
+_WRITE_REDIRECT_OPS = frozenset({">", ">>", ">|", "&>", "&>>", "<>"})
+# `>&N`, `>&N-`, `>&-`: a file-descriptor duplication/close, never a file. `>& word` with any other
+# word is bash's "stdout and stderr to file" and therefore a target.
+_FD_DUP_WORD_RE = re.compile(r"^(?:\d+-?|-)$")
+
+# Backslash-newline (an odd number of backslashes before the newline) is a line continuation.
+_LINE_CONTINUATION_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+# shlex starts a comment at *any* unquoted `#`, bash only at the start of a word — `echo x#y > f`
+# would otherwise lose its redirection. A `#` glued to a preceding word character is swapped for a
+# placeholder before tokenizing and restored afterwards.
+_MIDWORD_HASH_RE = re.compile(r"(?<=[^\s();<>|&])#")
+_HASH_PLACEHOLDER = "\ue000"
+_RAW_REDIRECT_RE = re.compile(r"(?:&>>|&>|>>|>\||>&|<>|>)\s*([^\s;&|()<>]+)")
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]*)`")
+# The word right after a heredoc operator in the raw line (not `<<<`), to see whether it was quoted.
+_HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\S*)")
+_MAX_SCAN_DEPTH = 4
+
+# A Git-Bash-style absolute path ("/d/dev/...", the MSYS form a worker's own Bash commands often
+# use on Windows) rewritten to the native drive form ("D:/dev/...") so Path() and glob matching
+# treat it the same as a Windows-native absolute path. Only ever rewritten on win32 — elsewhere a
+# leading "/x/..." is an ordinary absolute path and must be left alone.
+_GITBASH_DRIVE_RE = re.compile(r"^[\\/]([A-Za-z])[\\/](.*)$")
+
+# A "target" that is not a file in the project: the null device in its Unix and Windows spellings
+# and the standard streams (`ls src 2>/dev/null`, `cmd >NUL 2>&1`, `echo x >/dev/stderr`).
+_IGNORABLE_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nul", "nul:"}
+# A target whose text the shell still expands: variable, command substitution, brace expansion,
+# home directory. Its real path is unknown here (see _is_dynamic_target).
+_DYNAMIC_TARGET_RE = re.compile(r"[$`{]|^~")
+# A literal directory operand for `cd`/`git -C` — anything else leaves the base unknown.
+_SIMPLE_DIR_RE = re.compile(r"^[\w./:-]+$")
+
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+_RESERVED_PREFIXES = frozenset(
+    {"!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "time"}
+)
+_WRAPPER_COMMANDS = frozenset(
+    {"sudo", "env", "command", "builtin", "exec", "nohup", "nice", "timeout", "xargs", "stdbuf"}
+)
+# A wrapper's own option or number/duration (`nice -n 5`, `timeout 10s`), skipped before its command.
+_WRAPPER_ARG_RE = re.compile(r"^(?:-.*|\d+(?:\.\d+)?[smhd]?)$")
+_SHELL_NAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+# Every non-option operand is a target (mv: the sources vanish, so they count too).
+_ALL_OPERAND_WRITERS = frozenset({"tee", "touch", "mkdir", "rm", "rmdir", "unlink", "mv", "truncate", "shred"})
+# The last operand (or an explicit -t/--target-directory) is the target.
+_LAST_OPERAND_WRITERS = frozenset({"cp", "install", "ln", "rsync"})
+# Options that consume the next word, per command — so that word is neither mistaken for an operand
+# nor lost as a target (-t/--target-directory are read back as targets).
+_VALUE_FLAGS = {
+    "touch": frozenset({"-r", "--reference", "-d", "--date", "-t"}),
+    "mkdir": frozenset({"-m", "--mode"}),
+    "mv": frozenset({"-t", "--target-directory", "-S", "--suffix"}),
+    "truncate": frozenset({"-s", "--size", "-r", "--reference"}),
+    "shred": frozenset({"-n", "--iterations", "-s", "--size"}),
+    "cp": frozenset({"-t", "--target-directory", "-S", "--suffix"}),
+    "install": frozenset({"-t", "--target-directory", "-m", "--mode", "-o", "--owner", "-g", "--group", "-S", "--suffix"}),
+    "ln": frozenset({"-t", "--target-directory", "-S", "--suffix"}),
+    "rsync": frozenset({"-e", "--rsh", "--exclude", "--include", "-f", "--filter"}),
+    "sed": frozenset({"-e", "--expression", "-f", "--file", "-l", "--line-length"}),
+    "checkout": frozenset({"-b", "-B", "--orphan", "--conflict"}),
+    "restore": frozenset({"-s", "--source"}),
+}
+_SED_INPLACE_FLAG_RE = re.compile(r"^-[A-Za-z]*i")
+_GIT_GLOBAL_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"})
+# Which git subcommands count as writes: check 1 only mv/rm (the orchestrator restores .act/ files
+# with checkout/restore on purpose), check 1c also checkout/restore (a worker never needs them).
+_GIT_WRITES_TEMPLATE_GUARD = frozenset({"mv", "rm"})
+_GIT_WRITES_WORKER_SCOPE = frozenset({"mv", "rm", "checkout", "restore"})
+
+_Token = tuple[str, bool]  # (text, is_operator)
+_Target = tuple[str, Optional[str]]  # (raw target, base directory for a relative one; None = unknown)
+_Bases = frozenset  # frozenset[Optional[str]] — the directories the shell may be in at that point
+
+
+def _to_native_path(raw: str) -> str:
+    """Rewrite a Git-Bash-style absolute path to its native Windows drive form; left unchanged
+    everywhere else. See _GITBASH_DRIVE_RE."""
+    match = _GITBASH_DRIVE_RE.match(raw)
+    if match and sys.platform == "win32":
+        drive, rest = match.groups()
+        return f"{drive.upper()}:/{rest}"
+    return raw
+
+
+def _is_ignorable_write_target(raw: str) -> bool:
+    """True for a captured "target" that is not a project file — see _IGNORABLE_TARGETS."""
+    stripped = raw.strip()
+    return not stripped or stripped.lower() in _IGNORABLE_TARGETS
+
+
+def _is_dynamic_target(raw: str) -> bool:
+    """True if the shell would still expand `raw` ($VAR, $(...), `...`, {a,b}, ~) — its real path
+    cannot be known here, so no directory check on its literal text is trustworthy."""
+    return bool(_DYNAMIC_TARGET_RE.search(raw))
+
+
+def _is_absolute_target(raw: str) -> bool:
+    return Path(_to_native_path(raw)).is_absolute()
+
+
+class _NewlineKeepingStream(io.StringIO):
+    """shlex skips a `#` comment with readline(), which also swallows the newline. In whole-command
+    mode that newline separates two commands, so it is left in the stream instead."""
+
+    def readline(self, size: Optional[int] = -1, /) -> str:
+        line = super().readline(size)
+        if line.endswith("\n"):
+            self.seek(self.tell() - 1)
+            return line[:-1]
+        return line
+
+
+class _ShellLexer(shlex.shlex):
+    """shlex in POSIX mode that also reports whether the token just read contained any quoting or
+    escaping (`saw_quote`) — the one fact POSIX shlex drops along with the quotes. Without it a
+    quoted `'>'` or `";"` would look exactly like the operator. Tracked through the `state`
+    attribute, which shlex sets to the quote or escape character on entering one."""
+
+    def __init__(self, text: str, newline_is_operator: bool) -> None:
+        self.saw_quote = False
+        operators = _SHELL_OPERATOR_CHARS + ("\n" if newline_is_operator else "")
+        super().__init__(_NewlineKeepingStream(text), posix=True, punctuation_chars=operators)
+        self.whitespace_split = True
+        if newline_is_operator:
+            self.whitespace = " \t\r"
+
+    @property
+    def state(self) -> Optional[str]:
+        return self._state
+
+    @state.setter
+    def state(self, value: Optional[str]) -> None:
+        if value and value in getattr(self, "quotes", "") + getattr(self, "escape", ""):
+            self.saw_quote = True
+        self._state = value
+
+
+def _split_operator_run(run: str) -> list[str]:
+    ops: list[str] = []
+    pos = 0
+    while pos < len(run):
+        op = next((candidate for candidate in _SHELL_OPERATORS if run.startswith(candidate, pos)), run[pos])
+        ops.append(op)
+        pos += len(op)
+    return ops
+
+
+def _shell_tokens(text: str, newline_is_operator: bool) -> list[_Token]:
+    """Tokenize `text` into (text, is_operator) pairs. Raises ValueError (from shlex) on an
+    unclosed quote or a trailing escape."""
+    lexer = _ShellLexer(_MIDWORD_HASH_RE.sub(_HASH_PLACEHOLDER, text), newline_is_operator)
+    operator_chars = lexer.punctuation_chars
+    tokens: list[_Token] = []
+    while True:
+        lexer.saw_quote = False
+        token = lexer.get_token()
+        if token is None:
+            return tokens
+        if token and not lexer.saw_quote and all(char in operator_chars for char in token):
+            tokens.extend((op, True) for op in _split_operator_run(token))
+        else:
+            tokens.append((token.replace(_HASH_PLACEHOLDER, "#"), False))
+
+
+# Constructs in which bash does not read `<<` as a heredoc (or reads it as one that ends early):
+# arithmetic `$[1<<2]`, `${arr[1<<2]}`, an array index `a[1<<2]=x`, and a heredoc opened inside
+# backticks, whose body ends at the closing backtick. A line containing any of them opens no
+# heredoc here, so its following lines are scanned as commands — over-scanning is the safe side.
+_NO_HEREDOC_MARKERS = ("$[", "${", "[", "`")
+
+
+def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str], bool]]:
+    """Every heredoc a line opens, in order, as (terminator candidates, whether its body is
+    expanded). A line with `((` in it (arithmetic like `$((1<<2))`, where `<<` is a shift) or with
+    one of _NO_HEREDOC_MARKERS opens none — skipping nothing is the safe side. `<<-EOF` reaches
+    here as `<<` plus `-EOF`; both "EOF" and "-EOF" are accepted as the terminator, whichever comes first, since ending a body early only
+    ever scans more. A body is expanded (so `$(...)` and backticks in it run) unless the delimiter
+    was quoted; the tokens no longer show quoting, so that is read from the raw line, and if the two
+    do not line up the body is treated as expanded."""
+    if "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS):
+        return []
+    delimiters = []
+    for index, (text, is_op) in enumerate(tokens[:-1]):
+        next_text, next_is_op = tokens[index + 1]
+        if is_op and text == "<<" and not next_is_op:
+            candidates = {next_text}
+            if next_text.startswith("-") and len(next_text) > 1:
+                candidates.add(next_text[1:])
+            delimiters.append(candidates)
+    raw_words = _HEREDOC_OPEN_RE.findall(line)
+    aligned = len(raw_words) == len(delimiters)
+    return [
+        (candidates, not aligned or not any(char in raw_words[position] for char in "'\"\\"))
+        for position, candidates in enumerate(delimiters)
+    ]
+
+
+def _body_substitutions(body_lines: list[str]) -> list[str]:
+    """The command substitutions an expanded heredoc body runs: each backtick span as a subshell
+    `( ... )`, and the rest of a line from its first `$(`."""
+    snippets = []
+    for body_line in body_lines:
+        snippets.extend(f"( {span} )" for span in _BACKTICK_SPAN_RE.findall(body_line))
+        if "$(" in body_line:
+            snippets.append(body_line[body_line.index("$("):])
+    return snippets
+
+
+def _line_mode_tokens(command: str) -> list[_Token]:
+    """Tokenize line by line with heredoc bodies skipped (step 2 of the section comment). A body is
+    skipped only up to a terminator line that exists; without one, nothing is skipped, so the rest
+    is scanned as commands. The command substitutions of an expanded body are kept (as commands of
+    their own after the heredoc line). Raises ValueError if any line does not tokenize on its own."""
+    lines = command.split("\n")
+    tokens: list[_Token] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        line_tokens = _shell_tokens(line, newline_is_operator=False)
+        tokens.extend(line_tokens)
+        tokens.append(("\n", True))
+        index += 1
+        for candidates, expands in _heredoc_delimiters(line_tokens, line):
+            end = next((k for k in range(index, len(lines)) if lines[k].strip() in candidates), None)
+            if end is None:
+                break
+            if expands:
+                for snippet in _body_substitutions(lines[index:end]):
+                    tokens.extend(_shell_tokens(snippet, newline_is_operator=False))
+                    tokens.append(("\n", True))
+            index = end + 1
+    return tokens
+
+
+def _raw_redirect_targets(command: str) -> list[str]:
+    """Coarse last resort: every word after a `>`-style operator anywhere in the raw text, quotes
+    stripped off its ends, fd duplications (`>&2`) left out. Over-inclusive by design."""
+    targets = []
+    for match in _RAW_REDIRECT_RE.finditer(command):
+        word = match.group(1).strip("'\"")
+        if not _FD_DUP_WORD_RE.match(word):
+            targets.append(word)
+    return targets
+
+
+def _command_name(word: str) -> str:
+    name = word.lstrip("`").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _operands(args: list[str], value_flags: frozenset = frozenset()) -> tuple[list[str], dict[str, list[str]]]:
+    """Split a command's arguments into operands and the values of `value_flags` (`-t DIR`,
+    `--target-directory=DIR`, `-tDIR`). Other options are dropped; `--` ends option parsing."""
+    operands: list[str] = []
+    values: dict[str, list[str]] = {}
+    index = 0
+    options_done = False
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if options_done or arg == "-" or not arg.startswith("-"):
+            operands.append(arg)
+        elif arg == "--":
+            options_done = True
+        elif arg.startswith("--") and "=" in arg:
+            name, value = arg.split("=", 1)
+            if name in value_flags:
+                values.setdefault(name, []).append(value)
+        elif arg in value_flags:
+            if index < len(args):
+                values.setdefault(arg, []).append(args[index])
+                index += 1
+        elif not arg.startswith("--") and len(arg) > 2 and arg[:2] in value_flags:
+            values.setdefault(arg[:2], []).append(arg[2:])
+    return operands, values
+
+
+def _cd_bases(bases: _Bases, directory: str) -> _Bases:
+    """The possible directories after `cd <directory>` from each of `bases`. A rooted path without
+    a drive on Windows (`/tmp`, Git Bash's own mount points) has no knowable native location."""
+    native = _to_native_path(directory)
+    if Path(native).is_absolute():
+        return frozenset({native})
+    if native.startswith(("/", "\\")):
+        return frozenset({None})
+    return frozenset(str(Path(_to_native_path(base)) / native) if base is not None else None for base in bases)
+
+
+def _pairs(raw_targets: list[str], bases: _Bases) -> list[_Target]:
+    ordered = sorted(bases, key=lambda base: (base is None, base or ""))
+    return [(raw, base) for raw in raw_targets for base in ordered]
+
+
+def _git_targets(args: list[str], bases: _Bases, git_writes: frozenset) -> list[_Target]:
+    """Targets of `git [-C dir] [global options] <sub> ...` for a sub in `git_writes`: every operand
+    (checkout/restore without `--` cannot tell a branch from a path, so both count). `-C dir` moves
+    the base like a `cd`; `--work-tree` makes it unknown."""
+    target_bases = bases
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "-C" and index + 1 < len(args):
+            directory = args[index + 1]
+            simple = _SIMPLE_DIR_RE.match(directory) and not directory.startswith("-")
+            target_bases = _cd_bases(target_bases, directory) if simple else frozenset({None})
+            index += 2
+        elif arg in _GIT_GLOBAL_VALUE_FLAGS:
+            if arg == "--work-tree":
+                target_bases = frozenset({None})
+            index += 2
+        elif arg.startswith("-"):
+            if arg.startswith("--work-tree="):
+                target_bases = frozenset({None})
+            index += 1
+        else:
+            break
+    if index >= len(args) or args[index] not in git_writes:
+        return []
+    operands, _ = _operands(args[index + 1:], _VALUE_FLAGS.get(args[index], frozenset()))
+    return _pairs(operands, target_bases)
+
+
+def _download_targets(name: str, args: list[str]) -> list[str]:
+    """curl -o/--output, wget -O/--output-document (also clustered: `curl -sSLo f`). A download into
+    the current directory under the remote's own name (curl -O, wget without -O) is reported as
+    "*" there — every file of that directory. "-" (stdout) is no file."""
+    out_flag, remote_flag = ("o", "O") if name == "curl" else ("O", None)
+    long_out = "--output" if name == "curl" else "--output-document"
+    targets: list[str] = []
+    named = False
+    for index, arg in enumerate(args):
+        if arg == long_out and index + 1 < len(args):
+            targets.append(args[index + 1])
+            named = True
+        elif arg.startswith(long_out + "="):
+            targets.append(arg.split("=", 1)[1])
+            named = True
+        elif arg.startswith("-") and not arg.startswith("--") and out_flag in arg[1:]:
+            rest = arg[1:].split(out_flag, 1)[1]
+            if rest:
+                targets.append(rest)
+            elif index + 1 < len(args):
+                targets.append(args[index + 1])
+            named = True
+    if name == "curl":
+        if any(arg in ("--remote-name", "--remote-name-all")
+               or (remote_flag and arg.startswith("-") and not arg.startswith("--") and remote_flag in arg[1:])
+               for arg in args):
+            targets.append("*")
+    elif not named:
+        prefix = next((args[i + 1] for i, arg in enumerate(args[:-1]) if arg in ("-P", "--directory-prefix")), None)
+        targets.append(f"{prefix}/*" if prefix else "*")
+    return [target for target in targets if target != "-"]
+
+
+def _simple_command_targets(
+    words: list[str], bases: _Bases, git_writes: frozenset, depth: int
+) -> tuple[list[_Target], Optional[tuple[Optional[str], bool]]]:
+    """Write targets of one simple command (its words, redirections already taken out), and — for
+    `cd`/`pushd`/`popd` — the directory change as (literal directory or None if unknown, whether a
+    prefix like `if`/`{`/`env` made it conditional)."""
+    index = 0
+    prefixed = False
+    while index < len(words):
+        word = words[index]
+        if _ASSIGNMENT_RE.match(word):
+            index += 1
+        elif word in _RESERVED_PREFIXES:
+            prefixed = True
+            index += 1
+        elif _command_name(word) in _WRAPPER_COMMANDS:
+            prefixed = True
+            index += 1
+            while index < len(words) and (_WRAPPER_ARG_RE.match(words[index]) or _ASSIGNMENT_RE.match(words[index])):
+                index += 1
+        else:
+            break
+    if index >= len(words):
+        return [], None
+    name = _command_name(words[index])
+    args = words[index + 1:]
+
+    if name == "cd":
+        operands, _ = _operands(args)
+        if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
+            return [], (operands[0], prefixed)
+        return [], (None, prefixed)
+    if name in ("pushd", "popd"):
+        return [], (None, prefixed)
+
+    raw_targets: list[str] = []
+    if name in _ALL_OPERAND_WRITERS:
+        value_flags = _VALUE_FLAGS.get(name, frozenset())
+        operands, values = _operands(args, value_flags)
+        raw_targets = operands + values.get("--target-directory", [])
+        if name != "touch":  # touch -t is a timestamp, everywhere else a target directory
+            raw_targets += values.get("-t", [])
+    elif name in _LAST_OPERAND_WRITERS:
+        operands, values = _operands(args, _VALUE_FLAGS[name])
+        explicit = values.get("-t", []) + values.get("--target-directory", [])
+        if explicit:
+            raw_targets = explicit
+        elif name == "install" and any(arg in ("-d", "--directory") for arg in args):
+            raw_targets = operands
+        elif len(operands) >= 2:
+            raw_targets = [operands[-1]]
+        elif len(operands) == 1 and name == "ln":
+            raw_targets = [operands[0].replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]]
+    elif name == "sed":
+        if any(arg == "--in-place" or arg.startswith("--in-place=") or _SED_INPLACE_FLAG_RE.match(arg) for arg in args):
+            operands, values = _operands(args, _VALUE_FLAGS["sed"])
+            has_script = any(flag in values for flag in ("-e", "--expression", "-f", "--file"))
+            raw_targets = operands if has_script else operands[1:]
+    elif name == "dd":
+        raw_targets = [arg[3:] for arg in args if arg.startswith("of=")]
+    elif name in ("curl", "wget"):
+        raw_targets = _download_targets(name, args)
+    elif name == "git":
+        return _git_targets(args, bases, git_writes), None
+    elif name in _SHELL_NAMES:
+        for position, arg in enumerate(args):
+            if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+                if position + 1 < len(args):
+                    return _scan_command(args[position + 1], bases, git_writes, depth + 1), None
+                break
+    elif name == "eval":
+        return _scan_command(" ".join(args), bases, git_writes, depth + 1), None
+    return _pairs(raw_targets, bases), None
+
+
+def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
+    """Walk a token stream command by command (step 4 of the section comment). Directory tracking,
+    as a set of possible directories (None = unknown):
+      - `cd <literal dir>` as the first command of a list, into a directory that exists, replaces
+        the set; after `&&`/`||` or a prefix (`if`, `{`, ...) it is conditional, so the commands
+        after it in the same `&&` chain see only the new directory, but after the list ends both
+        old and new remain possible; a `||` makes everything seen in that list possible;
+      - `cd` without a literal directory (`cd`, `cd -`, `cd $X`, `cd ~`), `pushd`/`popd`, any `cd`
+        inside a subshell or `$(...)`, and a `cd` next to a pipe or `&` add "unknown";
+      - `( ... )` restores the outer directories when it closes."""
+    found: list[_Target] = []
+    bases = start_bases
+    list_start = start_bases
+    after_list = start_bases
+    saved: list[tuple[_Bases, _Bases, _Bases]] = []
+    words: list[str] = []
+    redirect_targets: list[str] = []
+    prev_sep: Optional[str] = None
+    index = 0
+    while True:
+        at_end = index >= len(tokens)
+        text, is_op = tokens[index] if not at_end else ("", True)
+        if not at_end and not is_op:
+            words.append(text)
+            index += 1
+            continue
+        if not at_end and text not in _SEPARATOR_OPS:
+            # A redirection. A bare number glued before it (`2>`) is its fd, not an argument.
+            if index > 0 and not tokens[index - 1][1] and tokens[index - 1][0].isdigit() and words:
+                words.pop()
+            has_word = index + 1 < len(tokens) and not tokens[index + 1][1]
+            if has_word:
+                word = tokens[index + 1][0]
+                if text in _WRITE_REDIRECT_OPS or (text == ">&" and not _FD_DUP_WORD_RE.match(word)):
+                    redirect_targets.append(word)
+            index += 2 if has_word else 1
+            continue
+
+        separator = None if at_end else text
+        if words or redirect_targets:
+            found.extend(_pairs(redirect_targets, bases))
+            for word in words + redirect_targets:
+                if "$(" in word:
+                    found.extend(_scan_command(word, bases, git_writes, depth + 1))
+            # Backticks: an unquoted `...` is split into several words by the tokenizer, so the
+            # spans are looked for across the command's words joined back together.
+            for span in _BACKTICK_SPAN_RE.findall(" ".join(words + redirect_targets)):
+                found.extend(_scan_command(span, bases, git_writes, depth + 1))
+            targets, cd_change = _simple_command_targets(words, bases, git_writes, depth)
+            found.extend(targets)
+            if cd_change is not None:
+                directory, prefixed = cd_change
+                near_pipe = prev_sep in _PIPE_OPS or separator in _PIPE_OPS or separator == "&"
+                if directory is None or saved or near_pipe:
+                    bases = bases | {None}
+                    after_list = after_list | {None}
+                else:
+                    new_bases = _cd_bases(bases, directory)
+                    first_in_list = prev_sep is None or prev_sep in _LIST_END_OPS or prev_sep == "("
+                    exists = all(base is None or Path(base).is_dir() for base in new_bases)
+                    if first_in_list and not prefixed and exists:
+                        after_list = new_bases
+                    else:
+                        after_list = after_list | new_bases
+                    bases = new_bases
+        words = []
+        redirect_targets = []
+        if separator is None:
+            return found
+        if separator == "||":
+            bases = bases | list_start | after_list
+        elif separator in _LIST_END_OPS:
+            bases = list_start = after_list
+        elif separator == "(":
+            saved.append((bases, list_start, after_list))
+            list_start = after_list = bases
+        elif separator == ")" and saved:
+            bases, list_start, after_list = saved.pop()
+        prev_sep = separator
+        index += 1
+
+
+def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
+    """All write targets of `command` (steps 1-4 of the section comment). Recursion depth is capped
+    for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs."""
+    command = _LINE_CONTINUATION_RE.sub(r"\1", command)
+    if depth > _MAX_SCAN_DEPTH:
+        return [(target, None) for target in _raw_redirect_targets(command)]
+    found: list[_Target] = []
+    tokens: Optional[list[_Token]] = None
+    ansi_c_quoting = "$'" in command
+    if not ansi_c_quoting:
+        try:
+            tokens = _line_mode_tokens(command)
+        except ValueError:
+            tokens = None
+    if tokens is None:
+        try:
+            tokens = _shell_tokens(command, newline_is_operator=True)
+        except ValueError:
+            tokens = None
+        if tokens is None or ansi_c_quoting:
+            found.extend((target, None) for target in _raw_redirect_targets(command))
+    if tokens is not None:
+        found.extend(_scan_tokens(tokens, bases, git_writes, depth))
+    return found
+
+
+def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
+    """The paths a Bash command writes to, each paired with the directory a relative one resolves
+    against (`base_cwd`, the Bash tool's own cwd, moved by any `cd` the scanner can follow) or None
+    where that directory is unknown — see the section comment above for how and its known limits.
+    A target reachable from several possible directories is listed once per directory. Null
+    devices and standard streams are dropped. `git_writes` names the git subcommands that count as
+    writes for the calling check (_GIT_WRITES_TEMPLATE_GUARD / _GIT_WRITES_WORKER_SCOPE)."""
+    try:
+        pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
+    except Exception:
+        # A bug in the scanner must never turn into a silent allow (module docstring, "im Zweifel
+        # ablehnen"): fall back to the coarse raw-text search with the base unknown.
+        pairs = [(target, None) for target in _raw_redirect_targets(command)]
+    result: list[_Target] = []
+    for pair in pairs:
+        if not _is_ignorable_write_target(pair[0]) and pair not in result:
+            result.append(pair)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Check 1 — template write-guard (PreToolUse), checked before anything else
 # ---------------------------------------------------------------------------
 
@@ -116,31 +730,27 @@ def _check_mode(config: dict[str, str], key: str, default: str) -> str:
 # the template tree rather than inside it, from this guard.
 _PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)")
 
-# Shell constructs that mark a Bash command as *writing* somewhere, as opposed to merely
-# mentioning a path (reading, grepping, listing it). Deliberately broad — "im Zweifel
-# ablehnen" — a command matched here plus a protected-path mention anywhere in it denies the
-# whole command, even if the path is actually only the read side (e.g. `cat .act/x > /tmp/y`).
-_REDIRECT_RE = re.compile(r"(\d*>>?|&>>?|>\|)")
-_WRITE_WORD_RE = re.compile(r"(?:^|[;&|]\s*)\s*(cp|mv|mkdir|rm|rmdir|touch|tee|install|rsync|dd|ln)\b")
-_SED_INPLACE_RE = re.compile(r"\bsed\b[^;&|]*-i\b")
-_FETCH_TO_FILE_RE = re.compile(r"\b(curl\b[^;&|]*-o\b|wget\b[^;&|]*-O\b)")
-_GIT_WRITE_RE = re.compile(r"\bgit\s+(mv|rm)\b")
-
-
-def _bash_targets_protected_path(command: str) -> bool:
-    """True if a Bash command both mentions a path under .act/ and contains a write construct
-    (redirection, cp/mv/mkdir/rm/..., in-place sed, curl -o/wget -O, git mv/rm). A
-    protected-path mention with no write construct at all (cat, ls, grep, git diff, ...) is a
-    read and is allowed."""
-    if not _PROTECTED_PATH_RE.search(command):
-        return False
-    return bool(
-        _REDIRECT_RE.search(command)
-        or _WRITE_WORD_RE.search(command)
-        or _SED_INPLACE_RE.search(command)
-        or _FETCH_TO_FILE_RE.search(command)
-        or _GIT_WRITE_RE.search(command)
-    )
+def _bash_targets_protected_path(command: str, base_cwd: str) -> bool:
+    """True if a Bash command writes to a path under .act/ — judged from the write targets the
+    shared scanner finds (_bash_write_targets), not from a mere mention: `cat .act/x > /tmp/y`,
+    `python .act/scripts/doctor.py 2>&1 | tail` and `grep -rn x .act/ 2>/dev/null` are reads and
+    pass. Of the git subcommands only `git mv`/`git rm` count here (_GIT_WRITES_TEMPLATE_GUARD):
+    `git checkout`/`git restore` stay allowed, since the orchestrator uses them to switch branches,
+    unstage, and fetch the template's own version of a .act/ file back. A target whose directory
+    is unknown (after `pushd`, a `cd $VAR`, inside a subshell, ...) or that contains a variable is
+    denied only if its own text names .act/ — everything else about it cannot be decided here."""
+    for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
+        if _PROTECTED_PATH_RE.search(raw):
+            return True
+        if base is None or _is_dynamic_target(raw):
+            continue
+        try:
+            resolved = (Path(_to_native_path(base)) / _to_native_path(raw)).resolve()
+        except (OSError, ValueError):
+            return True  # cannot place it — fail closed, see the module docstring
+        if _PROTECTED_PATH_RE.search(resolved.as_posix()):
+            return True
+    return False
 
 
 # Which tool_input field holds the write target, per tool. Bash has no single target field and
@@ -158,13 +768,14 @@ _WRITE_GUARD_MESSAGE = (
 )
 
 
-def _targets_protected_path(tool_name: str, tool_input: dict) -> bool:
+def _targets_protected_path(tool_name: str, tool_input: dict, base_cwd: str) -> bool:
     """True if this tool call writes somewhere under .act/, based on the write-target field(s)
     that specific tool uses. Unknown tools never match — this guard only needs to understand
-    the tools named in the PreToolUse matcher in settings.hooks.json."""
+    the tools named in the PreToolUse matcher in settings.hooks.json. `base_cwd` is the directory
+    a relative Bash target is resolved against (the Bash tool's own cwd)."""
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return isinstance(command, str) and _bash_targets_protected_path(command)
+        return isinstance(command, str) and _bash_targets_protected_path(command, base_cwd)
     for field in _TOOL_PATH_FIELDS.get(tool_name, ()):
         value = tool_input.get(field)
         if isinstance(value, str) and _PROTECTED_PATH_RE.search(value):
@@ -186,7 +797,9 @@ def check_write_guard(payload: dict) -> int:
     if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
         return 0  # nothing to check a write target against
 
-    if not _targets_protected_path(tool_name, tool_input):
+    cwd_raw = payload.get("cwd")
+    base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else os.getcwd()
+    if not _targets_protected_path(tool_name, tool_input, base_cwd):
         return 0
 
     if mode == "warn":
@@ -205,10 +818,18 @@ def check_write_guard(payload: dict) -> int:
 # 02-directory-plan.md § "Brücken" in the template-pflege repo, .act/agents/README.md) — this is
 # the mechanical backstop for that rule: a PreToolUse call to either tool whose payload carries an
 # "agent_id" did not come from the orchestrator (the harness stamps every sub-agent's own tool
-# calls with its agent_id; the main session's calls carry none — confirmed against
-# D:/dev/rufeger/template-agentic-coding-project/.claude/scripts/ai-log.py, which reads
-# payload["agent_id"] on every hook event including PreToolUse). Denied regardless of what a
-# role's own tools list says, since a hand-edited role bridge could otherwise re-add the tool.
+# calls with its agent_id; the main session's calls carry none — confirmed 2026-09-23 against a
+# real Claude Code run's payload capture, D:/dev/rufeger/act-live-probe/.act-local/probe/
+# payloads.jsonl: every PreToolUse fired from inside a spawned sub-agent carries "agent_id", the
+# orchestrator's own PreToolUse for "Agent" does not). Denied regardless of what a role's own
+# tools list says, since a hand-edited role bridge could otherwise re-add the tool.
+#
+# The same probe also shows the guard's live blind spot: the sub-agent it spawned (role
+# quick-check, tools Read/Grep/Glob/Bash/SubagentHandback) never got the "Agent"/"Task" tool at
+# all, so no PreToolUse for either ever fired to test the guard against — the *payload field* this
+# guard relies on is confirmed, the guard's own denial path was not exercised live. The nesting
+# guard's Bash-level escape-hatch check (`claude -p`/`--print`) is unaffected by that, since Bash
+# was in the sub-agent's tool list.
 #
 # The same guard also catches the CLI-level escape hatch: a sub-agent that cannot call
 # Agent/Task directly can still reach for `claude -p "..."` (or `--print`) via Bash to spawn an
@@ -282,6 +903,428 @@ def check_worker_nesting_guard(payload: dict) -> int:
 
     print(message, file=sys.stderr)
     return 2
+
+
+# ---------------------------------------------------------------------------
+# Check 1c — per-worker write scope (R-cost-delegate, PreToolUse)
+# ---------------------------------------------------------------------------
+#
+# R-cost-delegate (.act/rules/orchestrator/30-cost.md) has the orchestrator name a `Write scope:`
+# line in every assignment — one or more comma-separated glob patterns (project-root-relative,
+# "/" as the separator; a bullet prefix and backticks around a pattern are both tolerated, see
+# _parse_write_scope), or the literal `none` for a read-only assignment. Missing the line at all
+# means "unrestricted" (no scope beyond the template's own .act/ write-guard, check 1 above) — a
+# project that never writes the line never sees this check do anything beyond bookkeeping.
+#
+# Binding a worker's tool call back to the scope its assignment named runs through the harness's
+# own bookkeeping (2026-09-23 live-probe, see the comment above _WORKER_TOOL_NAMES for the file):
+# the orchestrator's PreToolUse for "Agent"/"Task" carries "tool_use_id" and
+# "tool_input.prompt"; the harness then writes <transcript_path-without-".jsonl">/subagents/
+# agent-<agent_id>.meta.json for that spawned worker, whose "toolUseId" field is exactly that same
+# tool_use_id, and agent-<agent_id>.jsonl, whose first line is the worker's own initial user
+# message (message.content == the assignment prompt verbatim). So: record the scope parsed from
+# the assignment prompt, in its own file keyed by tool_use_id (see _worker_scope_file — one file
+# per id, not a shared JSON document, so N parallel Agent/Task starts never race each other into a
+# lost update), when the orchestrator starts a worker; look it up again, keyed by
+# agent_id -> meta.json -> toolUseId, when that worker later tries to write something. A second
+# path (reading the assignment prompt straight out of the worker's own first transcript line)
+# covers a missing/unreadable meta.json. If neither works, the binding is unresolved for *this*
+# call — see _resolve_worker_scope and check_worker_write_scope's docstring for what happens then
+# (it is fail-closed only when scoping is demonstrably in use nearby, not unconditionally).
+
+_WORKER_SCOPES_DIRNAME = "worker-scopes"
+_SCOPE_ENTRY_TTL = timedelta(hours=24)
+
+# A tool_use_id becomes an entry's filename (see _worker_scope_file), so it is validated first —
+# the harness's own ids look like "toolu_01Ab...", but nothing here may assume that without
+# checking, since the string ultimately lands in a Path().
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# "Write scope: <patterns>" — one line, read top to bottom (first match wins, same as a human
+# skimming the assignment). An optional leading "- "/"* " bullet is tolerated (assignments are
+# often written as a bulleted list), and so is Markdown bold around the key (`**Write scope:**`,
+# `**Write scope**:`, also with `__`). "none" (case-insensitive) means read-only; anything else is a
+# comma-separated pattern list, each pattern optionally wrapped in backticks (`` `src/**` ``) and/or
+# ending in "/" (read as "/**", i.e. a bare directory name means "everything under it"). A prompt
+# with no such line at all is "unrestricted", which is deliberately a different value than an
+# (impossible) empty pattern list — see _parse_write_scope.
+_SCOPE_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*]\s+)?(?:\*\*|__)?Write scope(?:\*\*|__)?:(?:\*\*|__)?\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_backticks(text: str) -> str:
+    if len(text) >= 2 and text[0] == "`" and text[-1] == "`":
+        return text[1:-1].strip()
+    return text
+
+
+def _parse_write_scope(prompt: str) -> Optional[dict]:
+    """Parse the first `Write scope: ...` line out of an assignment prompt (see _SCOPE_LINE_RE for
+    the accepted line shapes: an optional bullet, patterns optionally backtick-wrapped and/or
+    ending in "/"). Returns None if no such line is present at all ("unrestricted" — deliberately
+    distinct from a scope that names zero patterns, which cannot happen: an empty pattern list
+    falls back to None too). Otherwise {"mode": "none"} or {"mode": "patterns", "patterns": [...]}.
+    """
+    match = _SCOPE_LINE_RE.search(prompt)
+    if not match:
+        return None
+    raw = match.group(1).strip()
+    parts = [_strip_backticks(p.strip()) for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        return None
+    if len(parts) == 1 and parts[0].lower() == "none":
+        return {"mode": "none"}
+    patterns = []
+    for part in parts:
+        pattern = part.replace("\\", "/")
+        if pattern.endswith("/"):
+            pattern += "**"
+        patterns.append(pattern)
+    return {"mode": "patterns", "patterns": patterns}
+
+
+def _worker_scopes_dir(root: Path) -> Path:
+    return root / ".act-local" / _WORKER_SCOPES_DIRNAME
+
+
+def _worker_scope_file(root: Path, tool_use_id: str) -> Optional[Path]:
+    """Path for one worker's recorded scope — one file per tool_use_id, so N parallel Agent/Task
+    starts each own their own file and never race each other into a lost update the way a single
+    shared JSON file did under concurrent read-modify-write (2026-09-23 review, t26_race.py: 8
+    parallel starts lost 6 of 8 entries against the old single-file scheme). None if `tool_use_id`
+    is not a safe filename (see _SAFE_ID_RE) — such an id is simply never recorded, not written
+    somewhere unsafe."""
+    if not isinstance(tool_use_id, str) or not _SAFE_ID_RE.match(tool_use_id):
+        return None
+    return _worker_scopes_dir(root) / f"{tool_use_id}.json"
+
+
+def _read_json_object(path: Path) -> Optional[dict]:
+    """Local, minimal twin of actlib._read_json — kept in this file rather than imported since
+    that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object."""
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _entry_is_fresh(entry: dict) -> bool:
+    ts = entry.get("ts")
+    try:
+        when = datetime.fromisoformat(ts) if isinstance(ts, str) else None
+    except ValueError:
+        when = None
+    return when is not None and when >= datetime.now(timezone.utc) - _SCOPE_ENTRY_TTL
+
+
+def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
+    """Delete every scope file older than _SCOPE_ENTRY_TTL, or unreadable/malformed — run
+    opportunistically on each write rather than on a schedule, so no separate cleanup process is
+    needed. `skip` is the file just written in this same call, left alone unconditionally (it
+    cannot be stale — it was just stamped with the current time)."""
+    try:
+        candidates = list(dir_path.glob("*.json"))
+    except OSError:
+        return
+    for path in candidates:
+        if path == skip:
+            continue
+        entry = _read_json_object(path)
+        if entry is None or not _entry_is_fresh(entry):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+
+def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
+    """Record one Agent/Task start's write scope in its own file (see _worker_scope_file), so a
+    worker's later call can look it up via its meta.json's "toolUseId" (_scope_via_meta). Always
+    called — even for "unrestricted" — so _recent_restricted_scope_registered can tell "a start was
+    registered here and named no restriction" from "nothing has run against this check yet" (see
+    that function and check_worker_write_scope's fail-closed fallback). Best-effort: a failed write
+    here only weakens that fallback, it never blocks the orchestrator's own call.
+
+    Written via a temp file plus os.replace in the same directory, so a concurrent reader never
+    observes a partially written file — os.replace is an atomic rename on both POSIX and Windows."""
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None:
+        return  # unsafe id -- never recorded, not an error
+    entry = dict(scope)
+    entry["ts"] = datetime.now(timezone.utc).isoformat()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # suffix ".tmp", not ".json": _prune_worker_scope_files globs "*.json", and a temp file
+        # that matched that pattern was briefly visible (between creation and the os.replace
+        # below) to a *concurrent* writer's own prune pass — which could delete it before this
+        # replace runs, dropping this write silently (2026-09-23 review, t26_race.py: 8 parallel
+        # starts sometimes wrote as few as 4 of 8 files under the old ".json"-suffixed temp name).
+        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".tmp", dir=str(path.parent))
+    except OSError:
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n")
+        os.replace(tmp_name, path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        return
+    _prune_worker_scope_files(path.parent, skip=path)
+
+
+def _read_worker_scope_entry(root: Path, tool_use_id: str) -> Optional[dict]:
+    """The scope recorded for one tool_use_id, or None if it was never recorded, is unreadable, or
+    has aged past _SCOPE_ENTRY_TTL."""
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None:
+        return None
+    entry = _read_json_object(path)
+    if entry is None or not _entry_is_fresh(entry):
+        return None
+    return entry
+
+
+def _recent_restricted_scope_registered(root: Path) -> bool:
+    """True if any worker-scopes file, within _SCOPE_ENTRY_TTL, holds an entry whose mode is "none"
+    or "patterns" (i.e. an assignment actually named a restriction) — as opposed to only
+    "unrestricted" entries or none at all. Used by check_worker_write_scope's fail-closed fallback:
+    a binding failure is only treated as suspicious when scoping is demonstrably in active use
+    nearby.
+
+    A damaged file (unreadable, not JSON, no usable "mode") does not count as "restricted" — so if
+    such files are all there is, an unbound worker is allowed. Deliberate: a broken bookkeeping file
+    must not lock every worker out; it is pruned on the orchestrator's next Agent/Task start
+    (_prune_worker_scope_files), and a bound worker is unaffected either way."""
+    try:
+        candidates = list(_worker_scopes_dir(root).glob("*.json"))
+    except OSError:
+        return False
+    for path in candidates:
+        entry = _read_json_object(path)
+        if entry is None or entry.get("mode") not in ("none", "patterns"):
+            continue
+        if _entry_is_fresh(entry):
+            return True
+    return False
+
+
+def _scope_via_meta(root: Path, transcript_path: object, agent_id: str) -> Optional[dict]:
+    """Look up the scope recorded for this worker via <session>/subagents/agent-<id>.meta.json's
+    "toolUseId" (see the Check 1c header comment). None if the meta.json is missing/unreadable, has
+    no usable "toolUseId", or nothing was ever recorded under that id."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    meta_path = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.meta.json"
+    meta = _read_json_object(meta_path)
+    if not meta:
+        return None
+    tool_use_id = meta.get("toolUseId")
+    if not isinstance(tool_use_id, str) or not tool_use_id:
+        return None
+    return _read_worker_scope_entry(root, tool_use_id)
+
+
+def _scope_via_transcript(transcript_path: object, agent_id: str) -> Optional[dict]:
+    """Fallback for _scope_via_meta: read the assignment prompt straight out of the worker's own
+    first transcript line (<session>/subagents/agent-<id>.jsonl, message.content of the first
+    record) and parse a `Write scope:` line out of it directly — no tool_use_id round-trip needed.
+    None if the file is missing/unreadable or its first line has no usable message content."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    agent_transcript = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+    if not agent_transcript.is_file():
+        return None
+    try:
+        with open(agent_transcript, "r", encoding="utf-8") as handle:
+            first_line = handle.readline()
+    except OSError:
+        return None
+    try:
+        record = json.loads(first_line)
+    except json.JSONDecodeError:
+        return None
+    message = record.get("message") if isinstance(record, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        return None
+    return _parse_write_scope(content) or {"mode": "unrestricted"}
+
+
+def _resolve_worker_scope(root: Path, payload: dict) -> Optional[dict]:
+    """Bind this PreToolUse call's agent_id to the scope its assignment named: meta.json first,
+    the worker's own transcript as fallback (see the Check 1c header comment). None if neither
+    resolves — a genuinely unbound call, handled by the fail-closed fallback in the caller."""
+    agent_id = payload.get("agent_id")
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    transcript_path = payload.get("transcript_path")
+    try:
+        entry = _scope_via_meta(root, transcript_path, agent_id)
+    except Exception:
+        entry = None
+    if entry is not None:
+        return entry
+    try:
+        entry = _scope_via_transcript(transcript_path, agent_id)
+    except Exception:
+        entry = None
+    return entry
+
+
+def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
+    """Turn a write-target path (absolute Windows, forward-slash, or Git-Bash `/d/...` form, or
+    one already relative — resolved against `base`, not always `root`: a Bash target is relative to
+    the tool call's own `cwd`, tracked forward through any `cd` the command made, see
+    _bash_write_targets) into a project-root-relative POSIX path for glob matching. None if it
+    cannot be placed under `root` at all — an out-of-root target never matches any pattern (it is
+    out of scope by definition, module comment step 4), except the worker's own scratchpad, which
+    the caller checks separately before ever calling this."""
+    if not raw:
+        return None
+    candidate = _to_native_path(raw)
+    try:
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = Path(_to_native_path(base)) / candidate
+        rel = path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return rel.as_posix()
+
+
+def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
+    """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload) —
+    exempt from write-scope enforcement per the module comment step 4 (a worker's temp files are
+    never "the project" in the sense a Write scope line means)."""
+    try:
+        target = Path(_to_native_path(raw))
+        if not target.is_absolute():
+            return False
+        target = target.resolve()
+        target.relative_to(Path(scratchpad_dir).resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(rel_posix, pattern) for pattern in patterns)
+
+
+def _write_scope_message(target: str, scope: dict) -> str:
+    if scope.get("mode") == "none":
+        allowed = "none (read-only assignment)"
+    else:
+        allowed = ", ".join(scope.get("patterns") or []) or "none"
+    return f"[act] outside this assignment's write scope: {target} (allowed: {allowed})"
+
+
+def check_worker_write_scope(payload: dict) -> int:
+    """Check 1c: a worker may only write where its assignment's `Write scope:` line allows
+    (R-cost-delegate). See the Check 1c header comment for the binding mechanism. Unlike check 1
+    (the template write-guard), this one is *not* unconditionally fail-closed: when a call's
+    agent_id cannot be bound to a recorded scope at all, it is denied only if a restricted scope
+    was demonstrably registered recently (_recent_restricted_scope_registered) — i.e. only when
+    scoping is in active use nearby. With no restricted scope registered anywhere recently (the
+    common case for a project that never writes a `Write scope:` line), an unresolved binding is
+    allowed, same as an explicit "unrestricted" scope would be."""
+    config = actlib.read_config()
+    mode = _check_mode(config, "worker-write-scope", default="block")
+    if mode == "off":
+        return 0
+
+    tool_name = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_name, str) or not isinstance(tool_input, dict):
+        return 0
+
+    try:
+        root = actlib.repo_root()
+    except RuntimeError:
+        return 0  # not inside a template-managed project — nothing to enforce against
+
+    if not payload.get("agent_id"):
+        # The orchestrator's own call: never write-scope-restricted itself (check 1 already
+        # guards .act/). If this is an Agent/Task start, record the scope it names for the
+        # worker it is about to spawn.
+        if tool_name in _WORKER_TOOL_NAMES:
+            tool_use_id = payload.get("tool_use_id")
+            prompt = tool_input.get("prompt")
+            if isinstance(tool_use_id, str) and tool_use_id and isinstance(prompt, str):
+                scope = _parse_write_scope(prompt) or {"mode": "unrestricted"}
+                _record_worker_scope(root, tool_use_id, scope)
+        return 0
+
+    write_targets: list[tuple[str, Optional[str]]] = []
+    if tool_name in _TOOL_PATH_FIELDS:
+        for field in _TOOL_PATH_FIELDS[tool_name]:
+            value = tool_input.get(field)
+            if isinstance(value, str) and value:
+                write_targets.append((value, str(root)))
+    elif tool_name == "Bash":
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            cwd_raw = payload.get("cwd")
+            base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+            write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+    if not write_targets:
+        return 0  # not a tool/shape this check understands as a write
+
+    scope = _resolve_worker_scope(root, payload)
+    if scope is None:
+        if not _recent_restricted_scope_registered(root):
+            return 0  # scoping is not demonstrably in use nearby — nothing to fail closed against
+        message = (
+            "[act] could not bind this worker to its assignment's write scope, and a restricted "
+            "scope was registered recently — denying as a precaution (R-cost-delegate)"
+        )
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+
+    if scope.get("mode") == "unrestricted":
+        return 0
+
+    scratchpad_dir = payload.get("scratchpad_dir")
+    for raw_target, base in write_targets:
+        dynamic = _is_dynamic_target(raw_target)
+        if (
+            not dynamic
+            and isinstance(scratchpad_dir, str)
+            and scratchpad_dir
+            and _within_scratchpad(raw_target, scratchpad_dir)
+        ):
+            continue
+        if scope.get("mode") == "none":
+            offending = raw_target
+        elif dynamic or (base is None and not _is_absolute_target(raw_target)):
+            # The shell still expands this target ($VAR, $(...), ~, {a,b}), or it is relative and
+            # the directory it resolves against is unknown (pushd, a subshell `cd`, `cd $X`, ...,
+            # see _scan_tokens) — deny rather than check it against a guessed path.
+            offending = raw_target
+        else:
+            rel = _normalize_candidate_path(raw_target, root, base if base is not None else str(root))
+            if rel is not None and _matches_scope(rel, scope.get("patterns") or []):
+                continue
+            offending = raw_target
+        message = _write_scope_message(offending, scope)
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -895,7 +1938,10 @@ def main(argv: list[str]) -> int:
         write_result = check_write_guard(payload)
         if write_result != 0:
             return write_result
-        return check_worker_nesting_guard(payload)
+        nesting_result = check_worker_nesting_guard(payload)
+        if nesting_result != 0:
+            return nesting_result
+        return check_worker_write_scope(payload)
     if event == "SessionStart":
         return refresh_session(payload)
     return 0  # unknown event — do nothing, exit 0

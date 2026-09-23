@@ -21,7 +21,10 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
   summary line settings.md shows for each one.
 - `--strict`: abort instead of substituting a placeholder — use this when the file is headed to
   people outside the project, not just another one of the human's own.
-- `--out PATH`: write there instead of `./act-settings-<date>.md`/`.zip`.
+- `--out PATH`: write there instead of the default `.act-local/export/act-settings-<date>.md`/
+  `.zip` (machine-local, gitignored, created on demand). The natural handover is dropping that file
+  straight into another checkout's `.act-local/import/` — that's exactly what `act-load-settings`
+  picks up when run with no path.
 
 ## Steps
 
