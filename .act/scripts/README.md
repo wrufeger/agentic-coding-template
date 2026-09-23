@@ -198,7 +198,7 @@ options:
 Call: direct
 
 ```text
-usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive]
+usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit]
 
 Turn a template checkout into a project, or dock onto an existing directory.
 
@@ -207,6 +207,7 @@ options:
   --target TARGET    create/dock in this directory instead of the current checkout
   --plan             show what would happen, change nothing
   --non-interactive  never prompt; take defaults, log open points to the inbox
+  --no-commit        do everything except the final commit
 ```
 
 ## `log.py`

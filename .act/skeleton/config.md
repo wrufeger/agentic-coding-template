@@ -80,7 +80,7 @@ project root (not versioned) — to follow along live, e.g. in a second terminal
 
 | Key | Value |
 | :--- | :--- |
-| `feedback` | off |
+| `feedback` | <feedback-mode> |
 | `feedback-cadence` | weekly |
 | `feedback-scope` | a,b,c |
 

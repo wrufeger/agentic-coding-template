@@ -17,6 +17,7 @@
 #   python .act/scripts/init.py --target <path>       # create/dock in another directory instead
 #   python .act/scripts/init.py --plan                # show the ten steps, change nothing
 #   python .act/scripts/init.py --non-interactive      # never prompt; take defaults, log to inbox
+#   python .act/scripts/init.py --no-commit            # do everything except the final commit
 #
 # Output format: one numbered line per step ("[n/10] ..."), 1..10, plus a closing "[act] done"
 #   line. Exit 0 on success (a --plan run included), 1 if a fatal precondition is not met (e.g.
@@ -57,6 +58,7 @@ class ProjectConfig(TypedDict):
     test_cmd: str
     tools: list[str]
     mode: str
+    feedback_mode: str
 
 
 class BridgeSpec(TypedDict):
@@ -102,12 +104,17 @@ def template_remotes(root):
 # Every generated bridge, keyed by its name under .act/bridges/. "tool" gates step 5 (None = always
 # written); "kind" picks how step 6/7 writes it. The three "verbatim" bridges are exactly the ones
 # .gitattributes marks `merge=ours` and dispatch.py re-derives — their hashes go into cache.json.
+# "docs-index" is a plain, never-overwritten, token-substituted file too (same write path as
+# "verbatim"), but deliberately its own kind: it is not merge=ours and not re-derived by
+# dispatch.py's fixed 3-entry map (.act/hooks/checks/session.py), so it stays out of cache.json's
+# "generated" hashes — nothing there expects a 4th entry (T59).
 BRIDGES: dict[str, BridgeSpec] = {
     "AGENTS.md": {"dest": "AGENTS.md", "tool": None, "kind": "verbatim"},
     "rules.md": {"dest": "docs/ai/rules.md", "tool": None, "kind": "verbatim"},
     "coding_rules.md": {"dest": "docs/project/coding_rules.md", "tool": None, "kind": "coding-rules"},
     "CLAUDE.md": {"dest": "CLAUDE.md", "tool": "claude-code", "kind": "verbatim"},
     "settings.hooks.json": {"dest": ".claude/settings.json", "tool": "claude-code", "kind": "json-merge"},
+    "docs-readme.md": {"dest": "docs/README.md", "tool": None, "kind": "docs-index"},
 }
 
 # Plain skeleton -> docs/ai/ copies (step 6). Placeholders (see CONFIG_TOKENS) are replaced in all
@@ -218,6 +225,58 @@ def _read_version_file(root: Path) -> tuple[str, str]:
 # Step 1 — config values
 # ---------------------------------------------------------------------------
 
+# Offered at init time (T58); config.md itself also accepts "manual" (collect, never auto-send) —
+# left out here because it is not a useful *first* answer, only something to switch to later.
+_FEEDBACK_ON_MODES = ("confirm", "automatic")
+# Anything that plainly means "no" also means "off" -- never required to type the exact word.
+_FEEDBACK_OFF_ALIASES = ("off", "n", "no", "nein", "aus", "0")
+_FEEDBACK_MAX_ATTEMPTS = 3
+
+
+def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
+    """Offers, once, to report back what worked or was missing about the *working method* to the
+    template author — never anything about this project itself (see
+    `.act/rules/topics/feedback.md`). Asked only on a genuinely fresh setup: skipped once
+    `docs/ai/config.md` already exists, since an established project already made its own choice
+    there and the writer in step_materialize never overwrites it anyway (covers both a repeat
+    `init` and `--target` docking onto an already set-up project, T58). `interactive` is already
+    False for both `--non-interactive` and `--plan` (see main()), so both take the same "stays
+    off, note left behind" branch already used by this function's other questions — nothing here
+    ever sends anything, it only decides what the config.md row will say.
+
+    Only `confirm`/`automatic`/an off-alias is accepted (case-insensitive); an empty answer or
+    anything else re-asks instead of defaulting to anything -- consent must be typed, never
+    assumed from a stray keystroke (review finding T58#1/#2). After `_FEEDBACK_MAX_ATTEMPTS` bad
+    answers it gives up and stays off, same as the non-interactive case."""
+    if (root / "docs" / "ai" / "config.md").is_file():
+        return "off"
+    if not interactive:
+        notes.append(
+            "Feedback to the template author is off (default) — turn it on any time in "
+            "docs/ai/config.md § Feedback (see TIP-feedback-on)."
+        )
+        return "off"
+    print()
+    print("Report back to the template author about the working method?")
+    print("- Entries: a short written summary plus a few closed-list settings — never file names/paths, code, or this project's own text.")
+    print("- With the default scope (feedback-scope: a,b,c), a send also adds usage numbers: commit/date counts, days active, file count and size, `ai.log` line counts if logging is on, a random project id (persists across sends, not tied to you), and this project's template base commit. Narrow this with `feedback-scope`.")
+    print("- confirm (recommended): shows the full payload and asks before every send. automatic: sends without asking.")
+    print("- Every actual send is also kept locally under '.act-local/feedback/sent/' (gitignored).")
+    print("- Off again any time: docs/ai/config.md § Feedback.")
+    for _attempt in range(_FEEDBACK_MAX_ATTEMPTS):
+        raw = _ask("Feedback mode - confirm (recommended) / automatic / off", "", True).strip().lower()
+        if raw in _FEEDBACK_OFF_ALIASES:
+            return "off"
+        if raw in _FEEDBACK_ON_MODES:
+            return raw
+        print("Please answer 'confirm', 'automatic', or 'off' (or n/no) — nothing else is accepted.")
+    notes.append(
+        "Feedback question left unanswered after 3 tries — stays off. Turn it on any time in "
+        "docs/ai/config.md § Feedback (see TIP-feedback-on)."
+    )
+    return "off"
+
+
 def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
@@ -246,6 +305,7 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
             )
 
     mode = _suggest_mode(root)
+    feedback_mode = _ask_feedback_mode(root, interactive, notes)
 
     return {
         "name": name,
@@ -257,6 +317,7 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
         "test_cmd": test_cmd,
         "tools": tools,
         "mode": mode,
+        "feedback_mode": feedback_mode,
     }
 
 
@@ -844,6 +905,12 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
         "<test-command>": cfg["test_cmd"] or "(not set)",
         "<tool-list>": ", ".join(cfg["tools"]) or "(none)",
         "<mode>": cfg["mode"],
+        # Used by .act/bridges/docs-readme.md's "Data as of" column — the day the index itself
+        # (and the files it lists) was first written, not a live-updating value.
+        "<today>": date.today().isoformat(),
+        # .act/skeleton/config.md § Feedback's `feedback` row (T58) — defaults to "off" via
+        # ProjectConfig["feedback_mode"] itself (_ask_feedback_mode's every return path).
+        "<feedback-mode>": cfg["feedback_mode"],
     }
 
 
@@ -945,6 +1012,30 @@ def step_materialize(
                 generated[spec["dest"]] = dest
             if created or dest.is_file():
                 touched.append(dest)
+        elif spec["kind"] == "docs-index":
+            # Same write path as "verbatim" (never overwrites, token substitution), but not added
+            # to `generated` — see the BRIDGES comment above for why. Two things a "verbatim"
+            # bridge does not need to guard against: (1) `--target` docking onto a project whose
+            # own, older `.act/` predates this bridge (it keeps its own `.act/`, never re-copied —
+            # see main()'s "already present in target, left unchanged") has no
+            # `.act/bridges/docs-readme.md` to read from at all; skip with a message instead of
+            # crashing (review finding T59#4). (2) unlike the others, only mark it `touched` when
+            # this run actually created it — `dest.is_file()` alone would sweep a project's own,
+            # already-existing (and possibly uncommitted) docs/README.md into this run's commit
+            # even though nothing here changed it (review finding T59#5; the same
+            # already-exists-so-touched pattern on the other bridges is intentional there and left
+            # alone, see the review's own note).
+            src = bridges_dir / key
+            if not plan and not src.is_file():
+                # Under --plan, .act/ itself is never actually copied into a not-yet-existing
+                # target (see main()'s "would copy .act/ into target"), so `src` legitimately
+                # doesn't exist yet even for a project that *will* have it -- only check for real.
+                messages.append(f"{_relative_label(dest, root)}: no {key} under this project's .act/bridges/ yet (older template) — skipped")
+            else:
+                message, created = _write_text_file(src, dest, tokens, plan, root)
+                messages.append(message)
+                if created:
+                    touched.append(dest)
 
     for dest_rel, src in copy_targets(root, cfg["tools"]).items():
         dest = root / dest_rel
@@ -1204,6 +1295,17 @@ def step_lock_and_cache(
     # (step_git_in_place/step_git_target); .act/VERSION's "commit=" line is only the fallback for
     # when there is no git to read it from at all.
     commit = template_commit or disk_commit
+    if not commit:
+        # Neither source had one this time (e.g. a re-run, possibly after --no-commit, where the
+        # running checkout's own HEAD/.act/VERSION momentarily can't be read) -- never blank out a
+        # commit an earlier, successful run already recorded (review finding T58#7). Read the lock
+        # file directly by path instead of via actlib.read_lock()/repo_root(): this function is
+        # handed `root` explicitly and must not depend on the process's current working directory.
+        try:
+            existing_lock = json.loads((root / ".act-lock.json").read_text(encoding="utf-8"))
+            commit = ((existing_lock.get("template") or {}).get("commit") or "") or commit
+        except (OSError, json.JSONDecodeError):
+            pass
     manifest_hash = ""
     if not plan:
         # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
@@ -1235,7 +1337,11 @@ def step_lock_and_cache(
 # Step 10 — first commit, by pathspec
 # ---------------------------------------------------------------------------
 
-def step_commit(root: Path, plan: bool, paths: list[Path]) -> str:
+def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> str:
+    if no_commit:
+        # Returns before any `git add`, so nothing is staged either -- say so plainly instead of
+        # the previous, inaccurate "staged/unstaged" (review finding T58#7).
+        return "would leave uncommitted (--no-commit, nothing staged)" if plan else "left uncommitted (--no-commit, nothing staged)"
     rels = sorted({str(p.relative_to(root)).replace(os.sep, "/") for p in paths if p.exists()})
     if not rels:
         return "nothing to commit"
@@ -1285,6 +1391,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--target", help="create/dock in this directory instead of the current checkout")
     parser.add_argument("--plan", action="store_true", help="show what would happen, change nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; take defaults, log open points to the inbox")
+    parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
     args = parser.parse_args(argv)
 
     plan = args.plan
@@ -1322,11 +1429,19 @@ def main(argv: list[str]) -> int:
     notes: list[str] = []
 
     cfg = step_config(root, interactive, notes)
+    # `--plan` never prompts (`interactive` above is already False for it), so `feedback_mode` is
+    # always "off" here even when a real (non-plan) run at a real terminal would ask -- say that
+    # honestly instead of implying "off" is the actual answer (review finding T58#8). Docking
+    # `--target` onto a project that already has docs/ai/config.md is unaffected: it would not ask
+    # either way (see _ask_feedback_mode), so no relabeling there.
+    feedback_display = repr(cfg["feedback_mode"])
+    if plan and actlib.is_interactive() and not (root / "docs" / "ai" / "config.md").is_file():
+        feedback_display = "'would ask (interactive)'"
     _print_step(
         1,
         f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language={cfg['language']!r}, "
-        f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r} (suggested, change it "
-        f"in docs/ai/config.md)",
+        f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r}, "
+        f"feedback={feedback_display} (suggested, change it in docs/ai/config.md)",
     )
 
     if is_target:
@@ -1359,7 +1474,7 @@ def main(argv: list[str]) -> int:
     commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]
     if inbox_path is not None:
         commit_paths.append(inbox_path)
-    _print_step(10, step_commit(root, plan, commit_paths))
+    _print_step(10, step_commit(root, plan, args.no_commit, commit_paths))
 
     if notes:
         print(f"[act] done - {len(notes)} open point(s) " + ("would go to" if plan else "left in") + " docs/ai/inbox/")
