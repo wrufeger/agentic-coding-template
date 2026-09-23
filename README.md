@@ -1,3 +1,4 @@
+<!-- act:template-readme -->
 # act — agentic coding template
 
 A thin, versioned layer that gives any project the same working agreement with its AI assistant:
@@ -5,6 +6,14 @@ rules, coding rule sets, a session dispatcher, and the scripts that keep them in
 
 **Status: rebuild in progress.** This branch (`next`) carries the new layer under `.act/` only.
 The previous generation of this template lives on `main` and stays usable for existing projects.
+
+This file is the template's own — `init` (step 8) replaces it with a short project skeleton once a
+project is set up from here, recognized by the `<!-- act:template-readme -->` marker on its first
+line and by its content still matching the template's own version at the commit the project was
+cloned from (an edit made after cloning, marker or not, is kept and noted instead); a project's own
+`README.md` never carries that marker and is left untouched either way. The GitHub-facing
+description of the template itself lives in `.github/README.md` (GitHub shows that one in
+preference to this one), removed by the same step under the same condition.
 
 ## What is in here
 

@@ -17,8 +17,8 @@ Reading stays free. Details: `topics/live-systems.md`.
 
 summary: secrets via file or environment, never command-line arguments
 
-No secret ever goes on the command line or into a shell argument — not even a throwaway test
-value. Use a file or the process environment instead.
+No secret ever goes on the command line — as an argument or an inline assignment — not even a
+throwaway test value. Use a file or the process environment instead.
 
 ## `R-safe-no-secret-diff` — Check the diff before every commit
 

@@ -6,10 +6,11 @@
 #          config values, resolve git (origin/branch), check git identity, write the per-checkout
 #          workspace identity, thin the bridges down to the chosen tools, materialize skeleton +
 #          bridges (plus skill copies and role bridges, see copy_targets()/agent_bridge_targets()),
-#          append .gitattributes/.gitignore, handle the template's own LICENSE, write the
-#          lock/cache state, and make the first commit. Never overwrites a file the project already
-#          has; anything that needs a decision but can't be asked (non-interactive run) is written
-#          to docs/ai/inbox/ instead of guessed. Stdlib only.
+#          append .gitattributes/.gitignore, retire the template's own README(s) and LICENSE (skipped
+#          in --target mode -- nothing of the template's own there to decide, only .act/ was copied
+#          in), write the lock/cache state, and make the first commit. Never overwrites a file the
+#          project already has; anything that needs a decision but can't be asked (non-interactive
+#          run) is written to docs/ai/inbox/ instead of guessed. Stdlib only.
 #
 # Usage:
 #   python .act/scripts/init.py                      # set up the current checkout in place
@@ -1035,13 +1036,140 @@ def step_git_files(root: Path, plan: bool) -> tuple[list[str], list[Path]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 8 — template's own files (LICENSE / README)
+# Step 8 — template's own files (README / LICENSE)
 # ---------------------------------------------------------------------------
 
-def step_own_files(root: Path, plan: bool, interactive: bool, notes: list[str]) -> str:
-    parts = []
-    readme = root / "README.md"
-    parts.append("README.md left untouched (project's own)" if readme.is_file() else "no README.md present")
+# First line of a README the template wrote for itself -- .github/README.md (GitHub's landing
+# page, has precedence over the root one) and the root README.md before a project replaces it.
+# Absent, this file is the project's own and step 8 never touches it, interactive or not. The
+# marker alone is *not* enough to act on the file, though (see _retire_template_readme below): it
+# only says the file started as the template's; whether it still matches the template is checked
+# separately, so an edit made after the marker was written is never silently discarded (rev56/loss).
+TEMPLATE_README_MARKER = "<!-- act:template-readme -->"
+
+
+def _has_template_readme_marker(path: Path) -> bool:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.readline().strip() == TEMPLATE_README_MARKER
+    except OSError:
+        return False
+
+
+def _normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _git_show_at_commit(root: Path, commit: str, rel_path: str) -> Optional[str]:
+    """Text of `rel_path` as it was at `commit` in this checkout's own history (still readable at
+    step 8 even after step 2's orphan-branch move -- the commit itself is untouched, only what a
+    branch points at changes), or None if that cannot be determined: no commit yet (a fresh `git
+    init`), the file did not exist there, or git failed for some other reason. Callers treat None
+    as "unverifiable", never as "different"."""
+    if not commit:
+        return None
+    result = _git(["show", f"{commit}:{rel_path}"], cwd=root, check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _retire_template_readme(
+    root: Path, plan: bool, rel_path: str, template_commit: str, backup_name: str,
+    notes: list[str], on_verified_match,
+) -> str:
+    """Shared decision for one template-owned README (.github/README.md or the root README.md):
+    the marker alone only says the file *started* as the template's; only removing/replacing it
+    outright once its current content still matches the template's own version at `template_commit`
+    byte-for-byte (line endings normalised) is safe -- a project that kept editing the file after
+    cloning (marker survives, text changed) would otherwise lose that edit silently the moment
+    `init` runs (rev56/loss, HIGH). A mismatch is left alone, with a note for the inbox instead.
+
+    Without a commit to compare against (no repository yet, so nothing to diff), falls back to the
+    marker alone like before T56's review -- but only after backing the current content up to
+    `.act-local/<backup_name>` first, so a false positive (an edit the marker happened to survive)
+    stays recoverable instead of gone.
+
+    `on_verified_match(plan) -> str` performs the actual remove/replace once content-equality (or
+    the no-history fallback) has cleared it, and returns its own step-8 message."""
+    path = root / rel_path
+    if not path.is_file():
+        return f"no {rel_path} present"
+    if not _has_template_readme_marker(path):
+        return f"{rel_path} left untouched (project's own)"
+
+    current_text = path.read_text(encoding="utf-8")
+    template_text = _git_show_at_commit(root, template_commit, rel_path)
+
+    if template_text is not None:
+        if _normalize_newlines(template_text) == _normalize_newlines(current_text):
+            return on_verified_match(plan)
+        short_commit = template_commit[:12]
+        note = f"{rel_path} was edited after cloning (differs from the template's version at {short_commit}) -- kept, review manually."
+        if note not in notes:
+            notes.append(note)
+        return f"{rel_path} kept (content differs from the template's version, left for review)"
+
+    if not plan:
+        backup = root / ".act-local" / backup_name
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        if not backup.is_file():
+            backup.write_text(current_text, encoding="utf-8")
+    note = f"{rel_path}: no template commit to verify against -- acted on the marker alone; previous content saved to .act-local/{backup_name}."
+    if note not in notes:
+        notes.append(note)
+    return on_verified_match(plan)
+
+
+def _step_own_readmes(
+    root: Path, plan: bool, cfg: ProjectConfig, template_commit: str, notes: list[str]
+) -> list[str]:
+    def remove_github_readme(plan: bool) -> str:
+        github_readme = root / ".github" / "README.md"
+        github_dir = github_readme.parent
+        if plan:
+            others = [p for p in github_dir.iterdir() if p != github_readme]
+            if not others:
+                return ".github/README.md would be removed (template's own), .github/ would be removed (now empty)"
+            return ".github/README.md would be removed (template's own)"
+        github_readme.unlink()
+        try:
+            now_empty = not any(github_dir.iterdir())
+        except OSError:
+            now_empty = False
+        if now_empty:
+            github_dir.rmdir()
+            return ".github/README.md removed (template's own), .github/ removed (now empty)"
+        return ".github/README.md removed (template's own)"
+
+    def replace_root_readme(plan: bool) -> str:
+        if plan:
+            return "README.md would be replaced with a project skeleton"
+        src = root / ".act" / "bridges" / "project-readme.md"
+        text = src.read_text(encoding="utf-8")
+        for token, value in _config_tokens(cfg).items():
+            text = text.replace(token, value)
+        if cfg["owner"] == "unknown":
+            text = text.replace("Maintained by unknown.\n\n", "")
+        _write_new_file(root / "README.md", text)
+        return "README.md replaced with a project skeleton"
+
+    return [
+        _retire_template_readme(
+            root, plan, ".github/README.md", template_commit,
+            "github-README.template.md", notes, remove_github_readme,
+        ),
+        _retire_template_readme(
+            root, plan, "README.md", template_commit,
+            "README.template.md", notes, replace_root_readme,
+        ),
+    ]
+
+
+def step_own_files(
+    root: Path, plan: bool, interactive: bool, cfg: ProjectConfig, template_commit: str, notes: list[str]
+) -> str:
+    parts = _step_own_readmes(root, plan, cfg, template_commit, notes)
 
     license_path = root / "LICENSE"
     if not license_path.is_file():
@@ -1223,7 +1351,7 @@ def main(argv: list[str]) -> int:
     if is_target:
         _print_step(8, "skipped in --target mode (docking onto an existing project, nothing of the template's own to decide)")
     else:
-        _print_step(8, step_own_files(root, plan, interactive, notes))
+        _print_step(8, step_own_files(root, plan, interactive, cfg, template_commit, notes))
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies))
 

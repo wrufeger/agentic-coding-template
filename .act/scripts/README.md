@@ -7,6 +7,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | Script | Purpose | Call |
 | :--- | :--- | :--- |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
+| `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/ 05-update-and-overrides.md § "Abgleich-Skill" in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and questions, one file per entry… | direct |
@@ -30,6 +31,40 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see…
+
+## `adopt_scan.py`
+
+Call: direct (used by skill `act-adopt` (stage 6))
+
+```text
+usage: adopt_scan.py [-h] [--target DIR] [--json]
+
+Read-only sighting of an existing project's documentation/AI-tooling sources before adoption.
+
+options:
+  -h, --help    show this help message and exit
+  --target DIR  directory to scan (default: this project's root)
+  --json        print the JSON payload instead of the human-readable table
+
+ALLOW-LIST (exact, case-sensitive) — the only way into the four classes with a downstream action:
+  ai-config     root AGENTS.md CLAUDE.md CLAUDE.local.md GEMINI.md CONVENTIONS.md AI-CONFIG.md
+                .aider.conf.yml .cursorrules .clinerules .windsurfrules .mcp.json;
+                .github/copilot-instructions.md, .github/instructions/*.instructions.md,
+                .claude/settings.json, .claude/settings.local.json (never bridge or delete),
+                .claude/settings.local.json.example, .claude/rules/*.md, .cursor/rules/,
+                .cursor/mcp.json, .gemini/settings.json, .junie/guidelines.md (never a nested one)
+  ai-machinery  one row per unit under .claude/{agents,skills,commands,scripts,hooks}/,
+                .github/agents/, .github/prompts/, .codex/{agents,skills,commands,scripts,hooks}/,
+                .gemini/commands/, and .cursor/ except rules/ and mcp.json
+  log           root ai.log, ai.log.*.bak, ai.log.state.json, ai.log.raw.jsonl; in a signed
+                docs/ai/: names with ledger/journal/protokoll/archive/archiv, template-feedback/sent/**
+  work          root TODO.md, TODO; in a signed docs/ai/: names with task(s)/aufgabe(n)/backlog/
+                question(s)/frage(n)/board/inbox
+Signed docs/ai/: holds at least two of board.md, tasks.md, ledger.md, questions.md, backlog.md,
+or the target has .claude/template.json. Any keyword hit elsewhere yields only "unknown" with a
+hint ("log?"). A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
+never followed. Git-ignored rows keep their class and get a "git-ignored/local" note.
+```
 
 ## `board.py`
 

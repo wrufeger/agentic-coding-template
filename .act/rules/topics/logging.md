@@ -1,6 +1,6 @@
 # Logging
 
-Detail page for a rule that references it as `topics/logging.md`. Read this when
+Detail page announced by the session-start topic line. Read this when
 `docs/ai/config.md` § Logging has `logging` set to `on` — the session-start status line names
 every topic whose switch is on, this one included, see `.act/hooks/checks/session.py`'s
 `refresh_session()`. Mechanism: `.act/scripts/log.py`, observer `.act/hooks/checks/event_log.py`.
