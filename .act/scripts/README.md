@@ -21,7 +21,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see… | library |
-| `update.py` | Pull a newer state of the template into an already-initialized project. Nine steps, always in the same order: fetch the template into a… | skill `act-update` (`--plan` alone is direct) |
+| `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
 | `usage.py` | Local usage counter (T41) — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is… | direct |
 
 ## Libraries (no CLI, imported only)
@@ -342,10 +342,10 @@ options:
   --on-local-changes {rescue,discard,abort}
                         skip the step-2 prompt
   --yes                 skip the interactive consent prompt (step 4)
-  --plan                show steps 1-3, describe 5-9, change nothing
+  --plan                show steps 1-3, describe 5-10, change nothing
   --no-commit           do everything except the final commit
   --non-interactive     never prompt
-  --catch-up            skip the fetch/diff/replace; finish steps 6-9 from the .act/ already on
+  --catch-up            skip the fetch/diff/replace; finish steps 6-10 from the .act/ already on
                         disk (e.g. after a plain 'git pull' of the template outside update.py,
                         Q73a) -- refuses unless that tree still matches its own MANIFEST.json
 ```

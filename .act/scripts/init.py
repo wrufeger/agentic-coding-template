@@ -873,6 +873,11 @@ def _write_text_file(
 
 
 def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None = None) -> tuple[str, bool]:
+    """Merges src's hook entries into dest (see actlib.merge_settings_hooks): an entry the bridge
+    already defines is replaced in place (a changed timeout/matcher/command never ends up as a
+    second, duplicate entry), one the bridge no longer defines is removed, and anything the
+    project added itself is left untouched. Idempotent — a second run against its own output
+    reports no change and leaves the file byte-for-byte identical (T46)."""
     if plan and not src.is_file():
         # --target --plan against a not-yet-created directory: .act/ was never copied, so there
         # is nothing to read from yet — report the intent without touching the filesystem.
@@ -885,21 +890,19 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
             return f"{_relative_label(dest, root)}: not valid JSON, left unchanged", False
     else:
         current = {}
-    hooks = current.setdefault("hooks", {})
-    changed_events: list[str] = []
-    for event, entries in bridge_data.get("hooks", {}).items():
-        existing_entries = hooks.setdefault(event, [])
-        for entry in entries:
-            if entry not in existing_entries:
-                existing_entries.append(entry)
-                changed_events.append(event)
+    if not actlib.is_valid_hooks_container(current):
+        # hooks: null, settings.json itself not an object, an entry that isn't one, ... -- never
+        # attempted, never a traceback; --catch-up must not fail permanently on this (T46 review
+        # finding 6).
+        return f"{_relative_label(dest, root)}: not a valid hooks structure, left unchanged", False
+    new_current, changed_events = actlib.merge_settings_hooks(current, bridge_data)
     if not changed_events:
-        return f"{_relative_label(dest, root)}: hook entries already present, left unchanged", False
+        return f"{_relative_label(dest, root)}: hook entries already up to date, left unchanged", False
     if plan:
-        return f"{_relative_label(dest, root)}: would add hook entries for {', '.join(sorted(set(changed_events)))}", False
+        return f"{_relative_label(dest, root)}: would add/update hook entries for {', '.join(changed_events)}", False
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return f"{_relative_label(dest, root)}: hook entries added ({', '.join(sorted(set(changed_events)))})", True
+    dest.write_text(json.dumps(new_current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return f"{_relative_label(dest, root)}: hook entries added/updated ({', '.join(changed_events)})", True
 
 
 def step_materialize(
@@ -979,32 +982,49 @@ def step_materialize(
 # Step 7 — .gitattributes / .gitignore
 # ---------------------------------------------------------------------------
 
-def _append_block(dest: Path, src: Path, marker: str, plan: bool) -> tuple[str, bool]:
-    existing = dest.read_text(encoding="utf-8") if dest.is_file() else ""
-    if marker in existing:
-        return f"{dest.name}: already present, left unchanged", False
-    if plan:
+def _append_block(dest: Path, src: Path, plan: bool) -> tuple[str, bool]:
+    """Appends whatever lines of src's template block are missing from dest (see
+    actlib.merge_text_block) — not just the whole block once, so a project that already has an
+    older subset of it (created before a later template revision added a line) gets just the new
+    lines instead of staying stuck on what init.py wrote at creation time (T46). Only lines new
+    *since* the state this project last applied are ever considered (.act-lock.json §
+    bridges_applied[dest.name], refreshed here on every non-plan run) — a project with no such
+    record yet (pre-T46-tracking) falls back to "add whatever is missing" once, same as before
+    (T46 review finding 4). A candidate conflicting with the project's own line (a gitignore `!x`
+    negation, or a .gitattributes line already attributing the same pattern differently) is never
+    applied, only named in the summary."""
+    if plan and not src.is_file():
         # --target --plan against a not-yet-created directory may not even have .act/ copied
         # yet, so the source block is read lazily, only once we know a write would happen.
         return f"{dest.name}: would append template block", False
     block_text = src.read_text(encoding="utf-8")
-    if not existing:
-        new_text = block_text
-    elif existing.endswith("\n"):
-        new_text = existing + "\n" + block_text
-    else:
-        new_text = existing + "\n\n" + block_text
+    existing = dest.read_text(encoding="utf-8") if dest.is_file() else ""
+    lock = actlib.read_lock()
+    bridges_applied = dict(lock.get("bridges_applied", {}))
+    applied_lines = bridges_applied.get(dest.name)
+    new_text, added = actlib.merge_text_block(existing, block_text, applied_lines)
+    conflicts = actlib.text_block_conflicts(existing, block_text, applied_lines)
+    suffix = f"; {len(conflicts)} conflicting line(s) kept as-is: {', '.join(conflicts)}" if conflicts else ""
+    if plan:
+        if not added:
+            return f"{dest.name}: already present, left unchanged{suffix}", False
+        return f"{dest.name}: would add {len(added)} missing line(s){suffix}", False
+    bridges_applied[dest.name] = block_text.splitlines()
+    actlib.write_lock({"bridges_applied": bridges_applied})
+    if not added:
+        return f"{dest.name}: already present, left unchanged{suffix}", False
     dest.write_text(new_text, encoding="utf-8")
-    return f"{dest.name}: template block appended", True
+    label = "template block appended" if not existing else f"{len(added)} missing line(s) added"
+    return f"{dest.name}: {label}{suffix}", True
 
 
 def step_git_files(root: Path, plan: bool) -> tuple[list[str], list[Path]]:
     act_dir = root / ".act"
     attrs_msg, attrs_changed = _append_block(
-        root / ".gitattributes", act_dir / "bridges" / "gitattributes", "/CLAUDE.md merge=ours", plan,
+        root / ".gitattributes", act_dir / "bridges" / "gitattributes", plan,
     )
     ignore_msg, ignore_changed = _append_block(
-        root / ".gitignore", act_dir / "bridges" / "gitignore-lines", ".act-local/", plan,
+        root / ".gitignore", act_dir / "bridges" / "gitignore-lines", plan,
     )
     touched = []
     if attrs_changed or (root / ".gitattributes").is_file():

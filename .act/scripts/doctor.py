@@ -18,8 +18,10 @@
 #               by a generated skill copy, a role bridge, or the docs/ai/local/ overlay of the
 #               matching .act/ file;
 #            8. hook entries .act/bridges/settings.hooks.json defines that .claude/settings.json
-#               is missing (only checked when "claude-code" is one of the project's configured
-#               tools, per docs/ai/config.md).
+#               is missing, or a template-generated entry .claude/settings.json still carries that
+#               the bridge no longer defines (outdated or a duplicate left over from before T46's
+#               merge fix) — only checked when "claude-code" is one of the project's configured
+#               tools, per docs/ai/config.md.
 #            9. .act/MANIFEST.json drift against the .act/ tree on disk, wherever a MANIFEST.json
 #               exists to compare against — a project that hand-edited .act/ since its last
 #               update, or the template's own checkout if its maintainer forgot `manifest.py
@@ -59,7 +61,7 @@ import hashlib
 import json
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -540,15 +542,63 @@ def check_hooks(root: Path) -> list[Finding]:
             settings = json.loads(settings_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             settings = {}
+    if not actlib.is_valid_hooks_container(settings):
+        # hooks: null, settings.json not an object, an entry that isn't one, ... — same shape
+        # init.py's/update.py's merge already refuses to touch (T46 review finding 6); doctor
+        # reports it the same way rather than crashing or half-comparing against it.
+        return [Finding(path=_rel(settings_path, root), line=None, kind="hook",
+                         message="not a valid hooks structure, left unchanged")]
+
     existing_hooks = settings.get("hooks", {}) if isinstance(settings, dict) else {}
+    bridge_hooks = bridge.get("hooks", {}) if isinstance(bridge, dict) else {}
 
     findings = []
-    for event, entries in bridge.get("hooks", {}).items():
+    # The union, not just the bridge's own events (T46 review finding 7): a "ours" hook can sit
+    # under an event the bridge no longer defines at all (the template retired the whole event),
+    # not only under one where it still defines *other* entries — that case must be reported too.
+    for event in sorted(set(bridge_hooks) | set(existing_hooks)):
+        bridge_entries = bridge_hooks.get(event, [])
         existing_entries = existing_hooks.get(event, [])
-        if any(entry not in existing_entries for entry in entries):
+        # Classified and counted per *hook*, not per entry (T46 review finding 3): a project hook
+        # sharing an entry with a template hook (same matcher) must never make that whole entry
+        # count as "ours", and an extra copy of a hook the bridge still wants exactly once (T46's
+        # duplicate scenario) needs counting, not just membership, to be caught at all.
+        bridge_hook_counts = Counter(
+            json.dumps(hook, sort_keys=True)
+            for entry in bridge_entries if isinstance(entry, dict)
+            for hook in entry.get("hooks", []) if isinstance(hook, dict)
+        )
+        existing_ours_counts = Counter(
+            json.dumps(hook, sort_keys=True)
+            for entry in existing_entries if isinstance(entry, dict)
+            for hook in entry.get("hooks", []) if actlib.is_ours_hook(hook, event)
+        )
+        # Both messages name `update.py --catch-up` specifically, not just "update.py": a project
+        # whose .act/ already matches the current template (the common case here — nothing left
+        # to fetch, only the hook entries are behind) makes a plain `update.py` report "nothing to
+        # update" and exit without touching anything; --catch-up is the one that always reconciles
+        # regardless (a run with an actual pending template diff self-relaunches under its own
+        # fresh code after replacing .act/ and reconciles too, see _relaunch_after_replace).
+        if bridge_hook_counts - existing_ours_counts:
             findings.append(Finding(
                 path=_rel(settings_path, root), line=None, kind="hook",
-                message=f"hook entry for event '{event}' missing (source: .act/bridges/settings.hooks.json)",
+                message=(
+                    f"hook entry for event '{event}' missing (source: .act/bridges/settings.hooks.json) "
+                    "-- run update.py --catch-up to reconcile"
+                ),
+            ))
+        # What's left over in existing_ours_counts once every bridge hook is accounted for: a
+        # template-generated hook (recognized by its exact command form, see actlib.is_ours_hook)
+        # the bridge no longer wants — either an older matcher/event the template retired, or a
+        # stale duplicate left over from before T46's fix to the merge logic. update.py reconciles
+        # this; doctor only reports it.
+        if existing_ours_counts - bridge_hook_counts:
+            findings.append(Finding(
+                path=_rel(settings_path, root), line=None, kind="hook",
+                message=(
+                    f"hook entry for event '{event}' outdated or duplicated against the template "
+                    "(source: .act/bridges/settings.hooks.json) -- run update.py --catch-up to reconcile"
+                ),
             ))
     return findings
 

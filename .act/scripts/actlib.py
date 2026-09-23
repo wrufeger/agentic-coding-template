@@ -117,6 +117,11 @@ def _default_lock() -> dict:
         "template": {"version": "", "commit": "", "source": "", "manifest_sha256": ""},
         "migrations_applied": [],
         "removed_by_user": [],
+        # "bridges_applied": per text-block bridge (currently ".gitignore"/".gitattributes"), the
+        # exact line list this project had last applied -- merge_text_block()'s baseline for "only
+        # add what's new since then" (T46 review finding 4). Absent for a project from before this
+        # tracking existed; see _append_block()'s fallback for that case.
+        "bridges_applied": {},
     }
 
 
@@ -245,6 +250,226 @@ def _is_separator_cell(cell: str) -> bool:
     """True for a Markdown table separator cell such as ":---", "---", "---:", ":---:"."""
     body = cell.strip(":")
     return bool(body) and set(body) == {"-"}
+
+
+# ---------------------------------------------------------------------------
+# Bridge merges — hook entries (.claude/settings.json) and appended text blocks
+# (.gitattributes/.gitignore). Shared by init.py (first write, a project's own .act/ already on
+# disk) and update.py (reconciling an *existing* project against a newer template state — a
+# project initialized before a bridge existed, or before a later template revision changed it,
+# otherwise never gets it, T46).
+# ---------------------------------------------------------------------------
+
+_HOOK_COMMAND_PREFIX = 'P=""; for c in python3 python'
+
+
+def _hook_command_suffix(event: str) -> str:
+    return f'"$P" .act/hooks/dispatch.py {event}'
+
+
+def is_ours_hook(hook, event: str) -> bool:
+    """True if `hook` (one item of a settings.json hook-entry's own "hooks" list) is exactly this
+    template's generated wrapper for `event` — matched by its *exact* command text (review T46
+    finding 3, replacing an earlier substring check): the fixed interpreter-detection prologue
+    this template always uses, ending in the literal dispatch.py invocation for this event,
+    optionally followed by "; true" for the events that must never block the harness. A project's
+    own hook that merely happens to also invoke dispatch.py (e.g. "python3 .act/hooks/dispatch.py
+    PreToolUse --project-flag") does not match this exact form and is correctly left alone —
+    classification is per *hook*, not per entry, so a project hook sharing an entry with a
+    template hook (same matcher) keeps its own hook and entry untouched."""
+    if not isinstance(hook, dict):
+        return False
+    command = hook.get("command", "")
+    if not isinstance(command, str) or not command.startswith(_HOOK_COMMAND_PREFIX):
+        return False
+    suffix = _hook_command_suffix(event)
+    return command.endswith(suffix) or command.endswith(suffix + "; true")
+
+
+def _filter_ours_hooks(entry, event: str) -> tuple[Optional[dict], bool]:
+    """Strips every `is_ours_hook` hook out of one settings.json hook-entry's "hooks" list.
+    Returns (filtered_entry, removed_any): filtered_entry is `entry` itself, unchanged, when
+    nothing was ours to remove; a new dict with the surviving (project-owned) hooks when some
+    were; or None when nothing is left, telling the caller to drop the entry entirely. Malformed
+    input (not a dict, or "hooks" not a list) is returned as-is, untouched — never raises."""
+    if not isinstance(entry, dict):
+        return entry, False
+    hooks_list = entry.get("hooks")
+    if not isinstance(hooks_list, list):
+        return entry, False
+    kept_hooks = [hook for hook in hooks_list if not is_ours_hook(hook, event)]
+    if len(kept_hooks) == len(hooks_list):
+        return entry, False
+    if not kept_hooks:
+        return None, True
+    new_entry = dict(entry)
+    new_entry["hooks"] = kept_hooks
+    return new_entry, True
+
+
+def merge_hook_event_entries(
+    existing_entries: list, bridge_entries: list, event: str,
+) -> tuple[list, bool]:
+    """Replaces every hook `is_ours_hook` recognizes for `event`, wherever it sits among
+    `existing_entries`, with the bridge's current set of entries for that event, inserted at the
+    position the first affected entry used to occupy — so a changed matcher/timeout/command is
+    updated in place and a hook the bridge no longer defines (e.g. a retired matcher) is dropped
+    instead of left behind as a stale duplicate. An entry that loses its only (template) hook is
+    dropped; an entry that keeps a surviving project hook stays, at its own position, with just
+    that hook (T46 review finding 3). Non-dict entries are left exactly where they are. Returns
+    (new_entries, changed) — changed is False when the result is byte-for-byte the input, the
+    caller's signal that nothing needs writing (keeps a second run a true no-op)."""
+    kept: list = []
+    touched_positions: list[int] = []
+    for entry in existing_entries:
+        filtered, removed_any = _filter_ours_hooks(entry, event)
+        if removed_any:
+            touched_positions.append(len(kept))
+        if filtered is not None:
+            kept.append(filtered)
+    insert_at = touched_positions[0] if touched_positions else len(kept)
+    new_entries = kept[:insert_at] + list(bridge_entries) + kept[insert_at:]
+    return new_entries, new_entries != existing_entries
+
+
+def is_valid_hooks_container(data) -> bool:
+    """True if `data` is shaped enough to merge into as a settings.json: a dict whose optional
+    "hooks" key, if present, is itself a dict mapping event name -> list of entry dicts. Anything
+    else (hooks: null, a list instead of a dict, an entry that is not itself a dict, ...) is a
+    shape this template's merge was never meant to repair (T46 review finding 6) — the caller
+    reports it and leaves the file exactly as it is, rather than half-merging into something that
+    was never a valid settings file to begin with."""
+    if not isinstance(data, dict):
+        return False
+    hooks = data.get("hooks", {})
+    if not isinstance(hooks, dict):
+        return False
+    for entries in hooks.values():
+        if not isinstance(entries, list):
+            return False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+    return True
+
+
+def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[str]]:
+    """Merges bridge_data["hooks"] (a parsed .act/bridges/*.json hook bridge, e.g.
+    settings.hooks.json) onto `current` (a parsed .claude/settings.json, or {} for a fresh one),
+    event by event, via merge_hook_event_entries(). Returns (new_settings, changed_events) —
+    changed_events is empty when every event's entries already match the bridge, the caller's
+    signal to leave the file on disk untouched. Never raises: a malformed `current`/`bridge_data`
+    (not a dict, "hooks" not a dict, an event's value not a list, ...) is treated as empty rather
+    than crashing --catch-up (T46 review finding 6); a caller that wants to report the shape as
+    invalid instead of silently normalizing it checks is_valid_hooks_container() first."""
+    current = current if isinstance(current, dict) else {}
+    bridge_hooks = bridge_data.get("hooks") if isinstance(bridge_data, dict) else None
+    bridge_hooks = bridge_hooks if isinstance(bridge_hooks, dict) else {}
+    raw_hooks = current.get("hooks")
+    hooks = dict(raw_hooks) if isinstance(raw_hooks, dict) else {}
+    changed_events: list[str] = []
+    for event in sorted(set(bridge_hooks) | set(hooks)):
+        bridge_entries = bridge_hooks.get(event)
+        bridge_entries = bridge_entries if isinstance(bridge_entries, list) else []
+        existing_entries = hooks.get(event)
+        existing_entries = existing_entries if isinstance(existing_entries, list) else []
+        new_entries, changed = merge_hook_event_entries(existing_entries, bridge_entries, event)
+        if changed:
+            changed_events.append(event)
+        if new_entries:
+            hooks[event] = new_entries
+        elif event in hooks:
+            del hooks[event]
+    new_current = dict(current)
+    if hooks:
+        new_current["hooks"] = hooks
+    else:
+        new_current.pop("hooks", None)
+    return new_current, changed_events
+
+
+def _classify_block_lines(
+    existing_text: str, block_text: str, applied_lines: Optional[list[str]],
+) -> tuple[list[str], list[str]]:
+    """Shared by merge_text_block() and text_block_conflicts(). Candidates are the block's lines
+    not yet accounted for: if `applied_lines` is given (this file's .act-lock.json §
+    bridges_applied[<name>] from the last time this bridge was applied), only lines new *since*
+    that recorded state — so a line the project has since deliberately deleted is never silently
+    reinstated, only what the template genuinely added since then. Without a recorded state (an
+    old project, from before this tracking existed) this falls back to "add whatever is missing
+    from the file", same as before (T46 review finding 4). Of the candidates, one already present
+    verbatim needs nothing; one conflicting with the project's own line — a gitignore `!pattern`
+    negation, or, for a multi-token line such as a .gitattributes entry, a different existing line
+    for the same leading pattern — is never applied, only reported back as a conflict."""
+    existing_lines = existing_text.splitlines()
+    existing_set = set(existing_lines)
+    block_lines = block_text.splitlines()
+    if applied_lines is None:
+        candidates = [line for line in block_lines if line not in existing_set]
+    else:
+        applied_set = set(applied_lines)
+        candidates = [line for line in block_lines if line not in applied_set]
+
+    to_add: list[str] = []
+    conflicts: list[str] = []
+    for line in candidates:
+        if line in existing_set:
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            to_add.append(line)
+            continue
+        if ("!" + line) in existing_set:
+            conflicts.append(line)
+            continue
+        tokens = line.split()
+        if len(tokens) > 1:
+            pattern = tokens[0]
+            conflicting = next(
+                (existing for existing in existing_lines
+                 if existing != line and not existing.lstrip().startswith("#")
+                 and existing.split()[:1] == [pattern]),
+                None,
+            )
+            if conflicting is not None:
+                conflicts.append(line)
+                continue
+        to_add.append(line)
+    return to_add, conflicts
+
+
+def merge_text_block(
+    existing_text: str, block_text: str, applied_lines: Optional[list[str]] = None,
+) -> tuple[str, list[str]]:
+    """Appends whatever lines of `block_text` still need adding (see _classify_block_lines) to
+    `existing_text`, as a single appended chunk in the block's own order — not the whole block
+    wholesale, so a project that only has an older subset of it gets just the missing lines (T46).
+    Returns (new_text, added_lines); added_lines is empty when nothing needed to change, the
+    caller's signal to leave the file untouched. A single blank line separates the appended chunk
+    from existing content; an empty `existing_text` gets the chunk verbatim. A candidate that
+    conflicts with the project's own line (see _classify_block_lines) is silently left out of both
+    — never applied, and not "added" — callers that want to report it use
+    text_block_conflicts()."""
+    to_add, _conflicts = _classify_block_lines(existing_text, block_text, applied_lines)
+    if not to_add:
+        return existing_text, []
+    added_text = "\n".join(to_add) + ("\n" if block_text.endswith("\n") else "")
+    if not existing_text:
+        new_text = added_text
+    elif existing_text.endswith("\n"):
+        new_text = existing_text + "\n" + added_text
+    else:
+        new_text = existing_text + "\n\n" + added_text
+    return new_text, to_add
+
+
+def text_block_conflicts(
+    existing_text: str, block_text: str, applied_lines: Optional[list[str]] = None,
+) -> list[str]:
+    """The subset of merge_text_block()'s candidate lines that were *not* applied because the
+    project already carries a conflicting line for the same pattern (T46 review finding 4) — for
+    a caller that wants to name them in its summary instead of silently leaving them out."""
+    _to_add, conflicts = _classify_block_lines(existing_text, block_text, applied_lines)
+    return conflicts
 
 
 # ---------------------------------------------------------------------------

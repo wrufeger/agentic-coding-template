@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Pull a newer state of the template into an already-initialized project. Nine steps,
+# Purpose: Pull a newer state of the template into an already-initialized project. Ten steps,
 #          always in the same order: fetch the template into a temp checkout (nothing from it is
 #          run), check whether the project edited .act/ itself since the last update, show the
 #          old -> new diff (rule/coding IDs individually), get the user's consent, replace .act/,
-#          refresh the template-owned "copies" living outside .act/, run any due migrations, hand
-#          off to doctor.py, and write .act-lock.json plus a commit. See
+#          refresh the template-owned "copies" living outside .act/, reconcile the
+#          .claude/settings.json hook entries and the .gitattributes/.gitignore template blocks
+#          against whatever init.py last wrote for this project (T46 — a project initialized
+#          before a bridge existed, or before a later template revision changed one, otherwise
+#          never gets it), run any due migrations, hand off to doctor.py, and write
+#          .act-lock.json plus a commit. See
 #          docs/project/concepts/ai-dev-app/05-update-and-overrides.md § "Ablauf eines Updates"
 #          in the template-pflege repo for the full spec this implements. Stdlib only.
 #
@@ -14,7 +18,7 @@
 #          only in .act-lock.json's `template.source`, set by init.py. A project .act/ that got
 #          replaced by something *other* than this script (e.g. a plain `git pull` of the shared
 #          history some projects still keep from before Q73a) looks, once it lands, exactly like
-#          an update.py run that crashed between step 5 and step 9: .act/ already matches a clean
+#          an update.py run that crashed between step 5 and step 10: .act/ already matches a clean
 #          template state, but .act-lock.json/copies/role bridges/migrations are still behind. A
 #          normal run notices this itself (step 3 finds no diff, then resumes instead of reporting
 #          "nothing to update"); --catch-up does the same without a fetch, for when there is
@@ -23,15 +27,15 @@
 # Usage:
 #   python .act/scripts/update.py                       # update from .act-lock.json's recorded source
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
-#   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-9, write nothing
+#   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10, write nothing
 #   python .act/scripts/update.py --yes                  # skip the interactive consent prompt (step 4)
 #   python .act/scripts/update.py --on-local-changes rescue|discard|abort   # skip the step-2 prompt
 #   python .act/scripts/update.py --non-interactive       # never prompt (implies a default answer)
 #   python .act/scripts/update.py --no-commit             # do everything except the final commit
-#   python .act/scripts/update.py --catch-up              # no fetch; finish steps 6-9 from .act/ as-is
+#   python .act/scripts/update.py --catch-up              # no fetch; finish steps 6-10 from .act/ as-is
 #
-# Output format: one numbered line per step ("[n/9] ..."), 1..9 (--plan stops after 3, then one
-#   descriptive line each for 5-9), plus a closing "[act] done" line. Exit 0 on success or a clean
+# Output format: one numbered line per step ("[n/10] ..."), 1..10 (--plan stops after 3, then one
+#   descriptive line each for 5-10), plus a closing "[act] done" line. Exit 0 on success or a clean
 #   --plan/abort, 1 if a fatal precondition is not met (no source resolvable, fetch failed, the
 #   user chose abort at step 2 or declined at step 4, or --catch-up found .act/ hand-edited).
 
@@ -83,7 +87,7 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
 
 
 def _print_step(n: int, text: str) -> None:
-    print(f"[{n}/9] {text}")
+    print(f"[{n}/10] {text}")
 
 
 def _ask_choice(prompt_text: str, choices: tuple[str, ...], default: str) -> str:
@@ -727,7 +731,78 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
 
 
 # ---------------------------------------------------------------------------
-# Step 7 — migrations
+# Step 7 — reconcile hook entries (.claude/settings.json) and the .gitattributes/.gitignore
+# template blocks against the just-replaced .act/ (T46: init.py only ever writes these once, at
+# creation time — a project initialized before a bridge existed, or before a later template
+# revision changed one, is otherwise stuck on whatever it got back then, forever)
+# ---------------------------------------------------------------------------
+
+def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
+    """Re-applies init.py's hook-entry merge (every BRIDGES entry of kind "json-merge", gated by
+    the project's configured tools the same way init.py gates it) and its
+    .gitattributes/.gitignore template-block append, using the just-installed template's own
+    init.py (loaded via _import_fresh_init, same as step_refresh_copies above) — so this reuses
+    exactly the merge logic a fresh `init.py` run would apply instead of a second copy of it that
+    could drift out of sync. Idempotent (a second run reports nothing to do), and safe to call
+    from --catch-up too (its .act/ already matches a clean template state). Returns (summary,
+    touched_paths)."""
+    if plan:
+        return (
+            "would reconcile .claude/settings.json hook entries and the "
+            ".gitattributes/.gitignore template blocks",
+            [],
+        )
+
+    new_init = _import_fresh_init(root / ".act" / "scripts")
+    if new_init is None:
+        return (
+            "could not load the updated template's init.py; hook entries and "
+            ".gitattributes/.gitignore left untouched",
+            [],
+        )
+
+    touched: list[Path] = []
+    parts: list[str] = []
+
+    tools = _project_tools(root)
+    for key, spec in new_init.BRIDGES.items():
+        if spec["kind"] != "json-merge":
+            continue
+        if spec["tool"] is not None and spec["tool"] not in tools:
+            continue
+        src = root / ".act" / "bridges" / key
+        dest = root / spec["dest"]
+        if not src.is_file():
+            continue
+        message, changed = new_init._merge_settings_hooks(src, dest, False, root)
+        parts.append(message)
+        if changed:
+            touched.append(dest)
+
+    # Not new_init.step_git_files(): its own touched-list also includes an *unchanged* existing
+    # file (right for init.py's own first-ever commit, where the whole file is new either way),
+    # which here would sweep a project's own, unrelated, already-uncommitted .gitignore/
+    # .gitattributes edits into "chore: update template" (T46 review finding 2). Call
+    # _append_block() directly instead and only mark a file touched when it actually changed.
+    act_dir = root / ".act"
+    attrs_msg, attrs_changed = new_init._append_block(
+        root / ".gitattributes", act_dir / "bridges" / "gitattributes", False,
+    )
+    ignore_msg, ignore_changed = new_init._append_block(
+        root / ".gitignore", act_dir / "bridges" / "gitignore-lines", False,
+    )
+    parts.append(attrs_msg)
+    parts.append(ignore_msg)
+    if attrs_changed:
+        touched.append(root / ".gitattributes")
+    if ignore_changed:
+        touched.append(root / ".gitignore")
+
+    return ("; ".join(parts) if parts else "nothing to reconcile"), touched
+
+
+# ---------------------------------------------------------------------------
+# Step 8 — migrations
 # ---------------------------------------------------------------------------
 
 # Contract for a migration module (.act/migrations/NNN-slug.py, id = file stem): a plan(root)
@@ -833,7 +908,7 @@ def step_migrate(root: Path, plan: bool) -> tuple[str, list[str], list[Path]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 8 — hand off to doctor.py
+# Step 9 — hand off to doctor.py
 # ---------------------------------------------------------------------------
 
 def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path]]:
@@ -866,7 +941,7 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 9 — .act-lock.json + commit
+# Step 10 — .act-lock.json + commit
 # ---------------------------------------------------------------------------
 
 def step_lock(
@@ -939,7 +1014,7 @@ def _maybe_print_branch_hint(root: Path, notes: list[str]) -> None:
 
 # ---------------------------------------------------------------------------
 # Resume detection — step 3 found no .act/ diff, but a previous run may have been interrupted
-# between step 5 (replace) and step 9 (lock write)
+# between step 5 (replace) and step 10 (lock write)
 # ---------------------------------------------------------------------------
 
 def _migrations_due(root: Path, lock: dict) -> bool:
@@ -953,9 +1028,9 @@ def _migrations_due(root: Path, lock: dict) -> bool:
 def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
     """True when .act/ already matches the fetched template (step_show_diff found nothing) but the
     run that put it there never finished going through update.py — either an update.py run that
-    crashed between step 5 and step 9, or a project's .act/ having been brought to that state by
+    crashed between step 5 and step 10, or a project's .act/ having been brought to that state by
     something other than update.py entirely (e.g. a plain `git pull` of the shared history, Q73a:
-    both look identical from here, and both need the same catch-up). Steps 6-9 then still need to
+    both look identical from here, and both need the same catch-up). Steps 6-10 then still need to
     run instead of reporting "nothing to update".
 
     When `fetched_commit` is known (a git source), it is compared directly against the lock's
@@ -975,7 +1050,88 @@ def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Steps 6-9 + commit — shared by the normal flow (after step 5 replaces .act/) and --catch-up
+# Self-relaunch — step 5 just replaced .act/scripts/{update,init,actlib}.py on disk, but this
+# process already has the *old* versions loaded in memory (Python does not hot-reload a running
+# module); steps 6-10 calling into their own top-level functions (not the ones already reached via
+# _import_fresh_init, e.g. step_hooks_and_gitfiles itself) would otherwise run with whatever
+# update.py looked like before this update, and only actually apply their own new behaviour on
+# some *later*, unrelated invocation (T46's original gap, T46 follow-up). If any of the three
+# changed, re-exec a fresh process against the now-current update.py --catch-up (.act/ already
+# matches; no fetch/diff/replace needed) so steps 6-10 run under their own current code, in the
+# same overall `update.py` call the user made. Never reached in --plan (that branch returns
+# before step 5's real call).
+#
+# Contract with the child (T46 review finding 1): no new CLI arguments — a future child from an
+# update further down the line would reject one it doesn't know yet — so what the parent already
+# knows and the child cannot recompute for itself (the commit --catch-up's own no-fetch path never
+# learns, and the consent/rescue decisions already made at steps 2/4) crosses via three env vars,
+# read back only under the guard var below. This env-var contract is the stable half of the two:
+# once named here, a var keeps its name and meaning, because the process that *sets* it is
+# whatever update.py was on disk *before* this update (potentially much older than the one
+# defining these names) and the process that *reads* it is always the fresh, current one -- a
+# rename here breaks every project updating from a pre-rename version. Add a new var instead of
+# repurposing one.
+# ---------------------------------------------------------------------------
+
+_SELF_RELAUNCH_GUARD_ENV = "ACT_UPDATE_RESTARTED"
+_SELF_RELAUNCH_FETCHED_COMMIT_ENV = "ACT_UPDATE_FETCHED_COMMIT"
+_SELF_RELAUNCH_RESCUE_ENV = "ACT_UPDATE_RESCUE"
+_SELF_RELAUNCH_NOTES_ENV = "ACT_UPDATE_NOTES"
+_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py")
+
+
+def _scripts_fingerprint(root: Path) -> dict[str, str]:
+    fingerprint = {}
+    for name in _SELF_RELAUNCH_FILES:
+        path = root / ".act" / "scripts" / name
+        fingerprint[name] = actlib.sha256_file(path) if path.is_file() else ""
+    return fingerprint
+
+
+def _relaunch_after_replace(
+    root: Path, args, source: str,
+    fetched_commit: Optional[str], rescue_active: bool, notes: list[str],
+) -> int:
+    """--catch-up, not a plain re-run: the fetch/diff this process already did (steps 1-3) must
+    not happen twice, and step 4's consent already covers this continuation, not a second
+    decision -- hence --yes regardless of whether the original run passed it. `fetched_commit`
+    (else --catch-up's step 10 would write an empty lock commit, making every later session think
+    an update is still pending and update.py commit again next time), `rescue_active` (else a
+    rescue's own files under docs/ai/local/ would be left out of this commit) and `notes`
+    (anything step 1-3 already found, e.g. "--ref ignored") cross to the child via env, per the
+    contract above -- guarded so a plain, user-run --catch-up never picks up stale values from the
+    calling shell's own environment. The guard env var on the child is belt-and-suspenders against
+    a recursive third generation of this (in practice unreachable: --catch-up's own code path
+    never calls step_replace, so this check never fires for it) -- not needed for the single hop
+    this actually performs, but cheap insurance against a future change coupling the two paths."""
+    print("[act]   .act/scripts/update.py (or init.py/actlib.py) changed with this update -- continuing under the new version")
+    child_argv = [
+        sys.executable, str(root / ".act" / "scripts" / "update.py"),
+        "--catch-up", "--source", source, "--yes",
+    ]
+    if args.no_commit:
+        child_argv.append("--no-commit")
+    if args.non_interactive:
+        child_argv.append("--non-interactive")
+    env = dict(os.environ)
+    env[_SELF_RELAUNCH_GUARD_ENV] = "1"
+    if fetched_commit:
+        env[_SELF_RELAUNCH_FETCHED_COMMIT_ENV] = fetched_commit
+    if rescue_active:
+        env[_SELF_RELAUNCH_RESCUE_ENV] = "1"
+    if notes:
+        env[_SELF_RELAUNCH_NOTES_ENV] = json.dumps(notes)
+    # The child's own output must appear after everything this process has already printed, not
+    # interleaved ahead of it -- both share the same inherited stdout/stderr (T46 review finding
+    # 5).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    result = subprocess.run(child_argv, cwd=root, env=env)
+    return result.returncode
+
+
+# ---------------------------------------------------------------------------
+# Steps 6-10 + commit — shared by the normal flow (after step 5 replaces .act/) and --catch-up
 # (which skips fetch/diff/replace because .act/ is already a clean, fetched-equivalent state)
 # ---------------------------------------------------------------------------
 
@@ -988,13 +1144,16 @@ def _finish_update(
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
     _print_step(6, f"{copies_summary}; roles: {role_summary}; role frontmatter: {frontmatter_summary}")
 
+    hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
+    _print_step(7, hooks_gitfiles_summary)
+
     migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
-    _print_step(7, migrate_summary)
+    _print_step(8, migrate_summary)
 
     doctor_summary, doctor_inbox = step_doctor(root, False)
-    _print_step(8, doctor_summary)
+    _print_step(9, doctor_summary)
 
-    _print_step(9, step_lock(root, False, source, new_copies, fetched_commit))
+    _print_step(10, step_lock(root, False, source, new_copies, fetched_commit))
 
     _maybe_print_branch_hint(root, notes)
 
@@ -1002,6 +1161,7 @@ def _finish_update(
     commit_paths.extend(root / rel for rel in new_copies)
     commit_paths.extend(role_touched)
     commit_paths.extend(frontmatter_touched)
+    commit_paths.extend(hooks_gitfiles_touched)
     if doctor_inbox is not None:
         commit_paths.append(doctor_inbox)
     rescue_dir = root / "docs" / "ai" / "local"
@@ -1046,17 +1206,33 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
         )
         return 1
 
+    # Only under the self-relaunch guard (never for a plain, user-run --catch-up, which must not
+    # pick up stale values left over in the calling shell's own environment): the parent's
+    # fetched_commit/rescue_active/notes, which this no-fetch path has no way to learn on its own
+    # (T46 review finding 1). See _relaunch_after_replace()'s docstring for the contract.
+    restarted = os.environ.get(_SELF_RELAUNCH_GUARD_ENV) == "1"
+    inherited_fetched_commit = os.environ.get(_SELF_RELAUNCH_FETCHED_COMMIT_ENV) if restarted else None
+    inherited_rescue = restarted and os.environ.get(_SELF_RELAUNCH_RESCUE_ENV) == "1"
+    if restarted:
+        raw_notes = os.environ.get(_SELF_RELAUNCH_NOTES_ENV)
+        if raw_notes:
+            try:
+                notes.extend(json.loads(raw_notes))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
     print("[act] catch-up: .act/ already matches a clean template state -- only .act-lock.json/copies/roles/migrations are behind")
 
     if plan:
         print(
-            "[act]   [6/9] " + step_refresh_copies(root, True)[0]
+            "[act]   [6/10] " + step_refresh_copies(root, True)[0]
             + "; roles: " + step_new_role_bridges(root, True)[0]
             + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
         )
-        print("[act]   [7/9] " + _plan_migrations_summary(act_dir))
-        print("[act]   [8/9] " + step_doctor(root, True)[0])
-        print("[act]   [9/9] " + step_lock(root, True, source, {}, None))
+        print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
+        print("[act]   [8/10] " + _plan_migrations_summary(act_dir))
+        print("[act]   [9/10] " + step_doctor(root, True)[0])
+        print("[act]   [10/10] " + step_lock(root, True, source, {}, None))
         print("[act] done - --plan: nothing was written")
         return 0
 
@@ -1073,7 +1249,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
         print("[act] catch-up aborted: no consent")
         return 1
 
-    return _finish_update(root, args.no_commit, source, notes, None, False)
+    return _finish_update(root, args.no_commit, source, notes, inherited_fetched_commit, inherited_rescue)
 
 
 # ---------------------------------------------------------------------------
@@ -1093,11 +1269,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--ref", help="tag or commit to update to (default: the source's default branch tip)")
     parser.add_argument("--on-local-changes", choices=("rescue", "discard", "abort"), help="skip the step-2 prompt")
     parser.add_argument("--yes", action="store_true", help="skip the interactive consent prompt (step 4)")
-    parser.add_argument("--plan", action="store_true", help="show steps 1-3, describe 5-9, change nothing")
+    parser.add_argument("--plan", action="store_true", help="show steps 1-3, describe 5-10, change nothing")
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt")
     parser.add_argument("--catch-up", action="store_true", help=(
-        "skip the fetch/diff/replace; finish steps 6-9 from the .act/ already on disk (e.g. after "
+        "skip the fetch/diff/replace; finish steps 6-10 from the .act/ already on disk (e.g. after "
         "a plain 'git pull' of the template outside update.py, Q73a) -- refuses unless that tree "
         "still matches its own MANIFEST.json"
     ))
@@ -1133,15 +1309,16 @@ def main(argv: list[str]) -> int:
         _print_step(3, diff_summary)
 
         if plan:
-            print("[act]   [5/9] " + step_replace(root, new_act_dir, True))
+            print("[act]   [5/10] " + step_replace(root, new_act_dir, True))
             print(
-                "[act]   [6/9] " + step_refresh_copies(root, True)[0]
+                "[act]   [6/10] " + step_refresh_copies(root, True)[0]
                 + "; roles: " + step_new_role_bridges(root, True)[0]
                 + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
             )
-            print("[act]   [7/9] " + _plan_migrations_summary(new_act_dir))
-            print("[act]   [8/9] " + step_doctor(root, True)[0])
-            print("[act]   [9/9] " + step_lock(root, True, source, {}, fetched_commit))
+            print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
+            print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
+            print("[act]   [9/10] " + step_doctor(root, True)[0])
+            print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit))
             print("[act] done - --plan: nothing was written")
             return 0
 
@@ -1184,7 +1361,14 @@ def main(argv: list[str]) -> int:
                         f"{dest.relative_to(root).as_posix()}"
                     )
 
+        old_fingerprint = _scripts_fingerprint(root)
         _print_step(5, step_replace(root, new_act_dir, False))
+
+        if (
+            os.environ.get(_SELF_RELAUNCH_GUARD_ENV) != "1"
+            and _scripts_fingerprint(root) != old_fingerprint
+        ):
+            return _relaunch_after_replace(root, args, source, fetched_commit, decision == "rescue", notes)
 
         return _finish_update(root, args.no_commit, source, notes, fetched_commit, decision == "rescue")
     finally:
