@@ -116,6 +116,7 @@ KIND_LABELS: dict[str, str] = {
     "hook": "Missing hook entries",
     "manifest": ".act/MANIFEST.json drift",
     "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
+    "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -603,6 +604,29 @@ def check_hooks(root: Path) -> list[Finding]:
     return findings
 
 
+# Unknown tool identifiers configured in docs/ai/config.md's `tools` value (F10, T60) — a typo, or
+# a spelling actlib.normalize_tool() does not recognize either (e.g. one carried over unchanged
+# from .act/tiers.json's now-retired "-cli" convention, "gemini-cli" say). Reported here rather
+# than only failing silently at init.py's SKILL_TARGET_DIRS gate, since a project can also
+# hand-edit `tools` after init. Not in the header docstring's numbered list above (like
+# check_script_docs() below, added after that list was last written) — see there for the same gap.
+# ---------------------------------------------------------------------------
+
+def check_unknown_tools(root: Path) -> list[Finding]:
+    configured = _configured_tools(actlib.read_config())
+    unknown = sorted({t for t in configured if actlib.normalize_tool(t) not in actlib.KNOWN_TOOLS})
+    if not unknown:
+        return []
+    return [Finding(
+        path="docs/ai/config.md", line=None, kind="unknown-tool",
+        message=(
+            f"`tools` entry not recognized: {', '.join(unknown)} — known ids: "
+            f"{', '.join(sorted(actlib.KNOWN_TOOLS))} (see actlib.TOOL_ALIASES for accepted "
+            "variant spellings)"
+        ),
+    )]
+
+
 # ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
@@ -723,6 +747,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_duplicate_entry_ids(root)
     findings += check_unreadable_entries(root)
     findings += check_hooks(root)
+    findings += check_unknown_tools(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
 

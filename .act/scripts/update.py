@@ -52,13 +52,16 @@ import shutil
 import stat
 import subprocess
 import sys
-from datetime import date
+import tempfile
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
 import actlib
+import entries
 import manifest
 import rules
+import tiers
 
 
 # ---------------------------------------------------------------------------
@@ -452,8 +455,9 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # init.py's copy_targets()) go through all four cases the spec asks for — handled below in
 # step_refresh_copies(). Role bridges (.act/agents/<name>.md paired with
 # .act/bridges/agents/<name>.md, init.py's agent_bridge_targets()) are simpler and handled
-# separately in step_new_role_bridges(): an existing one is never touched again, only a role new
-# since the last update gets a bridge created.
+# separately in step_new_role_bridges(): an existing one is only touched again when its role's row
+# in docs/ai/config.md § Roles changed (sync_dependent_files()), otherwise only a role new since
+# the last update gets a bridge created.
 _PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers")
 
 
@@ -461,7 +465,7 @@ def _project_tools(root: Path) -> list[str]:
     """The project's configured tools (docs/ai/config.md § Project, key "tools"), lowercased —
     the same gate copy_targets()/agent_bridge_targets() use to decide which destinations apply."""
     raw = actlib.read_config().get("tools", "")
-    return sorted({t.strip().lower() for t in raw.split(",") if t.strip()})
+    return sorted({actlib.normalize_tool(t) for t in raw.split(",") if t.strip()})
 
 
 def _import_fresh_init(new_scripts_dir: Path):
@@ -519,31 +523,169 @@ def _prune_empty_copy_dirs(start: Path, bases: set[Path], root: Path) -> None:
         current = parent
 
 
-def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
+def _new_backup_dir(root: Path) -> Path:
+    """A fresh, not yet existing .act-local/backup/<YYYYmmdd-HHMMSS>[-n]/ folder for one
+    sync_dependent_files() run (T60 Teil B, F3) — one folder per run, so a second run never
+    overwrites the first one's backups. Not created here; _backup_file() creates it on first use."""
+    base = root / ".act-local" / "backup"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    candidate, n = base / stamp, 1
+    while candidate.exists():
+        n += 1
+        candidate = base / f"{stamp}-{n}"
+    return candidate
+
+
+def _backup_file(backup_dir: Optional[Path], dest_rel: str, dest_path: Path) -> bool:
+    """Copies a locally-edited skill copy or role bridge to <backup_dir>/<dest_rel> before
+    sync_dependent_files() resets or removes it. Returns whether the backup really landed (same
+    size as the original) — a caller leaves the file untouched whenever it did not (F3: a path
+    past Windows' 260-character limit, or .act-local/backup blocked by a plain file, must never be
+    followed by the overwrite)."""
+    if backup_dir is None:
+        return False
+    target = backup_dir / dest_rel
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(dest_path, target)
+        return target.stat().st_size == dest_path.stat().st_size
+    except OSError:
+        return False
+
+
+def _report_reset_edits(root: Path, backup_dir: Path, reset: list[str]) -> Optional[Path]:
+    """Files one inbox entry (docs/ai/inbox/, via entries.py) listing every locally-edited skill
+    copy or role bridge sync_dependent_files() just reset or removed because the docs/ai/config.md
+    value it depends on changed, so the edit is noticed rather than silently lost — the previous
+    content is under `backup_dir`, and the entry points at docs/ai/local/ for an override that
+    survives the next config change too. Returns the entry's path (for the caller's own commit
+    tracking) or None on failure — best-effort: a broken inbox write must never fail the sync."""
+    try:
+        backup_label = backup_dir.relative_to(root).as_posix()
+    except ValueError:
+        backup_label = backup_dir.as_posix()
+    body = (
+        "A docs/ai/config.md value these files depend on (`tools`, or a role's row in the "
+        "\"## Roles\" table) changed, and the following files had been edited locally. They were "
+        "reset to the template's version (or removed, where the new value no longer calls for "
+        f"them); the edited content is under `{backup_label}/<path>` (gitignored). For an edit "
+        "that should survive future config changes, put it under `docs/ai/local/` instead — "
+        "`docs/ai/local/skills/<name>/<file>` for a skill, `docs/ai/local/agents/<role>.md` for a "
+        "role (see `.act/skills/README.md`).\n\n"
+        + "\n".join(f"- `{rel}`" for rel in reset) + "\n"
+    )
+    try:
+        path, _entry_id = entries.create_entry(
+            root, "inbox",
+            "Locally edited files were reset by a config change",
+            status="open", body=body,
+        )
+        return path
+    except Exception:
+        return None
+
+
+def _list_part(label: str, items: list[str], brief: bool) -> str:
+    """One "label: a, b, c" summary part — under `brief` (the session-start note, F12) a long list
+    shrinks to its count, so the note stays one readable line."""
+    if brief and len(items) > 5:
+        return f"{label}: {len(items)} files"
+    return f"{label}: {', '.join(items)}"
+
+
+def _own_copy_source(root: Path, entry: dict) -> Optional[Path]:
+    """The live docs/ai/local/ source a tracked copy's lock entry points at, or None. A
+    relative-looking "docs/ai/local/..." string can still escape that folder via "..", or (on
+    Windows) via a second drive-absolute segment such as "C:/evil/path" silently replacing `root`
+    in the "/" join below (belegt: pathlib's Path.__truediv__ drops the left side when the right
+    side is absolute) -- resolved first and checked to really land under docs/ai/local/."""
+    source_rel = entry.get("source", "")
+    if not source_rel or not source_rel.startswith("docs/ai/local/") or Path(source_rel).is_absolute():
+        return None
+    local_root = (root / "docs" / "ai" / "local").resolve()
+    candidate = (root / source_rel).resolve()
+    if candidate != local_root and local_root not in candidate.parents:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _skill_dir_active(new_init, dest_root: str, tools: list[str]) -> bool:
+    gate = dict(getattr(new_init, "SKILL_TARGET_DIRS", ())).get(dest_root)
+    check = getattr(new_init, "_skill_target_active", None)
+    return True if check is None else bool(check(gate, tools))
+
+
+def _dest_skill_dir(new_init, dest_rel: str) -> Optional[str]:
+    for dest_root, _gate in getattr(new_init, "SKILL_TARGET_DIRS", ()):
+        if dest_rel.startswith(dest_root + "/"):
+            return dest_root
+    return None
+
+
+def _fold(data: bytes) -> bytes:
+    """CRLF folded to LF, unless binary — the same rule as manifest.content_hash() (G2: a checkout
+    with core.autocrlf=true writes every copy with CRLF; that is not an edit)."""
+    return data if b"\x00" in data else data.replace(b"\r\n", b"\n")
+
+
+def _unedited(current: bytes, recorded_sha: Optional[str]) -> bool:
+    return recorded_sha in (hashlib.sha256(current).hexdigest(), hashlib.sha256(_fold(current)).hexdigest())
+
+
+def _write_bytes(dest_path: Path, data: bytes) -> bool:
+    """Writes one copy; False instead of an exception on failure (F8: one unwritable file must not
+    stop the rest of the run, nor leave the files already written untracked)."""
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_bytes(data)
+        return True
+    except OSError:
+        return False
+
+
+def step_refresh_copies(
+    root: Path, plan: bool, *, restore_paths: frozenset[str] = frozenset(),
+    restore_dirs: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None,
+    brief: bool = False,
+) -> tuple[str, dict[str, dict], list[str], list[Path]]:
     """Five cases per template-owned skill copy, exactly as the spec lists them: unchanged ->
     replaced; user-edited -> kept, reported; user-deleted -> left deleted (tracked in
     removed_by_user, same field init.py's lock skeleton already reserves for this); no longer
-    shipped by the template (removed or renamed there) -> the project's copy is deleted if it
-    still matches what the template last shipped (the project never edited it), or kept and
-    reported "no longer shipped, kept (edited)" if the project changed it since; new in the
-    template -> created. Returns (summary, new_copies) where new_copies is what .act-lock.json's
-    "copies" key should become.
+    shipped by the template (removed or renamed there) or no longer targeted (its tool left
+    `tools`) -> the project's copy is deleted if it still matches what the template last shipped
+    (the project never edited it), or kept and reported "no longer shipped, kept (edited)" if the
+    project changed it since; new in the template -> created (or taken over, if a byte-identical
+    file is already there — e.g. from an earlier run that stopped midway, F8). Returns (summary,
+    new_copies, reset_edited, removed): new_copies is what .act-lock.json's "copies" key should
+    become, reset_edited lists the edited copies this run backed up and reset (see
+    `restore_paths` below), removed the files it deleted (for the caller's commit, F11).
 
     A sixth case sits outside that list: a project's *own* skill (settings_load.py's
     write_unit_bridges() recorded its copies in the lock the same way, but init.py's
     copy_targets() deliberately never enumerates them — see that function's docstring). Such a
-    copy has no entry in new_specs, but its lock "source" still points at a live
-    docs/ai/local/skills/<name>/<file> — that is what tells it apart from a copy the template
-    truly stopped shipping, and it is refreshed from that source below instead of being deleted
-    as "no longer shipped" (belegt am 2026-09-22: without this check the first `update` after
-    importing an own skill deleted it outright, because an unedited own copy's hash still matched
-    the lock).
+    copy's lock "source" points at a live docs/ai/local/skills/<name>/<file> — that is what tells
+    it apart from a copy the template truly stopped shipping (belegt am 2026-09-22: without this
+    check the first `update` after importing an own skill deleted it outright). Its copies follow
+    the same tool gate as a template skill's (F5): refreshed in every active SKILL_TARGET_DIRS
+    folder, created in one that became active, removed (unedited only) from one that no longer is.
+
+    `restore_paths`/`restore_dirs` (T60 Teil B, Q85 a): set by sync_dependent_files() to exactly
+    the destinations and skill folders a moved `tools` value newly targets — empty for a plain call
+    and for any other change, so every case above stays as it was. For those only, a user-deleted
+    copy is recreated (its removed_by_user record cleared), and a user-edited one is backed up into
+    `backup_dir` (_backup_file) and then reset to the template's version — or, if the backup did
+    not land, left as it is and reported "kept (backup failed)" (F3). `brief` shortens long lists
+    in the summary to a count (session start, F12).
 
     If the updated template's init.py cannot be imported (see _import_fresh_init()), this step is
     aborted entirely rather than silently treating every copy as "no longer shipped" — that would
     drop every copy out of the lock and stop them from ever being refreshed again."""
     if plan:
-        return "would replace unchanged copies, keep edited ones (reported), leave deleted ones deleted, create new ones", {}
+        return (
+            "would replace unchanged copies, keep edited ones (reported), leave deleted ones "
+            "deleted unless a `tools` change newly targets them, create new ones",
+            {}, [], [],
+        )
 
     lock = actlib.read_lock()
     old_copies: dict[str, dict] = dict(lock.get("copies", {}))
@@ -551,150 +693,714 @@ def step_refresh_copies(root: Path, plan: bool) -> tuple[str, dict[str, dict]]:
 
     new_init = _import_fresh_init(root / ".act" / "scripts")
     if new_init is None:
-        return "could not load copy_targets() from the updated template; copies left untouched", old_copies
-    new_specs: dict[str, Path] = dict(new_init.copy_targets(root, _project_tools(root)))
+        return "could not load copy_targets() from the updated template; copies left untouched", old_copies, [], []
+    tools = _project_tools(root)
+    new_specs: dict[str, Path] = dict(new_init.copy_targets(root, tools))
     copy_bases = {root / dest_root for dest_root, _ in getattr(new_init, "SKILL_TARGET_DIRS", ())}
 
+    # F5: a project's own skill gets a copy in every active skill folder, like a template skill.
+    local_skills = (root / "docs" / "ai" / "local" / "skills").resolve()
+    active_dirs = [d for d, _ in getattr(new_init, "SKILL_TARGET_DIRS", ()) if _skill_dir_active(new_init, d, tools)]
+    restore = set(restore_paths)
+    for entry in old_copies.values():
+        own = _own_copy_source(root, entry)
+        if own is None or local_skills not in own.parents:
+            continue
+        rel = own.relative_to(local_skills).as_posix()
+        for dest_root in active_dirs:
+            dest = f"{dest_root}/{rel}"
+            if dest not in new_specs:
+                new_specs[dest] = own
+                if dest_root in restore_dirs:
+                    restore.add(dest)
+
     new_copies: dict[str, dict] = {}
-    replaced, kept, left_deleted, created = [], [], [], []
+    replaced, kept, left_deleted, created, adopted, failed = [], [], [], [], [], []
     no_longer_shipped_removed, no_longer_shipped_kept = [], []
     present_not_taken_over = []
+    restored, restored_edited, backup_failed = [], [], []
+    removed_paths: list[Path] = []
+
+    def _record(dest_rel: str, source_path: Path, data: bytes) -> None:
+        new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": hashlib.sha256(data).hexdigest()}
 
     for dest_rel, old_entry in old_copies.items():
         source_path = new_specs.pop(dest_rel, None)
         dest_path = root / dest_rel
         if source_path is None:
-            # copy_targets() never enumerates a project's own skill (see its docstring) — a
-            # tracked copy whose lock "source" still points at a live docs/ai/local/ file is one
-            # of those, not something the template stopped shipping, and is refreshed from that
-            # source below like any other tracked copy instead of being deleted as orphaned.
-            own_source_rel = old_entry.get("source", "")
-            own_source_path: Optional[Path] = None
-            if own_source_rel and own_source_rel.startswith("docs/ai/local/") and not Path(own_source_rel).is_absolute():
-                # A relative-looking "docs/ai/local/..." string can still escape that folder via
-                # "..", or (on Windows) via a second drive-absolute segment such as "C:/evil/path"
-                # silently replacing `root` in the "/" join below (belegt: pathlib's Path.__truediv__
-                # drops the left side when the right side is absolute) -- resolve first and check
-                # the result actually landed under docs/ai/local/, not just that its *string* started
-                # with that prefix.
-                local_root = (root / "docs" / "ai" / "local").resolve()
-                candidate = (root / own_source_rel).resolve()
-                if candidate == local_root or local_root in candidate.parents:
-                    own_source_path = candidate
-            if own_source_path is not None and own_source_path.is_file():
-                source_path = own_source_path
+            own = _own_copy_source(root, old_entry)
+            dest_root = _dest_skill_dir(new_init, dest_rel)
+            if own is not None and (dest_root is None or _skill_dir_active(new_init, dest_root, tools)):
+                source_path = own  # an own copy outside the usual layout: refreshed as before
             else:
-                # the template stopped shipping this copy (removed, or renamed to a different path)
+                # the template stopped shipping this copy (removed, or renamed to a different
+                # path), or its folder's tool left `tools` (F5 for an own skill)
                 if not dest_path.is_file():
                     continue  # already gone — nothing to remove, nothing left to track
-                current_hash = actlib.sha256_file(dest_path)
-                if current_hash == old_entry.get("sha256"):
-                    dest_path.unlink()
+                try:
+                    unedited = _unedited(dest_path.read_bytes(), old_entry.get("sha256"))
+                    if unedited:
+                        dest_path.unlink()
+                except OSError:
+                    new_copies[dest_rel] = old_entry
+                    failed.append(dest_rel)
+                    continue
+                if unedited:
                     _prune_empty_copy_dirs(dest_path, copy_bases, root)
                     no_longer_shipped_removed.append(dest_rel)
+                    removed_paths.append(dest_path)
                 else:
                     new_copies[dest_rel] = old_entry
                     no_longer_shipped_kept.append(dest_rel)
                 continue
+        try:
+            data = source_path.read_bytes()
+        except OSError:
+            new_copies[dest_rel] = old_entry
+            failed.append(dest_rel)
+            continue
         if not dest_path.is_file():
+            if dest_rel in restore:
+                # T60 Teil B: `tools` moved and newly targets this destination — recreate it and
+                # drop any removed_by_user record instead of leaving it deleted forever.
+                if not _write_bytes(dest_path, data):
+                    failed.append(dest_rel)
+                    continue
+                _record(dest_rel, source_path, data)
+                if dest_rel in removed_by_user:
+                    removed_by_user.remove(dest_rel)
+                restored.append(dest_rel)
+                continue
             if dest_rel not in removed_by_user:
                 removed_by_user.append(dest_rel)
             left_deleted.append(dest_rel)
             continue
-        current_hash = actlib.sha256_file(dest_path)
-        if current_hash == old_entry.get("sha256"):
-            data = source_path.read_bytes()
-            dest_path.write_bytes(data)
-            new_hash = hashlib.sha256(data).hexdigest()
-            new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": new_hash}
-            replaced.append(dest_rel)
+        try:
+            current = dest_path.read_bytes()
+        except OSError:
+            new_copies[dest_rel] = old_entry
+            failed.append(dest_rel)
+            continue
+        if _unedited(current, old_entry.get("sha256")):
+            if _fold(current) != _fold(data):
+                if not _write_bytes(dest_path, data):
+                    new_copies[dest_rel] = old_entry
+                    failed.append(dest_rel)
+                    continue
+                replaced.append(dest_rel)
+            _record(dest_rel, source_path, data)
+        elif dest_rel in restore:
+            # T60 Teil B: same trigger, for a locally-edited copy — reset only after the edit is
+            # safely backed up (F3); sync_dependent_files() files one inbox entry for the run.
+            if not _backup_file(backup_dir, dest_rel, dest_path):
+                new_copies[dest_rel] = old_entry
+                backup_failed.append(dest_rel)
+                continue
+            if not _write_bytes(dest_path, data):
+                new_copies[dest_rel] = old_entry
+                failed.append(dest_rel)
+                continue
+            _record(dest_rel, source_path, data)
+            restored_edited.append(dest_rel)
         else:
             new_copies[dest_rel] = old_entry
             kept.append(dest_rel)
 
     for dest_rel, source_path in new_specs.items():
-        if dest_rel in removed_by_user:
+        if dest_rel in removed_by_user and dest_rel not in restore:
             continue  # the project deliberately removed this one before; do not resurrect it
         dest_path = root / dest_rel
-        if dest_path.is_file():
+        try:
+            data = source_path.read_bytes()
+            existing = dest_path.read_bytes() if dest_path.is_file() else None
+        except OSError:
+            failed.append(dest_rel)
+            continue
+        if existing is not None:
+            if _fold(existing) == _fold(data):
+                # byte-identical already — e.g. written by an earlier run that stopped midway (F8)
+                _record(dest_rel, source_path, data)
+                adopted.append(dest_rel)
+                continue
             # something is already there that this run did not put there — leave it, but say so
             present_not_taken_over.append(dest_rel)
             continue
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        data = source_path.read_bytes()
-        dest_path.write_bytes(data)
-        new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": hashlib.sha256(data).hexdigest()}
+        if not _write_bytes(dest_path, data):
+            failed.append(dest_rel)
+            continue
+        _record(dest_rel, source_path, data)
+        if dest_rel in removed_by_user:
+            removed_by_user.remove(dest_rel)
         created.append(dest_rel)
 
-    actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
+    if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
+        # written only when it changed (G1: "nothing to change" must leave the lock untouched)
+        actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
 
     parts = []
-    if replaced:
-        parts.append(f"replaced: {', '.join(replaced)}")
-    if kept:
-        parts.append(f"kept (edited locally): {', '.join(kept)}")
-    if left_deleted:
-        parts.append(f"left deleted: {', '.join(left_deleted)}")
-    if no_longer_shipped_removed:
-        parts.append(f"no longer shipped, removed: {', '.join(no_longer_shipped_removed)}")
-    if no_longer_shipped_kept:
-        parts.append(f"no longer shipped, kept (edited): {', '.join(no_longer_shipped_kept)}")
-    if created:
-        parts.append(f"created: {', '.join(created)}")
-    if present_not_taken_over:
-        parts.append(f"present, not taken over: {', '.join(present_not_taken_over)}")
-    return ("; ".join(parts) if parts else "no template-owned copies"), new_copies
+    for label, items in (
+        ("replaced", replaced),
+        ("kept (edited locally)", kept),
+        ("left deleted", left_deleted),
+        ("restored (value changed)", restored),
+        ("reset, edit backed up (value changed)", restored_edited),
+        ("kept (backup failed)", backup_failed),
+        ("no longer shipped, removed", no_longer_shipped_removed),
+        ("no longer shipped, kept (edited)", no_longer_shipped_kept),
+        ("created", created),
+        ("taken over (identical)", adopted),
+        ("present, not taken over", present_not_taken_over),
+        ("failed, left as it was", failed),
+    ):
+        if items:
+            parts.append(_list_part(label, items, brief))
+    return ("; ".join(parts) if parts else "no changes to template-owned copies"), new_copies, restored_edited, removed_paths
 
 
-def step_new_role_bridges(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
+_BRIDGE_DERIVED_LINE_RE = re.compile(r"(model|effort|tier|reasoning)\s*:")
+
+
+def _bridge_core(text: str, drop: tuple[str, ...] = ()) -> str:
+    """A role bridge's text minus what changes on its own: the `model:`/`effort:` frontmatter
+    lines tiers.py re-derives at every session start and update, the `tier:`/`reasoning:` lines an
+    unresolved bridge still carries, and line endings. What is left differs from the template's
+    rendering only where a person edited the file."""
+    text = text.replace("\r\n", "\n")
+    match = re.match(r"---\n(.*?\n)---\n", text, re.S)
+    if not match:
+        return text
+    kept = [line for line in match.group(1).splitlines(keepends=True)
+            if not _BRIDGE_DERIVED_LINE_RE.match(line)
+            and not any(line.startswith(f"{key}:") for key in drop)]
+    return "---\n" + "".join(kept) + "---\n" + text[match.end():]
+
+
+def _bridge_edited(
+    new_init, root: Path, dest_path: Path, role: str, source_path: Optional[Path], variant: bool,
+    tiers_data: dict, overrides: dict,
+) -> bool:
+    """Whether an existing role bridge differs from what init.py's write_agent_bridge_file() renders
+    for it under `overrides` (the Roles table it was generated from), compared via _bridge_core().
+    Unreadable, or no source to render from, counts as edited — the safe side: it gets backed up
+    before anything happens to it."""
+    if source_path is None:
+        return True
+    try:
+        current = dest_path.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            reference_path = Path(tmp) / dest_path.name
+            new_init.write_agent_bridge_file(
+                role, source_path, reference_path, False, root, tiers_data, overrides, variant, None,
+            )
+            reference = reference_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return True
+    # A variant whose model is unresolvable under `overrides` renders verbatim, without its
+    # "-high" name/description/variant-of — those three lines then say nothing about an edit.
+    drop = ("name", "description", "variant-of") if variant and "variant-of:" not in reference else ()
+    return _bridge_core(current, drop) != _bridge_core(reference, drop)
+
+
+def _in_git_history(root: Path, rel: str) -> bool:
+    """Whether `rel` was ever committed — a missing role bridge that was, and that no snapshot or
+    lock entry explains otherwise, was deleted by the project, not never created (F13 fallback for
+    a checkout without .act-local/last-applied.json yet)."""
+    try:
+        result = _git(["log", "-1", "--format=%H", "--", rel], cwd=root, check=False)
+    except (OSError, ValueError):
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _role_bridge_targets(new_init, root: Path, tools: list[str]) -> tuple[dict[str, Path], dict[str, Path]]:
+    """(base targets, "-high" variant targets) from the given init module — see init.py's
+    agent_bridge_targets()/agent_bridge_variant_targets()."""
+    return (
+        dict(new_init.agent_bridge_targets(root, tools)),
+        dict(new_init.agent_bridge_variant_targets(root, tools)),
+    )
+
+
+def step_new_role_bridges(
+    root: Path, plan: bool, notes: Optional[list[str]] = None, *,
+    changed_roles: frozenset[str] = frozenset(), force_all: bool = False,
+    old_overrides: Optional[dict[str, dict[str, str]]] = None,
+    known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
+) -> tuple[str, list[Path], list[str]]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
     applicable role — new or already existing — that does not have one yet (13-model-tiers.md §
-    4/`Q71`, introduced together with the tier/reasoning scheme: an existing project may already
-    have base role bridges from before this existed). An existing .claude/agents/<name>.md (base
-    or variant) is never re-created here, matching the rule for role bridges (unlike a skill copy,
-    never replaced once written — see step_refresh_copies() above and init.py's
-    agent_bridge_targets()); its `model`/`effort` frontmatter is refreshed separately, by
-    step_refresh_role_frontmatter() below. `notes`, if given, collects messages the same way
-    step_fetch() above does (e.g. a role tiers.json/config.md cannot resolve, § "Pflege der
-    Zuordnungstabelle"). Returns (summary, touched_paths)."""
+    4/`Q71`). An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
+    here; its `model`/`effort` frontmatter is refreshed separately, by
+    step_refresh_role_frontmatter() below.
+
+    A missing bridge the project deleted stays deleted (F13, same rule as a skill copy): it is
+    recorded in .act-lock.json's removed_by_user as soon as it is recognised as deleted — already
+    listed there, in the last snapshot's "bridges" (`known`, see sync_dependent_files()), or ever
+    committed (_in_git_history) — and only a missing bridge none of those explain is created as new.
+
+    For a role in `changed_roles` (its row in docs/ai/config.md § Roles changed since the last
+    snapshot — or every role, with `force_all`, when `claude-code` just joined `tools`), its
+    bridges follow the new value (Q85 a): a missing one is recreated and its removed_by_user record
+    dropped; an edited one (compared against the rendering under `old_overrides`, the table it was
+    generated from — see _bridge_edited()) is backed up into `backup_dir` and regenerated, or left
+    as it is and reported "kept (backup failed)" if the backup did not land; a template-generated
+    "-high" variant (frontmatter `variant-of: <role>`) the new value no longer calls for is removed
+    the same way — a project's own "...-high" role without that field is never touched.
+
+    `notes`, if given, collects messages the same way step_fetch() above does. Returns (summary,
+    touched_paths, reset_or_removed_edited) — the last one for sync_dependent_files()'s inbox
+    entry."""
     if plan:
         return (
             "would create bridges for roles new since the last update, and any missing "
-            "'-high' variant, leaving existing files untouched",
-            [],
+            "'-high' variant, leaving existing and deleted files untouched unless their role's "
+            "row in docs/ai/config.md changed",
+            [], [],
         )
 
     new_init = _import_fresh_init(root / ".act" / "scripts")
     if new_init is None:
-        return "could not load agent_bridge_targets() from the updated template", []
+        return "could not load agent_bridge_targets() from the updated template", [], []
     tools = _project_tools(root)
-    targets: dict[str, Path] = dict(new_init.agent_bridge_targets(root, tools))
-    targets.update(new_init.agent_bridge_variant_targets(root, tools))
+    base_targets, variant_targets = _role_bridge_targets(new_init, root, tools)
+    targets = {**base_targets, **variant_targets}
     tiers_data = new_init.tiers.load_tiers(root)
     overrides = new_init.tiers.read_role_overrides(root, notes=notes)
+    reference_overrides = overrides if old_overrides is None else old_overrides
+    lock = actlib.read_lock()
+    removed_by_user: list[str] = list(lock.get("removed_by_user", []))
 
-    created: list[str] = []
+    created, restored, reset, left_deleted, kept_failed, dropped = [], [], [], [], [], []
     touched: list[Path] = []
+
+    def _role_of(dest_rel: str) -> str:
+        stem = Path(dest_rel).stem
+        return stem[: -len("-high")] if dest_rel in variant_targets else stem
+
     for dest_rel, source_path in sorted(targets.items()):
         dest_path = root / dest_rel
+        role = _role_of(dest_rel)
+        variant = dest_rel in variant_targets
+        follows_value = force_all or role in changed_roles
         if dest_path.is_file():
-            continue  # existing role bridge (base or variant) — never re-created, only refreshed
-        role = Path(dest_rel).stem
-        variant = role.endswith("-high")
-        base_role = role[: -len("-high")] if variant else role
+            # An existing bridge is never re-created, edited or not: the only part of it that hangs
+            # on the role's value is the `model`/`effort` pair, which step_refresh_role_frontmatter()
+            # and every session start re-derive in place — a project's own text in it survives
+            # (13-model-tiers.md § "Pflege der Zuordnungstabelle", t27/tier_test.sh).
+            continue
+        elif follows_value:
+            bucket = restored
+        elif dest_rel in removed_by_user or dest_rel in known or _in_git_history(root, dest_rel):
+            if dest_rel not in removed_by_user:
+                removed_by_user.append(dest_rel)
+            left_deleted.append(dest_rel)
+            continue
+        else:
+            bucket = created
         try:
-            message, ok = new_init.write_agent_bridge_file(
-                base_role, source_path, dest_path, False, root, tiers_data, overrides, variant, notes,
+            _message, ok = new_init.write_agent_bridge_file(
+                role, source_path, dest_path, False, root, tiers_data, overrides, variant, notes,
             )
         except (OSError, UnicodeDecodeError) as exc:
             if notes is not None:
                 notes.append(f"{dest_rel}: skipped, could not create ({exc.__class__.__name__})")
             continue
         if ok:
-            created.append(dest_rel)
+            bucket.append(dest_rel)
             touched.append(dest_path)
+            if dest_rel in removed_by_user:
+                removed_by_user.remove(dest_rel)
 
-    return (f"created: {', '.join(created)}" if created else "no new roles or variants"), touched
+    # A changed role's template-generated "-high" variant the new value no longer calls for (e.g.
+    # the role moved to tier "expert", or to the top reasoning step).
+    changed = {_role_of(rel) for rel in targets} if force_all else set(changed_roles)
+    for role in sorted(changed):
+        dest_rel = f".claude/agents/{role}-high.md"
+        dest_path = root / dest_rel
+        if dest_rel in targets or not dest_path.is_file():
+            continue
+        try:
+            fields, _body, _order = new_init.tiers.split_frontmatter(dest_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if fields.get("variant-of") != role:
+            continue  # a project's own "...-high" role, not a generated variant
+        source_path = base_targets.get(f".claude/agents/{role}.md")
+        edited = _bridge_edited(new_init, root, dest_path, role, source_path, True, tiers_data, reference_overrides)
+        if edited and not _backup_file(backup_dir, dest_rel, dest_path):
+            kept_failed.append(dest_rel)
+            continue
+        try:
+            dest_path.unlink()
+        except OSError:
+            continue
+        dropped.append(dest_rel)
+        touched.append(dest_path)
+        if edited:
+            reset.append(dest_rel)
+
+    if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
+        # written only when it changed (G1: "nothing to change" must leave the lock untouched)
+        actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
+
+    parts = [
+        _list_part(label, items, brief) for label, items in (
+            ("created", created),
+            ("restored (value changed)", restored),
+            ("reset, edit backed up (value changed)", reset),
+            ("removed (no longer applies)", dropped),
+            ("left deleted", left_deleted),
+            ("kept (backup failed)", kept_failed),
+        ) if items
+    ]
+    return ("; ".join(parts) if parts else "no new roles or variants"), touched, reset
+
+
+# ---------------------------------------------------------------------------
+# sync_dependent_files() — T60 Teil B (Q85 a): a docs/ai/config.md value that files depend on
+# (`tools` for skill copies and, via `claude-code`, role bridges; a role's row in the "## Roles"
+# table for that role's bridges) gets its dependent files nachinstalliert whichever mechanism
+# notices the change first — update.py or the next session start — compared against the
+# snapshot in .act-local/last-applied.json. Without a change, a deleted file stays deleted.
+# ---------------------------------------------------------------------------
+
+def _remove_role_bridges(
+    new_init, root: Path, old_tools: list[str], old_roles: dict, brief: bool,
+) -> tuple[Optional[str], list[Path]]:
+    """`claude-code` left `tools` (Offen 1, decided 2026-09-24): its role bridges go the way of its
+    skill copies — every bridge the old `tools` value targeted is removed if unedited
+    (_bridge_edited against the Roles table it was generated from), and left in place and reported
+    if edited. Returns (summary part or None, removed paths)."""
+    base_targets, variant_targets = _role_bridge_targets(new_init, root, old_tools)
+    tiers_data = new_init.tiers.load_tiers(root)
+    removed, kept = [], []
+    removed_paths: list[Path] = []
+    for dest_rel, source_path in sorted({**base_targets, **variant_targets}.items()):
+        dest_path = root / dest_rel
+        if not dest_path.is_file():
+            continue
+        variant = dest_rel in variant_targets
+        role = Path(dest_rel).stem[: -len("-high")] if variant else Path(dest_rel).stem
+        if _bridge_edited(new_init, root, dest_path, role, source_path, variant, tiers_data, old_roles):
+            kept.append(dest_rel)
+            continue
+        try:
+            dest_path.unlink()
+        except OSError:
+            kept.append(dest_rel)
+            continue
+        removed.append(dest_rel)
+        removed_paths.append(dest_path)
+    parts = []
+    if removed:
+        parts.append(_list_part("claude-code left tools, removed", removed, brief))
+    if kept:
+        parts.append(_list_part("claude-code left tools, kept (edited)", kept, brief))
+    return ("; ".join(parts) or None), removed_paths
+
+
+def _render_tool_bridge(new_init, root: Path, key: str, spec: dict) -> Optional[str]:
+    """The text init.py would write for a tool-gated BRIDGES entry into an empty project — the
+    reference a removal compares against. None if it cannot be rendered."""
+    src = root / ".act" / "bridges" / key
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / Path(spec["dest"]).name
+            if spec["kind"] == "json-merge":
+                new_init._merge_settings_hooks(src, dest, False, None)
+            else:
+                new_init._write_text_file(src, dest, {}, False, None)
+            return dest.read_text(encoding="utf-8") if dest.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _sync_tool_bridges(
+    new_init, root: Path, old_tools: list[str], new_tools: list[str],
+) -> tuple[list[str], list[Path]]:
+    """F7: the BRIDGES entries init.py gates on a tool (CLAUDE.md — "verbatim" — and
+    .claude/settings.json's hook entries — "json-merge" — both on `claude-code`) follow that tool
+    in `tools`: created (hook entries merged) when it joins; removed when it leaves, but only if
+    the file is still exactly what init.py generates (or what cache.json last recorded as
+    generated) — otherwise left in place and reported. Returns (summary parts, touched paths)."""
+    bridges = getattr(new_init, "BRIDGES", {})
+    cache = actlib.read_cache()
+    generated: dict = dict(cache.get("generated", {}))
+    parts: list[str] = []
+    touched: list[Path] = []
+    for key, spec in bridges.items():
+        tool = spec.get("tool")
+        if tool is None or spec.get("kind") not in ("verbatim", "json-merge"):
+            continue
+        dest_rel = spec["dest"]
+        dest = root / dest_rel
+        src = root / ".act" / "bridges" / key
+        try:
+            if tool in new_tools and tool not in old_tools:
+                if spec["kind"] == "json-merge":
+                    message, changed = new_init._merge_settings_hooks(src, dest, False, root)
+                else:
+                    message, changed = new_init._write_text_file(src, dest, {}, False, root)
+                    if changed:
+                        generated[dest_rel] = actlib.sha256_file(dest)
+                if changed:
+                    parts.append(f"{dest_rel}: created ({tool} joined tools)")
+                    touched.append(dest)
+            elif tool in old_tools and tool not in new_tools and dest.is_file():
+                current = dest.read_text(encoding="utf-8")
+                reference = _render_tool_bridge(new_init, root, key, spec)
+                same = (reference is not None and current.replace("\r\n", "\n") == reference.replace("\r\n", "\n")) \
+                    or generated.get(dest_rel) == actlib.sha256_file(dest)
+                if same:
+                    dest.unlink()
+                    generated.pop(dest_rel, None)
+                    parts.append(f"{dest_rel}: removed ({tool} left tools)")
+                    touched.append(dest)
+                else:
+                    parts.append(f"{dest_rel}: kept, edited ({tool} left tools)")
+        except (OSError, ValueError) as exc:
+            parts.append(f"{dest_rel}: failed ({exc.__class__.__name__}), left as it was")
+    if generated != cache.get("generated", {}):
+        actlib.write_cache({"generated": generated})
+    return parts, touched
+
+
+def _read_tools(root: Path) -> tuple[Optional[list[str]], Optional[str]]:
+    """(normalized `tools`, None) — or (None, problem) when nothing may be synced from the row:
+    docs/ai/config.md unreadable or without a `tools` row (F4 — read as "no tools", it would remove
+    every skill copy), or an id actlib.KNOWN_TOOLS does not know (G3 — a typo such as "claude code"
+    would otherwise read as "claude-code left" and remove the whole Claude integration)."""
+    path = root / "docs" / "ai" / "config.md"
+    try:
+        path.read_text(encoding="utf-8")
+        config = actlib.read_config()
+    except (OSError, ValueError):
+        return None, "docs/ai/config.md is not readable"
+    if "tools" not in config:
+        return None, "docs/ai/config.md has no `tools` row"
+    raw = [t for t in config["tools"].split(",") if t.strip()]
+    unknown = sorted({t.strip() for t in raw if actlib.normalize_tool(t) not in actlib.KNOWN_TOOLS})
+    if unknown:
+        return None, f"docs/ai/config.md `tools` holds unknown id(s): {', '.join(unknown)}"
+    return sorted({actlib.normalize_tool(t) for t in raw}), None
+
+
+def _dependent_values(root: Path) -> tuple[Optional[dict], Optional[str]]:
+    """The docs/ai/config.md values the dependent files hang on, for the snapshot comparison:
+    `tools` and every role's complete Roles-table entry (tier/reasoning/model — each of them decides
+    whether a "-high" variant exists and what the bridge's frontmatter says, init.py's
+    agent_bridge_variant_targets()). (None, problem) when `tools` cannot be used (_read_tools)."""
+    tools, problem = _read_tools(root)
+    if tools is None:
+        return None, problem
+    try:
+        roles = tiers.read_role_overrides(root)
+    except Exception:
+        roles = {}
+    return {"tools": tools, "roles": roles}, None
+
+
+def _valid_snapshot(last: Optional[dict]) -> bool:
+    """G4: the `applied` record comes from a versioned, hand-editable file — only a well-formed
+    one counts as a snapshot; anything else is treated like none at all."""
+    if not isinstance(last, dict):
+        return False
+    tools, roles = last.get("tools"), last.get("roles")
+    return (
+        isinstance(tools, list) and all(isinstance(t, str) for t in tools)
+        and isinstance(roles, dict)
+        and all(isinstance(entry, dict) and all(isinstance(v, str) for v in entry.values()) for entry in roles.values())
+    )
+
+
+def _write_snapshot(root: Path, current: dict, new_init=None) -> None:
+    """Records `current` in .act-lock.json § applied, and the role bridges present under it in
+    .act-local/cache.json § known_bridges — the files a later run reads as "known", so a missing one
+    of them was deleted by the project (F13; only files that exist, never mere targets, G4). Per
+    checkout on purpose: a fresh clone falls back to the git history (_in_git_history)."""
+    actlib.write_last_applied(dict(current))
+    new_init = new_init if new_init is not None else _import_fresh_init(root / ".act" / "scripts")
+    if new_init is not None:
+        try:
+            base_targets, variant_targets = _role_bridge_targets(new_init, root, current["tools"])
+            actlib.write_cache({"known_bridges": sorted(
+                rel for rel in set(base_targets) | set(variant_targets) if (root / rel).is_file()
+            )})
+        except (OSError, UnicodeDecodeError, ValueError):
+            pass
+
+
+def record_applied(root: Path) -> bool:
+    """For init.py: records the freshly created project's values as its first snapshot, so the first
+    session start already has something to compare against without writing the lock itself (G1).
+    Returns whether a snapshot was written."""
+    current, _problem = _dependent_values(root)
+    if current is None:
+        return False
+    _write_snapshot(root, current)
+    return True
+
+
+def _sync_note_once(problem: Optional[str]) -> None:
+    """One session-start note per distinct problem (F4/G3), remembered per checkout in
+    .act-local/cache.json — never in the versioned lock."""
+    cache = actlib.read_cache()
+    if cache.get("sync_note") == problem:
+        return
+    actlib.write_cache({"sync_note": problem})
+    if problem:
+        print(f"[act] note: {problem} -- skill copies, CLAUDE.md and role bridges left untouched until it is fixed")
+
+
+def _compare_snapshot(root: Path) -> dict:
+    """Current values against .act-lock.json § applied, without writing anything. {"problem": ...}
+    when `tools` cannot be used (_read_tools); otherwise the values plus what moved."""
+    current, problem = _dependent_values(root)
+    if current is None:
+        return {"problem": problem}
+    last = actlib.read_last_applied()
+    has_snapshot = _valid_snapshot(last)
+    old_tools: list[str] = sorted({actlib.normalize_tool(t) for t in last["tools"]}) if has_snapshot else current["tools"]
+    old_roles: dict = last["roles"] if has_snapshot else current["roles"]
+    bridges = actlib.read_cache().get("known_bridges")
+    known = frozenset(b for b in bridges if isinstance(b, str)) if isinstance(bridges, list) else frozenset()
+    return {
+        "problem": None, "current": current, "has_snapshot": has_snapshot,
+        "old_tools": old_tools, "old_roles": old_roles, "known": known,
+        "tools_moved": old_tools != current["tools"],
+        "changed_roles": frozenset(
+            role for role in set(old_roles) | set(current["roles"])
+            if old_roles.get(role) != current["roles"].get(role)
+        ),
+    }
+
+
+def pending_dependent_changes(root: Path) -> Optional[str]:
+    """What a session start under `session-start-refresh: warn` reports instead of syncing (F12):
+    the moved values in one short line, nothing written, no scan. None when nothing is pending (or
+    no snapshot exists yet)."""
+    state = _compare_snapshot(root)
+    if state["problem"]:
+        return state["problem"]
+    if not state["has_snapshot"]:
+        return None
+    moved = []
+    if state["tools_moved"]:
+        old, new = set(state["old_tools"]), set(state["current"]["tools"])
+        change = [f"+{t}" for t in sorted(new - old)] + [f"-{t}" for t in sorted(old - new)]
+        moved.append(f"tools ({', '.join(change)})")
+    if state["changed_roles"]:
+        moved.append(f"roles ({', '.join(sorted(state['changed_roles']))})")
+    return "; ".join(moved) or None
+
+
+def sync_dependent_files(
+    root: Path, *, always_run: bool, notes: Optional[list[str]] = None,
+) -> tuple[Optional[str], dict[str, dict], list[Path]]:
+    """The shared entry point for step_refresh_copies()/step_new_role_bridges() and the tool-gated
+    files, called from update.py (`always_run=True`, _finish_update/--catch-up) and from session
+    start (.act/hooks/checks/session.py's refresh_session(), `always_run=False`).
+
+    Each dependency is handled on its own (F2): a moved `tools` value restores or resets only the
+    skill copies and skill folders it newly targets (copy_targets(new) minus copy_targets(old),
+    own skills included, F5); what it no longer targets is removed by step_refresh_copies()'s "no
+    longer shipped" case (kept if edited). A changed role row touches only that role's bridges
+    (F1). `tools` touches the files that hang on a tool themselves: CLAUDE.md and the hook entries
+    in .claude/settings.json (_sync_tool_bridges, F7) and — via `claude-code` — every role bridge
+    (all restored when it joins, unedited ones removed when it leaves, _remove_role_bridges).
+
+    The comparison runs against .act-lock.json § applied (G1: versioned, so a branch switch is no
+    value change). `always_run=True`: both steps always run, as update.py's own job (template-side
+    changes) needs; only the comparison decides what is restored, reset or removed.
+    `always_run=False`: a plain comparison first — no scan, no write unless a value moved; no
+    snapshot yet means nothing to compare against, so nothing happens (update.py or init.py writes
+    the first one). The summary is then brief: only what changed, long lists as a count (F12).
+
+    `tools` unusable — unreadable, missing (F4), or holding an unknown id (G3): nothing is synced
+    and nothing recorded; update.py reports it in its step line, session start prints one note
+    per distinct problem.
+
+    Returns (summary, new_copies, touched): summary is None whenever nothing ran; new_copies is
+    .act-lock.json's new "copies" value (unchanged when the copy step did not run); touched is every
+    file created, reset or removed plus the inbox entry for backed-up edits, for commit tracking."""
+    def lock_copies() -> dict[str, dict]:
+        return dict(actlib.read_lock().get("copies", {}))
+
+    state = _compare_snapshot(root)
+    if state["problem"]:
+        if always_run:
+            return f"{state['problem']}; skill copies and role bridges left untouched", lock_copies(), []
+        _sync_note_once(state["problem"])
+        return None, lock_copies(), []
+    if not always_run and actlib.read_cache().get("sync_note"):
+        _sync_note_once(None)
+
+    current = state["current"]
+    old_tools, old_roles = state["old_tools"], state["old_roles"]
+    tools_moved, changed_roles = state["tools_moved"], state["changed_roles"]
+    claude_joined = "claude-code" in current["tools"] and "claude-code" not in old_tools
+    claude_left = "claude-code" in old_tools and "claude-code" not in current["tools"]
+    brief = not always_run
+
+    if not always_run and (not state["has_snapshot"] or (not tools_moved and not changed_roles)):
+        return None, lock_copies(), []
+
+    new_init = _import_fresh_init(root / ".act" / "scripts")
+    backup_dir = _new_backup_dir(root)
+    parts: list[str] = []
+    touched: list[Path] = []
+    reset_edited: list[str] = []
+
+    new_copies = lock_copies()
+    if always_run or tools_moved:
+        restore: frozenset[str] = frozenset()
+        restore_dirs: frozenset[str] = frozenset()
+        if tools_moved and new_init is not None:
+            restore = frozenset(
+                set(new_init.copy_targets(root, current["tools"])) - set(new_init.copy_targets(root, old_tools))
+            )
+            restore_dirs = frozenset(
+                d for d, _ in getattr(new_init, "SKILL_TARGET_DIRS", ())
+                if _skill_dir_active(new_init, d, current["tools"]) and not _skill_dir_active(new_init, d, old_tools)
+            )
+        copies_summary, new_copies, copies_reset, copies_removed = step_refresh_copies(
+            root, False, restore_paths=restore, restore_dirs=restore_dirs, backup_dir=backup_dir, brief=brief,
+        )
+        # update.py's own step_lock() writes "copies" too, but never runs at session start — this
+        # call is what persists it there (harmless duplicate from update.py: same value, merged;
+        # written only if it changed, see actlib._write_json_merged).
+        actlib.write_lock({"copies": new_copies})
+        if not (brief and copies_summary.startswith("no changes")):
+            parts.append(copies_summary)
+        reset_edited.extend(copies_reset)
+        touched.extend(copies_removed)
+
+    if tools_moved and new_init is not None:
+        tool_parts, tool_touched = _sync_tool_bridges(new_init, root, old_tools, current["tools"])
+        parts.extend(tool_parts)
+        touched.extend(tool_touched)
+        if claude_left:
+            removed_summary, removed_paths = _remove_role_bridges(new_init, root, old_tools, old_roles, brief)
+            if removed_summary:
+                parts.append(f"roles: {removed_summary}")
+            touched.extend(removed_paths)
+
+    if always_run or changed_roles or claude_joined:
+        role_summary, role_touched, roles_reset = step_new_role_bridges(
+            root, False, notes, changed_roles=changed_roles, force_all=claude_joined,
+            old_overrides=old_roles, known=state["known"], backup_dir=backup_dir, brief=brief,
+        )
+        if not (brief and role_summary == "no new roles or variants"):
+            parts.append(f"roles: {role_summary}")
+        touched.extend(role_touched)
+        reset_edited.extend(roles_reset)
+
+    _write_snapshot(root, current, new_init)
+    if reset_edited:
+        inbox_entry = _report_reset_edits(root, backup_dir, reset_edited)
+        if inbox_entry is not None:
+            touched.append(inbox_entry)
+    return ("; ".join(parts) or "nothing to change"), new_copies, touched
 
 
 def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
@@ -966,7 +1672,14 @@ def step_lock(
 def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> str:
     if no_commit:
         return "--no-commit: left staged/unstaged for the caller"
-    rels = sorted({str(p.relative_to(root)).replace("\\", "/") for p in paths if p.exists()})
+    all_rels = {str(p.relative_to(root)).replace("\\", "/"): p for p in paths}
+    rels = sorted(rel for rel, p in all_rels.items() if p.exists())
+    missing = sorted(rel for rel, p in all_rels.items() if not p.exists())
+    if missing:
+        # F11: a file this run deleted goes into the commit too — but only one git still tracks,
+        # named by path (never a tree-wide add); an untracked one has nothing to commit.
+        tracked = _git(["ls-files", "--", *missing], cwd=root, check=False)
+        rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing})
     if not rels:
         return "nothing to commit"
     if plan:
@@ -1139,10 +1852,9 @@ def _finish_update(
     root: Path, no_commit: bool, source: str, notes: list[str],
     fetched_commit: Optional[str], rescue_active: bool,
 ) -> int:
-    copies_summary, new_copies = step_refresh_copies(root, False)
-    role_summary, role_touched = step_new_role_bridges(root, False, notes)
+    sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
-    _print_step(6, f"{copies_summary}; roles: {role_summary}; role frontmatter: {frontmatter_summary}")
+    _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}")
 
     hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
     _print_step(7, hooks_gitfiles_summary)
@@ -1159,7 +1871,7 @@ def _finish_update(
 
     commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
     commit_paths.extend(root / rel for rel in new_copies)
-    commit_paths.extend(role_touched)
+    commit_paths.extend(sync_touched)
     commit_paths.extend(frontmatter_touched)
     commit_paths.extend(hooks_gitfiles_touched)
     if doctor_inbox is not None:

@@ -85,8 +85,8 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   name of a template unit, or a file at a place init.py writes itself (docs/ai/ skeleton,
   docs/ai/rules.md, docs/project/coding_rules.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
-  --non-interactive (--no-commit once init.py has it); existing CLAUDE.md/AGENTS.md stay until
-  --finish.
+  --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
+  own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
   bridge for become that bridge (protected rows stay as they are), other adopted sources and
   delete rows removed (git rm); an adopt target docs/ai/local/skills/<name>/... or
@@ -131,7 +131,7 @@ Call: direct (used by skill `act-adopt` (stage 6))
 ```text
 usage: adopt_entries.py [-h] --target DIR --from JSON [--plan]
 
-Write a checked batch of adopted entries (tasks, backlog, questions, inbox, journal) as entry
+Write a checked batch of adopted entries (tasks, backlog, questions, inbox, proposals) as entry
 files; the whole batch is refused on any conflict.
 
 options:

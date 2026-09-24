@@ -2,9 +2,15 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: SessionStart handling — inbox/questions "answered, not yet processed" count, bridge/
-#          role-frontmatter re-derivation, board refresh, template-awareness notes (check 2b), the
-#          active-topics status line, and the orchestrator-only rules delivered as hook context
-#          (all gated by their own docs/ai/config.md row, see _check_mode). refresh_session() is
+#          role-frontmatter re-derivation, board refresh, sync of the files that hang on a
+#          docs/ai/config.md value — skill copies, CLAUDE.md and hook entries on `tools`, a role's
+#          bridges on its "## Roles" row (tier/reasoning/model) — when one moved since the last
+#          snapshot (T60 Teil B, see update.sync_dependent_files(), imported lazily at that one
+#          call site so a session start
+#          never pays for/depends on `update`'s own imports — entries, rules, ... — just for this
+#          best-effort sub-step, F6, T60), template-awareness notes (check 2b), the active-topics
+#          status line, and the orchestrator-only rules delivered as hook context (all gated by
+#          their own docs/ai/config.md row, see _check_mode). refresh_session() is
 #          the single SessionStart entry point dispatch.py calls; everything below feeds into it.
 #          Unlike the PreToolUse checks, this is not a list of independent pass/fail gates — every
 #          sub-step is its own best-effort note or side effect, and refresh_session() must never
@@ -682,6 +688,28 @@ def refresh_session(payload: dict) -> int:
         _refresh_board(root)
     except Exception:
         pass
+
+    # T60 Teil B: files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
+    # hook entries on `tools`, a role's bridges on its "## Roles" row (tier/reasoning/model) — are
+    # synced here when that value moved since the .act-local/last-applied.json snapshot, not only
+    # on the next `update.py` run. A plain comparison, no scan unless something moved (see
+    # update.sync_dependent_files()). "block" syncs; "warn" only names what is pending (F12).
+    if mode in ("block", "warn"):
+        try:
+            import update  # deferred: see the header comment above (F6, T60)
+            if mode == "block":
+                sync_summary, _sync_copies, _sync_touched = update.sync_dependent_files(root, always_run=False)
+                if sync_summary:
+                    print(f"[act] note: docs/ai/config.md changed -- dependent files synced: {sync_summary}")
+            else:
+                pending = update.pending_dependent_changes(root)
+                if pending:
+                    print(f"[act] note: docs/ai/config.md changed ({pending}) -- dependent files would be synced (warn mode, not applied)")
+        except Exception as exc:
+            # F8: never silent — a sync that stopped midway is finished by the next session start
+            # (it keeps its snapshot unwritten) or by update.py --catch-up.
+            print(f"[act] note: syncing files that depend on docs/ai/config.md failed ({exc.__class__.__name__}) -- "
+                  "retried next session, or run `python .act/scripts/update.py --catch-up`")
 
     for dest_rel in changed_bridges:
         print(f"[act] note: {dest_rel} was changed locally, template version not applied")

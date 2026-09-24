@@ -7,11 +7,13 @@ below the frontmatter is the skill's instructions, written tool-neutral.
 
 `.act/scripts/init.py`'s `copy_targets()` turns every directory here into a project copy: the
 whole directory, file for file, under `.claude/skills/<name>/` (only when `claude-code` is one of
-the project's configured tools, `docs/ai/config.md` § Project) and always under
-`.agents/skills/<name>/` — the tool-neutral mirror other tools read. Where a project's file lands
-is data (`SKILL_TARGET_DIRS` in `init.py`), one entry per tool, so a further tool needs one more
-line there and nothing else; adding a skill itself needs no change anywhere — `copy_targets()`
-enumerates this directory at call time.
+the project's configured tools, `docs/ai/config.md` § Project) and under `.agents/skills/<name>/`
+— the tool-neutral mirror read by Codex, Copilot, Gemini CLI and Cursor — once any one of those is
+configured. Where a project's file lands is data (`SKILL_TARGET_DIRS` in `init.py`), one entry per
+skills folder with its tool gate, so a further tool that reads `.agents/skills/` needs only its id
+added to that gate, and a further tool with its own skills folder needs one more line there and
+nothing else; adding a skill itself needs no change anywhere — `copy_targets()` enumerates this
+directory at call time.
 
 A project copy is a template-owned copy, not a bridge: `.act/scripts/update.py` replaces it on
 update if it is still byte-identical to what was last generated (tracked as a hash per file in

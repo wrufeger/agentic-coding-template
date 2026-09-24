@@ -79,13 +79,18 @@ def resolve(path: str) -> Optional[tuple[Path, str]]:
 # ---------------------------------------------------------------------------
 
 def _read_json(path: Path) -> Optional[dict]:
-    """Read a JSON object from `path`. Returns None if the file is missing, unreadable, or not a
-    JSON object (never raises for those cases — callers fall back to a default)."""
+    """Read a JSON object from `path`. Returns None if the file is missing, unreadable, not valid
+    UTF-8, or not a JSON object (never raises for those cases — callers fall back to a default).
+    `ValueError` covers both `json.JSONDecodeError` and `UnicodeDecodeError` (both are subclasses
+    of it) — a state file with a few corrupted bytes is treated the same as one that was never
+    written yet, not as a reason to abort the caller (F9, T60: read_last_applied() previously left
+    `UnicodeDecodeError` uncaught, which made update.py abort mid-run and left `.act/` already
+    replaced)."""
     if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -95,8 +100,11 @@ def _write_json_merged(path: Path, data: dict) -> dict:
     keys already present on disk survive the write. Creates the parent directory if needed.
     Returns the merged dict actually written."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    merged = _read_json(path) or {}
+    existing = _read_json(path)
+    merged = dict(existing or {})
     merged.update(data)
+    if existing is not None and merged == existing:
+        return merged  # nothing changed: leave the file (and a versioned one's git status) alone
     path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return merged
 
@@ -189,6 +197,41 @@ def write_cache(data: dict) -> dict:
     merged = _write_json_merged(_cache_path(), data)
     merged.setdefault("generated", {})
     return merged
+
+
+# ---------------------------------------------------------------------------
+# .act-lock.json § applied — the docs/ai/config.md values the dependent files were last synced
+# for (`tools`, every role's Roles-table entry, the role bridges present then), so update.py's
+# sync_dependent_files() (T60 Teil B) can tell a session start with nothing to do from one where a
+# value moved. Versioned inside the lock (G1, T60): config.md and the copies are per branch, so
+# the record of what they were synced for travels with them — a per-checkout file read a branch
+# switch as a value change. A .act-local/last-applied.json from before is read as a fallback
+# until the first write, which removes it.
+# ---------------------------------------------------------------------------
+
+def _last_applied_path() -> Path:
+    return repo_root() / ".act-local" / "last-applied.json"
+
+
+def read_last_applied() -> Optional[dict]:
+    """The lock's `applied` record, else a legacy .act-local/last-applied.json, else None —
+    callers treat None as "never snapshotted yet", not as an error, and validate the shape
+    themselves (a hand-edited lock can hold anything)."""
+    applied = (_read_json(repo_root() / ".act-lock.json") or {}).get("applied")
+    if isinstance(applied, dict):
+        return applied
+    return _read_json(_last_applied_path())
+
+
+def write_last_applied(data: dict) -> dict:
+    """Replace the lock's `applied` record with `data` (written only if it differs, see
+    _write_json_merged) and drop a legacy .act-local/last-applied.json. Returns `data`."""
+    write_lock({"applied": data})
+    try:
+        _last_applied_path().unlink()
+    except OSError:
+        pass
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +513,38 @@ def text_block_conflicts(
     a caller that wants to name them in its summary instead of silently leaving them out."""
     _to_add, conflicts = _classify_block_lines(existing_text, block_text, applied_lines)
     return conflicts
+
+
+# ---------------------------------------------------------------------------
+# Tool identifiers — canonical id vs. accepted variant spellings for one `docs/ai/config.md` §
+# Project `tools` entry. Canonical is the short form init.py itself writes there and gates
+# SKILL_TARGET_DIRS with ("codex"/"copilot"/"gemini"/"cursor"/"claude-code"/"aider"/"cline"/
+# "ollama") — the same set adopt_config.TOOL_MAP maps onto. .act/tiers.json historically used the
+# CLI-flavoured "codex-cli"/"copilot-cli"/"gemini-cli" for the same three tools; a project's
+# `tools` value written in that spelling silently matched no SKILL_TARGET_DIRS gate at all, so no
+# .agents/skills/ was ever created for it (F10, T60). Callers normalize through this table instead
+# of comparing raw strings; an id not listed here (including every already-canonical one) is
+# returned unchanged by normalize_tool() — the caller's own job to flag as unknown against
+# KNOWN_TOOLS, see doctor.py's check_unknown_tools().
+# ---------------------------------------------------------------------------
+
+KNOWN_TOOLS = frozenset({
+    "claude-code", "codex", "copilot", "gemini", "cursor", "aider", "cline", "ollama",
+})
+
+TOOL_ALIASES: dict[str, str] = {
+    "codex-cli": "codex",
+    "copilot-cli": "copilot",
+    "gemini-cli": "gemini",
+}
+
+
+def normalize_tool(name: str) -> str:
+    """Canonical tool id for one `tools` entry: strips/lowercases `name`, then maps it through
+    TOOL_ALIASES if it is a known variant spelling. Returns the stripped/lowercased id unchanged
+    when it is not in TOOL_ALIASES — already-canonical ids and genuinely unknown ones alike."""
+    key = name.strip().lower()
+    return TOOL_ALIASES.get(key, key)
 
 
 # ---------------------------------------------------------------------------

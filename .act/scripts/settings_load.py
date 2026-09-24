@@ -1450,8 +1450,8 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
         copies = dict(lock.get("copies", {}))
         for item in skill_items:
             src = root / item["dest"]
-            for dest_root, tool in init.SKILL_TARGET_DIRS:
-                if tool is not None and tool not in tools:
+            for dest_root, tool_gate in init.SKILL_TARGET_DIRS:
+                if not init._skill_target_active(tool_gate, tools):
                     continue
                 copy_dest = root / dest_root / item["path"]
                 message, created = init._write_copy_file(src, copy_dest, False, root)

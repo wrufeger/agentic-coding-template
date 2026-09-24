@@ -10,3 +10,8 @@
 # .act/MANIFEST.json hashes the bytes on disk: without a fixed line ending, a checkout with
 # core.autocrlf=true would report every text file under .act/ as changed by hand.
 /.act/** text=auto eol=lf
+# Skill copies and role bridges: update.py tells an edited copy from an unchanged one by its hash;
+# a checkout with core.autocrlf=true would otherwise write them with CRLF (T60, G2).
+/.claude/skills/** text eol=lf
+/.agents/skills/** text eol=lf
+/.claude/agents/** text eol=lf

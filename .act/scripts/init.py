@@ -35,7 +35,7 @@ import sys
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, Union
 
 import actlib
 import manifest
@@ -292,6 +292,14 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
     test_cmd = _ask("Test command", "", interactive)
     tools_raw = _ask("Tools (comma-separated, e.g. claude-code)", "claude-code", interactive)
     tools = sorted({t.strip().lower() for t in tools_raw.split(",") if t.strip()})
+
+    unknown_tools = sorted({t for t in tools if actlib.normalize_tool(t) not in actlib.KNOWN_TOOLS})
+    if unknown_tools:
+        notes.append(
+            "Unknown tool id(s) in `tools`: " + ", ".join(unknown_tools)
+            + " — known ids: " + ", ".join(sorted(actlib.KNOWN_TOOLS))
+            + " (see actlib.TOOL_ALIASES for accepted variant spellings)."
+        )
 
     if not interactive:
         missing = [
@@ -653,13 +661,33 @@ def _write_coding_rules(
 # Step 6 helper — skill copies (.act/skills/<name>/** -> project copies)
 # ---------------------------------------------------------------------------
 
-# Destination root -> tool gate (None = always written), one entry per tool a skill copy can
-# land in. A further tool that wants its own skills folder needs one more line here, nothing
-# else — copy_targets() below stays unchanged.
-SKILL_TARGET_DIRS: list[tuple[str, Optional[str]]] = [
+# Destination root -> tool gate, one entry per skills folder a copy can land in. A gate is either
+# a single tool id, a tuple of tool ids (active once any one of them is configured), or None
+# (always written, no project has that today). ".agents/skills" is the tool-neutral mirror read
+# by every listed tool's own skill loader except claude-code (which has ".claude/skills" instead)
+# — belegt in .github/README.md: "read the same way by Codex, Copilot, Gemini CLI, and Cursor". A
+# further tool that reads it needs its id added to that tuple; a further tool with its own skills
+# folder needs one more line here, nothing else — copy_targets() below stays unchanged.
+SKILL_TARGET_DIRS: list[tuple[str, Optional[Union[str, tuple[str, ...]]]]] = [
     (".claude/skills", "claude-code"),
-    (".agents/skills", None),
+    (".agents/skills", ("codex", "copilot", "gemini", "cursor")),
 ]
+
+
+def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools: list[str]) -> bool:
+    """Whether a SKILL_TARGET_DIRS entry's tool gate is satisfied by the project's configured
+    `tools` (docs/ai/config.md § Project): None is always active, a single tool id must be
+    present, a tuple of ids needs at least one of them present. Both sides go through
+    actlib.normalize_tool() first, so a `tools` value written in a variant spelling
+    (.act/tiers.json's now-retired "codex-cli"/"copilot-cli"/"gemini-cli", say) still matches this
+    module's own canonical gate ids instead of silently producing no .agents/skills/ at all (F10,
+    T60)."""
+    normalized_tools = {actlib.normalize_tool(t) for t in tools}
+    if tool_gate is None:
+        return True
+    if isinstance(tool_gate, str):
+        return actlib.normalize_tool(tool_gate) in normalized_tools
+    return any(actlib.normalize_tool(t) in normalized_tools for t in tool_gate)
 
 
 def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
@@ -692,8 +720,8 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
             rel = src.relative_to(skills_dir).as_posix()  # "<name>/<file>"
             resolved = actlib.resolve(f"skills/{rel}")
             source_path = resolved[0] if resolved is not None else src
-            for dest_root, tool in SKILL_TARGET_DIRS:
-                if tool is not None and tool not in tools:
+            for dest_root, tool_gate in SKILL_TARGET_DIRS:
+                if not _skill_target_active(tool_gate, tools):
                     continue
                 targets[f"{dest_root}/{rel}"] = source_path
     return targets
@@ -1323,7 +1351,17 @@ def step_lock_and_cache(
         actlib.write_lock({
             "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash},
             "copies": copies,
+            # present from the start, so a later "nothing changed" never has to add it (T60, G1)
+            "removed_by_user": list(actlib.read_lock().get("removed_by_user", [])),
         })
+        # .act-lock.json § applied (T60, G1): the values the files just materialized hang on, so the
+        # first session start has a snapshot to compare against instead of writing the lock itself.
+        # Best-effort — without it, the next update.py run records one.
+        try:
+            import update as _update
+            _update.record_applied(root)
+        except Exception:
+            pass
     hashes = {rel: actlib.sha256_file(path) for rel, path in generated.items() if path.is_file()}
     if not plan:
         actlib.write_cache({"generated": hashes})

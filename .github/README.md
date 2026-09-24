@@ -34,6 +34,14 @@ already has:
 python .act/scripts/init.py --target ../my-existing-project
 ```
 
+If that project already had its own docs and AI tooling — a previous template, a different one,
+or something it made up on its own — adopt it instead of running the plain init above. This
+checkout has no `.claude/skills/` and no root `AGENTS.md`, so there is no skill to call by name:
+open the checkout in your assistant and have it follow `.act/skills/act-adopt/SKILL.md` for the
+project's path. It sights what is there, proposes an action per source, gets the owner's approval
+once, then moves it into this layout on a branch `act-adopt` (running `init.py` itself once the
+table is approved — running it separately first would only mean redoing that step).
+
 `init` never overwrites a file the project already owns. What it does instead — writing
 `docs/ai/config.md` from a short interview, detaching Git from the template's own history, bridging
 into `CLAUDE.md`/`AGENTS.md`/`.claude/` for the tools in use, thinning unused tool bridges back out,
@@ -62,6 +70,7 @@ Once a project is set up, its assistant has a set of skills under `.act/skills/`
 | `act-a11y` | check an interface for accessibility, work through findings by severity |
 | `act-design-ideas` / `act-design-build` / `act-design-assets` | design variants, implement one against a template, produce graphics |
 | `act-audit-docs` | check `docs/project/` against the actual code and bring it back in line |
+| `act-adopt` | one-time takeover of an existing project's docs and AI tooling — followed from a template checkout, see "Getting started" |
 | `act-commit` | close out an accepted task: evidence, archive, journal, commit |
 | `act-slides` | build or update a presentation about the project from its docs |
 | `act-update` | pull a newer template state into the project |
