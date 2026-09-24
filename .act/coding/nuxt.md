@@ -87,7 +87,7 @@ summary: ask before assuming SSR, know the hydration cost, check for mismatches 
 
 ## `CR-nuxt-toolchain` — Lint and format tooling
 
-summary: ESLint with @nuxt/eslint plus Prettier, whichever the project has set up
+summary: ESLint with `@nuxt/eslint` plus Prettier, whichever the project has set up
 
 - ESLint with `@nuxt/eslint`, configured in `eslint.config.mjs`, and Prettier for formatting are the
   template's usual choice; what the project actually has installed and configured governs

@@ -1031,7 +1031,9 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
             if not pset.enabled:
                 return f"{set_label}: already switched off", False
             lines = project.path.read_text(encoding="utf-8").splitlines()
-            lines[pset.line - 1] = re.sub(r"\[[ xX]\]", "[ ]", lines[pset.line - 1], count=1)
+            # T64: an unchecked set loses its "@" as well, or Claude Code would still import it.
+            lines[pset.line - 1] = rules.coding_set_line(
+                re.sub(r"\[[ xX]\]", "[ ]", lines[pset.line - 1], count=1))
             project.path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
             return f"{set_label}: whole set switched off", True
         if gid in pset.groups:

@@ -36,12 +36,23 @@
 #           12. an entry whose `status:` header value is none the mechanism knows (open, answered,
 #               done) — e.g. translated along with the scaffold; board.py and the session start
 #               count only those values (R-work-language).
+#           13. a hook command or a `Bash(...)` permission entry in .claude/settings.json (and,
+#               read-only, .claude/settings.local.json) that names a project script path which no
+#               longer exists — left over after an adoption replaced the old template's scripts
+#               (T54, D1). Never touches either file, only reports.
+#           14. (T64) an @-import Claude Code cannot follow from CLAUDE.md (relative to the
+#               importing file, at most four hops, rules.resolve_imports), every rule file
+#               under .act/rules/shared|orchestrator/ docs/ai/rules.md names but does not import,
+#               and every checked coding set that does not load.
+#          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
+#          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
 #          the template-vs-project cross-check after an update) is a separate, model-driven step
 #          and out of scope here. Stdlib only.
 #
 # Usage:
 #   python .act/scripts/doctor.py                  # run every check, human-readable output
+#   python .act/scripts/doctor.py --target <dir>    # same, against <dir> instead of this project
 #   python .act/scripts/doctor.py --json            # same, as one JSON object on stdout
 #   python .act/scripts/doctor.py --inbox            # also write docs/ai/inbox/<date>-doctor.md
 #                                                     # if (and only if) there are findings
@@ -63,6 +74,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -110,6 +122,7 @@ class EffectiveOverride:
 
 KIND_LABELS: dict[str, str] = {
     "validate": "Schema and set/group references (rules.py --validate)",
+    "import": "Rule files Claude Code does not load (rules.py --imports)",
     "dead-id": "Dead identifiers (overridden/off, but gone from the template)",
     "use-missing": "Switched-off rule set with a missing target",
     "override-stale": "Overridden rule whose template text has changed",
@@ -118,6 +131,7 @@ KIND_LABELS: dict[str, str] = {
     "duplicate-id": "Duplicate entry ids (task/backlog/question)",
     "entry-unreadable": "Entry files that cannot be read as UTF-8",
     "hook": "Missing hook entries",
+    "settings-script": "Hook/permission entries pointing at a missing script",
     "manifest": ".act/MANIFEST.json drift",
     "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
     "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
@@ -333,6 +347,8 @@ def check_disabled_use_missing(root: Path, project: rules.ProjectFile) -> list[F
 
 RE_ACT_REF = re.compile(r"<!--\s*act:ref\s+(?P<target>\S+)\s*-->")
 RE_ACT_PATH = re.compile(r"\.act/[\w.\-/]+\.md")
+RE_FENCE = re.compile(r"^(`{3,}|~{3,})")
+RE_INLINE_CODE = re.compile(r"(`+).*?\1")
 
 
 def _target_exists(root: Path, target: str) -> bool:
@@ -340,6 +356,13 @@ def _target_exists(root: Path, target: str) -> bool:
     if base.startswith(".act/"):
         return actlib.resolve(rules.strip_template_prefix(base)) is not None
     return (root / base).is_file()
+
+
+def _inline_code_ranges(line: str) -> list[tuple[int, int]]:
+    """Start/end offsets of every backtick-delimited inline code span on `line` — approximate
+    CommonMark (a run of N backticks, non-greedy content, the same run length to close), good
+    enough to tell an example marker inside `` `...` `` apart from a live one (D2)."""
+    return [match.span() for match in RE_INLINE_CODE.finditer(line)]
 
 
 def check_act_refs(root: Path) -> list[Finding]:
@@ -352,8 +375,25 @@ def check_act_refs(root: Path) -> list[Finding]:
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
+        in_fence = False
+        fence_char = ""
+        fence_len = 0
         for i, line in enumerate(lines, start=1):
+            fence_match = RE_FENCE.match(line.strip())
+            if fence_match:
+                marker = fence_match.group(1)
+                char, length = marker[0], len(marker)
+                if not in_fence:
+                    in_fence, fence_char, fence_len = True, char, length
+                elif char == fence_char and length >= fence_len:
+                    in_fence, fence_char, fence_len = False, "", 0
+                continue  # a fence delimiter line never carries a marker itself
+            if in_fence:
+                continue
+            code_ranges = _inline_code_ranges(line)
             for match in RE_ACT_REF.finditer(line):
+                if any(start <= match.start() < end for start, end in code_ranges):
+                    continue  # inside an inline code span — example, not a live reference
                 target = match.group("target")
                 if not _target_exists(root, target):
                     findings.append(Finding(
@@ -609,6 +649,125 @@ def check_hooks(root: Path) -> list[Finding]:
     return findings
 
 
+# ---------------------------------------------------------------------------
+# 13. Hook commands / Bash(...) permissions in .claude/settings.json (and, read-only,
+#     .claude/settings.local.json) naming a project script that no longer exists — left over once
+#     an adoption swapped an old template's scripts for this one's, but Claude Code itself never
+#     complains about a dead permission or hook command (T54, D1).
+# ---------------------------------------------------------------------------
+
+# A relative script path such as ".claude/scripts/foo.py" or ".act/hooks/dispatch.py" embedded in a
+# hook command string or a "Bash(...)" entry. The lookbehind/lookahead keep it from matching inside
+# a longer glob ("scripts/*") or an absolute/parent path ("/usr/...", "../other-repo/...": the
+# latter is filtered explicitly below, since ".." itself is a valid character in the class).
+RE_SETTINGS_SCRIPT_PATH = re.compile(
+    r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))(?![\w.-])"
+)
+
+# Claude Code expands `$CLAUDE_PROJECT_DIR` (also written `${CLAUDE_PROJECT_DIR}` or quoted,
+# `"$CLAUDE_PROJECT_DIR"`) to the project root in a hook command — all three forms name a script
+# relative to `root`, same as a plain relative path, but none of them match
+# RE_SETTINGS_SCRIPT_PATH above: the plain form matches it *without* the "$" and is then checked
+# as the literal (nonexistent) path "CLAUDE_PROJECT_DIR/...", and the quoted/braced forms don't
+# match at all (T62 F8 review finding).
+RE_PROJECT_DIR_SCRIPT = re.compile(
+    r'"?\$\{?CLAUDE_PROJECT_DIR\}?"?/((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))'
+)
+
+
+def _script_paths_in(text: str) -> list[str]:
+    out = []
+    project_dir_spans = []
+    for match in RE_PROJECT_DIR_SCRIPT.finditer(text):
+        out.append(match.group(1))
+        project_dir_spans.append(match.span())
+    for match in RE_SETTINGS_SCRIPT_PATH.finditer(text):
+        # Same text a $CLAUDE_PROJECT_DIR match above already turned into a proper relative path —
+        # without the guard, the plain (unquoted, unbraced) form also matches this regex, missing
+        # the leading "$" it cannot see, and would add a second, bogus "CLAUDE_PROJECT_DIR/..."
+        # candidate for the very same script.
+        if any(start <= match.start() < end for start, end in project_dir_spans):
+            continue
+        candidate = match.group(1)
+        if candidate.split("/", 1)[0] == "..":
+            continue  # outside the project — not this check's business
+        out.append(candidate)
+    return out
+
+
+def _missing_settings_scripts(root: Path, settings_path: Path) -> list[str]:
+    """Script paths named in `settings_path`'s hook commands or Bash(...) permission entries that
+    do not exist under `root`, first-seen order, deduplicated. Empty if the file is missing, not
+    valid JSON, or not an object — same "never crash on a malformed settings file" stance as
+    check_hooks() above."""
+    if not settings_path.is_file():
+        return []
+    try:
+        raw = settings_path.read_bytes()
+    except OSError:
+        return []
+    try:
+        # utf-8-sig strips a BOM when present (T62 F7: plain "utf-8" left it in front of "{" and
+        # json.loads failed on it, so a BOM'd settings.local.json was silently skipped instead of
+        # actually checked) and decodes plain UTF-8 exactly as before. A file in some other
+        # encoding still can't be read here — same "skip, never crash" stance as before, just
+        # catching the decode error too instead of letting it propagate.
+        settings = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(settings, dict):
+        return []
+
+    candidates: list[str] = []
+    hooks = settings.get("hooks", {})
+    if isinstance(hooks, dict):
+        for event_entries in hooks.values():
+            if not isinstance(event_entries, list):
+                continue
+            for entry in event_entries:
+                if not isinstance(entry, dict):
+                    continue
+                for hook in entry.get("hooks", []) or []:
+                    if isinstance(hook, dict) and hook.get("type") == "command":
+                        candidates += _script_paths_in(str(hook.get("command", "")))
+
+    permissions = settings.get("permissions", {})
+    if isinstance(permissions, dict):
+        for key in ("allow", "deny", "ask"):
+            for item in permissions.get(key, []) or []:
+                if isinstance(item, str) and item.startswith("Bash("):
+                    candidates += _script_paths_in(item)
+
+    seen: set[str] = set()
+    missing: list[str] = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if not (root / candidate).is_file():
+            missing.append(candidate)
+    return missing
+
+
+def check_settings_scripts(root: Path) -> list[Finding]:
+    findings = []
+    for rel in (".claude/settings.json", ".claude/settings.local.json"):
+        missing = _missing_settings_scripts(root, root / rel)
+        if not missing:
+            continue
+        shown = missing[:5]
+        tail = f", +{len(missing) - len(shown)} more" if len(missing) > len(shown) else ""
+        findings.append(Finding(
+            path=rel, line=None, kind="settings-script",
+            message=(
+                f"{len(missing)} hook/permission entr{'y' if len(missing) == 1 else 'ies'} "
+                f"{'names' if len(missing) == 1 else 'name'} a script that no longer exists in "
+                f"the project: {', '.join(shown)}{tail}"
+            ),
+        ))
+    return findings
+
+
 # Unknown tool identifiers configured in docs/ai/config.md's `tools` value (F10, T60) — a typo, or
 # a spelling actlib.normalize_tool() does not recognize either (e.g. one carried over unchanged
 # from .act/tiers.json's now-retired "-cli" convention, "gemini-cli" say). Reported here rather
@@ -646,6 +805,70 @@ def check_legacy_config_keys(root: Path) -> list[Finding]:
             "replace it with those two rows (`.act/skeleton/config.md` § Project, `R-work-language`)"
         ),
     )]
+
+
+_UNRESOLVED_RE = re.compile(r"^(?P<path>.*?):(?P<line>\d+): (?P<message>.*)$")
+
+
+def check_imports(root: Path) -> list[Finding]:
+    """14. (T64) What Claude Code actually loads, followed from CLAUDE.md exactly the way it does
+    (rules.resolve_imports): every import it cannot follow, and every rule file that should load
+    but does not — a rule file under .act/rules/shared|orchestrator/ (named in docs/ai/rules.md
+    but not imported, or not named there at all) and every checked coding set. Before T64 the
+    imports resolved against the wrong folder and not one rule file loaded; this is the check
+    that would have shown it. Skipped without a CLAUDE.md (Claude Code is not a configured tool)."""
+    if not (root / "CLAUDE.md").is_file():
+        return []
+    reached, unresolved = rules.resolve_imports(root, "CLAUDE.md")
+    findings: list[Finding] = []
+    reported: set[tuple[str, Optional[int]]] = set()
+    for entry in unresolved:
+        match = _UNRESOLVED_RE.match(entry)
+        path, line, message = (match.group("path"), int(match.group("line")) or None, match.group("message")) \
+            if match else ("CLAUDE.md", None, entry)
+        reported.add((path, line))
+        findings.append(Finding(path=path, line=line, kind="import",
+                                message=f"Claude Code does not load this: {message}"))
+
+    loaded = set(reached)
+    core = _parse_area(root, rules.AREAS["core"])
+    named = {pset.path: pset.line for pset in core.sets} if core is not None else {}
+    core_rel = rules.AREAS["core"].project_file
+    for layer in ("shared", "orchestrator"):
+        for path in sorted((root / ".act" / "rules" / layer).glob("*.md")):
+            rel = path.relative_to(root).as_posix()
+            if rel in loaded:
+                continue
+            wanted = rules.import_path(rel, core_rel)
+            # Only a file docs/ai/rules.md names without importing it (backticks, the pre-T64
+            # "@.act/..." form) — one whose line was dropped is switched off on purpose, as the
+            # bridge offers ("drop an import line to switch off its whole area"); a file new in
+            # the template reaches an unchanged copy through the bridge refresh (T64, F4).
+            if rel not in named or (core_rel, named[rel]) in reported:
+                continue  # not named, or already reported above as an import it cannot follow
+            findings.append(Finding(
+                path=core_rel, line=named[rel], kind="import",
+                message=f"{rel} is named but not imported, so Claude Code never loads it — write it as {wanted}",
+            ))
+
+    coding_rel = rules.AREAS["coding"].project_file
+    coding = _parse_area(root, rules.AREAS["coding"])
+    checked = [pset for pset in (coding.sets if coding is not None else []) if pset.enabled]
+    if checked and coding_rel not in loaded:
+        wanted = "@" + os.path.relpath(coding_rel, os.path.dirname(core_rel)).replace(os.sep, "/")
+        return findings + [Finding(
+            path=core_rel, line=None, kind="import",
+            message=(f"{coding_rel} is not imported, so its {len(checked)} checked set(s) never "
+                     f"load — add {wanted} here, or uncheck the sets"),
+        )]
+    for pset in (coding.sets if coding is not None else []):
+        if pset.enabled and pset.path not in loaded:
+            findings.append(Finding(
+                path=rules.AREAS["coding"].project_file, line=pset.line, kind="import",
+                message=(f"checked set {pset.path} is not loaded by Claude Code — write it as "
+                         f"{rules.import_path(pset.path, coding_rel)} (the session start does this)"),
+            ))
+    return findings
 
 
 STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/questions", "docs/ai/proposals", "docs/ai/work")
@@ -799,8 +1022,10 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_duplicate_entry_ids(root)
     findings += check_unreadable_entries(root)
     findings += check_hooks(root)
+    findings += check_settings_scripts(root)
     findings += check_unknown_tools(root)
     findings += check_legacy_config_keys(root)
+    findings += check_imports(root)
     findings += check_status_values(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
@@ -837,6 +1062,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="doctor.py",
         description="Mechanical project/template reconciliation — see the header comment for the full list of checks.",
     )
+    parser.add_argument("--target", metavar="DIR", help="check this project instead of the current checkout")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/<date>-doctor.md if there are findings")
     parser.add_argument("--accept", action="append", default=[], metavar="ID", help="accept the current template text for ID (repeatable)")
@@ -860,11 +1086,18 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    try:
-        root = actlib.repo_root()
-    except RuntimeError as exc:
-        print(f"doctor.py: {exc}", file=sys.stderr)
-        return 2
+    if args.target:
+        root = Path(args.target).expanduser().resolve()
+        if not (root / ".act").is_dir():
+            print(f"doctor.py: {root} has no .act/ — not a template-managed project", file=sys.stderr)
+            return 2
+        os.chdir(root)  # actlib's read_config()/resolve()/read_lock() find the project from the cwd
+    else:
+        try:
+            root = actlib.repo_root()
+        except RuntimeError as exc:
+            print(f"doctor.py: {exc}", file=sys.stderr)
+            return 2
 
     accept_ids = set(args.accept)
     findings, effective = run(root, accept_ids, args.accept_all)

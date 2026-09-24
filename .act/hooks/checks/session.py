@@ -9,7 +9,8 @@
 #          call site so a session start
 #          never pays for/depends on `update`'s own imports — entries, rules, ... — just for this
 #          best-effort sub-step, F6, T60), template-awareness notes (check 2b), the active-topics
-#          status line, and the orchestrator-only rules delivered as hook context (all gated by
+#          status line, the import check (T64) and, only as a fallback, a short form of the
+#          orchestrator-only rules when docs/ai/rules.md does not import them (all gated by
 #          their own docs/ai/config.md row, see _check_mode). refresh_session() is
 #          the single SessionStart entry point dispatch.py calls; everything below feeds into it.
 #          Unlike the PreToolUse checks, this is not a list of independent pass/fail gates — every
@@ -18,6 +19,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import re
@@ -43,12 +46,13 @@ __all__ = [
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
-    "_chat_language_line", "refresh_session",
+    "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
+    "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "refresh_session",
 ]
 
 # ---------------------------------------------------------------------------
 # Check 2 — session start: inbox count, bridge re-derivation, board refresh,
-#           orchestrator-only rules delivered as hook context
+#           orchestrator-only rules as a fallback short form
 # ---------------------------------------------------------------------------
 
 def _current_branch(root: Path) -> str:
@@ -428,9 +432,10 @@ def _check_update_awareness(root: Path, config: dict[str, str]) -> tuple[list[st
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator-only rules (.act/rules/orchestrator/) — delivered as SessionStart hook context,
-# never @-imported into docs/ai/rules.md, so a sub-agent (which only ever loads that file) never
-# sees them. See the "Overrides" note on _read_rule_states for the docs/ai/rules.md syntax this
+# Orchestrator-only rules (.act/rules/orchestrator/) — since T64/Q92 imported by docs/ai/rules.md
+# like the shared ones (marked "main session only, workers skip this section"). The hook hands
+# over a short form only as a fallback, while a locally changed docs/ai/rules.md does not import
+# them yet. See the "Overrides" note on _read_rule_states for the docs/ai/rules.md syntax this
 # reads.
 # ---------------------------------------------------------------------------
 
@@ -508,14 +513,14 @@ def _filter_orchestrator_file(
             return
         if section_rule_id is None:
             kept.extend(section_lines)
-        elif enabled.get(section_rule_id, True):
-            kept.extend(section_lines)
-            rule_count += 1
-        elif section_rule_id in overrides:
+        elif section_rule_id in overrides:  # a replacement wins, checked or not (T64)
             heading = section_lines[0] if section_lines else f"## `{section_rule_id}`"
             kept.append(f"{heading} (project override)")
             kept.append("")
             kept.append(overrides[section_rule_id])
+            rule_count += 1
+        elif enabled.get(section_rule_id, True):
+            kept.extend(section_lines)
             rule_count += 1
         # else: off, no override on file -> section dropped entirely
         section_lines = None
@@ -541,22 +546,57 @@ def _filter_orchestrator_file(
     return "\n".join(preamble + kept).rstrip("\n") + "\n", rule_count
 
 
-def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[int]:
+def _orchestrator_short_lines(
+    text: str, enabled: dict[str, bool], overrides: dict[str, str], compact: bool = False
+) -> tuple[list[str], int]:
+    """T64: one line per rule of one .act/rules/orchestrator/*.md file — its id and heading
+    title (or the project's override text, shortened) — instead of the full text, which would
+    swell the session-start output with rules that belong in an import (and past 10,000
+    characters, Claude Code moves it into a file and shows only a 2,000-character preview). Same
+    gating as _filter_orchestrator_file(). With
+    `compact`, only the ids, comma-separated on one line. Returns (lines, rule_count)."""
+    lines: list[str] = []
+    ids: list[str] = []
+    for heading in (m.group(1) for m in map(_SECTION_HEADING_RE.match, text.splitlines()) if m):
+        id_match = _RULE_ID_IN_TEXT_RE.search(heading)
+        if not id_match:
+            continue
+        rule_id = id_match.group(1)
+        if rule_id in overrides:  # a replacement wins, checked or not
+            override = overrides[rule_id]
+            title = "(project override) " + (override if len(override) <= 90 else override[:89] + "…")
+        elif enabled.get(rule_id, True):
+            title = heading.split("—", 1)[1].strip() if "—" in heading else ""
+        else:
+            continue
+        ids.append(rule_id)
+        lines.append(f"- {rule_id}: {title}" if title else f"- {rule_id}")
+    if compact and ids:
+        lines = ["  " + ", ".join(ids)]
+    return lines, len(ids)
+
+
+def _orchestrator_rules_imported(reached: list[str]) -> bool:
+    """True when docs/ai/rules.md already imports the orchestrator files (Q92 option a) — then
+    Claude Code loads them in full and the hook adds nothing."""
+    return any(path.startswith(".act/rules/orchestrator/") or path.startswith("docs/ai/local/rules/orchestrator/")
+               for path in reached)
+
+
+def _deliver_orchestrator_rules(root: Path, config: dict[str, str], compact: bool = False,
+                                reached: Optional[list[str]] = None) -> Optional[int]:
     """
-    Read every .act/rules/orchestrator/*.md file, in ascending filename order, filter it through
-    _read_rule_states/_filter_orchestrator_file, and print what survives as SessionStart hook
-    context — the one channel this template has that reaches only the main session (a sub-agent
-    only ever sees docs/ai/rules.md, and these files are deliberately not @-imported there; see
-    .act/bridges/rules.md).
+    Fallback only (Q92 a): normally docs/ai/rules.md imports the orchestrator rules and this prints
+    nothing. While a locally changed docs/ai/rules.md does not import them, print a short form of
+    .act/rules/orchestrator/*.md (ascending filename order, filtered through _read_rule_states,
+    one line per rule, see _orchestrator_short_lines) plus where the full text lives — never the
+    full text: that alone was 12 KB, past the 10,000 characters above which Claude Code moves a
+    hook output into a file and shows the model only a 2,000-character preview.
 
-    Returns None (and prints nothing) if the check is off or the directory does not exist yet —
-    an older checkout, or a build stage before this directory was added, does nothing here rather
-    than erroring. Otherwise returns the number of rules delivered (0 if every one was checked
-    off), for the caller's status line.
-
-    "block" and "warn" behave the same here: unlike the other two checks, this one has no side
-    effect to withhold under "warn" — it only ever prints hook context, never writes a file — so
-    both non-off values simply deliver the filtered rules.
+    Returns None (and prints nothing) if the check is off or the directory does not exist yet.
+    Prints nothing either, but returns the count, when `reached` (rules.resolve_imports) shows
+    that docs/ai/rules.md imports the files itself. Otherwise the number of rules delivered (0 if
+    every one was checked off), for the caller's status line. "block" and "warn" behave the same.
     """
     mode = _check_mode(config, "orchestrator-rules", default="block")
     if mode == "off":
@@ -574,16 +614,18 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        filtered, count = _filter_orchestrator_file(text, enabled, overrides)
+        lines, count = _orchestrator_short_lines(text, enabled, overrides, compact=compact)
         total += count
         if count:
-            blocks.append(filtered.rstrip("\n"))
+            blocks.append(f"{path.name}:")
+            blocks.extend(lines)
 
-    if blocks:
-        print("[act] orchestrator rules (main session only, not seen by sub-agents):")
-        print()
-        print("\n\n".join(blocks))
-        print()
+    if blocks and not (reached and _orchestrator_rules_imported(reached)):
+        form = "their ids only" if compact else "one line each"
+        print(f"[act] orchestrator rules, main session only — docs/ai/rules.md does not import them "
+              f"yet, so {form}; the binding text is in .act/rules/orchestrator/<file>, read it "
+              "before acting on a rule:")
+        print("\n".join(blocks))
     return total
 
 
@@ -639,20 +681,142 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
     return active
 
 
+# ---------------------------------------------------------------------------
+# Session-start output (T64) — one JSON object: `additionalContext` for the model, kept under the
+# 10,000-character cap above which Claude Code moves a hook's output into a file and shows only a
+# preview (hooks.md: "capped at 10,000 characters ... a preview of up to the first 2,000
+# characters"), and one
+# top-level `systemMessage` line for the human ("Warning message shown to the user"). Plain text
+# and JSON never mixed: everything the sub-steps print is captured and goes into the context.
+# ---------------------------------------------------------------------------
+
+CONTEXT_LIMIT = 9000  # characters; the harness cap is 10,000 per field, this leaves a margin
+_RULES_MARK = "\x00act-orchestrator-rules\x00"
+# Pre-T64 forms Claude Code never loads: "@.act/..." (resolved from docs/ai/) and the orchestrator
+# files listed in backticks instead of imported (Q92 a).
+_OLD_IMPORT_RE = re.compile(r"^(?:@\.act/|`\.act/rules/orchestrator/)", re.MULTILINE)
+
+
+def _old_rules_imports(root: Path) -> tuple[int, str]:
+    """(count, sha256) of pre-T64 "@.act/..." import lines left in docs/ai/rules.md — Claude Code
+    resolves them from docs/ai/ and never finds them. (0, "") when there are none."""
+    path = root / "docs" / "ai" / "rules.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0, ""
+    count = len(_OLD_IMPORT_RE.findall(text))
+    return (count, actlib.sha256_file(path)) if count else (0, "")
+
+
+def _old_imports_note(root: Path) -> Optional[str]:
+    """One note per state of a docs/ai/rules.md that still carries the old import form — one
+    changed locally or never recorded as generated; an unchanged one was just re-derived by
+    _refresh_bridges. Shown once, again only after the file changed and is still wrong.
+    Remembered in .act-local/cache.json."""
+    count, digest = _old_rules_imports(root)
+    if not count:
+        return None
+    cache = actlib.read_cache()
+    if cache.get("rules_import_hint") == digest:
+        return None
+    actlib.write_cache({"rules_import_hint": digest})
+    return (f"[act] note: docs/ai/rules.md names {count} rule file(s) in a form "
+            "Claude Code never loads (\"@.act/...\" or `.act/rules/orchestrator/...`) — write each "
+            "as \"@../../.act/...\" (check: python .act/scripts/rules.py --imports)")
+
+
+def _chat_language_short(config: dict[str, str]) -> str:
+    chat, docs = actlib.language_settings(config)
+    if chat != "auto":
+        return chat
+    return actlib.remembered_chat_language() or f"auto (until known: {docs})"
+
+
+def _human_line(state: dict) -> Optional[str]:
+    """The one `systemMessage` line: rule files loaded, chat language, and the inbox/question
+    entries answered but not yet processed (the status line's own count)."""
+    if not state:
+        return None
+    parts: list[str] = []
+    if "files" in state:
+        unresolved = state.get("unresolved", 0)
+        parts.append(f"rules loaded: {state['files']} files"
+                     + (f", {unresolved} import(s) not found" if unresolved else ""))
+    if "chat" in state:
+        parts.append(f"chat: {state['chat']}")
+    if "inbox" in state:
+        parts.append(f"inbox: {state['inbox']} to process")
+    if state.get("old_imports"):
+        parts.append("docs/ai/rules.md uses the old import form, see note")
+    return "act · " + " · ".join(parts) if parts else None
+
+
+def _fit_context(text: str, rules_full: str, rules_compact: str) -> str:
+    """Put the fallback orchestrator-rules block (usually empty) in place of its mark, and keep
+    the whole under CONTEXT_LIMIT: first the tip/reminder line gives way, then the rules shrink
+    to their ids; should even that not fit, the text is cut at a line boundary with a pointer to
+    .act-local/session-start.txt, where the whole output is kept."""
+    def without_tip(value: str) -> str:
+        return "".join(line for line in value.splitlines(keepends=True)
+                       if not line.startswith(("[act] tip", "[act] reminder")))
+
+    full = text.replace(_RULES_MARK + "\n", rules_full)
+    fitted = full
+    for candidate in (full, without_tip(full), without_tip(text.replace(_RULES_MARK + "\n", rules_compact))):
+        fitted = candidate
+        if len(fitted) <= CONTEXT_LIMIT:
+            return fitted.rstrip("\n")
+    try:
+        path = actlib.repo_root() / ".act-local" / "session-start.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(full, encoding="utf-8")
+    except (OSError, RuntimeError):
+        pass
+    tail = "[act] note: session notes cut here — all of them in .act-local/session-start.txt"
+    kept = fitted[:CONTEXT_LIMIT - len(tail) - 1].rsplit("\n", 1)[0]
+    return kept + "\n" + tail
+
+
 def refresh_session(payload: dict) -> int:
-    """Check 2: runs only for SessionStart. Never fails the session — every sub-step is best
-    effort and swallows its own errors; the fixed-format status line always comes right after
-    every other note except two deliberate exceptions: the "topics active" line, printed first of
-    all and even when `session-start-refresh` is "off" (see the comment above _active_topics()'s
-    call below), and an "update available" note, which is always a previous run's background
-    finding and prints after the status line (see _check_update_awareness's pre_notes/post_notes
-    split)."""
+    """Check 2: runs only for SessionStart. Never fails the session. Prints exactly one JSON
+    object (T64): the notes and the status line as `hookSpecificOutput.additionalContext`, one
+    human-readable line as `systemMessage`; nothing at all outside a template-managed project."""
+    state: dict = {}
+    rules_text = {"full": "", "compact": ""}
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        try:
+            in_project = _collect_session(payload, state, rules_text)
+        except Exception as exc:  # never fail the session over a note
+            print(f"[act] note: session start stopped early ({exc.__class__.__name__})")
+            in_project = True
+    if not in_project:
+        return 0
+    context = _fit_context(buffer.getvalue(), rules_text["full"], rules_text["compact"])
+    output: dict = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
+    message = _human_line(state)
+    if message:
+        output["systemMessage"] = message
+    sys.stdout.write(json.dumps(output, ensure_ascii=False) + "\n")
+    return 0
+
+
+def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
+    """Everything refresh_session() reports, printed line by line (refresh_session captures it).
+    Every sub-step is best effort and swallows its own errors; the fixed-format status line comes
+    right after every other note except two deliberate exceptions: the "topics active" line,
+    printed first of all and even when `session-start-refresh` is "off", and an "update available"
+    note, which is always a previous run's background finding and prints after the status line
+    (see _check_update_awareness's pre_notes/post_notes split). Fills `state` for the human line
+    and `rules_text` with the orchestrator-rules block (full and compact), whose place in the
+    output is marked by _RULES_MARK. Returns False outside a template-managed project."""
     config = actlib.read_config()
 
     try:
         root = actlib.repo_root()
     except RuntimeError:
-        return 0  # not inside a template-managed project — nothing to report
+        return False  # not inside a template-managed project — nothing to report
 
     # Printed ahead of the session-start-refresh on/off/warn gate below, and regardless of it: a
     # topic's own switch (docs/ai/config.md § Logging/Feedback), not this check, decides whether
@@ -666,6 +830,7 @@ def refresh_session(payload: dict) -> int:
         print("[act] topics active: " + ", ".join(f"{name} ({path})" for name, path in topics))
     try:
         language_line = _chat_language_line(config)
+        state["chat"] = _chat_language_short(config)
     except Exception:
         language_line = None
     if language_line:
@@ -673,7 +838,7 @@ def refresh_session(payload: dict) -> int:
 
     mode = _check_mode(config, "session-start-refresh", default="block")
     if mode == "off":
-        return 0
+        return True
 
     branch = _current_branch(root)
 
@@ -686,6 +851,7 @@ def refresh_session(payload: dict) -> int:
         waiting += _count_questions_answered(root)
     except Exception:
         pass
+    state["inbox"] = waiting
 
     # T42: whether a feedback reminder to the template author is due right now
     # (.act/scripts/feedback.py --due's own logic) — folded into the status line like the inbox
@@ -735,10 +901,38 @@ def refresh_session(payload: dict) -> int:
                   "retried next session, or run `python .act/scripts/update.py --catch-up`")
 
     for dest_rel in changed_bridges:
+        if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
+            continue  # the more specific import note below replaces this one (T64)
         print(f"[act] note: {dest_rel} was changed locally, template version not applied")
     if mode == "warn":
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
+
+    # T64: what Claude Code actually loads. A checked coding set becomes an "@" import (and an
+    # unchecked one loses it) so the checkboxes in docs/project/coding_rules.md decide; a locally
+    # changed docs/ai/rules.md still importing "@.act/..." gets one note; then the imports are
+    # followed from CLAUDE.md exactly the way Claude Code does (rules.resolve_imports).
+    reached: list[str] = []
+    try:
+        import rules  # deferred like update above: a broken rules.py must not end the session
+        coding_fixed = rules.sync_coding_imports(root, write=(mode == "block"))
+        if coding_fixed:
+            verb = "set to" if mode == "block" else "would be set to (warn mode)"
+            print(f"[act] note: docs/project/coding_rules.md: {coding_fixed} set line(s) {verb} "
+                  "their checkbox (checked = @-import)")
+        old_note = _old_imports_note(root)
+        if old_note:
+            state["old_imports"] = True
+            print(old_note)
+        if (root / "CLAUDE.md").is_file():
+            reached, unresolved = rules.resolve_imports(root, "CLAUDE.md")
+            state["files"] = len(reached)
+            state["unresolved"] = len(unresolved)
+            if unresolved:
+                print(f"[act] note: {len(unresolved)} @-import(s) Claude Code cannot follow — "
+                      "python .act/scripts/rules.py --imports")
+    except Exception as exc:
+        print(f"[act] note: import check failed ({exc.__class__.__name__})")
 
     # Role bridges (.claude/agents/*.md): only the `model`/`effort` frontmatter pair is refreshed
     # here, never the rest of the file — see tiers.py's refresh_project_bridge_frontmatter() for
@@ -767,13 +961,20 @@ def refresh_session(payload: dict) -> int:
         pass  # template-awareness is informational only, must never block the session
 
     rules_delivered: Optional[int] = None
-    try:
-        rules_delivered = _deliver_orchestrator_rules(root, config)
-    except Exception:
-        pass  # a broken rules delivery must not block the session
+    for key, compact in (("full", False), ("compact", True)):
+        captured = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(captured):
+                count = _deliver_orchestrator_rules(root, config, compact=compact, reached=reached)
+            rules_delivered = count if key == "full" else rules_delivered
+        except Exception:
+            pass  # a broken rules delivery must not block the session
+        rules_text[key] = captured.getvalue()
+    print(_RULES_MARK)
 
     inbox_part = f" · inbox: {waiting} waiting" if waiting else ""
-    rules_part = f" · rules: {rules_delivered}" if rules_delivered is not None else ""
+    rules_via = " (via import)" if _orchestrator_rules_imported(reached) else ""
+    rules_part = f" · rules: {rules_delivered}{rules_via}" if rules_delivered is not None else ""
     roles_part = f" · role-bridges refreshed: {len(role_frontmatter_changed)}" if mode == "block" and role_frontmatter_changed else ""
     feedback_part = " · feedback due" if feedback_due else ""
     print(f"[act] branch={branch}{inbox_part}{feedback_part} · board updated{rules_part}{roles_part}")
@@ -794,4 +995,4 @@ def refresh_session(payload: dict) -> int:
         tip_line = None
     if tip_line:
         print(tip_line)
-    return 0
+    return True

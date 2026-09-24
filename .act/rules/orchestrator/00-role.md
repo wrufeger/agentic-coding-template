@@ -2,8 +2,8 @@
 
 summary: orchestrator mandate, escalation path, role assignment table
 
-Loaded only in the main session (see the layer table in the build concept). A sub-agent never sees
-this file.
+Imported for every session through `docs/ai/rules.md`, but meant for the main session only —
+a worker (sub-agent) skips this file and the other orchestrator rules.
 
 ## `R-role-main` — The orchestrator's mandate
 

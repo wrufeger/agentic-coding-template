@@ -95,8 +95,14 @@
 #                 multiple notes joined with "\n", hookEventName matching whichever of the two
 #                 events this run is for.
 #                 Nothing printed at all when no note module had anything to say.
-#   SessionStart: one or more lines on stdout — an optional block of orchestrator-only rules
-#                 (main session only, never seen by a sub-agent), zero or more "[act] note: ..."
+#   SessionStart: one JSON object on stdout (T64): `hookSpecificOutput.additionalContext` holds
+#                 the lines below, kept under the 10,000-character cap (above it Claude Code
+#                 moves a hook output into a file and shows the model a 2,000-character
+#                 preview), and a top-level `systemMessage` holds one line for the human (rule
+#                 files loaded per `rules.py --imports`, chat language, inbox entries to
+#                 process). The lines: an optional
+#                 block of orchestrator-only rules, one line per rule plus where the full text
+#                 lives (main session only, never seen by a sub-agent), zero or more "[act] note: ..."
 #                 lines (a changed/unrefreshable bridge, an unresolvable tier/reasoning value, a
 #                 project .act/ pulled in without update.py — each best-effort and independently
 #                 gated, see checks.session.refresh_session()), then the fixed-format status line

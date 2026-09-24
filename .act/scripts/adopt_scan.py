@@ -4,7 +4,8 @@
 # Purpose: Read-only sighting of an existing project's documentation and AI-tooling material,
 #          before adoption (skill `act-adopt`). Walks the target tree and classifies
 #          every documentation-like file and every AI-tool unit (agent, skill, command, script,
-#          hook) it finds into one of: ai-config, ai-machinery, work, log, project-doc, unknown.
+#          hook) it finds into one of: ai-config, ai-machinery, work, log, project-doc, predecessor
+#          (a part of the previous template, see PREDECESSOR in the help text), unknown.
 #          Writes nothing but its own report under <target>/.act-local/adopt/ — the classified
 #          table is later turned into an action per class (adopt/legacy/keep/delete) by a human
 #          and by adopt.py (a later build step), never here. Runtime application logs (a
@@ -38,13 +39,15 @@
 #
 # Output format:
 #   Default: a table grouped by class, each row "<path>  [<kind>]  size=<n>  age=<date>  -- <reason>"
-#     (plus " (note: <note>)" and/or " (hint: <class>?)" when a row carries one), a per-class count
+#     (plus " (note: <note>)" and/or " (hint: <class>?)" when a row carries one, "  [<origin>]" with
+#     a predecessor template, and "  -> <proposed action>"), a per-class count
 #     line, one informational line per git submodule ("not scanned: submodule <path>"), and — if
 #     the target has a predecessor template (a .claude/template.json) — one hint line naming its
 #     base_commit. Never a finding/judgement, just a sighting.
 #   --json: the same content as {"target", "generated", "predecessor_hint", "info": [...],
 #     "rows": [...], "counts": {<class>: <n>, ...}}, one object per row: {"path", "kind", "size",
-#     "age", "class", "reason", "note", "hint"} (note/hint are null unless set). This is exactly
+#     "age", "class", "reason", "note", "hint", "origin", "proposed"} (note/hint/origin are null
+#     unless set; proposed is the starting point of the table, never binding). This is exactly
 #     what is written to <target>/.act-local/adopt/scan.json.
 #   Exit 0 on a normal run (there is no pass/fail here, only a sighting); 2 if the target does not
 #   exist or is not a directory, or if run without --target outside any template-managed project.
@@ -169,8 +172,42 @@ SIGNED_WORK_TOKENS = {
 # ---------------------------------------------------------------------------
 
 ROOT_DOC_PREFIXES = ("README", "CHANGELOG", "CONTRIBUTING", "LICENSE")
-DOC_PLACE_SEGMENTS = {"adr", "adrs", "wiki"}  # plus any "<name>.wiki" folder (a GitHub wiki clone)
+# ADR and wiki folders (plus any "<name>.wiki" folder, a GitHub wiki clone): an ADR folder is often
+# named decisions/ (notes/decisions/0001-use-sqlite.md), never only adr/.
+DOC_PLACE_SEGMENTS = {"adr", "adrs", "decisions", "decision-records", "wiki"}
 DOCS_SEGMENT = "docs"
+
+# log: a dated file (name starts YYYY-MM-DD) in a journal folder at the root or directly in docs/
+# — two signals together, so a blog's content/journal/ (a content tree) never matches.
+JOURNAL_DIRS = ("journal/", "journals/", "docs/journal/", "docs/journals/")
+DATED_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+# ---------------------------------------------------------------------------
+# Predecessor template — a project made from the previous template carries .claude/template.json
+# (base_commit, the placeholder values). Its own files are class "predecessor"; every row gets an
+# "origin" compared with the base_commit and a proposed action.
+# ---------------------------------------------------------------------------
+
+PREDECESSOR_FILE = ".claude/template.json"
+# Parts of the previous template's tooling that are no documents — sighted by name, proposed delete.
+PREDECESSOR_TOOL_FILES = {".mcp.json.example", ".claude/mcp-katalog.md"}
+# Its example files among the ai-config rows: proposed delete as well.
+PREDECESSOR_EXAMPLES = {".claude/settings.local.json.example"}
+# Its documentation, known by name — used even when the base_commit is not reachable.
+PREDECESSOR_DOCS = {
+    "docs/ai/README.md", "docs/ai/checklists.md", "docs/ai/config-guide.md",
+    "docs/ai/ai-config-hilfe.md", "docs/ai/resources.md",
+}
+PREDECESSOR_PREFIXES = ("docs/ai/template-feedback/",)
+PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
+ORIGIN_TEMPLATE = "template only"
+ORIGIN_UNKNOWN = "unknown (base_commit not reachable)"
+
+# Places init.py writes itself: an old file there is proposed adopt (merged into the template's
+# version), or legacy when it holds nothing of its own.
+INIT_WRITES = {"docs/README.md", "docs/project/coding_rules.md"}
+SKILL_AGENT_PARENTS = {".claude/skills", ".codex/skills", ".claude/agents", ".codex/agents", ".github/agents"}
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +245,8 @@ class Row:
     reason: str
     note: Optional[str] = None  # caution for the later adoption step (T51), e.g. "never delete"
     hint: Optional[str] = None  # only on "unknown": what a heuristic suspects, e.g. "log?"
+    origin: Optional[str] = None    # with a predecessor template: "template only" | "own text: n lines" | unknown
+    proposed: Optional[str] = None  # the proposed action (adopt | legacy | keep | delete), never binding
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -769,6 +808,10 @@ def classify_doc(root: Path, rel_posix: str, signed_ai: bool) -> tuple[str, str,
         reason = "signed docs/ai/, no allow-listed name" + (f"; {found[1]}" if found else "")
         return "unknown", reason, None, hint
 
+    # -- allow-list: a dated file in a journal folder at the root or directly in docs/ --
+    if rel_posix.startswith(JOURNAL_DIRS) and DATED_NAME_RE.match(name) and _is_document(rel_posix):
+        return "log", "dated file in a journal folder", None, None
+
     # -- known doc places (explicit folders win over any heuristic) --
     if _is_doc_place(folders):
         return "project-doc", "in an ADR or wiki folder", None, None
@@ -828,7 +871,7 @@ def scan_docs(scan: Scan, consumed_files: set[str], candidates: list[str], signe
 # Predecessor-template hint (informational only — never a class, never a row)
 # ---------------------------------------------------------------------------
 
-def predecessor_hint(root: Path) -> Optional[str]:
+def predecessor_hint(root: Path, pred: Optional["Predecessor"] = None) -> Optional[str]:
     path = root / ".claude" / "template.json"
     if not path.is_file():
         return None
@@ -837,14 +880,218 @@ def predecessor_hint(root: Path) -> Optional[str]:
     except (OSError, json.JSONDecodeError):
         return "predecessor template detected (base_commit unknown — template.json not readable)"
     base_commit = data.get("base_commit") if isinstance(data, dict) else None
-    return f"predecessor template detected (base_commit {base_commit or 'unknown'})"
+    reach = ""
+    if pred is not None and base_commit:
+        reach = ", in the history" if pred.tree is not None else ", NOT in the history: origin unknown"
+    return f"predecessor template detected (base_commit {base_commit or 'unknown'}{reach})"
+
+
+@dataclass
+class Predecessor:
+    base_commit: Optional[str]
+    values: dict             # placeholder name -> the value the project put in (template.json § values)
+    tree: Optional[set]      # files of the base_commit, relative to the scan root; None: not reachable
+    repo_top: Optional[Path]
+    prefix: str              # the scan root relative to repo_top ("" at the toplevel)
+
+    def is_part(self, rel: str) -> bool:
+        return (rel in PREDECESSOR_DOCS or rel in PREDECESSOR_TOOL_FILES or rel.startswith(PREDECESSOR_PREFIXES)
+                or (self.tree is not None and rel in self.tree))
+
+
+def load_predecessor(root: Path) -> Optional[Predecessor]:
+    """The predecessor template, if the target has a .claude/template.json (not a link). Its
+    base_commit tree is read with one `git ls-tree` call; tree None if the commit is not in the
+    target's history (a shallow clone, a squashed import) — origins then say "unknown"."""
+    if not _exists_exact(root, PREDECESSOR_FILE) or link_target(root, PREDECESSOR_FILE):
+        return None
+    try:
+        data = json.loads((root / PREDECESSOR_FILE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    base = data.get("base_commit") if isinstance(data.get("base_commit"), str) else None
+    raw_values = data.get("values") if isinstance(data.get("values"), dict) else {}
+    values = {str(k): str(v) for k, v in raw_values.items() if isinstance(v, (str, int, float))}
+    repo_top = _git_repo_top(root)
+    prefix = _relative_prefix(root, repo_top) if repo_top else None
+    pred = Predecessor(base_commit=base, values=values, tree=None, repo_top=repo_top, prefix=prefix or "")
+    if not base or repo_top is None or prefix is None:
+        return pred
+    try:
+        result = subprocess.run(["git", "-c", "core.quotePath=false", "-C", str(repo_top), "ls-tree", "-r",
+                                 "-z", "--name-only", f"{base}^{{commit}}"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return pred
+    if result.returncode != 0:
+        return pred
+    head = f"{prefix}/" if prefix else ""
+    pred.tree = {p[len(head):] for p in result.stdout.split("\0") if p and p.startswith(head)}
+    return pred
+
+
+def read_base_texts(pred: Predecessor, paths: list[str]) -> dict[str, str]:
+    """path -> its text in the base_commit, for every path of `paths` in the base tree (one
+    `git cat-file --batch` call)."""
+    wanted = [p for p in dict.fromkeys(paths) if pred.tree is not None and p in pred.tree]
+    if not wanted or pred.repo_top is None:
+        return {}
+    head = f"{pred.prefix}/" if pred.prefix else ""
+    request = "".join(f"{pred.base_commit}:{head}{p}\n" for p in wanted).encode("utf-8")
+    try:
+        result = subprocess.run(["git", "-C", str(pred.repo_top), "cat-file", "--batch"],
+                                input=request, capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    out, pos, texts = result.stdout, 0, {}
+    for path in wanted:
+        end = out.find(b"\n", pos)
+        if end < 0:
+            break
+        header = out[pos:end].split()
+        pos = end + 1
+        if len(header) < 3 or header[1] != b"blob":
+            continue
+        size = int(header[2])
+        texts[path] = out[pos:pos + size].decode("utf-8", errors="replace")
+        pos += size + 1
+    return texts
+
+
+def _norm_lines(text: str) -> list[str]:
+    return [line.rstrip() for line in text.splitlines() if line.strip()]
+
+
+def own_line_count(current: str, base: Optional[str], values: dict) -> int:
+    """Non-blank lines of `current` found neither in the base text as the template wrote it nor
+    with the project's values put in for its {{PLACEHOLDERS}} — lines the predecessor's own
+    setup or updates removed never count as own text."""
+    if base is None:
+        return len(_norm_lines(current))
+    filled = PLACEHOLDER_RE.sub(lambda m: values.get(m.group(1), m.group(0)), base)
+    known = set(_norm_lines(base)) | set(_norm_lines(filled))
+    # Independent of line breaks: a value longer or shorter than its placeholder re-wraps the
+    # paragraph, so a line that is a stretch of one of the base's paragraphs (whitespace
+    # collapsed) is no own text either — only for lines long enough not to match by chance.
+    corpus = "\n".join(_paragraphs(base) + _paragraphs(filled))
+    count = 0
+    for line in _norm_lines(current):
+        words = " ".join(line.split())
+        if line in known or (len(words) >= REWRAP_MIN and words in corpus):
+            continue
+        count += 1
+    return count
+
+
+REWRAP_MIN = 20  # shorter lines only count as the template's when they match a whole line
+
+
+def _paragraphs(text: str) -> list[str]:
+    """Runs of non-blank lines, each joined into one line with its whitespace collapsed."""
+    out, current = [], []
+    for line in text.splitlines():
+        if line.strip():
+            current.append(line.strip())
+        elif current:
+            out.append(" ".join(" ".join(current).split()))
+            current = []
+    if current:
+        out.append(" ".join(" ".join(current).split()))
+    return out
+
+
+def _row_files(root: Path, row: Row) -> list[str]:
+    if row.kind == "file":
+        return [row.path]
+    return [f for f in _walk_files(root, root / row.path, {"__pycache__"}, [])
+            if not f.endswith((".pyc", ".pyo"))]
+
+
+def set_origins(root: Path, pred: Predecessor, rows: list[Row]) -> None:
+    """row.origin for every row that is not a link: "template only" when every line is the
+    predecessor's (after putting its values in), "own text: n lines" otherwise, unknown when the
+    base_commit is not in the history."""
+    targets = [r for r in rows if not (r.note and ("link to " in r.note or "contains link " in r.note))]
+    if pred.tree is None:
+        for r in targets:
+            r.origin = ORIGIN_UNKNOWN
+        return
+    files = {r.path: _row_files(root, r) for r in targets}
+    base_paths = {p for r in targets for p in files[r.path]}
+    if any(r.kind == "dir" for r in targets):
+        base_paths |= {p for p in pred.tree for r in targets if r.kind == "dir" and p.startswith(r.path + "/")}
+    texts = read_base_texts(pred, sorted(base_paths))
+    for r in targets:
+        own = 0
+        for rel in files[r.path]:
+            try:
+                current = (root / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            own += own_line_count(current, texts.get(rel), pred.values)
+        in_base = any(p in pred.tree for p in files[r.path])
+        if own == 0 and in_base:
+            r.origin = ORIGIN_TEMPLATE
+        else:
+            r.origin = f"own text: {own} line{'s' if own != 1 else ''}" + ("" if in_base else " (not in the predecessor template)")
+
+
+# ---------------------------------------------------------------------------
+# Proposed action per row — what the table starts from; the owner decides
+# ---------------------------------------------------------------------------
+
+def propose(row: Row, pred: Optional[Predecessor]) -> str:
+    note, origin, path = row.note or "", row.origin or "", row.path
+    template_only = origin == ORIGIN_TEMPLATE
+    own = origin.startswith("own text")
+    if any(marker in note for marker in ("never bridge", "git-ignored/local", "local, git-ignored",
+                                          "link to ", "contains link ")):
+        return "keep"
+    if row.cls in ("log", "work"):
+        return "legacy"
+    if row.cls == "ai-config":
+        if path in (".claude/settings.json", SETTINGS_LOCAL):
+            return "keep"  # init.py merges its hook entries into settings.json
+        if path in PREDECESSOR_EXAMPLES:
+            return ("delete" if template_only else "legacy") if pred else "keep"
+        return "legacy" if template_only else "adopt"
+    if row.cls == "ai-machinery":
+        if template_only:
+            return "delete"
+        if pred and not own:
+            return "keep"  # origin unknown: nothing is proposed for removal blind
+        return "adopt" if str(PurePosixPath(path).parent) in SKILL_AGENT_PARENTS else "keep"
+    if row.cls == "project-doc":
+        if path in INIT_WRITES:
+            return "legacy" if template_only else "adopt"
+        return "keep"  # a root README.md too: init.py never replaces a foreign one, adopt into it is refused
+    if row.cls == "predecessor":
+        if (path in PREDECESSOR_TOOL_FILES or not _is_document(path)) and template_only:
+            return "delete"  # with own text (own MCP servers in an example): legacy, as below
+        return "legacy"  # its docs stay readable in the archive; own lines show in the origin
+    return "keep"
 
 
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
-CLASS_ORDER = ["ai-config", "ai-machinery", "work", "log", "project-doc", "unknown"]
+CLASS_ORDER = ["ai-config", "ai-machinery", "work", "log", "project-doc", "predecessor", "unknown"]
+
+
+def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row]:
+    """Rows that would be "unknown" but are the predecessor template's own files become class
+    "predecessor"; its non-document tooling (PREDECESSOR_TOOL_FILES) is sighted here by name."""
+    seen = {r.path for r in rows}
+    for r in rows:
+        if r.cls == "unknown" and pred.is_part(r.path) and not (r.note and "link" in r.note):
+            where = "in its base_commit" if pred.tree is not None and r.path in pred.tree else "a known part"
+            r.cls, r.reason, r.hint = "predecessor", f"part of the predecessor template ({where})", None
+    for rel in sorted(PREDECESSOR_TOOL_FILES - seen):
+        if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
+            rows.append(scan.file_row(rel, "predecessor", "tooling file of the predecessor template"))
+    return rows
 
 
 def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
@@ -870,9 +1117,15 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
     machinery_rows = scan_ai_machinery(scan)
     doc_rows = scan_docs(scan, consumed, candidates, signed_ai)
     rows = config_rows + machinery_rows + doc_rows + link_rows
+    pred = load_predecessor(root)
+    if pred is not None:
+        rows = mark_predecessor(scan, pred, rows)
+        set_origins(root, pred, rows)
+    for r in rows:
+        r.proposed = propose(r, pred)
     rows.sort(key=lambda r: (CLASS_ORDER.index(r.cls) if r.cls in CLASS_ORDER else len(CLASS_ORDER), r.path))
     info = [f"not scanned: submodule {path}" for path in submodules]
-    return rows, predecessor_hint(root), info
+    return rows, predecessor_hint(root, pred), info
 
 
 def write_scan_json(root: Path, rows: list[Row], hint: Optional[str], info: list[str]) -> dict:
@@ -905,6 +1158,8 @@ def render_human(rows: list[Row], hint: Optional[str], info: list[str]) -> str:
         for r in group:
             suffix = f"  (note: {r.note})" if r.note else ""
             suffix += f"  (hint: {r.hint})" if r.hint else ""
+            suffix += f"  [{r.origin}]" if r.origin else ""
+            suffix += f"  -> {r.proposed}" if r.proposed else ""
             lines.append(f"{r.path}  [{r.kind}]  size={r.size}  age={r.age}  -- {r.reason}{suffix}")
         lines.append("")
     lines.append(f"{len(rows)} source(s) sighted.")
@@ -927,13 +1182,33 @@ ALLOW-LIST (exact, case-sensitive) — the only way into the four classes with a
                 .github/agents/, .github/prompts/, .codex/{agents,skills,commands,scripts,hooks}/,
                 .gemini/commands/, and .cursor/ except rules/ and mcp.json
   log           root ai.log, ai.log.*.bak, ai.log.state.json, ai.log.raw.jsonl; in a signed
-                docs/ai/: names with ledger/journal/protokoll/archive/archiv, template-feedback/sent/**
+                docs/ai/: names with ledger/journal/protokoll/archive/archiv, template-feedback/sent/**;
+                a dated file (YYYY-MM-DD*) in journal(s)/ or docs/journal(s)/
   work          root TODO.md, TODO; in a signed docs/ai/: names with task(s)/aufgabe(n)/backlog/
                 question(s)/frage(n)/board/inbox
 Signed docs/ai/: holds at least two of board.md, tasks.md, ledger.md, questions.md, backlog.md,
 or the target has .claude/template.json. Any keyword hit elsewhere yields only "unknown" with a
 hint ("log?"). A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
 never followed. Git-ignored rows keep their class and get a "git-ignored/local" note.
+project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
+
+PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
+base_commit tree, or is one of the predecessor's known parts (docs/ai/README.md, checklists.md,
+config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, .claude/mcp-katalog.md,
+.mcp.json.example), is class "predecessor". Every row gets an origin: "template only" (each line
+is the base_commit's, after putting in the values of template.json § values; lines removed since
+do not count), "own text: n lines", or "unknown" when the base_commit is not in the history.
+
+PROPOSED ACTION (column "-> …", JSON "proposed"; the owner decides): log, work -> legacy;
+ai-config -> adopt, legacy if template only, keep for .claude/settings*.json and protected rows,
+for .claude/settings.local.json.example of a predecessor delete if template only, else legacy;
+ai-machinery -> delete if
+template only, keep if its origin is unknown, else adopt (skills, agents) or keep (the rest);
+project-doc -> keep (a root README.md too), docs/README.md and docs/project/coding_rules.md adopt
+(legacy if template only); predecessor -> delete (tooling, examples: template only), else legacy
+(docs, own lines included — the origin shows them); unknown -> keep. A link or protected row is
+always keep. Line breaks do not count: a line that is a stretch of a base paragraph (whitespace
+collapsed, at least 20 characters) is the template's.
 """
 
 

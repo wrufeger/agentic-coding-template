@@ -18,6 +18,7 @@
 #   python .act/scripts/rules.py --list                  # human overview, one line per set/group
 #   python .act/scripts/rules.py CR-nuxt-basics           # one group in full, with its origin
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
+#   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
 #
 # Output format:
 #   Default and <id>: Markdown, meant to be pasted into a model's context.
@@ -25,6 +26,10 @@
 #     it (symbols: "=" unchanged, "~" overridden, "-" switched off, "+" own addition).
 #   --validate: one finding per line as "<path>:<line>: <message>", nothing printed and exit 0 if
 #     there are no findings.
+#   --imports: "reached <n>:" and one indented root-relative path per file Claude Code loads, in
+#     load order, then "unresolved <n>:" and one "<file>:<line>: @<target> — <reason>" per import
+#     it cannot follow (exit 1 if there is any). Same rule as Claude Code (T64): relative to the
+#     importing file, at most four hops below the start file, never inside a code span or block.
 #   Errors (unknown area, missing project file, unknown id, bad arguments): one line on stderr,
 #     exit 1 (2 for a bad command line), never a traceback.
 
@@ -120,16 +125,40 @@ class TemplateSet:
 # Line grammar (see header comment — marks only, headings/prose are never read)
 # ---------------------------------------------------------------------------
 
-RE_CHECKBOX = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[ xX])\]\s*(?P<rest>.*)$")
-RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]*)\]\s*(?P<rest>.*)$")
+RE_CHECKBOX = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[ xX])\](?![(\[])\s*(?P<rest>.*)$")
+# A near-miss checkbox ("[X ]", "[-]", "[]") is reported; a Markdown link "- [Text](target)"
+# or "- [Text][ref]" never is — only a mark of at most two characters counts as a try.
+RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]{0,2})\](?![(\[])\s*(?P<rest>.*)$")
 RE_USE = re.compile(r"^use:\s*(?P<path>\S+)\s*$")
 RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:—\s*(?P<reason>.+))?$")
 RE_REPLACES = re.compile(r"^-\s*replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
 RE_REPLACES_LOOSE = re.compile(r"^-\s*replaces\b.*$")
-RE_CORE_SET = re.compile(r"^@?`?(?P<path>\.act/\S+?\.md)`?$")
+# A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is
+# written relative to docs/ai/ since T64 ("@../../.act/..."), the pre-T64 "@.act/..." still parses.
+RE_CORE_SET = re.compile(r"^(?:@(?:\.\./)*|`)?(?P<path>\.act/\S+?\.md)`?$")
 RE_OWN = re.compile(r"^-\s+(?:`(?P<id>[^`]+)`:\s*)?(?P<text>.*)$")
 RE_HEADING = re.compile(r"^##\s+`(?P<id>[^`]+)`\s*(?:—\s*(?P<title>.+))?\s*$")
 RE_HEADER_FIELD = re.compile(r"^(?P<key>summary|requires|retired):\s*(?P<value>.*)$", re.IGNORECASE)
+
+
+def normalize_set_path(raw: str) -> str:
+    """A set path as written in a project file, in any of its forms — "@../../.act/coding/x.md"
+    (an import, relative to the project file, T64), the pre-T64 "@.act/coding/x.md", "`...`" or a
+    bare ".act/coding/x.md" — as the root-relative ".act/coding/x.md" every other function here
+    expects."""
+    path = raw.strip().strip("`")
+    if path.startswith("@"):
+        path = path[1:]
+    while path.startswith(("../", "./")):
+        path = path[3:] if path.startswith("../") else path[2:]
+    return path
+
+
+def import_path(set_path: str, project_file: str) -> str:
+    """Root-relative `set_path` as an "@" import written from `project_file` (root-relative):
+    Claude Code resolves imports relative to the importing file, so docs/ai/rules.md imports
+    ".act/rules/shared/00-core.md" as "@../../.act/rules/shared/00-core.md"."""
+    return "@" + "../" * project_file.count("/") + normalize_set_path(set_path)
 
 
 def strip_template_prefix(path: str) -> str:
@@ -172,7 +201,7 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     findings.append((i, "expected '- [ ] use: <path>'"))
                     current_set = None
                     continue
-                current_set = ProjectSet(path=use.group("path"), enabled=enabled, line=i)
+                current_set = ProjectSet(path=normalize_set_path(use.group("path")), enabled=enabled, line=i)
                 sets.append(current_set)
             else:
                 group = RE_GROUP_ID.match(rest)
@@ -199,7 +228,7 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     current_set = ProjectSet(path=core_set.group("path"), enabled=True, line=i)
                     sets.append(current_set)
                     continue
-                if stripped.startswith(".act/") or stripped.startswith("@.act/"):
+                if re.match(r"^@?(?:\.\./)*\.act/", stripped):
                     findings.append((i, "expected '@<path>.md' or '`<path>.md`'"))
                     continue
 
@@ -434,6 +463,169 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Coding sets as imports (T64) — a checked set is an "@" import, so Claude Code loads it; an
+# unchecked one stays a bare path, which Claude Code never follows
+# ---------------------------------------------------------------------------
+
+def coding_set_line(line: str) -> str:
+    """One "- [x] use: <path>" line of docs/project/coding_rules.md in its canonical form: the
+    path as an import when the box is checked, bare when not. Anything after the path, the
+    indentation and the checkbox itself are kept; a line that is no set line comes back as is."""
+    checkbox = RE_CHECKBOX.match(line)
+    if not checkbox or checkbox.group("indent"):
+        return line
+    use = RE_USE.match(checkbox.group("rest"))
+    if not use:
+        return line
+    set_path = normalize_set_path(use.group("path"))
+    wanted = import_path(set_path, AREAS["coding"].project_file) \
+        if checkbox.group("mark") in ("x", "X") else set_path
+    start, end = checkbox.start("rest") + use.start("path"), checkbox.start("rest") + use.end("path")
+    return line[:start] + wanted + line[end:]
+
+
+def sync_coding_imports(root: Path, write: bool = True) -> int:
+    """Bring every set line of docs/project/coding_rules.md into its canonical form
+    (coding_set_line), so the checkboxes decide what Claude Code loads. Returns how many lines
+    differ (and were rewritten, with write=True); 0 if the file is missing."""
+    path = root / AREAS["coding"].project_file
+    if not path.is_file():
+        return 0
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    fixed = [coding_set_line(line) for line in lines]
+    changed = sum(1 for old, new in zip(lines, fixed) if old != new)
+    if changed and write:
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(fixed) + ("\n" if text.endswith("\n") else ""))
+    return changed
+
+
+# ---------------------------------------------------------------------------
+# Import check (T64) — follows "@" imports from CLAUDE.md the way Claude Code does
+# (code.claude.com/docs/en/memory.md, "Import additional files"): relative to the file that holds
+# the import, absolute and "~/" paths as they are, at most four hops below the start file, never
+# inside a code span, a fenced or indented code block, or an HTML comment (Claude Code strips
+# those), a "#section" suffix ignored. A target that does not exist is skipped by Claude Code
+# without a word — this is where it shows up, as long as it is shaped like a file path (so
+# "@someone" or a package name in prose is not counted).
+# ---------------------------------------------------------------------------
+
+MAX_IMPORT_HOPS = 4
+RE_IMPORT = re.compile(r"(?:^|(?<=[\s*_(\[]))@(?P<target>[^\s*_)\]]+(?:_[^\s*_)\]]+)*)")
+RE_FENCE = re.compile(r"^\s{0,3}(?P<fence>`{3,}|~{3,})")
+RE_CODE_SPAN = re.compile(r"(?P<ticks>`+).*?(?<!`)(?P=ticks)(?!`)")
+RE_HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+RE_INDENTED_CODE = re.compile(r"^(?: {4}|\t)")
+
+
+def _strip_html_comments(text: str) -> str:
+    """Blank out every HTML comment, keeping its line breaks so line numbers stay right."""
+    return RE_HTML_COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+
+
+def _import_targets(text: str) -> list[tuple[int, str]]:
+    """(line number, target) for every "@target" outside code spans, fenced and indented code
+    blocks and HTML comments; a trailing "#section" and sentence punctuation are dropped."""
+    found: list[tuple[int, str]] = []
+    fence: Optional[str] = None
+    previous_blank, in_indented = True, False
+    for number, line in enumerate(_strip_html_comments(text).splitlines(), start=1):
+        fence_match = RE_FENCE.match(line)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] \
+                    and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            continue
+        if line.strip() and RE_INDENTED_CODE.match(line) and (previous_blank or in_indented):
+            in_indented = True  # an indented code block cannot interrupt a paragraph or a list
+            continue
+        in_indented = in_indented and not line.strip()
+        previous_blank = not line.strip()
+        for match in RE_IMPORT.finditer(RE_CODE_SPAN.sub(" ", line)):
+            target = match.group("target").split("#", 1)[0].rstrip(".,;:!?")
+            if target:
+                found.append((number, target))
+    return found
+
+
+def _looks_like_path(target: str) -> bool:
+    """Only a target shaped like a file path is reported when missing — "@someone" or a package
+    name such as "@nuxt/eslint" in prose is not."""
+    return target.startswith(("./", "../", "/", "~/")) or target.endswith(".md")
+
+
+def _show(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def resolve_imports(root: Path, start: str = "CLAUDE.md") -> tuple[list[str], list[str]]:
+    """(reached, unresolved) from `start` (root-relative): every file Claude Code loads, in load
+    order, root-relative; one "<file>:<line>: @<target> — <reason>" per import it cannot follow.
+    A missing start file is itself unresolved."""
+    start_path = (root / start).resolve()
+    reached: list[str] = []
+    unresolved: list[str] = []
+    seen: set[Path] = set()
+
+    def visit(path: Path, hops: int) -> None:
+        seen.add(path)
+        reached.append(_show(path, root))
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            unresolved.append(f"{_show(path, root)}:0: unreadable — {exc.__class__.__name__}")
+            return
+        for number, target in _import_targets(text):
+            where = f"{_show(path, root)}:{number}: @{target}"
+            expanded = Path(target).expanduser()
+            candidate = (expanded if expanded.is_absolute() else path.parent / expanded).resolve()
+            if not candidate.is_file():
+                if _looks_like_path(target):
+                    unresolved.append(f"{where} — not found (looked for {_show(candidate, root)})")
+                continue
+            if candidate in seen:
+                continue
+            if hops >= MAX_IMPORT_HOPS:
+                unresolved.append(f"{where} — deeper than {MAX_IMPORT_HOPS} hops, not loaded")
+                continue
+            visit(candidate, hops + 1)
+
+    if not start_path.is_file():
+        return [], [f"{start}:0: start file not found"]
+    visit(start_path, 0)
+    return reached, unresolved
+
+
+def other_instruction_files(root: Path) -> list[str]:
+    """Files Claude Code loads besides CLAUDE.md and its imports, where they exist:
+    CLAUDE.local.md and .claude/rules/**/*.md. Named by --imports, not followed."""
+    found = ["CLAUDE.local.md"] if (root / "CLAUDE.local.md").is_file() else []
+    rules_dir = root / ".claude" / "rules"
+    if rules_dir.is_dir():
+        found += sorted(p.relative_to(root).as_posix() for p in rules_dir.rglob("*.md"))
+    return found
+
+
+def cmd_imports(root: Path, start: str) -> tuple[str, bool]:
+    reached, unresolved = resolve_imports(root, start)
+    lines = [f"reached {len(reached)}:"] + [f"  {path}" for path in reached]
+    lines.append(f"unresolved {len(unresolved)}:")
+    lines += [f"  {entry}" for entry in unresolved]
+    others = other_instruction_files(root)
+    if others:
+        lines.append(f"also loaded by Claude Code, not followed here ({len(others)}):")
+        lines += [f"  {path}" for path in others]
+    return "\n".join(lines) + "\n", not unresolved
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -448,6 +640,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--list", action="store_true", help="human overview, one line per set/group")
     mode.add_argument("--validate", action="store_true", help="schema + cross-checks, exit 1 on findings")
+    mode.add_argument("--imports", action="store_true",
+                      help="files Claude Code loads through @-imports, exit 1 on any it cannot follow")
+    parser.add_argument("--from", dest="start", metavar="FILE", default="CLAUDE.md",
+                        help="start file for --imports, root-relative (default: CLAUDE.md)")
     parser.add_argument("id", nargs="?", default=None, help="print exactly this group/rule in full")
     return parser
 
@@ -468,8 +664,8 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    if args.id is not None and (args.list or args.validate):
-        print("rules.py: an id argument cannot be combined with --list or --validate", file=sys.stderr)
+    if args.id is not None and (args.list or args.validate or args.imports):
+        print("rules.py: an id argument cannot be combined with --list, --validate or --imports", file=sys.stderr)
         return 2
 
     area = AREAS[args.area]
@@ -479,6 +675,11 @@ def main(argv: list[str]) -> int:
     except RuntimeError as exc:
         print(f"rules.py: {exc}", file=sys.stderr)
         return 1
+
+    if args.imports:
+        report, clean = cmd_imports(root, args.start)
+        sys.stdout.write(report)
+        return 0 if clean else 1
 
     project_path = root / area.project_file
     if not project_path.is_file():

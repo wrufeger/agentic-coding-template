@@ -13,8 +13,8 @@
 #                      done: turn adopted ai-config files into bridges, remove adopted sources
 #                      and `delete` rows, bridge adopted own skills/roles (targets under
 #                      docs/ai/local/skills|agents/) the way act-load-settings does, run
-#                      doctor.py, list references in docs/project/ to moved/removed paths, write
-#                      one inbox report.
+#                      doctor.py, bend dead references in docs/project/ to the new place (link
+#                      targets only), write one inbox report.
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
 # Usage:
@@ -39,6 +39,8 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
+import re
 import shutil
 import stat
 import subprocess
@@ -69,6 +71,8 @@ ALLOWED_ACTIONS: dict = {
     "work": {"adopt", "legacy", "keep", "delete"},
     "log": {"legacy", "keep"},
     "project-doc": {"adopt", "legacy", "keep", "delete"},
+    # A part of the predecessor template (adopt_scan.py: in its base_commit tree or a known part).
+    "predecessor": set(ACTIONS),
     "unknown": set(ACTIONS),
 }
 CONFIRM_NEEDED = {("project-doc", "delete")} | {("unknown", a) for a in ("adopt", "legacy", "delete")}
@@ -108,13 +112,61 @@ class Refused(Exception):
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     # core.longpaths: legacy paths nest the old path below docs/ai/work/archive/legacy/, which
-    # passes Windows' 260-character limit sooner than the original did.
-    result = subprocess.run(["git", "-c", "core.quotePath=false", "-c", "core.longpaths=true",
-                             "-C", str(root), *args],
+    # passes Windows' 260-character limit sooner than the original did. Only for adopt's own calls
+    # — the owner's later `git commit` does not get it, hence long_legacy_paths() before --apply.
+    # --literal-pathspecs: a path is a path, never a pattern — `notes[1].md` must not match
+    # `notes1.md` in `ls-files`, `add` or `rm` (every git call of this script goes through here).
+    result = subprocess.run(["git", "--literal-pathspecs", "-c", "core.quotePath=false",
+                             "-c", "core.longpaths=true", "-C", str(root), *args],
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check and result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+        shown = " ".join(args[:4]) + (" …" if len(args) > 4 else "")
+        raise RuntimeError(f"git {shown} failed (exit {result.returncode}): {result.stderr.strip()[:400]}")
     return result
+
+
+# Windows' MAX_PATH: 260 characters including the terminating NUL, so a path of 260 or more
+# characters fails in any git call without core.longpaths ("Filename too long"); a directory
+# fails from 248 on (room for an 8.3 name), so a later checkout or clone drops the files in it.
+WIN_MAX_PATH = 260
+WIN_MAX_DIR = 248
+
+
+def _win_len(path: str) -> int:
+    """Length as Windows counts it: UTF-16 code units (a character outside the BMP counts twice)."""
+    return len(path.encode("utf-16-le")) // 2
+
+
+def repo_longpaths(root: Path) -> bool:
+    """core.longpaths as the repository's own config says (local, global, system) — without the
+    `-c` override _git() adds, because the owner's later commits run without it."""
+    result = subprocess.run(["git", "-C", str(root), "config", "--type=bool", "--get", "core.longpaths"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def long_legacy_paths(root: Path, moves: list) -> list:
+    """(length, absolute path) of every file a move would put at or above WIN_MAX_PATH, or into a
+    folder at or above WIN_MAX_DIR (then the folder is named, with a trailing backslash), longest
+    first. Empty outside Windows and where the repository sets core.longpaths itself."""
+    if os.name != "nt" or repo_longpaths(root):
+        return []
+    found = {}
+    for path, dest, _action, _colliding in moves:
+        for rel in _files_below(root / path):
+            full = (f"{root}\\{dest}" + (f"/{rel}" if rel else "")).replace("/", "\\")
+            folder = full.rsplit("\\", 1)[0]
+            if _win_len(full) >= WIN_MAX_PATH:
+                found[full] = _win_len(full)
+            elif _win_len(folder) >= WIN_MAX_DIR:
+                found[folder + "\\"] = _win_len(folder)
+    return sorted(((length, full) for full, length in found.items()), reverse=True)
+
+
+def index_files(root: Path, base: str) -> set:
+    """Every path in the git index at or below `base` (one call)."""
+    out = _git(root, "ls-files", "-z", "--cached", "--", base).stdout
+    return {p for p in out.split("\0") if p}
 
 
 def _read_json(path: Path) -> Optional[dict]:
@@ -188,7 +240,7 @@ def local_files(root: Path, rel: str) -> list:
         return []
     found = set()
     for extra in ((), ("-i",)):
-        out = _git(root, "ls-files", "-o", *extra, "--exclude-standard", "--", rel, check=False).stdout
+        out = _git(root, "ls-files", "-o", *extra, "--exclude-standard", "--", rel).stdout
         found.update(line.strip() for line in out.splitlines() if line.strip())
     return sorted(f for f in found if "__pycache__/" not in f and not f.endswith((".pyc", ".pyo")))
 
@@ -325,6 +377,10 @@ def validate(root: Path, scan: dict, rows: list, on_disk: bool, moved_first=lamb
         confirmed = row.get("confirmed") is True
         if (cls, action) in CONFIRM_NEEDED and not confirmed:
             problems.append(f"{where}: {cls} row with action {action!r} needs \"confirmed\": true")
+        elif cls == "predecessor" and action == "delete" and scan_row.get("origin") != "template only" \
+                and not confirmed:
+            problems.append(f"{where}: predecessor row not \"template only\" (origin {scan_row.get('origin')!r}) "
+                            "with action 'delete' needs \"confirmed\": true")
         for key, kind in (("done", bool), ("confirmed", bool)):
             if key in row and not isinstance(row[key], kind):
                 problems.append(f"{where}: {key!r} must be true/false")
@@ -449,6 +505,9 @@ def accounting(root: Path, rows: list, state: dict, phase: str) -> tuple:
     moved = state.get("moved", {})
     removed_early = set(state.get("removed_at_apply", []))
     bridged = set(state.get("bridged", []))
+    # A legacy copy counts only if it is on disk AND in the git index: a copy git could not stage
+    # (a path too long, an ignore rule) is lost with the next commit that records the removal.
+    indexed = index_files(root, LEGACY_ROOT) if moved else set()
     lines, ok, counts = [], True, {}
 
     def emit(path: str, status: str, good: bool = True) -> None:
@@ -465,8 +524,14 @@ def accounting(root: Path, rows: list, state: dict, phase: str) -> tuple:
             dest = root / moved[path]
             now = _files_below(dest) if dest.exists() else {}
             good = bool(entry) and now == entry.get("files")
+            unstaged = [f"{moved[path]}/{rel}" if rel else moved[path] for rel in now
+                        if "__pycache__/" not in rel and not rel.endswith((".pyc", ".pyo"))]
+            unstaged = [p for p in unstaged if p not in indexed]
             label = "in legacy" if action == "legacy" else f"in legacy ({action}, moved before init)"
-            emit(path, f"{label} (checksum {'ok' if good else 'MISMATCH'}) -> {moved[path]}", good)
+            status = f"{label} (checksum {'ok' if good else 'MISMATCH'}"
+            if unstaged:
+                status += f", NOT IN GIT INDEX: {len(unstaged)} file(s), first {unstaged[0]}"
+            emit(path, f"{status}) -> {moved[path]}", good and not unstaged)
             continue
         if action == "delete":
             if path in removed_early:
@@ -514,7 +579,13 @@ def init_supports_no_commit() -> bool:
 def untracked_files(root: Path) -> set:
     """Every untracked file, git-ignored ones included (one git call) — the before/after snapshot
     that tells --abort exactly which files init.py created."""
-    out = _git(root, "ls-files", "-o", check=False).stdout
+    out = _git(root, "ls-files", "-o").stdout
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def ignored_files(root: Path) -> set:
+    """Every untracked file a .gitignore rule covers — never staged, never in a commit list."""
+    out = _git(root, "ls-files", "-o", "-i", "--exclude-standard").stdout
     return {line.strip() for line in out.splitlines() if line.strip()}
 
 
@@ -573,6 +644,13 @@ def cmd_apply(root: Path, plan: bool) -> int:
     clash = [dest for _p, dest, _a, _c in moves if os.path.lexists(root / dest)]
     if clash:
         raise Refused([f"legacy destination already exists: {dest}" for dest in clash])
+    too_long = long_legacy_paths(root, moves)
+    if too_long:
+        raise Refused([f"{len(too_long)} legacy path(s) would reach {WIN_MAX_PATH} characters or more (a folder: "
+                       f"{WIN_MAX_DIR}; the old path plus {len(LEGACY_ROOT) + 1}), and core.longpaths is not set: git fails "
+                       f"on them (\"Filename too long\") and the next commit would drop the copies. Run "
+                       f"`git -C {root} config core.longpaths true`, then --apply again",
+                       *[f"{length} characters: {full}" for length, full in too_long[:5]]])
     to_rescue = {path: local_files(root, path) for path in [*(m[0] for m in moves), *early_deletes]}
     to_rescue = {path: files for path, files in to_rescue.items() if files}
 
@@ -653,8 +731,13 @@ def cmd_apply(root: Path, plan: bool) -> int:
         print(f"    {line if len(line) <= 200 else line[:199] + '…'}")
     head_after = _git(root, "rev-parse", "HEAD").stdout.strip()
     own = (f"{LEGACY_ROOT}/", f"{ADOPT_DIR}/")
-    new_state["created"] = sorted(f for f in untracked_files(root) - before_untracked if not f.startswith(own))
+    new = {f for f in untracked_files(root) - before_untracked if not f.startswith(own)}
+    ignored = new & ignored_files(root)
+    # `created` is what a commit takes (never a git-ignored file: `git add` refuses those);
+    # `created_ignored` only tells --abort what else init.py left behind (byte code, .act-local/).
+    new_state["created"] = sorted(new - ignored)
     new_state["created_hashes"] = {f: _sha256(root / f) for f in new_state["created"] if (root / f).is_file()}
+    new_state["created_ignored"] = {f: _sha256(root / f) for f in sorted(ignored) if (root / f).is_file()}
     new_state.update({
         "state": "applied" if result.returncode == 0 else "init-failed",
         "init_exit": result.returncode, "init_commit": head_after if head_after != head_before else None,
@@ -668,16 +751,32 @@ def cmd_apply(root: Path, plan: bool) -> int:
     moved = new_state["moved"]
     staged = [path for path in [*moved, *early_deletes]
               if not os.path.lexists(root / path) and is_tracked(root, path)]
-    staged += list(moved.values())
+    legacy_dests = list(moved.values())
+    stage_error = None
     try:
         for start in range(0, len(staged), 50):
             _git(root, "add", "-A", "--", *staged[start:start + 50])
+        # -f: a legacy copy is taken as it is, even if a .gitignore rule matches its name (ai.log);
+        # byte code inside a moved unit stays out (regenerable, never staged at the old place).
+        for start in range(0, len(legacy_dests), 50):
+            _git(root, "add", "-A", "-f", "--", *legacy_dests[start:start + 50])
+        byte_code = sorted(f for f in index_files(root, LEGACY_ROOT)
+                           if "__pycache__/" in f or f.endswith((".pyc", ".pyo")))
+        for start in range(0, len(byte_code), 50):
+            _git(root, "rm", "-q", "--cached", "--", *byte_code[start:start + 50])
     except RuntimeError as exc:
-        print(f"[adopt] WARNING: staging the moves failed ({exc}); the files are moved and verified, "
-              f"stage them by path before committing")
+        stage_error = str(exc)
+        new_state.update({"state": "stage-failed", "error": f"staging the moves failed: {exc}"})
     # What --apply leaves changed in tracked files: --abort treats anything beyond this as work.
     new_state["dirty_after_apply"] = tracked_changes(root)
     _write_json(state_path, new_state)
+    if stage_error:
+        # No accounting: a move git could not stage is lost with the next commit of the removal.
+        print(f"[adopt] ERROR: git could not stage the moves — stopped, nothing verified: {stage_error}",
+              file=sys.stderr)
+        print(f"[adopt] fix the cause git names above (for a path too long: git -C {root} config "
+              f"core.longpaths true), then take the way back and start again: {way_back(root)}", file=sys.stderr)
+        return 1
     if result.returncode != 0:
         print(f"[adopt] init.py failed (exit {result.returncode}). Way back: {way_back(root)}")
         return 1
@@ -817,7 +916,15 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
                 path.unlink()
             else:
                 print(f"[adopt] WARNING: {rel} changed and was not saved, left in place")
-        _prune_empty_dirs(root, list(created))
+        # Git-ignored files init.py left (byte code is regenerable, anything else only unchanged).
+        ignored = state.get("created_ignored", {})
+        for rel, expected in ignored.items():
+            path = root / rel
+            if not _is_safe_rel(rel) or not path.is_file():
+                continue
+            if "__pycache__/" in rel or rel.endswith((".pyc", ".pyo")) or _sha256(path) == expected:
+                path.unlink()
+        _prune_empty_dirs(root, [*created, *ignored])
         steps.append("created")
         save()
 
@@ -977,24 +1084,152 @@ def bridge_own_units(root: Path, units: list) -> list:
     return settings_load.write_unit_bridges(root, settings_load.Analysis(file_plan=plan))
 
 
-def find_references(root: Path, paths: list) -> list:
-    """'<file>:<line>: <path>' for every mention of a moved/removed path under docs/project/."""
-    base = root / "docs" / "project"
-    hits = []
-    if not base.is_dir() or not paths:
-        return hits
-    for file in sorted(base.rglob("*")):
-        if not file.is_file() or file.suffix.lower() not in {".md", ".txt", ".rst", ".adoc"}:
+REFS_IN_REPORT = 50  # more references than this: the full list goes to REFS_FILE, the report names it
+REFS_FILE = f"{ADOPT_DIR}/references.txt"
+
+
+DOC_SUFFIXES = {".md", ".txt", ".rst", ".adoc"}
+LINK_RE = re.compile(r"(\]\()([^)\s]+)(\))")            # a Markdown link target: ](target)
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")          # a fence line: its character and length count
+CODE_SPAN_RE = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)")     # an inline code span: a run of N backticks, closed by N
+INDENTED_RE = re.compile(r"^(?: {4}|\t)")               # indented code (or a deeply nested list: left as it is)
+SUCCESSOR_SKIP = ("docs/ai/inbox/", "docs/ai/proposals/")  # side outputs of an adopt row, never its successor
+AMBIGUOUS = "\0ambiguous"  # successors(): an adopt row naming more than one main target
+
+
+def successors(rows: list, state: dict, gone: list) -> dict:
+    """gone source -> its new place (legacy copy, or the one successor an adopt row names); None
+    where there is none (a delete row), AMBIGUOUS where an adopt row names several targets."""
+    moved, by_path, out = state.get("moved", {}), {r["path"]: r for r in rows}, {}
+    for path in dict.fromkeys(gone):
+        row = by_path.get(path)
+        if path in moved:
+            out[path] = moved[path]
+        elif row and row.get("action") == "adopt":
+            main = [t for t in _targets(row) if not t.startswith(SUCCESSOR_SKIP)]
+            out[path] = main[0] if len(main) == 1 else AMBIGUOUS
+        else:
+            out[path] = None
+    return out
+
+
+def _new_place(root: Path, rel: str, succ: dict) -> tuple:
+    """(new path or None, why it stays or None, sources `rel` is or lies below). A new place that
+    does not exist (a folder adopted into one file: its pages have no place of their own) stays."""
+    hits = [(src, new) for src, new in succ.items() if rel == src or rel.startswith(src + "/")]
+    sources = [src for src, _new in hits]
+    if not hits:
+        return None, None, sources
+    if len(hits) != 1:
+        return None, "ambiguous: several sources", sources
+    src, new = hits[0]
+    if new is None:
+        return None, "no successor", sources
+    if new == AMBIGUOUS:
+        return None, "ambiguous: several targets", sources
+    new += rel[len(src):]
+    if not os.path.lexists(root / new):
+        return None, f"new place missing: {new}", sources
+    return new, None, sources
+
+
+def _mention_re(path: str):
+    return re.compile(r"(?<![\w./-])" + re.escape(path) + r"(?![\w-]|\.\w)")
+
+
+def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
+    """Dead references under docs/project/ to gone sources (`succ`), bent to the new place —
+    the link target only: a Markdown link target outside code (resolved against the file's
+    folder, written back relative again, anchor kept) and a path alone in single backticks that
+    is a source (root-relative), only where the new place exists. No other character changes;
+    fenced blocks (character and length tracked), indented lines and the rest of inline code are
+    never touched. Returns (changes, left): '<file>:<line>: <old> -> <new>' each, and
+    '<file>:<line>: <path> (<why>)' for every reference left as it is. With `plan`, nothing is
+    written."""
+    base_dir = root / "docs" / "project"
+    changes, left = [], []
+    if not base_dir.is_dir() or not succ:
+        return changes, left
+    mentions = {src: _mention_re(src) for src in succ}
+    for file in sorted(base_dir.rglob("*")):
+        if not file.is_file() or file.suffix.lower() not in DOC_SUFFIXES:
             continue
         try:
-            text = file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for number, line in enumerate(text.splitlines(), 1):
-            for path in paths:
-                if path in line:
-                    hits.append(f"{file.relative_to(root).as_posix()}:{number}: {path}")
-    return hits
+            text = file.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # never rewrite a file in another encoding
+        rel_file = file.relative_to(root).as_posix()
+        folder = posixpath.dirname(rel_file)
+        lines, fence, edited = text.splitlines(keepends=True), None, False
+        for number, line in enumerate(lines, 1):
+            body = line.lstrip("﻿") if number == 1 else line
+            marker = FENCE_RE.match(body)
+            if fence is None and marker:
+                fence = (marker.group(1)[0], len(marker.group(1)))
+                in_code = True
+            elif fence is not None:
+                in_code = True
+                closing = body.strip()
+                if marker and closing == marker.group(1) and closing[0] == fence[0] and len(closing) >= fence[1]:
+                    fence = None
+            else:
+                in_code = bool(INDENTED_RE.match(body))
+            if in_code:
+                left += [f"{rel_file}:{number}: {src} (in a code block)" for src, rx in mentions.items() if rx.search(line)]
+                continue
+            handled = set()
+
+            def link(match):
+                target = match.group(2)
+                path, sep, anchor = target.partition("#")
+                if not path or "://" in path or path.startswith("mailto:"):
+                    return match.group(0)
+                resolved = path.lstrip("/") if path.startswith("/") else posixpath.normpath(posixpath.join(folder, path))
+                new, why, sources = _new_place(root, resolved, succ)
+                handled.update(sources)
+                if new is None:
+                    if why:
+                        left.append(f"{rel_file}:{number}: {target} ({why})")
+                    return match.group(0)
+                new_target = ("/" + new) if path.startswith("/") else posixpath.relpath(new, folder or ".")
+                new_target += sep + anchor
+                changes.append(f"{rel_file}:{number}: {target} -> {new_target}")
+                return f"{match.group(1)}{new_target}{match.group(3)}"
+
+            def code(match):
+                content = match.group(2)
+                if len(match.group(1)) != 1 or content != content.strip() or " " in content:
+                    return match.group(0)  # not a path alone in single backticks: code, untouched
+                new, why, sources = _new_place(root, content, succ)
+                handled.update(sources)
+                if new is None:
+                    if why:
+                        left.append(f"{rel_file}:{number}: {content} ({why})")
+                    return match.group(0)
+                changes.append(f"{rel_file}:{number}: `{content}` -> `{new}`")
+                return f"`{new}`"
+
+            parts, pos = [], 0
+            for span in CODE_SPAN_RE.finditer(line):
+                parts += [LINK_RE.sub(link, line[pos:span.start()]), code(span)]
+                pos = span.end()
+            parts.append(LINK_RE.sub(link, line[pos:]))
+            new_line = "".join(parts)
+            if new_line != line:
+                lines[number - 1], edited = new_line, True
+            left += [f"{rel_file}:{number}: {src} (mentioned in the text)" for src, rx in mentions.items()
+                     if src not in handled and rx.search(new_line)]
+        if edited and not plan:
+            file.write_bytes("".join(lines).encode("utf-8"))
+    return changes, left
+
+
+def _code(text: str) -> str:
+    """`text` as one Markdown code span, also when it holds backticks itself."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 def run_doctor(root: Path) -> tuple:
@@ -1010,7 +1245,7 @@ def run_doctor(root: Path) -> tuple:
                                for f in findings]
 
 
-def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: list, acc: list) -> Path:
+def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple, acc: list) -> Path:
     inbox = root / "docs" / "ai" / "inbox"
     stem = f"{date.today().isoformat()}-adoption-report"
     dest, n = inbox / f"{stem}.md", 2
@@ -1021,20 +1256,26 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: list,
     out = ["for: all", "status: open", "", "# Adoption report (`adopt.py --finish`)", "",
            f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
            "adopt.py. Review the branch, then commit per path or drop it.", "", "## Adopted (source → target)", ""]
-    out += [f"- `{r['path']}` → {', '.join(f'`{t}`' for t in _targets(r))}"
+    out += [f"- {_code(r['path'])} → {', '.join(_code(t) for t in _targets(r))}"
             + (" (now a bridge)" if r["path"] in state.get("bridged", []) else "") for r in by_action["adopt"]] or ["- none"]
     out += ["", "## Own skills and roles bridged (as `act-load-settings` does)", ""]
-    out += [f"- `docs/ai/local/{unit}`" for unit in state.get("own_units", [])] or ["- none"]
+    out += [f"- {_code('docs/ai/local/' + unit)}" for unit in state.get("own_units", [])] or ["- none"]
     out += ["", "## Moved to legacy (byte-identical, see `.act-local/adopt/legacy-checksums.json`)", ""]
-    out += [f"- `{old}` → `{new}`" for old, new in moved.items()] or ["- none"]
+    out += [f"- {_code(old)} → {_code(new)}" for old, new in moved.items()] or ["- none"]
     out += ["", "## Deleted", ""]
-    out += [f"- `{r['path']}`" for r in by_action["delete"]] or ["- none"]
+    out += [f"- {_code(r['path'])}" for r in by_action["delete"]] or ["- none"]
     out += ["", "## Kept in place", ""]
-    out += [f"- `{r['path']}`" for r in by_action["keep"]] or ["- none"]
+    out += [f"- {_code(r['path'])}" for r in by_action["keep"]] or ["- none"]
     out += ["", f"## doctor.py (exit {doctor[0]})", ""]
     out += [f"- {line}" for line in doctor[1][:30]] or ["- no findings"]
-    out += ["", "## References in docs/project/ to moved or removed paths", ""]
-    out += [f"- `{line}`" for line in refs[:50]] or ["- none"]
+    changes, left = refs
+    out += ["", "## References in docs/project/ rewritten (link target only, not staged)", ""]
+    if len(changes) + len(left) > REFS_IN_REPORT:
+        out += [f"- {len(changes)} rewritten, {len(left)} left unchanged — the full list: {_code(REFS_FILE)}"]
+    else:
+        out += [f"- {_code(line)}" for line in changes] or ["- none"]
+        out += ["", "## References in docs/project/ left unchanged (no successor, ambiguous, plain text)", ""]
+        out += [f"- {_code(line)}" for line in left] or ["- none"]
     out += ["", "## Accounting", "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("\n".join(out), encoding="utf-8")
@@ -1057,6 +1298,16 @@ def cmd_finish(root: Path, plan: bool) -> int:
     problems = validate(root, scan, rows, on_disk=False, moved_first=moved_before_init.__contains__)
     actions = state.get("actions", {})
     hashes = state.get("target_hashes", {})
+    # A target adopt_config.py changed itself (rule-set marks in coding_rules.md) and nobody since:
+    # its content was still not adopted, so it counts as unchanged for the check below.
+    touched = (_read_json(root / ADOPT_DIR / "config-touched.json") or {}).get("paths")
+    touched = touched if isinstance(touched, dict) else {}
+
+    def config_only(target: str) -> bool:
+        entry = touched.get(target)
+        return (isinstance(entry, dict) and (root / target).is_file()
+                and entry.get("sha256") == _sha256(root / target))
+
     for row in rows:
         if actions.get(row.get("path")) != row.get("action"):
             problems.append(f"{row.get('path')!r}: action changed since --apply "
@@ -1073,6 +1324,9 @@ def cmd_finish(root: Path, plan: bool) -> int:
                     elif target in hashes and hashes[target] == _hash_path(root / target):
                         problems.append(f"{row['path']!r}: target {target!r} unchanged since --apply "
                                         "— content not adopted?")
+                    elif target in hashes and config_only(target):
+                        problems.append(f"{row['path']!r}: target {target!r} changed since --apply only by "
+                                        "adopt_config.py (config-touched.json) — content not adopted?")
     units, overrides, unit_problems = own_units(rows)
     problems += unit_problems
     if problems:
@@ -1128,8 +1382,20 @@ def cmd_finish(root: Path, plan: bool) -> int:
         print(f"[adopt] {prefix}bridge own {area[:-1]} {name!r} into the tool folders (as act-load-settings does)")
     for area, name in overrides:
         print(f"[adopt] leave {area[:-1]} {name!r} to the template's copy mechanism (override of a template unit)")
+    # Dead references in docs/project/: every source that is gone after this run (not bridged, not
+    # standing again at its place) and its new place, bent mechanically (Q91 a).
+    gone = [p for p in moved if not os.path.lexists(root / p)] + to_remove + \
+           [p for p in state.get("removed_at_apply", []) if not os.path.lexists(root / p)]
+    succ = successors(rows, state, gone)
     if plan:
-        print(f"[adopt] {prefix}run doctor.py, check docs/project/ references, write the inbox report")
+        changes, left = rewrite_references(root, succ, plan=True)
+        print(f"[adopt] {prefix}rewrite {len(changes)} reference(s) in docs/project/ (link target only), "
+              f"leave {len(left)} as they are")
+        for line in changes[:20]:
+            print(f"    {line}")
+        if len(changes) > 20:
+            print(f"    … {len(changes) - 20} more")
+        print(f"[adopt] {prefix}run doctor.py, write the inbox report")
         print("[adopt] plan only, nothing changed")
         return 0
 
@@ -1152,29 +1418,49 @@ def cmd_finish(root: Path, plan: bool) -> int:
         "feedback_mode": actlib.read_config().get("feedback", "off"),
     })
     cache = actlib.read_cache()
-    for path in to_bridge:
-        key, spec = bridges[path]
-        if spec["kind"] == "verbatim":
-            dest = root / path
-            dest.unlink()
-            init_mod._write_text_file(root / ".act" / "bridges" / key, dest, cfg_tokens, False, root)
-            cache["generated"][path] = actlib.sha256_file(dest)
-            _git(root, "add", "--", path)
-        bridged.append(path)
+    removed = []
+    try:
+        for path in to_bridge:
+            key, spec = bridges[path]
+            if spec["kind"] == "verbatim":
+                dest = root / path
+                dest.unlink(missing_ok=True)  # a re-run after a stop may find it gone already
+                init_mod._write_text_file(root / ".act" / "bridges" / key, dest, cfg_tokens, False, root)
+                cache["generated"][path] = actlib.sha256_file(dest)
+                _git(root, "add", "--", path)
+            bridged.append(path)
+        for path in to_remove:
+            if is_tracked(root, path):
+                _git(root, "rm", "-r", "-q", "--", path)
+            if os.path.lexists(root / path):
+                _remove_path(root / path)
+            removed.append(path)
+    except RuntimeError as exc:
+        # A failed git call is never followed by an accounting: state stays "applied", the same
+        # --finish continues (a written bridge is rewritten, a removed path is skipped).
+        if bridged:
+            actlib.write_cache({"generated": cache["generated"]})
+        state["error"] = f"--finish stopped: {exc}"
+        _write_json(state_path, state)
+        raise Refused(f"stopped during --finish, nothing verified: {exc}. Done so far: {len(bridged)} bridged, "
+                      f"{len(removed)} removed. Fix the cause git names (for a path too long: git -C {root} "
+                      f"config core.longpaths true), then run --finish again — or {way_back(root)}")
+    state.pop("error", None)
     if bridged:
         actlib.write_cache({"generated": cache["generated"]})
-    for path in to_remove:
-        if is_tracked(root, path):
-            _git(root, "rm", "-r", "-q", "--", path)
-        if os.path.lexists(root / path):
-            _remove_path(root / path)
     # After the removals: an own unit may carry the name its old tool folder had.
     unit_messages = bridge_own_units(root, units) if units else []
     for message in unit_messages:
         print(f"[adopt] {message}")
 
+    changes, left = rewrite_references(root, succ, plan=False)
     doctor = run_doctor(root)
-    refs = find_references(root, [*moved, *to_remove, *state.get("removed_at_apply", [])])
+    refs = (changes, left)
+    if len(changes) + len(left) > REFS_IN_REPORT:
+        refs_path = root / REFS_FILE
+        refs_path.parent.mkdir(parents=True, exist_ok=True)
+        refs_path.write_text("\n".join(["# rewritten (old -> new)", *changes, "", "# left unchanged", *left]) + "\n",
+                             encoding="utf-8")
     state.update({"bridged": bridged, "removed_at_finish": to_remove,
                   "own_units": [f"{area}/{name}" for area, name in units]})
     acc, ok = accounting(root, rows, state, "finish")
@@ -1185,9 +1471,10 @@ def cmd_finish(root: Path, plan: bool) -> int:
     print(f"[adopt] doctor.py: exit {doctor[0]}, {len(doctor[1])} finding(s)")
     for line in doctor[1][:10]:
         print(f"    {line}")
-    print(f"[adopt] references in docs/project/ to moved/removed paths: {len(refs)}")
-    for line in refs[:20]:
-        print(f"    {line}")
+    print(f"[adopt] references in docs/project/: {len(changes)} rewritten, {len(left)} left unchanged"
+          + (f" (full list: {REFS_FILE})" if len(changes) + len(left) > REFS_IN_REPORT else ""))
+    for line in left[:20]:
+        print(f"    left: {line}")
     print(f"[adopt] report: {report.relative_to(root).as_posix()}")
     print("[adopt] accounting after --finish:")
     print("\n".join(acc))
@@ -1210,6 +1497,7 @@ ALLOWED ACTIONS PER CLASS
   log           legacy, keep                 ai-machinery  adopt, delete, keep
   ai-config     adopt, legacy, keep, delete  work          adopt, legacy, keep, delete
   project-doc   adopt, legacy, keep; delete only with confirmed
+  predecessor   adopt, legacy, keep; delete only "template only" (scan origin) or with confirmed
   unknown       keep; adopt/legacy/delete only with confirmed
 
 REFUSED (whole run, with a list) on: a path that is not plain relative posix or not on disk; a
@@ -1221,14 +1509,17 @@ folder holding untracked or git-ignored files that would be moved or removed, wi
 (with it, those files go to {RESCUED_ROOT}/ first); an adopt target equal to or below its own
 source (unless the source moves before init) or below any path that is deleted, archived, removed
 or bridged; a path segment ending in a dot or space; paths are compared case-insensitively where
-the file system is; a scan.json that no longer matches a fresh scan (--apply).
+the file system is; a scan.json that no longer matches a fresh scan (--apply); on Windows a
+legacy path of 260 characters or more while the repository does not set core.longpaths
+(`git config core.longpaths true`).
 Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES))}, test*.
 
 --apply: clean tree (untracked only under .act-local/), new branch {BRANCH} (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
-  {LEGACY_ROOT}/<old path> (sha256 before = after). An old skill/agent carrying the
-  name of a template unit, or a file at a place init.py writes itself (docs/ai/ skeleton,
-  docs/ai/rules.md, docs/project/coding_rules.md), moves there too unless it is a delete row
+  {LEGACY_ROOT}/<old path> (sha256 before = after), then staged by path; a git
+  call that fails stops the run with no accounting. An old skill/agent carrying the name of a
+  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
+  docs/project/coding_rules.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
@@ -1239,9 +1530,14 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
   template's copy mechanism); doctor.py, docs/project/ references to moved/removed paths,
-  report docs/ai/inbox/<date>-adoption-report.md. A second --finish says "already finished".
-  An adopt target that still has the content it had right after --apply is refused ("content not
-  adopted?").
+  report docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ to a path that is
+  gone is bent to its new place (legacy copy, or the one successor of an adopt row): the target
+  of a Markdown link (relative stays relative, anchor kept) or a path alone in backticks; no other
+  text changes, code blocks never; the rest is listed (more than {REFS_IN_REPORT}: the full list
+  in {REFS_FILE}); --finish --plan shows the changes. A second --finish says "already finished".
+  An adopt target that still has the content it had right after --apply, or that only
+  adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is
+  refused ("content not adopted?").
 --apply refuses a detached HEAD. It backs up .claude/settings.json (init.py merges hooks into it).
 --abort: the way back after --apply or a stopped --apply, resumable (state.json is rewritten after
   every step). Refused while {BRANCH} carries a commit other than init.py's, and while work was

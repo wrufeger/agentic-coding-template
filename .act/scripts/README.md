@@ -65,6 +65,7 @@ ALLOWED ACTIONS PER CLASS
   log           legacy, keep                 ai-machinery  adopt, delete, keep
   ai-config     adopt, legacy, keep, delete  work          adopt, legacy, keep, delete
   project-doc   adopt, legacy, keep; delete only with confirmed
+  predecessor   adopt, legacy, keep; delete only "template only" (scan origin) or with confirmed
   unknown       keep; adopt/legacy/delete only with confirmed
 
 REFUSED (whole run, with a list) on: a path that is not plain relative posix or not on disk; a
@@ -76,14 +77,17 @@ folder holding untracked or git-ignored files that would be moved or removed, wi
 (with it, those files go to .act-local/adopt/rescued/ first); an adopt target equal to or below its own
 source (unless the source moves before init) or below any path that is deleted, archived, removed
 or bridged; a path segment ending in a dot or space; paths are compared case-insensitively where
-the file system is; a scan.json that no longer matches a fresh scan (--apply).
+the file system is; a scan.json that no longer matches a fresh scan (--apply); on Windows a
+legacy path of 260 characters or more while the repository does not set core.longpaths
+(`git config core.longpaths true`).
 Source/test/content trees (first path segment): __tests__, app, apps, assets, client, components, content, e2e, fixtures, lib, packages, pages, public, server, spec, specs, src, static, test*.
 
 --apply: clean tree (untracked only under .act-local/), new branch act-adopt (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
-  docs/ai/work/archive/legacy/<old path> (sha256 before = after). An old skill/agent carrying the
-  name of a template unit, or a file at a place init.py writes itself (docs/ai/ skeleton,
-  docs/ai/rules.md, docs/project/coding_rules.md), moves there too unless it is a delete row
+  docs/ai/work/archive/legacy/<old path> (sha256 before = after), then staged by path; a git
+  call that fails stops the run with no accounting. An old skill/agent carrying the name of a
+  template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
+  docs/project/coding_rules.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
@@ -94,9 +98,14 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
   template's copy mechanism); doctor.py, docs/project/ references to moved/removed paths,
-  report docs/ai/inbox/<date>-adoption-report.md. A second --finish says "already finished".
-  An adopt target that still has the content it had right after --apply is refused ("content not
-  adopted?").
+  report docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ to a path that is
+  gone is bent to its new place (legacy copy, or the one successor of an adopt row): the target
+  of a Markdown link (relative stays relative, anchor kept) or a path alone in backticks; no other
+  text changes, code blocks never; the rest is listed (more than 50: the full list
+  in .act-local/adopt/references.txt); --finish --plan shows the changes. A second --finish says "already finished".
+  An adopt target that still has the content it had right after --apply, or that only
+  adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
+  refused ("content not adopted?").
 --apply refuses a detached HEAD. It backs up .claude/settings.json (init.py merges hooks into it).
 --abort: the way back after --apply or a stopped --apply, resumable (state.json is rewritten after
   every step). Refused while act-adopt carries a commit other than init.py's, and while work was
@@ -166,13 +175,33 @@ ALLOW-LIST (exact, case-sensitive) — the only way into the four classes with a
                 .github/agents/, .github/prompts/, .codex/{agents,skills,commands,scripts,hooks}/,
                 .gemini/commands/, and .cursor/ except rules/ and mcp.json
   log           root ai.log, ai.log.*.bak, ai.log.state.json, ai.log.raw.jsonl; in a signed
-                docs/ai/: names with ledger/journal/protokoll/archive/archiv, template-feedback/sent/**
+                docs/ai/: names with ledger/journal/protokoll/archive/archiv, template-feedback/sent/**;
+                a dated file (YYYY-MM-DD*) in journal(s)/ or docs/journal(s)/
   work          root TODO.md, TODO; in a signed docs/ai/: names with task(s)/aufgabe(n)/backlog/
                 question(s)/frage(n)/board/inbox
 Signed docs/ai/: holds at least two of board.md, tasks.md, ledger.md, questions.md, backlog.md,
 or the target has .claude/template.json. Any keyword hit elsewhere yields only "unknown" with a
 hint ("log?"). A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
 never followed. Git-ignored rows keep their class and get a "git-ignored/local" note.
+project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
+
+PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
+base_commit tree, or is one of the predecessor's known parts (docs/ai/README.md, checklists.md,
+config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, .claude/mcp-katalog.md,
+.mcp.json.example), is class "predecessor". Every row gets an origin: "template only" (each line
+is the base_commit's, after putting in the values of template.json § values; lines removed since
+do not count), "own text: n lines", or "unknown" when the base_commit is not in the history.
+
+PROPOSED ACTION (column "-> …", JSON "proposed"; the owner decides): log, work -> legacy;
+ai-config -> adopt, legacy if template only, keep for .claude/settings*.json and protected rows,
+for .claude/settings.local.json.example of a predecessor delete if template only, else legacy;
+ai-machinery -> delete if
+template only, keep if its origin is unknown, else adopt (skills, agents) or keep (the rest);
+project-doc -> keep (a root README.md too), docs/README.md and docs/project/coding_rules.md adopt
+(legacy if template only); predecessor -> delete (tooling, examples: template only), else legacy
+(docs, own lines included — the origin shows them); unknown -> keep. A link or protected row is
+always keep. Line breaks do not count: a line that is a stretch of a base paragraph (whitespace
+collapsed, at least 20 characters) is the template's.
 ```
 
 ## `board.py`
@@ -195,12 +224,13 @@ options:
 Call: direct (judging the findings: skill `act-doctor`)
 
 ```text
-usage: doctor.py [-h] [--json] [--inbox] [--accept ID] [--accept-all]
+usage: doctor.py [-h] [--target DIR] [--json] [--inbox] [--accept ID] [--accept-all]
 
 Mechanical project/template reconciliation — see the header comment for the full list of checks.
 
 options:
   -h, --help    show this help message and exit
+  --target DIR  check this project instead of the current checkout
   --json        machine-readable output
   --inbox       also write docs/ai/inbox/<date>-doctor.md if there are findings
   --accept ID   accept the current template text for ID (repeatable)
@@ -380,7 +410,7 @@ usage: manifest.py --write | --check
 Call: direct
 
 ```text
-usage: rules.py [-h] [--area {coding,core}] [--list | --validate] [id]
+usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --imports] [--from FILE] [id]
 
 Read the effective coding/core rules after the project's checkboxes and replacements are applied.
 
@@ -392,6 +422,8 @@ options:
   --area {coding,core}  which rule area to read (default: coding)
   --list                human overview, one line per set/group
   --validate            schema + cross-checks, exit 1 on findings
+  --imports             files Claude Code loads through @-imports, exit 1 on any it cannot follow
+  --from FILE           start file for --imports, root-relative (default: CLAUDE.md)
 ```
 
 ## `script_docs.py`

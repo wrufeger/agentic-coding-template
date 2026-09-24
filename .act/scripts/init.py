@@ -336,7 +336,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
                 "Project config uses defaults for: " + ", ".join(missing) + " — review docs/ai/config.md."
             )
 
-    mode = _suggest_mode(root)
+    mode = _suggest_mode(root, notes)
     feedback_mode = _ask_feedback_mode(root, interactive, notes)
 
     return {
@@ -354,17 +354,41 @@ def step_config(root: Path, interactive: bool, notes: list[str],
     }
 
 
-def _suggest_mode(root: Path) -> str:
-    """Suggest 'solo' or 'team' from the existing history: more than one author means team.
+def _suggest_mode(root: Path, notes: list[str]) -> str:
+    """Suggest 'solo' or 'team' from the existing history: more than one distinct *real* author
+    email means team. Placeholder/test identities are dropped first, with the same check
+    `step_identity` uses (`_is_placeholder_identity`) — several name spellings of one person
+    (e.g. "Wolfgang" and "Wolfgang Rufeger", same email) must not inflate the count, and a
+    throwaway/test identity (e.g. `test <test@example.com>`) must not count as a second author
+    just because it used a different email than the real one (T62 I1: three names, one real
+    person, used to suggest 'team'). If nothing real is left to compare — every commit looks like
+    a placeholder, or there is no history at all — the guess stays 'solo' and a note is left for
+    the inbox instead of risking a wrong 'team'.
 
     Only the *timing* of ID assignment depends on this (see docs/ai/config.md); the layout is the
     same either way, so a wrong guess costs nothing but a line in config.md.
     """
-    result = _git(["log", "--format=%ae", "-n", "200"], cwd=root, check=False)
+    result = _git(["log", "--format=%an%x09%ae", "-n", "200"], cwd=root, check=False)
     if result.returncode != 0:
         return "solo"
-    authors = {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
-    return "team" if len(authors) > 1 else "solo"
+    real_emails: set[str] = set()
+    saw_any = False
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        saw_any = True
+        name, _, email = line.partition("\t")
+        if _is_placeholder_identity(name, email):
+            continue
+        real_emails.add(email.strip().lower())
+    if not real_emails:
+        if saw_any:
+            notes.append(
+                "Could not tell `mode` (solo/team) apart from the git history — every author "
+                "looks like a placeholder or test identity. Left at `solo`; review docs/ai/config.md."
+            )
+        return "solo"
+    return "team" if len(real_emails) > 1 else "solo"
 
 
 # ---------------------------------------------------------------------------
@@ -646,11 +670,12 @@ def _coding_rules_body(root: Path, cfg: ProjectConfig) -> tuple[str, list[str]]:
 
     lines: list[str] = []
     for name in ordered_enabled:
-        lines.append(f"- [x] use: .act/coding/{name}.md")
+        # T64: a checked set is written as an import, so Claude Code loads it right after init
+        lines.append(rules.coding_set_line(f"- [x] use: .act/coding/{name}.md"))
         for group_id in templates[name].groups:
             lines.append(f"  - [x] `{group_id}`")
     for name in ordered_rest:
-        lines.append(f"- [ ] use: .act/coding/{name}.md")
+        lines.append(rules.coding_set_line(f"- [ ] use: .act/coding/{name}.md"))
 
     return "\n".join(lines) + ("\n" if lines else ""), ordered_enabled
 
@@ -679,6 +704,62 @@ def _write_coding_rules(
     dest.write_text(text, encoding="utf-8")
     summary = ", ".join(enabled) if enabled else "(none detected)"
     return f"{label}: created — sets enabled: {summary}", True
+
+
+def enable_coding_sets(root: Path, requested: set[str], plan: bool) -> tuple[list[str], list[str], list[str]]:
+    """Check the given coding rule sets — plus whatever their `requires:` pulls in — in an
+    *already-existing* docs/project/coding_rules.md, adding each newly-checked set's group
+    checkbox lines the same way `_coding_rules_body()` does for init's own detection. Used by
+    `adopt_config.py` (T62 I2) to apply an old project's `Coding-Guidelines` value onto a file
+    init.py already materialized (init's own writer never overwrites an existing file, so a set
+    the old config named but init's own detection missed — e.g. no `pyproject.toml` yet, or a
+    stack hint that didn't mention it — would otherwise stay unchecked forever).
+
+    Returns (sets newly checked by this call, sets from `requested` that were already checked,
+    names in `requested` with no matching `.act/coding/<name>.md`). Never overwrites a set that is
+    already checked, never touches the file at all under `plan=True` or when there is nothing to
+    change, and does nothing (empty, empty, everything unknown) if the project has no
+    docs/project/coding_rules.md or no `.act/coding/` to detect sets from at all."""
+    dest = root / "docs" / "project" / "coding_rules.md"
+    coding_dir = root / ".act" / "coding"
+    if not coding_dir.is_dir():
+        return [], [], sorted(requested)
+    all_names = {p.stem for p in coding_dir.glob("*.md")}
+    known = {name for name in requested if name in all_names}
+    unknown = sorted(requested - known)
+    if not dest.is_file() or not known:
+        return [], [], unknown
+
+    templates = {name: rules.parse_template_set(coding_dir / f"{name}.md", "template") for name in all_names}
+    closure = set(known)
+    changed = True
+    while changed:
+        changed = False
+        for name in list(closure):
+            for required in templates[name].requires:
+                if required in templates and required not in closure:
+                    closure.add(required)
+                    changed = True
+
+    project = rules.parse_project_file(dest, rules.AREAS["coding"])
+    by_name = {Path(rules.strip_template_prefix(pset.path)).stem: pset for pset in project.sets}
+    already = sorted(name for name in known if name in by_name and by_name[name].enabled)
+    to_enable = {name: by_name[name] for name in closure if name in by_name and not by_name[name].enabled}
+    if not to_enable:
+        return [], already, unknown
+    if plan:
+        return sorted(to_enable), already, unknown
+
+    lines = dest.read_text(encoding="utf-8").splitlines()
+    # Process bottom-up so an earlier insertion never shifts the recorded line number of a set
+    # still waiting to be enabled.
+    for name in sorted(to_enable, key=lambda n: to_enable[n].line, reverse=True):
+        idx = to_enable[name].line - 1
+        lines[idx] = rules.coding_set_line(re.sub(r"\[\s\]", "[x]", lines[idx], count=1))  # T64: + import
+        group_lines = [f"  - [x] `{gid}`" for gid in templates[name].groups]
+        lines[idx + 1:idx + 1] = group_lines
+    _write_new_file(dest, "\n".join(lines) + "\n")
+    return sorted(to_enable), already, unknown
 
 
 # ---------------------------------------------------------------------------
