@@ -1612,26 +1612,68 @@ def step_migrate(root: Path, plan: bool) -> tuple[str, list[str], list[Path]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 9 — hand off to doctor.py
+# Step 9 — refresh the generated bridges, then hand off to doctor.py
 # ---------------------------------------------------------------------------
 
-def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path]]:
-    """Returns (summary, inbox_path). doctor.py's own exit codes: 0 = no findings, 1 = findings
-    (not an error — it already wrote docs/ai/inbox/<date>-doctor.md), 2 = a real failure."""
+def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]:
+    """Re-derives CLAUDE.md/AGENTS.md/docs/ai/rules.md from .act/bridges/ (whichever of them is
+    still exactly as it was last generated) before doctor.py runs — the same re-derivation
+    dispatch.py's SessionStart hook does for an unedited copy (checks.session._refresh_bridges,
+    T64). Without this, doctor's import check (check_imports) still sees the *old* docs/ai/
+    rules.md — the one from before this update replaced .act/rules/ — and reports every rule
+    file new in this template revision as "named but not imported", a false positive that would
+    otherwise clear itself only the next time a session starts (B118). Reuses the hook's own
+    function rather than rebuilding the re-derivation logic a second time, so a later change to
+    which bridges dispatch.py re-derives never has to be kept in sync in two places.
+
+    Returns (summary, touched) — `touched` are the absolute paths actually rewritten (empty under
+    plan, which must write nothing, same contract as every other step here)."""
+    hooks_dir = root / ".act" / "hooks"
+    if not hooks_dir.is_dir():
+        return "bridge refresh skipped (.act/hooks not found)", []
+    hooks_path = str(hooks_dir)
+    added = hooks_path not in sys.path
+    if added:
+        sys.path.insert(0, hooks_path)
+    try:
+        from checks.session import _refresh_bridges
+    except Exception as exc:  # best effort — a hook-side import error must not abort the update
+        return f"bridge refresh skipped ({exc})", []
+    finally:
+        if added:
+            sys.path.remove(hooks_path)
+
+    changed, refreshed = _refresh_bridges(root, write=not plan)
+    if not refreshed and not changed:
+        return "no generated bridges due for refresh", []
+    verb = "would refresh" if plan else "refreshed"
+    parts = [f"{verb} {', '.join(refreshed)}"] if refreshed else []
+    if changed:
+        parts.append(f"left {', '.join(changed)} (edited locally)")
+    touched = [] if plan else [root / rel for rel in refreshed]
+    return "; ".join(parts), touched
+
+
+def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path], list[Path]]:
+    """Returns (summary, inbox_path, touched). doctor.py's own exit codes: 0 = no findings, 1 =
+    findings (not an error — it already wrote docs/ai/inbox/<date>-doctor.md), 2 = a real
+    failure. `touched` carries the bridge files _refresh_generated_bridges rewrote, so the caller
+    can add them to the commit alongside the inbox file."""
+    bridge_summary, bridge_touched = _refresh_generated_bridges(root, plan)
     doctor_path = root / ".act" / "scripts" / "doctor.py"
     if not doctor_path.is_file():
-        return "doctor not available", None
+        return f"{bridge_summary}; doctor not available", None, bridge_touched
     if plan:
-        return "would run: python .act/scripts/doctor.py --inbox", None
+        return f"{bridge_summary}; would run: python .act/scripts/doctor.py --inbox", None, []
     result = subprocess.run(
         [sys.executable, str(doctor_path), "--inbox"], cwd=root, capture_output=True, text=True, encoding="utf-8",
     )
     if result.returncode not in (0, 1):
         detail = (result.stderr or result.stdout).strip().splitlines()
         last = detail[-1] if detail else f"exit code {result.returncode}"
-        return f"doctor.py --inbox failed (update not aborted over this): {last}", None
+        return f"{bridge_summary}; doctor.py --inbox failed (update not aborted over this): {last}", None, bridge_touched
     if result.returncode == 0:
-        return "doctor.py --inbox ran, no findings", None
+        return f"{bridge_summary}; doctor.py --inbox ran, no findings", None, bridge_touched
 
     lines = result.stdout.splitlines()
     inbox_rel = next(
@@ -1641,7 +1683,7 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path]]:
     count = count_match.group(1) if count_match else "some"
     inbox_path = root / inbox_rel if inbox_rel else None
     where = inbox_rel if inbox_rel else "docs/ai/inbox/"
-    return f"{count} finding(s) -> {where}", inbox_path
+    return f"{bridge_summary}; {count} finding(s) -> {where}", inbox_path, bridge_touched
 
 
 # ---------------------------------------------------------------------------
@@ -1860,7 +1902,7 @@ def _finish_update(
     migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
     _print_step(8, migrate_summary)
 
-    doctor_summary, doctor_inbox = step_doctor(root, False)
+    doctor_summary, doctor_inbox, doctor_touched = step_doctor(root, False)
     _print_step(9, doctor_summary)
 
     _print_step(10, step_lock(root, False, source, new_copies, fetched_commit))
@@ -1872,6 +1914,7 @@ def _finish_update(
     commit_paths.extend(sync_touched)
     commit_paths.extend(frontmatter_touched)
     commit_paths.extend(hooks_gitfiles_touched)
+    commit_paths.extend(doctor_touched)
     if doctor_inbox is not None:
         commit_paths.append(doctor_inbox)
     rescue_dir = root / "docs" / "ai" / "local"
