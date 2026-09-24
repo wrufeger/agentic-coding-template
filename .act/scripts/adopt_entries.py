@@ -59,6 +59,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -152,6 +153,23 @@ def _protected_sources(root: Path) -> set[str]:
     return protected
 
 
+def _key(rel: str) -> str:
+    """Comparison key for a relative path — mirrors adopt.py's own _key()/_at_or_below() (case-
+    folded where the file system is, "\\" normalized to "/"), so a protected *folder* row (e.g.
+    ".act-local", noted "git-ignored/local") is compared on "/" boundaries here exactly as
+    adopt.py itself compares it, instead of drifting into two different notions of "below"."""
+    return os.path.normcase(rel).replace("\\", "/")
+
+
+def _source_is_protected(path: str, protected: set[str]) -> bool:
+    """Whether `path` is a protected scan/table row itself, or sits *below* one that names a
+    folder (B118, 15 second part) — a folder-level "never bridge"/"git-ignored/local" row must
+    guard every file under it, not just an exact match on that row's own path. Compared at "/"
+    segment boundaries, so a protected row "foo" never falsely protects "foobar/baz.txt"."""
+    key = _key(path)
+    return any(key == _key(p) or key.startswith(_key(p) + "/") for p in protected)
+
+
 def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
     """Merge `ids` into entries.RESERVED_IDS_PATH (a plain {"ids": [...]} list, deduplicated) so
     entries.py's _next_id() keeps landing above an old id the content step decided not to give a
@@ -227,7 +245,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             continue
         # B118 (15, first part): refused on the script's own account, for every kind — not left to
         # the skill text alone.
-        if src is not None and src[0] in protected:
+        if src is not None and _source_is_protected(src[0], protected):
             problems.append(f"{where}: source {src[0]!r} is protected (adopt.py's scan/table note: "
                             "\"never bridge\" or \"git-ignored/local\") — its content is never adopted")
         if kind == RESERVED_KIND:
@@ -307,13 +325,53 @@ def read_map(root: Path) -> dict:
     return data
 
 
+def _strip_volatile(text: str) -> str:
+    """Drop the one header line that always differs between two writes of the very same content —
+    a `created:` timestamp (entries.py's create_entry()) or a `date:` line (write_proposal(), which
+    stamps today's date) — so two otherwise-identical texts compare equal below."""
+    # Header only (up to the first blank line): the same line inside a body is content. Line
+    # endings are unified first -- read_text() already folds CRLF, the expected text may not.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    head, sep, body = text.partition("\n\n")
+    head = "\n".join(line for line in head.split("\n") if not line.startswith(("created: ", "date: ")))
+    return head + sep + body
+
+
+def _expected_text(row: dict, item: dict) -> str:
+    """The exact file text this run would produce for `item`, mirroring entries.create_entry()/
+    write_proposal() header-for-header — using the id this row already carries (an explicit
+    `item["id"]` was already checked to match `row["id"]` by the caller; an auto-assigned one keeps
+    whatever id the earlier run happened to hand out). A placeholder `created:`/`date:` line is
+    included so _strip_volatile() drops it from both this text and the file's real one alike."""
+    if item["kind"] == PROPOSAL_KIND:
+        header = f"author: {item['author']}\ndate: PLACEHOLDER\ntarget: {item['target']}\n\n"
+        return header + f"# {item['title']}\n\n" + (item["body"] or "")
+    header_lines: list[str] = []
+    entry_id = row.get("id")
+    if entry_id:
+        header_lines.append(f"id: {entry_id}")
+    if item["formerly"] is not None:
+        header_lines.append(f"formerly: {item['formerly'].strip()}")
+    if item["kind"] == "question":
+        header_lines.append("for: all")
+        header_lines.append(f"status: {item['status'] or 'open'}")
+    elif item["kind"] == "inbox":
+        header_lines.append(f"for: {(item['for'] or 'all').strip()}")
+        header_lines.append(f"status: {item['status'] or 'open'}")
+    header_lines.append("created: PLACEHOLDER")
+    return "\n".join(header_lines) + "\n\n" + f"# {item['title'].strip()}\n\n" + (item["body"] or "")
+
+
 def _row_matches(root: Path, row: dict, item: dict) -> bool:
     """Whether `row` (an entries-map.json row from a previous, possibly stopped, run) already
     holds this exact item — B118 (12): a re-run of the same batch then skips it instead of
     refusing the whole batch as "already adopted". Compares id/formerly (and, for a proposal,
-    target/author) plus the file's own text, which must still end with this item's exact body — a
-    changed batch item at the same source/kind/title is a real conflict, not a retry, and stays
-    refused."""
+    target/author) as a cheap early exit, then the file's own text against _expected_text(),
+    volatile timestamp line stripped from both — the *whole* reconstructed text, not merely a
+    trailing-body check, so a shortened or emptied body, or a changed status/for, is a real
+    conflict, not a retry, and stays refused (B118, review finding 1: `text.endswith(body)` used to
+    let a truncated body and, worse, an emptied one (`return True` unconditionally) slip through as
+    "unchanged", and status/for were never compared at all)."""
     if item["id"] and (row.get("id") or None) != item["id"]:
         return False  # a kept id must match; an auto-assigned one (item["id"] is None) never asked for a
         # particular id in the first place, so whatever id the earlier run happened to hand out is fine
@@ -329,8 +387,7 @@ def _row_matches(root: Path, row: dict, item: dict) -> bool:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-    body = item["body"] or ""
-    return text.endswith(body) if body else True
+    return _strip_volatile(text) == _strip_volatile(_expected_text(row, item))
 
 
 def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str], dict[int, str]]:
@@ -363,11 +420,17 @@ def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str
     return problems, skip
 
 
-def plan_ids(root: Path, items: list[dict]) -> None:
+def plan_ids(root: Path, items: list[dict], reserved: tuple[str, ...] = ()) -> None:
     """Fill item["planned"] with the id each item will get: kept ids first (they are written
-    first), then the next free ones in batch order — "team" mode leaves those empty."""
+    first), then the next free ones in batch order — "team" mode leaves those empty.
+    `reserved`: this same batch's "reserved" ids (B118, review finding 2). The real run merges
+    them into entries.RESERVED_IDS_PATH before it lets entries.create_entry() compute each id
+    (see run()), so entries._next_id() already sees them on disk by then; --plan never calls that
+    merge, so without also treating them as used here, --plan would show a lower id (e.g. "would
+    create task [T3]") than the id the real run then actually hands out (T4) for a "reserved T3" in
+    the very same batch."""
     team = entries._mode(root) == "team"
-    kept = tuple(item["id"] for item in items if item["id"])
+    kept = tuple(item["id"] for item in items if item["id"]) + reserved
     extra: dict[str, list[str]] = {}
     for item in items:
         if item["id"]:
@@ -402,7 +465,7 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
     # neither rewritten nor allowed to consume a fresh id.
     reserved_idx = [i for i, item in enumerate(items) if item["kind"] == RESERVED_KIND]
     write_items = [item for i, item in enumerate(items) if i not in skip and i not in set(reserved_idx)]
-    plan_ids(root, write_items)
+    plan_ids(root, write_items, tuple(items[i]["id"] for i in reserved_idx))
     order = [i for i in write_items if i["id"]] + [i for i in write_items if not i["id"]]
     counts: dict[str, int] = {}
     for item in order:

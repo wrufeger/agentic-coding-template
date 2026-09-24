@@ -1643,7 +1643,10 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
         if added:
             sys.path.remove(hooks_path)
 
-    changed, refreshed = _refresh_bridges(root, write=not plan)
+    try:
+        changed, refreshed = _refresh_bridges(root, write=not plan)
+    except Exception as exc:  # same as the session hook: a failed refresh is reported, never aborts the update
+        return f"bridge refresh failed ({exc})", []
     if not refreshed and not changed:
         return "no generated bridges due for refresh", []
     verb = "would refresh" if plan else "refreshed"

@@ -407,7 +407,13 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
     the commit this project was initialized from -- so .act-lock.json's `template.commit` is set
     even when .act/VERSION's own "commit=" line is empty (a template built without that line filled
     in leaves the daily-update check silent until the first update, see the fix this replaces).
-    Empty if there is no commit to read (fresh/empty repository)."""
+    Empty if there is no commit to read (fresh/empty repository).
+
+    The dirty-tree check below runs first, before 'origin' is touched or the branch renamed --
+    read-only, so a refusal leaves the clone exactly as it was found (review B116/1: it used to run
+    after both of those, so a refusal still removed 'origin' -- the only place `template.source`
+    could still be read from -- and renamed the branch, with no way back except 'git stash' plus a
+    second run that then found 'origin' already gone)."""
     git_dir = root / ".git"
     if not git_dir.exists():
         if not plan:
@@ -419,6 +425,38 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
             _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
             return "no repository found -> ran 'git init' (branch 'main')", "", ""
         return "no repository found -> would run 'git init' (branch 'main')", "", ""
+
+    # Read-only look-ahead: is an orphan rebuild of 'main' coming up at all below? That's the only
+    # thing a dirty tracked file threatens (via the follow-up 'git rm -r --cached .'), and it only
+    # happens when there is a commit to rebuild from and HEAD is on a branch (not detached) -- same
+    # conditions the rest of this function checks further down, just answered here first so nothing
+    # has to be undone if the answer is "refuse".
+    has_commit = _git(["rev-parse", "--verify", "-q", "HEAD"], cwd=root, check=False).returncode == 0
+    current = _git(["branch", "--show-current"], cwd=root).stdout.strip()
+    if has_commit and current:
+        dirty = _git(["status", "--porcelain"], cwd=root, check=False).stdout
+        tracked_changes = [line for line in dirty.splitlines() if not line.startswith("??")]
+        if tracked_changes:
+            reason = (
+                f"{len(tracked_changes)} uncommitted change(s) to tracked file(s) -- the follow-up "
+                "'git rm -r --cached .' would fail on them"
+            )
+            advice = (
+                "git stash the changes (not commit: a commit made on this branch would become "
+                "'template.commit', a state the template itself never had), then run init.py again"
+            )
+            if plan:
+                return (
+                    "repository already present; would refuse to rebuild 'main' as an orphan "
+                    f"branch ({reason}); 'origin' and the current branch would be left unchanged; {advice}",
+                    "", "",
+                )
+            print(
+                f"init.py: clone has {reason} -- refusing to rebuild 'main' as an orphan branch; "
+                f"'origin' and the current branch are left unchanged; {advice}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     parts = ["repository already present"]
     template_source = ""
@@ -435,14 +473,12 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
     else:
         parts.append(f"'origin' ({origin_url}) points elsewhere -> left unchanged")
 
-    has_commit = _git(["rev-parse", "--verify", "-q", "HEAD"], cwd=root, check=False).returncode == 0
     if not has_commit:
         parts.append("no commits yet -> branch left as-is")
         return "; ".join(parts), template_source, ""
 
     template_commit = _git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
 
-    current = _git(["branch", "--show-current"], cwd=root).stdout.strip()
     if not current:
         parts.append("HEAD is detached -> branch left as-is")
         return "; ".join(parts), template_source, template_commit
@@ -455,29 +491,18 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
         else:
             parts.append(f"branch '{current}' -> would rename to 'template'")
     if not plan:
-        # Pre-check, not the 'git rm' below: a clone with uncommitted changes to tracked files is
-        # exactly what makes 'git rm -r --cached .' refuse ("staged content different from both").
-        # Catching it here means main() exits before 'checkout --orphan' has touched anything --
-        # the alternative (checking 'git rm's own result) would leave the branch already renamed
-        # to the orphan 'main' with the template's tree still staged, a harder state to explain.
-        dirty = _git(["status", "--porcelain"], cwd=root, check=False).stdout
-        tracked_changes = [line for line in dirty.splitlines() if not line.startswith("??")]
-        if tracked_changes:
-            print(
-                f"init.py: clone has {len(tracked_changes)} uncommitted change(s) to tracked file(s) "
-                "-- refusing to rebuild 'main' as an orphan branch, since the follow-up "
-                "'git rm -r --cached .' would fail on them and leave the whole template tree staged "
-                "for the first commit; commit or stash the changes, then run init.py again",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        # The dirty-tree check that used to sit here now runs at the top of the function, before
+        # 'origin' or the branch were touched at all -- see the docstring and review B116/1.
         _git(["checkout", "--orphan", "main"], cwd=root)
         rm_result = _git(["rm", "-r", "--cached", "."], cwd=root, check=False)
         if rm_result.returncode != 0:
             print(
                 "init.py: 'git rm -r --cached .' failed after creating the orphan branch -- "
-                f"{rm_result.stderr.strip()} -- resolve this in the repository, then run init.py "
-                "again (the orphan branch was created but nothing has been committed yet)",
+                f"{rm_result.stderr.strip()} -- the orphan branch was created but nothing has been "
+                "committed yet; 'git checkout -f template' clears the index again and abandons the "
+                "failed rebuild (the branch rename above already happened), then run init.py once more"
+                + (f"; 'origin' was already removed -- re-add it first (git remote add origin {origin_url}) "
+                   "so the template address lands in .act-lock.json" if template_source else ""),
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -1567,12 +1592,25 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
 _ADOPT_HINT_MARKERS = ("docs", "AGENTS.md", "CLAUDE.md", ".claude", "AI-CONFIG.md")
 
 
-def _existing_project_hint(root: Path) -> str | None:
+def _existing_project_hint(root: Path, source_act: Path) -> str | None:
+    """`source_act` is the template checkout this run is executing from (.act/) -- act-adopt is
+    never copied into a project (_SKILLS_NOT_COPIED), so the hint points at the skill file there,
+    not at a path that may not exist under `root`."""
+    # adopt.py --apply writes its own state file at this fixed path *before* it shells out to
+    # init.py --target (its ADOPT_DIR + "state.json") -- if it is already there, this run came from
+    # act-adopt itself, and telling act-adopt to see act-adopt would be circular noise (review
+    # B116/4). Not a flag or an env var: adopt.py has neither, and this marker it already writes
+    # says the same thing without touching adopt.py at all. The one edge case this misses -- a
+    # stale state.json left over from an earlier, unrelated adopt attempt -- just suppresses a hint
+    # that would have been wrong for a different reason anyway (the project *is* mid-adoption).
+    if (root / ".act-local" / "adopt" / "state.json").exists():
+        return None
     found = [name for name in _ADOPT_HINT_MARKERS if (root / name).exists()]
     if not found:
         return None
+    skill_path = source_act / "skills" / "act-adopt" / "SKILL.md"
     return (
-        f"  target already has {', '.join(found)} -- see act-adopt to fold an existing project's "
+        f"  target already has {', '.join(found)} -- see {skill_path} to fold an existing project's "
         "docs/AI-tool files in instead of starting from a bare skeleton"
     )
 
@@ -1627,7 +1665,7 @@ def main(argv: list[str]) -> int:
             if not plan:
                 root.mkdir(parents=True)
         else:
-            hint = _existing_project_hint(root)
+            hint = _existing_project_hint(root, source_act)
             if hint:
                 print(hint)
         act_dest = root / ".act"

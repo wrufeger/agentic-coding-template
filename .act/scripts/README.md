@@ -88,7 +88,7 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   docs/ai/work/archive/legacy/<old path> (sha256 before = after), then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
   template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
-  docs/project/coding_rules.md), moves there too unless it is a delete row
+  docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.

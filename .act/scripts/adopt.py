@@ -1067,7 +1067,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
 
 # A whole word, not negated (B118 #3): "no override"/"not an override" must not count as the
 # note meaning an override, only "override" (or "an override", "override of X", ...) does.
-OVERRIDE_RE = re.compile(r"(?<!no )(?<!not )(?<!not an )\boverride\b", re.IGNORECASE)
+OVERRIDE_RE = re.compile(r"(?<!no )(?<!not )(?<!not an )(?<!kein )(?<!keine )(?<!keinen )(?<!ohne )(?<!nicht als )\boverrides?\b", re.IGNORECASE)
 
 
 def _load_init():
