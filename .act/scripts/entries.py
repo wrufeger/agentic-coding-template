@@ -51,6 +51,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -112,6 +113,13 @@ _LEGACY_PATTERNS = (
     r"\|\s*({p})(\d+)([a-z]?)\s*\|",
     r"(?m)^id:\s*({p})(\d+)([a-z]?)\s*$",  # an old per-entry file's own header (_entry_files() skips legacy)
 )
+# B118 (6): an old id whose material the content step (adopt_entries.py) decided not to keep as a
+# live entry at all — a `delete` row `--finish` removes for good, never moved to LEGACY_ROOT either
+# — would otherwise be free to reuse. adopt_entries.py's "reserved" batch kind writes the id here
+# instead of a file; _next_id() reads it back the same way it reads legacy_ids(), so the next id
+# still lands above it. A plain {"ids": [...]} list, tolerant of a missing/unreadable file (then
+# nothing is reserved — the safer default is the same "not yet known about" as before this fix).
+RESERVED_IDS_PATH = Path(".act-local/adopt/reserved-ids.json")
 STATUS_VALUES = ("open", "answered")
 _HEADER_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")
 
@@ -278,6 +286,30 @@ def legacy_ids(root: Path) -> dict[str, set[str]]:
     return found
 
 
+def reserved_ids(root: Path) -> dict[str, set[str]]:
+    """prefix -> canonical ids from RESERVED_IDS_PATH (see its comment above) — read the same
+    tolerant way as legacy_ids(): a missing file, bad JSON, or a value that isn't a T/B/Q id is
+    skipped rather than raising, so a stray hand-edit never breaks id assignment."""
+    found: dict[str, set[str]] = {prefix: set() for prefix in KIND_PREFIX.values()}
+    text = _safe_read(root / RESERVED_IDS_PATH)
+    if text is None:
+        return found
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return found
+    ids = data.get("ids") if isinstance(data, dict) else data
+    if not isinstance(ids, list):
+        return found
+    for value in ids:
+        if not isinstance(value, str):
+            continue
+        match = _ID_ARG_RE.match(value.strip())
+        if match and match.group(1).upper() in found:
+            found[match.group(1).upper()].add(_canonical_id(value.strip()))
+    return found
+
+
 def used_ids(root: Path, kind: str) -> set[str]:
     """Every canonical id of `kind`'s prefix a "taken" check must refuse: entry-file headers
     anywhere _entry_files() reaches, archive included — never a legacy collection file's own old
@@ -296,12 +328,14 @@ def used_ids(root: Path, kind: str) -> set[str]:
 def _next_id(root: Path, kind: str, also_used: tuple = ()) -> str:
     """The next free id for `kind` — one past the highest number already used by that prefix,
     anywhere _entry_files() reaches (including the archive, so an id an accepted task already
-    carries is never reused) and in the legacy collection files (legacy_ids()), so an adopted
+    carries is never reused), in the legacy collection files (legacy_ids()), so an adopted
     project's next task comes after its highest old one even when that one only survives in
-    legacy. `also_used`: ids not on disk yet (a batch being planned). Leading zeros and
+    legacy, and in reserved_ids() (an old id `--finish` deletes for good instead, never moved to
+    legacy — B118 (6)). `also_used`: ids not on disk yet (a batch being planned). Leading zeros and
     sub-letters don't count ("T012" is 12, "Q55a" is 55, via _canonical_id/_id_number)."""
     prefix = KIND_PREFIX[kind]
-    numbers = [_id_number(i, prefix) for i in (*used_ids(root, kind), *legacy_ids(root)[prefix], *also_used)]
+    numbers = [_id_number(i, prefix) for i in
+              (*used_ids(root, kind), *legacy_ids(root)[prefix], *reserved_ids(root)[prefix], *also_used)]
     highest = max((n for n in numbers if n is not None), default=0)
     return f"{prefix}{highest + 1}"
 

@@ -23,26 +23,36 @@
 #   python .act/scripts/adopt_entries.py --target <project> --from <batch.json>          # write
 #
 # Batch format (UTF-8 JSON): a list, or {"entries": [...]}, of objects with the keys
-#   kind       task | backlog | question | inbox | proposal                       (required)
-#   title      one line, becomes the heading                                      (required)
+#   kind       task | backlog | question | inbox | proposal | reserved            (required)
+#   title      one line, becomes the heading (reserved: a short reason, kept for traceability only)
 #   source     {"path": "<old file>", "line": <n>} or "<old file>:<n>"            (required)
-#   id         keep this id: T/B/Q<n>, optional sub-letter (task/backlog/question only)
+#   id         keep this id: T/B/Q<n>, optional sub-letter (task/backlog/question, or required
+#              for "reserved" — the old id that never gets a live entry but must stay unused)
 #   formerly   the old id of another scheme, written as "formerly: <old id>"
 #   body       text below the heading, verbatim   | body_file  a UTF-8 file holding it instead
 #   status     open | answered (question/inbox)   | for        recipient identity (inbox only)
 #   target     rules | coding | checklists | config               (proposal only, required)
 #   author     free text for the header                (proposal only; default: see below)
 # Unknown keys are refused, so a misspelt field is never dropped silently. "target"/"author" on
-# anything but a proposal, or "id"/"status"/"for" on a proposal, are refused the same way — a
-# proposal never carries an id, and docs/ai/proposals/README.md's header has no room for them.
+# anything but a proposal, "id"/"status"/"for" on a proposal, or "formerly"/"status"/"for"/"target"/
+# "author"/"body"/"body_file" on a reserved item are refused the same way — a proposal never
+# carries an id, and docs/ai/proposals/README.md's header has no room for them; a reserved item
+# writes no file at all, only its id (B118, 6).
 # "ledger" is deliberately not a kind here: a journal/protocol source is always a `log` row in the
 # adoption table (action "legacy"), never reinterpreted as a new entry.
+# A source whose scan or table note marks it protected (adopt.py's own PROTECTED_MARKERS — "never
+# bridge"/"git-ignored/local": a local, git-ignored file adopt.py itself never moves or deletes) is
+# refused for every kind, on the script's own account — not merely because the skill text said so
+# (B118, 15 first part).
 #
 # Output format:
 #   A "refused:" block listing every problem (stderr, exit 1), or one line per entry
-#   ("would create" / "created" <kind> <id> <path> <- <source>), a per-kind count line, and the
-#   map path. Exit 0 on success and on --plan; 1 if refused or a write failed midway (the map then
-#   lists what was written); 2 on a usage error (target missing, no .act/, unreadable batch).
+#   ("would create" / "created" <kind> <id> <path> <- <source>, "reserved"/"already reserved
+#   <id>" for a reserved item, "skipped (already written, unchanged)" for an item a stopped
+#   earlier run already wrote byte-for-byte — B118, 12), a per-kind count line, and the map path.
+#   Exit 0 on success and on --plan; 1 if refused or a write failed midway (the map then lists what
+#   was written, and a re-run with the same batch picks up where it stopped instead of refusing the
+#   whole batch again); 2 on a usage error (target missing, no .act/, unreadable batch).
 
 from __future__ import annotations
 
@@ -66,11 +76,20 @@ FIELDS = {"kind", "title", "source", "id", "formerly", "body", "body_file", "sta
 PROPOSAL_KIND = "proposal"
 PROPOSAL_TARGETS = {"rules", "coding", "checklists", "config"}
 PROPOSAL_DIR = Path("docs/ai/proposals")
+RESERVED_KIND = "reserved"
+RESERVED_ONLY_FIELDS = {"formerly", "status", "for", "target", "author", "body", "body_file"}
 # The kinds this batch format accepts (usage comment above, "kind" row) — deliberately narrower
 # than entries.py's own KIND_DIR: "ledger" is a valid entries.py kind but never a valid one here
 # (header comment above, "\"ledger\" is deliberately not a kind here") — a journal/protocol source
 # is always a `log` row in the adoption table, never reinterpreted as an entry through this script.
-ADOPT_KINDS = {"task", "backlog", "question", "inbox", PROPOSAL_KIND}
+ADOPT_KINDS = {"task", "backlog", "question", "inbox", PROPOSAL_KIND, RESERVED_KIND}
+
+# B118 (15, first part): adopt.py's own scan/table notes and protection markers, read here
+# read-only (mirrors adopt.py's _note_of()/_is_protected(), never imports adopt.py itself — that
+# module has heavier side effects on import than this script needs).
+SCAN_PATH = Path(".act-local/adopt/scan.json")
+TABLE_PATH = Path(".act-local/adopt/table.json")
+PROTECTED_MARKERS = ("never bridge", "git-ignored/local")
 
 
 class Refused(Exception):
@@ -115,6 +134,41 @@ def _default_author(src: Optional[tuple[str, Optional[int]]]) -> str:
     return f"adopted (formerly {_label(src)})" if src else "adopted"
 
 
+def _protected_sources(root: Path) -> set[str]:
+    """Every scan.json path whose scan or table note marks it protected — same two markers, same
+    "scan note; table note" join as adopt.py's own _note_of()/_is_protected() (B118, 15 first
+    part). Missing or unreadable scan.json/table.json: nothing is known protected here (adopt.py
+    itself refuses --apply/--finish long before this script would ever run against such a
+    target)."""
+    scan = _read_json(root / SCAN_PATH) or {}
+    table = _read_json(root / TABLE_PATH) or {}
+    scan_notes = {r.get("path"): r.get("note") or "" for r in scan.get("rows", []) if isinstance(r, dict)}
+    table_notes = {r.get("path"): r.get("note") or "" for r in table.get("rows", []) if isinstance(r, dict)}
+    protected = set()
+    for path in set(scan_notes) | set(table_notes):
+        note = "; ".join(n for n in (scan_notes.get(path), table_notes.get(path)) if n)
+        if any(marker in note for marker in PROTECTED_MARKERS):
+            protected.add(path)
+    return protected
+
+
+def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
+    """Merge `ids` into entries.RESERVED_IDS_PATH (a plain {"ids": [...]} list, deduplicated) so
+    entries.py's _next_id() keeps landing above an old id the content step decided not to give a
+    live entry at all (B118, 6). Returns the ids that were actually new — an id already present is
+    silently idempotent, the same "retry is harmless" contract every other kind here has (B118,
+    12)."""
+    path = root / entries.RESERVED_IDS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_json(path)
+    current = set(data.get("ids", [])) if isinstance(data, dict) else set()
+    new = sorted(i for i in ids if i not in current)
+    if new:
+        path.write_text(json.dumps({"ids": sorted(current | set(ids))}, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8")
+    return new
+
+
 def write_proposal(root: Path, item: dict) -> Path:
     """Write one proposal file under docs/ai/proposals/ — not one of entries.py's own kinds (no
     id, no KIND_DIR entry): the skeleton's own docs/ai/proposals/README.md asks for a header
@@ -136,6 +190,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
         data = data.get("entries")
     if not isinstance(data, list):
         raise Refused([f"{batch_path}: expected a JSON list (or {{\"entries\": [...]}}) in UTF-8"])
+    protected = _protected_sources(root)
     problems: list[str] = []
     items: list[dict] = []
     seen_ids: dict[str, str] = {}
@@ -168,9 +223,28 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             problems.append(f"{where}: not encodable as UTF-8 (lone surrogate): {', '.join(unencodable)}")
             continue
         if kind not in ADOPT_KINDS:
-            problems.append(f"{where}: unknown kind {kind!r} (task | backlog | question | inbox | proposal)")
+            problems.append(f"{where}: unknown kind {kind!r} (task | backlog | question | inbox | proposal | reserved)")
             continue
-        if kind == PROPOSAL_KIND:
+        # B118 (15, first part): refused on the script's own account, for every kind — not left to
+        # the skill text alone.
+        if src is not None and src[0] in protected:
+            problems.append(f"{where}: source {src[0]!r} is protected (adopt.py's scan/table note: "
+                            "\"never bridge\" or \"git-ignored/local\") — its content is never adopted")
+        if kind == RESERVED_KIND:
+            if not entries._single_line(title):
+                problems.append(f"{where}: a one-line, non-empty title is required")
+            id_value = raw.get("id")
+            if not isinstance(id_value, str) or not id_value.strip():
+                problems.append(f"{where}: \"id\": required for a reserved item (the old id that must stay unused)")
+            else:
+                match = entries._ID_ARG_RE.match(id_value.strip())
+                if not match or match.group(1).upper() not in entries.KIND_PREFIX.values():
+                    problems.append(f"{where}: \"id\" {id_value!r}: must be T/B/Q<n> (optional sub-letter)")
+            forbidden = sorted(k for k in RESERVED_ONLY_FIELDS if raw.get(k) is not None)
+            if forbidden:
+                problems.append(f"{where}: {', '.join(forbidden)}: a reserved item only takes id/title/source "
+                                "(it writes no file)")
+        elif kind == PROPOSAL_KIND:
             if not entries._single_line(title):
                 problems.append(f"{where}: a one-line, non-empty title is required")
             for forbidden in ("id", "status", "for"):
@@ -233,23 +307,60 @@ def read_map(root: Path) -> dict:
     return data
 
 
-def check_target(root: Path, items: list[dict], mapping: dict) -> list[str]:
-    """Conflicts with what is already on disk: a kept id that is taken (an entry or the archive —
-    never a legacy collection file, see entries.used_ids()), an item adopted before."""
+def _row_matches(root: Path, row: dict, item: dict) -> bool:
+    """Whether `row` (an entries-map.json row from a previous, possibly stopped, run) already
+    holds this exact item — B118 (12): a re-run of the same batch then skips it instead of
+    refusing the whole batch as "already adopted". Compares id/formerly (and, for a proposal,
+    target/author) plus the file's own text, which must still end with this item's exact body — a
+    changed batch item at the same source/kind/title is a real conflict, not a retry, and stays
+    refused."""
+    if item["id"] and (row.get("id") or None) != item["id"]:
+        return False  # a kept id must match; an auto-assigned one (item["id"] is None) never asked for a
+        # particular id in the first place, so whatever id the earlier run happened to hand out is fine
+    if (row.get("formerly") or None) != (item["formerly"] or None):
+        return False
+    if item["kind"] == PROPOSAL_KIND:
+        if (row.get("proposal_target") or None) != (item["target"] or None):
+            return False
+        if (row.get("author") or None) != (item["author"] or None):
+            return False
+    path = root / str(row.get("file", ""))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    body = item["body"] or ""
+    return text.endswith(body) if body else True
+
+
+def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str], dict[int, str]]:
+    """(problems, skip): conflicts with what is already on disk — a kept id that is taken (an
+    entry or the archive — never a legacy collection file, see entries.used_ids()), an item
+    adopted before with different content — and, separately, `skip`: index -> file for an item a
+    previous run already wrote byte-for-byte (B118, 12; see _row_matches()). A reserved item (no
+    file, entries.RESERVED_IDS_PATH instead) is never "done" here — merging it is idempotent on
+    its own, checked in run()."""
     problems: list[str] = []
     used = {kind: entries.used_ids(root, kind) for kind in entries.KIND_PREFIX}
     done = {}
     for row in mapping["entries"]:
         if isinstance(row, dict) and (root / str(row.get("file", ""))).is_file():
-            done[(row.get("source_path"), row.get("source_line"), row.get("kind"), row.get("title"))] = row["file"]
-    for item in items:
+            done[(row.get("source_path"), row.get("source_line"), row.get("kind"), row.get("title"))] = row
+    skip: dict[int, str] = {}
+    for index, item in enumerate(items):
+        if item["kind"] == RESERVED_KIND:
+            continue
         src = item["source"]
+        row = done.get((src[0], src[1], item["kind"], item["title"]))
+        if row and _row_matches(root, row, item):
+            skip[index] = row["file"]
+            continue
         if item["id"] and item["id"] in used.get(item["kind"], set()):
             problems.append(f"{_label(src)}: id {item['id']} already taken (an entry or the archive)")
-        previous = done.get((src[0], src[1], item["kind"], item["title"]))
-        if previous:
-            problems.append(f"{_label(src)}: already adopted as {previous}")
-    return problems
+        if row:
+            problems.append(f"{_label(src)}: already adopted as {row['file']} with different content "
+                            "— resolve by hand")
+    return problems, skip
 
 
 def plan_ids(root: Path, items: list[dict]) -> None:
@@ -282,15 +393,33 @@ def write_map(root: Path, mapping: dict) -> None:
 def run(root: Path, batch_path: Path, plan: bool) -> int:
     items = load_batch(batch_path, root)
     mapping = read_map(root)
-    problems = check_target(root, items, mapping)
+    problems, skip = check_target(root, items, mapping)
     if problems:
         raise Refused(problems)
-    plan_ids(root, items)
-    order = [i for i in items if i["id"]] + [i for i in items if not i["id"]]
+    # B118 (6): a "reserved" item writes no file, just an id that must stay unused — merged into
+    # entries.RESERVED_IDS_PATH separately below, never through create_entry()/plan_ids().
+    # B118 (12): an item a stopped earlier run already wrote byte-for-byte (`skip`) is left alone —
+    # neither rewritten nor allowed to consume a fresh id.
+    reserved_idx = [i for i, item in enumerate(items) if item["kind"] == RESERVED_KIND]
+    write_items = [item for i, item in enumerate(items) if i not in skip and i not in set(reserved_idx)]
+    plan_ids(root, write_items)
+    order = [i for i in write_items if i["id"]] + [i for i in write_items if not i["id"]]
     counts: dict[str, int] = {}
     for item in order:
         counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+    if reserved_idx:
+        counts[RESERVED_KIND] = len(reserved_idx)
+    summary = ", ".join(f"{k}: {n}" for k, n in sorted(counts.items()))
+    if skip:
+        summary += (", " if summary else "") + f"{len(skip)} skipped (already written)"
+
     if plan:
+        for i in sorted(skip):
+            print(f"[adopt-entries] skip {items[i]['kind']} (already written, unchanged) {skip[i]} "
+                  f"<- {_label(items[i]['source'])}")
+        for i in reserved_idx:
+            item = items[i]
+            print(f"[adopt-entries] would reserve {item['id']} (never reused) <- {_label(item['source'])}")
         for item in order:
             tag = item["planned"] or "no id"
             if item["id"]:
@@ -298,11 +427,20 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
             if item["formerly"]:
                 tag += f", formerly {item['formerly'].strip()}"
             print(f"[adopt-entries] would create {item['kind']} [{tag}] {item['title']!r} <- {_label(item['source'])}")
-        print("[adopt-entries] " + ", ".join(f"{k}: {n}" for k, n in sorted(counts.items())) + " — plan only, nothing written")
+        print(f"[adopt-entries] {summary} — plan only, nothing written")
         return 0
 
+    for i in sorted(skip):
+        print(f"[adopt-entries] skipped {items[i]['kind']} (already written, unchanged) {skip[i]} "
+              f"<- {_label(items[i]['source'])}")
     stamp = datetime.now().isoformat(timespec="seconds")
     try:
+        if reserved_idx:
+            newly = merge_reserved_ids(root, [items[i]["id"] for i in reserved_idx])
+            for i in reserved_idx:
+                item = items[i]
+                tag = "reserved" if item["id"] in newly else "already reserved"
+                print(f"[adopt-entries] {tag} {item['id']} (never reused) <- {_label(item['source'])}")
         for item in order:
             if item["kind"] == PROPOSAL_KIND:
                 dest, written_id = write_proposal(root, item), None
@@ -318,11 +456,12 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
             print(f"[adopt-entries] created {item['kind']} [{written_id or 'no id'}] {rel} <- {_label(item['source'])}")
     except (OSError, UnicodeError) as exc:
         write_map(root, mapping)
-        print(f"adopt_entries.py: stopped: {exc} — {MAP_PATH.as_posix()} lists what was written; "
-              "fix the cause and run again with the entries not yet written", file=sys.stderr)
+        print(f"adopt_entries.py: stopped: {exc} — {MAP_PATH.as_posix()} lists what was written; fix the "
+              "cause and run again with the same batch — entries and reserved ids already written are "
+              "recognized and skipped, only the rest is written", file=sys.stderr)
         return 1
     write_map(root, mapping)
-    print("[adopt-entries] " + ", ".join(f"{k}: {n}" for k, n in sorted(counts.items())))
+    print(f"[adopt-entries] {summary}")
     print(f"[adopt-entries] map: {MAP_PATH.as_posix()}")
     return 0
 
