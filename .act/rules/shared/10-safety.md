@@ -28,6 +28,13 @@ Before a commit, check the diff against known secret patterns: key/token formats
 `.env` files in the diff, high-entropy assignments. A match stops the commit and gets reported —
 never silently stripped.
 
+## `R-safe-no-secret-log` — Never credentials or personal data in a log
+
+summary: logs and error output carry identifiers, never credentials or personal data
+
+No credentials, tokens, or personal data ever go into a log line or error output, in any
+language — log an identifier (an id, a masked value) instead of the value itself.
+
 ## `R-safe-no-shell-delete` — No recursive delete via shell
 
 summary: recursive deletes via language means, not a shell command

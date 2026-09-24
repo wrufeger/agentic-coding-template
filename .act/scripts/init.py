@@ -455,8 +455,32 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
         else:
             parts.append(f"branch '{current}' -> would rename to 'template'")
     if not plan:
+        # Pre-check, not the 'git rm' below: a clone with uncommitted changes to tracked files is
+        # exactly what makes 'git rm -r --cached .' refuse ("staged content different from both").
+        # Catching it here means main() exits before 'checkout --orphan' has touched anything --
+        # the alternative (checking 'git rm's own result) would leave the branch already renamed
+        # to the orphan 'main' with the template's tree still staged, a harder state to explain.
+        dirty = _git(["status", "--porcelain"], cwd=root, check=False).stdout
+        tracked_changes = [line for line in dirty.splitlines() if not line.startswith("??")]
+        if tracked_changes:
+            print(
+                f"init.py: clone has {len(tracked_changes)} uncommitted change(s) to tracked file(s) "
+                "-- refusing to rebuild 'main' as an orphan branch, since the follow-up "
+                "'git rm -r --cached .' would fail on them and leave the whole template tree staged "
+                "for the first commit; commit or stash the changes, then run init.py again",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         _git(["checkout", "--orphan", "main"], cwd=root)
-        _git(["rm", "-r", "--cached", "."], cwd=root, check=False)
+        rm_result = _git(["rm", "-r", "--cached", "."], cwd=root, check=False)
+        if rm_result.returncode != 0:
+            print(
+                "init.py: 'git rm -r --cached .' failed after creating the orphan branch -- "
+                f"{rm_result.stderr.strip()} -- resolve this in the repository, then run init.py "
+                "again (the orphan branch was created but nothing has been committed yet)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         parts.append("new orphan branch 'main' created")
     else:
         parts.append("would create new orphan branch 'main'")
@@ -795,12 +819,19 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
     return any(actlib.normalize_tool(t) in normalized_tools for t in tool_gate)
 
 
+_SKILLS_NOT_COPIED = {"act-adopt"}  # runs only from the template checkout itself (backlog B118#11)
+
+
 def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     """Every skill-copy destination -> its source file, for the given tools. Enumerates
     .act/skills/<name>/** dynamically — a subdirectory is a skill, a plain file right under
     .act/skills/ (such as README.md) is not — so adding a skill needs no change here. Each file
     gets one destination per SKILL_TARGET_DIRS entry whose tool gate passes, so a skill lands in
     every configured tool's own skills folder plus the tool-neutral .agents/ mirror.
+
+    `_SKILLS_NOT_COPIED` is the one exception: act-adopt only makes sense pointed at the template
+    checkout it adopts *into* a project, so a copy landing inside that same project would never
+    run correctly -- it stays template-only, never materialized as a project skill.
 
     A project override at docs/ai/local/skills/<name>/<file> wins over the template's own copy of
     that file (actlib.resolve(), same rule as everywhere else in this template) — the returned
@@ -819,6 +850,8 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     if not skills_dir.is_dir():
         return targets
     for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
+        if skill_dir.name in _SKILLS_NOT_COPIED:
+            continue
         for src in sorted(skill_dir.rglob("*")):
             if not src.is_file():
                 continue
@@ -1528,6 +1561,22 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
 # Inbox note for open points
 # ---------------------------------------------------------------------------
 
+# Markers of an existing project (its own docs, or another AI tool's files) that init.py itself
+# never merges -- act-adopt does that (backlog B118#9). Checked in --target mode only: in-place
+# runs happen inside the template checkout itself, which has none of these yet.
+_ADOPT_HINT_MARKERS = ("docs", "AGENTS.md", "CLAUDE.md", ".claude", "AI-CONFIG.md")
+
+
+def _existing_project_hint(root: Path) -> str | None:
+    found = [name for name in _ADOPT_HINT_MARKERS if (root / name).exists()]
+    if not found:
+        return None
+    return (
+        f"  target already has {', '.join(found)} -- see act-adopt to fold an existing project's "
+        "docs/AI-tool files in instead of starting from a bare skeleton"
+    )
+
+
 def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> Path | None:
     if not notes:
         return None
@@ -1577,6 +1626,10 @@ def main(argv: list[str]) -> int:
             print("  creating target directory" + (" (plan)" if plan else ""))
             if not plan:
                 root.mkdir(parents=True)
+        else:
+            hint = _existing_project_hint(root)
+            if hint:
+                print(hint)
         act_dest = root / ".act"
         if act_dest.resolve() != source_act.resolve():
             if act_dest.exists():

@@ -18,8 +18,8 @@ summary: explicit nullability, no raw types, correct exception handling, logging
 - Manage resources exclusively through try-with-resources.
 - Use `java.util.concurrent` (executors, `CompletableFuture`, concurrent collections) instead of manual
   `synchronized`/`wait`/`notify`.
-- Log through SLF4J, parametrized (`log.info("user {} failed", id)`, never string concatenation); never
-  log credentials or personal data.
+- Log through SLF4J, parametrized (`log.info("user {} failed", id)`, never string concatenation) —
+  see `R-safe-no-secret-log` for what never goes into a log line at all.
 - Use `var` only where the type is obvious from the right-hand side, otherwise spell out the type.
 - Return `Optional<T>` only as a method's return type for "possibly no result" — never as a field, a
   parameter, or inside a collection.

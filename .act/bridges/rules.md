@@ -18,6 +18,7 @@ template text of its rule, checked or not.
   - [x] `R-safe-approval`
   - [x] `R-safe-no-secret-cli`
   - [x] `R-safe-no-secret-diff`
+  - [x] `R-safe-no-secret-log`
   - [x] `R-safe-no-shell-delete`
   - [x] `R-safe-block`
   - [x] `R-safe-foreign-text`
