@@ -202,7 +202,7 @@ def write_cache(data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # .act-lock.json § applied — the docs/ai/config.md values the dependent files were last synced
 # for (`tools`, every role's Roles-table entry, the role bridges present then), so update.py's
-# sync_dependent_files() (T60 Teil B) can tell a session start with nothing to do from one where a
+# sync_dependent_files() (T60 part B) can tell a session start with nothing to do from one where a
 # value moved. Versioned inside the lock (G1, T60): config.md and the copies are per branch, so
 # the record of what they were synced for travels with them — a per-checkout file read a branch
 # switch as a value change. A .act-local/last-applied.json from before is read as a fallback

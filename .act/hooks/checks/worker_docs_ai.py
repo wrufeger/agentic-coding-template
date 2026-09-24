@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Check — a worker writing under docs/ai/ (PreToolUse, R-role-worker). AGENTS.md §
-#          Rollen / CLAUDE.md § 1: only the orchestrator writes docs/ai/ — a worker returns its
+# Purpose: Check — a worker writing under docs/ai/ (PreToolUse, R-role-worker):
+#          only the orchestrator writes docs/ai/ — a worker returns its
 #          result and lets the orchestrator record it. No exception for docs/ai/local/: that
 #          directory holds the *project's* override of a template file (ADR-5), still something
 #          only the orchestrator decides to write, not a worker's scratch space (a worker's

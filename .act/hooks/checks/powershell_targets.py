@@ -23,7 +23,7 @@
 #          way it already does for a Bash target whose base came back None. Returns None instead of
 #          a (possibly empty) set when the command as a whole is not safely evaluable this way
 #          (Invoke-Expression/iex, an unterminated quote or here-string) — checks/write_guard.py
-#          (check 1, "im Zweifel ablehnen") then denies if _PROTECTED_PATH_RE matches anywhere in
+#          (check 1, "when in doubt, deny") then denies if _PROTECTED_PATH_RE matches anywhere in
 #          the raw command text; checks/write_scope.py (check 1c) falls back to
 #          _ps_raw_redirect_targets, the same operator-based fallback Bash's own scanner uses.
 #
@@ -715,7 +715,7 @@ def _ps_raw_redirect_targets(command: str) -> set[str]:
     unterminated quote/here-string, Invoke-Expression/iex): every word right after a redirect-style
     operator anywhere in the raw text, quotes stripped off its ends — the PowerShell twin of
     shell_targets._raw_redirect_targets, over-inclusive by design. Used by checks/write_scope.py's
-    own None fallback (check 1c stays "analog zum Bash-Rückfall" — checks/write_guard.py's check 1
+    own None fallback (check 1c stays "the same way as the Bash fallback" — checks/write_guard.py's check 1
     instead searches the whole raw command text directly, see this module's docstring)."""
     return {match.group(1).strip("'\"") for match in _PS_RAW_REDIRECT_RE.finditer(command)}
 
@@ -737,6 +737,6 @@ def _powershell_write_targets(
             return None
         return _scan_ps_tokens(tokens, base_cwd, git_writes, broad, depth)
     except Exception:
-        # A bug in this scanner must never turn into a silent allow (dispatch.py's docstring, "im
-        # Zweifel ablehnen"): None makes the caller fall back to its own raw-text search.
+        # A bug in this scanner must never turn into a silent allow (dispatch.py's docstring,
+        # "when in doubt, deny"): None makes the caller fall back to its own raw-text search.
         return None

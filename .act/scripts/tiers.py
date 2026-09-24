@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/,
-#          see docs/project/concepts/ai-dev-app/13-model-tiers.md § "Entscheidungen" in the
-#          template-pflege repo -- into a concrete model alias/effort pair for one tool. Reads
-#          .act/tiers.json (the template's tier -> model table, § 3) and docs/ai/config.md's
+# Purpose: Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ --
+#          into a concrete model alias/effort pair for one tool. Reads
+#          .act/tiers.json (the template's tier -> model table) and docs/ai/config.md's
 #          "## Roles" table (a project's own override; a filled-in model there wins over the tier
-#          lookup entirely, § 5). Used by init.py/update.py when materializing/refreshing
-#          .claude/agents/<name>.md (and its "-high" variant, § "Stufe je Auftrag zur Laufzeit",
+#          lookup entirely). Used by init.py/update.py when materializing/refreshing
+#          .claude/agents/<name>.md (and its "-high" variant,
 #          `Q71`) and by .act/hooks/dispatch.py's session-start-refresh, which re-derives only the
 #          `model`/`effort` frontmatter fields of an already-existing bridge -- everything else in
 #          that file, including a project's own text below the frontmatter, is left untouched.
@@ -132,7 +131,7 @@ def resolve_tier(
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """(model_alias, effort_or_None, problem_or_None) for one (tier, reasoning) pair under `tool`.
     `problem` distinguishes three *reportable* reasons the pair could not be resolved from the one
-    *silent, documented* reason (13-model-tiers.md § 2/`Q29`, see .act/tiers.json's own
+    *silent, documented* reason (`Q29`, see .act/tiers.json's own
     "_comment"): a tool present in tiers.json with an empty "tiers" table has deliberately no
     researched mapping yet, so (None, None, None) there is normal, not a bug -- callers leave the
     role's existing model/effort untouched without telling anyone.
@@ -231,11 +230,11 @@ def effective_model_effort(
     tiers_data: dict, overrides: dict[str, dict[str, str]], tool: str = "claude-code",
     bump_variant: bool = False,
 ) -> tuple[Optional[str], Optional[str], Optional[str], str, str]:
-    """Resolve one role's `model`/`effort`/`problem`, override-first (13-model-tiers.md § 5): a
+    """Resolve one role's `model`/`effort`/`problem`, override-first (docs/ai/config.md § Roles): a
     fixed `model` in config.md's Roles table wins outright over the tier lookup (and so is always
     fully resolved -- `problem` is always None on that path), but its `reasoning` still falls back
-    to the template's own value when the override leaves that cell empty -- "reines Modell
-    fixieren, Denkstufe unverändert lassen" is a valid override on its own. Otherwise
+    to the template's own value when the override leaves that cell empty -- "fix the model alone,
+    leave the reasoning tier unchanged" is a valid override on its own. Otherwise
     `tier`/`reasoning` (the override's value if given, else the template's) go through
     resolve_tier() -- see there for what `problem` means. `bump_variant=True` additionally bumps
     the resolved reasoning one step further, for a role's "-high" variant file (`root` is accepted
@@ -360,8 +359,7 @@ def refresh_project_bridge_frontmatter(
     """Re-derive the `model`/`effort` frontmatter of every already-materialized
     .claude/agents/*.md file -- a template role's base bridge and its "-high" variant alike, and a
     project's own role as long as it is named in docs/ai/config.md's "## Roles" table and has its
-    own bridge file (13-model-tiers.md § 5: "Eigene Rollen des Projekts ... bekommen ebenfalls ihre
-    Felder, wenn eine Brücke existiert") -- from the current .act/tiers.json and that Roles table.
+    own bridge file, per docs/ai/config.md § Roles -- from the current .act/tiers.json and that Roles table.
     Nothing else in any file is touched: not the rest of the frontmatter, never the body (see
     _apply_resolved_fields() above). A file this function cannot resolve (no template role and no
     Roles-table entry for it, or a tool with a deliberately unpopulated tiers.json entry -- see
@@ -428,7 +426,7 @@ def refresh_project_bridge_frontmatter(
                       f"({exc.__class__.__name__}); role '{base_role}' left as it is")
                 continue
             if "tier" not in tmpl_fields:
-                continue  # pre-13-model-tiers (or hand-authored) bridge with a fixed model already
+                continue  # older (or hand-authored) bridge with a fixed model already
             template_tier = tmpl_fields.get("tier", "")
             template_reasoning = tmpl_fields.get("reasoning", "")
         elif base_role in overrides:

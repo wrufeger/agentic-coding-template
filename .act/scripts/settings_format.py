@@ -5,9 +5,7 @@
 #          snapshot of a project's own rule deviations (and, in later stages, agents/skills/
 #          scripts/checklists), used by `act-export-settings`/`act-load-settings` and by
 #          `act-export-settings --profile` (writes the same shape to the Owner's profile instead
-#          of a file). See docs/project/concepts/ai-dev-app/08-new-project.md § "Settings-Datei:
-#          Export und Import" and 05-update-and-overrides.md § "Gegenseite act-load-settings" /
-#          "## setup-required" in the template-pflege repo for the full spec this implements.
+#          of a file). The full format is documented in the sections below.
 #
 #          This module has no CLI of its own — it is imported by settings_export.py (this build
 #          stage) and, later, by a settings_import.py built on the same parse()/serialize() pair.
@@ -17,10 +15,10 @@
 #            - parse(text) -> SettingsFile and serialize(settings) -> text, a lossless round trip
 #              for anything this module itself produces (parse(serialize(x)) == x);
 #            - scan(text)/redact(settings), the "review before sharing" secrets check run before
-#              a settings file is written (spec § "Prüfung vor dem Schreiben", `Q61d`).
+#              a settings file is written (`Q61d`).
 #
 #          Areas are logical categories, not tool paths (`rules`, `coding`, `agents`, `skills`,
-#          `scripts`, `checklists`, `topics` — see § "Format — Aufbau", `Q61a`). Two of them
+#          `scripts`, `checklists`, `topics` — `Q61a`). Two of them
 #          (`rules`, `coding`) are what this build stage's exporter fills in; the parser reads
 #          every area structurally the same way ("[symbol] id — inline" + an optional indented or
 #          fenced body), so an area this build does not yet *write* (agents, skills, ...) still
@@ -28,7 +26,7 @@
 #          not contain a single recognizable entry line is never guessed at — it is kept verbatim
 #          in `SettingsArea.raw` instead of being dropped, and `SettingsFile.unmodeled_areas()`
 #          reports which ones that happened for, so a caller can log/print it instead of a silent
-#          loss ("unbekannte Bereiche nicht verschlucken, sondern melden").
+#          loss ("don't swallow unmodeled areas, report them").
 #
 # Usage: not run directly — imported, e.g. `import settings_format` from a script in the same
 #        directory (.act/scripts/, which adds itself to sys.path automatically).

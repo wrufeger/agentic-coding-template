@@ -3,8 +3,7 @@
 #
 # Purpose: `act-load-settings` — import a portable settings file (or several) into this project:
 #          the counterpart to settings_export.py. Runs the same three-way check the reconcile skill
-#          runs after a template update (docs/project/concepts/ai-dev-app/05-update-and-overrides.md
-#          § "Gegenseite act-load-settings" in the template-pflege repo), except the "other side" is
+#          runs after a template update, except the "other side" is
 #          a settings file instead of a new template state: identical -> nothing twice,
 #          new -> adopt, contradicting -> inbox (or a config-key resolution).
 #
@@ -21,9 +20,8 @@
 #          Built on settings_format.py (parse/serialize, reused read-only), rules.py (project file
 #          parser + the same [=]/[~]/[-]/[+] semantics), doctor.py's dead/retired-id corpus
 #          (`doctor._build_corpus`, read-only reuse — nothing here writes through doctor.py), and
-#          update.py's branch hint (`update._maybe_print_branch_hint`). See docs/project/concepts/
-#          ai-dev-app/05-update-and-overrides.md and 08-new-project.md § "Settings-Datei: Export und
-#          Import" in the template-pflege repo for the full spec.
+#          update.py's branch hint (`update._maybe_print_branch_hint`). See the settings file
+#          spec ("Export and import") for the full detail.
 #
 # Usage:
 #   python .act/scripts/settings_load.py plan [<file...>] [--candidates-out PATH] [--json]
@@ -535,7 +533,7 @@ def _corpus(root: Path, area_name: str) -> "doctor.TemplateCorpus":
     return doctor._build_corpus(root, area_name)
 
 
-# The settings file's area names ("rules", "coding" — logical categories, spec § "Format — Aufbau")
+# The settings file's area names ("rules", "coding" — logical categories, spec § "Format — layout")
 # do not match rules.py's area keys ("core", "coding" — its two project-file layouts). Translated
 # at the one seam between the two vocabularies; everywhere else (Finding.area, candidate keys,
 # `settings-conflict-<area>`) keeps the settings-file name, since that is what a settings.md/the
@@ -679,7 +677,7 @@ def _template_status(root: Path, area_name: str, gid: str, header: sf.SettingsHe
     current_version = (lock.get("template") or {}).get("version", "")
     if header.version and current_version and header.version != current_version:
         # Best-effort proxy: a target project shares no git history with the settings file's
-        # source (ADR-5 — "kein Merge, keine gemeinsame Historie"), so the old rule text at the
+        # source (ADR-5 — "no merge, no shared history"), so the old rule text at the
         # export's commit cannot be diffed against here. A version mismatch is reported instead of
         # silently trusting a rule the current template may have changed since.
         return "changed-since-export"
@@ -1168,8 +1166,8 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
 # A name colliding with a *template* unit is never written at all: docs/ai/local/agents/<name>.md
 # and docs/ai/local/skills/<name>/ both already mean "override this template file/skill" elsewhere
 # in this template (actlib.resolve(), init.py's copy_targets()) — silently placing an imported
-# own agent/skill there under a template name would start overriding it, exactly what the spec's
-# "nie still überschreiben" forbids (05-update-and-overrides.md § "Mitgegebene Dateien").
+# own agent/skill there under a template name would start overriding it, exactly what
+# "never silently overwrite" forbids.
 # ---------------------------------------------------------------------------
 
 _AGENT_RISKY_KEYS = ("permissionMode", "hooks", "mcpServers")
@@ -1535,7 +1533,7 @@ def open_items_by_file(result: Analysis) -> dict[str, list[OpenItem]]:
 
 def applied_count_by_file(result: Analysis) -> dict[str, int]:
     """How many rule/coding entries and bundled files were actually applied/written, per source
-    file — the "was bereits übernommen wurde (Anzahl)" half of the end-of-apply summary."""
+    file — the "how many were already applied" half of the end-of-apply summary."""
     counts: dict[str, int] = {}
     for res in result.resolutions:
         if res.action == "apply":

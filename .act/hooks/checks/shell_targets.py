@@ -93,8 +93,8 @@ _BACKTICK_SPAN_RE = re.compile(r"`([^`]*)`")
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\S*)")
 _MAX_SCAN_DEPTH = 4
 
-# A Git-Bash-style absolute path ("/d/dev/...", the MSYS form a worker's own Bash commands often
-# use on Windows) rewritten to the native drive form ("D:/dev/...") so Path() and glob matching
+# A Git-Bash-style absolute path ("/c/work/...", the MSYS form a worker's own Bash commands often
+# use on Windows) rewritten to the native drive form ("C:/work/...") so Path() and glob matching
 # treat it the same as a Windows-native absolute path. Only ever rewritten on win32 — elsewhere a
 # leading "/x/..." is an ordinary absolute path and must be left alone.
 _GITBASH_DRIVE_RE = re.compile(r"^[\\/]([A-Za-z])[\\/](.*)$")
@@ -624,8 +624,8 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
     try:
         pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
     except Exception:
-        # A bug in the scanner must never turn into a silent allow (dispatch.py's docstring, "im
-        # Zweifel ablehnen"): fall back to the coarse raw-text search with the base unknown.
+        # A bug in the scanner must never turn into a silent allow (dispatch.py's docstring,
+        # "when in doubt, deny"): fall back to the coarse raw-text search with the base unknown.
         pairs = [(target, None) for target in _raw_redirect_targets(command)]
     result: list[_Target] = []
     for pair in pairs:

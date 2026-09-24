@@ -2,9 +2,8 @@
 
 One file per role: `.act/agents/<name>.md`, the role's rules, without frontmatter — everything a
 worker in this role must follow, written tool-neutral. `.act/bridges/agents/<name>.md` is the
-matching bridge: YAML frontmatter (`name`, `description`, `tier`/`reasoning` — the neutral scale
-from `docs/project/concepts/ai-dev-app/13-model-tiers.md` § 1 in the template-pflege repo, never a
-real model name — `tools`), followed by the line "Apply the rules from `.act/agents/<name>.md`
+matching bridge: YAML frontmatter (`name`, `description`, `tier`/`reasoning` — the neutral scale,
+never a real model name — `tools`), followed by the line "Apply the rules from `.act/agents/<name>.md`
 before the ones below.", followed by room for the project's own additions to the role. A role with
 no bridge yet has nothing written into the project.
 
@@ -29,8 +28,7 @@ calls this way; the orchestrator's own calls carry none) is refused.
 **Once created, only `model`/`effort` are ever touched again.** Unlike a skill copy, an existing
 role bridge's body — everything below the frontmatter, including a project's own additions — is
 never replaced, not even when it still matches what the template ships
-(`docs/project/concepts/ai-dev-app/02-directory-plan.md` in the template-pflege repo: "einmal
-erzeugt, danach der Nutzer"). `.act/scripts/init.py` creates a role's bridge (and its `-high`
+("once created, the user owns it from then on"). `.act/scripts/init.py` creates a role's bridge (and its `-high`
 variant, where one applies) once; `.act/scripts/update.py` only creates bridges for roles new since
 the last update, or a missing `-high` variant for an already-known role. What *does* change on
 every `update` and at every session start (`dispatch.py`'s `session-start-refresh`) is the

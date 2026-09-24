@@ -11,28 +11,28 @@
 # second one in a row. "Consecutive" is per-session (state keyed by session_id under
 # .act-local/status-poll/) and resets the instant the orchestrator does anything else — including
 # a genuinely different status-query tool right after another counts as staying "in a row"; only a
-# *non*-poll tool call resets the streak, per the assignment's own wording ("Jede andere
-# Werkzeugnutzung des Orchestrators setzt den Zähler zurück").
+# *non*-poll tool call resets the streak, per the assignment's own wording ("any other tool use
+# by the orchestrator resets the counter").
 #
 # Which tool names count as "a status query" — established against real evidence before writing
-# any detection logic (per the assignment: "Belege das zuerst an echten Tool-Namen"), against this
-# maintenance project's own transcripts (C:/Users/wolfg/.claude/projects/
-# D--dev-rufeger-template-pflege/*.jsonl, grepped for tool_use blocks' "name" field, 2026-09-23):
+# any detection logic (per the assignment: "back this first with real tool names"), against
+# the template maintainer's own Claude Code session transcripts,
+# grepped for tool_use blocks' "name" field, 2026-09-23):
 #
 #   ReadNotifications   68 calls, every single one with input {} — a pure "anything waiting?"
 #                       check with no side effect, exactly the "poll" shape this rule targets.
 #   ListAgents          10 calls, likewise always {} — "who is running, since when".
 #   SendMessage         25 calls, but every payload sampled carried a substantial, distinct
-#                       "message" body to an *external* project's inbox (e.g. "Freigabe:
-#                       Template-Update kann laufen"), never a bare same-session status ping to a
+#                       "message" body to an *external* project's inbox (e.g. "approval: template
+#                       update can proceed"), never a bare same-session status ping to a
 #                       worker this session itself started. Deliberately left OUT of the poll set:
-#                       the assignment names it as a candidate ("SendMessage an einen Agenten mit
-#                       Frage nach dem Stand"), but nothing short of reading the message text can
+#                       the assignment names it as a candidate ("SendMessage to an agent with a
+#                       question about status"), but nothing short of reading the message text can
 #                       tell a status ping from real cross-agent communication, and the "message"
 #                       field's *content* is exactly the kind of thing R-code-encoding-adjacent
 #                       checks in this template avoid classifying on (heuristic text matching is
 #                       what produced the false positives below) — conservative, per the
-#                       assignment ("lieber zu wenig als echte Arbeit blockieren").
+#                       assignment ("better too little than blocking real work").
 #   TaskOutput          0 calls — never seen as an actual tool_use name anywhere in this session's
 #                       full history (only as prose mentioning the name). Included in the poll set
 #                       anyway, defensively: an unused name can never match a real tool_name, so
@@ -222,7 +222,7 @@ def observe(event: str, payload: dict) -> None:
     "something else happened": it is not the orchestrator doing real work in between two polls,
     just the harness relaying a message the orchestrator did not ask for and may not even act on
     yet — resetting the streak on it would let a poll/poll/(worker message)/poll sequence dodge
-    the second-in-a-row denial for free. Only a prompt Wolfgang actually typed resets it early;
+    the second-in-a-row denial for free. Only a prompt the user actually typed resets it early;
     everything else still ages out via _STREAK_TTL_SECONDS on its own."""
     if event != "UserPromptSubmit" or _is_harness_message(payload.get("prompt")):
         return

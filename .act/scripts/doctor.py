@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/
-#          05-update-and-overrides.md § "Abgleich-Skill" in the template-pflege repo) — the cheap
+# Purpose: Mechanical half of the reconcile skill `act-doctor` — the cheap
 #          checks that run after every update and on demand, without a model in the loop. Finds:
 #            1. everything rules.py --validate already reports, for both areas (core, coding);
 #            2. dead identifiers: an override/off of an R-/CR- ID that no longer exists in the
@@ -359,8 +358,7 @@ def check_act_refs(root: Path) -> list[Finding]:
 
 def check_bridge_files(root: Path) -> list[Finding]:
     """Role/skill bridges under .claude/agents/ and .claude/skills/, once they exist, mention the
-    .act/ file they wrap in prose (see docs/project/concepts/ai-dev-app/02-directory-plan.md in
-    the template-pflege repo). Neither directory exists yet at this build stage — the check is a
+    .act/ file they wrap in prose. Neither directory exists yet at this build stage — the check is a
     no-op until they do, rather than assuming a fixed layout."""
     findings = []
     for sub in ("agents", "skills"):
@@ -437,7 +435,7 @@ def check_duplicate_units(root: Path) -> list[Finding]:
     .claude/skills/x/SKILL.md, both hand-made with no .act/ template and no copy/bridge/override
     behind either, is two — that one is reported. Grouping by bare filename alone would have
     falsely flagged two unrelated, legitimately hand-made skills as duplicates of each other, since
-    every skill's file is named SKILL.md (belegt am 2026-09-22, review of T24)."""
+    every skill's file is named SKILL.md (confirmed 2026-09-22, review of T24)."""
     tools = _configured_tools(actlib.read_config())
     lock = actlib.read_lock()
     copy_dests = set(init.copy_targets(root, tools).keys()) | set(lock.get("copies", {}).keys())

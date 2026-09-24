@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Batch writer for the content step of an adoption (skill act-adopt, docs/project/concepts/
-#          ai-dev-app/11-build-decisions.md § "Stufe 6" in the template-pflege repo). The model reads
+# Purpose: Batch writer for the content step of an adoption (skill `act-adopt`). The model reads
 #          the old material in whatever format it has and writes one JSON list of entries; this
 #          script only checks that list and writes one entry file per item — task/backlog/question/
 #          inbox through entries.py's own validate_entry()/create_entry() (the same files

@@ -11,7 +11,7 @@ implementation, `elevated` for review/security judgment, `expert` only for an es
 failed attempts on the same task — an estimate for scope or duration, and a cap. Name the cap as its
 own `Cap: <n>`, checked mechanically, not from memory (`worker-cap`, `docs/ai/config.md` § Checks).
 `Cap:` is recognized either on its own line or right after a `·`/`|`/`;`/`,` further into a line, so
-a compact header works too, e.g. `Tier: standard · Schätzung: 45–65 tool calls, ~30 minutes · Cap:
+a compact header works too, e.g. `Tier: standard · Estimate: 45–65 tool calls, ~30 minutes · Cap:
 95.` Leaving the line out falls back to the tier's own default: `light` 10, `standard` 40, `elevated`
 60, `high`/`expert` 80; with neither a `Cap:` nor a `Tier:` line, `standard`. The worker gets one
 note on reaching the cap ("cap reached — deliver your current state now") and is refused from 1.5×

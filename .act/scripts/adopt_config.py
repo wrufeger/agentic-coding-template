@@ -2,12 +2,14 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Carry the settings of an older German AI-CONFIG.md (the predecessor template's control
-#          file) over into the project's docs/ai/config.md during an adoption (skill act-adopt,
-#          docs/project/concepts/ai-dev-app/11-build-decisions.md § "Stufe 6" in the template-pflege
-#          repo). Only keys with a real counterpart are written, and only where config.md still
+#          file) over into the project's docs/ai/config.md during an adoption (skill `act-adopt`).
+#          Only keys with a real counterpart are written, and only where config.md still
 #          holds what init wrote without being told (the skeleton default, see DEFAULTS) — a value
 #          the project already set is never overwritten, only reported next to the old one. German
-#          values are translated (aus -> off, wöchentlich -> weekly, ...). Every other key, every
+#          values are translated (aus -> off, wöchentlich -> weekly, ...) — see VALUE_MAP: the
+#          German words are the predecessor template's own literal config values, read verbatim
+#          from an old project's AI-CONFIG.md, so they must stay German to be recognized.
+#          Every other key, every
 #          value without a counterpart and every free-text passage is listed in a report — nothing
 #          is dropped silently. An old .claude/template.json "values" block fills in a mapped key
 #          the AI-CONFIG.md lacks (or stands in for a missing AI-CONFIG.md). Stdlib only.

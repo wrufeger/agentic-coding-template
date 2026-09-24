@@ -90,12 +90,12 @@ def _is_worker(payload: dict) -> bool:
     return bool(payload.get("agent_id"))
 
 
-# UserPromptSubmit fires the same way for text Wolfgang actually typed and for several things the
+# UserPromptSubmit fires the same way for text the user actually typed and for several things the
 # harness itself feeds into the conversation — a worker's SubagentHandback relayed to its caller
 # ("<agent-message from=\"...\">...</agent-message>"), a finished-task notice
 # ("<task-notification>...</task-notification>"), a message from another session, or a system
-# reminder block — confirmed against real payloads, T44 live probe (2026-09-23,
-# D:/dev/rufeger/act-live-probe3/.act-local/probe/payloads.jsonl): both agent-message and
+# reminder block — confirmed against real payloads, T44 live probe (2026-09-23, a live probe
+# capture's payloads.jsonl): both agent-message and
 # task-notification observed verbatim, opening the prompt right after leading whitespace, no other
 # text before the tag. Neither is something a user "typed" (usage counting, the [user][prompt] log
 # line, and a reminder/tip nudge all assume that), so every consumer of payload.prompt on
@@ -109,7 +109,7 @@ _HARNESS_MESSAGE_PREFIXES = (
 
 def _is_harness_message(prompt: object) -> bool:
     """True when `prompt` (UserPromptSubmit's payload["prompt"]) is harness-fed rather than typed
-    by Wolfgang — see the prefixes above. A non-string prompt (missing/malformed payload) is never
+    by the user — see the prefixes above. A non-string prompt (missing/malformed payload) is never
     a harness message either, just not a match."""
     return isinstance(prompt, str) and prompt.lstrip().startswith(_HARNESS_MESSAGE_PREFIXES)
 

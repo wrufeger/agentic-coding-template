@@ -143,8 +143,7 @@ def read_ledger_entries(root: Path, limit: int = LEDGER_LIMIT) -> Optional[list[
     the file has none.
 
     Fallback: if docs/ai/work/ledger/ does not exist but docs/ai/work/ledger.md does, its first
-    `limit` non-blank lines are taken verbatim (the single-file ledger already lists newest-first,
-    per AGENTS.md § Grundregeln).
+    `limit` non-blank lines are taken verbatim (the single-file ledger already lists newest-first).
     """
     ledger_dir = root / LEDGER_DIR
     if ledger_dir.is_dir():

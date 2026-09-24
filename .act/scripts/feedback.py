@@ -256,7 +256,7 @@ def _template_repo(lock: dict) -> Optional[str]:
 def _endpoint() -> str:
     """Target address, ALWAYS with a trailing slash — without it the real endpoint answers a POST
     with a 301 to the slash variant, and urllib turns a redirected POST into a GET (the payload
-    would vanish, the caller would only see an uninformative "405"; belegt 2026-09-15 against the
+    would vanish, the caller would only see an uninformative "405"; confirmed 2026-09-15 against the
     real endpoint in the template's earlier feedback.py)."""
     raw = (os.environ.get(ENDPOINT_ENV) or FEEDBACK_ENDPOINT).rstrip("/")
     return raw + "/"
@@ -497,7 +497,7 @@ def _build_payload(root: Path, config: dict[str, str]) -> dict:
         "origin": ORIGIN,
         "project_id": state.get("project_id"),
         "date": time.strftime("%Y-%m-%d"),
-        # Full hash, not shortened: the template-pflege side has the full history and can derive
+        # Full hash, not shortened: the receiving side has the full history and can derive
         # date/distance from it itself; a shortened hash would be ambiguous across many projects.
         "template_base": template.get("commit") or None,
         "scope": ",".join(sorted(scope)),
@@ -746,8 +746,8 @@ def cmd_add(root: Path, kind: Optional[str], title: Optional[str], text: Optiona
     print(f"stored: {path.relative_to(root).as_posix()}. {waiting} "
           f"entr{'y' if waiting == 1 else 'ies'} waiting. Preview: feedback.py --plan")
     if kind == "bug":
-        # A template bug is reported at once, independent of the cadence — see AGENTS.md §
-        # "Freiwillige Rueckmeldung" / .act/rules/topics/feedback.md. The consent gate (mode)
+        # A template bug is reported at once, independent of the cadence — see
+        # .act/rules/topics/feedback.md. The consent gate (mode)
         # still applies: cmd_send prints why nothing went out if mode is "off"; the entry stays
         # stored either way (an unsent bug report is not a failed --add).
         print("template bug — bypassing the cadence gate:")

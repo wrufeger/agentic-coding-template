@@ -16,14 +16,14 @@
 #     (checks.common._WORKER_TOOL_NAMES), *no* agent_id in the payload (the orchestrator's own
 #     call, not a nested one — checks.common._is_worker), tool_input.subagent_type present.
 #     Deliberately NOT keyed off SubagentStart's own agent_type instead: the brief line
-#     "subagent_type aus dem Orchestrator-Agent-Aufruf bzw. agent_type bei SubagentStart" offers
+#     "subagent_type from the orchestrator's Agent call, or agent_type at SubagentStart" offers
 #     either signal for the same start, and only the PreToolUse call also carries the tier
 #     ("Tier: ..." in tool_input.prompt) and the model (tool_input.model) that SubagentStart's own
 #     payload does not — so using it alone avoids correlating two separate events (no queue, no
 #     race between an Agent/Task call and its own SubagentStart, unlike checks/write_scope.py's
 #     tool_use_id -> meta.json binding, which exists only because a *worker's own later* call has
-#     no other way back to its assignment). This also gives "Hilfsagenten ohne agent_type nicht"
-#     for free: an internal helper agent of the harness (empty agent_type, SubagentStop only, no
+#     no other way back to its assignment). This also gives "helper agents without agent_type
+#     don't count" for free: an internal helper agent of the harness (empty agent_type, SubagentStop only, no
 #     prior SubagentStart or Agent/Task call — confirmed in both 2026-09-23 live-probe captures,
 #     see the brief) never reaches this branch at all, since it was never started through the
 #     Agent/Task tool in the first place.
@@ -53,7 +53,7 @@
 #
 # Concurrency: many dispatch.py processes can run at once — parallel worker tool calls fire their
 # own PreToolUse hooks concurrently (CLAUDE.md § Logging: only the Agent-call/SubagentStart/-Stop
-# hooks are synchronous, "alle uebrigen Events async"). A shared counter in memory is not an
+# hooks are synchronous, all other events async). A shared counter in memory is not an
 # option (separate processes), and a single shared JSON file updated read-modify-write per event
 # would lose updates under that concurrency — the same failure mode checks/write_scope.py's own
 # docstring documents for a single shared scope file (t26_race.py, 2026-09-23 review: 8 parallel
@@ -80,7 +80,7 @@ __all__ = [
 ]
 
 # "Tier: <value>" — first match, stopping at whitespace or a separator/punctuation character so
-# "Tier: light." and "Tier: standard · Schätzung: ..." both yield a bare value ("light",
+# "Tier: light." and "Tier: standard · Estimate: ..." both yield a bare value ("light",
 # "standard"). Lower-cased on capture (see _tier_from_prompt) so "Tier: Standard" and
 # "Tier: standard" land in the same usage.json bucket instead of splitting the count.
 _TIER_RE = re.compile(r"Tier:\s*([^\s.,;·]+)", re.IGNORECASE)
@@ -117,8 +117,8 @@ _CHECKLIST_PATH_RE = re.compile(
 # /update-template). No allow-list here: whatever word follows the slash is the key recorded, as
 # long as that *entire* first token matches lower-case letters/digits plus ":_-" (every real
 # command name here is lower-case; ":" for a plugin-qualified name like "anthropic-skills:docx") —
-# this keeps a prompt that merely opens with a filesystem path ("/Users/wolfg/secret-project/
-# notes.md bitte lesen", "/tmp/x.log ...") from being misread as a command (2026-09-23 review,
+# this keeps a prompt that merely opens with a filesystem path ("/Users/alex/secret-project/
+# notes.md please read", "/tmp/x.log ...") from being misread as a command (2026-09-23 review,
 # point 4). Matched in two steps rather than one pattern with a `(?!/)` lookahead right after the
 # char class: a lookahead there only rejects a match that runs all the way to the "/" — regex
 # backtracking then just retries with a *shorter* prefix that avoids the "/" instead of failing
@@ -139,9 +139,9 @@ def _slash_command(prompt: str) -> "str | None":
 
 
 # subagent_type "fork" (context: fork) is deliberately not counted as a role start at all — not
-# given its own key either (2026-09-23 review, point 3: "eigener Schlüssel oder weglassen —
-# begründen"). Reasoning: the roles.<name>.tiers/models/outcomes breakdown feeds the per-role/tier
-# tier proposal in docs/project/concepts/ai-dev-app/13-model-tiers.md § 7 — a "role" there is a
+# given its own key either (2026-09-23 review, point 3: "own key or leave it out —
+# justify it"). Reasoning: the roles.<name>.tiers/models/outcomes breakdown feeds the per-role/tier
+# proposal (a local inbox entry; only the pattern, never these numbers, goes out via Feedback) — a "role" there is a
 # choice from .act/agents/*.md's tier table (builder, reviewer, explorer, ...), each with its own
 # tier/model. A fork always inherits the parent's own model verbatim (Agent tool docs: "the fork
 # runs on your model — a model override is ignored") and is not a role selection at all, so

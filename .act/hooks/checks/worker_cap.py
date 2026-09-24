@@ -70,7 +70,7 @@
 #
 # Follow-up review (2026-09-23, BLOCK on the version before this comment): `_CAP_LINE_RE` /
 # `_TIER_LINE_RE` used to require `Cap:`/`Tier:` at the start of a line, missing the shape real
-# assignment headers actually use ("Tier: standard · Schätzung: ... · Cap: 95." — Tier at the
+# assignment headers actually use ("Tier: standard · Estimate: ... · Cap: 95." — Tier at the
 # start, Cap only after a "·"); `_KEY_BOUNDARY` now also matches right after "·", "|", ";" or ","
 # anywhere in the line (see the comment above it for why a quoted "> Cap: 999" line still doesn't
 # match either way). Also: `_locked`'s wait loop and `_prune_stale_entries` both now clear a lock
@@ -123,7 +123,7 @@ _DEFAULT_CAP = _TIER_DEFAULT_CAPS[_DEFAULT_TIER]
 # "Cap: <n>" / "Tier: <name>" — recognized two ways (real assignments use both): at the start of
 # its own line (optional "- "/"* " bullet, optional Markdown bold **/__ around the key — same
 # shapes as write_scope's _SCOPE_LINE_RE), or right after one of "·", "|", ";", "," anywhere in a
-# line (real assignment header shape: "Tier: standard · Schätzung: ... · Cap: 95."). A quoted line
+# line (real assignment header shape: "Tier: standard · Estimate: ... · Cap: 95."). A quoted line
 # ("> Cap: 999") is not "start of line" (the literal "> " sits between ^ and the key) and has no
 # ·/|/;/, directly before "Cap" either, so it stays ignored either way. The value only needs to
 # start with what we look for (digits for Cap, a word for Tier) — trailing text on the same line
@@ -314,7 +314,7 @@ def _transcript_first_prompt(transcript_path: object, agent_id: str) -> Optional
 def _resolve_worker_cap(root: Path, payload: dict) -> int:
     """The cap that applies to this worker's tool call: the cap recorded for its Agent/Task start
     (via meta.json's toolUseId), else a fresh parse of its own first transcript line, else the
-    standard default when neither binds ("Worker nicht bindbar -> Stufen-Vorgabe standard")."""
+    standard default when neither binds ("worker not bindable -> tier default standard")."""
     agent_id = payload.get("agent_id")
     if not isinstance(agent_id, str) or not agent_id:
         return _DEFAULT_CAP

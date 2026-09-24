@@ -3,12 +3,11 @@
 #
 # Purpose: Check 1b — no sub-sub-agents (R-role-worker, PreToolUse).
 #
-# A role's own `tools` frontmatter never lists "Agent"/"Task" (docs/project/concepts/ai-dev-app/
-# 02-directory-plan.md § "Brücken" in the template-pflege repo, .act/agents/README.md) — this is
+# A role's own `tools` frontmatter never lists "Agent"/"Task" (.act/agents/README.md) — this is
 # the mechanical backstop for that rule: a PreToolUse call to either tool whose payload carries an
 # "agent_id" did not come from the orchestrator (the harness stamps every sub-agent's own tool
 # calls with its agent_id; the main session's calls carry none — confirmed 2026-09-23 against a
-# real Claude Code run's payload capture, D:/dev/rufeger/act-live-probe/.act-local/probe/
+# real Claude Code run's payload capture, a live probe capture's
 # payloads.jsonl: every PreToolUse fired from inside a spawned sub-agent carries "agent_id", the
 # orchestrator's own PreToolUse for "Agent" does not). Denied regardless of what a role's own
 # tools list says, since a hand-edited role bridge could otherwise re-add the tool.

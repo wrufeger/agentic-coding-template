@@ -1,5 +1,5 @@
 {
-  "_comment": "Tier -> tool value tables (docs/project/concepts/ai-dev-app/13-model-tiers.md, especially § 3, in the template-pflege repo). No real model name belongs anywhere else under .act/ -- only here, plus a project's own fixed-model override in docs/ai/config.md § Roles. 'reasoning_scale' is the ladder a role's reasoning field, and a '-high' variant's one-step bump, walk; 'reasoning_field' is the tool's own frontmatter key for it (Claude Code: 'effort'). A tool with an empty 'tiers' object has no researched mapping yet -- .act/scripts/tiers.py then leaves a role's existing model/effort untouched instead of guessing one.",
+  "_comment": "Tier -> tool value tables. No real model name belongs anywhere else under .act/ -- only here, plus a project's own fixed-model override in docs/ai/config.md § Roles. 'reasoning_scale' is the ladder a role's reasoning field, and a '-high' variant's one-step bump, walk; 'reasoning_field' is the tool's own frontmatter key for it (Claude Code: 'effort'). A tool with an empty 'tiers' object has no researched mapping yet -- .act/scripts/tiers.py then leaves a role's existing model/effort untouched instead of guessing one.",
   "claude-code": {
     "reasoning_field": "effort",
     "reasoning_scale": ["none", "low", "medium", "high", "xhigh", "max"],
@@ -12,13 +12,13 @@
     }
   },
   "codex-cli": {
-    "_status": "research stand, not belegt (13-model-tiers.md § 2/§ 3/§ 9) -- verify against config.toml [profiles.<name>] / model_reasoning_effort before filling in",
+    "_status": "research stage, not confirmed -- verify against config.toml [profiles.<name>] / model_reasoning_effort before filling in",
     "reasoning_field": "",
     "reasoning_scale": [],
     "tiers": {}
   },
   "copilot-cli": {
-    "_status": "research stand, not belegt -- verify reasoningEffort frontmatter support (issue #2904) before filling in",
+    "_status": "research stage, not confirmed -- verify reasoningEffort frontmatter support (issue #2904) before filling in",
     "reasoning_field": "",
     "reasoning_scale": [],
     "tiers": {}
@@ -42,7 +42,7 @@
     "tiers": {}
   },
   "cline": {
-    "_status": "no belegt per-role model/reasoning field -- dashboard shows reasoning effort as part of the model config",
+    "_status": "no confirmed per-role model/reasoning field -- dashboard shows reasoning effort as part of the model config",
     "reasoning_field": "",
     "reasoning_scale": [],
     "tiers": {}

@@ -5,10 +5,10 @@
 #          each skill, slash command, script and checklist is used; how a worker's outcome turned
 #          out at acceptance time. Feeds two later mechanisms without any extra bookkeeping of
 #          their own: the tips-that-fade-once-a-feature-is-used condition `unused:<key>` (T42,
-#          docs/project/concepts/ai-dev-app/03-core-rules.md ~line 418, is_unused() below) and the
-#          per-role/tier tier proposal in 13-model-tiers.md § 7 (roles.<name>.outcomes below, via
-#          --outcome). Stdlib only. Never sent anywhere (docs/project/concepts/ai-dev-app/
-#          13-model-tiers.md § 7: only the *pattern*, not this project's own numbers, ever goes
+#          is_unused() below) and the
+#          per-role/tier tier proposal (roles.<name>.outcomes below, via
+#          --outcome). Stdlib only. Never sent anywhere (only the *pattern*, not this project's
+#          own numbers, ever goes
 #          out — via the ordinary Feedback mechanism, not this script).
 #
 # Store: .act-local/usage.json (gitignored — decided: purely local, see the task order for T41).

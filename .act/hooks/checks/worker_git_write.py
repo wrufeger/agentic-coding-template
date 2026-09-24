@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — a worker running a git command that changes the tree or history (PreToolUse,
-#          R-role-worker). AGENTS.md § Rollen: "Git benutzt er nur lesend (status, diff, log,
-#          show)" — every other subcommand this module names in _GIT_WRITE_SUBCOMMANDS is a write
+#          R-role-worker): a worker only ever reads git (status, diff, log,
+#          show) — every other subcommand this module names in _GIT_WRITE_SUBCOMMANDS is a write
 #          for this check's purposes, plus `branch` when it is not a plain listing (see
 #          _BRANCH_MUTATING_FLAGS / _is_git_write_subcommand): `status`, `diff`, `log`, `show`,
 #          `rev-parse`, `ls-files`, `blame` and a plain/--list `branch` are simply never in the

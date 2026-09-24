@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Mechanical executor of an approved adoption table (docs/project/concepts/ai-dev-app/
-#          08-new-project.md § "Weg 3", stage 2 steps 4 and 6, and 11-build-decisions.md
-#          § "Stufe 6", in the template-pflege repo). Runs from a template checkout against a
+# Purpose: Mechanical executor of an approved adoption table (skill `act-adopt`, steps
+#          4 and 7). Runs from a template checkout against a
 #          project that was sighted with adopt_scan.py and whose owner approved one action per
 #          sighted source in <target>/.act-local/adopt/table.json. Decides nothing itself: every
 #          row is validated strictly first, and the whole run is refused on the first doubt.

@@ -7,12 +7,12 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | Script | Purpose | Call |
 | :--- | :--- | :--- |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
-| `adopt.py` | Mechanical executor of an approved adoption table (docs/project/concepts/ai-dev-app/ 08-new-project.md § "Weg 3", stage 2 steps 4 and 6… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout against a project that… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
-| `adopt_entries.py` | Batch writer for the content step of an adoption (skill act-adopt, docs/project/concepts/ ai-dev-app/11-build-decisions.md § "Stufe 6" in… | direct (used by skill `act-adopt` (stage 6)) |
-| `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
-| `doctor.py` | Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/ 05-update-and-overrides.md § "Abgleich-Skill" in the… | direct (judging the findings: skill `act-doctor`) |
+| `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and questions, one file per entry… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
@@ -24,7 +24,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
-| `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see… | library |
+| `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
 | `usage.py` | Local usage counter (T41) — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is… | direct |
 
@@ -33,7 +33,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `actlib.py` — Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project…
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
-- `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see…
+- `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one…
 
 ## `adopt.py`
 

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: T42 — the SessionStart "tip of the day" line and the user's own reminders
-#          (docs/project/concepts/ai-dev-app/03-core-rules.md § "Tipps im Chat", B104). Two
+#          (B104). Two
 #          sources feed the same one-line slot, checked in this order:
 #            1. docs/ai/local/reminders.md — the user's own "remind me to ..." lines, one per
 #               line, each with a cadence prefix (session/daily/weekly/once/every <n>[mhdw]) or
@@ -596,8 +596,8 @@ def observe(event: str, payload: dict) -> None:
         return
     if _is_harness_message(payload.get("prompt")):
         # A worker's report or a task-finished notice, not a real user turn (T44 live probe,
-        # 2026-09-23, checks.common._is_harness_message) — a minute/hour reminder nudging Wolfgang
-        # about something makes no sense attached to text he never typed.
+        # 2026-09-23, checks.common._is_harness_message) — a minute/hour reminder nudging the user
+        # about something makes no sense attached to text they never typed.
         return
     try:
         root = actlib.repo_root()

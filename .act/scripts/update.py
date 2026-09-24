@@ -10,9 +10,7 @@
 #          against whatever init.py last wrote for this project (T46 — a project initialized
 #          before a bridge existed, or before a later template revision changed one, otherwise
 #          never gets it), run any due migrations, hand off to doctor.py, and write
-#          .act-lock.json plus a commit. See
-#          docs/project/concepts/ai-dev-app/05-update-and-overrides.md § "Ablauf eines Updates"
-#          in the template-pflege repo for the full spec this implements. Stdlib only.
+#          .act-lock.json plus a commit. Stdlib only.
 #
 #          There is no "template" git remote to update from (Q73a) — the template's address lives
 #          only in .act-lock.json's `template.source`, set by init.py. A project .act/ that got
@@ -525,7 +523,7 @@ def _prune_empty_copy_dirs(start: Path, bases: set[Path], root: Path) -> None:
 
 def _new_backup_dir(root: Path) -> Path:
     """A fresh, not yet existing .act-local/backup/<YYYYmmdd-HHMMSS>[-n]/ folder for one
-    sync_dependent_files() run (T60 Teil B, F3) — one folder per run, so a second run never
+    sync_dependent_files() run (T60 part B, F3) — one folder per run, so a second run never
     overwrites the first one's backups. Not created here; _backup_file() creates it on first use."""
     base = root / ".act-local" / "backup"
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -597,7 +595,7 @@ def _own_copy_source(root: Path, entry: dict) -> Optional[Path]:
     """The live docs/ai/local/ source a tracked copy's lock entry points at, or None. A
     relative-looking "docs/ai/local/..." string can still escape that folder via "..", or (on
     Windows) via a second drive-absolute segment such as "C:/evil/path" silently replacing `root`
-    in the "/" join below (belegt: pathlib's Path.__truediv__ drops the left side when the right
+    in the "/" join below (confirmed: pathlib's Path.__truediv__ drops the left side when the right
     side is absolute) -- resolved first and checked to really land under docs/ai/local/."""
     source_rel = entry.get("source", "")
     if not source_rel or not source_rel.startswith("docs/ai/local/") or Path(source_rel).is_absolute():
@@ -664,12 +662,12 @@ def step_refresh_copies(
     write_unit_bridges() recorded its copies in the lock the same way, but init.py's
     copy_targets() deliberately never enumerates them — see that function's docstring). Such a
     copy's lock "source" points at a live docs/ai/local/skills/<name>/<file> — that is what tells
-    it apart from a copy the template truly stopped shipping (belegt am 2026-09-22: without this
+    it apart from a copy the template truly stopped shipping (confirmed 2026-09-22: without this
     check the first `update` after importing an own skill deleted it outright). Its copies follow
     the same tool gate as a template skill's (F5): refreshed in every active SKILL_TARGET_DIRS
     folder, created in one that became active, removed (unedited only) from one that no longer is.
 
-    `restore_paths`/`restore_dirs` (T60 Teil B, Q85 a): set by sync_dependent_files() to exactly
+    `restore_paths`/`restore_dirs` (T60 part B, Q85 a): set by sync_dependent_files() to exactly
     the destinations and skill folders a moved `tools` value newly targets — empty for a plain call
     and for any other change, so every case above stays as it was. For those only, a user-deleted
     copy is recreated (its removed_by_user record cleared), and a user-edited one is backed up into
@@ -761,7 +759,7 @@ def step_refresh_copies(
             continue
         if not dest_path.is_file():
             if dest_rel in restore:
-                # T60 Teil B: `tools` moved and newly targets this destination — recreate it and
+                # T60 part B: `tools` moved and newly targets this destination — recreate it and
                 # drop any removed_by_user record instead of leaving it deleted forever.
                 if not _write_bytes(dest_path, data):
                     failed.append(dest_rel)
@@ -790,7 +788,7 @@ def step_refresh_copies(
                 replaced.append(dest_rel)
             _record(dest_rel, source_path, data)
         elif dest_rel in restore:
-            # T60 Teil B: same trigger, for a locally-edited copy — reset only after the edit is
+            # T60 part B: same trigger, for a locally-edited copy — reset only after the edit is
             # safely backed up (F3); sync_dependent_files() files one inbox entry for the run.
             if not _backup_file(backup_dir, dest_rel, dest_path):
                 new_copies[dest_rel] = old_entry
@@ -928,8 +926,8 @@ def step_new_role_bridges(
     known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
 ) -> tuple[str, list[Path], list[str]]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
-    applicable role — new or already existing — that does not have one yet (13-model-tiers.md §
-    4/`Q71`). An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
+    applicable role — new or already existing — that does not have one yet (`Q71`).
+    An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
     here; its `model`/`effort` frontmatter is refreshed separately, by
     step_refresh_role_frontmatter() below.
 
@@ -986,7 +984,7 @@ def step_new_role_bridges(
             # An existing bridge is never re-created, edited or not: the only part of it that hangs
             # on the role's value is the `model`/`effort` pair, which step_refresh_role_frontmatter()
             # and every session start re-derive in place — a project's own text in it survives
-            # (13-model-tiers.md § "Pflege der Zuordnungstabelle", t27/tier_test.sh).
+            # (see tiers.py's refresh_project_bridge_frontmatter(), t27/tier_test.sh).
             continue
         elif follows_value:
             bucket = restored
@@ -1057,10 +1055,10 @@ def step_new_role_bridges(
 
 
 # ---------------------------------------------------------------------------
-# sync_dependent_files() — T60 Teil B (Q85 a): a docs/ai/config.md value that files depend on
+# sync_dependent_files() — T60 part B (Q85 a): a docs/ai/config.md value that files depend on
 # (`tools` for skill copies and, via `claude-code`, role bridges; a role's row in the "## Roles"
-# table for that role's bridges) gets its dependent files nachinstalliert whichever mechanism
-# notices the change first — update.py or the next session start — compared against the
+# table for that role's bridges) gets its dependent files installed after the fact by whichever
+# mechanism notices the change first — update.py or the next session start — compared against the
 # snapshot in .act-local/last-applied.json. Without a change, a deleted file stays deleted.
 # ---------------------------------------------------------------------------
 
@@ -1407,7 +1405,7 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
     """Re-derives the `model`/`effort` frontmatter of every already-materialized role bridge (base
     and "-high" variant alike, template role or a project's own named in docs/ai/config.md §
     Roles) from the updated .act/tiers.json and that Roles table — the one part of a role bridge
-    that *does* change on every update, per 13-model-tiers.md § "Pflege der Zuordnungstabelle".
+    that *does* change on every update, via tiers.py's refresh_project_bridge_frontmatter().
     Everything else in the file, including a project's own text below the frontmatter, is left
     exactly as it is (tiers.py's refresh_project_bridge_frontmatter() carries that guarantee, and
     also never lets a single unreadable/unwritable file abort this step — it is skipped with a note

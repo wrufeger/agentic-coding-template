@@ -5,9 +5,8 @@
 #          checkboxes, replacements and additions are applied. One script, one parser, for both
 #          rule areas: coding rules (template source .act/coding/<set>.md, project file
 #          docs/project/coding_rules.md, IDs "CR-...") and core rules (template source
-#          .act/rules/**/*.md, project file docs/ai/rules.md, IDs "R-..."). See
-#          docs/project/concepts/ai-dev-app/03-core-rules.md § "Coding-Regeln — dasselbe Schema"
-#          in the template-pflege repo for the full spec this implements.
+#          .act/rules/**/*.md, project file docs/ai/rules.md, IDs "R-..."). Both areas use the
+#          same schema, described below.
 #
 #          The parser reads only the language-neutral marks a project file can contain — a
 #          checkbox, "use:", a backticked ID, "replaces", an "@path"/"`path`" set reference — and
@@ -297,7 +296,7 @@ def resolve_template_set(project_set: ProjectSet) -> Optional[TemplateSet]:
 def classify(group_id: str, project_group: Optional[ProjectGroup],
              override_by_id: dict[str, Override]) -> str:
     """Return one of "=", "~", "-" for a template group given the project's checkbox/replaces
-    state. A group the project file never mentions counts as switched on ("=") — "gilt als an"."""
+    state. A group the project file never mentions counts as switched on ("=")."""
     if group_id in override_by_id:
         return "~"
     if project_group is None or project_group.enabled:

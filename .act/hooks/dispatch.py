@@ -122,7 +122,7 @@
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
 # write is NOT swallowed the way a SessionStart error is. Every other check in this template
 # fails open (never blocks the session on its own bug); the write-guard is the one exception —
-# "im Zweifel ablehnen" (when in doubt, deny) — because a false allow here means the template
+# "when in doubt, deny" — because a false allow here means the template
 # silently loses its own files to an edit the next update overwrites anyway.
 #
 # Backward compatibility: every name that used to live directly in this module (before the

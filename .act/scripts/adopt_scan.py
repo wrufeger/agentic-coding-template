@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Read-only sighting of an existing project's documentation and AI-tooling material,
-#          before adoption (docs/project/concepts/ai-dev-app/11-build-decisions.md § "Stufe 6",
-#          07-build-plan.md, in the template-pflege repo). Walks the target tree and classifies
+#          before adoption (skill `act-adopt`). Walks the target tree and classifies
 #          every documentation-like file and every AI-tool unit (agent, skill, command, script,
 #          hook) it finds into one of: ai-config, ai-machinery, work, log, project-doc, unknown.
 #          Writes nothing but its own report under <target>/.act-local/adopt/ — the classified

@@ -6,8 +6,8 @@
 #
 # Exit-code contract specific to this check: a mechanism error while checking a candidate write is
 # NOT swallowed the way most other checks fail open. Every other check in this template fails open
-# (never blocks the session on its own bug); this one is the exception — "im Zweifel ablehnen"
-# (when in doubt, deny) — because a false allow here means the template silently loses its own
+# (never blocks the session on its own bug); this one is the exception — "when in doubt, deny"
+# — because a false allow here means the template silently loses its own
 # files to an edit the next update overwrites anyway.
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _powershell_targets_protected_path(command: str, base_cwd: str) -> bool:
     `broad=True` (only git mv/rm count, _GIT_WRITES_TEMPLATE_GUARD, same split as the Bash side;
     `broad` is check 1's own deliberately over-inclusive extra pass, see that module's docstring).
     None back from that scanner (Invoke-Expression/iex, an unterminated quote/here-string) denies
-    outright if .act/ is mentioned anywhere in the raw command text — "im Zweifel ablehnen"
+    outright if .act/ is mentioned anywhere in the raw command text — "when in doubt, deny"
     (2026-09-23 review, BLOCK): unlike check 1c's own None fallback (_ps_raw_redirect_targets, the
     same operator-based approximation Bash's own scanner falls back to), check 1 cannot afford to
     miss a write it could not parse, since a false allow here survives until the next template

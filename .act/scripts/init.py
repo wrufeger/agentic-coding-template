@@ -535,9 +535,8 @@ def step_thin_bridges(tools: list[str]) -> tuple[dict[str, BridgeSpec], str]:
 # Step 6 helper — detect coding rule sets (docs/project/coding_rules.md)
 # ---------------------------------------------------------------------------
 
-# Priority order for the directly-detected sets — see docs/project/concepts/ai-dev-app/
-# 03-core-rules.md § "Coding-Regeln — dasselbe Schema" in the template-pflege repo for the exact
-# rules. Only used to order *enabled* sets in the generated file; every set the template actually
+# Priority order for the directly-detected sets — detection itself: `_detect_coding_sets()` below.
+# Only used to order *enabled* sets in the generated file; every set the template actually
 # ships under .act/coding/ is included either way, checked or not, even one missing here.
 CODING_SET_DETECTION_ORDER = [
     "nuxt", "vue", "typescript", "tailwind", "php", "python", "go", "java", "csharp", "bash", "sql",
@@ -665,7 +664,7 @@ def _write_coding_rules(
 # a single tool id, a tuple of tool ids (active once any one of them is configured), or None
 # (always written, no project has that today). ".agents/skills" is the tool-neutral mirror read
 # by every listed tool's own skill loader except claude-code (which has ".claude/skills" instead)
-# — belegt in .github/README.md: "read the same way by Codex, Copilot, Gemini CLI, and Cursor". A
+# — confirmed in .github/README.md: "read the same way by Codex, Copilot, Gemini CLI, and Cursor". A
 # further tool that reads it needs its id added to that tuple; a further tool with its own skills
 # folder needs one more line here, nothing else — copy_targets() below stays unchanged.
 SKILL_TARGET_DIRS: list[tuple[str, Optional[Union[str, tuple[str, ...]]]]] = [
@@ -745,7 +744,7 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     below the frontmatter never needs to change after the fact. The one exception, handled by
     write_agent_bridge_file() below rather than here, is the `model`/`effort` frontmatter pair
     itself: re-derived from `.act/tiers.json`/`docs/ai/config.md` § Roles on every `update` and at
-    every session start (13-model-tiers.md § "Pflege der Zuordnungstabelle").
+    every session start (see tiers.py's refresh_project_bridge_frontmatter()).
 
     A project's *own* role — a docs/ai/local/agents/<name>.md file with no .act/agents/<name>.md
     counterpart, e.g. one `act-load-settings` just wrote from an imported settings file — is a
@@ -776,7 +775,7 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     # (agent_bridge_variant_targets() below writes ".claude/agents/<role>-high.md" for those) —
     # otherwise a docs/ai/local/agents/<role>-high.md would slip through as an "own role" here
     # and end up aliased onto what should be the template variant's bridge target instead
-    # (belegt am 2026-09-22, review of T24).
+    # (confirmed 2026-09-22, review of T24).
     reserved_role_names = {name.lower() for name in template_role_names}
     reserved_role_names |= {f"{name}-high" for name in reserved_role_names}
 
@@ -795,9 +794,9 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
     """Every applicable role's "-high" variant destination -> the same .act/bridges/agents/
     source agent_bridge_targets() uses for its base file — the runtime choice of "give this one
     assignment more reasoning" without ever writing a real model ID into an assignment
-    (13-model-tiers.md § "Entscheidungen", `Q71`). Only a role whose template bridge declares a
-    `tier`/`reasoning` pair gets one (a pre-13-model-tiers or hand-authored bridge with a fixed
-    `model:` already has nothing to bump); skipped outright for `tier: expert` or a `reasoning`
+    (`Q71`). Only a role whose template bridge declares a
+    `tier`/`reasoning` pair gets one (an older or hand-authored bridge with a fixed
+    `model:` and no `tier:` already has nothing to bump); skipped outright for `tier: expert` or a `reasoning`
     already at the top of the tool's reasoning scale — one step further does not exist there."""
     base_targets = agent_bridge_targets(root, tools)
     if not base_targets:
@@ -844,7 +843,7 @@ def write_agent_bridge_file(
     """Like _write_copy_file, but for a role bridge (base or "-high" variant): resolves the
     .act/bridges/agents/<role>.md template's `tier`/`reasoning` frontmatter into a concrete
     `model`/`effort` pair via tiers.py instead of copying bytes verbatim. A bridge that already
-    carries a fixed `model:` (no `tier:` field — a pre-13-model-tiers or hand-authored bridge) has
+    carries a fixed `model:` (no `tier:` field — an older or hand-authored bridge) has
     nothing to resolve and is copied verbatim, same as before. A variant additionally gets its
     `name`/`description` reworded for the "-high" file and a `variant-of: <role>` frontmatter field
     -- the one thing that later tells tiers.py's refresh (and this module's own
@@ -855,7 +854,7 @@ def write_agent_bridge_file(
     regardless of platform -- see tiers.py's refresh, which instead preserves whatever a file
     already has once one exists. `notes`, if given, collects one message (deduplicated) whenever
     tiers.json/config.md leave `model`/`effort` unresolvable for a *reportable* reason (see
-    resolve_tier()); the pre-13-model-tiers/unresearched-tool cases stay silent, same as before.
+    resolve_tier()); the older-bridge/unresearched-tool cases stay silent, same as before.
     Returns (message, created)."""
     label = _relative_label(dest, root)
     if dest.is_file():

@@ -5,7 +5,7 @@
 #          `--all`/`-am ...` (PreToolUse, R-code-commit); `git stage` counts as `git add` (an
 #          alias some git tutorials configure by hand — this check does not care whether it is
 #          actually configured in the target repo, only that the word means "add" if it is).
-#          AGENTS.md § Grundregeln: "Commits ausschließlich per Pathspec (nie ein catch-all wie
+#          R-code-commit: "Commits exclusively by pathspec (never a catch-all like
 #          `git add -A`/`git add .`)" — for **everyone**, the orchestrator included, unlike
 #          checks/worker_git_write.py in this same wave (which is worker-only). `git add -u`/
 #          `--update` stays free (named explicitly in the assignment): it stages changes to

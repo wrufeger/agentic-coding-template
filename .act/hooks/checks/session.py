@@ -5,7 +5,7 @@
 #          role-frontmatter re-derivation, board refresh, sync of the files that hang on a
 #          docs/ai/config.md value — skill copies, CLAUDE.md and hook entries on `tools`, a role's
 #          bridges on its "## Roles" row (tier/reasoning/model) — when one moved since the last
-#          snapshot (T60 Teil B, see update.sync_dependent_files(), imported lazily at that one
+#          snapshot (T60 part B, see update.sync_dependent_files(), imported lazily at that one
 #          call site so a session start
 #          never pays for/depends on `update`'s own imports — entries, rules, ... — just for this
 #          best-effort sub-step, F6, T60), template-awareness notes (check 2b), the active-topics
@@ -589,8 +589,7 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[
 
 # ---------------------------------------------------------------------------
 # Active topics at session start — a topic with a switch (logging, feedback, ...) only ever
-# matters once its own switch is on (docs/project/concepts/ai-dev-app/03-core-rules.md § "Thema
-# mit Schalter" in the template-pflege repo); this names, in the table's own order, which ones are
+# matters once its own switch is on; this names, in the table's own order, which ones are
 # active this session and where their rule file lives, so the orchestrator (and a human reading
 # the transcript) can tell without opening docs/ai/config.md first.
 # ---------------------------------------------------------------------------
@@ -689,7 +688,7 @@ def refresh_session(payload: dict) -> int:
     except Exception:
         pass
 
-    # T60 Teil B: files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
+    # T60 part B: files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
     # hook entries on `tools`, a role's bridges on its "## Roles" row (tier/reasoning/model) — are
     # synced here when that value moved since the .act-local/last-applied.json snapshot, not only
     # on the next `update.py` run. A plain comparison, no scan unless something moved (see
@@ -718,9 +717,8 @@ def refresh_session(payload: dict) -> int:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
 
     # Role bridges (.claude/agents/*.md): only the `model`/`effort` frontmatter pair is refreshed
-    # here, never the rest of the file — see tiers.py's refresh_project_bridge_frontmatter() and
-    # 13-model-tiers.md § "Pflege der Zuordnungstabelle" for why this differs from _refresh_bridges
-    # above, which replaces a whole file or leaves it alone.
+    # here, never the rest of the file — see tiers.py's refresh_project_bridge_frontmatter() for
+    # why this differs from _refresh_bridges above, which replaces a whole file or leaves it alone.
     role_frontmatter_changed: list[str] = []
     tier_notes: list[str] = []
     try:

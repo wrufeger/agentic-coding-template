@@ -7,9 +7,8 @@
 #          report handed back with this build). Built on .act/scripts/settings_format.py (data
 #          model, parser, serializer, secrets scan) and reuses .act/scripts/rules.py's project-
 #          file parser/classifier instead of re-reading docs/ai/rules.md or
-#          docs/project/coding_rules.md by hand. See docs/project/concepts/ai-dev-app/
-#          08-new-project.md § "Settings-Datei: Export und Import" (`Q60a`-`Q61d`) in the
-#          template-pflege repo for the full spec.
+#          docs/project/coding_rules.md by hand. See settings_format.py's own docstring
+#          (`Q60a`-`Q61d`) for the full detail.
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
 #          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts`,

@@ -3,8 +3,7 @@
 #
 # Purpose: Create and account for the project's short-lived entry files — tasks, backlog items,
 #          journal entries, and questions, one file per entry under docs/ai/work/<kind>/ or
-#          docs/ai/questions/, named "YYYY-MM-DD-<slug>.md" (docs/project/concepts/ai-dev-app/
-#          02-directory-plan.md § "Eine Datei je Eintrag" in the template-pflege repo). A task,
+#          docs/ai/questions/, named "YYYY-MM-DD-<slug>.md" (one file per entry). A task,
 #          backlog item, or question additionally carries a short id ("T12", "B7", "Q5") in an
 #          "id:" header line at the top of the file — never in the filename, so two branches that
 #          each add an entry never fight over the same number, Git just reports "both added"

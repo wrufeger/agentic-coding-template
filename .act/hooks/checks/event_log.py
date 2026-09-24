@@ -16,7 +16,7 @@
 #          under the payload's agent_id; SubagentStop looks that label back up. The harness also
 #          fires SubagentStop for its own internal helper agents, which never got a SubagentStart
 #          this template ever saw and carry an empty agent_type (2026-09-23 live probe,
-#          D:/dev/rufeger/act-live-probe/.act-local/probe/payloads.jsonl: 10 SubagentStop lines,
+#          a live probe capture's payloads.jsonl: 10 SubagentStop lines,
 #          3 with a non-empty agent_type and a matching prior SubagentStart, 7 without) — both are
 #          filtered out below rather than logged as a numberless "[end]" line.
 #
@@ -150,7 +150,7 @@ def observe(event: str, payload: dict) -> None:
         prompt = payload.get("prompt", "")
         if _is_harness_message(prompt):
             # A worker's report, a task-finished notice, or similar — fed in by the harness
-            # itself, not typed by Wolfgang (checks.common._is_harness_message). Logged as a
+            # itself, not typed by the user (checks.common._is_harness_message). Logged as a
             # system result, never as "[user] [prompt]" — see _harness_message_summary for what
             # each tag keeps.
             log.write_line(cfg, "INFO", "system", "result", _harness_message_summary(prompt))

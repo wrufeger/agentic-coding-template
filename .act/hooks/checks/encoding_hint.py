@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — before Write/Edit/MultiEdit/NotebookEdit touches an existing file whose bytes
-#          do not decode as UTF-8 (R-code-encoding, AGENTS.md § Doku, Tests, Coding: "Vor dem
-#          Bearbeiten einer Datei die Kodierung prüfen ... sonst zerstört ein UTF-8-Schreibzugriff
-#          die Umlaute einer Latin-1/Windows-1252-Altdatei"). `block` (the default) stops the
+#          do not decode as UTF-8 (R-code-encoding: "Check a
+#          file's encoding before editing it ... otherwise a UTF-8 write destroys the umlauts
+#          of a Latin-1/Windows-1252 legacy file"). `block` (the default) stops the
 #          *first* write per (session, file) once — exit 2, one line on stderr — and remembers
 #          that file as noted, so the repeated write (the assistant trying again, now aware) goes
 #          through unmodified (exit 0, no output). `warn` never stops the write; it only delivers

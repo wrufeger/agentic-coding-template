@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — a recursive delete run from the shell (PreToolUse, R-safe-no-shell-delete).
-#          AGENTS.md § Umgang mit Sicherheits-/Safeguard-Warnungen: "Kein `rm -rf` aus der Shell
-#          ... Aufräumen mit den Mitteln der Sprache (`shutil.rmtree` in Python) oder gezielt Datei
-#          für Datei." For **everyone**, orchestrator included — a shell-level recursive delete is
+#          R-safe-no-shell-delete: "No `rm -rf` from the shell ...
+#          clean up with the language's own means (`shutil.rmtree` in Python) or file by file."
+#          For **everyone**, orchestrator included — a shell-level recursive delete is
 #          the risk this check exists for regardless of who runs it. `python -c
 #          "shutil.rmtree(...)"` is deliberately never matched: it is the recommended way and is
 #          invisible to a shell-command scan by construction (the delete happens inside the
