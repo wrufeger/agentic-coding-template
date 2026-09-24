@@ -1,3 +1,4 @@
+<!-- act:default -->
 One question per file, `YYYY-MM-DD-<slug>.md`, created with `python .act/scripts/entries.py new
 question <title>`. The header carries `for: all`, `status: open`, and `created: <timestamp>`
 right away, and, once integrated, the assigned `id: Q<n>` (`docs/ai/config.md` § `mode`) — the

@@ -43,7 +43,7 @@ __all__ = [
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
-    "refresh_session",
+    "_chat_language_line", "refresh_session",
 ]
 
 # ---------------------------------------------------------------------------
@@ -588,6 +588,24 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str]) -> Optional[
 
 
 # ---------------------------------------------------------------------------
+# Chat language at session start (R-human-language, Q90) — only while `language-chat` is `auto`:
+# the language remembered for this person on this machine (`board.py --chat-language`,
+# .act-local/identity.json), so the assistant does not have to guess it again, or the hint how to
+# remember it once recognized. A fixed `language-chat` needs no line; config.md already says it.
+# ---------------------------------------------------------------------------
+
+def _chat_language_line(config: dict[str, str]) -> Optional[str]:
+    chat, docs = actlib.language_settings(config)
+    if chat != "auto":
+        return None
+    remembered = actlib.remembered_chat_language()
+    if remembered:
+        return f"[act] chat language: {remembered} (remembered on this machine; docs stay {docs})"
+    return (f"[act] chat language: auto, none remembered yet — recognize it from the owner's messages, "
+            f"then `python .act/scripts/board.py --chat-language <code>` (until then: {docs})")
+
+
+# ---------------------------------------------------------------------------
 # Active topics at session start — a topic with a switch (logging, feedback, ...) only ever
 # matters once its own switch is on; this names, in the table's own order, which ones are
 # active this session and where their rule file lives, so the orchestrator (and a human reading
@@ -646,6 +664,12 @@ def refresh_session(payload: dict) -> int:
         topics = []
     if topics:
         print("[act] topics active: " + ", ".join(f"{name} ({path})" for name, path in topics))
+    try:
+        language_line = _chat_language_line(config)
+    except Exception:
+        language_line = None
+    if language_line:
+        print(language_line)
 
     mode = _check_mode(config, "session-start-refresh", default="block")
     if mode == "off":

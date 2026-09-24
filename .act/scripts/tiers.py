@@ -166,6 +166,7 @@ def resolve_tier(
 # ---------------------------------------------------------------------------
 
 _MODEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._:\[\]=-]+$")
+ROLES_MARK_RE = re.compile(r"^<!--\s*act:roles\s*-->$")
 
 
 def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[str, dict[str, str]]:
@@ -187,12 +188,18 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
     except (OSError, UnicodeDecodeError):
         return {}
 
+    # The section is found by its `<!-- act:roles -->` mark, so a translated heading still works
+    # (R-work-language); the English heading remains the fallback for a config.md without the mark.
+    # The table's header row is skipped by shape (a separator row follows it), never by its words.
     in_roles = False
     result: dict[str, dict[str, str]] = {}
-    for line in lines:
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("## "):
             in_roles = stripped[3:].strip().lower() == "roles"
+            continue
+        if ROLES_MARK_RE.match(stripped):
+            in_roles = True
             continue
         if not in_roles or not stripped.startswith("|") or not stripped.endswith("|"):
             continue
@@ -200,7 +207,7 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
         if len(cells) < 4:
             continue
         role = cells[0].strip("`").strip()
-        if not role or set(role) <= {"-", ":"} or role.lower() in ("role", "rolle"):
+        if not role or set(role) <= {"-", ":"} or actlib._is_header_row(lines, index):
             continue
         entry: dict[str, str] = {}
         if cells[1].strip("`").strip():

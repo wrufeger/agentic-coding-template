@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -293,6 +294,112 @@ def _is_separator_cell(cell: str) -> bool:
     """True for a Markdown table separator cell such as ":---", "---", "---:", ":---:"."""
     body = cell.strip(":")
     return bool(body) and set(body) == {"-"}
+
+
+# ---------------------------------------------------------------------------
+# Languages (T61) — chat and docs language from docs/ai/config.md, and the `act:default` mark on
+# docs scaffold files still in the template's English. The mechanism reads marks, never words:
+# a scaffold file translated by hand keeps working as long as its marks and header fields stay.
+# ---------------------------------------------------------------------------
+
+DEFAULT_MARK = "<!-- act:default -->"
+_DEFAULT_MARK_RE = re.compile(r"^\ufeff?\s*<!--\s*act:default\b[^>]*-->\s*$")
+TRANSLATE_NOTE_SUFFIX = "-translate-scaffold.md"
+# Status values the mechanism knows in an entry's `status:` header field — never translated.
+STATUS_VALUES = ("open", "answered", "done")
+# Language names an older file or a person may spell out -> the code the config keys take; a value
+# that already looks like a code ("de", "pt-BR") passes through lower-cased.
+LANGUAGE_NAMES = {"deutsch": "de", "german": "de", "englisch": "en", "english": "en",
+                  "französisch": "fr", "french": "fr", "spanisch": "es", "spanish": "es"}
+_LANGUAGE_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$")
+
+
+def normalize_language(value: str, allow_auto: bool = False) -> Optional[str]:
+    """A language code for `value` ("Deutsch" -> "de", "EN" -> "en", "pt-BR" -> "pt-br"), "auto"
+    where `allow_auto` permits it, or None if it is neither a known name nor shaped like a code."""
+    word = value.strip().strip("`").strip().lower()
+    if word in ("auto", "automatisch", "automatic"):
+        return "auto" if allow_auto else None
+    code = LANGUAGE_NAMES.get(word, word)
+    return code if _LANGUAGE_CODE_RE.match(code) else None
+
+
+def language_settings(config: dict[str, str]) -> tuple[str, str]:
+    """(chat language, docs language) from a read_config() result. `language-chat` defaults to
+    "auto" (follow the owner's own messages), `language-docs` to "en". A config.md from before
+    T61 carries one `language` key; it still counts, as the value for both."""
+    legacy = config.get("language", "").strip()
+    chat = config.get("language-chat", "").strip() or legacy or "auto"
+    docs = config.get("language-docs", "").strip() or (legacy if legacy.lower() != "auto" else "") or "en"
+    return normalize_language(chat, allow_auto=True) or chat, normalize_language(docs) or docs
+
+
+def remembered_chat_language() -> Optional[str]:
+    """The chat language remembered for this person on this machine (`board.py --chat-language`,
+    .act-local/identity.json, never versioned) — used only while `language-chat` is `auto`."""
+    value = (read_identity() or {}).get("chat_language")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def is_english(language: str) -> bool:
+    """True for "en" and its regional variants ("en-GB") — the language the scaffold ships in."""
+    return language.strip().lower().split("-")[0] in ("en", "english")
+
+
+def scaffold_default_files(root: Path) -> list[str]:
+    """Every file under docs/ whose first line is the `act:default` mark — scaffold text as the
+    template ships it, not yet translated or taken over by the project. Sorted, root-relative.
+    Only line 1 counts: the mark quoted in prose or an example elsewhere is not the mark."""
+    base = root / "docs"
+    if not base.is_dir():
+        return []
+    found = []
+    for path in sorted(base.rglob("*.md")):
+        try:
+            with path.open(encoding="utf-8") as handle:
+                first = handle.readline()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _DEFAULT_MARK_RE.match(first):
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+def translate_note_text(language: str, files: list[str]) -> str:
+    """The inbox entry asking for the one-time scaffold translation (`R-work-language`)."""
+    lines = [
+        "for: all", "status: open", "",
+        f"# docs scaffold is still English (`act:default`) — translate it into {language}", "",
+        f"`language-docs` in `docs/ai/config.md` is `{language}`, but these scaffold files are still "
+        "the template's English text:", "",
+    ]
+    lines.extend(f"- `{rel}`" for rel in files)
+    lines += [
+        "", "Translate once, file by file (`R-work-language`): headings, table headers, status words "
+        "in prose and hint texts only. Leave unchanged: marks (`<!-- act:... -->`), header fields "
+        "and their values (`status: open|answered|done` stays English, in examples too), config "
+        "keys and values, code, paths, and anything a person wrote. Then remove the `act:default` "
+        "line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays English, "
+        "the template keeps it current.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def write_translate_note(root: Path, language: str, plan: bool = False) -> Optional[Path]:
+    """Write docs/ai/inbox/<date>-translate-scaffold.md unless the docs language is English, no
+    file carries `act:default`, or such an entry already exists (any date). Returns the path that
+    was (plan: would be) written, else None."""
+    if is_english(language):
+        return None
+    files = scaffold_default_files(root)
+    inbox = root / "docs" / "ai" / "inbox"
+    if not files or (inbox.is_dir() and any(inbox.glob(f"*{TRANSLATE_NOTE_SUFFIX}"))):
+        return None
+    dest = inbox / f"{date.today().isoformat()}{TRANSLATE_NOTE_SUFFIX}"
+    if not plan:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(translate_note_text(language, files), encoding="utf-8")
+    return dest
 
 
 # ---------------------------------------------------------------------------

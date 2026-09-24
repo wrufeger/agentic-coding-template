@@ -967,13 +967,20 @@ def mark_new_files_pending(result: Analysis) -> None:
 # Writing rules/coding files
 # ---------------------------------------------------------------------------
 
-def _insert_after_heading(lines: list[str], heading: str, new_lines: list[str]) -> list[str]:
-    idx = next((i for i, ln in enumerate(lines) if ln.strip() == heading), None)
+def _insert_after_heading(lines: list[str], heading: str, mark: str, new_lines: list[str]) -> list[str]:
+    """Insert at the end of the section that `mark` (e.g. `<!-- act:own-rules -->`) opens — the
+    mark, not the heading's words, so a translated heading still works (R-work-language); the
+    English heading is the fallback for a file without the mark, and both are added if neither
+    is there."""
+    idx = next((i for i, ln in enumerate(lines) if ln.strip() == mark), None)
+    if idx is None:
+        idx = next((i for i, ln in enumerate(lines) if ln.strip() == heading), None)
     if idx is None:
         out = list(lines)
         if out and out[-1].strip():
             out.append("")
         out.append(heading)
+        out.append(mark)
         out.append("")
         out.extend(new_lines)
         return out
@@ -1068,9 +1075,9 @@ def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
         own_lines = [_own_rule_line(r.entry) for r in resolutions if r.entry.symbol == "+"]
         replaces_lines = [_replaces_line(r.entry) for r in resolutions if r.entry.symbol == "~"]
         if own_lines:
-            lines = _insert_after_heading(lines, "## Own rules", own_lines)
+            lines = _insert_after_heading(lines, "## Own rules", "<!-- act:own-rules -->", own_lines)
         if replaces_lines:
-            lines = _insert_after_heading(lines, "## Overrides", replaces_lines)
+            lines = _insert_after_heading(lines, "## Overrides", "<!-- act:overrides -->", replaces_lines)
         if own_lines or replaces_lines:
             path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
             for r in resolutions:

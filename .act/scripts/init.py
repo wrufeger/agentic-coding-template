@@ -10,13 +10,17 @@
 #          in --target mode -- nothing of the template's own there to decide, only .act/ was copied
 #          in), write the lock/cache state, and make the first commit. Never overwrites a file the
 #          project already has; anything that needs a decision but can't be asked (non-interactive
-#          run) is written to docs/ai/inbox/ instead of guessed. Stdlib only.
+#          run) is written to docs/ai/inbox/ instead of guessed. A `language-docs` other than
+#          English leaves the scaffold English (marked `act:default`) plus one inbox entry asking to
+#          translate it (R-work-language) — init has no model to do that itself. Stdlib only.
 #
 # Usage:
 #   python .act/scripts/init.py                      # set up the current checkout in place
 #   python .act/scripts/init.py --target <path>       # create/dock in another directory instead
 #   python .act/scripts/init.py --plan                # show the ten steps, change nothing
 #   python .act/scripts/init.py --non-interactive      # never prompt; take defaults, log to inbox
+#   python .act/scripts/init.py --language-docs de     # docs language without asking (default en);
+#                                                      # --language-chat <code|auto> likewise
 #   python .act/scripts/init.py --no-commit            # do everything except the final commit
 #
 # Output format: one numbered line per step ("[n/10] ..."), 1..10, plus a closing "[act] done"
@@ -51,7 +55,8 @@ class ProjectConfig(TypedDict):
     """Return value of step_config(): the resolved project settings, before templating."""
     name: str
     owner: str
-    language: str
+    language_chat: str
+    language_docs: str
     stack: str
     lint_cmd: str
     typecheck_cmd: str
@@ -277,7 +282,21 @@ def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
     return "off"
 
 
-def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfig:
+def _language(key: str, given: Optional[str], prompt_text: str, default: str, interactive: bool,
+              notes: list[str]) -> tuple[str, bool]:
+    """(value, from_option). An option value wins over the prompt; either way a language name is
+    normalized to its code ("Deutsch" -> "de"). A value that is no code is kept as given, with a
+    note for the inbox, rather than silently replaced."""
+    raw = given if given is not None else _ask(prompt_text, default, interactive)
+    code = actlib.normalize_language(raw, allow_auto=(key == "language-chat"))
+    if code is None:
+        notes.append(f"`{key}` {raw!r} is not a language code — review docs/ai/config.md.")
+        return raw.strip(), given is not None
+    return code, given is not None
+
+
+def step_config(root: Path, interactive: bool, notes: list[str],
+                languages: Optional[dict[str, Optional[str]]] = None) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
     if git_name and not _is_placeholder_name(git_name):
@@ -285,7 +304,12 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
 
     name = _ask("Project name", root.name, interactive)
     owner = _ask("Owner", default_owner, interactive)
-    language = _ask("Chat/doc language", "en", interactive)
+    languages = languages or {}
+    language_chat, chat_given = _language("language-chat", languages.get("language-chat"),
+                                          "Chat language (auto = follow the owner's messages)", "auto",
+                                          interactive, notes)
+    language_docs, docs_given = _language("language-docs", languages.get("language-docs"),
+                                          "Docs language (e.g. en, de)", "en", interactive, notes)
     stack = _ask("Stack", "unspecified", interactive)
     lint_cmd = _ask("Lint command", "", interactive)
     typecheck_cmd = _ask("Typecheck command", "", interactive)
@@ -306,7 +330,7 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
             label
             for label, value in (("stack", stack), ("lint", lint_cmd), ("typecheck", typecheck_cmd), ("test", test_cmd))
             if not value or value == "unspecified"
-        ]
+        ] + ([] if chat_given and docs_given else ["language-chat/language-docs (auto/en)"])
         if missing:
             notes.append(
                 "Project config uses defaults for: " + ", ".join(missing) + " — review docs/ai/config.md."
@@ -318,7 +342,8 @@ def step_config(root: Path, interactive: bool, notes: list[str]) -> ProjectConfi
     return {
         "name": name,
         "owner": owner,
-        "language": language,
+        "language_chat": language_chat,
+        "language_docs": language_docs,
         "stack": stack,
         "lint_cmd": lint_cmd,
         "typecheck_cmd": typecheck_cmd,
@@ -925,7 +950,8 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
     return {
         "<name>": cfg["name"],
         "<owner>": cfg["owner"],
-        "<language>": cfg["language"],
+        "<language-chat>": cfg["language_chat"],
+        "<language-docs>": cfg["language_docs"],
         "<stack>": cfg["stack"],
         "<lint-command>": cfg["lint_cmd"] or "(not set)",
         "<typecheck-command>": cfg["typecheck_cmd"] or "(not set)",
@@ -1394,6 +1420,30 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
 
 
 # ---------------------------------------------------------------------------
+# Inbox note for a docs scaffold that stays English (T61, `R-work-language`)
+# ---------------------------------------------------------------------------
+
+def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Optional[Path], str]:
+    """With a docs language other than English, the scaffold just written still carries the
+    template's English text and its `act:default` mark — init has no model to translate it, so it
+    leaves one inbox entry asking for that instead. Reads the language from the config.md actually
+    on disk (docking onto a project keeps its own), falling back to the answer from step 1."""
+    config_path = root / "docs" / "ai" / "config.md"
+    docs_language = cfg["language_docs"]
+    if not plan and config_path.is_file():
+        docs_language = actlib.language_settings(actlib.read_config())[1]
+    if actlib.is_english(docs_language):
+        return None, ""
+    if plan and not (root / "docs").is_dir():
+        return None, f"would note in the inbox: translate the docs scaffold into {docs_language}"
+    dest = actlib.write_translate_note(root, docs_language, plan)
+    if dest is None:
+        return None, f"docs scaffold: no `act:default` file left, or a translation entry exists ({docs_language})"
+    verb = "would create" if plan else "created"
+    return dest, f"{_relative_label(dest, root)}: {verb} (docs scaffold still English, translate into {docs_language})"
+
+
+# ---------------------------------------------------------------------------
 # Inbox note for open points
 # ---------------------------------------------------------------------------
 
@@ -1429,6 +1479,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--plan", action="store_true", help="show what would happen, change nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; take defaults, log open points to the inbox")
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
+    parser.add_argument("--language-docs", metavar="CODE",
+                        help="language of docs/ (e.g. de) instead of asking; default en (R-work-language)")
+    parser.add_argument("--language-chat", metavar="CODE",
+                        help="chat language (a code, or auto = follow the owner's messages) instead of asking")
     args = parser.parse_args(argv)
 
     plan = args.plan
@@ -1465,7 +1519,8 @@ def main(argv: list[str]) -> int:
     interactive = actlib.is_interactive() and not plan
     notes: list[str] = []
 
-    cfg = step_config(root, interactive, notes)
+    cfg = step_config(root, interactive, notes,
+                      {"language-docs": args.language_docs, "language-chat": args.language_chat})
     # `--plan` never prompts (`interactive` above is already False for it), so `feedback_mode` is
     # always "off" here even when a real (non-plan) run at a real terminal would ask -- say that
     # honestly instead of implying "off" is the actual answer (review finding T58#8). Docking
@@ -1476,7 +1531,8 @@ def main(argv: list[str]) -> int:
         feedback_display = "'would ask (interactive)'"
     _print_step(
         1,
-        f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language={cfg['language']!r}, "
+        f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language-chat={cfg['language_chat']!r}, "
+        f"language-docs={cfg['language_docs']!r}, "
         f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r}, "
         f"feedback={feedback_display} (suggested, change it in docs/ai/config.md)",
     )
@@ -1495,6 +1551,9 @@ def main(argv: list[str]) -> int:
     _print_step(5, thin_summary)
 
     materialize_messages, generated, touched_bridges, copies = step_materialize(root, plan, cfg, selected_bridges, notes)
+    translate_path, translate_message = step_translate_note(root, plan, cfg)
+    if translate_message:
+        materialize_messages.append(translate_message)
     _print_step(6, "; ".join(materialize_messages))
 
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)
@@ -1511,6 +1570,8 @@ def main(argv: list[str]) -> int:
     commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]
     if inbox_path is not None:
         commit_paths.append(inbox_path)
+    if translate_path is not None and not plan:
+        commit_paths.append(translate_path)
     _print_step(10, step_commit(root, plan, args.no_commit, commit_paths))
 
     if notes:

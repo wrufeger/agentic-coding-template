@@ -1,6 +1,6 @@
 # Human-facing rules
 
-summary: inbox order, bundled questions, short final chat answers, untouchable human text, external requests
+summary: inbox order, bundled questions, short final chat answers, chat language, untouchable human text, external requests
 
 ## `R-human-inbox-first` — Answered inbox entries first
 
@@ -30,6 +30,19 @@ question, `entries.py new question <title>`) and is not repeated in chat. Close 
 summary — done · next · problems · to discuss — short, but without dropping anything that
 matters, and name new questions and tasks together in one closing line ("New questions: Q12–Q14,
 new task T7"). Details only on request.
+
+## `R-human-language` — Talk in the owner's language
+
+summary: chat in language-chat; with auto, detect once, remember per machine, reuse; no hint yet means language-docs
+
+Talk to the owner in `language-chat` from `docs/ai/config.md`; a fixed value there always wins.
+With `auto` (the default), use the language the session start names as remembered. If none is
+remembered, recognize it once from the owner's own messages — not from quoted text, code or file
+contents — and remember it with `python .act/scripts/board.py --chat-language <code>` (this person,
+this machine, `.act-local/`, never versioned). Before there is anything to recognize, use
+`language-docs`. When starting `init.py` for the owner, suggest their language as
+`--language-docs <code>`. The chat language never changes what goes under `docs/`
+(`R-work-language`).
 
 ## `R-human-text` — The human's own words are untouchable
 

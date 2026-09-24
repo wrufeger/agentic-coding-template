@@ -23,7 +23,11 @@
 #   The report as Markdown on stdout — "Mapped" (old key, old value, key, result: set / same /
 #   kept: project value / not set: reason), "No counterpart" (old key, value, section, note), and
 #   "Free text" (each passage verbatim with its section and lines) — also written to
-#   <target>/.act-local/adopt/config-report.md; then one "[adopt-config] ..." summary line.
+#   <target>/.act-local/adopt/config-report.md; then one "[adopt-config] ..." summary line. A
+#   `language-docs` other than English also leaves docs/ai/inbox/<date>-translate-scaffold.md
+#   (the scaffold init wrote is still English, R-work-language) unless one exists already. An old
+#   AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
+#   always German — and its "Mapped" row says that this is an assumption.
 #   --plan: the same report ("would set"), nothing written. Exit 0 on success and on --plan;
 #   2 if the target has no docs/ai/config.md or no source was found.
 
@@ -37,6 +41,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import actlib
+
 LEGACY_ROOT = Path("docs/ai/work/archive/legacy")
 CONFIG = Path("docs/ai/config.md")
 REPORT = Path(".act-local/adopt/config-report.md")
@@ -48,9 +54,12 @@ KEY_MAP: dict[str, str] = {
     "lint-befehl": "commands:0", "typecheck-befehl": "commands:1", "test-befehl": "commands:2",
     "ki-werkzeuge": "tools", "feedback": "feedback", "feedback-takt": "feedback-cadence",
     "feedback-umfang": "feedback-scope", "logging": "logging", "logging-tiefe": "log-level",
+    # T61: the old template's one language row (`| Sprache | Deutsch |`, until it was dropped for a
+    # fixed German) is the docs language (R-work-language); the chat language stays `auto`.
+    "sprache": "language-docs",
 }
 KEY_MAP.update({new: new for new in ("name", "owner", "stack", "tools", "feedback-cadence",
-                                     "feedback-scope", "log-level")})
+                                     "feedback-scope", "log-level", "language-chat", "language-docs")})
 TEMPLATE_JSON_KEYS = {"PROJEKTNAME": "projektname", "AUFTRAGGEBER": "auftraggeber", "STACK": "stack",
                       "LINT_BEFEHL": "lint-befehl", "TYPECHECK_BEFEHL": "typecheck-befehl",
                       "TEST_BEFEHL": "test-befehl"}
@@ -66,6 +75,10 @@ VALUE_MAP: dict[str, dict[str, str]] = {
     "logging": {"aus": "off", "ein": "on", "off": "off", "on": "on"},
     "log-level": {v.lower(): v for v in ("DEBUG", "INFO", "WARN", "ERROR")},
 }
+# An old AI-CONFIG.md without any language row comes from the template's later, always-German
+# versions ("Die Arbeitssprache ist fest Deutsch") — `language-docs` is then assumed `de`, and the
+# report says so (build()).
+ASSUMED_DOCS_LANGUAGE = "de"
 # The old tool names (AI-CONFIG.md § Assistenten, "KI-Werkzeuge") -> the ids `tools` takes.
 TOOL_MAP = {"claude code": "claude-code", "claude-code": "claude-code", "copilot": "copilot",
             "github copilot": "copilot", "cursor": "cursor", "aider": "aider", "gemini cli": "gemini",
@@ -77,7 +90,8 @@ DEFAULTS: dict[str, set] = {
     "name": {"", "<name>"}, "owner": {"", "<owner>", "unknown"}, "stack": {"", "<stack>", "unspecified"},
     "tools": {"", "<tool-list>", "(none)", "claude-code"}, "feedback": {"", "<feedback-mode>", "off"},
     "feedback-cadence": {"", "weekly"}, "feedback-scope": {"", "a,b,c"}, "logging": {"", "off"},
-    "log-level": {"", "INFO"},
+    "log-level": {"", "INFO"}, "language-chat": {"", "<language-chat>", "auto"},
+    "language-docs": {"", "<language-docs>", "en"},
 }
 NOT_SET = "(not set)"
 EMPTY_VALUES = {"", "—", "–", "-"}
@@ -191,6 +205,9 @@ def translate(new_key: str, old_value: str) -> tuple[Optional[str], str]:
         if letters and all(p in ("a", "b", "c") for p in letters):
             return ",".join(sorted(set(letters))), ""
         return None, f"value {value!r} has no counterpart (a, b, c)"
+    if new_key in ("language-chat", "language-docs"):
+        code = actlib.normalize_language(value, allow_auto=(new_key == "language-chat"))
+        return (code, "") if code else (None, f"value {value!r} is no language code (or `auto` for docs)")
     if new_key == "tools":
         names = [p.strip() for p in value.split(",") if p.strip()]
         known = sorted({TOOL_MAP[n.lower()] for n in names if n.lower() in TOOL_MAP})
@@ -269,11 +286,18 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
             unmapped.append({"key": tj_key, "value": value, "section": ".claude/template.json values",
                              "line": None, "note": f"not used: {source.name if source else 'the old file'} says {have['value']!r}"})
 
+    if source is not None and not any(KEY_MAP.get(k) == "language-docs" for k in by_old):
+        by_old["(no language row)"] = {
+            "key": "(no language row)", "value": ASSUMED_DOCS_LANGUAGE, "section": "(assumption)",
+            "line": None, "origin": source.name, "target": "language-docs",
+            "assumed": "assumption: no language row, the old template was always German",
+        }
+
     verb = "would set" if plan else "set"
     mapped: list[dict] = []
     command_parts: dict[int, tuple[str, dict]] = {}
     for old_key, row in by_old.items():
-        new_key = KEY_MAP[old_key]
+        new_key = row.get("target") or KEY_MAP[old_key]
         if new_key.startswith("commands:"):
             value, note = translate("commands", row["value"])
             if value is None:
@@ -294,6 +318,8 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
             result = f"{verb}: {value}" + (f" ({note})" if note else "")
         else:
             result = f"kept: project value {current.strip()!r}" + (f" ({note})" if note else "")
+        if row.get("assumed"):
+            result += f" — {row['assumed']}"
         mapped.append(dict(row, new=new_key, result=result))
 
     if command_parts:
@@ -399,9 +425,15 @@ def main(argv: list[str]) -> int:
         (root / REPORT).parent.mkdir(parents=True, exist_ok=True)
         (root / REPORT).write_bytes(report.encode("utf-8"))
     would = sum(1 for r in data["mapped"] if r["result"].startswith("would set"))
+    # A docs language other than English leaves the scaffold init wrote to translate (R-work-language):
+    # one inbox entry, the same one init.py writes when it is asked for that language itself.
+    current = {k: v for k in ("language-docs", "language") if (v := cfg.get(k)) is not None}
+    docs_language = actlib.language_settings(current)[1]
+    note = actlib.write_translate_note(root, docs_language, args.plan)
     print(f"[adopt-config] {changed or would} value(s) {'would be ' if args.plan else ''}set, "
           f"{len(data['unmapped'])} key(s) without counterpart, {len(data['passages'])} free-text passage(s)"
-          + ("" if args.plan else f"; report: {REPORT.as_posix()}"))
+          + ("" if args.plan else f"; report: {REPORT.as_posix()}")
+          + (f"; {'would write' if args.plan else 'wrote'} {note.relative_to(root).as_posix()}" if note else ""))
     return 0
 
 

@@ -9,6 +9,7 @@ area, add your own below (`R-work-override`).
 @.act/rules/shared/00-core.md
   - [x] `R-work-evidence`
   - [x] `R-work-override`
+  - [x] `R-work-language`
   - [x] `R-role-worker`
 
 @.act/rules/shared/10-safety.md
@@ -47,6 +48,7 @@ The dispatcher hands them to the main session; without one, the main session rea
   - [x] `R-human-inbox-first`
   - [x] `R-human-ask`
   - [x] `R-human-chat`
+  - [x] `R-human-language`
   - [x] `R-human-text`
   - [x] `R-human-external`
 
@@ -57,9 +59,11 @@ The dispatcher hands them to the main session; without one, the main session rea
   - [x] `R-code-commit`
 
 ## Overrides
+<!-- act:overrides -->
 
 <!-- replaces `R-...`: <your version> -->
 
 ## Own rules
+<!-- act:own-rules -->
 
 <!-- one item per rule, no counterpart in the template -->

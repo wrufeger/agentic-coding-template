@@ -1,3 +1,4 @@
+<!-- act:default -->
 # Coding rules
 
 Rule sets for whoever writes or reviews code in this project — read with
@@ -15,9 +16,11 @@ optionally with a reason after " — ".
 <!-- act:coding-rules-sets -->
 
 ## Overrides
+<!-- act:overrides -->
 
 <!-- replaces `CR-...`: <your version> -->
 
 ## Own rules
+<!-- act:own-rules -->
 
 <!-- one item per rule, no counterpart in the template -->

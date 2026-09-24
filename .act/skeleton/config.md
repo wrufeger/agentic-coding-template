@@ -1,3 +1,4 @@
+<!-- act:default -->
 # Project configuration
 
 `init` fills in the values below from what it asked or detected. Change them any time — nothing
@@ -9,11 +10,18 @@ here needs a rebuild; `.act/hooks/dispatch.py` reads this file at session start.
 | :--- | :--- |
 | `name` | <name> |
 | `owner` | <owner> |
-| `language` | <language> |
+| `language-chat` | <language-chat> |
+| `language-docs` | <language-docs> |
 | `stack` | <stack> |
 | `commands` | <lint-command>, <typecheck-command>, <test-command> |
 | `tools` | <tool-list> |
 | `mode` | <mode> |
+
+`language-chat` is the language the assistant talks in: `auto` (default) follows the owner's own
+messages, a code such as `de` fixes it. `language-docs` is the language of everything the
+assistant writes under `docs/` and of the scaffold there; `.act/` stays English either way
+(`R-work-language`). A config.md with the older single `language` key still works — the value
+counts for both.
 
 `mode` is `solo` or `team`, and it changes **one** thing: when an entry gets its short ID. In
 `solo` the assistant assigns it right away (`Q66`, `T19`, `B99`) and carries on. In `team` only
@@ -103,6 +111,7 @@ session). Tips come from `.act/tips.md` and disappear once you use the feature. 
 in `docs/ai/local/reminders.md` are not affected by this key.
 
 ## Roles
+<!-- act:roles -->
 
 | Role | Tier | Reasoning | Model |
 | :--- | :--- | :--- | :--- |

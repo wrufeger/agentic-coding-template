@@ -1141,9 +1141,11 @@ def cmd_finish(root: Path, plan: bool) -> int:
         _write_json(state_path, state)
         raise Refused(f"stopped before any removal: {exc}")
     bridged = []
+    language_chat, language_docs = actlib.language_settings(actlib.read_config())
     cfg_tokens = init_mod._config_tokens({
         "name": actlib.read_config().get("name", root.name), "owner": actlib.read_config().get("owner", ""),
-        "language": actlib.read_config().get("language", "en"), "stack": actlib.read_config().get("stack", ""),
+        "language_chat": language_chat, "language_docs": language_docs,
+        "stack": actlib.read_config().get("stack", ""),
         "lint_cmd": "", "typecheck_cmd": "", "test_cmd": "", "tools": tools,
         "mode": actlib.read_config().get("mode", "solo"),
         # init.py's ProjectConfig gained "feedback_mode" (T58); only the <feedback-mode> token uses it.

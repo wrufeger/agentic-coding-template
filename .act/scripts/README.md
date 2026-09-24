@@ -180,7 +180,14 @@ never followed. Git-ignored rows keep their class and get a "git-ignored/local" 
 Call: direct
 
 ```text
-usage: board.py
+usage: board.py [-h] [--chat-language CODE]
+
+Write the per-branch board to .act-local/board-<branch>.md.
+
+options:
+  -h, --help            show this help message and exit
+  --chat-language CODE  remember the chat language recognized for this person on this machine
+                        (.act-local/identity.json) while language-chat is auto, then exit
 ```
 
 ## `doctor.py`
@@ -317,15 +324,20 @@ Call: direct
 
 ```text
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit]
+               [--language-docs CODE] [--language-chat CODE]
 
 Turn a template checkout into a project, or dock onto an existing directory.
 
 options:
-  -h, --help         show this help message and exit
-  --target TARGET    create/dock in this directory instead of the current checkout
-  --plan             show what would happen, change nothing
-  --non-interactive  never prompt; take defaults, log open points to the inbox
-  --no-commit        do everything except the final commit
+  -h, --help            show this help message and exit
+  --target TARGET       create/dock in this directory instead of the current checkout
+  --plan                show what would happen, change nothing
+  --non-interactive     never prompt; take defaults, log open points to the inbox
+  --no-commit           do everything except the final commit
+  --language-docs CODE  language of docs/ (e.g. de) instead of asking; default en (R-work-
+                        language)
+  --language-chat CODE  chat language (a code, or auto = follow the owner's messages) instead of
+                        asking
 ```
 
 ## `log.py`

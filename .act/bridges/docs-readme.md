@@ -1,3 +1,4 @@
+<!-- act:default -->
 # Documentation index
 
 What lives under `docs/`, in one table, so a new session (or a new person) knows what to read

@@ -1,3 +1,4 @@
+<!-- act:default -->
 One file per entry (`YYYY-MM-DD-<slug>.md`) — things waiting for a decision, versioned and
 visible instead of sent privately. Both the user and the assistant add entries; nothing is
 deleted, only answered and archived.

@@ -6,12 +6,19 @@
 #          inbox items plus open questions, open tasks, backlog items). Nothing here is
 #          hand-maintained; every run overwrites the file from scratch. Stdlib only.
 #
+#          `--chat-language` instead remembers the chat language recognized for this person on
+#          this machine while `language-chat` is `auto` (R-human-language) — per checkout in
+#          .act-local/identity.json, never versioned; the session start names it again.
+#
 # Usage:
 #   python .act/scripts/board.py
+#   python .act/scripts/board.py --chat-language de   # remember the owner's chat language here
 #
 # Output format:
 #   Writes .act-local/board-<branch>.md (gitignored) and prints one summary line to stdout,
 #   e.g. "board: wrote .act-local/board-next.md (branch=next, ledger=3, waiting=2, tasks=5)".
+#   --chat-language: one line "board: chat language '<code>' remembered ..."; exit 2 if the value
+#   is no language code.
 #
 # Filename encoding for the branch name: branch names may contain "/" (e.g. "feature/login"),
 # which is not valid inside a single path segment on any platform this template targets. The
@@ -27,6 +34,7 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -354,11 +362,25 @@ def main(argv: list[str]) -> int:
         except (AttributeError, ValueError):
             pass
 
-    if argv:
-        print("usage: board.py", file=sys.stderr)
-        return 2
+    parser = argparse.ArgumentParser(
+        prog="board.py", description="Write the per-branch board to .act-local/board-<branch>.md.")
+    parser.add_argument("--chat-language", metavar="CODE",
+                        help="remember the chat language recognized for this person on this machine "
+                             "(.act-local/identity.json) while language-chat is auto, then exit")
+    args = parser.parse_args(argv)
 
     root = actlib.repo_root()
+
+    if args.chat_language is not None:
+        code = actlib.normalize_language(args.chat_language)
+        if code is None:
+            print(f"board: {args.chat_language!r} is no language code (e.g. de, en, pt-br)", file=sys.stderr)
+            return 2
+        actlib.write_identity({"chat_language": code})
+        chat = actlib.language_settings(actlib.read_config())[0]
+        suffix = "" if chat == "auto" else f" (inactive while config.md fixes language-chat {chat!r})"
+        print(f"board: chat language {code!r} remembered for this checkout in .act-local/identity.json{suffix}")
+        return 0
 
     branch = get_branch(root)
     commit = get_last_commit(root) if branch is not None else None

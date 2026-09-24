@@ -1,6 +1,6 @@
 # Core rules
 
-summary: evidence over claims, template overrides, worker scope and git access
+summary: evidence over claims, template overrides, docs language, worker scope and git access
 
 Rules every role loads — orchestrator and every sub-agent. IDs (`R-<area>-<name>`) are stable and
 never reassigned, even if the wording changes later. Companion files in this layer:
@@ -25,6 +25,24 @@ edit anything under `.act/` directly; a project-specific version goes into
 `feedback.py --add --kind bug`, and with `feedback: automatic` the assistant also files the
 recurring events that pattern covers (a rule/format proving impractical, a missing workflow, a
 needed workaround) itself; details in `topics/feedback.md`.
+
+## `R-work-language` — One docs language, `.act/` in English
+
+summary: every docs/ai entry and new doc in language-docs whatever the chat language; .act/ English; human text untranslated; scaffold translated once
+
+Everything the assistant writes under `docs/` is in `language-docs` from `docs/ai/config.md`
+(default `en`) — journal, questions, tasks, backlog, inbox, proposals and new documentation alike,
+whatever language the chat runs in and whoever it runs with, so the record reads as one. `.act/`
+stays English, and so does what the mechanism generates (the board under `.act-local/`,
+`docs/ai/rules.md`, which the template keeps current); identifiers follow `R-code-language`. Text
+a person wrote stays in its original language: translating it is a separate, explicit assignment,
+never part of another task. A file whose line 1 is `<!-- act:default -->` is scaffold in the
+template's English: if `language-docs` is not English, translate it once (the inbox entry
+`*-translate-scaffold.md` lists the files) — headings, table headers, status words in prose and
+hint texts only. Marks (`<!-- act:... -->`), header fields and their values (`status:
+open|answered|done` stays English, in examples too), config keys and values, code and paths stay
+as they are, since the mechanism reads those, never the words. Then drop the mark line; from then
+on the file is the project's.
 
 ## `R-role-worker` — What a worker may and may not do
 

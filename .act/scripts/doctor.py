@@ -31,6 +31,11 @@
 #               it here; plus, from the same scan, an entry file that isn't valid UTF-8 at all
 #               (entries.find_unreadable_entries()) — this template never lets a decode failure
 #               abort a run, here or in entries.py itself.
+#           11. an outdated config.md key: the single `language` still in place of
+#               `language-chat`/`language-docs` (T61) — still read, one note to replace it.
+#           12. an entry whose `status:` header value is none the mechanism knows (open, answered,
+#               done) — e.g. translated along with the scaffold; board.py and the session start
+#               count only those values (R-work-language).
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
 #          the template-vs-project cross-check after an update) is a separate, model-driven step
 #          and out of scope here. Stdlib only.
@@ -116,6 +121,8 @@ KIND_LABELS: dict[str, str] = {
     "manifest": ".act/MANIFEST.json drift",
     "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
     "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
+    "config-key": "Outdated keys in docs/ai/config.md",
+    "status-value": "Unknown `status:` values in entry headers",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -625,6 +632,53 @@ def check_unknown_tools(root: Path) -> list[Finding]:
     )]
 
 
+def check_legacy_config_keys(root: Path) -> list[Finding]:
+    """One note for a config.md from before T61: the single `language` key still counts (for
+    chat and docs alike, actlib.language_settings), but the two keys that replace it are missing."""
+    config = actlib.read_config()
+    if "language" not in config or "language-chat" in config or "language-docs" in config:
+        return []
+    chat, docs = actlib.language_settings(config)
+    return [Finding(
+        path="docs/ai/config.md", line=None, kind="config-key",
+        message=(
+            f"`language` is still read (as `language-chat` {chat!r} and `language-docs` {docs!r}); "
+            "replace it with those two rows (`.act/skeleton/config.md` § Project, `R-work-language`)"
+        ),
+    )]
+
+
+STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/questions", "docs/ai/proposals", "docs/ai/work")
+_STATUS_FIELD_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
+
+
+def check_status_values(root: Path) -> list[Finding]:
+    """An entry header's `status:` value outside actlib.STATUS_VALUES — the mechanism reads only
+    those words (board.py, the session-start count), so a translated value silently drops the
+    entry from every count. README files and the legacy archive are not entries."""
+    legacy = root / entries.LEGACY_ROOT
+    findings = []
+    for rel in STATUS_SCAN_DIRS:
+        base = root / rel
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.md")):
+            if path.name.lower() == "readme.md" or legacy in path.parents:
+                continue
+            try:
+                header = actlib.header_block(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue  # reported by check_unreadable_entries()
+            match = _STATUS_FIELD_RE.search(header)
+            if match and match.group(1).lower() not in actlib.STATUS_VALUES:
+                findings.append(Finding(
+                    path=_rel(path, root), line=None, kind="status-value",
+                    message=(f"`status: {match.group(1)}` is not one of "
+                             f"{', '.join(actlib.STATUS_VALUES)} — header values stay English"),
+                ))
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
@@ -746,6 +800,8 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_unreadable_entries(root)
     findings += check_hooks(root)
     findings += check_unknown_tools(root)
+    findings += check_legacy_config_keys(root)
+    findings += check_status_values(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
 

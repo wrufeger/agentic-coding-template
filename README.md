@@ -32,6 +32,7 @@ preference to this one), removed by the same step under the same condition.
 python .act/scripts/init.py --plan          # show what would happen
 python .act/scripts/init.py                 # set up the current folder
 python .act/scripts/init.py --target ../my-project
+python .act/scripts/init.py --language-docs de   # docs in the owner's language (default en)
 ```
 
 Read the effective rules of a project:

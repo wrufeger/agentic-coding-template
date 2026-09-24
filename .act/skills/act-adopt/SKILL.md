@@ -158,9 +158,9 @@ and the hash of each target that existed. Run again after success, it prints the
 ## 5. Settings — check `docs/ai/config.md` before anything else
 
 `init.py` ran non-interactively, so `docs/ai/config.md` holds its defaults: `name` the folder
-name, `owner` the Git `user.name` (else `unknown`), `language` `en`, `stack` `unspecified`, empty
-`commands`, `tools` `claude-code`, `mode` `solo` or `team` from the number of commit authors. It
-says so in `docs/ai/inbox/<date>-init-notes.md` ("Project config uses defaults for: ...").
+name, `owner` the Git `user.name` (else `unknown`), `language-chat` `auto`, `language-docs` `en`,
+`stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode` `solo` or `team` from the
+number of commit authors. It says so in `docs/ai/inbox/<date>-init-notes.md` ("Project config uses defaults for: ...").
 
 ```bash
 python .act/scripts/adopt_config.py --target <dir> --plan   # show the report, write nothing
@@ -174,8 +174,15 @@ overwritten. Everything else — unknown keys, values without a counterpart, eve
 with its line numbers — lands in `<dir>/.act-local/adopt/config-report.md`.
 
 Then compare `docs/ai/config.md` with the old project by hand and correct it (orchestrator):
-`tools`, `language`, `stack`, `commands`, `owner`, `mode`. `adopt_config.py` never sets
-`language` or `mode`. This has to be right before step 6 and 7: `--finish` chooses the bridges by
+`tools`, `language-chat`, `language-docs`, `stack`, `commands`, `owner`, `mode`. `adopt_config.py`
+sets `language-docs` from the old template's `Sprache` row (`Deutsch` -> `de`); an old `AI-CONFIG.md`
+without any language row gets `de` too, marked as an assumption in the report (the old template was
+always German) — confirm it with the owner. It never sets `language-chat` (stays `auto`) or `mode`.
+A `language-docs` other than English leaves `docs/ai/inbox/<date>-translate-scaffold.md` (from
+`adopt_config.py`, or from you by hand if you set it yourself: `init.py` wrote the scaffold in
+English, marked `act:default`) — translate that scaffold once as `R-work-language` describes, never
+the adopted content, whose translation is a separate assignment offered in the report, done only
+on request. This has to be right before step 6 and 7: `--finish` chooses the bridges by
 `tools` (without `claude-code` there, an adopted `CLAUDE.md` is removed instead of becoming the
 bridge), and `mode` decides whether an entry without a kept id gets a new id now (`solo`) or none
 yet (`team`).
