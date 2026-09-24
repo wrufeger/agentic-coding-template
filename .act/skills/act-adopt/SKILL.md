@@ -313,7 +313,7 @@ python .act/scripts/adopt_entries.py --target <dir> --from <dir>/.act-local/adop
 python .act/scripts/adopt_entries.py --target <dir> --from <dir>/.act-local/adopt/batch-<source>.json
 ```
 
-Batch items (a JSON list): `kind` (`task`|`backlog`|`question`|`inbox`|`proposal`), `title`,
+Batch items (a JSON list): `kind` (`task`|`backlog`|`question`|`inbox`|`proposal`|`reserved`), `title`,
 `source` (`"<table path>:<line>"` — the row's own `path` and the heading's line; for a moved row
 the line in the legacy copy is the same), and optionally `id`, `formerly`, `body_file`, `status`
 (question/inbox), `for` (inbox). `for` is the recipient: the person who has to act on the entry
@@ -337,12 +337,16 @@ person is meant. Per kind:
   built on an earlier generation of this template carries such prose — plan for it. Only the
   project's own passages become proposals, not the predecessor template's text (step 2, "Own or
   the predecessor's").
+- **Old ids that get no live entry and no legacy copy** (they sat in a file `--finish` deletes):
+  `kind: "reserved"`, `id` the old id, `title` a short reason. Nothing is written but the id, so
+  `entries.py` never hands out that number again.
 - **The config report** from step 5: one `inbox` item, title `Config adoption report`,
   `body_file` `.act-local/adopt/config-report.md`, `source` the old `AI-CONFIG.md`, `for: "all"`,
   so nothing of it stays outside the entry system.
 
 `ledger` is not a kind: a journal is a `log` row, always `legacy`, never a new entry. A batch is
-refused as a whole on any single problem; nothing partial. After each successful run,
+refused as a whole on any single problem; nothing partial. A rerun after an interrupted write
+skips the items already written unchanged instead of refusing them. After each successful run,
 `<dir>/.act-local/adopt/entries-map.json` lists every written file under `entries`, each with its
 `source_path`, `source_line` and `file`.
 
