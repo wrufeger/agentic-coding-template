@@ -504,9 +504,12 @@ def is_tracked(root: Path, rel: str) -> bool:
 # Accounting — "nothing lost"
 # ---------------------------------------------------------------------------
 
-def accounting(root: Path, rows: list, state: dict, phase: str) -> tuple:
+def accounting(root: Path, rows: list, state: dict, phase: str, scan_rows: Optional[dict] = None) -> tuple:
     """(lines, ok): one line per table row, where its content is now; ok is False if any row is
-    neither at its target, in legacy with matching checksums, deleted (listed) nor kept."""
+    neither at its target, in legacy with matching checksums, deleted (listed) nor kept.
+    `scan_rows` (path -> scan.json row): only "finish" reaches the adopt-source wording that
+    needs it, "apply" never does (adopt rows return before that point)."""
+    scan_rows = scan_rows or {}
     sums = _read_json(root / ADOPT_DIR / "legacy-checksums.json") or {}
     moved = state.get("moved", {})
     removed_early = set(state.get("removed_at_apply", []))
@@ -577,8 +580,19 @@ def accounting(root: Path, rows: list, state: dict, phase: str) -> tuple:
             if not targets or missing:
                 emit(path, f"at target: MISSING {', '.join(missing) or '(no target)'}", False)
                 continue
-            source = "bridge" if path in bridged else (
-                "source stays (protected)" if os.path.lexists(root / path) else "source removed")
+            if path in bridged:
+                source = "bridge"
+            elif not os.path.lexists(root / path):
+                source = "source removed"
+            elif _is_protected(_note_of(row, (scan_rows or {}).get(path))):
+                source = "source stays (protected)"
+            elif any(PurePosixPath(t).parts[:4] in (OWN_SKILLS, OWN_AGENTS) for t in targets):
+                # An own skill/agent: --finish removes it (to_remove), the tool copy is written
+                # separately (bridge_own_units) — "protected" would claim a note nobody wrote
+                # (B118 #14, cosmetic: this branch means the removal has not run yet or failed).
+                source = "source stays (own unit — not yet removed)"
+            else:
+                source = "source stays (unexpected, not a protected note)"
             emit(path, f"at target: {', '.join(targets)} ({source})")
     for original, saved in state.get("rescued", {}).items():
         emit(original, f"rescued (untracked/ignored file of a moved or removed unit) -> {saved}",
@@ -791,6 +805,10 @@ def cmd_apply(root: Path, plan: bool) -> int:
         new_state.update({"state": "stage-failed", "error": f"staging the moves failed: {exc}"})
     # What --apply leaves changed in tracked files: --abort treats anything beyond this as work.
     new_state["dirty_after_apply"] = tracked_changes(root)
+    # A backed-up file (.claude/settings.json) is git-ignored: tracked_changes() never sees it.
+    # Its hash right here, once init.py is done, is --abort's own baseline for "changed since
+    # --apply" (B118 #1) — the pre-init backup above is only what gets restored, not that baseline.
+    new_state["backup_after_apply"] = {rel: _sha256(root / rel) for rel in BACKED_UP if (root / rel).is_file()}
     _write_json(state_path, new_state)
     if stage_error:
         # No accounting: a move git could not stage is lost with the next commit of the removal.
@@ -1001,12 +1019,29 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
         steps.append("checkout")
         save()
 
+    kept_changed = []
     for original, saved_at in state.get("backup", {}).items():
         if (root / saved_at).is_file():
+            baseline = state.get("backup_after_apply", {}).get(original)
+            # A tracked file is already handled above ("checkout"): it is back at its pre-apply
+            # committed content there, which content_changes()/--force cover if it was edited.
+            # Only a git-ignored one slips past that (B118 #1) — is_tracked() here, not before the
+            # checkout above, so a file the project untracks only on this branch still counts.
+            if (baseline is not None and (root / original).is_file() and not is_tracked(root, original)
+                    and _sha256(root / original) != baseline):
+                # Changed during the content step, nothing that said so on a plain overwrite —
+                # keep a copy, warn, but do not refuse the abort over it.
+                dest = root / ABORTED_ROOT / original
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(root / original, dest)
+                kept_changed.append(original)
             (root / original).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(root / saved_at, root / original)
             (root / saved_at).unlink()
             _prune_empty_dirs(root, [saved_at])
+    if kept_changed:
+        print(f"[adopt] changed since --apply (git-ignored, not tracked), kept as a copy under "
+              f"{ABORTED_ROOT}/, restored the pre-apply original instead: {', '.join(kept_changed)}")
 
     if branch_exists(root):
         _git(root, "branch", "-q", "-D", branch)
@@ -1029,6 +1064,11 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
 # ---------------------------------------------------------------------------
 # --finish
 # ---------------------------------------------------------------------------
+
+# A whole word, not negated (B118 #3): "no override"/"not an override" must not count as the
+# note meaning an override, only "override" (or "an override", "override of X", ...) does.
+OVERRIDE_RE = re.compile(r"(?<!no )(?<!not )(?<!not an )\boverride\b", re.IGNORECASE)
+
 
 def _load_init():
     """init.py as a module — its bridge writer (_write_text_file) and bridge table (BRIDGES,
@@ -1074,7 +1114,7 @@ def own_units(rows: list) -> tuple:
                 clash = stem in agents or (stem.endswith("-high") and stem[: -len("-high")] in agents)
             else:
                 continue
-            if clash and "override" in (row.get("note") or ""):
+            if clash and OVERRIDE_RE.search(row.get("note") or ""):
                 overrides.add((area, name))
             elif clash:
                 problems.append(f"{row['path']!r}: target {target!r} carries the name of the template's own "
@@ -1158,9 +1198,23 @@ def emptied_folders(root: Path, gone: list, pending: list, succ: dict) -> dict:
     return out
 
 
-def _new_place(root: Path, rel: str, succ: dict) -> tuple:
+def _tree_paths(root: Path, commit: str) -> frozenset:
+    """Every file path (recursively) git tracked at `commit` — the tree before the adoption
+    started, so _new_place() can tell a reference that was already broken there (B118 #20) from
+    one the adoption itself left without a successor."""
+    result = _git(root, "ls-tree", "-r", "--name-only", commit, check=False)
+    return frozenset(line for line in result.stdout.split("\n") if line) if result.returncode == 0 else frozenset()
+
+
+def _existed_before(before: frozenset, rel: str) -> bool:
+    return rel in before or any(p.startswith(rel + "/") for p in before)
+
+
+def _new_place(root: Path, rel: str, succ: dict, before: frozenset = frozenset()) -> tuple:
     """(new path or None, why it stays or None, sources `rel` is or lies below). A new place that
-    does not exist (a folder adopted into one file: its pages have no place of their own) stays."""
+    does not exist (a folder adopted into one file: its pages have no place of their own) stays.
+    `before`: _tree_paths() at the commit --apply started from — a `rel` missing there already
+    was dead before the adoption touched anything (B118 #20), not a successor the adoption owes."""
     hits = [(src, new) for src, new in succ.items() if rel == src or rel.startswith(src + "/")]
     sources = [src for src, _new in hits]
     if not hits:
@@ -1174,6 +1228,8 @@ def _new_place(root: Path, rel: str, succ: dict) -> tuple:
         return None, "ambiguous: several targets", sources
     new += rel[len(src):]
     if not os.path.lexists(root / new):
+        if before and not _existed_before(before, rel):
+            return None, "already dead before", sources
         return None, f"new place missing: {new}", sources
     return new, None, sources
 
@@ -1182,17 +1238,22 @@ def _mention_re(path: str):
     return re.compile(r"(?<![\w./-])" + re.escape(path) + r"(?![\w-]|\.\w)")
 
 
-def _reference_files(root: Path) -> list:
+def _reference_files(root: Path, exclude: frozenset = frozenset()) -> list:
     """The files whose references --finish bends (REFS_SCOPE): docs/README.md and every doc file
-    under docs/project/."""
+    under docs/project/ — except `exclude` (B118 #19: the same set --finish itself is about to
+    remove, so --plan and the real run scan the same files and count the same)."""
+    def kept(rel: str) -> bool:
+        return rel not in exclude and not any(rel == e or rel.startswith(e + "/") for e in exclude)
+
     index, base_dir = root / "docs" / "README.md", root / "docs" / "project"
-    files = [index] if index.is_file() else []
+    files = [index] if index.is_file() and kept("docs/README.md") else []
     if base_dir.is_dir():
-        files += [f for f in sorted(base_dir.rglob("*")) if f.is_file() and f.suffix.lower() in DOC_SUFFIXES]
+        files += [f for f in sorted(base_dir.rglob("*")) if f.is_file() and f.suffix.lower() in DOC_SUFFIXES
+                  and kept(f.relative_to(root).as_posix())]
     return files
 
 
-def _span_readings(root: Path, content: str, folder: str, succ: dict) -> tuple:
+def _span_readings(root: Path, content: str, folder: str, succ: dict, before: frozenset = frozenset()) -> tuple:
     """(readings, sources) for a path alone in backticks — text, never changed (Q91 a): read
     relative to the file's folder and relative to the root (spelled ./ or ../: the folder only; a
     leading /: the root only). `readings` describes every reading that meets a gone source with
@@ -1206,14 +1267,15 @@ def _span_readings(root: Path, content: str, folder: str, succ: dict) -> tuple:
     for label, reading in dict.fromkeys(readings):
         if reading == "." or reading.startswith("../"):
             continue  # outside the repository
-        new, why, hit = _new_place(root, reading, succ)
+        new, why, hit = _new_place(root, reading, succ, before)
         if hit:
             sources += hit
             found.append(f"{label}: {reading} -> {new}" if new else f"{label}: {reading}, {why}")
     return "; ".join(found), sources
 
 
-def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
+def rewrite_references(root: Path, succ: dict, plan: bool, exclude: frozenset = frozenset(),
+                       before: frozenset = frozenset()) -> tuple:
     """Dead references in REFS_SCOPE to gone sources (`succ`), bent to the new place — the link
     target only (Q91 a): the target of a Markdown link `](…)` or of a reference definition
     `[x]: …` outside code, resolved against the file's folder (a leading /: the root), written
@@ -1222,12 +1284,13 @@ def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
     _span_readings); fenced blocks (character and length tracked) and indented lines are never
     touched. Returns (changes, left): '<file>:<line>: <old> -> <new>' each, and
     '<file>:<line>: <path> … (<why>)' for every reference left as it is. With `plan`, nothing is
-    written."""
+    written. `exclude`: files --finish itself is about to remove, scanned by neither --plan nor
+    the real run (B118 #19). `before`: see _new_place() (B118 #20)."""
     changes, left = [], []
     if not succ:
         return changes, left
     mentions = {src: _mention_re(src) for src in succ}
-    for file in _reference_files(root):
+    for file in _reference_files(root, exclude):
         try:
             text = file.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
@@ -1259,7 +1322,7 @@ def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
                 if not path or "://" in path or path.startswith("mailto:"):
                     return match.group(0)
                 resolved = path.lstrip("/") if path.startswith("/") else posixpath.normpath(posixpath.join(folder, path))
-                new, why, sources = _new_place(root, resolved, succ)
+                new, why, sources = _new_place(root, resolved, succ, before)
                 handled.update(sources)
                 if new is None:
                     if why:
@@ -1273,7 +1336,7 @@ def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
             def code(match):
                 content = match.group(2)
                 if len(match.group(1)) == 1 and content == content.strip() and " " not in content:
-                    readings, sources = _span_readings(root, content, folder, succ)
+                    readings, sources = _span_readings(root, content, folder, succ, before)
                     handled.update(sources)
                     if readings:
                         left.append(f"{rel_file}:{number}: `{content}` — {readings} (mention in text — not changed)")
@@ -1720,6 +1783,11 @@ def cmd_finish(root: Path, plan: bool) -> int:
     dead = [p for p in dict.fromkeys(gone) if actions_of.get(p) in ("delete", "legacy")]
     adopt_targets = [t for row in rows if row["action"] == "adopt" for t in _targets(row)
                      if not t.startswith(SUCCESSOR_SKIP)]
+    # Same for --plan and the real run below (B118 #19/#20): neither scans a file this same
+    # --finish is about to remove, and both tell a reference dead before the adoption apart from
+    # one only missing a successor.
+    refs_exclude = frozenset(to_remove)
+    refs_before = _tree_paths(root, state.get("base_commit", "HEAD"))
     if plan:
         settings_removed, settings_notes = prune_settings(root, dead, to_remove, plan=True, gone=gone)
         print(f"[adopt] {prefix}remove {len(settings_removed)} entr{'y' if len(settings_removed) == 1 else 'ies'} "
@@ -1730,7 +1798,7 @@ def cmd_finish(root: Path, plan: bool) -> int:
             print(f"    check by hand: {line}")
         for rel in strip_default_marks(root, adopt_targets, plan=True, created=state.get("created_hashes")):
             print(f"[adopt] {prefix}remove the act:default mark (line 1) from {rel} (adopted content)")
-        refs = rewrite_references(root, succ, plan=True)
+        refs = rewrite_references(root, succ, plan=True, exclude=refs_exclude, before=refs_before)
         refs_file = write_references(root, refs, plan=True)
         print(f"[adopt] references in {REFS_SCOPE} (plan): {refs_summary(refs)} — full list: {refs_file}")
         print(f"[adopt] {prefix}run doctor.py, write the inbox report")
@@ -1800,13 +1868,13 @@ def cmd_finish(root: Path, plan: bool) -> int:
     unmarked = strip_default_marks(root, adopt_targets, plan=False, created=state.get("created_hashes"))
     for rel in unmarked:
         print(f"[adopt] removed the act:default mark (line 1) from {rel} (adopted content)")
-    refs = rewrite_references(root, succ, plan=False)
+    refs = rewrite_references(root, succ, plan=False, exclude=refs_exclude, before=refs_before)
     refs_file = write_references(root, refs, plan=False)
     doctor = run_doctor(root)
     state.update({"bridged": bridged, "removed_at_finish": to_remove,
                   "own_units": [f"{area}/{name}" for area, name in units],
                   "settings_removed": settings_removed, "unmarked": unmarked})
-    acc, ok = accounting(root, rows, state, "finish")
+    acc, ok = accounting(root, rows, state, "finish", scan_rows)
     report = write_report(root, rows, state, doctor, refs, acc,
                           (settings_removed, settings_notes, unmarked, refs_file))
     state.update({"state": "finished", "finished": datetime.now().isoformat(timespec="seconds"),
@@ -1860,7 +1928,7 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   {LEGACY_ROOT}/<old path> (sha256 before = after), then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
   template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
-  docs/project/coding_rules.md), moves there too unless it is a delete row
+  docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
