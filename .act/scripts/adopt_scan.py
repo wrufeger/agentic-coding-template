@@ -25,7 +25,8 @@
 #          outside where it appears, is never followed: one "unknown" row, note "link to <target>".
 #          A row found only on disk (git-ignored in a git target) keeps its class but carries the
 #          note "git-ignored/local: …"; CLAUDE.local.md, .mcp.json, .cursor/mcp.json always carry
-#          "never bridge". Several notes on one row are joined with "; ".
+#          "never bridge"; a tracked unit folder with git-ignored files inside carries "contains
+#          git-ignored files: <first>". Several notes on one row are joined with "; ".
 #
 # Usage:
 #   python .act/scripts/adopt_scan.py                    # scan the current project (see below)
@@ -117,6 +118,9 @@ NEVER_BRIDGE = {"CLAUDE.local.md", ".mcp.json", ".cursor/mcp.json"}
 NEVER_BRIDGE_NOTE = "never bridge"
 # Any row found only on disk, i.e. git-ignored in a git target: its class stays, the note warns.
 LOCAL_NOTE = "git-ignored/local: never bridge, delete or move into tracked legacy"
+# A tracked unit folder with git-ignored files inside (never the whole folder ignored — that is
+# LOCAL_NOTE): moved or removed only with the owner's confirmation, the files rescued first.
+IGNORED_INSIDE_NOTE = "contains git-ignored files"
 # A nested CLAUDE.md/AGENTS.md (a scaffold template, a sample, a module named "agents") is never
 # allow-listed: it gets "unknown" + hint "ai-config?" like any other heuristic hit.
 
@@ -493,6 +497,12 @@ class Scan:
         if links:
             note = f"contains link {links[0]} -> {entry_link(self.root / links[0])}"
             cls, reason, hint = "unknown", f"{reason}, but contains a symlink/junction", f"{cls}?"
+        elif self.git_files is not None and rel in self.git_dirs:
+            # Part of the unit is tracked, part only on disk (a local credentials file next to a
+            # skill): adopt.py refuses to move or remove the unit without an explicit confirmation.
+            ignored = [f for f in files if not f.endswith((".pyc", ".pyo")) and f not in self.git_files]
+            if ignored:
+                note = f"{IGNORED_INSIDE_NOTE}: {ignored[0]}" + (f" (+{len(ignored) - 1})" if len(ignored) > 1 else "")
         return Row(path=rel, kind="dir", size=size, age=age_for(self.root, rel, True, self.git_dates),
                    cls=cls, reason=reason, note=self.notes(rel, note), hint=hint)
 

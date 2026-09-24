@@ -7,6 +7,9 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | Script | Purpose | Call |
 | :--- | :--- | :--- |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
+| `adopt.py` | Mechanical executor of an approved adoption table (docs/project/concepts/ai-dev-app/ 08-new-project.md § "Weg 3", stage 2 steps 4 and 6… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_entries.py` | Batch writer for the content step of an adoption (skill act-adopt, docs/project/concepts/ ai-dev-app/11-build-decisions.md § "Stufe 6" in… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` (docs/project/concepts/ai-dev-app/ 05-update-and-overrides.md § "Abgleich-Skill" in the… | direct (judging the findings: skill `act-doctor`) |
@@ -31,6 +34,112 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/, see…
+
+## `adopt.py`
+
+Call: direct (used by skill `act-adopt` (stage 6))
+
+```text
+usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
+
+Carry out an approved adoption table: move legacy sources, install the template, then bridge/remove adopted sources. Never commits.
+
+options:
+  -h, --help    show this help message and exit
+  --target DIR  the project to adopt (a git repository)
+  --apply       branch, legacy moves, init.py --target
+  --finish      bridges, removals, doctor, inbox report
+  --abort       the way back after --apply: undo it, delete the branch
+  --plan        validate and show what would happen, change nothing
+  --force       with --abort: copy work done since --apply to .act-local/adopt/aborted/ first,
+                then abort
+
+TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
+  path       as in scan.json          class   as in scan.json (must match)
+  action     adopt | legacy | keep | delete
+  target     adopt only: destination path or list of paths (filled by the content step)
+  done       adopt only: true once the content is at its target (required for --finish)
+  confirmed  true: the owner confirmed this one row (see below)      note  free text
+
+ALLOWED ACTIONS PER CLASS
+  log           legacy, keep                 ai-machinery  adopt, delete, keep
+  ai-config     adopt, legacy, keep, delete  work          adopt, legacy, keep, delete
+  project-doc   adopt, legacy, keep; delete only with confirmed
+  unknown       keep; adopt/legacy/delete only with confirmed
+
+REFUSED (whole run, with a list) on: a path that is not plain relative posix or not on disk; a
+path not in scan.json, or a scan.json row without a table row; a class differing from scan.json;
+a disallowed action; a row whose note (scan's or table's) says "never bridge"/"git-ignored/local"
+with action delete or legacy, or adopt into a bridge file; any non-keep action on a link or below
+one; any non-keep action below a source/test/content tree (see below) without confirmed; a unit
+folder holding untracked or git-ignored files that would be moved or removed, without confirmed
+(with it, those files go to .act-local/adopt/rescued/ first); an adopt target equal to or below its own
+source (unless the source moves before init) or below any path that is deleted, archived, removed
+or bridged; a path segment ending in a dot or space; paths are compared case-insensitively where
+the file system is; a scan.json that no longer matches a fresh scan (--apply).
+Source/test/content trees (first path segment): __tests__, app, apps, assets, client, components, content, e2e, fixtures, lib, packages, pages, public, server, spec, specs, src, static, test*.
+
+--apply: clean tree (untracked only under .act-local/), new branch act-adopt (an existing branch
+  refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
+  docs/ai/work/archive/legacy/<old path> (sha256 before = after). An old skill/agent carrying the
+  name of a template unit, or a file at a place init.py writes itself (docs/ai/ skeleton,
+  docs/ai/rules.md, docs/project/coding_rules.md), moves there too unless it is a delete row
+  (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
+  --non-interactive (--no-commit once init.py has it); existing CLAUDE.md/AGENTS.md stay until
+  --finish.
+--finish: every adopt row done with its target on disk; adopted ai-config files that init has a
+  bridge for become that bridge (protected rows stay as they are), other adopted sources and
+  delete rows removed (git rm); an adopt target docs/ai/local/skills/<name>/... or
+  docs/ai/local/agents/<name>.md is an own unit and gets its tool copies/bridge like
+  act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
+  <name> is a template unit's (that would be an override; a row note "override" leaves it to the
+  template's copy mechanism); doctor.py, docs/project/ references to moved/removed paths,
+  report docs/ai/inbox/<date>-adoption-report.md. A second --finish says "already finished".
+  An adopt target that still has the content it had right after --apply is refused ("content not
+  adopted?").
+--apply refuses a detached HEAD. It backs up .claude/settings.json (init.py merges hooks into it).
+--abort: the way back after --apply or a stopped --apply, resumable (state.json is rewritten after
+  every step). Refused while act-adopt carries a commit other than init.py's, and while work was
+  done since --apply — a changed file init.py created, an uncommitted edit to a tracked file, a
+  new file where a moved unit returns — unless --force, which first copies those files to
+  .act-local/adopt/aborted/<path> and lists them. Then: removes the files init.py created that are
+  unchanged (or saved), puts moved units back only from a legacy copy that still holds the moved
+  content, puts rescued files back, checks out the base branch, restores the settings backup,
+  deletes act-adopt and the state. New files it did not create are left in place and listed.
+```
+
+## `adopt_config.py`
+
+Call: direct (used by skill `act-adopt` (stage 6))
+
+```text
+usage: adopt_config.py [-h] --target DIR [--source FILE] [--plan]
+
+Carry an old AI-CONFIG.md's settings into docs/ai/config.md; report everything else.
+
+options:
+  -h, --help     show this help message and exit
+  --target DIR   the project (already set up by adopt.py --apply)
+  --source FILE  the old AI-CONFIG.md (default: see Usage)
+  --plan         show the report, write nothing
+```
+
+## `adopt_entries.py`
+
+Call: direct (used by skill `act-adopt` (stage 6))
+
+```text
+usage: adopt_entries.py [-h] --target DIR --from JSON [--plan]
+
+Write a checked batch of adopted entries (tasks, backlog, questions, inbox, journal) as entry
+files; the whole batch is refused on any conflict.
+
+options:
+  -h, --help    show this help message and exit
+  --target DIR  the project (already set up by adopt.py --apply)
+  --from JSON   the batch file (UTF-8 JSON)
+  --plan        check and show what would be written, write nothing
+```
 
 ## `adopt_scan.py`
 
@@ -98,7 +207,7 @@ Call: direct
 ```text
 usage: entries.py [-h] {new,assign,list,check} ...
 
-Create and account for docs/ai/'s per-entry task/backlog/ledger/question files.
+Create and account for docs/ai/'s per-entry task/backlog/ledger/question/inbox files.
 
 positional arguments:
   {new,assign,list,check}
@@ -114,15 +223,24 @@ options:
 ### `entries.py new`
 
 ```text
-usage: entries.py new [-h] {backlog,ledger,question,task} title [title ...]
+usage: entries.py new [-h] [--id ID] [--formerly OLD_ID] [--status {open,answered}]
+                      [--for IDENTITY] [--body-file PATH]
+                      {backlog,inbox,ledger,question,task} title [title ...]
 
 positional arguments:
-  {backlog,ledger,question,task}
-                        task | backlog | ledger | question
+  {backlog,inbox,ledger,question,task}
+                        task | backlog | ledger | question | inbox
   title                 entry title — becomes the file's heading
 
 options:
   -h, --help            show this help message and exit
+  --id ID               keep this id (T/B/Q<n>, optional sub-letter); refused if taken or wrong
+                        prefix
+  --formerly OLD_ID     header line "formerly: <old id>"
+  --status {open,answered}
+                        question or inbox entry (default open)
+  --for IDENTITY        inbox entry: recipient (default all)
+  --body-file PATH      body below the heading, copied verbatim (UTF-8)
 ```
 
 ### `entries.py assign`
@@ -137,11 +255,11 @@ options:
 ### `entries.py list`
 
 ```text
-usage: entries.py list [-h] [{backlog,ledger,question,task}]
+usage: entries.py list [-h] [{backlog,inbox,ledger,question,task}]
 
 positional arguments:
-  {backlog,ledger,question,task}
-                        task | backlog | ledger | question
+  {backlog,inbox,ledger,question,task}
+                        task | backlog | ledger | question | inbox
 
 options:
   -h, --help            show this help message and exit

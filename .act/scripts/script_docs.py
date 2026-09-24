@@ -55,6 +55,9 @@ HELP_COLUMNS = "100"
 SCRIPT_INFO: dict[str, dict[str, str]] = {
     "actlib.py": {"kind": "library"},
     "board.py": {"kind": "direct"},
+    "adopt.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
+    "adopt_config.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
+    "adopt_entries.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "adopt_scan.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "doctor.py": {"kind": "direct", "note": "judging the findings: skill `act-doctor`"},
     "entries.py": {"kind": "direct"},
