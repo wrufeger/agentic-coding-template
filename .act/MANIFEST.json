@@ -90,7 +90,7 @@
   "scripts/settings_export.py": "d2f35079d06b186c3bf8bcccfd4830ef977ace3fcaea6f2f8cb7f5fea1c7be1c",
   "scripts/settings_format.py": "862188262101c819c8e3b0931dfc46a949926d477439bbaddac4387d359f1f25",
   "scripts/settings_load.py": "f53fd333e104113175a7f951619bfc95c7cd31540ebb8821480ca377e76473d5",
-  "scripts/skills.py": "0845a50010330a44d12a00e3cc7f41bf6c4a11339d2262a54369f65050913bc9",
+  "scripts/skills.py": "c1fcf31ad92d0996baf70caff29c982c497a37ba2b795abaf08ab2a2d672679c",
   "scripts/tiers.py": "bf686de6c490d19d75c8da0779f66ed093fb9b53a2aad29c04c3d8ee8897de7b",
   "scripts/update.py": "f2018b621df4c5217e2f54ae836d43a6d3a8fc3f97574a426d11bba8245cbc9d",
   "scripts/usage.py": "2df492652f27a54c924e22aee3b53ce2ca1c27a7e417b0d015d7d89eb1993bc5",

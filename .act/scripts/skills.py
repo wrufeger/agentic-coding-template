@@ -24,6 +24,11 @@
 #   Plain text, no Markdown fence — callers (this script's own CLI, the `act` skill's fallback,
 #   the UserPromptSubmit fast path) put it in a code block themselves where one is wanted, so the
 #   text here can be reused unchanged in all three places (R-cost-script single source of truth).
+#   Table: header line, blank line, then per skill a "  /<name>" line (two-space indent, plus
+#   " (own)"/" (overridden)" for a project skill under docs/ai/local/skills/ — see Skill.marker)
+#   and, below it, the description with its trigger sentence (the first one starting "Use ...")
+#   cut off, wrapped to 96 columns with a six-space indent on every line (T67 live-probe: long
+#   descriptions used to wrap flush-left, unreadable against the name column).
 #   Unknown name: "Unknown skill '<name>'." on its own line, then a blank line, then the table —
 #   never an error exit, since the caller (the hook included) always wants something shown.
 #   Exit 0 always; exit 1 only if no skills directory exists at all (template checkout broken).
@@ -32,11 +37,20 @@ from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from pathlib import Path
 from typing import NamedTuple, Optional
 
 import actlib
 import tiers
+
+WIDTH = 96          # wrap width for the table's description lines (T67, live-probe feedback)
+INDENT = "      "   # six spaces — description lines, under the two-space-indented "/<name>" line
+
+# Sentence-lead marker for the trigger half of a description (see _short_description()) — every
+# convention seen across this template's SKILL.md files reads "Use when ...", "Use after ...",
+# "Use to ...", "Use right after ...", so the generic prefix is what's checked, not a fixed list.
+_TRIGGER_PREFIX = "Use "
 
 
 class Skill(NamedTuple):
@@ -44,6 +58,7 @@ class Skill(NamedTuple):
     description: str   # frontmatter `description`, "" if missing
     origin: str         # "local" or "template" — actlib.resolve()'s own vocabulary
     path: Path
+    marker: str = ""    # "own" (local, no template counterpart), "overridden" (local + template), or ""
 
 
 def _skill_dir_names(root: Path) -> set[str]:
@@ -60,6 +75,15 @@ def _skill_dir_names(root: Path) -> set[str]:
     return names
 
 
+def _marker(root: Path, dir_name: str, origin: str) -> str:
+    """"own" for a project skill with no template counterpart, "overridden" for a project skill
+    that replaces a template one of the same name, "" for a plain template skill."""
+    if origin != "local":
+        return ""
+    template_path = root / ".act" / "skills" / dir_name / "SKILL.md"
+    return "overridden" if template_path.is_file() else "own"
+
+
 def load_skill(root: Path, dir_name: str) -> Optional[Skill]:
     """The effective `Skill` for the skill directory named `dir_name`, or None if neither source
     has it (a caller passed a name that does not exist at all)."""
@@ -74,7 +98,8 @@ def load_skill(root: Path, dir_name: str) -> Optional[Skill]:
     fields, _body, _order = tiers.split_frontmatter(text)
     name = fields.get("name", "").strip() or dir_name
     description = fields.get("description", "").strip()
-    return Skill(name=name, description=description, origin=origin, path=path)
+    marker = _marker(root, dir_name, origin)
+    return Skill(name=name, description=description, origin=origin, path=path, marker=marker)
 
 
 def list_skills(root: Path) -> list[Skill]:
@@ -89,12 +114,31 @@ def list_skills(root: Path) -> list[Skill]:
     return sorted(skills, key=lambda skill: skill.name)
 
 
+def _short_description(description: str) -> str:
+    """`description` with its trigger sentence dropped — the first sentence that starts with
+    `_TRIGGER_PREFIX` ("Use when a bug is reported, ...", "Use right after a task is accepted,
+    ...", "Use to check for drift, ..."), plus everything after it. Sentence boundary is ". ", so
+    the description is split on it and the first matching sentence onward is cut. Falls back to
+    the full description when no such sentence exists, or when cutting it would leave nothing
+    (the whole description is one trigger sentence)."""
+    sentences = description.split(". ")
+    for i, sentence in enumerate(sentences):
+        if sentence.startswith(_TRIGGER_PREFIX):
+            short = ". ".join(sentences[:i]).strip()
+            return short or description
+    return description
+
+
 def render_table(skills: list[Skill]) -> str:
     if not skills:
         return "No skills found under .act/skills/ — is this a template checkout?"
-    width = max(len(skill.name) for skill in skills)
-    lines = ["Skills in this project — /act <name> shows one in full", ""]
-    lines.extend(f"  {skill.name.ljust(width)}  {skill.description}".rstrip() for skill in skills)
+    lines = ["PROJECT SKILLS — /act <name> shows one in full", ""]
+    for skill in skills:
+        suffix = f" ({skill.marker})" if skill.marker else ""
+        lines.append(f"  /{skill.name}{suffix}")
+        short = _short_description(skill.description)
+        if short:
+            lines.append(textwrap.fill(short, WIDTH, initial_indent=INDENT, subsequent_indent=INDENT))
     return "\n".join(lines)
 
 
