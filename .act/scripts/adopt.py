@@ -12,9 +12,12 @@
 #            --finish  after the content step (skill act-adopt / T52) marked every `adopt` row
 #                      done: turn adopted ai-config files into bridges, remove adopted sources
 #                      and `delete` rows, bridge adopted own skills/roles (targets under
-#                      docs/ai/local/skills|agents/) the way act-load-settings does, run
-#                      doctor.py, bend dead references in docs/project/ to the new place (link
-#                      targets only), write one inbox report.
+#                      docs/ai/local/skills|agents/) the way act-load-settings does, drop
+#                      .claude/settings.json entries that run a removed script, remove the
+#                      act:default mark from adopt targets (docs/ai/config.md keeps it: values
+#                      only, its text stays scaffold), bend dead references in docs/project/
+#                      and docs/README.md to the new place (link targets only), run doctor.py,
+#                      write one inbox report.
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
 # Usage:
@@ -41,6 +44,7 @@ import json
 import os
 import posixpath
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -67,7 +71,9 @@ ACTIONS = ("adopt", "legacy", "keep", "delete")
 # own `confirmed: true`; so does `delete` on a project-doc row (CONFIRM_NEEDED below).
 ALLOWED_ACTIONS: dict = {
     "ai-config": {"adopt", "keep", "legacy", "delete"},
-    "ai-machinery": {"adopt", "delete", "keep"},
+    # legacy (T65, Q93 open): an old skill/agent/script kept byte-identical in the archive, e.g. on a
+    # name collision with a template unit — as scan and skill propose it.
+    "ai-machinery": {"adopt", "legacy", "delete", "keep"},
     "work": {"adopt", "legacy", "keep", "delete"},
     "log": {"legacy", "keep"},
     "project-doc": {"adopt", "legacy", "keep", "delete"},
@@ -531,7 +537,23 @@ def accounting(root: Path, rows: list, state: dict, phase: str) -> tuple:
             status = f"{label} (checksum {'ok' if good else 'MISMATCH'}"
             if unstaged:
                 status += f", NOT IN GIT INDEX: {len(unstaged)} file(s), first {unstaged[0]}"
-            emit(path, f"{status}) -> {moved[path]}", good and not unstaged)
+            if action != "adopt":
+                emit(path, f"{status}) -> {moved[path]}", good and not unstaged)
+                continue
+            # An adopt row moved before init (init writes at its place): counted as adopted, the
+            # original's legacy copy checked all the same.
+            targets = _targets(row)
+            how = "into itself" if path in targets else "original moved before init"
+            original = f"{how}; original in legacy, checksum {'ok' if good else 'MISMATCH'}" + (
+                f", NOT IN GIT INDEX: {len(unstaged)} file(s), first {unstaged[0]}" if unstaged else "")
+            if phase == "apply":
+                emit(path, f"adoption pending ({original} -> {moved[path]})", good and not unstaged)
+                continue
+            missing = [t for t in targets if not os.path.lexists(root / t)]
+            if not targets or missing:
+                emit(path, f"at target: MISSING {', '.join(missing) or '(no target)'} ({original})", False)
+                continue
+            emit(path, f"at target: {', '.join(targets)} ({original} -> {moved[path]})", good and not unstaged)
             continue
         if action == "delete":
             if path in removed_early:
@@ -1084,12 +1106,15 @@ def bridge_own_units(root: Path, units: list) -> list:
     return settings_load.write_unit_bridges(root, settings_load.Analysis(file_plan=plan))
 
 
-REFS_IN_REPORT = 50  # more references than this: the full list goes to REFS_FILE, the report names it
-REFS_FILE = f"{ADOPT_DIR}/references.txt"
+REFS_IN_REPORT = 50  # more references than this: the report names REFS_FILE instead of listing them
+REFS_FILE = f"{ADOPT_DIR}/references.txt"            # the full list, written by every --finish
+REFS_PLAN_FILE = f"{ADOPT_DIR}/references.plan.txt"  # the same list, written by --finish --plan
+REFS_SCOPE = "docs/project/ and docs/README.md"     # where references are bent
 
 
 DOC_SUFFIXES = {".md", ".txt", ".rst", ".adoc"}
 LINK_RE = re.compile(r"(\]\()([^)\s]+)(\))")            # a Markdown link target: ](target)
+REFDEF_RE = re.compile(r"^( {0,3}\[[^\]]+\]:[ \t]*<?)([^\s<>]+)()")  # a reference definition: [x]: target
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")          # a fence line: its character and length count
 CODE_SPAN_RE = re.compile(r"(`+)(.+?)(?<!`)\1(?!`)")     # an inline code span: a run of N backticks, closed by N
 INDENTED_RE = re.compile(r"^(?: {4}|\t)")               # indented code (or a deeply nested list: left as it is)
@@ -1113,6 +1138,26 @@ def successors(rows: list, state: dict, gone: list) -> dict:
     return out
 
 
+def emptied_folders(root: Path, gone: list, pending: list, succ: dict) -> dict:
+    """Folders above a gone source that hold no file once --finish is done (`pending`: sources it
+    still removes) -> their legacy folder if there is one, else None — a reference to such a
+    folder is dead as well (T65: docs/project/coding_rules.d/ with every file a delete row)."""
+    out, full = {}, set()
+    for path in dict.fromkeys(gone):
+        folder = posixpath.dirname(path)
+        while folder and folder not in out and folder not in full:
+            base = root / folder
+            files = (f for f in (base.rglob("*") if base.is_dir() else []) if f.is_file())
+            if any(not any(_at_or_below(f.relative_to(root).as_posix(), p) for p in pending) for f in files):
+                full.add(folder)
+                break
+            if folder not in succ:
+                legacy = f"{LEGACY_ROOT}/{folder}"
+                out[folder] = legacy if (root / legacy).is_dir() else None
+            folder = posixpath.dirname(folder)
+    return out
+
+
 def _new_place(root: Path, rel: str, succ: dict) -> tuple:
     """(new path or None, why it stays or None, sources `rel` is or lies below). A new place that
     does not exist (a folder adopted into one file: its pages have no place of their own) stays."""
@@ -1120,9 +1165,9 @@ def _new_place(root: Path, rel: str, succ: dict) -> tuple:
     sources = [src for src, _new in hits]
     if not hits:
         return None, None, sources
-    if len(hits) != 1:
-        return None, "ambiguous: several sources", sources
-    src, new = hits[0]
+    # All hits are `rel` or folders above it: the most specific one names the new place (a file
+    # row below a folder that the adoption emptied).
+    src, new = max(hits, key=lambda hit: len(hit[0]))
     if new is None:
         return None, "no successor", sources
     if new == AMBIGUOUS:
@@ -1137,23 +1182,52 @@ def _mention_re(path: str):
     return re.compile(r"(?<![\w./-])" + re.escape(path) + r"(?![\w-]|\.\w)")
 
 
+def _reference_files(root: Path) -> list:
+    """The files whose references --finish bends (REFS_SCOPE): docs/README.md and every doc file
+    under docs/project/."""
+    index, base_dir = root / "docs" / "README.md", root / "docs" / "project"
+    files = [index] if index.is_file() else []
+    if base_dir.is_dir():
+        files += [f for f in sorted(base_dir.rglob("*")) if f.is_file() and f.suffix.lower() in DOC_SUFFIXES]
+    return files
+
+
+def _span_readings(root: Path, content: str, folder: str, succ: dict) -> tuple:
+    """(readings, sources) for a path alone in backticks — text, never changed (Q91 a): read
+    relative to the file's folder and relative to the root (spelled ./ or ../: the folder only; a
+    leading /: the root only). `readings` describes every reading that meets a gone source with
+    its new place or why there is none ('' if none meets one)."""
+    readings = []
+    if not content.startswith("/"):
+        readings.append(("relative to the file", posixpath.normpath(posixpath.join(folder, content))))
+    if not content.startswith(("./", "../")):
+        readings.append(("relative to the root", posixpath.normpath(content.lstrip("/"))))
+    found, sources = [], []
+    for label, reading in dict.fromkeys(readings):
+        if reading == "." or reading.startswith("../"):
+            continue  # outside the repository
+        new, why, hit = _new_place(root, reading, succ)
+        if hit:
+            sources += hit
+            found.append(f"{label}: {reading} -> {new}" if new else f"{label}: {reading}, {why}")
+    return "; ".join(found), sources
+
+
 def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
-    """Dead references under docs/project/ to gone sources (`succ`), bent to the new place —
-    the link target only: a Markdown link target outside code (resolved against the file's
-    folder, written back relative again, anchor kept) and a path alone in single backticks that
-    is a source (root-relative), only where the new place exists. No other character changes;
-    fenced blocks (character and length tracked), indented lines and the rest of inline code are
-    never touched. Returns (changes, left): '<file>:<line>: <old> -> <new>' each, and
-    '<file>:<line>: <path> (<why>)' for every reference left as it is. With `plan`, nothing is
+    """Dead references in REFS_SCOPE to gone sources (`succ`), bent to the new place — the link
+    target only (Q91 a): the target of a Markdown link `](…)` or of a reference definition
+    `[x]: …` outside code, resolved against the file's folder (a leading /: the root), written
+    back the same way, anchor kept, only where the new place exists. Nothing else changes: a path
+    in backticks is text and only listed ("mention in text — not changed", both readings, see
+    _span_readings); fenced blocks (character and length tracked) and indented lines are never
+    touched. Returns (changes, left): '<file>:<line>: <old> -> <new>' each, and
+    '<file>:<line>: <path> … (<why>)' for every reference left as it is. With `plan`, nothing is
     written."""
-    base_dir = root / "docs" / "project"
     changes, left = [], []
-    if not base_dir.is_dir() or not succ:
+    if not succ:
         return changes, left
     mentions = {src: _mention_re(src) for src in succ}
-    for file in sorted(base_dir.rglob("*")):
-        if not file.is_file() or file.suffix.lower() not in DOC_SUFFIXES:
-            continue
+    for file in _reference_files(root):
         try:
             text = file.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
@@ -1192,30 +1266,27 @@ def rewrite_references(root: Path, succ: dict, plan: bool) -> tuple:
                         left.append(f"{rel_file}:{number}: {target} ({why})")
                     return match.group(0)
                 new_target = ("/" + new) if path.startswith("/") else posixpath.relpath(new, folder or ".")
-                new_target += sep + anchor
+                new_target += ("/" if path.endswith("/") and not new_target.endswith("/") else "") + sep + anchor
                 changes.append(f"{rel_file}:{number}: {target} -> {new_target}")
                 return f"{match.group(1)}{new_target}{match.group(3)}"
 
             def code(match):
                 content = match.group(2)
-                if len(match.group(1)) != 1 or content != content.strip() or " " in content:
-                    return match.group(0)  # not a path alone in single backticks: code, untouched
-                new, why, sources = _new_place(root, content, succ)
-                handled.update(sources)
-                if new is None:
-                    if why:
-                        left.append(f"{rel_file}:{number}: {content} ({why})")
-                    return match.group(0)
-                changes.append(f"{rel_file}:{number}: `{content}` -> `{new}`")
-                return f"`{new}`"
+                if len(match.group(1)) == 1 and content == content.strip() and " " not in content:
+                    readings, sources = _span_readings(root, content, folder, succ)
+                    handled.update(sources)
+                    if readings:
+                        left.append(f"{rel_file}:{number}: `{content}` — {readings} (mention in text — not changed)")
+                return match.group(0)  # text: never changed
 
+            line = REFDEF_RE.sub(link, line, count=1)
             parts, pos = [], 0
             for span in CODE_SPAN_RE.finditer(line):
                 parts += [LINK_RE.sub(link, line[pos:span.start()]), code(span)]
                 pos = span.end()
             parts.append(LINK_RE.sub(link, line[pos:]))
             new_line = "".join(parts)
-            if new_line != line:
+            if new_line != lines[number - 1]:
                 lines[number - 1], edited = new_line, True
             left += [f"{rel_file}:{number}: {src} (mentioned in the text)" for src, rx in mentions.items()
                      if src not in handled and rx.search(new_line)]
@@ -1232,6 +1303,242 @@ def _code(text: str) -> str:
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
+def write_references(root: Path, refs: tuple, plan: bool) -> str:
+    """The full list — every reference bent and every one left, with its reason — written to
+    REFS_FILE (REFS_PLAN_FILE with `plan`); returns that path."""
+    changes, left = refs
+    rel = REFS_PLAN_FILE if plan else REFS_FILE
+    head = "# would be rewritten (old -> new)" if plan else "# rewritten (old -> new)"
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([head, *changes, "", "# left unchanged (reason in brackets)", *left]) + "\n",
+                    encoding="utf-8")
+    return rel
+
+
+def refs_summary(refs: tuple) -> str:
+    """'<n> rewritten, <m> left unchanged (<k> <reason>, ...)'."""
+    changes, left = refs
+    reasons: dict = {}
+    for line in left:
+        why = line.rsplit(" (", 1)[-1].rstrip(")").split(":")[0]
+        reasons[why] = reasons.get(why, 0) + 1
+    detail = ", ".join(f"{n} {why}" for why, n in sorted(reasons.items(), key=lambda item: -item[1]))
+    return f"{len(changes)} rewritten, {len(left)} left unchanged" + (f" ({detail})" if detail else "")
+
+
+# Settings entries that run a removed script (T65): the script a hook command or a Bash(...)
+# permission rule executes — the first word of a simple command, or the word after an
+# interpreter — written relative to the project (bare, ./ or through $CLAUDE_PROJECT_DIR), never
+# an absolute path, one into another repository, or a script that is only an argument.
+SCRIPT_SUFFIXES = (".py", ".sh", ".ps1", ".bat", ".cmd", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl")
+INTERPRETERS = {"python", "python3", "py", "bash", "sh", "zsh", "node", "pwsh", "powershell", "deno", "bun",
+                "ruby", "perl"}
+SHELL_WORDS = {"if", "then", "do", "else", "elif", "while", "until", "{", "!", "time", "exec", "command", "env"}
+PROJECT_PREFIXES = ("$CLAUDE_PROJECT_DIR/", "${CLAUDE_PROJECT_DIR}/", "%CLAUDE_PROJECT_DIR%/", "./")
+SHELL_VAR_RE = re.compile(r"^\$(?:\w+|\{\w+\})$")  # "$P" — a variable holding the interpreter
+SETTINGS_FILE = ".claude/settings.json"
+SETTINGS_LOCAL = ".claude/settings.local.json"
+
+
+def _project_script(word: str) -> Optional[str]:
+    """`word` as a project-relative script path, or None (absolute, outside, a pattern, no script)."""
+    for prefix in PROJECT_PREFIXES:
+        if word.startswith(prefix):
+            word = word[len(prefix):]
+            break
+    word = re.sub(r":?\*+$", "", word)  # a permission pattern: path:* or path*
+    if not word or "*" in word or word.startswith(("/", "~", "$", "%", "..")) or re.match(r"^[A-Za-z]:", word):
+        return None
+    word = posixpath.normpath(word)
+    return word if word.lower().endswith(SCRIPT_SUFFIXES) and not word.startswith("..") else None
+
+
+def executed_scripts(command: str) -> list:
+    """Project-relative scripts `command` executes (see above); `bash -c '…'` is read again."""
+    text = command.replace('\\"', '"').replace("\\", "/")
+    try:
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        words = list(lexer)
+    except ValueError:
+        words = text.split()
+    found, at_start, i = [], True, 0
+    while i < len(words):
+        word = words[i]
+        i += 1
+        if word and set(word) <= set(";&|()"):
+            at_start = True
+            continue
+        if not at_start or word in SHELL_WORDS or re.match(r"^\w+=", word):
+            continue
+        at_start = False
+        name = posixpath.basename(word).lower()
+        name = name[:-4] if name.endswith(".exe") else name
+        if name not in INTERPRETERS and not SHELL_VAR_RE.match(word):
+            script = _project_script(word)
+            found += [script] if script else []
+            continue
+        while i < len(words) and words[i].startswith("-") and words[i] not in ("-c", "-File", "-f"):
+            i += 1
+        if i < len(words) and words[i] in ("-c", "-File", "-f") and i + 1 < len(words):
+            if words[i] == "-c" and name in ("bash", "sh", "zsh"):
+                found += executed_scripts(words[i + 1])
+            elif words[i] != "-c":
+                found += [s for s in [_project_script(words[i + 1])] if s]
+            i += 2
+        elif i < len(words) and not (words[i] and set(words[i]) <= set(";&|()")):
+            found += [s for s in [_project_script(words[i])] if s]
+            i += 1
+    return list(dict.fromkeys(found))
+
+
+def _entry_scripts(entry: str, kind: str) -> list:
+    """Scripts a settings entry executes: a hook or statusLine command, or a Bash(...) rule (a
+    Read/Edit/Write rule executes nothing)."""
+    if kind == "rule":
+        match = re.match(r"^Bash\((.*)\)$", entry.strip(), re.S)
+        return executed_scripts(match.group(1)) if match else []
+    return executed_scripts(entry)
+
+
+def _json_layout(text: str, data) -> Optional[tuple]:
+    """(indent, ensure_ascii, newline, final newline) with which json.dumps gives back `text`
+    exactly — None if no such layout exists (then the file is not rewritten)."""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    first = next((line for line in text.split(newline) if line[:1] in (" ", "\t")), "  ")
+    indent = "\t" if first.startswith("\t") else len(first) - len(first.lstrip(" "))
+    final = text.endswith(newline)
+    for ascii_only in (False, True):
+        layout = (indent, ascii_only, newline, final)
+        if _json_dump(data, layout) == text:
+            return layout
+    return None
+
+
+def _json_dump(data, layout: tuple) -> str:
+    indent, ascii_only, newline, final = layout
+    return json.dumps(data, indent=indent, ensure_ascii=ascii_only).replace("\n", newline) + (newline if final else "")
+
+
+def prune_settings(root: Path, dead: list, pending: list, plan: bool, gone: list = ()) -> tuple:
+    """(removed, notes): hook commands and Bash(...) permission rules in .claude/settings.json whose
+    executed script lies at or below a delete or legacy row this adoption removed (`dead`; for a
+    --plan, `pending` is what the real run still removes), taken out — an emptied hook group and
+    an event it empties go with them (an event that was empty already stays), everything else
+    stays byte for byte (line endings included); written only if json.dumps reproduces the file
+    exactly, otherwise listed for removal by hand. Also listed, never removed: an entry whose
+    script was already missing before the adoption, one whose script an adopt row removed
+    (another source in `gone`), a statusLine, and everything in .claude/settings.local.json.
+    With `plan`, nothing is written."""
+    removed, notes = [], []
+
+    def verdict(script: str) -> Optional[str]:
+        """'dead', a reason to list the entry, or None (the script is there)."""
+        leaving = any(_at_or_below(script, p) for p in pending)
+        if os.path.lexists(root / script) and not leaving:
+            return None
+        if any(_at_or_below(script, p) for p in dead):
+            return "dead"
+        if leaving or any(_at_or_below(script, p) for p in gone):
+            return f"script {script} removed by this adoption (adopt row) — re-point or remove it by hand"
+        return f"script {script} was already missing before the adoption — remove it by hand"
+
+    def judge(entry: str, kind: str, where: str, rel: str) -> bool:
+        """True if the entry goes; lists it in `notes` where it only needs a look."""
+        verdicts = [v for v in (verdict(s) for s in _entry_scripts(entry, kind)) if v]
+        if "dead" in verdicts:
+            return True
+        notes.extend(f"{rel}: {where}: {entry} — {v}" for v in verdicts)
+        return False
+
+    for rel in (SETTINGS_FILE, SETTINGS_LOCAL):
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8")
+            data = json.loads(text)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            notes.append(f"{rel}: not read ({exc.__class__.__name__}) — check its hooks and permissions by hand")
+            continue
+        if not isinstance(data, dict):
+            continue
+        hits = []
+        perms = data.get("permissions")
+        for key, rules in (perms.items() if isinstance(perms, dict) else []):
+            if isinstance(rules, list):
+                out = [r for r in rules if isinstance(r, str) and judge(r, "rule", f"permissions.{key}", rel)]
+                hits += [f"permissions.{key}: {r}" for r in out]
+                perms[key] = [r for r in rules if r not in out]
+        hooks = data.get("hooks")
+        for event, groups in (list(hooks.items()) if isinstance(hooks, dict) else []):
+            if not isinstance(groups, list):
+                continue
+            kept_groups = []
+            for group in groups:
+                entries = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(entries, list):
+                    kept_groups.append(group)
+                    continue
+                out = [h for h in entries if isinstance(h, dict) and isinstance(h.get("command"), str)
+                       and judge(h["command"], "command", f"hooks.{event}", rel)]
+                hits += [f"hooks.{event}: {h['command']}" for h in out]
+                if len(out) < len(entries) or not entries:
+                    group["hooks"] = [h for h in entries if not any(h is g for g in out)]
+                    kept_groups.append(group)
+            if kept_groups or not groups:
+                hooks[event] = kept_groups
+            else:
+                del hooks[event]
+        status = data.get("statusLine")
+        if isinstance(status, dict) and isinstance(status.get("command"), str):
+            reasons = [v for v in (verdict(s) for s in _entry_scripts(status["command"], "command")) if v]
+            notes += [f"{rel}: statusLine: {status['command']} — "
+                      + ("runs a removed script, check it by hand" if v == "dead" else v) for v in reasons]
+        if not hits:
+            continue
+        if rel == SETTINGS_LOCAL:
+            notes += [f"{rel}: {hit} — runs a removed script, left in place (local file)" for hit in hits]
+            continue
+        layout = _json_layout(text, json.loads(text))
+        if layout is None:
+            notes += [f"{rel}: {hit} — runs a removed script; the file's layout is not reproducible, "
+                      "remove it by hand" for hit in hits]
+            continue
+        removed += [f"{rel}: {hit}" for hit in hits]
+        if not plan:
+            path.write_bytes(_json_dump(data, layout).encode("utf-8"))
+    return removed, notes
+
+
+# Adopt targets that keep the act:default mark: docs/ai/config.md takes over values only — its
+# text stays the template's scaffold and so stays on the translation list (R-work-language).
+KEEP_DEFAULT_MARK = {"docs/ai/config.md"}
+
+
+def strip_default_marks(root: Path, targets: list, plan: bool, created: Optional[dict] = None) -> list:
+    """Adopt targets (files, or files below a folder target) whose line 1 is the `act:default`
+    mark: that line removed (a BOM stays), nothing else — the file now holds adopted content and
+    is no longer scaffold to translate. KEEP_DEFAULT_MARK keeps it, and so does a file init.py
+    created whose content is still what it was after --apply (`created`: state created_hashes —
+    a scaffold file inside a folder target). Returns the root-relative paths."""
+    import actlib
+    marked = set(actlib.scaffold_default_files(root)) - KEEP_DEFAULT_MARK
+    done = []
+    created = created or {}
+    for rel in sorted(p for p in marked if any(_at_or_below(p, t) for t in targets)):
+        path = root / rel
+        if created.get(rel) and created[rel] == _sha256(path):
+            continue  # unchanged since --apply: still scaffold
+        text = path.read_bytes().decode("utf-8")
+        first, rest = (text.split("\n", 1) + [""])[:2]
+        if not plan:
+            path.write_bytes((("﻿" if first.startswith("﻿") else "") + rest).encode("utf-8"))
+        done.append(rel)
+    return done
+
+
 def run_doctor(root: Path) -> tuple:
     """(exit code, finding lines) of the project's own doctor.py."""
     doctor = root / ".act" / "scripts" / "doctor.py"
@@ -1245,19 +1552,38 @@ def run_doctor(root: Path) -> tuple:
                                for f in findings]
 
 
-def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple, acc: list) -> Path:
+def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple, acc: list,
+                 extra: tuple = ((), (), (), "")) -> Path:
+    """The inbox report. `extra`: (settings entries removed, settings notes, files whose
+    act:default mark was removed, path of the full reference list)."""
     inbox = root / "docs" / "ai" / "inbox"
     stem = f"{date.today().isoformat()}-adoption-report"
     dest, n = inbox / f"{stem}.md", 2
     while dest.exists():
         dest, n = inbox / f"{stem}-{n}.md", n + 1
     moved = state.get("moved", {})
-    by_action = {a: [r for r in rows if r["action"] == a and r["path"] not in moved] for a in ACTIONS}
+    by_action = {a: [r for r in rows if r["action"] == a and (a == "adopt" or r["path"] not in moved)] for a in ACTIONS}
+
+    def adopted_note(row: dict) -> str:
+        if row["path"] in state.get("bridged", []):
+            return " (now a bridge)"
+        if row["path"] in moved:
+            how = "into itself" if row["path"] in _targets(row) else "original moved before init"
+            return f" ({how}; original in legacy: {_code(moved[row['path']])})"
+        return ""
+
+    settings_removed, settings_notes, unmarked, refs_file = extra
     out = ["for: all", "status: open", "", "# Adoption report (`adopt.py --finish`)", "",
            f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
            "adopt.py. Review the branch, then commit per path or drop it.", "", "## Adopted (source → target)", ""]
-    out += [f"- {_code(r['path'])} → {', '.join(_code(t) for t in _targets(r))}"
-            + (" (now a bridge)" if r["path"] in state.get("bridged", []) else "") for r in by_action["adopt"]] or ["- none"]
+    out += [f"- {_code(r['path'])} → {', '.join(_code(t) for t in _targets(r))}{adopted_note(r)}"
+            for r in by_action["adopt"]] or ["- none"]
+    out += ["", "## `act:default` mark removed (adopted content, no longer scaffold)", ""]
+    out += [f"- {_code(rel)}" for rel in unmarked] or ["- none"]
+    out += ["", f"## Entries in {_code(SETTINGS_FILE)} removed (they ran a removed script; not staged)", ""]
+    out += [f"- {_code(line)}" for line in settings_removed] or ["- none"]
+    if settings_notes:
+        out += ["", "Remove it by hand, or check:", ""] + [f"- {_code(line)}" for line in settings_notes]
     out += ["", "## Own skills and roles bridged (as `act-load-settings` does)", ""]
     out += [f"- {_code('docs/ai/local/' + unit)}" for unit in state.get("own_units", [])] or ["- none"]
     out += ["", "## Moved to legacy (byte-identical, see `.act-local/adopt/legacy-checksums.json`)", ""]
@@ -1269,12 +1595,12 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     out += ["", f"## doctor.py (exit {doctor[0]})", ""]
     out += [f"- {line}" for line in doctor[1][:30]] or ["- no findings"]
     changes, left = refs
-    out += ["", "## References in docs/project/ rewritten (link target only, not staged)", ""]
+    out += ["", f"## References in {REFS_SCOPE} rewritten (link target only, not staged)", ""]
     if len(changes) + len(left) > REFS_IN_REPORT:
-        out += [f"- {len(changes)} rewritten, {len(left)} left unchanged — the full list: {_code(REFS_FILE)}"]
+        out += [f"- {refs_summary(refs)} — the full list: {_code(refs_file or REFS_FILE)}"]
     else:
         out += [f"- {_code(line)}" for line in changes] or ["- none"]
-        out += ["", "## References in docs/project/ left unchanged (no successor, ambiguous, plain text)", ""]
+        out += ["", f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text)", ""]
         out += [f"- {_code(line)}" for line in left] or ["- none"]
     out += ["", "## Accounting", "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1387,16 +1713,28 @@ def cmd_finish(root: Path, plan: bool) -> int:
     gone = [p for p in moved if not os.path.lexists(root / p)] + to_remove + \
            [p for p in state.get("removed_at_apply", []) if not os.path.lexists(root / p)]
     succ = successors(rows, state, gone)
+    succ.update(emptied_folders(root, gone, to_remove, succ))
+    # Settings entries that run a script of a delete or legacy row (T65); adopt targets whose
+    # act:default mark goes because they now hold adopted content.
+    actions_of = {row["path"]: row["action"] for row in rows}
+    dead = [p for p in dict.fromkeys(gone) if actions_of.get(p) in ("delete", "legacy")]
+    adopt_targets = [t for row in rows if row["action"] == "adopt" for t in _targets(row)
+                     if not t.startswith(SUCCESSOR_SKIP)]
     if plan:
-        changes, left = rewrite_references(root, succ, plan=True)
-        print(f"[adopt] {prefix}rewrite {len(changes)} reference(s) in docs/project/ (link target only), "
-              f"leave {len(left)} as they are")
-        for line in changes[:20]:
+        settings_removed, settings_notes = prune_settings(root, dead, to_remove, plan=True, gone=gone)
+        print(f"[adopt] {prefix}remove {len(settings_removed)} entr{'y' if len(settings_removed) == 1 else 'ies'} "
+              f"from {SETTINGS_FILE} that run a removed script:")
+        for line in settings_removed:
             print(f"    {line}")
-        if len(changes) > 20:
-            print(f"    … {len(changes) - 20} more")
+        for line in settings_notes:
+            print(f"    check by hand: {line}")
+        for rel in strip_default_marks(root, adopt_targets, plan=True, created=state.get("created_hashes")):
+            print(f"[adopt] {prefix}remove the act:default mark (line 1) from {rel} (adopted content)")
+        refs = rewrite_references(root, succ, plan=True)
+        refs_file = write_references(root, refs, plan=True)
+        print(f"[adopt] references in {REFS_SCOPE} (plan): {refs_summary(refs)} — full list: {refs_file}")
         print(f"[adopt] {prefix}run doctor.py, write the inbox report")
-        print("[adopt] plan only, nothing changed")
+        print(f"[adopt] plan only, nothing changed (except {refs_file})")
         return 0
 
     state.setdefault("rescued", {})
@@ -1453,28 +1791,31 @@ def cmd_finish(root: Path, plan: bool) -> int:
     for message in unit_messages:
         print(f"[adopt] {message}")
 
-    changes, left = rewrite_references(root, succ, plan=False)
+    # Before doctor.py, which checks the hooks: entries that run a removed script go first.
+    settings_removed, settings_notes = prune_settings(root, dead, [], plan=False, gone=gone)
+    for line in settings_removed:
+        print(f"[adopt] removed from {line} (ran a removed script)")
+    for line in settings_notes:
+        print(f"[adopt] check by hand: {line}")
+    unmarked = strip_default_marks(root, adopt_targets, plan=False, created=state.get("created_hashes"))
+    for rel in unmarked:
+        print(f"[adopt] removed the act:default mark (line 1) from {rel} (adopted content)")
+    refs = rewrite_references(root, succ, plan=False)
+    refs_file = write_references(root, refs, plan=False)
     doctor = run_doctor(root)
-    refs = (changes, left)
-    if len(changes) + len(left) > REFS_IN_REPORT:
-        refs_path = root / REFS_FILE
-        refs_path.parent.mkdir(parents=True, exist_ok=True)
-        refs_path.write_text("\n".join(["# rewritten (old -> new)", *changes, "", "# left unchanged", *left]) + "\n",
-                             encoding="utf-8")
     state.update({"bridged": bridged, "removed_at_finish": to_remove,
-                  "own_units": [f"{area}/{name}" for area, name in units]})
+                  "own_units": [f"{area}/{name}" for area, name in units],
+                  "settings_removed": settings_removed, "unmarked": unmarked})
     acc, ok = accounting(root, rows, state, "finish")
-    report = write_report(root, rows, state, doctor, refs, acc)
+    report = write_report(root, rows, state, doctor, refs, acc,
+                          (settings_removed, settings_notes, unmarked, refs_file))
     state.update({"state": "finished", "finished": datetime.now().isoformat(timespec="seconds"),
                   "report": report.relative_to(root).as_posix(), "doctor_exit": doctor[0]})
     _write_json(state_path, state)
     print(f"[adopt] doctor.py: exit {doctor[0]}, {len(doctor[1])} finding(s)")
     for line in doctor[1][:10]:
         print(f"    {line}")
-    print(f"[adopt] references in docs/project/: {len(changes)} rewritten, {len(left)} left unchanged"
-          + (f" (full list: {REFS_FILE})" if len(changes) + len(left) > REFS_IN_REPORT else ""))
-    for line in left[:20]:
-        print(f"    left: {line}")
+    print(f"[adopt] references in {REFS_SCOPE}: {refs_summary(refs)} — full list: {refs_file}")
     print(f"[adopt] report: {report.relative_to(root).as_posix()}")
     print("[adopt] accounting after --finish:")
     print("\n".join(acc))
@@ -1494,7 +1835,7 @@ TABLE <target>/{ADOPT_DIR}/table.json — {{"rows": [...]}}, exactly one row per
   confirmed  true: the owner confirmed this one row (see below)      note  free text
 
 ALLOWED ACTIONS PER CLASS
-  log           legacy, keep                 ai-machinery  adopt, delete, keep
+  log           legacy, keep                 ai-machinery  adopt, legacy, delete, keep
   ai-config     adopt, legacy, keep, delete  work          adopt, legacy, keep, delete
   project-doc   adopt, legacy, keep; delete only with confirmed
   predecessor   adopt, legacy, keep; delete only "template only" (scan origin) or with confirmed
@@ -1529,12 +1870,27 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   docs/ai/local/agents/<name>.md is an own unit and gets its tool copies/bridge like
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
-  template's copy mechanism); doctor.py, docs/project/ references to moved/removed paths,
-  report docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ to a path that is
-  gone is bent to its new place (legacy copy, or the one successor of an adopt row): the target
-  of a Markdown link (relative stays relative, anchor kept) or a path alone in backticks; no other
-  text changes, code blocks never; the rest is listed (more than {REFS_IN_REPORT}: the full list
-  in {REFS_FILE}); --finish --plan shows the changes. A second --finish says "already finished".
+  template's copy mechanism); doctor.py, references to moved/removed paths, report
+  docs/ai/inbox/<date>-adoption-report.md. A reference in {REFS_SCOPE}
+  to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
+  new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
+  the target of a Markdown link or of a reference definition `[x]: path` (relative stays
+  relative, anchor kept); no other text changes, code blocks never. A path in backticks is text:
+  never changed, only listed ("mention in text — not changed") with both readings, relative to
+  the file and to the root. The full list, bent and left with the reason, goes to
+  {REFS_FILE} (--finish --plan: {REFS_PLAN_FILE},
+  the terminal gets the counts); the report lists it inline up to {REFS_IN_REPORT} lines. Hook commands and
+  Bash(...) permission rules in {SETTINGS_FILE} whose executed script (the first word of a
+  command, or the word after python/bash/node/… or "$VAR"; bare, ./ or $CLAUDE_PROJECT_DIR/ path)
+  lies at or below a gone delete or legacy row are removed — an emptied hook group or event with
+  them, nothing else changes, line endings kept; a script that is only an argument, Read/Edit/
+  Write rules and entries on scripts still on disk never. Listed for removal by hand instead: a
+  file whose layout json.dumps cannot reproduce, an entry whose script was already missing before
+  the adoption or went with an adopt row, a statusLine, and {SETTINGS_LOCAL}.
+  An adopt target (or a file below one that changed since --apply) whose line 1 is
+  <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
+  stays scaffold to translate).
+  --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is
   refused ("content not adopted?").
@@ -1560,7 +1916,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", metavar="DIR", required=True, help="the project to adopt (a git repository)")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--apply", action="store_true", help="branch, legacy moves, init.py --target")
-    mode.add_argument("--finish", action="store_true", help="bridges, removals, doctor, inbox report")
+    mode.add_argument("--finish", action="store_true",
+                      help="bridges, removals, settings entries, marks, references, doctor, inbox report")
     mode.add_argument("--abort", action="store_true", help="the way back after --apply: undo it, delete the branch")
     parser.add_argument("--plan", action="store_true", help="validate and show what would happen, change nothing")
     parser.add_argument("--force", action="store_true",

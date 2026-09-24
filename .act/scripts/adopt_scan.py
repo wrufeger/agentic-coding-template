@@ -199,7 +199,13 @@ PREDECESSOR_DOCS = {
     "docs/ai/README.md", "docs/ai/checklists.md", "docs/ai/config-guide.md",
     "docs/ai/ai-config-hilfe.md", "docs/ai/resources.md",
 }
-PREDECESSOR_PREFIXES = ("docs/ai/template-feedback/",)
+PREDECESSOR_PREFIXES = ("docs/ai/template-feedback/", "docs/project/coding_rules.d/")
+# Doc-like predecessor parts (class "predecessor", _is_document() true) whose own text is worth
+# nothing once the new template replaces the whole area — a template-only copy is proposed delete,
+# like a tooling file, not kept legacy for its own sake: docs/project/coding_rules.d/*, a block of
+# pre-fabricated rule stubs .act/coding/ replaces wholesale. docs/ai/template-feedback/ stays out of
+# this set on purpose — its own docs remain historically useful even unmodified (T65 review).
+PREDECESSOR_DELETE_IF_TEMPLATE_ONLY_PREFIXES = ("docs/project/coding_rules.d/",)
 PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
 ORIGIN_TEMPLATE = "template only"
 ORIGIN_UNKNOWN = "unknown (base_commit not reachable)"
@@ -208,6 +214,18 @@ ORIGIN_UNKNOWN = "unknown (base_commit not reachable)"
 # version), or legacy when it holds nothing of its own.
 INIT_WRITES = {"docs/README.md", "docs/project/coding_rules.md"}
 SKILL_AGENT_PARENTS = {".claude/skills", ".codex/skills", ".claude/agents", ".codex/agents", ".github/agents"}
+AGENT_PARENTS = {".claude/agents", ".codex/agents", ".github/agents"}
+SKILL_PARENTS = {".claude/skills", ".codex/skills"}
+# Note attached to an ai-machinery row proposed "legacy" because its name collides (case-insensitive,
+# "-high" role variant included) with a unit the new template ships itself (adopt.py's
+# own_units()/collides_with_template() would refuse "adopt" at --finish: the name belongs to the
+# template there, not to an own unit under docs/ai/local/); {name} is the row's own on-disk spelling.
+TEMPLATE_UNIT_NAME_NOTE = (
+    "name '{name}' carries the template's own {kind} '{name}': adopt would be refused at --finish "
+    "(the name belongs to the template there); legacy keeps the own lines in the archive instead — "
+    "an override of the template unit is a manual choice: docs/ai/local/{area}/{target}, "
+    "note \"override\""
+)
 
 
 # ---------------------------------------------------------------------------
@@ -894,9 +912,33 @@ class Predecessor:
     repo_top: Optional[Path]
     prefix: str              # the scan root relative to repo_top ("" at the toplevel)
 
+    def is_named(self, rel: str) -> bool:
+        """Exact, curated identity of a predecessor part — a known doc path or tooling file. Safe
+        to reclassify a "project-doc" row into "predecessor" unconditionally: these paths are
+        specific files, never a directory a project could also put its own content under."""
+        return rel in PREDECESSOR_DOCS or rel in PREDECESSOR_TOOL_FILES
+
+    def is_prefixed(self, rel: str) -> bool:
+        return rel.startswith(PREDECESSOR_PREFIXES)
+
+    def is_explicit(self, rel: str) -> bool:
+        """Named part of the predecessor template, independent of whether its base_commit tree is
+        reachable: a known doc, a tooling file, or under one of PREDECESSOR_PREFIXES — its own
+        archive (template-feedback/) or a block the new template replaces wholesale
+        (coding_rules.d/, superseded by .act/coding/)."""
+        return self.is_named(rel) or self.is_prefixed(rel)
+
+    def is_verified_prefixed(self, rel: str) -> bool:
+        """A PREDECESSOR_PREFIXES match confirmed present in the base_commit tree — unlike
+        is_prefixed() alone, never true for a file the project added on its own under the same
+        directory (T65: docs/project/coding_rules.d/our-api.md, a project's own file, must not be
+        swept into "predecessor" just because the directory as a whole is the predecessor's; with
+        the tree unreachable there is no way to tell, so this stays False and the row is left
+        alone — the same "nothing proposed blind without evidence" stance as elsewhere here)."""
+        return self.is_prefixed(rel) and self.tree is not None and rel in self.tree
+
     def is_part(self, rel: str) -> bool:
-        return (rel in PREDECESSOR_DOCS or rel in PREDECESSOR_TOOL_FILES or rel.startswith(PREDECESSOR_PREFIXES)
-                or (self.tree is not None and rel in self.tree))
+        return self.is_explicit(rel) or (self.tree is not None and rel in self.tree)
 
 
 def load_predecessor(root: Path) -> Optional[Predecessor]:
@@ -1041,6 +1083,59 @@ def set_origins(root: Path, pred: Predecessor, rows: list[Row]) -> None:
 # Proposed action per row — what the table starts from; the owner decides
 # ---------------------------------------------------------------------------
 
+_TEMPLATE_UNIT_NAMES: Optional[tuple] = None  # (skill names, agent names), read once per process
+
+
+def _template_unit_names() -> tuple:
+    """(skill names, agent names) the template ships under .act/skills/ and .act/agents/ — the
+    same lookup adopt.py's template_units() makes (agents/*.md minus README), from this script's
+    own .act/ (the checkout this scan runs from, never the target being scanned). Cached: read
+    once per process, the template checkout does not change mid-scan."""
+    global _TEMPLATE_UNIT_NAMES
+    if _TEMPLATE_UNIT_NAMES is None:
+        base = Path(__file__).resolve().parent.parent
+        skills = {p.name for p in (base / "skills").iterdir() if p.is_dir()} if (base / "skills").is_dir() else set()
+        agents = {p.stem for p in (base / "agents").glob("*.md") if p.stem != "README"}
+        _TEMPLATE_UNIT_NAMES = (skills, agents)
+    return _TEMPLATE_UNIT_NAMES
+
+
+def _template_unit_collision(path: str) -> Optional[tuple]:
+    """(area, template_name, is_high) if `path` is a direct skill folder or agent file under one
+    of SKILL_AGENT_PARENTS whose own name collides with a name the new template ships itself —
+    compared case-insensitively (a case-only difference is no difference on the case-insensitive
+    filesystem both Windows and macOS default to), and for an agent, its reserved "-high" suffix
+    counts as a collision too (is_high True then, template_name is the base role it varies). The
+    same clashes adopt.py's own_units()/collides_with_template() and init.py's
+    agent_bridge_variant_targets() (init.py:880, itself case-insensitive with the same "-high"
+    reservation) refuse or reserve at build/--finish time, caught here before the table ever
+    proposes "adopt" for one. template_name is the template's own spelling, for the note — the
+    row's on-disk name may differ only in case, or carry "-high". None otherwise (including: not
+    under a skill/agent parent at all)."""
+    p = PurePosixPath(path)
+    parent = str(p.parent)
+    skills, agents = _template_unit_names()
+    if parent in SKILL_PARENTS:
+        for name in skills:
+            if name.lower() == p.name.lower():
+                return "skills", name, False
+        return None
+    if parent in AGENT_PARENTS:
+        if p.suffix.lower() != ".md":
+            return None
+        stem_lower = p.stem.lower()
+        for name in agents:
+            if name.lower() == stem_lower:
+                return "agents", name, False
+        if stem_lower.endswith("-high"):
+            base_lower = stem_lower[: -len("-high")]
+            for name in agents:
+                if name.lower() == base_lower:
+                    return "agents", name, True
+        return None
+    return None
+
+
 def propose(row: Row, pred: Optional[Predecessor]) -> str:
     note, origin, path = row.note or "", row.origin or "", row.path
     template_only = origin == ORIGIN_TEMPLATE
@@ -1061,16 +1156,61 @@ def propose(row: Row, pred: Optional[Predecessor]) -> str:
             return "delete"
         if pred and not own:
             return "keep"  # origin unknown: nothing is proposed for removal blind
-        return "adopt" if str(PurePosixPath(path).parent) in SKILL_AGENT_PARENTS else "keep"
+        if str(PurePosixPath(path).parent) not in SKILL_AGENT_PARENTS:
+            return "keep"
+        collision = _template_unit_collision(path)
+        if collision:
+            area, template_name, is_high = collision
+            kind = "agent" if area == "agents" else "skill"
+            own_name = PurePosixPath(path).stem if area == "agents" else PurePosixPath(path).name
+            target = f"{own_name}.md" if area == "agents" else f"{own_name}/"
+            note = TEMPLATE_UNIT_NAME_NOTE.format(name=own_name, kind=kind, area=area, target=target)
+            if is_high:
+                note += f" (the template's reserved \"-high\" variant name of its own {kind} '{template_name}')"
+            elif own_name != template_name:
+                note += f" (the template spells it '{template_name}')"
+            row.note = "; ".join(filter(None, (row.note, note)))
+            return "legacy"  # adopt would be refused at --finish: the name is the template's own
+        return "adopt"
     if row.cls == "project-doc":
         if path in INIT_WRITES:
             return "legacy" if template_only else "adopt"
         return "keep"  # a root README.md too: init.py never replaces a foreign one, adopt into it is refused
     if row.cls == "predecessor":
-        if (path in PREDECESSOR_TOOL_FILES or not _is_document(path)) and template_only:
-            return "delete"  # with own text (own MCP servers in an example): legacy, as below
+        delete_area = path in PREDECESSOR_TOOL_FILES or not _is_document(path) or path.startswith(
+            PREDECESSOR_DELETE_IF_TEMPLATE_ONLY_PREFIXES)
+        if delete_area and template_only:
+            return "delete"  # with own text (own MCP servers in an example, own coding_rules.d/ text): legacy
         return "legacy"  # its docs stay readable in the archive; own lines show in the origin
     return "keep"
+
+
+MACHINERY_PARENTS = {base for base, _ in MACHINERY_DIRS}
+
+
+def propose_dying_folder_readmes(rows: list[Row]) -> None:
+    """A README/description file directly under a MACHINERY_DIRS folder (typically
+    .claude/scripts/, .codex/hooks/, …) whose every OTHER direct sibling in that same folder was
+    proposed delete or legacy follows them — by its own origin, template_only -> delete, else
+    legacy — instead of the generic ai-machinery default ("keep" for an own-text file outside
+    SKILL_AGENT_PARENTS): a README describing a folder whose scripts are all gone or archived is
+    not current documentation worth keeping in place either (T65: .claude/scripts/README.md of a
+    predecessor, own text, describing only scripts every one of which was proposed delete). Mutates
+    row.proposed in place; called after every row already has its generic proposal."""
+    by_parent: dict[str, list[Row]] = {}
+    for r in rows:
+        if r.cls != "ai-machinery":
+            continue
+        parent = str(PurePosixPath(r.path).parent)
+        if parent in MACHINERY_PARENTS:
+            by_parent.setdefault(parent, []).append(r)
+    for siblings in by_parent.values():
+        for r in siblings:
+            if PurePosixPath(r.path).stem.upper() != "README":
+                continue
+            others = [s for s in siblings if s is not r]
+            if others and all(s.proposed in ("delete", "legacy") for s in others):
+                r.proposed = "delete" if (r.origin or "") == ORIGIN_TEMPLATE else "legacy"
 
 
 # ---------------------------------------------------------------------------
@@ -1081,13 +1221,36 @@ CLASS_ORDER = ["ai-config", "ai-machinery", "work", "log", "project-doc", "prede
 
 
 def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row]:
-    """Rows that would be "unknown" but are the predecessor template's own files become class
-    "predecessor"; its non-document tooling (PREDECESSOR_TOOL_FILES) is sighted here by name."""
+    """Rows that would be "unknown" but are any part of the predecessor template (named, or found
+    in its base_commit tree) become class "predecessor". A row already classified "project-doc"
+    (docs/ under a known doc place, e.g. docs/project/coding_rules.d/*.md) only reclassifies when
+    it is a NAMED file (is_named: a curated path, never a directory) or a PREDECESSOR_PREFIXES
+    match CONFIRMED in the base_commit tree (is_verified_prefixed): a doc that merely shares a
+    directory prefix with the predecessor, without itself being part of its tree, stays project-doc
+    — e.g. docs/project/coding_rules.d/our-api.md, a file the project added on its own under a
+    directory whose *other* files are the predecessor's, is not itself "a named part of the
+    predecessor template" (T65 review: the old is_explicit() check swept it in on the directory
+    prefix alone, misclassifying an own file with a reason that was simply false for it). Its
+    non-document tooling (PREDECESSOR_TOOL_FILES) is sighted here by name."""
     seen = {r.path for r in rows}
     for r in rows:
-        if r.cls == "unknown" and pred.is_part(r.path) and not (r.note and "link" in r.note):
+        if r.note and "link" in r.note:
+            continue
+        if r.cls == "unknown" and pred.is_part(r.path):
             where = "in its base_commit" if pred.tree is not None and r.path in pred.tree else "a known part"
             r.cls, r.reason, r.hint = "predecessor", f"part of the predecessor template ({where})", None
+        elif r.cls == "project-doc" and (pred.is_named(r.path) or pred.is_verified_prefixed(r.path)):
+            r.cls, r.reason = "predecessor", "a named part of the predecessor template, replaced by the new one"
+        elif r.cls == "project-doc" and pred.is_prefixed(r.path):
+            # is_prefixed but not is_verified_prefixed: own content (or the tree is unreachable, so
+            # membership can't be confirmed either way) under a directory that is otherwise the
+            # predecessor's — stays project-doc/keep, but flagged so the directory's fate isn't
+            # silently decided out from under it (T65 review).
+            prefix = next(p for p in PREDECESSOR_PREFIXES if r.path.startswith(p))
+            r.note = "; ".join(filter(None, (r.note, (
+                f"under {prefix} — a predecessor-template directory whose other files may be proposed "
+                "delete/legacy; not itself confirmed part of the predecessor, but check whether it "
+                "should move before the directory disappears"))))
     for rel in sorted(PREDECESSOR_TOOL_FILES - seen):
         if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
             rows.append(scan.file_row(rel, "predecessor", "tooling file of the predecessor template"))
@@ -1123,6 +1286,7 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
         set_origins(root, pred, rows)
     for r in rows:
         r.proposed = propose(r, pred)
+    propose_dying_folder_readmes(rows)
     rows.sort(key=lambda r: (CLASS_ORDER.index(r.cls) if r.cls in CLASS_ORDER else len(CLASS_ORDER), r.path))
     info = [f"not scanned: submodule {path}" for path in submodules]
     return rows, predecessor_hint(root, pred), info
@@ -1193,22 +1357,33 @@ never followed. Git-ignored rows keep their class and get a "git-ignored/local" 
 project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 
 PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
-base_commit tree, or is one of the predecessor's known parts (docs/ai/README.md, checklists.md,
-config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, .claude/mcp-katalog.md,
-.mcp.json.example), is class "predecessor". Every row gets an origin: "template only" (each line
-is the base_commit's, after putting in the values of template.json § values; lines removed since
-do not count), "own text: n lines", or "unknown" when the base_commit is not in the history.
+base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
+config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
+.claude/mcp-katalog.md, .mcp.json.example), is class "predecessor". A row already "project-doc"
+reclassifies to "predecessor" only for a curated file name (docs/ai/README.md etc.) or, under a
+PREDECESSOR_PREFIXES directory (template-feedback/, coding_rules.d/), only when the path is
+confirmed present in the base_commit tree — a file the project added on its own under that same
+directory (docs/project/coding_rules.d/our-api.md, never part of any template) stays project-doc,
+flagged with a note that its directory is otherwise the predecessor's. Every row gets an origin:
+"template only" (each line is the base_commit's, after putting in the values of template.json §
+values; lines removed since do not count), "own text: n lines", or "unknown" when the base_commit
+is not in the history.
 
 PROPOSED ACTION (column "-> …", JSON "proposed"; the owner decides): log, work -> legacy;
 ai-config -> adopt, legacy if template only, keep for .claude/settings*.json and protected rows,
 for .claude/settings.local.json.example of a predecessor delete if template only, else legacy;
-ai-machinery -> delete if
-template only, keep if its origin is unknown, else adopt (skills, agents) or keep (the rest);
-project-doc -> keep (a root README.md too), docs/README.md and docs/project/coding_rules.md adopt
-(legacy if template only); predecessor -> delete (tooling, examples: template only), else legacy
-(docs, own lines included — the origin shows them); unknown -> keep. A link or protected row is
-always keep. Line breaks do not count: a line that is a stretch of a base paragraph (whitespace
-collapsed, at least 20 characters) is the template's.
+ai-machinery -> delete if template only, keep if its origin is unknown, else adopt (a skill/agent
+unit whose own name is free) or legacy (a skill/agent unit whose name collides, case-insensitively,
+with the new template's own — its reserved "-<role>-high" variant included — adopt would be refused
+at --finish; the row's note points at the manual override) or keep (the rest); a README/description
+file directly under a MACHINERY_DIRS folder whose every OTHER sibling proposes delete/legacy follows
+them by its own origin instead of the generic ai-machinery rule (a README only describing scripts
+that are all gone is not current documentation either); project-doc -> keep (a root README.md too),
+docs/README.md and docs/project/coding_rules.md adopt (legacy if template only); predecessor ->
+delete (tooling, examples, docs/project/coding_rules.d/: template only), else legacy (docs, own
+lines included — the origin shows them); unknown -> keep. A link or protected row is always keep.
+Line breaks do not count: a line that is a stretch of a base paragraph (whitespace collapsed, at
+least 20 characters) is the template's.
 """
 
 

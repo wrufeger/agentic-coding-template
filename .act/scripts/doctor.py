@@ -695,17 +695,21 @@ def _script_paths_in(text: str) -> list[str]:
     return out
 
 
-def _missing_settings_scripts(root: Path, settings_path: Path) -> list[str]:
-    """Script paths named in `settings_path`'s hook commands or Bash(...) permission entries that
-    do not exist under `root`, first-seen order, deduplicated. Empty if the file is missing, not
-    valid JSON, or not an object — same "never crash on a malformed settings file" stance as
-    check_hooks() above."""
+def _missing_settings_scripts(root: Path, settings_path: Path) -> tuple[int, list[str]]:
+    """(total occurrences, distinct paths) of a script named in `settings_path`'s hook commands or
+    Bash(...) permission entries that does not exist under `root` — total counts every hook/
+    permission occurrence (a script named twice across entries counts twice), distinct is the same
+    set of paths first-seen order, deduplicated (T65: the old single list conflated the two —
+    "5 shown, +1 more" claimed to be a count of entries while it was really the count of distinct
+    paths, understating a settings file that names the same handful of missing scripts across many
+    entries). (0, []) if the file is missing, not valid JSON, or not an object — same "never crash
+    on a malformed settings file" stance as check_hooks() above."""
     if not settings_path.is_file():
-        return []
+        return 0, []
     try:
         raw = settings_path.read_bytes()
     except OSError:
-        return []
+        return 0, []
     try:
         # utf-8-sig strips a BOM when present (T62 F7: plain "utf-8" left it in front of "{" and
         # json.loads failed on it, so a BOM'd settings.local.json was silently skipped instead of
@@ -714,9 +718,9 @@ def _missing_settings_scripts(root: Path, settings_path: Path) -> list[str]:
         # catching the decode error too instead of letting it propagate.
         settings = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-        return []
+        return 0, []
     if not isinstance(settings, dict):
-        return []
+        return 0, []
 
     candidates: list[str] = []
     hooks = settings.get("hooks", {})
@@ -738,31 +742,34 @@ def _missing_settings_scripts(root: Path, settings_path: Path) -> list[str]:
                 if isinstance(item, str) and item.startswith("Bash("):
                     candidates += _script_paths_in(item)
 
+    total = 0
     seen: set[str] = set()
-    missing: list[str] = []
+    distinct: list[str] = []
     for candidate in candidates:
-        if candidate in seen:
+        if (root / candidate).is_file():
             continue
-        seen.add(candidate)
-        if not (root / candidate).is_file():
-            missing.append(candidate)
-    return missing
+        total += 1
+        if candidate not in seen:
+            seen.add(candidate)
+            distinct.append(candidate)
+    return total, distinct
 
 
 def check_settings_scripts(root: Path) -> list[Finding]:
     findings = []
     for rel in (".claude/settings.json", ".claude/settings.local.json"):
-        missing = _missing_settings_scripts(root, root / rel)
-        if not missing:
+        total, distinct = _missing_settings_scripts(root, root / rel)
+        if not distinct:
             continue
-        shown = missing[:5]
-        tail = f", +{len(missing) - len(shown)} more" if len(missing) > len(shown) else ""
+        shown = distinct[:5]
+        tail = f", +{len(distinct) - len(shown)} more" if len(distinct) > len(shown) else ""
         findings.append(Finding(
             path=rel, line=None, kind="settings-script",
             message=(
-                f"{len(missing)} hook/permission entr{'y' if len(missing) == 1 else 'ies'} "
-                f"{'names' if len(missing) == 1 else 'name'} a script that no longer exists in "
-                f"the project: {', '.join(shown)}{tail}"
+                f"{total} hook/permission entr{'y' if total == 1 else 'ies'} "
+                f"{'names' if total == 1 else 'name'} a script that no longer exists in the project "
+                f"({len(distinct)} distinct path{'' if len(distinct) == 1 else 's'}): "
+                f"{', '.join(shown)}{tail}"
             ),
         ))
     return findings

@@ -49,8 +49,10 @@ rules under `PROPOSED ACTION` in `--help`). A project made from the previous tem
 `.claude/template.json`; then the first line names its `base_commit` and whether it is in the
 history, the previous template's own files that fit no other class are `predecessor` (its
 `docs/ai/README.md`, `checklists.md`, `config-guide.md`, `ai-config-hilfe.md`, `resources.md`,
-`template-feedback/`, `.claude/mcp-katalog.md`, `.mcp.json.example` and whatever else its
-`base_commit` holds), and every row carries an `origin` (`[...]` in the table):
+`template-feedback/`, `docs/project/coding_rules.d/` (replaced by `.act/coding/`),
+`.claude/mcp-katalog.md`, `.mcp.json.example` and whatever else its `base_commit` holds; a named
+part is `predecessor` even where it would be `project-doc`), and every row carries an `origin`
+(`[...]` in the table):
 
 - `template only` — every line is the predecessor's own, after putting in the placeholder values
   of `template.json` § `values`. Replacing `{{PROJEKTNAME}}` by the project name is no text of its
@@ -84,9 +86,9 @@ of their own:
   placeholder value in (the scan already leaves those out of n). Rules or content of the
   project's own keep `adopt` for an `ai-config` file (they become proposals in step 6); lines that
   are no rule (a date, a filled-in example, a line the owner deleted from the template) mean
-  `legacy`, with the reason in `note`. A `delete` proposal on a row with own text becomes `keep`
-  where those lines are the project's (its own servers in a predecessor's `.mcp.json.example`, say
-  — the scan proposes `delete` for that tooling whatever its origin).
+  `legacy`, with the reason in `note`. A predecessor's tooling or `coding_rules.d/` file with own
+  text is proposed `legacy`, not `delete` (its own servers in `.mcp.json.example`, say); make it
+  `keep` where the project still uses the file.
 - `unknown (base_commit not reachable)`: compare with a checkout of the predecessor template at
   that state before deciding; the proposal is `adopt`/`keep` there, never a blind `delete`.
 
@@ -129,14 +131,19 @@ Why the proposals are what they are, and where to deviate:
   skills, agents, scripts and hooks (on branch `act-adopt`, so nothing is lost for good).
   `adopt` for the project's **own** skills and agents, with the target
   `docs/ai/local/skills/<name>` or `docs/ai/local/agents/<name>.md` (`<name>` must not be one of
-  the template's own units — `--finish` refuses that). Own **scripts and hooks**, and a
-  predecessor's script the project changed, stay `keep` for now: there is no target for them yet
+  the template's own units — `--finish` refuses that). A unit with own text whose name the new
+  template ships itself is proposed `legacy` (allowed for `ai-machinery` for this case), its note
+  says why: the own lines stay in the archive. To keep them in force, the owner chooses an
+  override instead — action `adopt`, target `docs/ai/local/<area>/<name>` (`<name>/` for a skill,
+  `<name>.md` for an agent), note `"override"`. Own **scripts and hooks**, and a predecessor's
+  script the project changed, stay `keep` for now: there is no target for them yet
   (`--finish` bridges skills and agents only), and a moved or deleted hook script breaks the
   command that calls it from `.claude/settings.json`.
 - `predecessor` -> `legacy` for its documents (they stay readable in the archive; own lines in
   them show in the origin, and a rule still in force among them becomes a proposal in step 6),
   `delete` for its tooling (`.mcp.json.example`, `.claude/mcp-katalog.md`, anything that is no
-  document).
+  document) and its `coding_rules.d/` files, each only where it is `template only` — with own text
+  `legacy`.
 - `unknown` -> `keep`.
 
 `.claude/template.json` is not a scan row and gets no table row (`adopt.py` refuses a row that is
@@ -206,7 +213,9 @@ result: `moved` (old path -> legacy path), `removed_at_apply` (`delete` rows rem
 git-ignored one; those are in `created_ignored`, for `--abort` only), `dirty_after_apply` (every
 versioned file that differs from the start: the moves, and what `init.py` wrote over versioned
 paths — `.gitignore`, a moved or removed place it filled again), and the hash of each target that
-existed. The accounting counts a legacy copy only when it is on disk **and** in the Git index.
+existed. The accounting counts a legacy copy only when it is on disk **and** in the Git index,
+and it counts every `adopt` row: one `--apply` moved first stands as `adoption pending`, marked
+`into itself` where its target is its own path (`--finish` counts it `at target`).
 
 Run again after success, it prints the recorded state and exits 0. Any failing Git call stops the
 run without an accounting: state `stage-failed` (the moves could not be staged) or `init-failed`
@@ -282,12 +291,13 @@ text, so where the title line holds more than the title, the body starts with th
 | Old item | Title | Body |
 | :--- | :--- | :--- |
 | a heading or a bold line (`### T12 · …`, `**Q3 · …**`) | its text | the lines below it, up to the next item |
-| a bullet or checkbox without a heading (`- [ ] **T12 · …** — …`, a board list) | the bold lead, else the text up to the first ` — ` or `: ` | the whole bullet with its indented continuation lines |
+| a bullet or checkbox without a heading (`- [ ] **T12 · …** — …`, a board list) | the bold lead, else the text up to the first ` — ` or `: `; where that is only the start of a sentence without a statement (fewer than four words), the whole logical line (the item's first line joined with the lines it wraps onto, by single spaces) | the whole bullet with its indented continuation lines |
 | a backlog table row | the cell of the title column (`Titel`, `Title`) | the table's header and separator line, the row, then its detail section (`### B12 …` with the heading, up to the next heading of the same or a higher level) where the file has one |
 | rule prose without a heading of its own | its first sentence, up to `. `, `: ` or the line end | the passage |
 
-A title never carries the old id, bold markers or a status emoji (🔴, 🟡, ✅, ⏳, ⚠️, …) — the
-emoji and the space next to it go, every other character stays. No two items of a batch get the
+A title never carries the old id, bold markers, a status emoji (🔴, 🟡, ✅, ⏳, ⚠️, …) or a
+closing colon — the emoji and the space next to it go, a colon at the very end goes, every other
+character stays. No two items of a batch get the
 same title: where a passage starts with a sentence that is already a title, its next sentence is
 the title. A link into the old file (`[Details](#b12)`) stays as it is in the body: rewriting it
 would change the human's text, and a detail section cut into the same body brings its heading,
@@ -339,14 +349,18 @@ refused as a whole on any single problem; nothing partial. After each successful
 **Files outside the entry system** (the orchestrator writes them; a worker drafts under
 `.act-local/adopt/drafts/<same path>`):
 
-- `docs/project/coding_rules.md` (adopted into itself, step 2): the old text from the legacy copy
-  goes below `## Own rules` (after its marker and comment line), wording unchanged; only the
-  heading levels move so the old top level becomes `###` (`#` -> `###`, `##` -> `####`, …).
-- `docs/README.md` (adopted into itself): the old text goes at the end of the template's version,
-  wording unchanged, the old top level becoming `##` (`#` -> `##`, `##` -> `###`, …). In its old
-  index table, a row whose file is gone after the adoption (moved to legacy or removed) is left
-  out — the template's rows already name the new places, and the legacy copy keeps the whole old
-  table; every other row and line stays as it is.
+- `docs/project/coding_rules.md` and `docs/README.md` (adopted into themselves, step 2): only the
+  project's own passages go in, found with the same diff as the `origin` (step 2). The
+  predecessor's own text stays out — its `Datenstand` line, the section "Vorgefertigte
+  Regelsätze" and other scaffold prose the template's version replaces; the legacy copy keeps it.
+  Wording unchanged; only heading levels move.
+  - `coding_rules.md`: below `## Own rules` (after its marker and comment line), the old top level
+    becoming `###` (`#` -> `###`, `##` -> `####`, …).
+  - `docs/README.md`: at the end of the template's version, the old top level becoming `##`
+    (`#` -> `##`, `##` -> `###`, …). In its old index table, a row whose file is gone after the
+    adoption (moved to legacy or removed) is left out, and so is a footnote only such rows refer
+    to (`¹`) — the template's rows already name the new places, and the legacy copy keeps the
+    whole old table; every other row and line stays as it is.
 - A doc that moves into `docs/project/` (step 2): copy it byte-identical to its target,
   `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`.
 - An own skill or agent: copy it byte-identical to its target:
@@ -380,14 +394,39 @@ with `claude-code` in `tools`); other adopted sources and every `delete` row are
 fix the cause and run the same `--finish` again. A second `--finish` after success says "already
 finished".
 
-**Dead references in `docs/project/`** to a path that is gone are bent to its new place — the
-legacy copy, or the one successor an `adopt` row names: only the link target of a Markdown link
-(relative stays relative, the anchor stays) or a path standing alone in backticks; no other
-character, never inside a code block. `--finish --plan` shows each change first. A reference with
-no successor or with several, and a path in plain text, stays as it is and is listed; with more
-than 50 in all the full list goes to `<dir>/.act-local/adopt/references.txt`. The bent files are
-left unstaged (group 5 in step 8). Then `doctor.py` runs and a report lands at
-`docs/ai/inbox/<date>-adoption-report.md`.
+What `--finish` does after that, all shown first by `--finish --plan` (nothing written but the
+reference list):
+
+- **Settings entries on removed scripts.** A hook command or `Bash(...)` permission rule in
+  `.claude/settings.json` whose **executed** script (the command's first word, or the word after
+  `python`, `bash`, `node`, …; a bare, `./` or `$CLAUDE_PROJECT_DIR/` path) this adoption removed
+  — a `delete` or `legacy` row — is removed, an emptied hook group or event with it; everything
+  else stays byte for byte. A script that is only an argument, a `Read`/`Edit`/`Write` rule and an
+  entry on a script still on disk are never touched. The report lists under "Remove it by hand, or
+  check" instead: every entry when the file's layout cannot be reproduced exactly, an entry whose
+  script was already missing before the adoption (it stays) or went with an `adopt` row, a
+  `statusLine` on such a script, and every entry in `.claude/settings.local.json` (a local file,
+  the owner's). The file is left unstaged (group 2 in step 8).
+- **The `act:default` mark** goes from line 1 of every `adopt` target that changed since
+  `--apply` (it now holds adopted content, no scaffold), a file below a folder target included —
+  except `docs/ai/config.md`: only values were taken over there, its text stays the template's
+  scaffold and so stays on the translation list.
+- **Dead references in `docs/project/` and `docs/README.md`** to a path that is gone — or to a
+  folder the adoption leaves without any file, whose successor is its legacy folder — are bent to
+  the new place (the legacy copy, or the one successor an `adopt` row names), **the link target
+  only**: the target of a Markdown link `](…)` or of a reference
+  definition `[x]: path` (relative stays relative, the anchor stays). No other character, never
+  inside a code block. **A path in backticks is text and is never changed**: it is listed as
+  "mention in text — not changed", with both readings (relative to the file and to the root). A
+  link with no successor or with several also stays and is listed. The full list, bent and left
+  with the reason, goes to `<dir>/.act-local/adopt/references.txt` (`--finish --plan`:
+  `references.plan.txt`); the terminal gets the counts. The orchestrator goes through every
+  listed mention with the owner and changes the text only where the owner says so. The bent files
+  are left unstaged (group 5 in step 8).
+
+Then `doctor.py` runs and a report lands at `docs/ai/inbox/<date>-adoption-report.md`. Its
+accounting counts every `adopt` row `at target`, marked `into itself` where the target is its own
+path.
 
 Check the result against the project, not the checkout:
 
@@ -395,14 +434,13 @@ Check the result against the project, not the checkout:
 python .act/scripts/doctor.py --target <dir>
 ```
 
-**Hooks and permissions on removed scripts.** `doctor` reports every hook command and every
+**By hand only what the report names.** `doctor` still reports every hook command and every
 `Bash(...)` permission in `.claude/settings.json` (and, read-only, `.claude/settings.local.json`)
-that names a script no longer in the project — typically the predecessor's `.claude/scripts/…`
-after their `delete`. The orchestrator settles them with the owner before committing and removes
-those entries (a script that should have stayed needed `keep` in step 2; after `--finish` it is
-gone with its row). The versioned `settings.json` is edited in place and goes with group 2; the
-local `settings.local.json` is the owner's to clean. Afterwards `doctor.py --target <dir>`
-reports 0 findings.
+that names a script no longer in the project. After `--finish` those are only the entries the
+report lists under "Remove it by hand, or check": the orchestrator settles them with the owner
+before committing and edits `settings.json` in place (it goes with group 2); `settings.local.json`
+is the owner's to clean. A script that should have stayed needed `keep` in step 2 — after
+`--finish` it is gone with its row. Afterwards `doctor.py --target <dir>` reports 0 findings.
 
 ## 8. Commit — the orchestrator, by pathspec, on `act-adopt`
 
@@ -422,7 +460,9 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
    `docs/ai/inbox/<date>-translate-scaffold.md` from step 5 (both are about the scaffold, not
    about old content; step 5 may have changed the init notes), `.gitignore`, the template copies
    now standing where an old unit of the same name was moved or removed (with the removal of that
-   unit's other files), and `.claude/settings.json` as it is now (after step 7's cleanup).
+   unit's other files), and `.claude/settings.json` as it is now — `init.py`'s merged hooks and
+   the entries `--finish` or the orchestrator removed in step 7 in one commit, since a pathspec
+   commit always takes the whole file (the report lists the removed entries).
 3. **One commit per source** — an `adopt` row's `target` files (entries, proposals,
    `docs/ai/config.md`, `docs/project/coding_rules.md`, `docs/README.md`,
    `docs/ai/local/<unit>`); for a `legacy` row, the entry files `entries-map.json` lists under its
@@ -432,9 +472,9 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
 4. **What `--finish` did** — `state.json`'s `bridged` and `removed_at_finish` paths, the tool
    copies it printed for own units (`skills: <path>: created`, role bridges), and the adoption
    report (`state.json`'s `report`).
-5. **References** — the files under `docs/project/` whose links `--finish` bent:
-   `git -C <dir> status --porcelain -- docs/project` lists them as modified; one that is already a
-   table target stays in group 3.
+5. **References** — the files under `docs/project/`, and `docs/README.md`, whose links `--finish`
+   bent: `git -C <dir> status --porcelain -- docs/project docs/README.md` lists them as modified;
+   one that already belongs to group 2 or 3 (a table target, a file `init.py` wrote) stays there.
 
 Before the first commit, check the grouping: every line of
 `git status --porcelain --untracked-files=all` (both sides of a rename) falls under exactly one

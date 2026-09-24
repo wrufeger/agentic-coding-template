@@ -48,7 +48,7 @@ options:
   -h, --help    show this help message and exit
   --target DIR  the project to adopt (a git repository)
   --apply       branch, legacy moves, init.py --target
-  --finish      bridges, removals, doctor, inbox report
+  --finish      bridges, removals, settings entries, marks, references, doctor, inbox report
   --abort       the way back after --apply: undo it, delete the branch
   --plan        validate and show what would happen, change nothing
   --force       with --abort: copy work done since --apply to .act-local/adopt/aborted/ first,
@@ -62,7 +62,7 @@ TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row 
   confirmed  true: the owner confirmed this one row (see below)      note  free text
 
 ALLOWED ACTIONS PER CLASS
-  log           legacy, keep                 ai-machinery  adopt, delete, keep
+  log           legacy, keep                 ai-machinery  adopt, legacy, delete, keep
   ai-config     adopt, legacy, keep, delete  work          adopt, legacy, keep, delete
   project-doc   adopt, legacy, keep; delete only with confirmed
   predecessor   adopt, legacy, keep; delete only "template only" (scan origin) or with confirmed
@@ -97,12 +97,27 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   docs/ai/local/agents/<name>.md is an own unit and gets its tool copies/bridge like
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
-  template's copy mechanism); doctor.py, docs/project/ references to moved/removed paths,
-  report docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ to a path that is
-  gone is bent to its new place (legacy copy, or the one successor of an adopt row): the target
-  of a Markdown link (relative stays relative, anchor kept) or a path alone in backticks; no other
-  text changes, code blocks never; the rest is listed (more than 50: the full list
-  in .act-local/adopt/references.txt); --finish --plan shows the changes. A second --finish says "already finished".
+  template's copy mechanism); doctor.py, references to moved/removed paths, report
+  docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ and docs/README.md
+  to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
+  new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
+  the target of a Markdown link or of a reference definition `[x]: path` (relative stays
+  relative, anchor kept); no other text changes, code blocks never. A path in backticks is text:
+  never changed, only listed ("mention in text — not changed") with both readings, relative to
+  the file and to the root. The full list, bent and left with the reason, goes to
+  .act-local/adopt/references.txt (--finish --plan: .act-local/adopt/references.plan.txt,
+  the terminal gets the counts); the report lists it inline up to 50 lines. Hook commands and
+  Bash(...) permission rules in .claude/settings.json whose executed script (the first word of a
+  command, or the word after python/bash/node/… or "$VAR"; bare, ./ or $CLAUDE_PROJECT_DIR/ path)
+  lies at or below a gone delete or legacy row are removed — an emptied hook group or event with
+  them, nothing else changes, line endings kept; a script that is only an argument, Read/Edit/
+  Write rules and entries on scripts still on disk never. Listed for removal by hand instead: a
+  file whose layout json.dumps cannot reproduce, an entry whose script was already missing before
+  the adoption or went with an adopt row, a statusLine, and .claude/settings.local.json.
+  An adopt target (or a file below one that changed since --apply) whose line 1 is
+  <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
+  stays scaffold to translate).
+  --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
   refused ("content not adopted?").
@@ -186,22 +201,33 @@ never followed. Git-ignored rows keep their class and get a "git-ignored/local" 
 project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 
 PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
-base_commit tree, or is one of the predecessor's known parts (docs/ai/README.md, checklists.md,
-config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, .claude/mcp-katalog.md,
-.mcp.json.example), is class "predecessor". Every row gets an origin: "template only" (each line
-is the base_commit's, after putting in the values of template.json § values; lines removed since
-do not count), "own text: n lines", or "unknown" when the base_commit is not in the history.
+base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
+config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
+.claude/mcp-katalog.md, .mcp.json.example), is class "predecessor". A row already "project-doc"
+reclassifies to "predecessor" only for a curated file name (docs/ai/README.md etc.) or, under a
+PREDECESSOR_PREFIXES directory (template-feedback/, coding_rules.d/), only when the path is
+confirmed present in the base_commit tree — a file the project added on its own under that same
+directory (docs/project/coding_rules.d/our-api.md, never part of any template) stays project-doc,
+flagged with a note that its directory is otherwise the predecessor's. Every row gets an origin:
+"template only" (each line is the base_commit's, after putting in the values of template.json §
+values; lines removed since do not count), "own text: n lines", or "unknown" when the base_commit
+is not in the history.
 
 PROPOSED ACTION (column "-> …", JSON "proposed"; the owner decides): log, work -> legacy;
 ai-config -> adopt, legacy if template only, keep for .claude/settings*.json and protected rows,
 for .claude/settings.local.json.example of a predecessor delete if template only, else legacy;
-ai-machinery -> delete if
-template only, keep if its origin is unknown, else adopt (skills, agents) or keep (the rest);
-project-doc -> keep (a root README.md too), docs/README.md and docs/project/coding_rules.md adopt
-(legacy if template only); predecessor -> delete (tooling, examples: template only), else legacy
-(docs, own lines included — the origin shows them); unknown -> keep. A link or protected row is
-always keep. Line breaks do not count: a line that is a stretch of a base paragraph (whitespace
-collapsed, at least 20 characters) is the template's.
+ai-machinery -> delete if template only, keep if its origin is unknown, else adopt (a skill/agent
+unit whose own name is free) or legacy (a skill/agent unit whose name collides, case-insensitively,
+with the new template's own — its reserved "-<role>-high" variant included — adopt would be refused
+at --finish; the row's note points at the manual override) or keep (the rest); a README/description
+file directly under a MACHINERY_DIRS folder whose every OTHER sibling proposes delete/legacy follows
+them by its own origin instead of the generic ai-machinery rule (a README only describing scripts
+that are all gone is not current documentation either); project-doc -> keep (a root README.md too),
+docs/README.md and docs/project/coding_rules.md adopt (legacy if template only); predecessor ->
+delete (tooling, examples, docs/project/coding_rules.d/: template only), else legacy (docs, own
+lines included — the origin shows them); unknown -> keep. A link or protected row is always keep.
+Line breaks do not count: a line that is a stretch of a base paragraph (whitespace collapsed, at
+least 20 characters) is the template's.
 ```
 
 ## `board.py`
