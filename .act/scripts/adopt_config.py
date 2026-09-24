@@ -434,8 +434,26 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[P
     return dest
 
 
+def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
+    """Decode the old AI-CONFIG.md: UTF-8 first, else Windows-1252 (common for a hand-edited file
+    from an older editor) instead of silently dropping characters via errors="replace" (B118).
+    Returns the text plus a note for the report when the fallback was used or even that failed."""
+    if source is None:
+        return "", None
+    raw = source.read_bytes()
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        pass
+    try:
+        return raw.decode("cp1252"), f"read as Windows-1252, not UTF-8 ({source.name})"
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace"), (
+            f"read as Windows-1252, not UTF-8 ({source.name}) — some bytes matched neither and were replaced")
+
+
 def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg: ConfigFile, plan: bool) -> dict:
-    text = source.read_bytes().decode("utf-8", errors="replace") if source else ""
+    text, encoding_note = _read_source_text(source)
     rows, passages = parse_old_config(text)
     fallback = read_template_values(template_json)
     defaults = {k: set(v) for k, v in DEFAULTS.items()}
@@ -541,7 +559,7 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
         mapped.append(_apply_coding_guidelines(root, coding_guidelines_row, plan))
 
     return {"source": source, "template_json": template_json, "mapped": mapped, "unmapped": unmapped,
-            "passages": passages}
+            "passages": passages, "encoding_note": encoding_note}
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +585,8 @@ def render(root: Path, data: dict, plan: bool) -> str:
     # heading. The standalone copy under .act-local/adopt/config-report.md loses nothing by it;
     # the "Source: ..." line already says what this is.
     out = [f"Source: `{rel(data['source'])}` · fallback: `{rel(data['template_json'])}` · target: `{CONFIG.as_posix()}`"
-           + (" · plan only, nothing written" if plan else ""), "",
+           + (" · plan only, nothing written" if plan else "")
+           + (f" · {data['encoding_note']}" if data.get("encoding_note") else ""), "",
            "## Mapped", "", "| Old key | Old value | Key | Result |", "| :--- | :--- | :--- | :--- |"]
     out += [f"| {_cell(r['key'])} | {_cell(r['value'])} | `{r['new']}` | {_cell(r['result'])} |" for r in data["mapped"]] \
         or ["| — | — | — | nothing to map |"]
