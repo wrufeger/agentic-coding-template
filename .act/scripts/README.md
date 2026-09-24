@@ -24,6 +24,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
+| `skills.py` | List the project's skills like a man page (name + one-line description from each `SKILL.md`'s frontmatter), or print one skill's `SKILL.md`… | direct (used by skill `act` and by dispatch.py's `/act` fast path) |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
 | `usage.py` | Local usage counter (T41) — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is… | direct |
@@ -546,6 +547,22 @@ options:
                         keep what applied, discard the rest), ignore (move to import/ignored/,
                         never offered again), or delete (remove the file) — only with the default
                         no-argument .act-local/import/ discovery
+```
+
+## `skills.py`
+
+Call: direct (used by skill `act` and by dispatch.py's `/act` fast path)
+
+```text
+usage: skills.py [-h] [name]
+
+List the project's skills (name + description), or print one in full.
+
+positional arguments:
+  name        print exactly this skill's SKILL.md in full
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## `update.py`

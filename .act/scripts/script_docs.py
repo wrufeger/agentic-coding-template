@@ -71,6 +71,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "settings_export.py": {"kind": "skill", "skill": "act-export-settings"},
     "settings_format.py": {"kind": "library"},
     "settings_load.py": {"kind": "skill", "skill": "act-load-settings"},
+    "skills.py": {"kind": "direct", "note": "used by skill `act` and by dispatch.py's `/act` fast path"},
     "tiers.py": {"kind": "library"},
     "update.py": {"kind": "skill", "skill": "act-update", "note": "`--plan` alone is direct"},
     "usage.py": {"kind": "direct"},

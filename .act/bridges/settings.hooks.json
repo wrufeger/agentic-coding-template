@@ -90,6 +90,12 @@
           {
             "type": "command",
             "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py UserPromptSubmit --act-check",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "shell": "bash",
             "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; if [ -z \"$P\" ]; then exit 0; fi; \"$P\" .act/hooks/dispatch.py UserPromptSubmit",
             "timeout": 10,
             "async": true

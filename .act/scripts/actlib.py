@@ -417,23 +417,41 @@ def _hook_command_suffix(event: str) -> str:
     return f'"$P" .act/hooks/dispatch.py {event}'
 
 
+# Per event, every extra fixed argument this template's own hooks may pass dispatch.py beyond the
+# plain "dispatch.py <event>" call — currently only UserPromptSubmit's dedicated "/act" fast-path
+# entry (T67, .act/bridges/settings.hooks.json), a second, synchronous hook for that one event
+# next to the plain async one, reaching dispatch.py's own early-exit branch (see its header). Not
+# a general "any extra args count" rule on purpose (see is_ours_hook's docstring) — each variant
+# is listed here explicitly, same precision as the plain suffix itself.
+_HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
+    "UserPromptSubmit": ("--act-check",),
+}
+
+
+def _hook_command_suffixes(event: str) -> list[str]:
+    base = _hook_command_suffix(event)
+    return [base] + [f"{base} {extra}" for extra in _HOOK_COMMAND_EXTRA_ARGS.get(event, ())]
+
+
 def is_ours_hook(hook, event: str) -> bool:
     """True if `hook` (one item of a settings.json hook-entry's own "hooks" list) is exactly this
     template's generated wrapper for `event` — matched by its *exact* command text (review T46
     finding 3, replacing an earlier substring check): the fixed interpreter-detection prologue
-    this template always uses, ending in the literal dispatch.py invocation for this event,
-    optionally followed by "; true" for the events that must never block the harness. A project's
-    own hook that merely happens to also invoke dispatch.py (e.g. "python3 .act/hooks/dispatch.py
-    PreToolUse --project-flag") does not match this exact form and is correctly left alone —
-    classification is per *hook*, not per entry, so a project hook sharing an entry with a
-    template hook (same matcher) keeps its own hook and entry untouched."""
+    this template always uses, ending in the literal dispatch.py invocation for this event (one of
+    _hook_command_suffixes(event) — normally just one, see that function for the one event with a
+    second, fixed-argument variant), optionally followed by "; true" for the events that must
+    never block the harness. A project's own hook that merely happens to also invoke dispatch.py
+    (e.g. "python3 .act/hooks/dispatch.py PreToolUse --project-flag") does not match any of these
+    exact forms and is correctly left alone — classification is per *hook*, not per entry, so a
+    project hook sharing an entry with a template hook (same matcher) keeps its own hook and entry
+    untouched."""
     if not isinstance(hook, dict):
         return False
     command = hook.get("command", "")
     if not isinstance(command, str) or not command.startswith(_HOOK_COMMAND_PREFIX):
         return False
-    suffix = _hook_command_suffix(event)
-    return command.endswith(suffix) or command.endswith(suffix + "; true")
+    return any(command.endswith(suffix) or command.endswith(suffix + "; true")
+               for suffix in _hook_command_suffixes(event))
 
 
 def _filter_ours_hooks(entry, event: str) -> tuple[Optional[dict], bool]:

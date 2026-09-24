@@ -78,13 +78,17 @@
 #
 # Usage:
 #   python .act/hooks/dispatch.py <event>
+#   python .act/hooks/dispatch.py UserPromptSubmit --act-check
 #   ... with the hook's JSON payload piped in on stdin (may be empty or malformed; handled).
 #
 #   <event> is the hook event name. "PreToolUse" runs the checks, "PostToolUse" and
 #   "PostToolUseFailure" both run the notes, "SessionStart" the session handler; every event
 #   (these four and e.g. SubagentStart, SubagentStop, UserPromptSubmit, Notification, SessionEnd)
 #   first goes to the observers. Anything else exits 0 — an unknown event must never break the
-#   caller's hook chain.
+#   caller's hook chain. "UserPromptSubmit --act-check" is a second, separate invocation of this
+#   same event (its own synchronous entry in .act/bridges/settings.hooks.json, alongside the
+#   plain "UserPromptSubmit" one, which stays async and unchanged) — see the fast-path block near
+#   the top of this file, before the heavy imports, and "Output format" below.
 #
 # Output format:
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
@@ -124,6 +128,16 @@
 #                 checks.session._spawn_update_check_worker() launches as a detached background
 #                 process (see main() below). Not documented to the harness, not something a hook
 #                 config ever names.
+#
+#   "UserPromptSubmit --act-check" (T67): the prompt is not "/act"/"/act <name>", or it is a
+#                 worker's own payload — exit 0, nothing on stdout (the common case, checked
+#                 before any of manifest.py/tiers.py/checks.session is imported). On a match:
+#                 one line on stdout, {"decision": "block", "reason": "<skill list or one skill's
+#                 SKILL.md in full>"} — the format Claude Code is confirmed to read for
+#                 UserPromptSubmit as "show `reason` to the user, never send this prompt to the
+#                 model" (same mechanism the predecessor template used before T60's `.act/`
+#                 restructure). Always exit 0 either way; a bug in .act/scripts/skills.py falls
+#                 back to "say nothing, let the prompt through" rather than eating it.
 #
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
 # write is NOT swallowed the way a SessionStart error is. Every other check in this template
@@ -180,6 +194,43 @@ if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
         _early_payload = {}
     if not _early_payload.get("agent_id") and _early_payload.get("tool_name") not in _POST_TOOL_USE_TOOLS:
         sys.exit(0)
+
+# UserPromptSubmit "/act" fast intercept (T67) — a second, synchronous hook entry dedicated to
+# this one check (.act/bridges/settings.hooks.json's "--act-check" entry), kept apart from the
+# plain "UserPromptSubmit" entry below (still async, feeds only the observers — see
+# checks/tips.py's own header for why that one stays async: it never needs to block anything). A
+# normal prompt must never pay for manifest.py/tiers.py/checks.session just to rule itself out
+# here — checked before any of that is imported, same early-exit shape as the PostToolUse block
+# above. Only on an actual "/act"/"/act <name>" match is .act/scripts/skills.py imported and run;
+# on a match, prints {"decision": "block", "reason": <skill list or one skill in full>} — Claude
+# Code shows the reason to the user and never sends the prompt to the model (confirmed against
+# the predecessor template's identical mechanism, live before T60's structure change).
+if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "--act-check":
+    import re as _re
+    try:
+        _raw2 = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+        _payload2 = json.loads(_raw2) if _raw2.strip() else {}
+    except (OSError, ValueError, AttributeError):
+        _payload2 = {}
+    if not isinstance(_payload2, dict):
+        _payload2 = {}
+    _prompt2 = _payload2.get("prompt")
+    _match2 = _re.fullmatch(r"\s*/act(?:\s+(\S+))?\s*", _prompt2) if isinstance(_prompt2, str) else None
+    if _match2 is None or _payload2.get("agent_id"):
+        sys.exit(0)  # not "/act"/"/act <name>", or a worker's own payload — nothing to do here
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    try:
+        import actlib as _actlib2  # noqa: E402
+        import skills as _skills2  # noqa: E402
+        _reason2 = _skills2.render(_actlib2.repo_root(), _match2.group(1) or "")
+    except Exception:  # noqa: BLE001 — a bug in the listing must never eat the user's prompt
+        sys.exit(0)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    print(json.dumps({"decision": "block", "reason": _reason2}, ensure_ascii=False))
+    sys.exit(0)
 
 # Force UTF-8 on stdout/stderr: on Windows, Python otherwise picks the console's legacy code
 # page (e.g. cp1252), which silently mangles the em dash in checks.write_guard's message into a

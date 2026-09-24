@@ -5,15 +5,11 @@ description: List the project's skills with a one-line description from each one
 
 # List project skills
 
-1. **No argument:** read `name` and `description` from every `SKILL.md` under `.agents/skills/*/`
-   — the tool-neutral copy that already has any project override baked in, see
-   `.act/skills/README.md` — and print them as a short table, sorted by name. Nothing else: no
-   commentary, no summary, no skill started.
-2. **With a name:** print that skill's `SKILL.md` in full and unchanged, in a code block. Name not
-   found: say so and show the table from step 1 instead of guessing which one was meant.
+Fallback path only. In Claude Code, a prompt that is exactly `/act` or `/act <name>` is already
+intercepted before it ever reaches the model (`.act/hooks/dispatch.py`'s `UserPromptSubmit
+--act-check` entry, `.act/bridges/settings.hooks.json`) — this skill runs only where that hook
+cannot: a tool without harness hooks, or a session with hooks turned off.
 
-## Gap in this stage
-
-No script does this listing yet. Doing it by hand for a handful of skills is fine; once the count
-of skills makes that slow or it gets repeated every session, this belongs in `.act/scripts/`
-instead (`R-cost-script`), same as any other recurring, scriptable check.
+Run `python .act/scripts/skills.py` (no argument: the table, sorted by name) or
+`python .act/scripts/skills.py <name>` (that skill's `SKILL.md` in full) and put its stdout,
+unchanged, in a code block. Nothing else: no commentary, no summary, no skill started.
