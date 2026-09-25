@@ -85,7 +85,11 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
 
 --apply: clean tree (untracked only under .act-local/), new branch act-adopt (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
-  docs/ai/work/archive/legacy/<old path> (sha256 before = after), then staged by path; a git
+  docs/ai/work/archive/legacy/<old path> (sha256 before = after) — with every AI-tool config path segment
+  renamed first (B128: `.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
+  `.github/agents`/`.github/prompts` -> `_agents`/`_prompts`, `.github/copilot-instructions.md`
+  -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
+  reads the archived copy as its own configuration) — then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
   template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
   docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
@@ -118,6 +122,8 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   An adopt target (or a file below one that changed since --apply) whose line 1 is
   <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
   stays scaffold to translate).
+  docs/ai/work/archive/legacy/_act-renames.md (act:default, old path -> renamed path table) is written when B128 renamed at
+  least one legacy path; nothing when it did not.
   --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
@@ -204,7 +210,12 @@ project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
 base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
 config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
-.claude/mcp-katalog.md, .mcp.json.example), is class "predecessor". A row already "project-doc"
+.claude/mcp-katalog.md, .mcp.json.example) — including .claude/template.json, .claude/TEMPLATE-
+LICENSE and .github/workflows/ci.yml (B129.8), which no document extension lets the generic doc
+scan reach, so they are sighted by name here too, proposed "legacy" (template.json,
+TEMPLATE-LICENSE: never a blind delete) or, for ci.yml, "legacy" only while it still carries the
+predecessor's own placeholder steps (an `echo "TODO` line naming create-project.py or
+checklists.md), else "keep" — is class "predecessor". A row already "project-doc"
 reclassifies to "predecessor" only for a curated file name (docs/ai/README.md etc.) or, under a
 PREDECESSOR_PREFIXES directory (template-feedback/, coding_rules.d/), only when the path is
 confirmed present in the base_commit tree — a file the project added on its own under that same

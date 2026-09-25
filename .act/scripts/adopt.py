@@ -8,7 +8,9 @@
 #          row is validated strictly first, and the whole run is refused on the first doubt.
 #            --apply   on a new branch "act-adopt": move every `legacy` row (and every old skill/
 #                      agent that carries the name of a template unit) byte-identical to
-#                      docs/ai/work/archive/legacy/<old path>, then run init.py --target.
+#                      docs/ai/work/archive/legacy/<old path>, its AI-tool config path segments
+#                      renamed first (B128, legacy_rel()) so no tool reads the archived copy as
+#                      its own configuration, then run init.py --target.
 #            --finish  after the content step (skill act-adopt / T52) marked every `adopt` row
 #                      done: turn adopted ai-config files into bridges, remove adopted sources
 #                      and `delete` rows, bridge adopted own skills/roles (targets under
@@ -16,8 +18,11 @@
 #                      .claude/settings.json entries that run a removed script, remove the
 #                      act:default mark from adopt targets (docs/ai/config.md keeps it: values
 #                      only, its text stays scaffold), bend dead references in docs/project/
-#                      and docs/README.md to the new place (link targets only), run doctor.py,
-#                      write one inbox report.
+#                      and docs/README.md to the new place (link targets only), write
+#                      docs/ai/work/archive/legacy/_act-renames.md (old path -> renamed path table;
+#                      not "README.md", which a `legacy` row for a project's own root README.md
+#                      could land at) where B128 renamed anything, run doctor.py, write one inbox
+#                      report.
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
 # Usage:
@@ -63,6 +68,70 @@ BRANCH = "act-adopt"
 LEGACY_ROOT = "docs/ai/work/archive/legacy"
 RESCUED_ROOT = ".act-local/adopt/rescued"  # ignored/untracked files out of a moved or removed unit
 ABORTED_ROOT = ".act-local/adopt/aborted"  # copies of work --abort --force had to discard
+# Not "README.md": a `legacy` row for a root-level README.md (act-adopt/SKILL.md step 6 proposes
+# `keep` for a project-doc README.md, but a table may still choose `legacy`) would land at exactly
+# that path and get silently overwritten by write_legacy_readme() (B128 follow-up) — a name the
+# rename mapping can never itself produce protects it (see the duplicate-destination and
+# LEGACY_README checks in validate()).
+LEGACY_README = f"{LEGACY_ROOT}/_act-renames.md"
+
+# B128: an AI tool reads a `.claude/`, `.codex/`, ... folder or a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`
+# file as its own configuration wherever it sits — including nested below docs/ai/work/archive/legacy/,
+# and including nested anywhere inside a directory a legacy move takes wholesale (e.g. an old
+# `app/.claude/` inside a moved `app/`). Every path a legacy move puts there goes through legacy_rel()
+# first, so the archived copy never loads as configuration again — applied to every segment, at any
+# depth (everywhere but under ".github", which has its own two rules below).
+LEGACY_DIR_RENAME = {".claude": "_claude", ".codex": "_codex", ".gemini": "_gemini",
+                     ".cursor": "_cursor", ".agents": "_agents"}
+# Files renamed wherever they sit, any depth, by appending ".legacy" to the name.
+LEGACY_FILE_RENAME = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "CLAUDE.local.md")
+
+
+def legacy_rel(path: str) -> str:
+    """`path` (a plain relative posix path, as validate() requires) with every tool-config segment
+    renamed, at any depth, so no AI tool reads the legacy copy as its own configuration (B128): every
+    segment named ``.claude``/``.codex``/``.gemini``/``.cursor``/``.agents`` -> ``_claude``/…,
+    wherever it sits (a nested ``app/.claude/`` renamed the same as a top-level one); every
+    ``.github`` segment's own ``agents``/``prompts`` child -> ``_agents``/``_prompts`` (its own other
+    content, e.g. workflows/, is untouched) and its ``copilot-instructions.md`` child exactly ->
+    ``copilot-instructions.md.legacy``; a file named ``CLAUDE.md``/``AGENTS.md``/``GEMINI.md``/
+    ``CLAUDE.local.md`` at any depth gets ``.legacy`` appended to its name. The one function every
+    legacy-destination computation in this script goes through — never build
+    f"{LEGACY_ROOT}/{path}" directly. Renames only the path string itself; for a directory moved
+    wholesale, the files nested inside still need moving to match (see legacy_move())."""
+    parts = list(PurePosixPath(path).parts)
+    if not parts:
+        return path
+    out = []
+    i, n = 0, len(parts)
+    while i < n:
+        part = parts[i]
+        if part == ".github" and i + 1 < n and parts[i + 1] == "copilot-instructions.md" and i + 2 == n:
+            out.append(part)
+            out.append("copilot-instructions.md.legacy")
+            i += 2
+            continue
+        if part == ".github" and i + 1 < n and parts[i + 1] in ("agents", "prompts"):
+            out.append(part)
+            out.append("_" + parts[i + 1])
+            i += 2
+            continue
+        if part in LEGACY_DIR_RENAME:
+            out.append(LEGACY_DIR_RENAME[part])
+            i += 1
+            continue
+        if part in LEGACY_FILE_RENAME:
+            out.append(part + ".legacy")
+            i += 1
+            continue
+        out.append(part)
+        i += 1
+    return "/".join(out)
+
+
+def legacy_dest(path: str) -> str:
+    """Where `path` lands under the legacy archive, tool-config segments renamed (legacy_rel())."""
+    return f"{LEGACY_ROOT}/{legacy_rel(path)}"
 BACKUP_ROOT = ".act-local/adopt/backup"    # files init.py merges into, restored by --abort
 BACKED_UP = (".claude/settings.json",)
 ACTIONS = ("adopt", "legacy", "keep", "delete")
@@ -210,6 +279,61 @@ def _files_below(path: Path) -> dict:
             full = Path(dirpath) / name
             out[full.relative_to(path).as_posix()] = _sha256(full)
     return dict(sorted(out.items()))
+
+
+def _prune_empty_below(base: Path) -> None:
+    """Remove directories left empty under `base` (base itself included if it ends up empty),
+    deepest first."""
+    if not base.is_dir():
+        return
+    for dirpath, _dirs, _files in list(os.walk(base, topdown=False)):
+        current = Path(dirpath)
+        try:
+            if not any(current.iterdir()):
+                current.rmdir()
+        except OSError:
+            pass
+
+
+def legacy_rename_nested(dest: Path) -> dict:
+    """After a whole directory landed at `dest` byte-identical (a plain move preserves every
+    internal name), rename every file inside whose relative path legacy_rel() would change (B128,
+    any depth — legacy_rel() only rewrites the path string, this makes the file system match it):
+    move each such file to its renamed relative location under `dest`, then remove directories left
+    empty by that (e.g. a nested `.claude/` once every file below it moved to `_claude/`). Returns
+    old-relative -> new-relative for every file actually moved (empty if legacy_rel() changed
+    nothing below `dest`) — --apply records it so --abort can reverse it before moving the unit
+    back. `dest` itself (the row's own top-level rename) is not touched here, only what is below
+    it — legacy_dest() already renamed that part."""
+    if not dest.is_dir():
+        return {}
+    renamed = {}
+    for rel in sorted(_files_below(dest)):
+        new_rel = legacy_rel(rel)
+        if new_rel == rel:
+            continue
+        src, dst = dest / rel, dest / new_rel
+        if dst.exists():
+            raise RuntimeError(f"legacy rename destination already exists: {dest}/{new_rel}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src, dst)
+        renamed[rel] = new_rel
+    if renamed:
+        _prune_empty_below(dest)
+    return renamed
+
+
+def legacy_rename_nested_undo(dest: Path, renamed: dict) -> None:
+    """Reverse legacy_rename_nested(): move every renamed file back to its original relative
+    place under `dest`, before the unit as a whole is moved back out of the legacy archive."""
+    for rel, new_rel in renamed.items():
+        src, dst = dest / new_rel, dest / rel
+        if not src.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src, dst)
+    if renamed:
+        _prune_empty_below(dest)
 
 
 def _remove_path(path: Path) -> None:
@@ -423,6 +547,7 @@ def validate(root: Path, scan: dict, rows: list, on_disk: bool, moved_first=lamb
                                 f"would lose ({', '.join(found[:3])}); needs \"confirmed\": true — they are then "
                                 f"rescued to {RESCUED_ROOT}/")
     problems += target_conflicts(rows, leaving_paths(rows, scan_rows, moved_first))
+    problems += legacy_destination_problems(rows, moved_first)
     for path in sorted(set(scan_rows) - seen):
         problems.append(f"scan.json row {path!r} has no table row (one row per sighted source)")
     if on_disk:
@@ -450,6 +575,42 @@ def leaving_paths(rows: list, scan_rows: dict, moved_first) -> list:
         elif action == "adopt" and not moved_first(path) and not _is_protected(_note_of(row, scan_rows.get(path))):
             out.append(path)
     return out
+
+
+def legacy_moves(rows: list, moved_first) -> list:
+    """(path, dest) for every row this adoption's --apply moves into the legacy archive: every
+    `legacy` row, and every `adopt`/`keep` row whose source collides with what init.py writes
+    itself (moved_first — mirrors cmd_apply's own `moves` list, built the same way)."""
+    out = []
+    for row in rows:
+        path, action = row.get("path"), row.get("action")
+        if not isinstance(path, str) or not _is_safe_rel(path):
+            continue
+        if action == "legacy" or (action in ("adopt", "keep") and moved_first(path)):
+            out.append((path, legacy_dest(path)))
+    return out
+
+
+def legacy_destination_problems(rows: list, moved_first) -> list:
+    """Two checks on where --apply's legacy moves would land, run in validate() so a --plan (and
+    thus every real --apply, which always validates first) refuses them before anything moves:
+    a destination that collides with LEGACY_README (reserved for the rename table
+    write_legacy_readme() writes — B128 follow-up), and two sources landing on the same
+    destination (compared case-insensitively, as the file system may), where the second
+    os.replace() would otherwise silently overwrite the first."""
+    problems = []
+    seen: dict = {}
+    for path, dest in legacy_moves(rows, moved_first):
+        if dest == LEGACY_README:
+            problems.append(f"{path!r}: would move to {dest!r}, reserved for the rename table "
+                            f"({LEGACY_README})")
+        key = _key(dest)
+        if key in seen and seen[key] != path:
+            problems.append(f"{path!r} and {seen[key]!r} both land at {dest!r} in the legacy "
+                            "archive (paths compared case-insensitively where the file system is)")
+        else:
+            seen[key] = path
+    return problems
 
 
 def target_conflicts(rows: list, leaving: list) -> list:
@@ -674,7 +835,7 @@ def cmd_apply(root: Path, plan: bool) -> int:
         if path in init_dests and action == "keep":
             shadowed.append(path)  # kept means kept: init then leaves the project's file in place
         elif action == "legacy" or (colliding and action in ("adopt", "keep")):
-            moves.append((path, f"{LEGACY_ROOT}/{path}", action, colliding))
+            moves.append((path, legacy_dest(path), action, colliding))
         elif colliding and action == "delete":
             early_deletes.append(path)
     clash = [dest for _p, dest, _a, _c in moves if os.path.lexists(root / dest)]
@@ -736,11 +897,15 @@ def cmd_apply(root: Path, plan: bool) -> int:
             before = _files_below(root / path)
             (root / dest).parent.mkdir(parents=True, exist_ok=True)
             os.replace(root / path, root / dest)
+            renamed = legacy_rename_nested(root / dest)  # B128, nested: rename what a plain move left as-is
+            if renamed:
+                new_state.setdefault("moved_renames", {})[path] = renamed
             new_state["moved"][path] = dest
             _write_json(state_path, new_state)
             after = _files_below(root / dest)
             checksums[path] = {"legacy": dest, "files": after}
-            if after != before:
+            expected = {renamed.get(rel, rel): digest for rel, digest in before.items()}
+            if after != expected:
                 raise RuntimeError(f"checksum mismatch after moving {path} -> {dest}")
         for path in early_deletes:
             _remove_path(root / path)
@@ -997,6 +1162,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
         _prune_empty_dirs(root, in_the_way)
         if (root / old).is_dir() and not any((root / old).rglob("*")):
             shutil.rmtree(root / old)  # only empty folders left
+        legacy_rename_nested_undo(root / dest, state.get("moved_renames", {}).get(old, {}))
         (root / old).parent.mkdir(parents=True, exist_ok=True)
         os.replace(root / dest, root / old)
         _prune_empty_dirs(root, [dest])
@@ -1192,7 +1358,7 @@ def emptied_folders(root: Path, gone: list, pending: list, succ: dict) -> dict:
                 full.add(folder)
                 break
             if folder not in succ:
-                legacy = f"{LEGACY_ROOT}/{folder}"
+                legacy = legacy_dest(folder)
                 out[folder] = legacy if (root / legacy).is_dir() else None
             folder = posixpath.dirname(folder)
     return out
@@ -1390,6 +1556,27 @@ def refs_summary(refs: tuple) -> str:
     return f"{len(changes)} rewritten, {len(left)} left unchanged" + (f" ({detail})" if detail else "")
 
 
+def group_left_by_target(left: list) -> list:
+    """(target, count, files) per distinct target mentioned in `left` (B129.6: a project can carry
+    a few hundred left-unchanged mentions of one old path across docs/project/ — too long for a
+    human to read line by line; grouped by the referenced path/text, sorted by count then target,
+    `files` sorted and de-duplicated). Each line in `left` is
+    "<file>:<line number>: <target> (<reason>)"; `target` here is everything before the reason's
+    opening "(" — the same text `refs_summary()` reads the reason from, on the other side of the
+    split. The full, ungrouped list stays at REFS_FILE/REFS_PLAN_FILE (write_references())."""
+    groups: dict = {}
+    for line in left:
+        file_part, _sep, rest = line.partition(":")
+        rest = rest.split(":", 1)[1].strip() if ":" in rest else rest.strip()
+        target = rest.rsplit(" (", 1)[0]
+        entry = groups.setdefault(target, {"count": 0, "files": set()})
+        entry["count"] += 1
+        entry["files"].add(file_part)
+    rows = [(target, info["count"], sorted(info["files"])) for target, info in groups.items()]
+    rows.sort(key=lambda row: (-row[1], row[0]))
+    return rows
+
+
 # Settings entries that run a removed script (T65): the script a hook command or a Bash(...)
 # permission rule executes — the first word of a simple command, or the word after an
 # interpreter — written relative to the project (bare, ./ or through $CLAUDE_PROJECT_DIR), never
@@ -1484,6 +1671,12 @@ def _json_dump(data, layout: tuple) -> str:
     return json.dumps(data, indent=indent, ensure_ascii=ascii_only).replace("\n", newline) + (newline if final else "")
 
 
+# B129.7a: substring of the predecessor's own inline Python SessionStart hook (checks
+# docs/ai/config.md by hand, prints its own message, "exit 0" — no script of its own, so
+# _entry_scripts() never has anything to flag it by).
+PREDECESSOR_HOOK_SIGNATURE = "AI-CONFIG-Abgleich"
+
+
 def prune_settings(root: Path, dead: list, pending: list, plan: bool, gone: list = ()) -> tuple:
     """(removed, notes): hook commands and Bash(...) permission rules in .claude/settings.json whose
     executed script lies at or below a delete or legacy row this adoption removed (`dead`; for a
@@ -1509,7 +1702,10 @@ def prune_settings(root: Path, dead: list, pending: list, plan: bool, gone: list
 
     def judge(entry: str, kind: str, where: str, rel: str) -> bool:
         """True if the entry goes; lists it in `notes` where it only needs a look."""
-        verdicts = [v for v in (verdict(s) for s in _entry_scripts(entry, kind)) if v]
+        scripts = _entry_scripts(entry, kind)
+        if not scripts and kind == "command" and PREDECESSOR_HOOK_SIGNATURE in entry:
+            return True  # B129.7a: the predecessor's own inline hook, runs no script of its own
+        verdicts = [v for v in (verdict(s) for s in scripts) if v]
         if "dead" in verdicts:
             return True
         notes.extend(f"{rel}: {where}: {entry} — {v}" for v in verdicts)
@@ -1602,6 +1798,47 @@ def strip_default_marks(root: Path, targets: list, plan: bool, created: Optional
     return done
 
 
+def legacy_readme_rows(moved: dict) -> list:
+    """(old path, renamed path) for every legacy move this adoption actually renamed (B128,
+    legacy_rel()) — sorted, ready for a Markdown table row each. Empty when nothing was renamed."""
+    return sorted((old, new) for old, new in moved.items() if legacy_rel(old) != old)
+
+
+def write_legacy_readme(root: Path, moved: dict, plan: bool) -> Optional[str]:
+    """{LEGACY_README} (`act:default`, English — R-work-language translates it like any other
+    scaffold): why a few paths under the legacy archive differ from their old one (B128 — an AI
+    tool reads a `.claude/` folder, or a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` file, as its own
+    configuration wherever it sits, archive included) and the old-path -> renamed-path table.
+    Written (overwriting an earlier one from the same project) only where this run's `moved`
+    renamed at least one path; returns the path written, or None (nothing renamed, or `plan`)."""
+    rows = legacy_readme_rows(moved)
+    if not rows:
+        return None
+    if plan:
+        return LEGACY_README
+    lines = [
+        "<!-- act:default -->",
+        "# Archived material — renamed paths",
+        "",
+        "Everything under this folder is a byte-identical copy `adopt.py` made of material the "
+        "adoption moved out of the way (`docs/ai/work/archive/legacy/<old path>`) — reference "
+        "material only, nothing here is loaded by any tool.",
+        "",
+        "A few paths differ from their old one on purpose (`B128`): an AI tool reads a `.claude/` "
+        "folder, or a file named `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, as its own configuration "
+        "wherever it sits — nested here included. Those are renamed so nothing here loads again:",
+        "",
+        "| Old path | Here |",
+        "| :--- | :--- |",
+        *(f"| `{old}` | `{new}` |" for old, new in rows),
+        "",
+    ]
+    path = root / LEGACY_README
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return LEGACY_README
+
+
 def run_doctor(root: Path) -> tuple:
     """(exit code, finding lines) of the project's own doctor.py."""
     doctor = root / ".act" / "scripts" / "doctor.py"
@@ -1659,12 +1896,25 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     out += [f"- {line}" for line in doctor[1][:30]] or ["- no findings"]
     changes, left = refs
     out += ["", f"## References in {REFS_SCOPE} rewritten (link target only, not staged)", ""]
-    if len(changes) + len(left) > REFS_IN_REPORT:
-        out += [f"- {refs_summary(refs)} — the full list: {_code(refs_file or REFS_FILE)}"]
+    if len(changes) > REFS_IN_REPORT:
+        out += [f"- {len(changes)} rewritten — the full list: {_code(refs_file or REFS_FILE)}"]
     else:
         out += [f"- {_code(line)}" for line in changes] or ["- none"]
-        out += ["", f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text)", ""]
-        out += [f"- {_code(line)}" for line in left] or ["- none"]
+    # B129.6: a raw line per left-unchanged reference ran to 143 lines in the first real adoption —
+    # too long for a human; grouped by target (old path/text mentioned) instead, the full list
+    # stays at refs_file (write_references()).
+    out += ["", f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text), by target", ""]
+    grouped = group_left_by_target(left)
+    if grouped:
+        out += ["| Target | Count | Files |", "| :--- | ---: | :--- |"]
+        for target, count, files in grouped:
+            shown = ", ".join(_code(f) for f in files[:5])
+            if len(files) > 5:
+                shown += f", +{len(files) - 5} more"
+            out.append(f"| {_code(target)} | {count} | {shown} |")
+        out += ["", f"full list: {_code(refs_file or REFS_FILE)}"]
+    else:
+        out += ["- none"]
     out += ["", "## Accounting", "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("\n".join(out), encoding="utf-8")
@@ -1801,6 +2051,9 @@ def cmd_finish(root: Path, plan: bool) -> int:
         refs = rewrite_references(root, succ, plan=True, exclude=refs_exclude, before=refs_before)
         refs_file = write_references(root, refs, plan=True)
         print(f"[adopt] references in {REFS_SCOPE} (plan): {refs_summary(refs)} — full list: {refs_file}")
+        legacy_readme = write_legacy_readme(root, state.get("moved", {}), plan=True)
+        if legacy_readme:
+            print(f"[adopt] {prefix}write {legacy_readme} (renamed paths table)")
         print(f"[adopt] {prefix}run doctor.py, write the inbox report")
         print(f"[adopt] plan only, nothing changed (except {refs_file})")
         return 0
@@ -1870,6 +2123,9 @@ def cmd_finish(root: Path, plan: bool) -> int:
         print(f"[adopt] removed the act:default mark (line 1) from {rel} (adopted content)")
     refs = rewrite_references(root, succ, plan=False, exclude=refs_exclude, before=refs_before)
     refs_file = write_references(root, refs, plan=False)
+    legacy_readme = write_legacy_readme(root, state.get("moved", {}), plan=False)
+    if legacy_readme:
+        print(f"[adopt] wrote {legacy_readme} (renamed paths table)")
     doctor = run_doctor(root)
     state.update({"bridged": bridged, "removed_at_finish": to_remove,
                   "own_units": [f"{area}/{name}" for area, name in units],
@@ -1925,7 +2181,11 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
 
 --apply: clean tree (untracked only under .act-local/), new branch {BRANCH} (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
-  {LEGACY_ROOT}/<old path> (sha256 before = after), then staged by path; a git
+  {LEGACY_ROOT}/<old path> (sha256 before = after) — with every AI-tool config path segment
+  renamed first (B128: `.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
+  `.github/agents`/`.github/prompts` -> `_agents`/`_prompts`, `.github/copilot-instructions.md`
+  -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
+  reads the archived copy as its own configuration) — then staged by path; a git
   call that fails stops the run with no accounting. An old skill/agent carrying the name of a
   template unit, or a file at a place init.py writes itself (docs/ai/ skeleton, docs/ai/rules.md,
   docs/project/coding_rules.md, docs/README.md), moves there too unless it is a delete row
@@ -1958,6 +2218,8 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   An adopt target (or a file below one that changed since --apply) whose line 1 is
   <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
   stays scaffold to translate).
+  {LEGACY_README} (act:default, old path -> renamed path table) is written when B128 renamed at
+  least one legacy path; nothing when it did not.
   --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is

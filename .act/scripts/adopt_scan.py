@@ -200,6 +200,15 @@ PREDECESSOR_DOCS = {
     "docs/ai/ai-config-hilfe.md", "docs/ai/resources.md",
 }
 PREDECESSOR_PREFIXES = ("docs/ai/template-feedback/", "docs/project/coding_rules.d/")
+# Predecessor files the generic doc scan never reaches (no document extension, B129.8): sighted by
+# name whenever a predecessor exists, never blindly deleted. template.json/TEMPLATE-LICENSE: the
+# project's own marker and license file — always proposed "legacy", their history stays readable.
+PREDECESSOR_MARKER_FILES = {".claude/template.json", ".claude/TEMPLATE-LICENSE"}
+# ci.yml: proposed "legacy" only while it still carries the predecessor's own placeholder steps
+# (an `echo "TODO` line naming create-project.py/checklists.md, never text a project would write
+# about its own CI), "keep" once the project replaced them with its own.
+PREDECESSOR_CI_FILE = ".github/workflows/ci.yml"
+CI_PLACEHOLDER_HINTS = ("create-project.py", "checklists.md")
 # Doc-like predecessor parts (class "predecessor", _is_document() true) whose own text is worth
 # nothing once the new template replaces the whole area — a template-only copy is proposed delete,
 # like a tooling file, not kept legacy for its own sake: docs/project/coding_rules.d/*, a block of
@@ -1136,8 +1145,20 @@ def _template_unit_collision(path: str) -> Optional[tuple]:
     return None
 
 
-def propose(row: Row, pred: Optional[Predecessor]) -> str:
+def _ci_still_placeholder(root: Path, rel: str) -> bool:
+    """True while `rel` (the predecessor's own ci.yml) still carries its placeholder steps: an
+    `echo "TODO` line together with a mention of create-project.py or checklists.md — the
+    predecessor's own next-step hints, never text a project would write about its own CI."""
+    text = _read_head(root / rel, max_bytes=1 << 20)
+    return 'echo "TODO' in text and any(hint in text for hint in CI_PLACEHOLDER_HINTS)
+
+
+def propose(row: Row, pred: Optional[Predecessor], root: Optional[Path] = None) -> str:
     note, origin, path = row.note or "", row.origin or "", row.path
+    if row.cls == "predecessor" and path in PREDECESSOR_MARKER_FILES:
+        return "legacy"  # the project's own marker/license: history stays readable, never a blind delete
+    if row.cls == "predecessor" and path == PREDECESSOR_CI_FILE:
+        return "legacy" if root is not None and _ci_still_placeholder(root, path) else "keep"
     template_only = origin == ORIGIN_TEMPLATE
     own = origin.startswith("own text")
     if any(marker in note for marker in ("never bridge", "git-ignored/local", "local, git-ignored",
@@ -1254,6 +1275,12 @@ def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row
     for rel in sorted(PREDECESSOR_TOOL_FILES - seen):
         if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
             rows.append(scan.file_row(rel, "predecessor", "tooling file of the predecessor template"))
+    # B129.8: named predecessor files no document extension lets the generic doc scan reach.
+    for rel in sorted((PREDECESSOR_MARKER_FILES | {PREDECESSOR_CI_FILE}) - seen):
+        if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
+            reason = ("marker file of the predecessor template" if rel in PREDECESSOR_MARKER_FILES
+                      else "CI workflow of the predecessor template")
+            rows.append(scan.file_row(rel, "predecessor", reason))
     return rows
 
 
@@ -1285,7 +1312,7 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
         rows = mark_predecessor(scan, pred, rows)
         set_origins(root, pred, rows)
     for r in rows:
-        r.proposed = propose(r, pred)
+        r.proposed = propose(r, pred, root)
     propose_dying_folder_readmes(rows)
     rows.sort(key=lambda r: (CLASS_ORDER.index(r.cls) if r.cls in CLASS_ORDER else len(CLASS_ORDER), r.path))
     info = [f"not scanned: submodule {path}" for path in submodules]
@@ -1359,7 +1386,12 @@ project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 PREDECESSOR (the target has .claude/template.json): a row that would be "unknown" but is in the
 base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
 config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
-.claude/mcp-katalog.md, .mcp.json.example), is class "predecessor". A row already "project-doc"
+.claude/mcp-katalog.md, .mcp.json.example) — including .claude/template.json, .claude/TEMPLATE-
+LICENSE and .github/workflows/ci.yml (B129.8), which no document extension lets the generic doc
+scan reach, so they are sighted by name here too, proposed "legacy" (template.json,
+TEMPLATE-LICENSE: never a blind delete) or, for ci.yml, "legacy" only while it still carries the
+predecessor's own placeholder steps (an `echo "TODO` line naming create-project.py or
+checklists.md), else "keep" — is class "predecessor". A row already "project-doc"
 reclassifies to "predecessor" only for a curated file name (docs/ai/README.md etc.) or, under a
 PREDECESSOR_PREFIXES directory (template-feedback/, coding_rules.d/), only when the path is
 confirmed present in the base_commit tree — a file the project added on its own under that same

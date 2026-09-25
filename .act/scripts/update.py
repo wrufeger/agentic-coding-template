@@ -1140,7 +1140,7 @@ def _sync_tool_bridges(
                 else:
                     message, changed = new_init._write_text_file(src, dest, {}, False, root)
                     if changed:
-                        generated[dest_rel] = actlib.sha256_file(dest)
+                        generated[dest_rel] = actlib.generated_hash(dest)
                 if changed:
                     parts.append(f"{dest_rel}: created ({tool} joined tools)")
                     touched.append(dest)
@@ -1148,7 +1148,7 @@ def _sync_tool_bridges(
                 current = dest.read_text(encoding="utf-8")
                 reference = _render_tool_bridge(new_init, root, key, spec)
                 same = (reference is not None and current.replace("\r\n", "\n") == reference.replace("\r\n", "\n")) \
-                    or generated.get(dest_rel) == actlib.sha256_file(dest)
+                    or actlib.generated_unchanged(dest, generated.get(dest_rel, ""))
                 if same:
                     dest.unlink()
                     generated.pop(dest_rel, None)

@@ -53,11 +53,12 @@ from .shell_targets import (
 
 __all__ = [
     "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE",
-    "_strip_backticks", "_parse_write_scope", "_worker_scopes_dir", "_worker_scope_file",
-    "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files", "_record_worker_scope",
-    "_read_worker_scope_entry", "_recent_restricted_scope_registered", "_scope_via_meta",
-    "_scope_via_transcript", "_resolve_worker_scope", "_normalize_candidate_path",
-    "_within_scratchpad", "_matches_scope", "_write_scope_message", "check_worker_write_scope",
+    "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_parse_write_scope", "_worker_scopes_dir",
+    "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files",
+    "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
+    "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
+    "_normalize_candidate_path", "_within_scratchpad", "_matches_scope", "_write_scope_message",
+    "check_worker_write_scope",
 ]
 
 _WORKER_SCOPES_DIRNAME = "worker-scopes"
@@ -88,13 +89,72 @@ def _strip_backticks(text: str) -> str:
     return text
 
 
-def _parse_write_scope(prompt: str) -> Optional[dict]:
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _split_glob_prefix(native_pattern: str) -> tuple[str, str]:
+    """(literal prefix, glob remainder without a leading "/") split at the last "/" before the
+    first "*", "?" or "[" in `native_pattern` — the prefix itself holds no glob character, so it is
+    safe to pass to Path.resolve() (B127: on Python 3.9/Windows, Path("D:/…/src/**").resolve() can
+    raise OSError — WinError 123, "The filename, directory name, or volume label syntax is
+    incorrect" — for the glob part alone, which the caller then mistook for "outside the project
+    root" and refused every write). No glob character at all: the whole pattern is the prefix,
+    remainder "". A glob character in the first path segment (no "/" before it): prefix "",
+    remainder the whole pattern unchanged — resolving is not attempted there either."""
+    idx = next((i for i, ch in enumerate(native_pattern) if ch in _GLOB_CHARS), None)
+    if idx is None:
+        return native_pattern, ""
+    cut = native_pattern.rfind("/", 0, idx)
+    if cut == -1:
+        return "", native_pattern
+    return native_pattern[:cut], native_pattern[cut + 1:]
+
+
+def _root_relative_pattern(pattern: str, root: Path) -> tuple[Optional[str], Optional[str]]:
+    """A single `Write scope:` pattern (already "/"-normalized, no trailing "/"), turned
+    project-root-relative if it is written as an absolute path (Windows drive letter, POSIX, or a
+    Git-Bash `/d/...` form via _to_native_path): drive letter/case and "\\" vs "/" are normalized
+    the same way _normalize_candidate_path does it for a write target, since that is what a
+    pattern is ultimately matched against (_matches_scope always compares against a root-relative
+    path — B127). A pattern left as-is (already relative) comes back unchanged, (pattern, None).
+    An absolute pattern that resolves inside `root` comes back as (root-relative, None). One that
+    does not — genuinely outside the project — comes back as (None, message), the message naming
+    the pattern and stating that patterns are root-relative. Only the glob-free part of the
+    pattern is ever given to Path.resolve() (see _split_glob_prefix, B127) — a pattern with no
+    glob-free prefix at all (a glob character in its very first segment) is passed through
+    unresolved, since there is nothing safe left to resolve."""
+    if not _is_absolute_target(pattern):
+        return pattern, None
+    native = _to_native_path(pattern)
+    prefix, remainder = _split_glob_prefix(native)
+    if not prefix:
+        return pattern, None
+    try:
+        rel = Path(prefix).resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        message = (
+            f"[act] write scope pattern is outside the project root: {pattern} "
+            "(a Write scope pattern is always project-root-relative, R-cost-delegate)"
+        )
+        return None, message
+    rel_str = rel.as_posix()
+    if not remainder:
+        return rel_str, None
+    return (remainder if rel_str == "." else f"{rel_str}/{remainder}"), None
+
+
+def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dict]:
     """Parse the first `Write scope: ...` line out of an assignment prompt (see _SCOPE_LINE_RE for
     the accepted line shapes: an optional bullet, patterns optionally backtick-wrapped and/or
     ending in "/"). Returns None if no such line is present at all ("unrestricted" — deliberately
     distinct from a scope that names zero patterns, which cannot happen: an empty pattern list
-    falls back to None too). Otherwise {"mode": "none"} or {"mode": "patterns", "patterns": [...]}.
-    """
+    falls back to None too). Otherwise {"mode": "none"}, {"mode": "patterns", "patterns": [...]},
+    or — when `root` is given and a pattern is an absolute path outside it (B127) —
+    {"mode": "error", "message": <str>}, one message for the first such pattern found; that mode is
+    only ever surfaced by the caller at the point of an actual write attempt, not at worker start
+    (see check_worker_write_scope), since a bad scope is otherwise only recorded, never enforced,
+    when nothing is ever written under it. Without `root` (a caller that has none reachable), an
+    absolute pattern is passed through unchanged, same as before B127."""
     match = _SCOPE_LINE_RE.search(prompt)
     if not match:
         return None
@@ -108,8 +168,15 @@ def _parse_write_scope(prompt: str) -> Optional[dict]:
     patterns = []
     for part in parts:
         pattern = part.replace("\\", "/")
-        if pattern.endswith("/"):
-            pattern += "**"
+        trailing_slash = pattern.endswith("/")
+        if trailing_slash:
+            pattern = pattern[:-1]
+        if root is not None:
+            pattern, error = _root_relative_pattern(pattern, root)
+            if error:
+                return {"mode": "error", "message": error}
+        if trailing_slash:
+            pattern += "/**"
         patterns.append(pattern)
     return {"mode": "patterns", "patterns": patterns}
 
@@ -261,7 +328,7 @@ def _scope_via_meta(root: Path, transcript_path: object, agent_id: str) -> Optio
     return _read_worker_scope_entry(root, tool_use_id)
 
 
-def _scope_via_transcript(transcript_path: object, agent_id: str) -> Optional[dict]:
+def _scope_via_transcript(transcript_path: object, agent_id: str, root: Path) -> Optional[dict]:
     """Fallback for _scope_via_meta: read the assignment prompt straight out of the worker's own
     first transcript line (<session>/subagents/agent-<id>.jsonl, message.content of the first
     record) and parse a `Write scope:` line out of it directly — no tool_use_id round-trip needed.
@@ -284,7 +351,7 @@ def _scope_via_transcript(transcript_path: object, agent_id: str) -> Optional[di
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str):
         return None
-    return _parse_write_scope(content) or {"mode": "unrestricted"}
+    return _parse_write_scope(content, root) or {"mode": "unrestricted"}
 
 
 def _resolve_worker_scope(root: Path, payload: dict) -> Optional[dict]:
@@ -302,7 +369,7 @@ def _resolve_worker_scope(root: Path, payload: dict) -> Optional[dict]:
     if entry is not None:
         return entry
     try:
-        entry = _scope_via_transcript(transcript_path, agent_id)
+        entry = _scope_via_transcript(transcript_path, agent_id, root)
     except Exception:
         entry = None
     return entry
@@ -353,7 +420,10 @@ def _write_scope_message(target: str, scope: dict) -> str:
         allowed = "none (read-only assignment)"
     else:
         allowed = ", ".join(scope.get("patterns") or []) or "none"
-    return f"[act] outside this assignment's write scope: {target} (allowed: {allowed})"
+    return (
+        f"[act] outside this assignment's write scope: {target} (allowed: {allowed}; "
+        "Write scope patterns are project-root-relative)"
+    )
 
 
 def check_worker_write_scope(payload: dict) -> int:
@@ -388,7 +458,7 @@ def check_worker_write_scope(payload: dict) -> int:
             tool_use_id = payload.get("tool_use_id")
             prompt = tool_input.get("prompt")
             if isinstance(tool_use_id, str) and tool_use_id and isinstance(prompt, str):
-                scope = _parse_write_scope(prompt) or {"mode": "unrestricted"}
+                scope = _parse_write_scope(prompt, root) or {"mode": "unrestricted"}
                 _record_worker_scope(root, tool_use_id, scope)
         return 0
 
@@ -439,6 +509,18 @@ def check_worker_write_scope(payload: dict) -> int:
 
     if scope.get("mode") == "unrestricted":
         return 0
+
+    if scope.get("mode") == "error":
+        # An absolute pattern outside the project root (B127) — refused here, at the first write
+        # attempt, rather than at worker start (_record_worker_scope only records the bad scope,
+        # see _parse_write_scope's docstring): a scope nothing is ever written under would
+        # otherwise never surface the problem.
+        message = scope.get("message") or "[act] invalid write scope"
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
 
     scratchpad_dir = payload.get("scratchpad_dir")
     for raw_target, base in write_targets:

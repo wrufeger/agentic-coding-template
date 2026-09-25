@@ -47,7 +47,8 @@ __all__ = [
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
-    "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "refresh_session",
+    "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "_changed_bridge_note",
+    "refresh_session",
 ]
 
 # ---------------------------------------------------------------------------
@@ -185,16 +186,18 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
         if recorded_hash is None:
             continue  # never tracked as generated — not ours to touch
 
-        current_hash = actlib.sha256_file(dest_path)
-        if current_hash != recorded_hash:
+        # B134: compared with line endings normalized (and still accepts an older, raw-byte
+        # recorded hash) so a checkout's own line endings never make an untouched bridge look
+        # "changed locally" on their own.
+        if not actlib.generated_unchanged(dest_path, recorded_hash):
             changed.append(dest_rel)
             continue
 
         refreshed.append(dest_rel)
         if write:
             content = source_path.read_text(encoding="utf-8")
-            dest_path.write_text(content, encoding="utf-8")
-            generated[dest_rel] = actlib.sha256_file(dest_path)
+            actlib.write_text_lf(dest_path, content)
+            generated[dest_rel] = actlib.generated_hash(dest_path)
 
     if write and refreshed:
         actlib.write_cache({"generated": generated})
@@ -726,6 +729,38 @@ def _old_imports_note(root: Path) -> Optional[str]:
             "as \"@../../.act/...\" (check: python .act/scripts/rules.py --imports)")
 
 
+def _changed_bridge_note(root: Path, dest_rel: str) -> Optional[str]:
+    """One note per changed state of a generated bridge that was edited locally (B134): remembered
+    by the pair (edited file's own content hash, template source's content hash) in
+    .act-local/cache.json ("bridge_change_notes"), same pattern as _old_imports_note()'s
+    "rules_import_hint" -- so it is not repeated at every session start while the edit stands, and
+    noted again once the file changes further. The template source's own hash is part of the key
+    too: a template update to the bridge source (e.g. .act/bridges/rules.md) while the project's
+    copy stays locally edited must note again once -- the project's edit is now against a template
+    version it has never been compared to, even though the local file itself did not change. This
+    matters most for docs/ai/rules.md, which projects are invited to edit (own rules, § "Own
+    rules")."""
+    dest_path = root / dest_rel
+    try:
+        digest = actlib.normalized_sha256(dest_path)
+    except OSError:
+        return None
+    source_name = _BRIDGE_MAP.get(dest_rel)
+    source_path = root / ".act" / "bridges" / source_name if source_name else None
+    try:
+        source_digest = actlib.normalized_sha256(source_path) if source_path else ""
+    except OSError:
+        source_digest = ""
+    key = f"{digest}:{source_digest}"
+    cache = actlib.read_cache()
+    notes = dict(cache.get("bridge_change_notes", {}))
+    if notes.get(dest_rel) == key:
+        return None
+    notes[dest_rel] = key
+    actlib.write_cache({"bridge_change_notes": notes})
+    return f"[act] note: {dest_rel} was changed locally, template version not applied"
+
+
 def _chat_language_short(config: dict[str, str]) -> str:
     chat, docs = actlib.language_settings(config)
     if chat != "auto":
@@ -903,7 +938,9 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     for dest_rel in changed_bridges:
         if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
             continue  # the more specific import note below replaces this one (T64)
-        print(f"[act] note: {dest_rel} was changed locally, template version not applied")
+        note = _changed_bridge_note(root, dest_rel)
+        if note:
+            print(note)
     if mode == "warn":
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")

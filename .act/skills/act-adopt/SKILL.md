@@ -146,8 +146,14 @@ Why the proposals are what they are, and where to deviate:
   `legacy`.
 - `unknown` -> `keep`.
 
-`.claude/template.json` is not a scan row and gets no table row (`adopt.py` refuses a row that is
-not in `scan.json`): it stays where it is, and `adopt_config.py` reads its values in step 5.
+`.claude/template.json` and `.claude/TEMPLATE-LICENSE` are sighted by name (`predecessor`,
+proposed `legacy` — never a blind delete: they are the project's own marker and license file, kept
+readable in the archive), and so is `.github/workflows/ci.yml`, proposed `legacy` only while it
+still carries the predecessor's own placeholder steps (an `echo "TODO` line naming
+`create-project.py`/`checklists.md`), `keep` once the project replaced them with its own (`B129.8`
+— none of the three has a document extension the generic scan would otherwise reach).
+`adopt_config.py` reads `template.json`'s values in step 5 from wherever it now is — its own place,
+or its legacy copy (renamed, `B128`) once `--apply` moved it there.
 
 **Targets now, where they are fixed.** Fill `target` in this step whenever the destination is
 already known — `docs/project/coding_rules.md` and `docs/README.md` as above, `docs/ai/config.md`
@@ -175,7 +181,9 @@ python .act/scripts/adopt.py --target <dir> --apply --plan
 
 It checks the whole table (plus what needs the disk: existence, links, untracked files, a stale
 scan, and on Windows the length of every legacy path) and changes nothing. Fix what it refuses,
-then present the table for step 3 — as a table with the origin column, not the raw JSON.
+then present the table for step 3 — as a table with the origin column, not the raw JSON. Write
+`table.json` and run this dry run as two separate tool calls: one command doing both was refused
+by Claude Code's auto-mode safety classifier as a blind apply.
 
 **Windows: long paths.** A legacy path is the old path plus `docs/ai/work/archive/legacy/`; at 260
 characters or more Git fails on it unless the repository sets `core.longpaths`. `--apply --plan`
@@ -291,7 +299,7 @@ text, so where the title line holds more than the title, the body starts with th
 | Old item | Title | Body |
 | :--- | :--- | :--- |
 | a heading or a bold line (`### T12 · …`, `**Q3 · …**`) | its text | the lines below it, up to the next item |
-| a bullet or checkbox without a heading (`- [ ] **T12 · …** — …`, a board list) | the bold lead, else the text up to the first ` — ` or `: `; where that is only the start of a sentence without a statement (fewer than four words), the whole logical line (the item's first line joined with the lines it wraps onto, by single spaces) | the whole bullet with its indented continuation lines |
+| a bullet or checkbox without a heading (`- [ ] **T12 · …** — …`, a board list) | the bold lead, else the text up to the first ` — ` or `: `; where either is only a label or the start of a sentence without a statement (fewer than four words — a bold lead like "Release" counts too), the whole logical line (the item's first line joined with the lines it wraps onto, by single spaces) | the whole bullet with its indented continuation lines |
 | a backlog table row | the cell of the title column (`Titel`, `Title`) | the table's header and separator line, the row, then its detail section (`### B12 …` with the heading, up to the next heading of the same or a higher level) where the file has one |
 | rule prose without a heading of its own | its first sentence, up to `. `, `: ` or the line end | the passage |
 

@@ -23,6 +23,9 @@ assistant writes under `docs/` and of the scaffold there; `.act/` stays English 
 (`R-work-language`). A config.md with the older single `language` key still works — the value
 counts for both.
 
+`commands` is lint, typecheck, test, in this order; `(not set)` means no command is set up for that
+slot, and the matching check is skipped (`R-code-commit`).
+
 `mode` is `solo` or `team`, and it changes **one** thing: when an entry gets its short ID. In
 `solo` the assistant assigns it right away (`Q66`, `T19`, `B99`) and carries on. In `team` only
 whoever files the entry on the default branch assigns it, so two people can never hand out the

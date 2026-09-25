@@ -173,6 +173,13 @@ def strip_template_prefix(path: str) -> str:
 # Parsing the project file (docs/project/coding_rules.md or docs/ai/rules.md)
 # ---------------------------------------------------------------------------
 
+def _is_new_item(raw: str, stripped: str) -> bool:
+    """True if `raw` starts a new list item/checkbox rather than continuing the previous one — a
+    bullet ("- ..." or "- [ ] ...", indented or not) or a near-miss checkbox mark. Used by
+    parse_project_file to know where an own rule's continuation lines end (B131)."""
+    return stripped.startswith("- ") or bool(RE_CHECKBOX_LOOSE.match(raw))
+
+
 def parse_project_file(path: Path, area: Area) -> ProjectFile:
     lines = path.read_text(encoding="utf-8").splitlines()
     sets: list[ProjectSet] = []
@@ -181,7 +188,12 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
     findings: list[tuple[int, str]] = []
     current_set: Optional[ProjectSet] = None
 
-    for i, raw in enumerate(lines, start=1):
+    total = len(lines)
+    i = 0
+    while i < total:
+        line_no = i + 1
+        raw = lines[i]
+        i += 1
         line = raw.rstrip()
         stripped = line.strip()
         if not stripped:
@@ -193,58 +205,70 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             enabled = mark in ("x", "X")
             if indent == "":
                 if area.name != "coding":
-                    findings.append((i, "a checkbox set line ('use:') is only valid for --area coding"))
+                    findings.append((line_no, "a checkbox set line ('use:') is only valid for --area coding"))
                     current_set = None
                     continue
                 use = RE_USE.match(rest)
                 if not use:
-                    findings.append((i, "expected '- [ ] use: <path>'"))
+                    findings.append((line_no, "expected '- [ ] use: <path>'"))
                     current_set = None
                     continue
-                current_set = ProjectSet(path=normalize_set_path(use.group("path")), enabled=enabled, line=i)
+                current_set = ProjectSet(path=normalize_set_path(use.group("path")), enabled=enabled, line=line_no)
                 sets.append(current_set)
             else:
                 group = RE_GROUP_ID.match(rest)
                 if not group:
-                    findings.append((i, "expected '  - [ ] `ID`' with an optional ' — reason'"))
+                    findings.append((line_no, "expected '  - [ ] `ID`' with an optional ' — reason'"))
                     continue
                 if current_set is None:
-                    findings.append((i, "group checkbox with no preceding set line"))
+                    findings.append((line_no, "group checkbox with no preceding set line"))
                     continue
                 current_set.groups[group.group("id")] = ProjectGroup(
-                    enabled=enabled, reason=group.group("reason"), line=i,
+                    enabled=enabled, reason=group.group("reason"), line=line_no,
                 )
             continue
 
         loose = RE_CHECKBOX_LOOSE.match(line)
         if loose:
-            findings.append((i, "invalid checkbox mark, expected '[ ]' or '[x]'"))
+            findings.append((line_no, "invalid checkbox mark, expected '[ ]' or '[x]'"))
             continue
 
         if line[:1] not in (" ", "\t"):
             if area.name == "core":
                 core_set = RE_CORE_SET.match(stripped)
                 if core_set:
-                    current_set = ProjectSet(path=core_set.group("path"), enabled=True, line=i)
+                    current_set = ProjectSet(path=core_set.group("path"), enabled=True, line=line_no)
                     sets.append(current_set)
                     continue
                 if re.match(r"^@?(?:\.\./)*\.act/", stripped):
-                    findings.append((i, "expected '@<path>.md' or '`<path>.md`'"))
+                    findings.append((line_no, "expected '@<path>.md' or '`<path>.md`'"))
                     continue
 
             replaces = RE_REPLACES.match(stripped)
             if replaces:
-                overrides.append(Override(id=replaces.group("id"), text=replaces.group("text"), line=i))
+                overrides.append(Override(id=replaces.group("id"), text=replaces.group("text"), line=line_no))
                 continue
             if RE_REPLACES_LOOSE.match(stripped):
-                findings.append((i, "expected '- replaces `ID`: <text>'"))
+                findings.append((line_no, "expected '- replaces `ID`: <text>'"))
                 continue
 
             if stripped.startswith("- "):
                 own = RE_OWN.match(stripped)
+                text_parts = [(own.group("text") if own else stripped[2:]).strip()]
+                # Indented continuation lines (B131) belong to this same rule's text, joined with
+                # single spaces, up to the next blank line, the next bullet/checkbox (indented or
+                # not — _is_new_item), or the next unindented line (heading or a new top-level
+                # entry) — whichever comes first.
+                while i < total:
+                    cont_raw = lines[i]
+                    cont_stripped = cont_raw.strip()
+                    if not cont_stripped or cont_raw[:1] not in (" ", "\t") \
+                            or _is_new_item(cont_raw, cont_stripped):
+                        break
+                    text_parts.append(cont_stripped)
+                    i += 1
                 own_rules.append(OwnRule(id=own.group("id") if own else None,
-                                          text=(own.group("text") if own else stripped[2:]).strip(),
-                                          line=i))
+                                          text=" ".join(text_parts), line=line_no))
                 continue
             # heading or prose in the project's own language — not read by the mechanism.
 

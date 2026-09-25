@@ -142,11 +142,18 @@ Code, comments, and rule texts in `.act/` are in English. A project's own workin
 
 ## Contributing
 
-This repository carries almost no content of its own beyond `.act/`: `docs/ai/` and `docs/project/`
-are the skeletons every derived project fills in itself. The template's own development — backlog,
-open questions, journal, test projects — runs in a separate maintenance repository, not part of
-this checkout. A message here that is not clearly about setting up or adopting a project gets a
-short pointer to `docs/ai/` and `docs/project/` in reply, nothing more.
+This repository carries almost no content of its own beyond `.act/`: it has no `docs/` — the
+skeleton every derived project fills in as its own `docs/ai/` and `docs/project/` lives here under
+`.act/skeleton/` and `.act/bridges/` instead. The template's own development — backlog, open
+questions, journal, test projects — runs in a separate maintenance repository, not part of this
+checkout. A message here that is not clearly about setting up or adopting a project gets a short
+pointer to `.act/skeleton/` and `.act/bridges/` in reply, nothing more.
+
+Maintainers: `init.py` run in place (no `--target`) refuses on the template's own development
+checkout — either `.act-local/template-dev` (gitignored, per-checkout) is present, or the
+repository has more than one `git worktree`. Use `--target <dir>` to build a project or a
+throwaway probe elsewhere instead; delete the marker only if this checkout really is meant to
+become a project (B130).
 
 ## License
 

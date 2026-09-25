@@ -398,7 +398,7 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
     dest = inbox / f"{date.today().isoformat()}{TRANSLATE_NOTE_SUFFIX}"
     if not plan:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(translate_note_text(language, files), encoding="utf-8")
+        write_text_lf(dest, translate_note_text(language, files))
     return dest
 
 
@@ -414,6 +414,20 @@ _HOOK_COMMAND_PREFIX = 'P=""; for c in python3 python'
 
 
 def _hook_command_suffix(event: str) -> str:
+    """The current (post-B126) form: the invocation ends by handing dispatch.py the path this
+    command built into `$D` earlier — `"${CLAUDE_PROJECT_DIR:-.}"` anchored, never a bare relative
+    ".act/hooks/dispatch.py" (see .act/bridges/settings.hooks.json). A relative path is read
+    against the *hook's own* current directory, which a Bash tool's own lasting `cd` moves for the
+    rest of the session (B126, 2026-09-25) — Python then can't find the file and exits 2, which
+    Claude Code reads as "block", for every tool call, not just Bash's."""
+    return f'"$P" "$D" {event}'
+
+
+def _hook_command_suffix_old_form(event: str) -> str:
+    """The pre-B126 form (bare relative ".act/hooks/dispatch.py"), still recognized by
+    is_ours_hook so update.py's reconcile replaces it with the current form instead of leaving it
+    behind as an unrecognized, un-mergeable duplicate in a project that has not run update.py
+    since B126."""
     return f'"$P" .act/hooks/dispatch.py {event}'
 
 
@@ -429,8 +443,13 @@ _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
 
 
 def _hook_command_suffixes(event: str) -> list[str]:
-    base = _hook_command_suffix(event)
-    return [base] + [f"{base} {extra}" for extra in _HOOK_COMMAND_EXTRA_ARGS.get(event, ())]
+    """Every exact tail this template's own hook commands for `event` are known to end with,
+    current form first: the current $D-anchored form, the pre-B126 bare-relative form (still
+    produced by a project that has not run update.py since B126), and, for the one event with an
+    extra fixed argument, each of those two with that argument appended too."""
+    bases = [_hook_command_suffix(event), _hook_command_suffix_old_form(event)]
+    extra_args = _HOOK_COMMAND_EXTRA_ARGS.get(event, ())
+    return bases + [f"{base} {extra}" for base in bases for extra in extra_args]
 
 
 def is_ours_hook(hook, event: str) -> bool:
@@ -438,12 +457,12 @@ def is_ours_hook(hook, event: str) -> bool:
     template's generated wrapper for `event` — matched by its *exact* command text (review T46
     finding 3, replacing an earlier substring check): the fixed interpreter-detection prologue
     this template always uses, ending in the literal dispatch.py invocation for this event (one of
-    _hook_command_suffixes(event) — normally just one, see that function for the one event with a
-    second, fixed-argument variant), optionally followed by "; true" for the events that must
-    never block the harness. A project's own hook that merely happens to also invoke dispatch.py
-    (e.g. "python3 .act/hooks/dispatch.py PreToolUse --project-flag") does not match any of these
-    exact forms and is correctly left alone — classification is per *hook*, not per entry, so a
-    project hook sharing an entry with a template hook (same matcher) keeps its own hook and entry
+    _hook_command_suffixes(event) — current or pre-B126 form, normally one fixed-argument variant
+    each, see that function), optionally followed by "; true" for the events that must never block
+    the harness. A project's own hook that merely happens to also invoke dispatch.py (e.g.
+    "python3 .act/hooks/dispatch.py PreToolUse --project-flag") does not match any of these exact
+    forms and is correctly left alone — classification is per *hook*, not per entry, so a project
+    hook sharing an entry with a template hook (same matcher) keeps its own hook and entry
     untouched."""
     if not isinstance(hook, dict):
         return False
@@ -554,6 +573,30 @@ def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[s
     else:
         new_current.pop("hooks", None)
     return new_current, changed_events
+
+
+def merge_settings_env(current: dict, bridge_data: dict) -> tuple[dict, bool]:
+    """Merges bridge_data["env"] (e.g. settings.hooks.json's top-level "env" key —
+    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1, B126: without it a Bash tool's own `cd` survives
+    across tool calls, breaking the hooks' file lookup by relative path) onto `current["env"]`.
+    Additive only — adds a key `current` does not already have, never overwrites or removes a key
+    the project set itself, even to a different value. Returns (new_current, changed); `changed`
+    is False and `new_current` is `current` itself, unchanged, when there is nothing to add — the
+    caller's signal that the file needs no write for this part either. Never raises: a malformed
+    `current`/`bridge_data` is treated as empty, same convention as merge_settings_hooks."""
+    current = current if isinstance(current, dict) else {}
+    bridge_env = bridge_data.get("env") if isinstance(bridge_data, dict) else None
+    bridge_env = bridge_env if isinstance(bridge_env, dict) else {}
+    raw_env = current.get("env")
+    env = raw_env if isinstance(raw_env, dict) else {}
+    missing = {key: value for key, value in bridge_env.items() if key not in env}
+    if not missing:
+        return current, False
+    new_env = dict(env)
+    new_env.update(missing)
+    new_current = dict(current)
+    new_current["env"] = new_env
+    return new_current, True
 
 
 def _classify_block_lines(
@@ -700,6 +743,62 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(65536), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def write_text_lf(path: Path, text: str) -> None:
+    """Write `text` to `path` as UTF-8 with `\\n` line endings regardless of platform default.
+    Every generated bridge and scaffold/docs file must come out the same way `.gitattributes`
+    (`* text=auto eol=lf`) checks the very same file out as — otherwise the "unchanged since
+    generated" hash comparison in .act-local/cache.json flips on nothing but the checkout's own
+    line endings (B134). `open()`'s own `newline` parameter has always accepted this value, unlike
+    `Path.write_text(..., newline=...)` (Python 3.10+), which this project's floor (3.9) lacks."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
+def normalized_sha256(path: Path) -> str:
+    """SHA-256 of `path` with CRLF folded to LF first — unless it holds a NUL byte (binary) — the
+    same folding manifest.py's content_hash() applies to every file under .act/. A generated
+    bridge or scaffold file checked out or written with CRLF must hash the same as its LF
+    counterpart (B134), so a comparison against this hash never flips on line endings alone."""
+    data = path.read_bytes()
+    if b"\x00" not in data:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+def generated_hash(path: Path) -> str:
+    """The hash to record in .act-local/cache.json's "generated" map right after (re)writing a
+    generated file: normalized_sha256(), so the recorded value reads the same back regardless of
+    which platform generated it (B134)."""
+    return normalized_sha256(path)
+
+
+def generated_unchanged(path: Path, recorded_hash: str) -> bool:
+    """True if `path` still matches what .act-local/cache.json's "generated" map recorded for it
+    at generation time. Compared with line endings normalized first (normalized_sha256()), so a
+    checkout's line endings alone never make an untouched generated file look "changed locally"
+    (B134). A cache entry from before this fix recorded the raw-byte hash (sha256_file()) — that
+    still counts as unchanged too, so an existing project's cache does not spuriously flag every
+    bridge as edited the first time it runs against this fix. Also covers the CRLF variant of that
+    same old raw-byte form: a session start once wrote the file with CRLF and recorded its raw
+    hash, git later checked the file out as LF — the file's normalized bytes re-expanded to CRLF
+    still hash to the same recorded value. A caller that gets True back from one of these old-form
+    matches should re-record generated_hash(path) so the cache moves to the normalized form."""
+    if not recorded_hash or not path.is_file():
+        return False
+    normalized = normalized_sha256(path)
+    if normalized == recorded_hash:
+        return True
+    if sha256_file(path) == recorded_hash:
+        return True
+    data = path.read_bytes()
+    if b"\x00" not in data:
+        crlf_data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+        if hashlib.sha256(crlf_data).hexdigest() == recorded_hash:
+            return True
+    return False
 
 
 def is_interactive() -> bool:

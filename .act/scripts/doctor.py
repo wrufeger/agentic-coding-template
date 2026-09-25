@@ -664,14 +664,15 @@ RE_SETTINGS_SCRIPT_PATH = re.compile(
     r"(?<![\w./-])((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))(?![\w.-])"
 )
 
-# Claude Code expands `$CLAUDE_PROJECT_DIR` (also written `${CLAUDE_PROJECT_DIR}` or quoted,
-# `"$CLAUDE_PROJECT_DIR"`) to the project root in a hook command — all three forms name a script
-# relative to `root`, same as a plain relative path, but none of them match
+# Claude Code expands `$CLAUDE_PROJECT_DIR` (also written `${CLAUDE_PROJECT_DIR}`, quoted
+# `"$CLAUDE_PROJECT_DIR"`, or with a bash default-value fallback `${CLAUDE_PROJECT_DIR:-.}`, this
+# template's own form since B126) to the project root in a hook command — all these forms name a
+# script relative to `root`, same as a plain relative path, but none of them match
 # RE_SETTINGS_SCRIPT_PATH above: the plain form matches it *without* the "$" and is then checked
-# as the literal (nonexistent) path "CLAUDE_PROJECT_DIR/...", and the quoted/braced forms don't
-# match at all (T62 F8 review finding).
+# as the literal (nonexistent) path "CLAUDE_PROJECT_DIR/...", and the quoted/braced/default-value
+# forms don't match at all (T62 F8 review finding; `:-.` form added B126).
 RE_PROJECT_DIR_SCRIPT = re.compile(
-    r'"?\$\{?CLAUDE_PROJECT_DIR\}?"?/((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))'
+    r'"?\$\{?CLAUDE_PROJECT_DIR(?::-[^}]*)?\}?"?/((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))'
 )
 
 

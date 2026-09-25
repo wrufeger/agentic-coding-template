@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Optional
 
 import actlib
+import adopt
 import init
 
 LEGACY_ROOT = Path("docs/ai/work/archive/legacy")
@@ -184,7 +185,9 @@ def read_template_values(path: Optional[Path]) -> dict[str, str]:
 
 
 def _first_existing(root: Path, rel: str) -> Optional[Path]:
-    for candidate in (root / rel, root / LEGACY_ROOT / rel):
+    # The legacy copy of a tool-config path is renamed (B128, adopt.legacy_rel()) so no AI tool
+    # reads it as its own configuration from inside the archive — check under that name, not `rel`.
+    for candidate in (root / rel, root / LEGACY_ROOT / adopt.legacy_rel(rel)):
         if candidate.is_file():
             return candidate
     return None
@@ -398,6 +401,45 @@ def _init_notes_path(root: Path) -> Optional[Path]:
     return candidates[-1] if candidates else None
 
 
+_IDENTITY_PLACEHOLDERS = {None, "unknown", "user"}
+
+
+def _slugify_owner(owner: str) -> str:
+    """Same rule as init.py's step_workspace_identity()."""
+    return re.sub(r"[^a-z0-9]+", "-", owner.strip().lower()).strip("-") or "user"
+
+
+def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Optional[str]:
+    """.act-local/identity.json `identity` set to the adopted owner's slug (B129.9), once this run
+    actually set `owner` and the current identity is still a placeholder (`unknown`/`user`) or the
+    file/key is missing altogether — never overwrites an identity a real init.py run already
+    picked for this checkout. Reads/writes the file by `root` directly rather than through
+    actlib's read_identity()/write_identity(): those resolve the repo root from the current
+    working directory (actlib.repo_root()), which is not necessarily `root` here. Returns the new
+    slug, or None (nothing to do, or `plan`)."""
+    owner_row = next((r for r in mapped if r["new"] == "owner" and r["result"].startswith("set")), None)
+    if owner_row is None:
+        return None
+    owner = owner_row["result"].split(":", 1)[1].strip()
+    if not owner:
+        return None
+    path = root / ".act-local" / "identity.json"
+    try:
+        current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (OSError, ValueError):
+        current = {}
+    if not isinstance(current, dict) or current.get("identity") not in _IDENTITY_PLACEHOLDERS:
+        return None
+    slug = _slugify_owner(owner)
+    if plan:
+        return slug
+    path.parent.mkdir(parents=True, exist_ok=True)
+    merged = dict(current)
+    merged["identity"] = slug
+    path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return slug
+
+
 def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[Path]:
     """Bring the docs/ai/inbox/<date>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
@@ -430,7 +472,10 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[P
         changed = True
     if not changed:
         return None
-    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # newline="\n": read via splitlines() above (line endings already stripped), so the write must
+    # force LF itself — a plain write_text() would otherwise use os.linesep (CRLF on Windows).
+    with open(dest, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines) + "\n")
     return dest
 
 
@@ -652,11 +697,14 @@ def main(argv: list[str]) -> int:
     docs_language = actlib.language_settings(current)[1]
     note = actlib.write_translate_note(root, docs_language, args.plan)
     init_notes = _update_init_notes(root, data["mapped"], args.plan)
+    identity_slug = _update_workspace_identity(root, data["mapped"], args.plan)
     print(f"[adopt-config] {changed or would} value(s) {'would be ' if args.plan else ''}set, "
           f"{len(data['unmapped'])} key(s) without counterpart, {len(data['passages'])} free-text passage(s)"
           + ("" if args.plan else f"; report: {REPORT.as_posix()}")
           + (f"; {'would write' if args.plan else 'wrote'} {note.relative_to(root).as_posix()}" if note else "")
-          + (f"; updated {init_notes.relative_to(root).as_posix()}" if init_notes else ""))
+          + (f"; updated {init_notes.relative_to(root).as_posix()}" if init_notes else "")
+          + (f"; {'would set' if args.plan else 'set'} .act-local/identity.json identity to '{identity_slug}'"
+             if identity_slug else ""))
     return 0
 
 

@@ -395,6 +395,23 @@ def _suggest_mode(root: Path, notes: list[str]) -> str:
 # Step 2 — resolve git (origin, branch)
 # ---------------------------------------------------------------------------
 
+def _template_dev_checkout_reason(root: Path) -> str:
+    """Non-empty reason string if `root` looks like the template's own development checkout,
+    never a project to build in place (B130): either the maintainer marker
+    '.act-local/template-dev' is present, or 'git worktree list' shows more than one worktree for
+    this repository — the template's own dev checkout is routinely one of several worktrees of the
+    same repo (e.g. alongside the checkout that became this "next" build). Empty string ("") for a
+    plain clone, which proceeds exactly as before."""
+    if (root / ".act-local" / "template-dev").exists():
+        return "the '.act-local/template-dev' marker is present"
+    result = _git(["worktree", "list"], cwd=root, check=False)
+    if result.returncode == 0:
+        lines = [line for line in result.stdout.splitlines() if line.strip()]
+        if len(lines) > 1:
+            return f"this repository has {len(lines)} worktrees (git worktree list)"
+    return ""
+
+
 def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
     """Returns (summary, template_source, template_commit). template_source is the template's own
     address (its "origin" remote URL, before it gets removed below) if that's what "origin"
@@ -425,6 +442,10 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
             _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
             return "no repository found -> ran 'git init' (branch 'main')", "", ""
         return "no repository found -> would run 'git init' (branch 'main')", "", ""
+
+    # B130: the template-dev-checkout refusal used to live here. It now runs in main(), before
+    # step_config's questions (step 1) rather than only here at step 2 -- see main()'s own comment
+    # at the call site. By the time this function runs, that check has already passed.
 
     # Read-only look-ahead: is an orphan rebuild of 'main' coming up at all below? That's the only
     # thing a dirty tracked file threatens (via the follow-up 'git rm -r --cached .'), and it only
@@ -749,8 +770,7 @@ def _write_coding_rules(
         raise RuntimeError(f"{src}: missing marker '{_CODING_RULES_MARKER}'")
     body, enabled = _coding_rules_body(root, cfg)
     text = text.replace(_CODING_RULES_MARKER, body.rstrip("\n"))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
+    actlib.write_text_lf(dest, text)  # B134: LF regardless of platform, matches .gitattributes
     summary = ", ".join(enabled) if enabled else "(none detected)"
     return f"{label}: created — sets enabled: {summary}", True
 
@@ -992,11 +1012,9 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
 
 
 def _write_new_file(dest: Path, text: str) -> None:
-    """Write a brand-new file with `\\n` line endings, regardless of platform default -- unlike
-    `Path.write_text(..., newline=...)` (Python 3.10+), `open()`'s own `newline` parameter has
-    always accepted this, so this stays usable on this project's older Python floor too."""
-    with open(dest, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
+    """Write a brand-new file with `\\n` line endings, regardless of platform default (B134) --
+    see actlib.write_text_lf()."""
+    actlib.write_text_lf(dest, text)
 
 
 def write_agent_bridge_file(
@@ -1127,17 +1145,19 @@ def _write_text_file(
     text = src.read_text(encoding="utf-8")
     for token, value in tokens.items():
         text = text.replace(token, value)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(text, encoding="utf-8")
+    actlib.write_text_lf(dest, text)  # B134: LF regardless of platform, matches .gitattributes
     return f"{label}: created", True
 
 
 def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None = None) -> tuple[str, bool]:
-    """Merges src's hook entries into dest (see actlib.merge_settings_hooks): an entry the bridge
-    already defines is replaced in place (a changed timeout/matcher/command never ends up as a
-    second, duplicate entry), one the bridge no longer defines is removed, and anything the
-    project added itself is left untouched. Idempotent — a second run against its own output
-    reports no change and leaves the file byte-for-byte identical (T46)."""
+    """Merges src's hook entries and top-level "env" keys into dest (see
+    actlib.merge_settings_hooks / actlib.merge_settings_env): a hook entry the bridge already
+    defines is replaced in place (a changed timeout/matcher/command never ends up as a second,
+    duplicate entry), one the bridge no longer defines is removed, and anything the project added
+    itself — hooks or env keys alike — is left untouched; an env key (e.g.
+    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR, B126) is only ever added when missing, never
+    overwritten. Idempotent — a second run against its own output reports no change and leaves the
+    file byte-for-byte identical (T46)."""
     if plan and not src.is_file():
         # --target --plan against a not-yet-created directory: .act/ was never copied, so there
         # is nothing to read from yet — report the intent without touching the filesystem.
@@ -1156,13 +1176,19 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
         # finding 6).
         return f"{_relative_label(dest, root)}: not a valid hooks structure, left unchanged", False
     new_current, changed_events = actlib.merge_settings_hooks(current, bridge_data)
-    if not changed_events:
+    new_current, env_changed = actlib.merge_settings_env(new_current, bridge_data)
+    if not changed_events and not env_changed:
         return f"{_relative_label(dest, root)}: hook entries already up to date, left unchanged", False
+    parts = []
+    if changed_events:
+        parts.append(f"hook entries for {', '.join(changed_events)}")
+    if env_changed:
+        parts.append("env")
     if plan:
-        return f"{_relative_label(dest, root)}: would add/update hook entries for {', '.join(changed_events)}", False
+        return f"{_relative_label(dest, root)}: would add/update {', '.join(parts)}", False
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(new_current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return f"{_relative_label(dest, root)}: hook entries added/updated ({', '.join(changed_events)})", True
+    return f"{_relative_label(dest, root)}: added/updated {', '.join(parts)}", True
 
 
 def step_materialize(
@@ -1297,7 +1323,7 @@ def _append_block(dest: Path, src: Path, plan: bool) -> tuple[str, bool]:
     actlib.write_lock({"bridges_applied": bridges_applied})
     if not added:
         return f"{dest.name}: already present, left unchanged{suffix}", False
-    dest.write_text(new_text, encoding="utf-8")
+    actlib.write_text_lf(dest, new_text)  # B134: LF regardless of platform, matches .gitattributes
     label = "template block appended" if not existing else f"{len(added)} missing line(s) added"
     return f"{dest.name}: {label}{suffix}", True
 
@@ -1526,7 +1552,7 @@ def step_lock_and_cache(
             _update.record_applied(root)
         except Exception:
             pass
-    hashes = {rel: actlib.sha256_file(path) for rel, path in generated.items() if path.is_file()}
+    hashes = {rel: actlib.generated_hash(path) for rel, path in generated.items() if path.is_file()}
     if not plan:
         actlib.write_cache({"generated": hashes})
     return (
@@ -1623,8 +1649,7 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
         return None if plan else dest
     lines = [f"for: {owner}", "", "# Open points from `init.py` (non-interactive run)", ""]
     lines.extend(f"- {note}" for note in notes)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # B134: LF regardless of platform
     return dest
 
 
@@ -1687,6 +1712,33 @@ def main(argv: list[str]) -> int:
         root = actlib.repo_root()
         if not plan:
             os.chdir(root)
+
+        # B130: refuse before asking anything -- when this checkout is the template's own
+        # development checkout, never a project to build in place, this has to be caught before
+        # step_config's own questions (step 1), not only once step_git_in_place (step 2) runs --
+        # otherwise a refusal still means the owner was asked project name/owner/stack first for
+        # nothing. Read-only, so a refusal leaves the clone exactly as it was found.
+        dev_reason = _template_dev_checkout_reason(root)
+        if dev_reason:
+            marker_present = (root / ".act-local" / "template-dev").exists()
+            advice = "run with '--target <dir>' to build a project (or a throwaway probe) elsewhere"
+            if marker_present:
+                advice += (
+                    ", or delete '.act-local/template-dev' if this really is a fresh clone meant "
+                    "to become a project"
+                )
+            if plan:
+                print(
+                    f"[act] repository already present; would refuse to run in place ({dev_reason}); "
+                    f"'origin' and the current branch would be left unchanged; {advice}"
+                )
+                return 0
+            print(
+                f"init.py: {dev_reason} -- refusing to run in place; 'origin' and the current "
+                f"branch are left unchanged; {advice}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     interactive = actlib.is_interactive() and not plan
     notes: list[str] = []

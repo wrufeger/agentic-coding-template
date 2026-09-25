@@ -24,8 +24,11 @@ task comes back to the orchestrator, which cuts and starts the new assignments i
 Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
 patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`
 already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
-shorthand, `dir/` (read the same way). `Write scope: none` means read-only, no writes at all.
-Leaving the line out means no restriction beyond the template's own `.act/` write-guard.
+shorthand, `dir/` (read the same way). A relative pattern (`src/**`) is the usual case; an absolute
+path inside the project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been
+written relative — one outside the project root is refused. `Write scope: none` means read-only, no
+writes at all. Leaving the line out means no restriction beyond the template's own `.act/`
+write-guard.
 `worker-write-scope` (`docs/ai/config.md` § Checks) checks it mechanically, the same way the cap is
 checked mechanically rather than from memory — for a Bash command this is best-effort (it catches
 redirection and the common write commands, not a full shell parse), not a complete guarantee:
