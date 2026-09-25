@@ -25,7 +25,7 @@ import hashlib
 import json
 import re
 import sys
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -368,7 +368,7 @@ def scaffold_default_files(root: Path) -> list[str]:
 def translate_note_text(language: str, files: list[str]) -> str:
     """The inbox entry asking for the one-time scaffold translation (`R-work-language`)."""
     lines = [
-        "for: all", "status: open", "",
+        "kind: todo", "for: all", "status: open", "",
         f"# docs scaffold is still English (`act:default`) — translate it into {language}", "",
         f"`language-docs` in `docs/ai/config.md` is `{language}`, but these scaffold files are still "
         "the template's English text:", "",
@@ -386,20 +386,62 @@ def translate_note_text(language: str, files: list[str]) -> str:
 
 
 def write_translate_note(root: Path, language: str, plan: bool = False) -> Optional[Path]:
-    """Write docs/ai/inbox/<date>-translate-scaffold.md unless the docs language is English, no
-    file carries `act:default`, or such an entry already exists (any date). Returns the path that
-    was (plan: would be) written, else None."""
+    """Write docs/ai/inbox/todo-<stamp>-translate-scaffold.md unless the docs language is English,
+    no file carries `act:default`, or such an entry already exists (any stamp). Returns the path
+    that was (plan: would be) written, else None."""
     if is_english(language):
         return None
     files = scaffold_default_files(root)
-    inbox = root / "docs" / "ai" / "inbox"
+    inbox = root / INBOX_DIR
     if not files or (inbox.is_dir() and any(inbox.glob(f"*{TRANSLATE_NOTE_SUFFIX}"))):
         return None
-    dest = inbox / f"{date.today().isoformat()}{TRANSLATE_NOTE_SUFFIX}"
+    dest = inbox / inbox_entry_filename("todo", "translate-scaffold")
     if not plan:
         dest.parent.mkdir(parents=True, exist_ok=True)
         write_text_lf(dest, translate_note_text(language, files))
     return dest
+
+
+# ---------------------------------------------------------------------------
+# docs/ai/inbox/ — the one place everything waiting on a person lives (ADR-9, T75). Every entry
+# carries a `kind:` header field (question | todo | report | note, see INBOX_KINDS); a file without
+# one — an older entry, or a hand-written one — counts as DEFAULT_INBOX_KIND ("todo"), never as an
+# error. Only `question` also carries an id (`Q<n>`, handed out by entries.py the same way a task or
+# backlog item is); the other three kinds are named entirely from `kind`, a timestamp and a slug —
+# see inbox_entry_filename(). entries.py owns the id side (KIND_DIR, KIND_PREFIX, _slugify); this
+# module only owns the pieces write_translate_note() and other non-entries.py writers need too.
+# ---------------------------------------------------------------------------
+
+INBOX_DIR = Path("docs/ai/inbox")
+INBOX_KINDS = ("question", "todo", "report", "note")
+DEFAULT_INBOX_KIND = "todo"
+
+
+def entry_stamp(when: Optional[datetime] = None) -> str:
+    """Local-time "YYYYMMDD-HHMM" for an inbox filename or a team-mode entry filename awaiting its
+    id — the same clock and precision as an entry's own `created:` header field, just without the
+    punctuation a filename can't carry. `when` defaults to now(); a caller passes it explicitly only
+    to keep a filename and its `created:` value from a shared instant apart by a whisker."""
+    return (when or datetime.now()).strftime("%Y%m%d-%H%M")
+
+
+def inbox_entry_filename(kind: str, slug: str, when: Optional[datetime] = None) -> str:
+    """"<kind>-<stamp>-<slug>.md" — the filename for an inbox entry that carries no id of its own
+    (todo | report | note; a question keeps its id-based name, entries.py's own concern). `kind` is
+    used as given, not validated against INBOX_KINDS here — the caller (entries.py's validate_entry,
+    or a fixed literal like write_translate_note's "todo") already knows it is one of the four."""
+    return f"{kind}-{entry_stamp(when)}-{slug}.md"
+
+
+def inbox_kind(text: str) -> str:
+    """The `kind:` value from `text`'s header block (header_block(), never the body), or
+    DEFAULT_INBOX_KIND if the field is missing, empty, or not one of INBOX_KINDS — an older entry
+    or a hand-written one without the field is a "todo", not an error."""
+    match = re.search(r"(?im)^kind:\s*(\S+)\s*$", header_block(text))
+    if not match:
+        return DEFAULT_INBOX_KIND
+    value = match.group(1).strip().lower()
+    return value if value in INBOX_KINDS else DEFAULT_INBOX_KIND
 
 
 # ---------------------------------------------------------------------------

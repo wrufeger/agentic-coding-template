@@ -13,7 +13,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
-| `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and questions, one file per entry… | direct |
+| `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
@@ -103,7 +103,7 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
   template's copy mechanism); doctor.py, references to moved/removed paths, report
-  docs/ai/inbox/<date>-adoption-report.md. A reference in docs/project/ and docs/README.md
+  docs/ai/inbox/report-<stamp>-adoption-report.md. A reference in docs/project/ and docs/README.md
   to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
   new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
   the target of a Markdown link or of a reference definition `[x]: path` (relative stays
@@ -162,8 +162,8 @@ Call: direct (used by skill `act-adopt` (stage 6))
 ```text
 usage: adopt_entries.py [-h] --target DIR --from JSON [--plan]
 
-Write a checked batch of adopted entries (tasks, backlog, questions, inbox, proposals) as entry
-files; the whole batch is refused on any conflict.
+Write a checked batch of adopted entries (tasks, backlog, questions, todos, reports, notes,
+proposals) as entry files; the whole batch is refused on any conflict.
 
 options:
   -h, --help    show this help message and exit
@@ -270,7 +270,7 @@ options:
   -h, --help    show this help message and exit
   --target DIR  check this project instead of the current checkout
   --json        machine-readable output
-  --inbox       also write docs/ai/inbox/<date>-doctor.md if there are findings
+  --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings
   --accept ID   accept the current template text for ID (repeatable)
   --accept-all  accept the current template text for every stale override/off
 ```
@@ -282,7 +282,8 @@ Call: direct
 ```text
 usage: entries.py [-h] {new,assign,list,check} ...
 
-Create and account for docs/ai/'s per-entry task/backlog/ledger/question/inbox files.
+Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
+todo | report | note).
 
 positional arguments:
   {new,assign,list,check}
@@ -300,11 +301,12 @@ options:
 ```text
 usage: entries.py new [-h] [--id ID] [--formerly OLD_ID] [--status {open,answered}]
                       [--for IDENTITY] [--body-file PATH]
-                      {backlog,inbox,ledger,question,task} title [title ...]
+                      {backlog,inbox,ledger,note,question,report,task,todo} title [title ...]
 
 positional arguments:
-  {backlog,inbox,ledger,question,task}
-                        task | backlog | ledger | question | inbox
+  {backlog,inbox,ledger,note,question,report,task,todo}
+                        task | backlog | ledger | question | todo | report | note (inbox: alias
+                        for todo)
   title                 entry title — becomes the file's heading
 
 options:
@@ -313,8 +315,8 @@ options:
                         prefix
   --formerly OLD_ID     header line "formerly: <old id>"
   --status {open,answered}
-                        question or inbox entry (default open)
-  --for IDENTITY        inbox entry: recipient (default all)
+                        question/todo/report/note entry (default open)
+  --for IDENTITY        todo/report/note entry: recipient (default all)
   --body-file PATH      body below the heading, copied verbatim (UTF-8)
 ```
 
@@ -330,11 +332,12 @@ options:
 ### `entries.py list`
 
 ```text
-usage: entries.py list [-h] [{backlog,inbox,ledger,question,task}]
+usage: entries.py list [-h] [{backlog,inbox,ledger,note,question,report,task,todo}]
 
 positional arguments:
-  {backlog,inbox,ledger,question,task}
-                        task | backlog | ledger | question | inbox
+  {backlog,inbox,ledger,note,question,report,task,todo}
+                        task | backlog | ledger | question | todo | report | note (inbox: alias
+                        for todo)
 
 options:
   -h, --help            show this help message and exit

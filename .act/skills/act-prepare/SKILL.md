@@ -22,8 +22,8 @@ code already answers, so research comes before the question round, never after.
    met, unknowns researched. Anything failing this stays marked open and **doesn't start**.
 5. **One bundled question round.** Numbered, answer options, a marked recommendation where there
    is one, ordered by how much each blocks, with one line on what happens if it stays unanswered.
-   File the same questions under `docs/ai/questions/` (`entries.py new question <title>` per
-   question) so the answer has somewhere to land — the board's Waiting section already surfaces
+   File the same questions in the inbox (`entries.py new question <title>` per question, `kind:
+   question`) so the answer has somewhere to land — the board's Waiting section already surfaces
    them, no separate inbox entry needed.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked
    ready. A question left open keeps its task on hold — never started "on best guess".

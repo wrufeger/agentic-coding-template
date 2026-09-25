@@ -26,7 +26,7 @@
 #               update, or the template's own checkout if its maintainer forgot `manifest.py
 #               --write` before committing an .act/ change (Q73a).
 #           10. a short id (T<n>/B<n>/Q<n>) assigned to more than one entry file under
-#               docs/ai/work/ or docs/ai/questions/ — the merge-safety net Q62a/Q65c call for,
+#               docs/ai/work/ or docs/ai/inbox/ — the merge-safety net Q62a/Q65c call for,
 #               reusing entries.py's own scan (entries.find_duplicate_ids()) rather than repeating
 #               it here; plus, from the same scan, an entry file that isn't valid UTF-8 at all
 #               (entries.find_unreadable_entries()) — this template never lets a decode failure
@@ -44,6 +44,9 @@
 #               importing file, at most four hops, rules.resolve_imports), every rule file
 #               under .act/rules/shared|orchestrator/ docs/ai/rules.md names but does not import,
 #               and every checked coding set that does not load.
+#           15. (T75) leftover files under docs/ai/questions/ (besides its own README.md) — the
+#               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
+#               someone still writes to at the old location with an older checkout falls here.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -54,8 +57,10 @@
 #   python .act/scripts/doctor.py                  # run every check, human-readable output
 #   python .act/scripts/doctor.py --target <dir>    # same, against <dir> instead of this project
 #   python .act/scripts/doctor.py --json            # same, as one JSON object on stdout
-#   python .act/scripts/doctor.py --inbox            # also write docs/ai/inbox/<date>-doctor.md
-#                                                     # if (and only if) there are findings
+#   python .act/scripts/doctor.py --inbox            # also write a report-<YYYYMMDD-HHMM>-doctor.md entry
+#                                                     # under docs/ai/inbox/, if there are findings
+#                                                     # (a second run with the same findings updates
+#                                                     # that same entry instead of adding another)
 #   python .act/scripts/doctor.py --accept ID [...]  # record ID's current template text as the
 #                                                     # accepted baseline (clears finding 4 for it)
 #   python .act/scripts/doctor.py --accept-all       # same, for every stale override/off found
@@ -137,6 +142,7 @@ KIND_LABELS: dict[str, str] = {
     "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
     "config-key": "Outdated keys in docs/ai/config.md",
     "status-value": "Unknown `status:` values in entry headers",
+    "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -549,6 +555,24 @@ def check_duplicate_entry_ids(root: Path) -> list[Finding]:
     return findings
 
 
+def check_legacy_questions_dir(root: Path) -> list[Finding]:
+    """15. A project still has docs/ai/questions/ files besides its own README.md — e.g. a
+    colleague on a pre-T75 checkout still filing a question there. Migration 001-one-inbox moved
+    the format to docs/ai/inbox/ (kind: question); this is a per-project drift check, not a
+    duplicate of the migration itself."""
+    questions_dir = root / "docs" / "ai" / "questions"
+    if not questions_dir.is_dir():
+        return []
+    leftover = [p for p in sorted(questions_dir.iterdir()) if p.is_file() and p.name != "README.md"]
+    if not leftover:
+        return []
+    return [Finding(
+        path=_rel(questions_dir, root), line=None, kind="legacy-questions-dir",
+        message=(f"{len(leftover)} file(s) still here; obsolete since migration 001-one-inbox — "
+                 "questions live in docs/ai/inbox/ (kind: question)"),
+    )]
+
+
 def check_unreadable_entries(root: Path) -> list[Finding]:
     """A file under an id-bearing entry directory that isn't valid UTF-8 — entries.py itself
     already skips it everywhere rather than crashing (find_unreadable_entries()), but a file that
@@ -879,7 +903,7 @@ def check_imports(root: Path) -> list[Finding]:
     return findings
 
 
-STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/questions", "docs/ai/proposals", "docs/ai/work")
+STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/proposals", "docs/ai/work")
 _STATUS_FIELD_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
 
 
@@ -980,10 +1004,40 @@ def check_script_docs(root: Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
+    # A tool's own report of what it found (finding 12 in the module docstring is one input to
+    # this, not a decision by itself) — no action is asked of anyone but reading it, so `kind:
+    # report` (16-inbox-questions-tasks.md § "Arten in der Inbox"), never `todo`. A re-run today
+    # replaces today's own file rather than piling up near-duplicates — but only while that file
+    # is still `status: open` and unread: once a person has answered it (or it is from an earlier
+    # day), overwriting it would erase their words under it (R-human-text) and silently reopen a
+    # closed entry, so a fresh file is written instead.
     if not findings:
         return None
-    dest = root / "docs" / "ai" / "inbox" / f"{date.today().isoformat()}-doctor.md"
-    lines = ["for: all", "status: open", "", "# doctor findings", ""]
+    inbox_dir = root / actlib.INBOX_DIR
+    today_stamp_prefix = f"report-{date.today().strftime('%Y%m%d')}-"
+    dest = None
+    if inbox_dir.is_dir():
+        for candidate in sorted(inbox_dir.glob("report-*-doctor.md")):
+            if not candidate.name.startswith(today_stamp_prefix):
+                continue
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            match = re.search(r"(?im)^status:\s*(.*?)\s*$", actlib.header_block(text))
+            if match and match.group(1).strip() == "open":
+                dest = candidate
+    if dest is None:
+        # Within the same minute as a report that must not be reused (answered, or no longer
+        # open), the stamped name is the same — count up instead of writing over it.
+        stamp = actlib.entry_stamp()
+        dest = inbox_dir / actlib.inbox_entry_filename("report", "doctor")
+        n = 2
+        while dest.exists():  # the counter goes before the slug, so the glob above still finds it
+            dest = inbox_dir / f"report-{stamp}-{n}-doctor.md"
+            n += 1
+    lines = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}",
+              "", "# doctor findings", ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
         if not group:
@@ -1028,6 +1082,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_bridge_files(root)
     findings += check_duplicate_units(root)
     findings += check_duplicate_entry_ids(root)
+    findings += check_legacy_questions_dir(root)
     findings += check_unreadable_entries(root)
     findings += check_hooks(root)
     findings += check_settings_scripts(root)
@@ -1072,7 +1127,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", metavar="DIR", help="check this project instead of the current checkout")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/<date>-doctor.md if there are findings")
+    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings")
     parser.add_argument("--accept", action="append", default=[], metavar="ID", help="accept the current template text for ID (repeatable)")
     parser.add_argument("--accept-all", action="store_true", help="accept the current template text for every stale override/off")
     return parser

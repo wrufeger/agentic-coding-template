@@ -1855,12 +1855,18 @@ def run_doctor(root: Path) -> tuple:
 def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple, acc: list,
                  extra: tuple = ((), (), (), "")) -> Path:
     """The inbox report. `extra`: (settings entries removed, settings notes, files whose
-    act:default mark was removed, path of the full reference list)."""
-    inbox = root / "docs" / "ai" / "inbox"
-    stem = f"{date.today().isoformat()}-adoption-report"
-    dest, n = inbox / f"{stem}.md", 2
-    while dest.exists():
-        dest, n = inbox / f"{stem}-{n}.md", n + 1
+    act:default mark was removed, path of the full reference list). A pure report of what the
+    tool did (reviewing the branch and committing is still up to a human, but nothing here asks
+    for a decision) -- `kind: report`, never `todo` (16-inbox-questions-tasks.md § "Arten in der
+    Inbox")."""
+    import actlib
+    inbox = root / actlib.INBOX_DIR
+    when = datetime.now()  # fixed once, so a same-minute retry below keeps the same stamp
+    dest = inbox / actlib.inbox_entry_filename("report", "adoption-report", when)
+    n = 2
+    while dest.exists():  # same-minute collision (concept doc: "-2", "-3" as before)
+        dest = inbox / actlib.inbox_entry_filename("report", f"adoption-report-{n}", when)
+        n += 1
     moved = state.get("moved", {})
     by_action = {a: [r for r in rows if r["action"] == a and (a == "adopt" or r["path"] not in moved)] for a in ACTIONS}
 
@@ -1873,7 +1879,8 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
         return ""
 
     settings_removed, settings_notes, unmarked, refs_file = extra
-    out = ["for: all", "status: open", "", "# Adoption report (`adopt.py --finish`)", "",
+    out = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}", "",
+           "# Adoption report (`adopt.py --finish`)", "",
            f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
            "adopt.py. Review the branch, then commit per path or drop it.", "", "## Adopted (source → target)", ""]
     out += [f"- {_code(r['path'])} → {', '.join(_code(t) for t in _targets(r))}{adopted_note(r)}"
@@ -2199,7 +2206,7 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   act-load-settings writes them (skill copies recorded in .act-lock.json § copies) — refused if
   <name> is a template unit's (that would be an override; a row note "override" leaves it to the
   template's copy mechanism); doctor.py, references to moved/removed paths, report
-  docs/ai/inbox/<date>-adoption-report.md. A reference in {REFS_SCOPE}
+  docs/ai/inbox/report-<stamp>-adoption-report.md. A reference in {REFS_SCOPE}
   to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
   new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
   the target of a Markdown link or of a reference definition `[x]: path` (relative stays

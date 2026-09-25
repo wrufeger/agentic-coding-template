@@ -66,7 +66,9 @@ import tiers
 # Categories — for grouping the step-3 diff the way the spec asks for it
 # ---------------------------------------------------------------------------
 
-CATEGORY_DIRS = ("rules", "coding", "skills", "agents", "scripts", "bridges", "hooks", "skeleton")
+CATEGORY_DIRS = (
+    "rules", "coding", "skills", "agents", "scripts", "bridges", "hooks", "skeleton", "migrations",
+)
 
 
 def _categorize(rel_path: str) -> str:
@@ -574,7 +576,7 @@ def _report_reset_edits(root: Path, backup_dir: Path, reset: list[str]) -> Optio
     )
     try:
         path, _entry_id = entries.create_entry(
-            root, "inbox",
+            root, "todo",
             "Locally edited files were reset by a config change",
             status="open", body=body,
         )
@@ -1512,8 +1514,9 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
 # Contract for a migration module (.act/migrations/NNN-slug.py, id = file stem): a plan(root)
 # function returning a description without writing anything, and an apply(root) function that
 # performs the change and returns (description, touched_paths). Neither is documented elsewhere
-# yet (no migration has shipped so far) — this is the minimal shape that satisfies the spec's
-# "--plan first, then run, wiederholbar" and is exercised by this script's test fixtures.
+# yet — this is the minimal shape that satisfies the spec's "--plan first, then run, repeatable"
+# and is exercised by this script's test fixtures; 001-one-inbox.py (T75, Q100 b) is the first
+# migration to actually ship it.
 
 def _load_migration(path: Path):
     saved = sys.modules.pop(path.stem, None)
@@ -1659,7 +1662,7 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
 
 def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path], list[Path]]:
     """Returns (summary, inbox_path, touched). doctor.py's own exit codes: 0 = no findings, 1 =
-    findings (not an error — it already wrote docs/ai/inbox/<date>-doctor.md), 2 = a real
+    findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md), 2 = a real
     failure. `touched` carries the bridge files _refresh_generated_bridges rewrote, so the caller
     can add them to the commit alongside the inbox file."""
     bridge_summary, bridge_touched = _refresh_generated_bridges(root, plan)

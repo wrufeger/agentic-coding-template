@@ -3,11 +3,15 @@
 #
 # Purpose: Batch writer for the content step of an adoption (skill `act-adopt`). The model reads
 #          the old material in whatever format it has and writes one JSON list of entries; this
-#          script only checks that list and writes one entry file per item — task/backlog/question/
-#          inbox through entries.py's own validate_entry()/create_entry() (the same files
-#          `entries.py new` writes), "proposal" through its own write_proposal() below (proposals
-#          are not one of entries.py's kinds: no id, filed straight under docs/ai/proposals/ with
-#          the header its own README asks for). It decides nothing: on the first doubt the whole
+#          script only checks that list and writes one entry file per item — task/backlog/ledger/
+#          question/todo/report/note through entries.py's own validate_entry()/create_entry() (the
+#          same files `entries.py new` writes; "question"/"todo"/"report"/"note" all land under
+#          docs/ai/inbox/ now, 16-inbox-questions-tasks.md § "Orte" — "question" keeps its `Q<n>`
+#          id, the other three never carry one), "proposal" through its own write_proposal() below
+#          (proposals are not one of entries.py's kinds: no id, filed straight under
+#          docs/ai/proposals/ with the header its own README asks for). "inbox" is accepted as an
+#          old-batch alias for "todo" (normalized before anything else runs) so a batch written
+#          against the old format still works. It decides nothing: on the first doubt the whole
 #          batch is refused and nothing is written.
 #          Old ids of the kind's own scheme are kept ("id", Q79 a); any other old number goes into
 #          "formerly" and the entry gets the next free id (solo) or none yet (team) — a proposal
@@ -23,14 +27,16 @@
 #   python .act/scripts/adopt_entries.py --target <project> --from <batch.json>          # write
 #
 # Batch format (UTF-8 JSON): a list, or {"entries": [...]}, of objects with the keys
-#   kind       task | backlog | question | inbox | proposal | reserved            (required)
+#   kind       task | backlog | question | todo | report | note | proposal | reserved  (required)
+#              ("inbox" is accepted too, an alias for "todo" from before the one-inbox migration)
 #   title      one line, becomes the heading (reserved: a short reason, kept for traceability only)
 #   source     {"path": "<old file>", "line": <n>} or "<old file>:<n>"            (required)
 #   id         keep this id: T/B/Q<n>, optional sub-letter (task/backlog/question, or required
 #              for "reserved" — the old id that never gets a live entry but must stay unused)
 #   formerly   the old id of another scheme, written as "formerly: <old id>"
 #   body       text below the heading, verbatim   | body_file  a UTF-8 file holding it instead
-#   status     open | answered (question/inbox)   | for        recipient identity (inbox only)
+#   status     open | answered | done (question/todo/report/note) | for   recipient identity
+#              (todo/report/note only — a question is always "for: all")
 #   target     rules | coding | checklists | config               (proposal only, required)
 #   author     free text for the header                (proposal only; default: see below)
 # Unknown keys are refused, so a misspelt field is never dropped silently. "target"/"author" on
@@ -69,6 +75,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import actlib  # noqa: E402
 import entries  # noqa: E402
 
 MAP_PATH = Path(".act-local/adopt/entries-map.json")
@@ -83,7 +90,10 @@ RESERVED_ONLY_FIELDS = {"formerly", "status", "for", "target", "author", "body",
 # than entries.py's own KIND_DIR: "ledger" is a valid entries.py kind but never a valid one here
 # (header comment above, "\"ledger\" is deliberately not a kind here") — a journal/protocol source
 # is always a `log` row in the adoption table, never reinterpreted as an entry through this script.
-ADOPT_KINDS = {"task", "backlog", "question", "inbox", PROPOSAL_KIND, RESERVED_KIND}
+# "inbox" is kept here only as an old-batch alias, normalized to "todo" in load_batch() before
+# anything else sees it (16-inbox-questions-tasks.md § "Arten in der Inbox").
+ADOPT_KINDS = {"task", "backlog", "question", "todo", "report", "note", "inbox",
+               PROPOSAL_KIND, RESERVED_KIND}
 
 # B118 (15, first part): adopt.py's own scan/table notes and protection markers, read here
 # read-only (mirrors adopt.py's _note_of()/_is_protected(), never imports adopt.py itself — that
@@ -198,7 +208,7 @@ def write_proposal(root: Path, item: dict) -> Path:
     today = date.today().isoformat()
     header = f"author: {item['author']}\ndate: {today}\ntarget: {item['target']}\n\n"
     text = header + f"# {item['title']}\n\n" + item["body"]
-    return entries._create_unique(entry_dir, today, entries._slugify(item["title"]), text)
+    return entries._create_unique(entry_dir, f"{today}-{entries._slugify(item['title'])}.md", text)
 
 
 def load_batch(batch_path: Path, root: Path) -> list[dict]:
@@ -222,6 +232,8 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
         if unknown:
             problems.append(f"{where}: unknown key(s) {', '.join(unknown)}")
         kind, title = raw.get("kind"), raw.get("title")
+        if kind == "inbox":  # old-batch alias, normalized once here (see ADOPT_KINDS comment)
+            kind = "todo"
         src = _source(raw.get("source"))
         if src is None:
             problems.append(f"{where}: \"source\" missing or malformed (path and optional line > 0)")
@@ -241,7 +253,8 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             problems.append(f"{where}: not encodable as UTF-8 (lone surrogate): {', '.join(unencodable)}")
             continue
         if kind not in ADOPT_KINDS:
-            problems.append(f"{where}: unknown kind {kind!r} (task | backlog | question | inbox | proposal | reserved)")
+            problems.append(f"{where}: unknown kind {kind!r} "
+                            "(task | backlog | question | todo | report | note | proposal | reserved)")
             continue
         # B118 (15, first part): refused on the script's own account, for every kind — not left to
         # the skill text alone.
@@ -281,8 +294,14 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             if author is not None and not entries._single_line(author):
                 problems.append(f"{where}: \"author\" must be a one-line, non-empty value")
         else:
+            status = raw.get("status")
+            # entries.validate_entry() only knows entries.py new's own "open"/"answered" — "done"
+            # is an adoption-only value (an old, already-settled entry, ADR-9 T75) for a question
+            # or another inbox kind; it never blocks validate_entry's other checks, and the "done"
+            # value itself is still written below (create_entry() writes status verbatim).
+            checked_status = None if status == "done" and kind in actlib.INBOX_KINDS else status
             for problem in entries.validate_entry(None, kind, title, raw.get("id"), raw.get("formerly"),
-                                                  raw.get("status"), raw.get("for")):
+                                                  checked_status, raw.get("for")):
                 problems.append(f"{where}: {problem.replace('--', '')}")
             if raw.get("target") is not None or raw.get("author") is not None:
                 problems.append(f"{where}: \"target\"/\"author\" only apply to a proposal entry")
@@ -346,20 +365,35 @@ def _expected_text(row: dict, item: dict) -> str:
     if item["kind"] == PROPOSAL_KIND:
         header = f"author: {item['author']}\ndate: PLACEHOLDER\ntarget: {item['target']}\n\n"
         return header + f"# {item['title']}\n\n" + (item["body"] or "")
+    # "question"/"todo"/"report"/"note" all now live under docs/ai/inbox/ (actlib.INBOX_KINDS) and
+    # carry a `kind:` header line, id/formerly/kind/for/status/created in that exact order -- kept
+    # in sync with entries.create_entry() header-for-header, same as the rest of this function.
     header_lines: list[str] = []
     entry_id = row.get("id")
     if entry_id:
         header_lines.append(f"id: {entry_id}")
     if item["formerly"] is not None:
         header_lines.append(f"formerly: {item['formerly'].strip()}")
-    if item["kind"] == "question":
-        header_lines.append("for: all")
-        header_lines.append(f"status: {item['status'] or 'open'}")
-    elif item["kind"] == "inbox":
-        header_lines.append(f"for: {(item['for'] or 'all').strip()}")
+    if item["kind"] in actlib.INBOX_KINDS:
+        header_lines.append(f"kind: {item['kind']}")
+        header_lines.append("for: all" if item["kind"] == "question"
+                            else f"for: {(item['for'] or 'all').strip()}")
         header_lines.append(f"status: {item['status'] or 'open'}")
     header_lines.append("created: PLACEHOLDER")
     return "\n".join(header_lines) + "\n\n" + f"# {item['title'].strip()}\n\n" + (item["body"] or "")
+
+
+def _row_file(root: Path, row: dict) -> Optional[Path]:
+    """The file `row` (an entries-map.json row from a previous, possibly stopped, run) points to,
+    or None if it cannot be found at all. Tolerant of the docs/ai/questions/ -> docs/ai/inbox/
+    migration (ADR-9, T75, 16-inbox-questions-tasks.md): if the row's own path no longer exists,
+    the same filename is tried under actlib.INBOX_DIR instead — a row surviving from before the
+    migration would otherwise look unwritten and adopt the same entry a second time."""
+    path = root / str(row.get("file", ""))
+    if path.is_file():
+        return path
+    moved = root / actlib.INBOX_DIR / path.name
+    return moved if moved.is_file() else None
 
 
 def _row_matches(root: Path, row: dict, item: dict) -> bool:
@@ -382,7 +416,9 @@ def _row_matches(root: Path, row: dict, item: dict) -> bool:
             return False
         if (row.get("author") or None) != (item["author"] or None):
             return False
-    path = root / str(row.get("file", ""))
+    path = _row_file(root, row)
+    if path is None:
+        return False
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -401,8 +437,12 @@ def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str
     used = {kind: entries.used_ids(root, kind) for kind in entries.KIND_PREFIX}
     done = {}
     for row in mapping["entries"]:
-        if isinstance(row, dict) and (root / str(row.get("file", ""))).is_file():
-            done[(row.get("source_path"), row.get("source_line"), row.get("kind"), row.get("title"))] = row
+        if isinstance(row, dict) and _row_file(root, row) is not None:
+            # "kind" is normalized the same way load_batch() already normalized item["kind"]
+            # ("inbox" -> "todo") — an older map row written before that alias existed would
+            # otherwise never match here, and the same source/title would be adopted a second time.
+            row_kind = entries._canonical_kind(row.get("kind")) if isinstance(row.get("kind"), str) else row.get("kind")
+            done[(row.get("source_path"), row.get("source_line"), row_kind, row.get("title"))] = row
     skip: dict[int, str] = {}
     for index, item in enumerate(items):
         if item["kind"] == RESERVED_KIND:
@@ -532,8 +572,8 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="adopt_entries.py",
-        description="Write a checked batch of adopted entries (tasks, backlog, questions, inbox, proposals) "
-                    "as entry files; the whole batch is refused on any conflict.",
+        description="Write a checked batch of adopted entries (tasks, backlog, questions, todos, reports, "
+                    "notes, proposals) as entry files; the whole batch is refused on any conflict.",
     )
     parser.add_argument("--target", metavar="DIR", required=True, help="the project (already set up by adopt.py --apply)")
     parser.add_argument("--from", dest="batch", metavar="JSON", required=True, help="the batch file (UTF-8 JSON)")

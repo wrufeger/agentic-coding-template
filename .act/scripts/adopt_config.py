@@ -24,16 +24,16 @@
 #   kept: project value / not set: reason), "No counterpart" (old key, value, section, note), and
 #   "Free text" (each passage verbatim with its section and lines) — also written to
 #   <target>/.act-local/adopt/config-report.md; then one "[adopt-config] ..." summary line. A
-#   `language-docs` other than English also leaves docs/ai/inbox/<date>-translate-scaffold.md
-#   (the scaffold init wrote is still English, R-work-language) unless one exists already. An old
-#   AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
+#   `language-docs` other than English also leaves a docs/ai/inbox/todo-<stamp>-translate-scaffold.md
+#   entry (the scaffold init wrote is still English, R-work-language) unless one exists already. An
+#   old AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
 #   always German — and its "Mapped" row says that this is an assumption. `Coding-Guidelines`
 #   checks the named sets (plus whatever their `requires:` pulls in) straight in
 #   docs/project/coding_rules.md, group checkboxes included (T62 I2) — its "Mapped" row says which
 #   were newly checked, already checked, or matched no rule set. A lint/typecheck/test command
 #   that names a path the adoption is removing (`.act-local/adopt/table.json` action
 #   delete/legacy, or simply nothing left on disk) is still set as given, but flagged in its
-#   result (T62 C1). If the most recent docs/ai/inbox/<date>-init-notes.md (init.py's
+#   result (T62 C1). If the most recent docs/ai/inbox/todo-<stamp>-init-notes.md (init.py's
 #   non-interactive run) is still around, it is updated in place — `for: unknown` becomes the
 #   adopted owner, and a short "Filled in by adopt_config.py" section lists what else this run
 #   set (T62 I3); the human's own wording there, if any, is only ever appended to, never edited.
@@ -379,7 +379,7 @@ def _removed_command_paths(root: Path, command: str, table_rows: list[dict]) -> 
 
 
 def _init_notes_path(root: Path) -> Optional[Path]:
-    """The docs/ai/inbox/<date>-init-notes.md that belongs to *this* adoption's own init.py run —
+    """The docs/ai/inbox/todo-<stamp>-init-notes.md that belongs to *this* adoption's own init.py run —
     read from .act-local/adopt/state.json's "created" list (adopt.py records every path init.py
     left behind there right after running it), rather than guessing by filename recency, which
     could just as well pick up a stale note left over from an unrelated, earlier init.py run in
@@ -396,8 +396,8 @@ def _init_notes_path(root: Path) -> Optional[Path]:
         if match:
             candidate = root / match
             return candidate if candidate.is_file() else None
-    inbox_dir = root / "docs" / "ai" / "inbox"
-    candidates = sorted(inbox_dir.glob("*-init-notes.md")) if inbox_dir.is_dir() else []
+    inbox_dir = root / actlib.INBOX_DIR
+    candidates = sorted(inbox_dir.glob("todo-*-init-notes.md")) if inbox_dir.is_dir() else []
     return candidates[-1] if candidates else None
 
 
@@ -441,14 +441,15 @@ def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Op
 
 
 def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[Path]:
-    """Bring the docs/ai/inbox/<date>-init-notes.md belonging to this adoption's own init.py run
+    """Bring the docs/ai/inbox/todo-<stamp>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
     adoption just filled in, instead of leaving it to say `for: unknown` or list config defaults
     that no longer apply (T62 I3): its `for:` line becomes the adopted owner once one was set, and
     a short section lists every other key this run set. Only ever appends or rewrites the
     machine-written `for:` line — a human's own comment further down the file is never touched.
     Does nothing under `plan`, without such a file, or when this run set nothing (a repeat run, or
-    one with no old config to draw from)."""
+    one with no old config to draw from). The `for:` line sits below `kind: todo` in the header
+    now (init.py's own _write_inbox_note()), not necessarily on line 0 — found by prefix instead."""
     if plan:
         return None
     dest = _init_notes_path(root)
@@ -460,11 +461,14 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[P
     lines = dest.read_text(encoding="utf-8").splitlines()
     changed = False
     owner_row = next((r for r in set_rows if r["new"] == "owner"), None)
-    if owner_row and lines and lines[0].strip().lower() == "for: unknown":
-        new_owner = owner_row["result"].split(":", 1)[1].strip()
-        if new_owner:
-            lines[0] = f"for: {new_owner}"
-            changed = True
+    if owner_row:
+        for_index = next((i for i, line in enumerate(lines[:10])
+                          if line.strip().lower() == "for: unknown"), None)
+        if for_index is not None:
+            new_owner = owner_row["result"].split(":", 1)[1].strip()
+            if new_owner:
+                lines[for_index] = f"for: {new_owner}"
+                changed = True
     marker = "## Filled in by `adopt_config.py`"
     if marker not in "\n".join(lines):
         keys = sorted({r["new"] for r in set_rows})

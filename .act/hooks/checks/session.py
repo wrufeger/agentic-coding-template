@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: SessionStart handling — inbox/questions "answered, not yet processed" count, bridge/
-#          role-frontmatter re-derivation, board refresh, sync of the files that hang on a
+# Purpose: SessionStart handling — inbox "answered, not yet processed" count (the single inbox at
+#          docs/ai/inbox/, all kinds — question/todo/report/note, 16-inbox-questions-tasks.md,
+#          Q100 b), bridge/role-frontmatter re-derivation, board refresh, sync of the files that
+#          hang on a
 #          docs/ai/config.md value — skill copies, CLAUDE.md and hook entries on `tools`, a role's
 #          bridges on its "## Roles" row (tier/reasoning/model) — when one moved since the last
 #          snapshot (T60 part B, see update.sync_dependent_files(), imported lazily at that one
@@ -38,7 +40,7 @@ import tiers
 from .common import _check_mode
 
 __all__ = [
-    "_current_branch", "_STATUS_RE", "_count_inbox_waiting", "_count_questions_answered",
+    "_current_branch", "_STATUS_RE", "_count_inbox_waiting",
     "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_active_topics",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
@@ -73,15 +75,20 @@ _STATUS_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE)
 
 def _count_inbox_waiting(root: Path) -> int:
     """
-    Count inbox entries that are "answered, not yet processed": a file in docs/ai/inbox/ (one
-    per entry, "YYYY-MM-DD-<slug>.md") whose header says `status: answered`.
+    Count inbox entries that are "answered, not yet processed": a file in actlib.INBOX_DIR (the
+    single inbox, one file per entry, every kind — question/todo/report/note,
+    16-inbox-questions-tasks.md, Q100 b) whose header says `status: answered`.
 
-    The header carries three fields: `for:` (who it is addressed to), `status:` and the date in
-    the file name. `status` runs `open` -> `answered` -> `done`: the human (or the assistant, when
-    the answer came up in chat) sets `answered`, and whoever works the entry into its place sets
-    `done`. Only `answered` is counted — `open` is still waiting on a person, `done` is finished.
+    The header carries `for:` (who it is addressed to, absent for a question), `kind:`, and for a
+    question an `id:` too — none of which matter here, only `status:` does. `status` runs `open`
+    -> `answered` -> `done` (a question keeps that same lifecycle since Q100 b; it used to live
+    under docs/ai/questions/, which no longer exists — see 16-inbox-questions-tasks.md): the human
+    (or the assistant, when the answer came up in chat) sets `answered`, and whoever works the
+    entry into its place sets `done`. Only `answered` is counted — `open` is still waiting on a
+    person, `done` is finished and never appears here (B85). This one count now covers what used
+    to be two separate counts (inbox entries and questions) before the two lived in one place.
     """
-    inbox_dir = root / "docs" / "ai" / "inbox"
+    inbox_dir = root / actlib.INBOX_DIR
     if not inbox_dir.is_dir():
         return 0
     count = 0
@@ -90,42 +97,9 @@ def _count_inbox_waiting(root: Path) -> int:
             continue
         try:
             lines = entry.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        for line in lines[:20]:  # header fields live at the top of the file
-            match = _STATUS_RE.match(line.strip())
-            if match:
-                if match.group(1).strip().lower() == "answered":
-                    count += 1
-                break
-    return count
-
-
-def _count_questions_answered(root: Path) -> int:
-    """
-    Count question entries (docs/ai/questions/*.md, one file per question, T43) whose header says
-    `status: answered` — a person replied but the answer has not been worked into its place yet,
-    the same "waiting" meaning _count_inbox_waiting() counts for the inbox (R-human-inbox-first).
-    Excludes README.md. Header shape and field are identical to the inbox's own (see
-    _STATUS_RE) — the difference is only the directory and, for a question, an `id:`/`status:`
-    pair right above `# <title>` instead of `for:`/`status:`.
-
-    Robust against a file that is not valid UTF-8: skipped rather than raised, same contract as
-    _count_inbox_waiting()'s own OSError guard, plus UnicodeDecodeError specifically here since a
-    question file is more likely to have been hand-edited outside the assistant.
-    """
-    questions_dir = root / "docs" / "ai" / "questions"
-    if not questions_dir.is_dir():
-        return 0
-    count = 0
-    for entry in questions_dir.glob("*.md"):
-        if entry.name.lower() == "readme.md":
-            continue
-        try:
-            lines = entry.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
-        for line in lines[:20]:
+        for line in lines[:20]:  # header fields live at the top of the file
             match = _STATUS_RE.match(line.strip())
             if match:
                 if match.group(1).strip().lower() == "answered":
@@ -769,8 +743,8 @@ def _chat_language_short(config: dict[str, str]) -> str:
 
 
 def _human_line(state: dict) -> Optional[str]:
-    """The one `systemMessage` line: rule files loaded, chat language, and the inbox/question
-    entries answered but not yet processed (the status line's own count)."""
+    """The one `systemMessage` line: rule files loaded, chat language, and the inbox entries
+    answered but not yet processed (the status line's own count)."""
     if not state:
         return None
     parts: list[str] = []
@@ -879,11 +853,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     waiting = 0
     try:
-        waiting += _count_inbox_waiting(root)
-    except Exception:
-        pass
-    try:
-        waiting += _count_questions_answered(root)
+        waiting = _count_inbox_waiting(root)
     except Exception:
         pass
     state["inbox"] = waiting
@@ -891,7 +861,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # T42: whether a feedback reminder to the template author is due right now
     # (.act/scripts/feedback.py --due's own logic) — folded into the status line like the inbox
     # count above, and counted as an "open point" that silences the tip/reminder line below (same
-    # reasoning as inbox/questions: the thing that is waiting comes first, self-promotion later).
+    # reasoning as the inbox count: the thing that is waiting comes first, self-promotion later).
     # Imported lazily and wrapped in its own try/except, like every other sub-step in this
     # function — a broken tips.py must never take the session-start hook down with it.
     feedback_due = False
@@ -1022,7 +992,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         print(note)
     # T42: at most one line, last of all — either a due reminder from docs/ai/local/reminders.md
     # (user's own, always checked first) or a rotated .act/tips.md tip (config.md § Tips),
-    # silenced by `output-depth: sparse` and by any open point above (inbox/questions/feedback
+    # silenced by `output-depth: sparse` and by any open point above (inbox/feedback
     # due) inside tips.session_line() itself. Same lazy-import-and-swallow pattern as every other
     # sub-step here.
     try:

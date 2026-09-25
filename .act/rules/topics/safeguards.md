@@ -14,7 +14,7 @@ flags a request or an action as risky — a guardrail, a content filter, a permi
    `reviewer` role — instead of permanently changing the orchestrator's own context. A worker
    doesn't start that role itself; it hands the case back to the orchestrator.
 4. Still flagged, and it touches something only the human can do: record it as an inbox entry for
-   the human — `docs/ai/inbox/YYYY-MM-DD-<slug>.md` with `for:` naming the human and
+   the human — `docs/ai/inbox/todo-<YYYYMMDD-HHMM>-<slug>.md` with `for:` naming the human and
    `status: open`, context plus the exact step — instead of forcing it. Never as a task under
    `docs/ai/work/tasks/`: that is the assistant's own queue.
 

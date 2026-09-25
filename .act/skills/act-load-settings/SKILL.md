@@ -45,7 +45,7 @@ is reported, never silent.
 5. A written own agent/skill gets its tool bridge automatically (`.claude/agents/<name>.md`, the
    matching skill copies) — nothing further to do for that.
 6. Whatever is left — dead/retired ids, cross-file disagreements, unreviewed candidates,
-   `## setup-required` lines — lands in one `docs/ai/inbox/<date>-settings-*.md`. Read it out to the
+   `## setup-required` lines — lands in one `docs/ai/inbox/todo-<timestamp>-settings-*.md`. Read it out to the
    human; a `setup-required` entry needs configuring before that rule/agent/skill actually works.
 7. A file `apply` could not fully resolve stays in `.act-local/import/` and prints, per item, why:
    declined by you, needs `--yes`, needs a judgment (content overlap), a name/id collision, or

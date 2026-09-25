@@ -17,9 +17,9 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
 3. **Write a concept** at `docs/project/concepts/<topic>.md`: starting point with findings,
    **options** (description, pros, cons, effort each), **recommendation**. "Do nothing" is a real
    option, with its consequences.
-4. **Put it to the human** as a question under `docs/ai/questions/` (`python
-   .act/scripts/entries.py new question <title>` — writes `for: all` into the header, `Q63b`),
-   options labeled, recommendation marked. Nothing built, no task filed, before it's answered.
+4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
+   question <title>` — writes `kind: question` and `for: all` into the header, `Q63b`), options
+   labeled, recommendation marked. Nothing built, no task filed, before it's answered.
 5. **Estimate for the chosen path only**: scope, missing tooling (library, MCP server, rule set,
    a skill that doesn't exist yet — its own step, not "along the way"), a rough task breakdown
    with goal and acceptance check, and an ADR in `docs/project/decisions.md`.

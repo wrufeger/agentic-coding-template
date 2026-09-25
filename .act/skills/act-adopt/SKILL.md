@@ -236,7 +236,7 @@ retry; fix the cause (a path too long: `core.longpaths`, step 2) and start again
 name, `owner` the Git `user.name` (else `unknown`), `language-chat` `auto`, `language-docs` `en`,
 `stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode` `solo` or `team` from the
 number of distinct real author e-mails (placeholder and test identities left out). It says so in
-`docs/ai/inbox/<date>-init-notes.md` ("Project config uses defaults for: ...").
+`docs/ai/inbox/todo-<timestamp>-init-notes.md` ("Project config uses defaults for: ...").
 
 ```bash
 python .act/scripts/adopt_config.py --target <dir> --plan   # show the report, write nothing
@@ -265,7 +265,7 @@ adoption removes"): settle it with the owner — drop it, or point it at what re
 an old `AI-CONFIG.md` without any language row gets `de` too, marked as an assumption in the report
 (the old template was always German) — confirm it with the owner. It never sets `language-chat`
 (stays `auto`) or `mode`. A `language-docs` other than English leaves
-`docs/ai/inbox/<date>-translate-scaffold.md` (from `adopt_config.py`, or from you by hand if you
+`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` (from `adopt_config.py`, or from you by hand if you
 set it yourself: `init.py` wrote the scaffold in English, marked `act:default`) — translate that
 scaffold once as `R-work-language` describes, never the adopted content, whose translation is a
 separate assignment offered in the report, done only on request. This has to be right before
@@ -436,7 +436,7 @@ reference list):
   listed mention with the owner and changes the text only where the owner says so. The bent files
   are left unstaged (group 5 in step 8).
 
-Then `doctor.py` runs and a report lands at `docs/ai/inbox/<date>-adoption-report.md`. Its
+Then `doctor.py` runs and a report lands at `docs/ai/inbox/report-<timestamp>-adoption-report.md`. Its
 accounting counts every `adopt` row `at target`, marked `into itself` where the target is its own
 path.
 
@@ -469,7 +469,7 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
    the `removed_at_apply` paths; except anything under `.act-local/` (git-ignored) or
    `docs/ai/work/archive/legacy/`, group 1's paths, and table targets. That is `.act/`, bridges,
    skeleton, tool copies, `.act-lock.json`, the init notes in the inbox together with
-   `docs/ai/inbox/<date>-translate-scaffold.md` from step 5 (both are about the scaffold, not
+   `docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` from step 5 (both are about the scaffold, not
    about old content; step 5 may have changed the init notes), `.gitignore`, the template copies
    now standing where an old unit of the same name was moved or removed (with the removal of that
    unit's other files), and `.claude/settings.json` as it is now — `init.py`'s merged hooks and
@@ -510,8 +510,8 @@ With `--force`, the changed files are copied to `.act-local/adopt/aborted/` befo
 removed.
 
 **What `--abort` does not catch:** files written after `--apply` by anything but `init.py` —
-`docs/ai/inbox/<date>-translate-scaffold.md` from step 5, and everything the content step added:
-entries under `docs/ai/work/`, `docs/ai/questions/`, `docs/ai/inbox/`, proposals under
+`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` from step 5, and everything the content step added:
+entries under `docs/ai/work/`, `docs/ai/inbox/`, proposals under
 `docs/ai/proposals/`, copies under `docs/ai/local/`. They neither block `--abort` nor are removed
 by it: it ends with exit 0 and lists them as "left in place (not created by adopt/init): ...",
 untracked on the base branch. Move them out of the way (e.g. into

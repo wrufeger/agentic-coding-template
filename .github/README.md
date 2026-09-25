@@ -122,7 +122,7 @@ feedback off — then anonymously, with nothing but that text and the template's
 | `.act/scripts/` | `init.py`, `update.py`, `doctor.py`, `rules.py`, `board.py`, `feedback.py`, `tiers.py`, `usage.py`, and the shared `actlib.py` |
 | `.act/hooks/dispatch.py` | one entry point per session event: write guard for `.act/**`, session start |
 | `.act/bridges/` | the files `init.py` generates in a project — `CLAUDE.md`, `AGENTS.md`, `docs/ai/rules.md`, coding rules, hook entries, git file blocks, role bridges under `agents/`, and a project `README.md` skeleton (`project-readme.md`) |
-| `.act/skeleton/` | starting files for `docs/ai/` — config, inbox, proposals, questions, working memory |
+| `.act/skeleton/` | starting files for `docs/ai/` — config, inbox (questions, tasks for a human, tool reports, notes), proposals, working memory |
 
 ## Tools
 

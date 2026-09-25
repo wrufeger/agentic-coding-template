@@ -1642,12 +1642,35 @@ def _existing_project_hint(root: Path, source_act: Path) -> str | None:
 
 
 def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> Path | None:
+    # Each note asks the owner to look at (and often fix) something init.py could not decide on
+    # its own -- an action, not just a read -- so `kind: todo` (16-inbox-questions-tasks.md §
+    # "Arten in der Inbox"), never `report`. A second run before this one is answered reuses the
+    # same file (matched by the fixed "init-notes" slug) instead of adding another -- but only
+    # while that file is still open or answered; a `done` one (already acted on) never blocks a
+    # fresh note silently.
     if not notes:
         return None
-    dest = root / "docs" / "ai" / "inbox" / f"{date.today().isoformat()}-init-notes.md"
-    if dest.is_file() or plan:
+    inbox_dir = root / actlib.INBOX_DIR
+    existing = sorted(inbox_dir.glob("todo-*-init-notes.md")) if inbox_dir.is_dir() else []
+    blocking = None
+    for candidate in existing:
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r"(?im)^status:\s*(.*?)\s*$", actlib.header_block(text))
+        status = match.group(1).strip() if match else "open"  # no status field: treat as open
+        if status in ("open", "answered"):
+            blocking = candidate
+    dest = blocking if blocking is not None else inbox_dir / actlib.inbox_entry_filename("todo", "init-notes")
+    n = 2
+    while blocking is None and dest.exists():  # a `done` one from the same minute: never overwrite it
+        dest = inbox_dir / f"todo-{actlib.entry_stamp()}-{n}-init-notes.md"  # still matches the glob above
+        n += 1
+    if blocking is not None or plan:
         return None if plan else dest
-    lines = [f"for: {owner}", "", "# Open points from `init.py` (non-interactive run)", ""]
+    lines = ["kind: todo", f"for: {owner}", "status: open", f"created: {date.today().isoformat()}",
+              "", "# Open points from `init.py` (non-interactive run)", ""]
     lines.extend(f"- {note}" for note in notes)
     actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # B134: LF regardless of platform
     return dest

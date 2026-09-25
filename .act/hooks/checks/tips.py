@@ -24,7 +24,8 @@
 #               tips whose `when:` condition currently holds.
 #
 #          Both are silenced together by `output-depth: sparse` and by any open point at session
-#          start — inbox/questions waiting (session.py's own `waiting`) or a feedback reminder
+#          start — inbox entries waiting (session.py's own `waiting`, the single inbox at
+#          docs/ai/inbox/, all kinds, 16-inbox-questions-tasks.md) or a feedback reminder
 #          due (is_feedback_due() below, called by session.py separately so it can also fold into
 #          its own status line) — and never shown twice in the same session (session_id, or twice
 #          in the same calendar day for `tips: occasionally`).
