@@ -75,6 +75,12 @@ Jedes abgeleitete Projekt behält die Verbindung zum Template. Ein Update wird g
 und über die Checkliste „Template-Update" eingespielt: neue Agenten, Skills und Regeln kommen an, die eigenen
 Werte und die Projekt-Dokumentation bleiben unangetastet.
 
+## Neue Fassung des Templates
+
+Es gibt eine neue Fassung dieses Templates (Mechanik unter `.act/`, Regeln und Scripte auf Englisch). Sie
+löst diesen Stand nicht per Update ab — ein bestehendes Projekt zieht mit dem Skill `act-adopt` aus einem
+Checkout der neuen Fassung um, nicht per `/act-update-template`. Details und Rückweg: [UMZUG.md](../UMZUG.md).
+
 ## Lernt mit — aus echten Projekten, nicht aus Vermutungen
 
 Die meisten Vorlagen altern ab dem Tag, an dem sie veröffentlicht werden: Was sich in der Praxis als

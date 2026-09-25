@@ -930,6 +930,24 @@ def _remote_exists(root: Path, remote: str) -> bool:
     return remote in remotes
 
 
+# Marker der Nachfolge-Fassung (neuer Template-Neubau, .act/ statt .claude/, kein template.json) - siehe
+# UMZUG.md. Nur GELESEN per 'git cat-file -e' (Existenzpruefung, kein Checkout, kein Ausfuehren) - nie Code
+# aus einem frisch geholten Ref ausfuehren (Kopfkommentar).
+SUCCESSOR_MARKER_PATH = ".act/VERSION"
+SUCCESSOR_NOTICE = (
+    "Template-Nachfolger: neue Fassung unter .act/ - nicht per Update uebernehmen, Umzug mit "
+    "act-adopt, siehe UMZUG.md"
+)
+
+
+def _ref_has_successor(root: Path, ref: str) -> bool:
+    """True, wenn 'ref' selbst schon die Nachfolge-Fassung ist (SUCCESSOR_MARKER_PATH vorhanden). Rein
+    lesend, keine Ausfuehrung - siehe SUCCESSOR_MARKER_PATH."""
+    if not ref:
+        return False
+    return run_git(root, ["cat-file", "-e", f"{ref}:{SUCCESSOR_MARKER_PATH}"]).returncode == 0
+
+
 def compare_ref(root: Path, cfg: dict):
     """Vergleichsziel fuer Template-Updates -> (ref, fetch_noetig) oder (None, False).
 
@@ -1185,6 +1203,13 @@ def cmd_check(root: Path, cfg: dict, quiet: bool) -> int:
                 return 0
             print(f"Template-Update: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}")
             return 2
+
+    # Nachfolge-Fassung erkannt (SUCCESSOR_MARKER_PATH im geholten Ref) - eigene Meldung statt der
+    # gewoehnlichen Update-Liste, auch unter --quiet (Q97 b: soll sofort ankommen). Exit 3 wie
+    # "Update verfuegbar" - ein Aufrufer, der nur auf 0/3 unterscheidet, sieht weiterhin "es gibt etwas".
+    if _ref_has_successor(root, ref):
+        print(SUCCESSOR_NOTICE)
+        return 3
 
     base = cfg["base_commit"]
     res_count = run_git(root, ["rev-list", "--count", f"{base}..{ref}"])
@@ -2418,6 +2443,13 @@ def cmd_apply(root: Path, cfg: dict, path: Path, do_commit: bool, continuing: bo
             if res_fetch.returncode != 0:
                 print(f"Fehler: 'git fetch {remote}' fehlgeschlagen: {res_fetch.stderr.strip()}", file=sys.stderr)
                 return 2
+
+        # Nachfolge-Fassung erkannt (SUCCESSOR_MARKER_PATH im geholten Ref) - abbrechen VOR jedem Merge und
+        # jedem Schreibzugriff (Arbeitsbaum ist hier noch garantiert sauber, siehe Pruefung oben). Ein
+        # gewoehnlicher Merge wuerde die neue Fassung sonst versehentlich in die alte Struktur einspielen.
+        if _ref_has_successor(root, ref):
+            print(f"Fehler: {SUCCESSOR_NOTICE}", file=sys.stderr)
+            return 2
 
         base = cfg.get("base_commit")
         if base:
