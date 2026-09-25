@@ -40,7 +40,9 @@ language as `--language-docs` below):
 
 1. **A new project, right here in this clone.** The connection to the template's own repository is
    cut (`origin` removed), and the project starts on a fresh `main` with no history of its own —
-   the template's branch is removed afterward so nobody merges it into the project by accident.
+   the template's branch is removed afterward so nobody merges it into the project by accident
+   (only while it holds nothing but the template's own history — with commits of the owner's own
+   on it, it stays and an inbox entry says so).
    From then on, template updates come only through `act-update`.
 2. **A project somewhere else** (a new folder, or one that already has a project in it). Ask for
    the path.

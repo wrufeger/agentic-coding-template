@@ -130,7 +130,8 @@ RE_CHECKBOX = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[ xX])\](?![(\[])\s*(?
 # or "- [Text][ref]" never is — only a mark of at most two characters counts as a try.
 RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]{0,2})\](?![(\[])\s*(?P<rest>.*)$")
 RE_USE = re.compile(r"^use:\s*(?P<path>\S+)\s*$")
-RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:—\s*(?P<reason>.+))?$")
+# The reason separator is an em dash; an en dash or "--" (what people type instead) counts the same.
+RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:(?:—|–|--)\s*(?P<reason>.+))?$")
 RE_REPLACES = re.compile(r"^-\s*replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
 RE_REPLACES_LOOSE = re.compile(r"^-\s*replaces\b.*$")
 # A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is

@@ -23,7 +23,8 @@ It asks two questions and does the rest; no `python` command to type yourself.
 
 1. **A new project, right here in this clone.** The connection to the template's own repository is
    cut, and the project starts on a fresh `main` with no history of its own — the template's
-   branch is removed afterward so nobody merges it into the project by accident. Template updates
+   branch is removed afterward so nobody merges it into the project by accident (kept, with a note,
+   if it already carries commits of your own). Template updates
    from then on come only through `act-update`.
 2. **A project somewhere else** — a new folder, or one that already has a project in it. Give the
    path; an empty or missing folder is set up directly, one that already has content is taken over
