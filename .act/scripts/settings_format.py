@@ -64,6 +64,13 @@ class SettingsEntry:
     inline: Optional[str] = None   # short one-line content, rendered after " — " on the entry line
     body: Optional[str] = None     # multi-line content, rendered indented below the entry (fenced
                                     # as ```text when symbol == "~", plain indented text otherwise)
+    fingerprint: Optional[str] = None  # sha256 of the template group's body at export time — only
+                                        # set for a "~"/"-" entry (B106.1); rendered as "(fp:<hash>)"
+                                        # right after the id, read back by settings_load.py to tell
+                                        # "template text unchanged since export" from "changed since
+                                        # export" per identifier, instead of only per template
+                                        # version. An older export without one falls back to the
+                                        # version-only check (settings_load._template_status()).
 
 
 @dataclass
@@ -105,7 +112,9 @@ class SettingsFile:
 _RE_HEADER_KV = re.compile(r"^(?P<key>[\w-]+):\s*(?P<value>.*)$")
 _RE_AREA_HEADING = re.compile(r"^##\s+(?P<name>\S+)\s*$")
 _RE_SETUP_HEADING = re.compile(r"^##\s+setup-required\s*$")
-_RE_ENTRY = re.compile(r"^\[(?P<symbol>[=~+-])\]\s+(?P<id>\S+)(?:\s+—\s+(?P<inline>.*))?\s*$")
+_RE_ENTRY = re.compile(
+    r"^\[(?P<symbol>[=~+-])\]\s+(?P<id>\S+)(?:\s+\(fp:(?P<fp>[0-9a-f]+)\))?(?:\s+—\s+(?P<inline>.*))?\s*$"
+)
 _RE_FENCE = re.compile(r"^(?P<fence>`{3,}|~{3,})\s*\S*\s*$")
 _RE_SETUP_ITEM = re.compile(r"^-\s+(?P<text>.*)$")
 
@@ -234,7 +243,7 @@ def _parse_area(name: str, block: list[str]) -> SettingsArea:
                 groups.append(current_group)
             entry = SettingsEntry(
                 symbol=entry_match.group("symbol"), id=entry_match.group("id"),
-                inline=entry_match.group("inline"),
+                inline=entry_match.group("inline"), fingerprint=entry_match.group("fp"),
             )
             current_group.entries.append(entry)
             current_entry = entry
@@ -302,6 +311,8 @@ def serialize(settings: SettingsFile) -> str:
                 out.append(group.label)
             for entry in group.entries:
                 head = f"{indent}[{entry.symbol}] {entry.id}"
+                if entry.fingerprint:
+                    head += f" (fp:{entry.fingerprint})"
                 if entry.inline:
                     head += f" — {entry.inline}"
                 out.append(head)
@@ -512,6 +523,7 @@ def redact(settings: SettingsFile) -> tuple[SettingsFile, list[tuple[str, ScanFi
                     symbol=entry.symbol, id=entry.id,
                     inline=inline_result.text if inline_result else entry.inline,
                     body=body_result.text if body_result else entry.body,
+                    fingerprint=entry.fingerprint,
                 ))
             new_groups.append(SettingsGroup(label=group.label, entries=new_entries))
         new_areas.append(SettingsArea(name=area.name, groups=new_groups))

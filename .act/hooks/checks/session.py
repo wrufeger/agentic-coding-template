@@ -46,6 +46,7 @@ __all__ = [
     "_last_ledger_entry_with_prefix", "_last_docs_audit_entry", "_commits_since", "_docs_audit_note",
     "_DEPENDENCY_CHECK_TITLE_PREFIX", "_DEPENDENCY_CHECK_DUE_DAYS", "_dependency_check_note",
     "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_active_topics",
+    "_bootstrap_marker", "_first_line", "_is_bootstrap_copy",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
     "_remote_update_available", "_update_check_result_path", "_consume_pending_update_note",
@@ -331,7 +332,42 @@ _BRIDGE_MAP = {
 }
 
 
-def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
+def _bootstrap_marker() -> Optional[str]:
+    """init.py's TEMPLATE_BOOTSTRAP_MARKER (the first line "<!-- act:bootstrap -->" a bare
+    template clone's own root CLAUDE.md/AGENTS.md carry before `init` ever runs, T76/Q101a),
+    imported lazily like `update`/`rules` elsewhere in this module so a session start never pays
+    for init.py's own (much larger) import cost unless this one constant is actually needed.
+    None if init.py cannot be imported at all -- the caller then treats every bootstrap check as
+    "not a bootstrap file", the same fail-open stance every other best-effort note here takes."""
+    try:
+        from init import TEMPLATE_BOOTSTRAP_MARKER  # deferred: see the header comment (F6, T60)
+    except Exception:
+        return None
+    return TEMPLATE_BOOTSTRAP_MARKER
+
+
+def _first_line(path: Path) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.readline().strip()
+    except OSError:
+        return ""
+
+
+def _is_bootstrap_copy(dest_path: Path, lock_present: bool, marker: Optional[str]) -> bool:
+    """True when `dest_path` is not the project's own CLAUDE.md/AGENTS.md but a copy of the
+    template's own bootstrap file (first line `marker`) that landed on top of it -- a raw `git
+    pull` of the template's shared history bringing in its root entry files verbatim rather than
+    going through `update.py` (rev28). Only meaningful once the project is actually set up
+    (`.act-lock.json` present, `lock_present`): a bare clone not yet run through `init` legitimately
+    still carries the marker on its own root files, and those are `init`'s job to replace, not
+    this one's (see `_bootstrap_entry_files` in init.py)."""
+    if not lock_present or marker is None:
+        return False
+    return _first_line(dest_path) == marker
+
+
+def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], list[str]]:
     """
     Re-derive every generated bridge that is still exactly as it was last generated (current
     hash matches .act-local/cache.json) from its .act/bridges/ source — this stands in for a
@@ -339,12 +375,20 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
     `git config` no checkout is guaranteed to have. A bridge whose hash no longer matches was
     edited locally and is left untouched either way.
 
-    With `write=False` (check-mode-`warn`), nothing is written — the "refreshed" list reports
-    what would have changed instead.
+    One exception (rev28): a root CLAUDE.md/AGENTS.md that is not locally edited at all but a raw
+    copy of the *template's own* bootstrap file (see `_is_bootstrap_copy`) never counts as "edited
+    locally" — it never was the project's file to begin with, whatever its recorded hash says — so
+    it is rewritten from the template source the same as an unchanged bridge, just reported
+    separately (`bootstrapped`) rather than folded into `refreshed`.
 
-    Returns (changed, refreshed): `changed` are destinations left alone because they were
-    edited locally; `refreshed` are destinations re-derived from the template (or that would
-    have been, under write=False).
+    With `write=False` (check-mode-`warn`), nothing is written — the "refreshed"/"bootstrapped"
+    lists report what would have changed instead.
+
+    Returns (changed, refreshed, bootstrapped): `changed` are destinations left alone because
+    they were edited locally; `refreshed` are destinations re-derived from the template (or that
+    would have been, under write=False) because they still matched their last-generated hash;
+    `bootstrapped` are destinations re-derived because they turned out to be the template's own
+    bootstrap file instead (or that would have been, under write=False).
 
     B118 (d): each file is written and cached individually rather than batching the cache write
     until after the whole loop — a read/write failure partway through the map (a locked file, a
@@ -361,6 +405,9 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
     generated = cache["generated"]
     changed: list[str] = []
     refreshed: list[str] = []
+    bootstrapped: list[str] = []
+    lock_present = (root / ".act-lock.json").is_file()
+    marker = _bootstrap_marker()
 
     for dest_rel, source_name in _BRIDGE_MAP.items():
         dest_path = root / dest_rel
@@ -372,15 +419,20 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
         if recorded_hash is None:
             continue  # never tracked as generated — not ours to touch
 
+        is_bootstrap = _is_bootstrap_copy(dest_path, lock_present, marker)
+
         # B134: compared with line endings normalized (and still accepts an older, raw-byte
         # recorded hash) so a checkout's own line endings never make an untouched bridge look
-        # "changed locally" on their own.
-        if not actlib.generated_unchanged(dest_path, recorded_hash):
+        # "changed locally" on their own. Skipped for a bootstrap copy (rev28): its hash never
+        # matches the recorded one either, but that mismatch is not a local edit to preserve.
+        if not is_bootstrap and not actlib.generated_unchanged(dest_path, recorded_hash):
             changed.append(dest_rel)
             continue
 
+        target_list = bootstrapped if is_bootstrap else refreshed
+
         if not write:
-            refreshed.append(dest_rel)
+            target_list.append(dest_rel)
             continue
 
         try:
@@ -389,10 +441,10 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
             generated[dest_rel] = actlib.generated_hash(dest_path)
         except (OSError, UnicodeDecodeError):
             continue  # left for the next run; every file already handled above stays reported
-        refreshed.append(dest_rel)
+        target_list.append(dest_rel)
         actlib.write_cache({"generated": generated})
 
-    return changed, refreshed
+    return changed, refreshed, bootstrapped
 
 
 # ---------------------------------------------------------------------------
@@ -1123,8 +1175,9 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     changed_bridges: list[str] = []
     refreshed_bridges: list[str] = []
+    bootstrap_bridges: list[str] = []
     try:
-        changed_bridges, refreshed_bridges = _refresh_bridges(root, write=(mode == "block"))
+        changed_bridges, refreshed_bridges, bootstrap_bridges = _refresh_bridges(root, write=(mode == "block"))
     except Exception:
         pass
 
@@ -1164,6 +1217,15 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     if mode == "warn":
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
+    # rev28: a raw `git pull` can land the template's own bootstrap CLAUDE.md/AGENTS.md (marker
+    # "<!-- act:bootstrap -->") on top of the project's real bridge in an already set-up project.
+    # _refresh_bridges tells that apart from an actual local edit and rewrites it here — self-
+    # resolving, so no once-per-state cache entry like _changed_bridge_note's is needed: once
+    # rewritten, the marker is gone and this cannot fire again for the same file.
+    for dest_rel in bootstrap_bridges:
+        verb = "replaced by" if mode == "block" else "would be replaced by (warn mode, not applied)"
+        print(f"[act] note: {dest_rel}: template bootstrap file {verb} the project bridge "
+              "(a raw git pull brought it in)")
 
     # T64: what Claude Code actually loads. A checked coding set becomes an "@" import (and an
     # unchecked one loses it) so the checkboxes in docs/project/coding_rules.md decide; a locally

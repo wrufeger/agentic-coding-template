@@ -3,16 +3,22 @@
 #
 # Purpose: Turn a checkout of this template into a project ("here, in this clone"), or dock onto
 #          an existing/empty directory ("--target"). Ten steps, always in the same order: collect
-#          config values, resolve git (origin/branch), check git identity, write the per-checkout
-#          workspace identity, thin the bridges down to the chosen tools, materialize skeleton +
-#          bridges (plus skill copies and role bridges, see copy_targets()/agent_bridge_targets()),
-#          append .gitattributes/.gitignore, retire the template's own README(s) and LICENSE (skipped
-#          in --target mode -- nothing of the template's own there to decide, only .act/ was copied
-#          in), write the lock/cache state, and make the first commit. Never overwrites a file the
-#          project already has; anything that needs a decision but can't be asked (non-interactive
-#          run) is written to docs/ai/inbox/ instead of guessed. A `language-docs` other than
-#          English leaves the scaffold English (marked `act:default`) plus one inbox entry asking to
-#          translate it (R-work-language) — init has no model to do that itself. Stdlib only.
+#          config values, resolve git (origin/branch -- in-place, the old history moves to a
+#          'template' branch and 'main' is rebuilt as an orphan; once the first commit below has
+#          landed on it, 'template' is deleted outright so nobody can merge it back into 'main',
+#          T76/Q101b), check git identity, write the per-checkout workspace identity, thin the
+#          bridges down to the chosen tools, materialize skeleton + bridges (plus skill copies and
+#          role bridges, see copy_targets()/agent_bridge_targets(); in-place, a root CLAUDE.md/
+#          AGENTS.md still carrying the template's own bootstrap marker is replaced by its project
+#          bridge here too, see _bootstrap_entry_files/TEMPLATE_BOOTSTRAP_MARKER -- --target never
+#          has one to replace), append .gitattributes/.gitignore, retire the template's own
+#          README(s) and LICENSE (skipped in --target mode -- nothing of the template's own there
+#          to decide, only .act/ was copied in), write the lock/cache state, and make the first
+#          commit. Never overwrites a file the project already has; anything that needs a decision
+#          but can't be asked (non-interactive run) is written to docs/ai/inbox/ instead of guessed.
+#          A `language-docs` other than English leaves the scaffold English (marked `act:default`)
+#          plus one inbox entry asking to translate it (R-work-language) — init has no model to do
+#          that itself. Stdlib only.
 #
 # Usage:
 #   python .act/scripts/init.py                      # set up the current checkout in place
@@ -39,7 +45,7 @@ import sys
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import Optional, TypedDict, Union
+from typing import NamedTuple, Optional, TypedDict, Union
 
 import actlib
 import manifest
@@ -204,6 +210,27 @@ def _is_template_remote(url: str, root: Path | None = None) -> bool:
 def _get_remote_url(root: Path, name: str) -> str | None:
     result = _git(["remote", "get-url", name], cwd=root, check=False)
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _remote_tracking_commit(root: Path, remote: str, branch: str) -> Optional[str]:
+    """SHA of `<remote>/<branch>` if that remote-tracking ref exists, else None -- must be read
+    before `remote` is ever touched (`git remote remove` deletes its tracking refs along with it,
+    review HIGH/B142/T76 S1+S3): once gone, there is no way left to tell a plain clone's HEAD apart
+    from a HEAD that already carries commits of the project's own."""
+    result = _git(["rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{branch}"], cwd=root, check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def _commits_ahead_of(root: Path, ref: str) -> Optional[int]:
+    """How many commits HEAD has that `ref` lacks -- None (never confused with an actual 0) if the
+    count itself could not be read."""
+    result = _git(["rev-list", "--count", "HEAD", "--not", ref], cwd=root, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return None
 
 
 def _checkout_source(checkout_root: Path) -> str:
@@ -412,8 +439,58 @@ def _template_dev_checkout_reason(root: Path) -> str:
     return ""
 
 
-def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
-    """Returns (summary, template_source, template_commit). template_source is the template's own
+class GitInPlaceResult(NamedTuple):
+    """Return shape of step_git_in_place -- a plain tuple used to read like keyword arguments at
+    both ends (review HIGH/B142/T76 S1+S3 added the last three fields, see below)."""
+    summary: str
+    template_source: str
+    template_commit: str
+    orphan_rebuilt: bool
+    # Commit to compare a template-owned root file's *current* content against (the bootstrap
+    # CLAUDE.md/AGENTS.md, the READMEs -- see _retire_template_readme/_bootstrap_entry_files):
+    # origin's remote-tracking commit when that was readable, i.e. the template's own version
+    # regardless of any commit the owner may have added on top locally after cloning; falls back to
+    # `template_commit` (plain HEAD) when there was no origin/tracking ref to read at all. Using
+    # `template_commit` unconditionally used to compare a file against *its own already-committed,
+    # edited copy* whenever the owner had committed an edit before running init -- always a
+    # "verified match" that way, so the edit was silently discarded (review HIGH, data loss).
+    verify_commit: str
+    # Whether the caller (main(), step 10) may delete the old 'template' branch once the first
+    # commit on the rebuilt 'main' lands. False whenever any of the three conditions in
+    # _old_branch_disposition below does not hold -- see there for what each means and why all
+    # three have to be checked *before* 'origin' is removed a few lines down (its tracking refs go
+    # with it).
+    can_delete_old_branch: bool
+    # Human-readable reason `can_delete_old_branch` is False, for the inbox note -- empty when it
+    # is True or when there is no 'template' branch to begin with (orphan_rebuilt is False).
+    keep_old_branch_reason: str
+    # Tip of the old branch right after the rename below (== template_commit whenever a rename/
+    # orphan-rebuild actually happens) -- read once here rather than re-derived at deletion time,
+    # since by then 'template' itself is gone. Used only for the "(was <sha>)" report.
+    old_branch_tip: str
+
+
+def _old_branch_disposition(
+    root: Path, plan: bool, has_commit: bool, current: str,
+) -> tuple[Optional[str], Optional[int]]:
+    """Read-only, called before 'origin' or the current branch are touched: (origin_tip,
+    own_commits). origin_tip is the SHA `refs/remotes/origin/<current>` pointed at, or None if that
+    ref does not exist (no 'origin', a shallow/unusual clone, or -- moot once own_commits is used --
+    'origin' never was the template to begin with). own_commits is how many commits HEAD has that
+    origin_tip lacks (None if origin_tip itself is None) -- 0 for an untouched clone, more than 0
+    once the owner has committed anything locally before running init (T76 S1). Both must be read
+    here, before 'git remote remove origin' a few lines below deletes the very ref they read from."""
+    if not (has_commit and current):
+        return None, None
+    origin_tip = _remote_tracking_commit(root, "origin", current)
+    if origin_tip is None:
+        return None, None
+    own_commits = _commits_ahead_of(root, f"refs/remotes/origin/{current}")
+    return origin_tip, own_commits
+
+
+def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
+    """Returns a GitInPlaceResult (see there for each field). template_source is the template's own
     address (its "origin" remote URL, before it gets removed below) if that's what "origin"
     pointed at, else empty -- always recorded into .act-lock.json's `template.source`, never left
     implicit in a remote (Q73a): a `git remote rename origin template` used to leave the project
@@ -425,6 +502,17 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
     even when .act/VERSION's own "commit=" line is empty (a template built without that line filled
     in leaves the daily-update check silent until the first update, see the fix this replaces).
     Empty if there is no commit to read (fresh/empty repository).
+    orphan_rebuilt is True once this call reaches the point of (re)building 'main' as an orphan
+    branch off the old history now on 'template' (True under `plan` too, meaning "would") -- the
+    caller (main()) uses it, after the first real commit on the new 'main' actually lands (step
+    10), to remove the now-superseded 'template' branch, but only when can_delete_old_branch also
+    holds (Wolfgang 2026-09-25, Q101b: nobody should be able to merge the old history back into
+    'main'; the template's own history stays reachable on GitHub, updates from here on only via
+    update.py -- but that decision assumed an untouched clone, review HIGH/B142/T76 S1+S3: it never
+    covered a clone the owner already committed into, or an existing project's repo repurposed in
+    place, either of which would lose history found nowhere else). Never True for the "no
+    repository"/"no commits yet"/"detached HEAD"/"refused, dirty tree" returns below -- there is no
+    'template' branch to remove in any of those cases.
 
     The dirty-tree check below runs first, before 'origin' is touched or the branch renamed --
     read-only, so a refusal leaves the clone exactly as it was found (review B116/1: it used to run
@@ -440,8 +528,8 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
             # explicitly so the outcome does not depend on that setting. Safe before the first
             # commit: it only moves the unborn HEAD, nothing is renamed or rewritten.
             _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
-            return "no repository found -> ran 'git init' (branch 'main')", "", ""
-        return "no repository found -> would run 'git init' (branch 'main')", "", ""
+            return GitInPlaceResult("no repository found -> ran 'git init' (branch 'main')", "", "", False, "", False, "", "")
+        return GitInPlaceResult("no repository found -> would run 'git init' (branch 'main')", "", "", False, "", False, "", "")
 
     # B130: the template-dev-checkout refusal used to live here. It now runs in main(), before
     # step_config's questions (step 1) rather than only here at step 2 -- see main()'s own comment
@@ -467,10 +555,10 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
                 "'template.commit', a state the template itself never had), then run init.py again"
             )
             if plan:
-                return (
+                return GitInPlaceResult(
                     "repository already present; would refuse to rebuild 'main' as an orphan "
                     f"branch ({reason}); 'origin' and the current branch would be left unchanged; {advice}",
-                    "", "",
+                    "", "", False, "", False, "", "",
                 )
             print(
                 f"init.py: clone has {reason} -- refusing to rebuild 'main' as an orphan branch; "
@@ -478,6 +566,11 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    # Review HIGH/B142/T76 S1+S3: read before 'origin' is touched below -- 'git remote remove
+    # origin' takes its tracking refs with it, and those refs are the only way left afterwards to
+    # tell an untouched clone's HEAD apart from one the owner already committed into.
+    origin_tip, own_commits = _old_branch_disposition(root, plan, has_commit, current)
 
     parts = ["repository already present"]
     template_source = ""
@@ -496,13 +589,14 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
 
     if not has_commit:
         parts.append("no commits yet -> branch left as-is")
-        return "; ".join(parts), template_source, ""
+        return GitInPlaceResult("; ".join(parts), template_source, "", False, "", False, "", "")
 
     template_commit = _git(["rev-parse", "HEAD"], cwd=root).stdout.strip()
+    verify_commit = origin_tip or template_commit
 
     if not current:
         parts.append("HEAD is detached -> branch left as-is")
-        return "; ".join(parts), template_source, template_commit
+        return GitInPlaceResult("; ".join(parts), template_source, template_commit, False, verify_commit, False, "", "")
     if current == "template":
         parts.append("current branch already named 'template'")
     else:
@@ -530,7 +624,26 @@ def step_git_in_place(root: Path, plan: bool) -> tuple[str, str, str]:
         parts.append("new orphan branch 'main' created")
     else:
         parts.append("would create new orphan branch 'main'")
-    return "; ".join(parts), template_source, template_commit
+
+    # Review HIGH/B142/T76 S1+S3: delete only once *all three* hold -- (a) 'origin' really was the
+    # template (template_source set), (b) no commits sit on this branch that 'origin' doesn't also
+    # have (own_commits == 0, read above before 'origin' was touched), (c) the branch's tip is still
+    # exactly the commit 'origin' had (origin_tip == template_commit -- (b) already guarantees this
+    # whenever origin_tip is known, since HEAD cannot both equal and be ahead of the same ref; kept
+    # as an explicit condition here so a future change to either half doesn't quietly rely on that).
+    can_delete_old_branch = bool(template_source) and origin_tip is not None and own_commits == 0 and origin_tip == template_commit
+    if can_delete_old_branch:
+        keep_old_branch_reason = ""
+    elif not template_source:
+        keep_old_branch_reason = "'origin' was not the template's address -- the previous history is this project's own"
+    elif origin_tip is None or own_commits is None:
+        keep_old_branch_reason = "could not verify it against 'origin' (no matching remote-tracking ref to compare with)"
+    else:
+        keep_old_branch_reason = f"{own_commits} commit(s) were added to it after cloning, before this run"
+    return GitInPlaceResult(
+        "; ".join(parts), template_source, template_commit, True,
+        verify_commit, can_delete_old_branch, keep_old_branch_reason, template_commit,
+    )
 
 
 def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str, str]:
@@ -1134,11 +1247,15 @@ def _relative_label(path: Path, root: Path | None = None) -> str:
 
 
 def _write_text_file(
-    src: Path, dest: Path, tokens: dict[str, str], plan: bool, root: Path | None = None
+    src: Path, dest: Path, tokens: dict[str, str], plan: bool, root: Path | None = None,
+    force: bool = False,
 ) -> tuple[str, bool]:
-    """Never overwrites an existing project file. Returns (message, created)."""
+    """Never overwrites an existing project file. Returns (message, created). `force` is the one
+    exception: a root CLAUDE.md/AGENTS.md whose template bootstrap marker `_bootstrap_entry_files`
+    already verified and cleared (or, under `plan`, would clear) -- `dest.is_file()` is skipped so
+    the message says "would create"/"created" instead of "already present" for it."""
     label = _relative_label(dest, root)
-    if dest.is_file():
+    if dest.is_file() and not force:
         return f"{label}: already present, left unchanged", False
     if plan:
         return f"{label}: would create", False
@@ -1193,7 +1310,7 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
 
 def step_materialize(
     root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec],
-    notes: Optional[list[str]] = None,
+    notes: Optional[list[str]] = None, is_target: bool = False, template_commit: str = "",
 ) -> tuple[list[str], dict[str, Path], list[Path], dict[str, dict]]:
     tokens = _config_tokens(cfg)
     bridges_dir = root / ".act" / "bridges"
@@ -1202,6 +1319,18 @@ def step_materialize(
     generated: dict[str, Path] = {}  # bridge name -> written path, for cache.json hashing
     touched: list[Path] = []
     copies: dict[str, dict] = {}  # dest -> {"source", "sha256"}, for .act-lock.json § copies
+
+    # T76/Q101a: the root CLAUDE.md/AGENTS.md a plain clone opens with (marker
+    # TEMPLATE_BOOTSTRAP_MARKER) belong to the template, not a project -- never touched in
+    # `--target` mode (a target directory never had them to begin with), cleared here in-place so
+    # the bridge writer below creates the real project bridge in their place instead of reporting
+    # "already present, left unchanged".
+    force_recreate: set[str] = set()
+    if not is_target:
+        bootstrap_messages, force_recreate = _bootstrap_entry_files(
+            root, plan, template_commit, notes if notes is not None else [], selected_bridges,
+        )
+        messages.extend(bootstrap_messages)
 
     for src_name, dest_rel in skeleton_files(skeleton_dir):
         message, created = _write_text_file(skeleton_dir / src_name, root / dest_rel, tokens, plan, root)
@@ -1212,7 +1341,9 @@ def step_materialize(
     for key, spec in selected_bridges.items():
         dest = root / spec["dest"]
         if spec["kind"] == "verbatim":
-            message, created = _write_text_file(bridges_dir / key, dest, tokens, plan, root)
+            message, created = _write_text_file(
+                bridges_dir / key, dest, tokens, plan, root, force=spec["dest"] in force_recreate,
+            )
             messages.append(message)
             if created:
                 generated[spec["dest"]] = dest
@@ -1357,12 +1488,28 @@ def step_git_files(root: Path, plan: bool) -> tuple[list[str], list[Path]]:
 TEMPLATE_README_MARKER = "<!-- act:template-readme -->"
 
 
-def _has_template_readme_marker(path: Path) -> bool:
+def _has_marker(path: Path, marker: str) -> bool:
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f.readline().strip() == TEMPLATE_README_MARKER
+            return f.readline().strip() == marker
     except OSError:
         return False
+
+
+def _has_template_readme_marker(path: Path) -> bool:
+    return _has_marker(path, TEMPLATE_README_MARKER)
+
+
+# First line of the template's own root entry files (CLAUDE.md, AGENTS.md) before a clone is
+# turned into a project (T76, Q101a): tells an AI tool opening the bare clone that it is sitting
+# in the template, not a project, and to follow .act/skills/act-setup/SKILL.md. `step_materialize`
+# (step 6) clears a file still carrying this marker so its own bridge-writer creates the real
+# project bridge in its place (see _bootstrap_entry_files below); `--target` and `act-adopt` never
+# touch these two files at all -- they only ever copy/materialize .act/ and the bridges under it,
+# and a target directory never had the template's own root files to begin with.
+TEMPLATE_BOOTSTRAP_MARKER = "<!-- act:bootstrap -->"
+# Root bootstrap files with no project bridge behind them (see _bootstrap_entry_files).
+_BOOTSTRAP_ONLY_FILES = ("GEMINI.md",)
 
 
 def _normalize_newlines(text: str) -> str:
@@ -1385,7 +1532,7 @@ def _git_show_at_commit(root: Path, commit: str, rel_path: str) -> Optional[str]
 
 def _retire_template_readme(
     root: Path, plan: bool, rel_path: str, template_commit: str, backup_name: str,
-    notes: list[str], on_verified_match,
+    notes: list[str], on_verified_match, marker: str = TEMPLATE_README_MARKER,
 ) -> str:
     """Shared decision for one template-owned README (.github/README.md or the root README.md):
     the marker alone only says the file *started* as the template's; only removing/replacing it
@@ -1400,11 +1547,14 @@ def _retire_template_readme(
     stays recoverable instead of gone.
 
     `on_verified_match(plan) -> str` performs the actual remove/replace once content-equality (or
-    the no-history fallback) has cleared it, and returns its own step-8 message."""
+    the no-history fallback) has cleared it, and returns its own step-8 message. `marker` is the
+    first-line mark that says the file started as the template's -- TEMPLATE_README_MARKER by
+    default, or TEMPLATE_BOOTSTRAP_MARKER for the root CLAUDE.md/AGENTS.md bootstrap files
+    (_bootstrap_entry_files below)."""
     path = root / rel_path
     if not path.is_file():
         return f"no {rel_path} present"
-    if not _has_template_readme_marker(path):
+    if not _has_marker(path, marker):
         return f"{rel_path} left untouched (project's own)"
 
     current_text = path.read_text(encoding="utf-8")
@@ -1428,6 +1578,68 @@ def _retire_template_readme(
     if note not in notes:
         notes.append(note)
     return on_verified_match(plan)
+
+
+def _bootstrap_entry_files(
+    root: Path, plan: bool, template_commit: str, notes: list[str],
+    selected_bridges: dict[str, BridgeSpec],
+) -> tuple[list[str], set[str]]:
+    """Called from step_materialize (step 6), before the bridge writer runs: root AGENTS.md/
+    CLAUDE.md (and any future bridge of the same shape, e.g. GEMINI.md, see `root_entry_files`
+    below) still carrying TEMPLATE_BOOTSTRAP_MARKER on their first line are the template's own
+    (a bare clone opened before `init` -- see the root files themselves and
+    .act/skills/act-setup/SKILL.md, T76/Q101a), so they are removed here to make way for the real
+    project bridge; the same verified-match safety net as `_retire_template_readme` applies (a
+    file whose marker is gone -- edited after cloning -- is left alone; one somehow edited with the
+    marker still on it is left alone too, with a note, rather than discarding the edit). Never
+    called for `--target` (a target directory never had these files at all, see `step_materialize`).
+    `selected_bridges` (this run's step 5 result) says which of them actually get a replacement
+    written below -- CLAUDE.md's bridge is gated on the `claude-code` tool, so a project that
+    doesn't use it never gets one back; the message says so instead of always claiming "replaced"
+    (review finding, wording only -- the removal itself was already correct).
+
+    Returns (messages, dest names -- "AGENTS.md"/"CLAUDE.md"/... -- removed here, or that would be
+    removed under `plan`): the bridge writer treats a name in that set as absent even though
+    `dest.is_file()` may still be true (a `plan` run touches nothing), instead of reporting
+    "already present, left unchanged" for a file about to be replaced."""
+    messages: list[str] = []
+    force: set[str] = set()
+    selected_dests = {spec["dest"] for spec in selected_bridges.values()}
+
+    def remove_entry(rel_path: str, will_be_replaced: bool):
+        replaced_by = (
+            "replaced by its project bridge below" if will_be_replaced
+            else "this project's tools don't include one that uses it, so nothing replaces it"
+        )
+        def _do(inner_plan: bool) -> str:
+            verb = "would be removed" if inner_plan else "removed"
+            if not inner_plan:
+                (root / rel_path).unlink()
+            return f"{rel_path} {verb} (template bootstrap file, {replaced_by})"
+        return _do
+
+    # Every root-level bootstrap entry file the template ships: derived from BRIDGES itself (kind
+    # "verbatim", dest with no "/") rather than a hardcoded ("AGENTS.md", "CLAUDE.md") pair, so a
+    # bridge added there later (e.g. GEMINI.md) is covered automatically, without touching this
+    # function again. GEMINI.md ships as a bootstrap file too (Gemini CLI reads it, not AGENTS.md)
+    # but has no project bridge, so it is added by name and simply removed.
+    root_entry_names = [
+        spec["dest"] for spec in BRIDGES.values()
+        if spec["kind"] == "verbatim" and spec["dest"].endswith(".md") and "/" not in spec["dest"]
+    ]
+    root_entry_names += [name for name in _BOOTSTRAP_ONLY_FILES if name not in root_entry_names]
+    root_entry_files = [(name, f"{Path(name).stem}.template.md") for name in root_entry_names]
+    for rel_path, backup_name in root_entry_files:
+        if not (root / rel_path).is_file():
+            continue
+        message = _retire_template_readme(
+            root, plan, rel_path, template_commit, backup_name, notes,
+            remove_entry(rel_path, rel_path in selected_dests), marker=TEMPLATE_BOOTSTRAP_MARKER,
+        )
+        messages.append(message)
+        if "removed" in message:
+            force.add(rel_path)
+    return messages, force
 
 
 def _step_own_readmes(
@@ -1564,6 +1776,30 @@ def step_lock_and_cache(
 # ---------------------------------------------------------------------------
 # Step 10 — first commit, by pathspec
 # ---------------------------------------------------------------------------
+
+def _remove_old_template_branch(root: Path, plan: bool, old_branch_tip: str) -> str:
+    """Removes the local 'template' branch step_git_in_place left behind (the clone's old history,
+    now superseded by the orphan 'main' step 10 just committed) -- so nobody can later merge it
+    back into 'main' by accident (Wolfgang 2026-09-25, Q101b); the template's own history stays
+    reachable on GitHub regardless, and updates from here on only ever come in via update.py, never
+    a merge. Called only when GitInPlaceResult.can_delete_old_branch was True (see main()) -- an
+    untouched clone, verified against 'origin' before it was removed (review HIGH/B142/T76 S1+S3;
+    see step_git_in_place/_old_branch_disposition for the conditions checked and why deleting on
+    weaker evidence used to lose a project's own commits). Called only once the first real commit on
+    the new 'main' has actually landed (see main()) -- deleting it any earlier would risk losing the
+    old history with nothing committed yet to replace it. A failed delete (e.g. the branch is
+    checked out elsewhere, or already gone) is reported, never fatal -- the commit on 'main' already
+    stands either way. `old_branch_tip` (read in step_git_in_place, before the branch's own history
+    became unreachable) is only for the report -- "(was <sha>)" -- so the deleted commit stays
+    findable in `git reflog`/`git fsck --unreachable` without anyone having to remember it."""
+    short_tip = f" (was {old_branch_tip[:12]})" if old_branch_tip else ""
+    if plan:
+        return f"would remove old 'template' branch{short_tip}"
+    result = _git(["branch", "-D", "template"], cwd=root, check=False)
+    if result.returncode != 0:
+        return f"old 'template' branch left in place -- delete failed: {result.stderr.strip()}"
+    return f"old 'template' branch removed{short_tip}"
+
 
 def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> str:
     if no_commit:
@@ -1805,12 +2041,29 @@ def main(argv: list[str]) -> int:
         f"feedback={feedback_display} (suggested, change it in docs/ai/config.md)",
     )
 
+    orphan_rebuilt = False
+    can_delete_old_branch = False
+    old_branch_tip = ""
     if is_target:
         summary, template_origin, template_commit = step_git_target(root, plan, source_act)
+        verify_commit = template_commit
         _print_step(2, summary)
     else:
-        summary, template_origin, template_commit = step_git_in_place(root, plan)
+        git_result = step_git_in_place(root, plan)
+        summary = git_result.summary
+        template_origin = git_result.template_source
+        template_commit = git_result.template_commit
+        orphan_rebuilt = git_result.orphan_rebuilt
+        verify_commit = git_result.verify_commit
+        can_delete_old_branch = git_result.can_delete_old_branch
+        old_branch_tip = git_result.old_branch_tip
         _print_step(2, summary)
+        if orphan_rebuilt and not can_delete_old_branch:
+            notes.append(
+                f"The old branch 'template' was kept -- {git_result.keep_old_branch_reason}. "
+                "Review it, fold anything worth keeping into 'main', or delete it yourself "
+                "once you're sure (`git branch -D template`)."
+            )
 
     _print_step(3, step_identity(root, plan, interactive, notes))
     _print_step(4, f"{step_workspace_identity(root, plan, cfg['owner'])}; {step_import_folder(root, plan)}")
@@ -1818,7 +2071,9 @@ def main(argv: list[str]) -> int:
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
-    materialize_messages, generated, touched_bridges, copies = step_materialize(root, plan, cfg, selected_bridges, notes)
+    materialize_messages, generated, touched_bridges, copies = step_materialize(
+        root, plan, cfg, selected_bridges, notes, is_target=is_target, template_commit=verify_commit,
+    )
     translate_path, translate_message = step_translate_note(root, plan, cfg)
     if translate_message:
         materialize_messages.append(translate_message)
@@ -1830,22 +2085,38 @@ def main(argv: list[str]) -> int:
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)
     _print_step(7, "; ".join(gitfiles_messages))
 
+    # README.md/LICENSE at the repo root, whatever step 8 below did with them (replaced, kept
+    # as-is, or left as the project's own) -- always re-added to the new commit here, in-place
+    # only: step 2's orphan rebuild of 'main' drops every path from the index, including these two,
+    # so leaving them out of `commit_paths` would leave them as untracked residue after step 10's
+    # pathspec commit even though nothing about them needs a human decision (found in T76's own
+    # probe, tests/probes/t76-bootstrap; --target never touches them, same reasoning as step 8).
+    own_root_files: list[Path] = []
     if is_target:
         _print_step(8, "skipped in --target mode (docking onto an existing project, nothing of the template's own to decide)")
     else:
-        _print_step(8, step_own_files(root, plan, interactive, cfg, template_commit, notes))
+        _print_step(8, step_own_files(root, plan, interactive, cfg, verify_commit, notes))
+        own_root_files = [p for p in (root / "README.md", root / "LICENSE") if p.is_file()]
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
-    commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles]
+    commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles, *own_root_files]
     if inbox_path is not None:
         commit_paths.append(inbox_path)
     if translate_path is not None and not plan:
         commit_paths.append(translate_path)
     if dependency_check_path is not None and not plan:
         commit_paths.append(dependency_check_path)
-    _print_step(10, step_commit(root, plan, args.no_commit, commit_paths))
+    commit_message = step_commit(root, plan, args.no_commit, commit_paths)
+    # The old 'template' branch is only ever removed once a real commit landed on the new 'main'
+    # (never under --plan, --no-commit, or a run that had nothing to commit) *and*
+    # can_delete_old_branch held (review HIGH/B142/T76 S1+S3) -- see _remove_old_template_branch
+    # and step_git_in_place/_old_branch_disposition.
+    commit_landed = commit_message.startswith("committed") or (plan and commit_message.startswith("would commit"))
+    if orphan_rebuilt and can_delete_old_branch and not is_target and not args.no_commit and commit_landed:
+        commit_message += f"; {_remove_old_template_branch(root, plan, old_branch_tip)}"
+    _print_step(10, commit_message)
 
     if notes:
         print(f"[act] done - {len(notes)} open point(s) " + ("would go to" if plan else "left in") + " docs/ai/inbox/")

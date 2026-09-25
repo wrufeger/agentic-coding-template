@@ -1691,16 +1691,23 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
             sys.path.remove(hooks_path)
 
     try:
-        changed, refreshed = _refresh_bridges(root, write=not plan)
+        changed, refreshed, bootstrapped = _refresh_bridges(root, write=not plan)
     except Exception as exc:  # same as the session hook: a failed refresh is reported, never aborts the update
         return f"bridge refresh failed ({exc})", []
-    if not refreshed and not changed:
+    if not refreshed and not changed and not bootstrapped:
         return "no generated bridges due for refresh", []
     verb = "would refresh" if plan else "refreshed"
     parts = [f"{verb} {', '.join(refreshed)}"] if refreshed else []
+    if bootstrapped:
+        # rev28: a raw `git pull` landed the template's own bootstrap CLAUDE.md/AGENTS.md on top
+        # of the project's real bridge -- not a local edit, rewritten the same as `refreshed`
+        # above, just called out separately so `--catch-up` explains why the "edited locally"
+        # rule did not apply here.
+        bootstrap_verb = "would replace" if plan else "replaced"
+        parts.append(f"{bootstrap_verb} {', '.join(bootstrapped)} (template bootstrap file, not a local edit)")
     if changed:
         parts.append(f"left {', '.join(changed)} (edited locally)")
-    touched = [] if plan else [root / rel for rel in refreshed]
+    touched = [] if plan else [root / rel for rel in refreshed + bootstrapped]
     return "; ".join(parts), touched
 
 

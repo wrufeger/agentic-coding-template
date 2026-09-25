@@ -288,6 +288,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("git_reset_hard", "check_git_reset_hard"),           # git reset --hard on a dirty tree (R-safe-git-reset)
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
     ("secret_scan", "check_secret_scan"),                 # secrets in the diff before commit (R-safe-no-secret-diff)
+    ("danger_scan", "check_danger_scan"),                 # dangerous patterns in the diff before commit (security-check, B117 Art A)
     ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate)
     ("status_poll", "check_status_poll"),                 # repeated status queries (R-cost-wait)
     ("encoding_hint", "check_encoding_hint"),             # non-UTF-8 target, note only (R-code-encoding)

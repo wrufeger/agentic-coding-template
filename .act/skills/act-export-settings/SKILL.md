@@ -25,11 +25,20 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
   `.zip` (machine-local, gitignored, created on demand). The natural handover is dropping that file
   straight into another checkout's `.act-local/import/` — that's exactly what `act-load-settings`
   picks up when run with no path.
+- `--profile`: write to the Owner's profile instead — the grounds a future `init` will hand to a
+  fresh clone as its starting point (`init` does not read the profile yet, only this writes it).
+  Same format, same switches; goes to the platform config dir (Windows `%APPDATA%\act\settings.md`,
+  else `~/.config/act/settings.md`), never a path inside this project. Use it for "these are the
+  personal defaults I want every future project to start with", not for handing settings to
+  someone else — that is `--out`. An existing profile file is backed up next to itself
+  (`settings.md.bak-<stamp>`), never silently overwritten. Mutually exclusive with `--out`.
 
 ## Steps
 
 1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, an own
-   role, or an own skill is a deliberate choice, not a default.
+   role, or an own skill is a deliberate choice, not a default. Ask separately whether this run
+   goes to a file/another project (`--out` or the default location) or to the Owner's own profile
+   (`--profile`) — the two are mutually exclusive.
 2. Run the script. It scans every value it writes for credentials, mail addresses, IPs, local
    paths and internal hosts on its own and replaces a hit with a visible `<setup:KIND>` placeholder
    plus a `## setup-required` line — never a silent drop, never a silent secret.

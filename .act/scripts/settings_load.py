@@ -403,6 +403,9 @@ class ImportEntry:
     id: str
     inline: Optional[str]
     body: Optional[str]
+    fingerprint: Optional[str] = None  # sha256 of the template group's body at export time
+                                        # (B106.1) — only set for "~"/"-"; None falls back to the
+                                        # coarser version-only "changed since export" check.
 
     @property
     def text(self) -> str:
@@ -440,6 +443,7 @@ def collect_entries(source: SourceFile) -> list[ImportEntry]:
                 out.append(ImportEntry(
                     file_label=source.label, area=area.name, group_label=group.label,
                     symbol=entry.symbol, id=entry.id, inline=entry.inline, body=entry.body,
+                    fingerprint=entry.fingerprint,
                 ))
     return out
 
@@ -661,12 +665,21 @@ def _candidate_pairs(entry: ImportEntry, pool: list[tuple[str, str]]) -> list[tu
 # ---------------------------------------------------------------------------
 
 def _template_status(root: Path, area_name: str, gid: str, header: sf.SettingsHeader,
-                      corpus: "doctor.TemplateCorpus", is_whole_set: bool = False) -> Optional[str]:
+                      corpus: "doctor.TemplateCorpus", fingerprint: Optional[str] = None,
+                      is_whole_set: bool = False) -> Optional[str]:
     """None if the id is alive and (as far as this project can tell) unchanged since the export;
     otherwise the Finding kind that applies ("dead-id" or "changed-since-export"). `is_whole_set`
     is set for a coding "[-] <set-name> — entire rule set switched off" entry: its id is a coding
     set's file basename (e.g. "bash"), not a template group id, so it is checked against the
-    template's coding sets instead of `corpus.ids` (which only holds *group* ids)."""
+    template's coding sets instead of `corpus.ids` (which only holds *group* ids).
+
+    `fingerprint` (B106.1) is the sha256 settings_export.py recorded for this id's template body at
+    export time. When present, "changed since export" is decided per identifier — hashing the
+    *current* template body of the same id and comparing — instead of the coarser fallback below
+    (an older export with no fingerprint at all, or a whole-set entry, which has no body of its own
+    to hash): a version bump elsewhere in the template no longer flags an id whose own text never
+    changed, and a genuinely changed id is caught even without a version bump (e.g. a same-version
+    hotfix)."""
     if is_whole_set:
         if actlib.resolve(f"coding/{gid}.md") is None:
             return "dead-id"
@@ -674,13 +687,17 @@ def _template_status(root: Path, area_name: str, gid: str, header: sf.SettingsHe
     if gid not in corpus.ids:
         return "dead-id"  # covers both "never existed" and "retired:" (doctor._build_corpus folds
         # "retired:" into corpus.retired, checked next) — checked together, message differs below
+    if fingerprint:
+        current_hash = hashlib.sha256(corpus.groups[gid].body.encode("utf-8")).hexdigest()
+        return "changed-since-export" if current_hash != fingerprint else None
     lock = actlib.read_lock()
     current_version = (lock.get("template") or {}).get("version", "")
     if header.version and current_version and header.version != current_version:
-        # Best-effort proxy: a target project shares no git history with the settings file's
-        # source (ADR-5 — "no merge, no shared history"), so the old rule text at the
-        # export's commit cannot be diffed against here. A version mismatch is reported instead of
-        # silently trusting a rule the current template may have changed since.
+        # Fallback for an export written before B106.1 (no per-id fingerprint) — best-effort proxy:
+        # a target project shares no git history with the settings file's source (ADR-5 — "no
+        # merge, no shared history"), so the old rule text at the export's commit cannot be diffed
+        # against here. A version mismatch is reported instead of silently trusting a rule the
+        # current template may have changed since.
         return "changed-since-export"
     return None
 
@@ -784,7 +801,8 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
 
         if entry.symbol == "-":
             is_whole_set = area_name == "coding" and entry.group_label is None
-            status = _template_status(root, area_name, entry.id, header_by_file[entry.file_label], corpus, is_whole_set)
+            status = _template_status(root, area_name, entry.id, header_by_file[entry.file_label],
+                                       corpus, entry.fingerprint, is_whole_set)
             if status:
                 result.findings.append(Finding(
                     kind=status, area=area_name, message=_dead_message(entry.id, corpus, status)
@@ -805,7 +823,8 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
             continue
 
         if entry.symbol == "~":
-            status = _template_status(root, area_name, entry.id, header_by_file[entry.file_label], corpus)
+            status = _template_status(root, area_name, entry.id, header_by_file[entry.file_label],
+                                       corpus, entry.fingerprint)
             if status:
                 result.findings.append(Finding(
                     kind=status, area=area_name, message=_dead_message(entry.id, corpus, status)

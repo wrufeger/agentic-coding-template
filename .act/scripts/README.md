@@ -380,9 +380,9 @@ Call: skill `act-feedback` (`--status`/`--due` alone are direct)
 
 ```text
 usage: feedback.py [-h] [--status | --enable | --disable | --add | --plan | --send |
-                   --direct TEXT | --due | --postpone DAYS | --clear]
-                   [--kind {rule,script,skill,workflow,docs,bug,mcp,link}] [--title TITLE]
-                   [--text TEXT] [--url URL] [--repo-url REPO_URL]
+                   --direct TEXT | --due | --postpone DAYS | --clear | --discard-harvest]
+                   [--target DIR] [--kind {rule,script,skill,workflow,docs,bug,mcp,link}]
+                   [--title TITLE] [--text TEXT] [--url URL] [--repo-url REPO_URL]
                    [--mode {off,confirm,automatic,manual}] [--force] [--yes]
 
 Voluntary feedback to the template author - never without consent, never unseen.
@@ -399,6 +399,9 @@ options:
   --due                 report whether a reminder is due under the current cadence
   --postpone DAYS       pause the due reminder for this many days and count it as a postponement
   --clear               discard every waiting entry, send nothing
+  --discard-harvest     remove --target's .act-local/adopt/harvest.md, add nothing to the outbox
+  --target DIR          act on the project at DIR instead of the current checkout (act-adopt,
+                        B124)
   --kind {rule,script,skill,workflow,docs,bug,mcp,link}
                         with --add
   --title TITLE         with --add: one line
@@ -509,7 +512,7 @@ Call: skill `act-export-settings`
 
 ```text
 usage: settings_export.py [-h] [--all] [--with-scripts] [--with-checklists] [--with-agents]
-                          [--with-skills] [--with-files] [--strict] [--out PATH]
+                          [--with-skills] [--with-files] [--strict] [--out PATH] [--profile]
 
 Write the project's rule deviations (and, with a switch, local scripts/checklists) to a portable
 settings file.
@@ -525,6 +528,8 @@ options:
                      agents/--with-skills
   --strict           abort on any finding instead of substituting a placeholder
   --out PATH         output path (default: .act-local/export/act-settings-<date>.md|.zip)
+  --profile          write to the Owner's profile (platform config dir) instead of --out/the
+                     default location; backs up an existing profile file first
 ```
 
 ## `settings_load.py`

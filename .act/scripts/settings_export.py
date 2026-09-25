@@ -3,12 +3,11 @@
 #
 # Purpose: `act-export-settings` — write the project's own rule deviations (and, with a switch,
 #          local scripts/checklists) to a portable settings file, for `act-load-settings` in
-#          another project or for the Owner's profile (`--profile`, not yet built — see the
-#          report handed back with this build). Built on .act/scripts/settings_format.py (data
-#          model, parser, serializer, secrets scan) and reuses .act/scripts/rules.py's project-
-#          file parser/classifier instead of re-reading docs/ai/rules.md or
-#          docs/project/coding_rules.md by hand. See settings_format.py's own docstring
-#          (`Q60a`-`Q61d`) for the full detail.
+#          another project or for the Owner's profile (`--profile`). Built on
+#          .act/scripts/settings_format.py (data model, parser, serializer, secrets scan) and
+#          reuses .act/scripts/rules.py's project-file parser/classifier instead of re-reading
+#          docs/ai/rules.md or docs/project/coding_rules.md by hand. See settings_format.py's own
+#          docstring (`Q60a`-`Q61d`) for the full detail.
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
 #          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts`,
@@ -34,19 +33,32 @@
 #       a "## setup-required" line, and the run still succeeds.
 #   python .act/scripts/settings_export.py --out <path>
 #       Write there instead of the default .act-local/export/act-settings-<date>.md|.zip.
+#   python .act/scripts/settings_export.py --profile
+#       Write the same export (same format, same switches — settings.md or, with --with-files, a
+#       zip) to the Owner's profile instead of .act-local/export/: Windows "%APPDATA%\act\
+#       settings.md", else "$XDG_CONFIG_HOME/act/settings.md" (falling back to "~/.config/act/
+#       settings.md") — resolved from the environment/Path.home() at run time, never a hard-coded
+#       path (`docs/project/coding_rules.md` § "Pfade außerhalb des Projekts" in the template-pflege
+#       repo). This is the grounds a future `init` reads to hand the same setup to a fresh clone
+#       (`Q57d`) — init.py does not read the profile yet, only this export writes it. An existing
+#       profile file is never silently overwritten: it is renamed to "<name>.bak-<stamp>" first, and
+#       the run says so. Mutually exclusive with --out.
 #
 # Output format: one line on stdout naming the file written and the number of placeholders
-#   inserted ("review before sharing"). --strict prints "<location> — <hint>" per finding to
-#   stderr instead and writes nothing. Exit 0 on success, 1 on a --strict abort, 2 on a fatal error
-#   (no .act/ found) — never a traceback.
+#   inserted ("review before sharing"), plus a line naming the backup path when --profile replaced
+#   an existing profile file. --strict prints "<location> — <hint>" per finding to stderr instead
+#   and writes nothing. Exit 0 on success, 1 on a --strict abort, 2 on a fatal error (no .act/
+#   found, or --profile combined with --out) — never a traceback.
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import re
 import sys
 import zipfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -87,6 +99,28 @@ def build_header(root: Path) -> sf.SettingsHeader:
 
 
 # ---------------------------------------------------------------------------
+# Owner's profile location (`--profile`, Q57d/Q60b) — platform-appropriate, resolved fresh on every
+# call from the environment/Path.home(), never a hard-coded path (coding_rules.md § "Pfade außerhalb
+# des Projekts"): reading it fresh each time is also what lets a test point HOME/APPDATA/
+# XDG_CONFIG_HOME at a scratch directory without touching the real profile.
+# ---------------------------------------------------------------------------
+
+def profile_dir() -> Path:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA")
+        return (Path(base) if base else Path.home() / "AppData" / "Roaming") / "act"
+    base = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(base) if base else Path.home() / ".config") / "act"
+
+
+def _group_fingerprint(tgroup: "rules.TemplateGroup") -> str:
+    """sha256 of a template group's full section body (heading included, same text
+    doctor.py._check_overrides() hashes for its own stale-override tracking) — the per-identifier
+    "changed since export" fingerprint (B106.1)."""
+    return hashlib.sha256(tgroup.body.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # rules / coding areas — built from rules.py's own parser + classifier
 # ---------------------------------------------------------------------------
 
@@ -110,15 +144,23 @@ def _own_rule_id(prefix: str, own: "rules.OwnRule", used: set[str]) -> str:
 
 
 def _entry_for_group(symbol: str, group_id: str, project_group: Optional["rules.ProjectGroup"],
-                      override: Optional["rules.Override"]) -> sf.SettingsEntry:
+                      override: Optional["rules.Override"],
+                      fingerprint: Optional[str] = None) -> sf.SettingsEntry:
+    """`fingerprint` (B106.1) is the sha256 of the template group's body text at export time — set
+    only for "~"/"-" (an "=" entry is unchanged by definition, and a template body has nothing to
+    fingerprint for a "+" own rule). settings_load.py compares it against the same group's *current*
+    body in the target project to report "changed since export" per identifier, not just per
+    template version."""
     if symbol == "~" and override is not None:
         if "\n" in override.text:
-            return sf.SettingsEntry(symbol="~", id=group_id, inline="replaces:", body=override.text)
-        return sf.SettingsEntry(symbol="~", id=group_id, inline=f"replaces: {override.text}")
+            return sf.SettingsEntry(symbol="~", id=group_id, inline="replaces:", body=override.text,
+                                     fingerprint=fingerprint)
+        return sf.SettingsEntry(symbol="~", id=group_id, inline=f"replaces: {override.text}",
+                                 fingerprint=fingerprint)
     if symbol == "-":
         reason = project_group.reason if project_group else None
         inline = f"reason: {reason}" if reason else None
-        return sf.SettingsEntry(symbol="-", id=group_id, inline=inline)
+        return sf.SettingsEntry(symbol="-", id=group_id, inline=inline, fingerprint=fingerprint)
     return sf.SettingsEntry(symbol="=", id=group_id)
 
 
@@ -136,14 +178,16 @@ def build_rules_area(root: Path, show_all: bool) -> Optional[sf.SettingsArea]:
         template = rules.resolve_template_set(pset)
         if template is None:
             continue
-        for group_id, _tgroup in template.groups.items():
+        for group_id, tgroup in template.groups.items():
             if group_id in seen:
                 continue
             seen.add(group_id)
             symbol = rules.classify(group_id, pset.groups.get(group_id), override_by_id)
             if symbol == "=" and not show_all:
                 continue
-            entries.append(_entry_for_group(symbol, group_id, pset.groups.get(group_id), override_by_id.get(group_id)))
+            fingerprint = _group_fingerprint(tgroup) if symbol in ("~", "-") else None
+            entries.append(_entry_for_group(symbol, group_id, pset.groups.get(group_id),
+                                             override_by_id.get(group_id), fingerprint))
 
     used_ids = seen | set(override_by_id)
     for own in project.own_rules:
@@ -179,12 +223,14 @@ def build_coding_area(root: Path, show_all: bool) -> Optional[sf.SettingsArea]:
         if template is None:
             continue
         group_entries: list[sf.SettingsEntry] = []
-        for group_id, _tgroup in template.groups.items():
+        for group_id, tgroup in template.groups.items():
             seen.add(group_id)
             symbol = rules.classify(group_id, pset.groups.get(group_id), override_by_id)
             if symbol == "=" and not show_all:
                 continue
-            group_entries.append(_entry_for_group(symbol, group_id, pset.groups.get(group_id), override_by_id.get(group_id)))
+            fingerprint = _group_fingerprint(tgroup) if symbol in ("~", "-") else None
+            group_entries.append(_entry_for_group(symbol, group_id, pset.groups.get(group_id),
+                                                   override_by_id.get(group_id), fingerprint))
         if group_entries:
             groups.append(sf.SettingsGroup(label=set_label, entries=group_entries))
 
@@ -380,6 +426,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--strict", action="store_true", help="abort on any finding instead of substituting a placeholder")
     parser.add_argument("--out", metavar="PATH", default=None,
                          help="output path (default: .act-local/export/act-settings-<date>.md|.zip)")
+    parser.add_argument("--profile", action="store_true",
+                         help="write to the Owner's profile (platform config dir) instead of "
+                              "--out/the default location; backs up an existing profile file first")
     return parser
 
 
@@ -398,6 +447,10 @@ def main(argv: list[str]) -> int:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
+
+    if args.profile and args.out:
+        print("settings_export.py: --profile and --out are mutually exclusive", file=sys.stderr)
+        return 2
 
     try:
         root = actlib.repo_root()
@@ -454,23 +507,40 @@ def main(argv: list[str]) -> int:
     redacted.setup_required = sf.setup_required_lines(located)
     text = sf.serialize(redacted)
 
-    # No --out: the machine-local, gitignored .act-local/export/ (Q74b) — never the project root,
-    # so a forgotten export never ends up staged for a commit. --out is used exactly as given.
+    # No --out and no --profile: the machine-local, gitignored .act-local/export/ (Q74b) — never
+    # the project root, so a forgotten export never ends up staged for a commit. --out is used
+    # exactly as given; --profile goes to the Owner's profile instead (Q57d/Q60b).
     ext = "zip" if with_files else "md"
-    out_path = Path(args.out) if args.out else root / ".act-local" / "export" / f"act-settings-{settings.header.date}.{ext}"
+    if args.profile:
+        out_path = profile_dir() / f"settings.{ext}"
+    elif args.out:
+        out_path = Path(args.out)
+    else:
+        out_path = root / ".act-local" / "export" / f"act-settings-{settings.header.date}.{ext}"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # An existing profile is never silently overwritten (§ "Voreinstellungen" in the concept) — a
+    # settings.md/.zip already there is a prior export/import cycle's own state, not scratch output.
+    # --out never gets this treatment: an explicit path is the caller's own choice to overwrite.
+    backup_path: Optional[Path] = None
+    if args.profile and out_path.exists():
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = out_path.with_name(f"{out_path.name}.bak-{stamp}")
+        out_path.replace(backup_path)
 
     if with_files:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("settings.md", text)
             for area_name, contents in file_payload.items():
                 for rel, redacted_text in contents.items():
                     zf.writestr(f"files/{area_name}/{rel}", redacted_text)
     else:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(text, encoding="utf-8")
 
     print(f"settings_export.py: wrote {out_path} — review before sharing ({len(located)} placeholder(s) inserted).")
+    if backup_path is not None:
+        print(f"settings_export.py: existing profile backed up to {backup_path}")
     return 0
 
 

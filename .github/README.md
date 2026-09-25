@@ -12,45 +12,66 @@ drift.
 spread across the repository root; everything now lives under `.act/`, in English, for
 stdlib-only Python 3.9+. The previous generation stays usable for projects already built on it.
 
-## Prerequisites
-
-**Python 3.9+** on the `PATH` (`python3 --version` / `python --version`). It runs `init.py`,
-`update.py`, `doctor.py`, the feedback and logging scripts, and the session-start hook. No
-third-party packages — everything under `.act/scripts/` is standard library only.
-
 ## Getting started
 
-Either clone this repository, or use GitHub's "Use this template" button, then run:
+Clone this repository (or use GitHub's "Use this template" button), open the folder in your AI
+assistant — Claude Code, Codex, GitHub Copilot, Cursor, or any other that reads
+`CLAUDE.md`/`AGENTS.md`, and Gemini CLI, which reads `GEMINI.md` instead — and say what you want.
+It asks two questions and does the rest; no `python` command to type yourself.
+
+**The two ways it offers:**
+
+1. **A new project, right here in this clone.** The connection to the template's own repository is
+   cut, and the project starts on a fresh `main` with no history of its own — the template's
+   branch is removed afterward so nobody merges it into the project by accident. Template updates
+   from then on come only through `act-update`.
+2. **A project somewhere else** — a new folder, or one that already has a project in it. Give the
+   path; an empty or missing folder is set up directly, one that already has content is taken over
+   through the `act-adopt` skill (its docs and AI tooling sighted, proposed, and moved in only
+   after you approve the table once).
+
+### Installing Python
+
+The assistant checks for Python 3.9+ itself (`init.py`, `update.py`, `doctor.py`, the feedback and
+logging scripts, and the session-start hook all need it; nothing else under `.act/scripts/` needs
+a third-party package). If it is missing, it explains installing it and waits:
+
+- **Windows:** https://www.python.org/downloads/ , or `winget install Python.Python.3.12` in a
+  terminal — tick "Add python.exe to PATH" in the installer. Details:
+  https://docs.python.org/3/using/windows.html
+- **macOS:** https://www.python.org/downloads/ , details: https://docs.python.org/3/using/mac.html
+- **Linux/Unix:** the distribution's package manager, or https://www.python.org/downloads/ ,
+  details: https://docs.python.org/3/using/unix.html
+
+### By hand
+
+The commands above run through `.act/skills/act-setup/SKILL.md` — read that file, or run its steps
+yourself:
 
 ```bash
 python .act/scripts/init.py --plan   # show what would happen, change nothing
 python .act/scripts/init.py          # set up the current folder as a project
+python .act/scripts/init.py --target ../my-new-project   # a new, empty folder elsewhere
 ```
 
-To bring the layer into a project that already exists elsewhere, without touching anything it
-already has:
-
-```bash
-python .act/scripts/init.py --target ../my-existing-project
-```
-
-If that project already had its own docs and AI tooling — a previous template, a different one,
-or something it made up on its own — adopt it instead of running the plain init above. This
-checkout has no `.claude/skills/` and no root `AGENTS.md`, so there is no skill to call by name:
-open the checkout in your assistant and have it follow `.act/skills/act-adopt/SKILL.md` for the
-project's path. It sights what is there, proposes an action per source, gets the owner's approval
-once, then moves it into this layout on a branch `act-adopt` (running `init.py` itself once the
-table is approved — running it separately first would only mean redoing that step).
+For a project that already has its own docs and AI tooling — a previous template, a different one,
+or something it made up on its own — adopt it instead of running the plain init above: open the
+checkout in your assistant and have it follow `.act/skills/act-adopt/SKILL.md` for the project's
+path. It sights what is there, proposes an action per source, gets the owner's approval once, then
+moves it into this layout on a branch `act-adopt` (running `init.py` itself once the table is
+approved — running it separately first would only mean redoing that step).
 
 `init` never overwrites a file the project already owns. What it does instead — writing
-`docs/ai/config.md` from a short interview, detaching Git from the template's own history, bridging
-into `CLAUDE.md`/`AGENTS.md`/`.claude/` for the tools in use, thinning unused tool bridges back out,
-retiring the template's own `.github/README.md` (removed outright, never rewritten — the project
-skeleton goes to the root `README.md` only, so GitHub falls back to showing that one) and replacing
-the root `README.md` with that skeleton (only once their content still matches the template's — an
-edit made after cloning is kept, not overwritten), and keeping or deleting the template's own
-`LICENSE` — is ten fixed steps, each printed as it runs. `--non-interactive` skips every prompt and
-logs anything it would otherwise have asked into the project's inbox instead.
+`docs/ai/config.md` from a short interview, cutting Git loose from the template's own history onto
+a fresh `main` with no prior commits (the template's branch removed afterward, so it can never be
+merged into the project by accident), bridging into `CLAUDE.md`/`AGENTS.md`/`.claude/` for the
+tools in use, thinning unused tool bridges back out, retiring the template's own `.github/README.md`
+(removed outright, never rewritten — the project skeleton goes to the root `README.md` only, so
+GitHub falls back to showing that one) and replacing the root `README.md` with that skeleton (only
+once their content still matches the template's — an edit made after cloning is kept, not
+overwritten), and keeping or deleting the template's own `LICENSE` — is ten fixed steps, each
+printed as it runs. `--non-interactive` skips every prompt and logs anything it would otherwise
+have asked into the project's inbox instead.
 
 ## Commands
 
@@ -59,6 +80,7 @@ Once a project is set up, its assistant has a set of skills under `.act/skills/`
 
 | Skill | For |
 | :--- | :--- |
+| `act-setup` | set up this checkout as a project, or dock it onto one that already exists — also runs before any project exists, from the root `CLAUDE.md`/`AGENTS.md` |
 | `act-idea` | take in a feature or change request, lay out options, get a decision, file it |
 | `act-prepare` | prepare a larger block of work so it runs without interruptions |
 | `act-bug` | fix a reported bug — reproduce, localize, a red test before the fix |

@@ -2062,6 +2062,11 @@ def cmd_finish(root: Path, plan: bool) -> int:
         if legacy_readme:
             print(f"[adopt] {prefix}write {legacy_readme} (renamed paths table)")
         print(f"[adopt] {prefix}run doctor.py, write the inbox report")
+        harvest = root / ADOPT_DIR / "harvest.md"
+        if harvest.is_file():
+            print(f"[adopt] {harvest.relative_to(root).as_posix()} has candidates for the "
+                  f"template — ask consent after --finish (feedback.py --target {root} ...), "
+                  f"see SKILL.md step 7.")
         print(f"[adopt] plan only, nothing changed (except {refs_file})")
         return 0
 
@@ -2148,6 +2153,12 @@ def cmd_finish(root: Path, plan: bool) -> int:
         print(f"    {line}")
     print(f"[adopt] references in {REFS_SCOPE}: {refs_summary(refs)} — full list: {refs_file}")
     print(f"[adopt] report: {report.relative_to(root).as_posix()}")
+    harvest = root / ADOPT_DIR / "harvest.md"
+    if harvest.is_file():
+        # B124/Q26 b: step 6 wrote candidates for the template while reading the old project; the
+        # consent question (feedback.py --target) is asked now, not before — see SKILL.md step 7.
+        print(f"[adopt] {harvest.relative_to(root).as_posix()} has candidates for the template — "
+              f"ask consent now (feedback.py --target {root} ...), see SKILL.md step 7.")
     print("[adopt] accounting after --finish:")
     print("\n".join(acc))
     return 0 if ok else 1

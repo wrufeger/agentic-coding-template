@@ -55,6 +55,12 @@
 #              below), reshaped for this build's actual config keys.
 #
 # Usage:
+#   --target <dir>
+#       Every command below acts on the project at <dir> instead of the checkout this script is
+#       run from — its outbox, its state, its docs/ai/config.md, its .act-lock.json. Needed for
+#       act-adopt (B124), which runs from the template checkout against a project being adopted at
+#       <dir>; without it, every command below acts on the checkout's own project as found by
+#       actlib.repo_root() (walking upward from the current working directory).
 #   python .act/scripts/feedback.py --status
 #       Consent, target URL, how many entries are waiting, when last sent. Writes nothing.
 #   python .act/scripts/feedback.py --enable [--mode confirm|automatic|manual] [--repo-url <url>]
@@ -96,6 +102,10 @@
 #   python .act/scripts/feedback.py --clear
 #       Discards every waiting entry without sending. What was already sent stays in its protocol
 #       — that is the proof and is never cleared.
+#   python .act/scripts/feedback.py --target <dir> --discard-harvest
+#       Removes <dir>/.act-local/adopt/harvest.md (act-adopt step 6's local list of candidates for
+#       the template) without adding anything to the outbox — the B124/Q27 b path for
+#       docs/ai/config.md's `feedback: off`. No-op (exit 0) if the file is not there.
 #
 # Output format: plain text; a payload is shown as an indented JSON block. Exit 0 = ok, 1 =
 #   payload rejected (not sent), 2 = aborted (no consent, missing argument, transport error).
@@ -218,6 +228,50 @@ def _set_config_value(root: Path, key: str, value: str) -> bool:
     except OSError:
         return False
     return True
+
+
+def _read_config_at(root: Path) -> dict[str, str]:
+    """Same table-parsing as actlib.read_config(), for an explicit `root` instead of
+    actlib.repo_root() (which always resolves from the current working directory). Needed for
+    --target (B124: act-adopt runs this script from the template checkout against a project being
+    adopted elsewhere) — actlib.py itself is out of scope for that change, so its private helpers
+    are reused here rather than duplicating their logic; keep this in lockstep with
+    actlib.read_config() if that one changes."""
+    path = root / "docs" / "ai" / "config.md"
+    config: dict[str, str] = {}
+    if not path.is_file():
+        return config
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return config
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            continue
+        inner = stripped[1:-1]
+        cells = [cell.strip() for cell in inner.split("|")]
+        if len(cells) < 2:
+            continue
+        key, value = cells[0].strip("`").strip(), cells[1]
+        if not key:
+            continue
+        if actlib._is_separator_cell(key) and actlib._is_separator_cell(value):
+            continue
+        if actlib._is_header_row(lines, index):
+            continue
+        config[key] = value
+    return config
+
+
+def _read_lock_at(root: Path) -> dict:
+    """Same as actlib.read_lock(), for an explicit `root` — see _read_config_at()'s docstring."""
+    data = actlib._read_json(root / ".act-lock.json")
+    if data is None:
+        return actlib._default_lock()
+    result = actlib._default_lock()
+    result.update(data)
+    return result
 
 
 def _mode(config: dict[str, str]) -> str:
@@ -490,7 +544,7 @@ def _ensure_project_id(root: Path, config: dict[str, str], state: dict) -> dict:
 def _build_payload(root: Path, config: dict[str, str]) -> dict:
     scope = _scope(config)
     state = _ensure_project_id(root, config, _read_state(root))
-    lock = actlib.read_lock()
+    lock = _read_lock_at(root)
     template = lock.get("template") or {}
     payload: dict = {
         "schema": SCHEMA_BATCH,
@@ -640,7 +694,7 @@ def _write_journal_entry(root: Path, title: str) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_status(root: Path) -> int:
-    config = actlib.read_config()
+    config = _read_config_at(root)
     mode, cadence = _mode(config), _cadence(config)
     state = _read_state(root)
     print(f"feedback:   {mode}   (cadence: {cadence}, from docs/ai/config.md)")
@@ -688,7 +742,7 @@ def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str]) -> int:
             return 2
         state["repo_url"] = repo_url
     _write_state(root, state)
-    print(f"docs/ai/config.md: feedback = {mode}   (cadence: {_cadence(actlib.read_config())})")
+    print(f"docs/ai/config.md: feedback = {mode}   (cadence: {_cadence(_read_config_at(root))})")
     if mode != "off":
         print(f"target: {_endpoint()} - protocol of every send under "
               f"{_protocol_dir(root).relative_to(root).as_posix()}/ (local, kept out of git)")
@@ -753,7 +807,7 @@ def cmd_add(root: Path, kind: Optional[str], title: Optional[str], text: Optiona
         print("template bug — bypassing the cadence gate:")
         cmd_send(root, force=False, yes=yes, bypass_cadence=True)
         return 0
-    config = actlib.read_config()
+    config = _read_config_at(root)
     if _mode(config) == "automatic" and _cadence(config) == "immediate":
         print("cadence 'immediate': triggering a send now.")
         if cmd_send(root, force=False, yes=yes) != 0:
@@ -762,12 +816,12 @@ def cmd_add(root: Path, kind: Optional[str], title: Optional[str], text: Optiona
 
 
 def cmd_plan(root: Path) -> int:
-    config = actlib.read_config()
+    config = _read_config_at(root)
     payload = _build_payload(root, config)
     endpoint = _endpoint()
     _show(payload, endpoint)
     print("")
-    template_repo = _template_repo(actlib.read_lock())
+    template_repo = _template_repo(_read_lock_at(root))
     problems = _check_payload(payload, endpoint, template_repo=template_repo)
     if problems:
         print("rejected - this would NOT be sent:")
@@ -819,7 +873,7 @@ def _shrink_chunk(chunk: list, envelope: dict) -> list[list]:
 
 
 def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -> int:
-    config = actlib.read_config()
+    config = _read_config_at(root)
     mode, cadence = _mode(config), _cadence(config)
     if mode == "off":
         print("aborted: feedback is off (docs/ai/config.md).", file=sys.stderr)
@@ -842,7 +896,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
             return 0
     payload = _build_payload(root, config)
     endpoint = _endpoint()
-    template_repo = _template_repo(actlib.read_lock())
+    template_repo = _template_repo(_read_lock_at(root))
     problems = _check_payload(payload, endpoint, template_repo=template_repo)
     if problems:
         print("rejected - not sent:", file=sys.stderr)
@@ -910,10 +964,10 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
               "not a derived project. --direct only sends from a derived project.", file=sys.stderr)
         return 2
 
-    lock = actlib.read_lock()
+    lock = _read_lock_at(root)
     endpoint = _endpoint()
     template_repo = _template_repo(lock)
-    config = actlib.read_config()
+    config = _read_config_at(root)
     mode = _mode(config)
     payload: dict = {"schema": SCHEMA_DIRECT, "origin": ORIGIN, "kind": "direct",
                       "date": time.strftime("%Y-%m-%d"), "text": text}
@@ -1032,13 +1086,34 @@ def cmd_clear(root: Path) -> int:
     return 0
 
 
+HARVEST_FILE_REL = ".act-local/adopt/harvest.md"
+
+
+def cmd_discard_harvest(root: Path) -> int:
+    """B124/Q27 b: with docs/ai/config.md's `feedback: off`, act-adopt's harvest.md (step 6's
+    local list of candidates for the template, written while reading the old project) is deleted
+    rather than turned into outbox entries — nothing of it survives. A no-op, not an error, when
+    there is nothing to discard (an adoption that found no candidates, or a rerun)."""
+    path = root / HARVEST_FILE_REL
+    if not path.is_file():
+        print(f"nothing to discard: {HARVEST_FILE_REL} does not exist.")
+        return 0
+    try:
+        path.unlink()
+    except OSError as exc:
+        print(f"error: could not remove {HARVEST_FILE_REL}: {exc}", file=sys.stderr)
+        return 2
+    print(f"discarded: {HARVEST_FILE_REL} (feedback is off — nothing of it is kept or sent).")
+    return 0
+
+
 def due_status(root: Path) -> "tuple[bool, str]":
     """(due, detail) -- the same due/no-due decision and detail text cmd_due() prints below,
     factored out (review 2026-09-23) so a caller that only wants the boolean (checks/tips.py's
     is_feedback_due(), folded into the SessionStart status line) does not have to capture and
     parse cmd_due()'s stdout. Never raises; side effect unchanged from before the split: an
     adaptive cadence's learning marker still advances exactly when due comes back True."""
-    config = actlib.read_config()
+    config = _read_config_at(root)
     mode, cadence = _mode(config), _cadence(config)
     state = _read_state(root)
     last_sent = state.get("last_sent") or ""
@@ -1109,6 +1184,10 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--postpone", metavar="DAYS", type=int, default=None,
                         help="pause the due reminder for this many days and count it as a postponement")
     group.add_argument("--clear", action="store_true", help="discard every waiting entry, send nothing")
+    group.add_argument("--discard-harvest", action="store_true",
+                        help="remove --target's .act-local/adopt/harvest.md, add nothing to the outbox")
+    parser.add_argument("--target", metavar="DIR", default=None,
+                         help="act on the project at DIR instead of the current checkout (act-adopt, B124)")
     parser.add_argument("--kind", choices=KINDS, default=None, help="with --add")
     parser.add_argument("--title", default=None, help="with --add: one line")
     parser.add_argument("--text", default=None, help="with --add: two to six sentences")
@@ -1125,8 +1204,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
-    root = actlib.repo_root()
+    if args.target:
+        root = Path(args.target).expanduser().resolve()
+        if not root.is_dir():
+            print(f"feedback.py: target is not a directory: {root}", file=sys.stderr)
+            return 2
+    else:
+        root = actlib.repo_root()
 
+    if args.discard_harvest:
+        return cmd_discard_harvest(root)
     if args.status:
         return cmd_status(root)
     if args.enable:

@@ -275,6 +275,19 @@ without a kept id gets a new id now (`solo`) or none yet (`team`).
 
 ## 6. Fill the content — one worker per target, never "all the docs at once"
 
+**Harvest for the template, alongside reading (`B124`).** Every old source in this step is read
+anyway — while reading it, judge each rule, skill, doc/form convention or code convention against
+one question: **does this help someone who will never see this project?** (`Q25` b+c — the scope
+reaches rule files, skills, and doc/form/code conventions alike; a code convention need not become
+a `.act/coding/` bundle of its own, project directory layouts differ too much for that, but a
+transferable idea from one is still worth a line.) A hit gets one line in
+`<dir>/.act-local/adopt/harvest.md` (create it on the first hit): source as `<path>:<line>`, what
+it is, why it would help a stranger — the wording never copied verbatim from the old project, no
+project name, no code, no numbers, same bar as `.act/rules/topics/feedback.md`'s "Privacy check"
+and its "What a good entry looks like" table. This file is local only (`.act-local/` is
+gitignored) and judgment only — nothing here is sent yet; step 7 asks consent and only then turns
+lines into outbox entries or discards them.
+
 **Where to read.** The old content of a row that `--apply` moved is no longer at its `path` (at a
 place `init.py` writes itself, the file there is now the template's version): `state.json`'s
 `moved` map says where it is (`docs/ai/work/archive/legacy/<old path>`, byte-identical, same line
@@ -467,6 +480,29 @@ report lists under "Remove it by hand, or check": the orchestrator settles them 
 before committing and edits `settings.json` in place (it goes with group 2); `settings.local.json`
 is the owner's to clean. A script that should have stayed needed `keep` in step 2 — after
 `--finish` it is gone with its row. Afterwards `doctor.py --target <dir>` reports 0 findings.
+
+**Ask consent for the harvest now, not before (`B124`, `Q26` b).** `--finish --plan` and `--finish`
+both name `<dir>/.act-local/adopt/harvest.md` when step 6 found anything. Reading `feedback` from
+`<dir>/docs/ai/config.md` decides what happens to it — every command below takes `--target <dir>`
+so it acts on the adopted project, not on this checkout:
+
+- `off` (`Q27` b): nothing is asked, nothing is kept — `python .act/scripts/feedback.py --target
+  <dir> --discard-harvest` removes the file; mention once, in the closing summary, that candidates
+  for the template were found but discarded (feedback is off).
+- `manual`: turn every harvest line into an entry (`python .act/scripts/feedback.py --target <dir>
+  --add --kind <rule|script|skill|workflow|docs|bug|mcp|link> --title "<one line>" --text
+  "<2-6 sentences>"`, one call per line) — they wait in the outbox, nothing is sent; the owner
+  sends later via `/act-feedback`.
+- `confirm`: same `--add` calls, then show the owner the assembled payload
+  (`feedback.py --target <dir> --plan`) and ask yes/no; on yes, `feedback.py --target <dir> --send
+  --yes`.
+- `automatic`: same `--add` calls; each one sends on its own when `feedback-cadence` is
+  `immediate` (`.act/rules/topics/feedback.md`), otherwise it waits in the outbox for the next
+  scheduled send — no extra `--send` call needed here.
+
+Once the harvest is handled (discarded, or every line turned into an entry), delete
+`harvest.md` if it is still there (`--add` does not remove it): it has done its job and is not
+itself part of the entry system.
 
 ## 8. Commit — the orchestrator, by pathspec, on `act-adopt`
 

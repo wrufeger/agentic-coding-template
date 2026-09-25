@@ -7,6 +7,10 @@ rules, coding rule sets, a session dispatcher, and the scripts that keep them in
 **Status: rebuild in progress.** This branch (`next`) carries the new layer under `.act/` only.
 The previous generation of this template lives on `main` and stays usable for existing projects.
 
+**Getting started, in short:** clone this, open the folder in your AI assistant, and say what you
+want — it checks for Python, asks whether the project goes right here or in another folder, and
+does the rest (`.act/skills/act-setup/SKILL.md`; commands below are the by-hand path).
+
 This file is the template's own — `init` (step 8) replaces it with a short project skeleton once a
 project is set up from here, recognized by the `<!-- act:template-readme -->` marker on its first
 line and by its content still matching the template's own version at the commit the project was
