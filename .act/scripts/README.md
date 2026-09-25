@@ -10,12 +10,14 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout against a project that… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
+| `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
@@ -33,6 +35,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 
 - `actlib.py` — Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project…
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
+- `frontmatter.py` — One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one…
 
@@ -170,6 +173,25 @@ options:
   --target DIR  the project (already set up by adopt.py --apply)
   --from JSON   the batch file (UTF-8 JSON)
   --plan        check and show what would be written, write nothing
+```
+
+## `adopt_passages.py`
+
+Call: direct (used by skill `act-adopt` (stage 6))
+
+```text
+usage: adopt_passages.py [-h] --target DIR --into {coding,readme} --from FILE [--plan]
+
+Insert an adopted project's own passages into docs/project/coding_rules.md or docs/README.md,
+heading levels shifted, target line endings preserved.
+
+options:
+  -h, --help            show this help message and exit
+  --target DIR          the project (already set up by adopt.py --apply)
+  --into {coding,readme}
+                        which file to insert into
+  --from FILE           UTF-8 file holding the passage(s), cut byte-identical from the old source
+  --plan                check and show what would change, write nothing
 ```
 
 ## `adopt_scan.py`

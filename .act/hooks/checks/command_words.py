@@ -28,7 +28,10 @@
 # mode, with _shell_tokens as the whole-command fallback for anything that does not tokenize line
 # by line — an unclosed quote spanning lines, `$'...'` ANSI-C quoting) rather than re-deriving
 # quoting/heredoc handling a second time; only the *grouping* into simple commands and the
-# *recursion* into a nested interpreter are this module's own.
+# *recursion* into a nested interpreter are this module's own. Backtick spans are found the same
+# way shell_targets._scan_tokens finds them — a regex over each simple command's dequoted words
+# joined back together (shell_targets.py's "Known limits" name what that cannot tell apart,
+# B112.1).
 #
 # Contract: `_command_word_lists(command)` returns one (words, separator) pair per simple command
 # found at any recursion depth — words is that command's own argv (its own name included as
@@ -77,6 +80,7 @@ from .shell_targets import (
     _RESERVED_PREFIXES,
     _WRAPPER_ARG_RE,
     _WRAPPER_COMMANDS,
+    _WRAPPER_VALUE_FLAGS,
     _command_name,
     _line_mode_tokens,
     _shell_tokens,
@@ -103,9 +107,12 @@ _SEGMENT_SPLIT_RE_FALLBACK = _re.compile(r"&&|\|\||[;&|()\n]")
 
 def _strip_command_prefix(words: list[str]) -> list[str]:
     """Drop leading VAR=value assignments and known wrapper commands (sudo, env, exec, time,
-    xargs, ...) plus their own flags, mirroring shell_targets._simple_command_targets's own
-    prefix-skipping loop (not itself exported there, since it is entangled with write-target/cd
-    bookkeeping this module does not need)."""
+    xargs, ...) plus their own flags — including a flag's separate value word (`env -u VAR`,
+    `env -C dir`, `timeout -s KILL`, `sudo -u name`; shell_targets._WRAPPER_VALUE_FLAGS, B112.2,
+    without which that value was read as the command's own name and the real command behind it
+    went unseen) — mirroring shell_targets._simple_command_targets's own prefix-skipping loop (not
+    itself exported there, since it is entangled with write-target/cd bookkeeping this module does
+    not need)."""
     index = 0
     while index < len(words):
         word = words[index]
@@ -114,11 +121,16 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
         elif word in _RESERVED_PREFIXES:
             index += 1
         elif _command_name(word) in _WRAPPER_COMMANDS:
+            wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(_command_name(word), frozenset())
             index += 1
-            while index < len(words) and (
-                _WRAPPER_ARG_RE.match(words[index]) or _ASSIGNMENT_RE.match(words[index])
-            ):
-                index += 1
+            while index < len(words):
+                arg = words[index]
+                if arg in wrapper_value_flags:
+                    index += 2 if index + 1 < len(words) else 1
+                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg):
+                    index += 1
+                else:
+                    break
         else:
             break
     return words[index:]

@@ -37,10 +37,45 @@
 #   - an fd number glued to a redirection (`2>`) cannot be told apart from a separate word (`echo
 #     2 > f`) once tokenized, so a bare number right before a redirection is dropped as fd;
 #   - only the directory changes listed in _scan_tokens are followed; anything else there makes
-#     the base unknown rather than guessed.
+#     the base unknown rather than guessed;
+#   - not recognized as writers at all (B112.3): `patch`, a `tar`/`unzip` extraction into the
+#     implicit current directory (no explicit `-C`/`-d`), `find -delete` with no leading path
+#     operand, `git apply`/`stash`/`reset --hard`/`clean`. `tar -x -C <dir>`, `unzip -d <dir>` and
+#     `find <path> ... -delete` *are* recognized (see _simple_command_targets) since their target
+#     is then determinable the same cheap way `cd`/`-C` already is; the rest is genuinely open-
+#     ended (`patch`'s target is named inside the diff text itself, `git apply`'s likewise) and
+#     is only ever caught by the raw-redirect fallback if it happens to also redirect;
+#   - `git checkout <ref> -- .act/x` (or `git restore --source=<ref> -- .act/x`) is recognized as a
+#     write to `.act/x` (both are in _GIT_WRITES_WORKER_SCOPE, and check 1's own
+#     _GIT_WRITES_TEMPLATE_GUARD leaves them out on purpose so the orchestrator can restore a
+#     template file this way) but not as what it actually does: replace `.act/x` with whatever
+#     content `<ref>` happens to hold, including content a worker itself committed earlier in the
+#     same session — a restore, not a rewrite from scratch. Accepted as a residual risk of trusting
+#     the orchestrator's own git history rather than a gap in target detection;
+#   - a line opening a heredoc (`<<`/`<<-`) that also contains `[`, `${`, `$[` or a backtick opens
+#     no heredoc at all here (_NO_HEREDOC_MARKERS, since 2026-09-23) — safe on the side that matters
+#     (a real heredoc body is never mistakenly skipped as something else), but its actual body lines
+#     are then scanned as ordinary commands instead of being skipped, which can raise a spurious
+#     target from body text that was never going to run as a command (over-scanning, not a missed
+#     write);
+#   - backticks are found by a regex over the already dequoted words (_scan_tokens,
+#     _BACKTICK_SPAN_RE), with no quote context left by then (B112.1, open: a pre-tokenizing mask
+#     of every span was tried on 2026-09-25 and taken out again the same day after failing review
+#     twice — it lost `command_words.py`'s recursion, then mistook an apostrophe inside double
+#     quotes for a single quote, opening more bypasses than it closed). Three consequences: a span
+#     whose own text opens a quote leaks that quote into the rest of the command
+#     (`` echo `echo '` > other/f `echo '` `` — bash runs the `>`, this scanner reads it as quoted
+#     text: a known bypass); a backtick pair inside a single-quoted string (a commit message
+#     `git commit -m 'note `rm x`'`) is still recursed into as if bash ran it (a false block when
+#     that text names a protected path or a blocked command); and an unquoted span containing
+#     whitespace is split into several words, so a redirection target or operand that starts one is
+#     seen only as its first fragment (`echo x > \`echo .act/x\`` yields the target "`echo" — dynamic,
+#     so check 1c denies it, but a caller's text-only fallback such as check 1's finds no `.act/`
+#     in it; the span's own content is still scanned for writes of its own).
 
 from __future__ import annotations
 
+import bisect
 import io
 import re
 import shlex
@@ -54,15 +89,15 @@ __all__ = [
     "_HASH_PLACEHOLDER", "_RAW_REDIRECT_RE", "_BACKTICK_SPAN_RE", "_HEREDOC_OPEN_RE",
     "_MAX_SCAN_DEPTH", "_GITBASH_DRIVE_RE", "_IGNORABLE_TARGETS", "_DYNAMIC_TARGET_RE",
     "_SIMPLE_DIR_RE", "_ASSIGNMENT_RE", "_RESERVED_PREFIXES", "_WRAPPER_COMMANDS",
-    "_WRAPPER_ARG_RE", "_SHELL_NAMES", "_ALL_OPERAND_WRITERS", "_LAST_OPERAND_WRITERS",
-    "_VALUE_FLAGS", "_SED_INPLACE_FLAG_RE", "_GIT_GLOBAL_VALUE_FLAGS",
+    "_WRAPPER_ARG_RE", "_WRAPPER_VALUE_FLAGS", "_SHELL_NAMES", "_ALL_OPERAND_WRITERS",
+    "_LAST_OPERAND_WRITERS", "_VALUE_FLAGS", "_SED_INPLACE_FLAG_RE", "_GIT_GLOBAL_VALUE_FLAGS",
     "_GIT_WRITES_TEMPLATE_GUARD", "_GIT_WRITES_WORKER_SCOPE", "_Token", "_Target", "_Bases",
     "_NO_HEREDOC_MARKERS", "_to_native_path", "_is_ignorable_write_target", "_is_dynamic_target",
     "_is_absolute_target", "_NewlineKeepingStream", "_ShellLexer", "_split_operator_run",
-    "_shell_tokens", "_heredoc_delimiters", "_body_substitutions", "_line_mode_tokens",
-    "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases", "_pairs", "_git_targets",
-    "_download_targets", "_simple_command_targets", "_scan_tokens", "_scan_command",
-    "_bash_write_targets",
+    "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
+    "_line_mode_tokens", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
+    "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
+    "_scan_command", "_bash_write_targets",
 ]
 
 _SHELL_OPERATOR_CHARS = "();<>|&"
@@ -117,6 +152,30 @@ _WRAPPER_COMMANDS = frozenset(
 )
 # A wrapper's own option or number/duration (`nice -n 5`, `timeout 10s`), skipped before its command.
 _WRAPPER_ARG_RE = re.compile(r"^(?:-.*|\d+(?:\.\d+)?[smhd]?)$")
+# A wrapper's own option that takes a separate following word as its value (`env -u VAR rm`,
+# `timeout -s KILL 5 rm`, `sudo -u name rm`) — that value word must be skipped too (B112.2), not
+# mistaken for the wrapped command itself: on its own it matches neither _WRAPPER_ARG_RE (it does
+# not start with "-" and is not a bare number/duration) nor an assignment, so the skip loop in
+# _simple_command_targets used to stop right there and read the option's value as if it were the
+# command name, hiding the real one (and its write targets) after it. `--flag=value` needs no entry
+# here — it is already one word, already matched by _WRAPPER_ARG_RE.
+_WRAPPER_VALUE_FLAGS = {
+    "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
+    "sudo": frozenset({"-u", "--user", "-g", "--group", "-p", "--prompt", "-h", "--host",
+                        "-r", "--role", "-t", "--type"}),
+    "nice": frozenset({"-n", "--adjustment"}),
+    "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
+    # GNU xargs's lowercase `-i`/`-l` take their argument only glued on (`-ifoo`, `-l5`), never as a
+    # separate following word — unlike `-I`/`-L`, which do (`-I {}`, `-L 5`); listing `-i`/`-l` here
+    # too used to make the loop below eat the next *real* argument as if it were their value
+    # (`xargs -i rm .act/rules/a.md` hid `rm` as `-i`'s value, target invisible; T76 review,
+    # 2026-09-25) — the general "starts with -" skip already handles the glued form correctly on its
+    # own, so they are deliberately left out of this set.
+    "xargs": frozenset({"-a", "--arg-file", "-d", "--delimiter", "-E", "-I",
+                         "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs",
+                         "-s", "--max-chars"}),
+}
 _SHELL_NAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 # Every non-option operand is a target (mv: the sources vanish, so they count too).
 _ALL_OPERAND_WRITERS = frozenset({"tee", "touch", "mkdir", "rm", "rmdir", "unlink", "mv", "truncate", "shred"})
@@ -284,12 +343,35 @@ def _body_substitutions(body_lines: list[str]) -> list[str]:
     return snippets
 
 
+def _heredoc_terminator(line_positions: dict[str, list[int]], candidates: set[str], start: int) -> Optional[int]:
+    """The smallest line index >= `start` whose stripped text is one of `candidates`, read from
+    `line_positions` (every line's stripped text mapped to its own sorted occurrence indices,
+    built once per command by _line_mode_tokens) via a binary search per candidate rather than
+    rescanning the remaining lines from `start` to the end (B112.4: that rescan made an unterminated
+    heredoc on every line of a large command quadratic overall — one heredoc per line, each one
+    scanning to the end again, 1.4s for 10,000 lines; a lookup here is O(log n) per candidate
+    instead)."""
+    best: Optional[int] = None
+    for candidate in candidates:
+        positions = line_positions.get(candidate)
+        if not positions:
+            continue
+        idx = bisect.bisect_left(positions, start)
+        if idx < len(positions) and (best is None or positions[idx] < best):
+            best = positions[idx]
+    return best
+
+
 def _line_mode_tokens(command: str) -> list[_Token]:
     """Tokenize line by line with heredoc bodies skipped (step 2 of the section comment). A body is
-    skipped only up to a terminator line that exists; without one, nothing is skipped, so the rest
-    is scanned as commands. The command substitutions of an expanded body are kept (as commands of
-    their own after the heredoc line). Raises ValueError if any line does not tokenize on its own."""
+    skipped only up to a terminator line that exists (found via _heredoc_terminator, B112.4);
+    without one, nothing is skipped, so the rest is scanned as commands. The command substitutions
+    of an expanded body are kept (as commands of their own after the heredoc line). Raises
+    ValueError if any line does not tokenize on its own."""
     lines = command.split("\n")
+    line_positions: dict[str, list[int]] = {}
+    for position, raw_line in enumerate(lines):
+        line_positions.setdefault(raw_line.strip(), []).append(position)
     tokens: list[_Token] = []
     index = 0
     while index < len(lines):
@@ -299,7 +381,7 @@ def _line_mode_tokens(command: str) -> list[_Token]:
         tokens.append(("\n", True))
         index += 1
         for candidates, expands in _heredoc_delimiters(line_tokens, line):
-            end = next((k for k in range(index, len(lines)) if lines[k].strip() in candidates), None)
+            end = _heredoc_terminator(line_positions, candidates, index)
             if end is None:
                 break
             if expands:
@@ -439,6 +521,7 @@ def _simple_command_targets(
     prefix like `if`/`{`/`env` made it conditional)."""
     index = 0
     prefixed = False
+    bases_unknown = False
     while index < len(words):
         word = words[index]
         if _ASSIGNMENT_RE.match(word):
@@ -447,12 +530,34 @@ def _simple_command_targets(
             prefixed = True
             index += 1
         elif _command_name(word) in _WRAPPER_COMMANDS:
+            wrapper_name = _command_name(word)
+            wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper_name, frozenset())
             prefixed = True
             index += 1
-            while index < len(words) and (_WRAPPER_ARG_RE.match(words[index]) or _ASSIGNMENT_RE.match(words[index])):
-                index += 1
+            while index < len(words):
+                arg = words[index]
+                if wrapper_name == "env" and (arg.startswith("--chdir=") or arg in ("-C", "--chdir")):
+                    # `env -C dir`/`env --chdir=dir cmd` runs cmd in `dir`, not `bases` — the exact
+                    # directory is knowable in principle, but resolving a wrapper's own change of
+                    # directory the way `cd`/`git -C` already do would need `dir` threaded back into
+                    # `_scan_tokens`'s own bases tracking, which never sees inside a simple command's
+                    # own words; simplest correct answer here is "unknown", same as a `cd` this
+                    # module already cannot resolve (T76 review, 2026-09-25).
+                    bases_unknown = True
+                    index += 1 if arg.startswith("--chdir=") else (2 if index + 1 < len(words) else 1)
+                elif arg in wrapper_value_flags:
+                    # B112.2: `env -u VAR`, `timeout -s KILL`, `sudo -u name` — the value is its own
+                    # word, matching neither _WRAPPER_ARG_RE nor an assignment, so it must be
+                    # skipped explicitly too or it gets read as the wrapped command's own name.
+                    index += 2 if index + 1 < len(words) else 1
+                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg):
+                    index += 1
+                else:
+                    break
         else:
             break
+    if bases_unknown:
+        bases = frozenset({None})
     if index >= len(words):
         return [], None
     name = _command_name(words[index])
@@ -491,6 +596,34 @@ def _simple_command_targets(
             raw_targets = operands if has_script else operands[1:]
     elif name == "dd":
         raw_targets = [arg[3:] for arg in args if arg.startswith("of=")]
+    elif name == "tar":
+        # B112.3: only the explicit-directory case is worth the cheap detection here — `tar -x`
+        # into the implicit current directory is still invisible (see the module's Known limits).
+        extracting = any(
+            arg in ("-x", "--extract", "--get")
+            or (arg.startswith("-") and not arg.startswith("--") and "x" in arg[1:])
+            for arg in args
+        )
+        if extracting:
+            _, values = _operands(args, frozenset({"-C", "--directory"}))
+            directories = values.get("-C", []) + values.get("--directory", [])
+            raw_targets = [directory.rstrip("/") + "/*" for directory in directories]
+    elif name == "unzip":
+        # Same tradeoff as tar above: only `-d <dir>` is recognized; extraction into the implicit
+        # current directory is not (Known limits). -l/-t/-v list/test the archive without writing.
+        if not any(arg in ("-l", "-t", "-v") for arg in args):
+            _, values = _operands(args, frozenset({"-d"}))
+            raw_targets = [directory.rstrip("/") + "/*" for directory in values.get("-d", [])]
+    elif name == "find" and "-delete" in args:
+        # Only the leading path operand(s) — find's own operand/expression split is otherwise too
+        # ambiguous to parse generically here; no leading operand at all (bare "find -delete",
+        # implicit ".") stays undetected (Known limits).
+        roots = []
+        for arg in args:
+            if arg.startswith("-"):
+                break
+            roots.append(arg)
+        raw_targets = [root.rstrip("/") + "/*" for root in roots]
     elif name in ("curl", "wget"):
         raw_targets = _download_targets(name, args)
     elif name == "git":

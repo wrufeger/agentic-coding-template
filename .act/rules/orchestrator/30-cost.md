@@ -26,9 +26,10 @@ patterns relative to the project root, `/` as the separator, `*` crossing `/` fr
 already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
 shorthand, `dir/` (read the same way). A relative pattern (`src/**`) is the usual case; an absolute
 path inside the project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been
-written relative — one outside the project root is refused. `Write scope: none` means read-only, no
-writes at all. Leaving the line out means no restriction beyond the template's own `.act/`
-write-guard.
+written relative — one outside the project root is refused, unless it lies in a directory listed in
+`permissions.additionalDirectories` (a sibling checkout: `../other/.act/**` or its absolute path).
+`Write scope: none` means read-only, no writes at all. Leaving the line out means no restriction
+beyond the template's own `.act/` write-guard.
 `worker-write-scope` (`docs/ai/config.md` § Checks) checks it mechanically, the same way the cap is
 checked mechanically rather than from memory — for a Bash command this is best-effort (it catches
 redirection and the common write commands, not a full shell parse), not a complete guarantee:

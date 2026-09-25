@@ -123,6 +123,7 @@ from typing import Optional
 
 import actlib
 import doctor
+import frontmatter
 import init
 import rules
 import settings_format as sf
@@ -1184,60 +1185,28 @@ _SKILL_RISKY_KEYS = ("allowed-tools", "hooks")
 _HINT_KEYS = ("tools", "model")
 
 
-def _strip_quotes(raw: str) -> str:
-    """Trim whitespace and, if the whole (trimmed) string is wrapped in one matching pair of
-    quotes, remove them. Used for both a frontmatter key (before lowercasing it) and the "name"
-    value below, so a quoted key ('"hooks":') or a quoted value (name: "builder") cannot dodge the
-    checks that follow by hiding behind a quote mark."""
-    value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        value = value[1:-1].strip()
-    return value
+def _strict_frontmatter(text: str) -> tuple[dict[str, str], bool, Optional[str]]:
+    """A frontmatter reader strict enough for the risky-key/name checks in plan_units() to trust,
+    built on the shared frontmatter.parse_frontmatter() (`B111.1` -- this used to be its own
+    hand-rolled parser; tiers.split_frontmatter() now shares the same parsing code, see that
+    module's docstring). A BOM before the opening '---', CRLF line endings, a quoted key, whitespace
+    before the colon, or a closing '---' with no trailing newline at EOF are all still-valid
+    frontmatter here (so the fields inside are still checked) -- this only gives up, signalling the
+    caller to reject the whole unit, when a '---' block is opened but never closes cleanly, or a
+    line inside it is neither 'key: value', quoted, a block-scalar/continuation line, nor blank.
 
-
-def _strict_frontmatter(text: str) -> tuple[dict[str, str], bool]:
-    """A frontmatter reader strict enough for the risky-key/name checks in plan_units() to trust.
-    tiers.split_frontmatter() is built only for the template's own single-line bridge files (see
-    that module's docstring) and is too permissive to gate an import on: a BOM before the opening
-    '---', CRLF line endings, a quoted key, whitespace before the colon, or a closing '---' with no
-    trailing newline at EOF all make it silently see no frontmatter at all -- exactly the shape a
-    bundled file would need to hide a risky key or a name-shadow attempt from plan_units().
-    This function instead treats each of those as still-valid frontmatter (so the fields inside are
-    still checked) and only gives up -- signalling the caller to reject the whole unit -- when a
-    '---' block is opened but never closes cleanly, or a line inside it is neither 'key: value', an
-    indented continuation/list line, nor blank.
-
-    Returns (fields, True) on success, with every key quote-stripped and lowercased (callers must
-    compare against lowercased key names too) and the "name" value quote-stripped as well. Returns
-    ({}, True) -- same as tiers.split_frontmatter()'s fallback -- when the file has no frontmatter
-    block at all; that is not an error, an agent without frontmatter is allowed (docstring of
-    plan_units() below). Returns ({}, False) when a frontmatter block was opened but could not be
-    parsed with confidence."""
-    body = text.lstrip("﻿")
-    lines = body.splitlines()
-    start = 0
-    while start < len(lines) and lines[start].strip() == "":
-        start += 1
-    if start >= len(lines) or lines[start].strip() != "---":
-        return {}, True
-    fields: dict[str, str] = {}
-    i = start + 1
-    while i < len(lines):
-        line = lines[i]
-        if line.strip() == "---":
-            return fields, True
-        if line.strip() == "" or line[:1] in (" ", "\t"):
-            i += 1
-            continue
-        if ":" not in line:
-            return {}, False
-        raw_key, _, raw_value = line.partition(":")
-        key = _strip_quotes(raw_key).lower()
-        if not key:
-            return {}, False
-        fields[key] = _strip_quotes(raw_value)
-        i += 1
-    return {}, False  # opened with '---' but EOF arrived before a closing '---'
+    Returns (fields, True, None) on success, with every key lowercased (callers must compare
+    against lowercased key names too; frontmatter.parse_frontmatter() already quote-strips both key
+    and value). Returns ({}, True, None) -- same as tiers.split_frontmatter()'s fallback -- when the
+    file has no frontmatter block at all; that is not an error, an agent without frontmatter is
+    allowed (docstring of plan_units() below). Returns ({}, False, error) when a frontmatter block
+    was opened but could not be parsed with confidence -- `error` is
+    frontmatter.ParseResult.error's line/value detail, for the caller to fold into its own
+    rejection message."""
+    result = frontmatter.parse_frontmatter(text)
+    if not result.ok:
+        return {}, False, result.error
+    return {key.lower(): value for key, value in result.fields.items()}, True, None
 
 
 def _agent_unit_name(relpath: str) -> Optional[str]:
@@ -1348,13 +1317,14 @@ def plan_units(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                 dangerous: list[str] = []
                 hints: list[str] = []
                 if def_text is not None:
-                    fields, parsed_ok = _strict_frontmatter(def_text)
+                    fields, parsed_ok, parse_error = _strict_frontmatter(def_text)
                     if not parsed_ok:
+                        detail = f" ({parse_error})" if parse_error else ""
                         _reject("unparsable-frontmatter",
                                 f"docs/ai/local/{area_name}/{unit_name} — {def_relpath} has a "
                                 "malformed '---' frontmatter block (opener that never closes cleanly, "
                                 "or a line that is neither 'key: value', an indented continuation, nor "
-                                "blank) — not imported")
+                                f"blank) — not imported{detail}")
                         continue
                     frontmatter_name = fields.get("name")
                     dangerous = [k for k in risky_keys[area_name] if k.lower() in fields]

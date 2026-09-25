@@ -12,6 +12,7 @@ template text of its rule, checked or not.
   - [x] `R-work-evidence`
   - [x] `R-work-override`
   - [x] `R-work-language`
+  - [x] `R-work-second-check`
   - [x] `R-role-worker`
 
 @../../.act/rules/shared/10-safety.md
@@ -20,6 +21,7 @@ template text of its rule, checked or not.
   - [x] `R-safe-no-secret-diff`
   - [x] `R-safe-no-secret-log`
   - [x] `R-safe-no-shell-delete`
+  - [x] `R-safe-git-reset`
   - [x] `R-safe-block`
   - [x] `R-safe-foreign-text`
 

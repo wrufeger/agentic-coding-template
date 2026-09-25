@@ -32,3 +32,24 @@ an id is assigned: `<P>-<identity>-<YYYYMMDD-HHMM>-<slug>.md`, renamed by `entri
 
 `done` is finished and gets archived to `docs/ai/work/archive/`, whatever its `kind` —
 questions included.
+
+## `note` entries
+
+Only the human writes the entry itself; the assistant replies below it in one appended block of
+fixed form, never editing the human's own text — with a blank line above the block, so its leading
+`---` stays a divider instead of turning the human's own last line into a Markdown heading:
+
+```text
+
+---
+DD.MM.YYYY HH:MM - TITLE
+TEXT
+TEXT
+TEXT
+-> questions Q13, Q14 - tasks T12 (references only where they apply)
+```
+
+At most three lines of text, the last line naming any questions or tasks it produced. At most
+three blocks per entry — past that, bundle into one block instead of appending a fourth. "Draft" (or
+its German `Entwurf`) in the title means a short first take only, no full analysis — the human is
+still thinking it through. Once processed, the entry moves to `done` and archive like any other.

@@ -25,3 +25,10 @@ session start), so its whole file loads: an unchecked group in it is **off** —
 <!-- act:own-rules -->
 
 <!-- one item per rule, no counterpart in the template -->
+
+## Known deviations
+<!-- act:known-deviations -->
+
+<!-- The rule above stays the rule. An existing part of the codebase that deviates from it is named
+     here instead of being silently ignored or force-fixed on sight — one line per case: where, and
+     why it was checked and deliberately left as is. -->

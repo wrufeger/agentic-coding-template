@@ -140,6 +140,31 @@ RE_OWN = re.compile(r"^-\s+(?:`(?P<id>[^`]+)`:\s*)?(?P<text>.*)$")
 RE_HEADING = re.compile(r"^##\s+`(?P<id>[^`]+)`\s*(?:—\s*(?P<title>.+))?\s*$")
 RE_HEADER_FIELD = re.compile(r"^(?P<key>summary|requires|retired):\s*(?P<value>.*)$", re.IGNORECASE)
 
+# Section tracking inside a project file (B-follow-up to B77): "replaces" and bare "- ..." bullets
+# at the top level are only read as overrides/own rules while the surrounding top-level ("## ")
+# section is actually "## Overrides"/"## Own rules" — never inside "## Known deviations" (own text
+# in its own right, one line per accepted deviation, not a rule) or a heading recognized as some
+# other section of the template (e.g. "## Rule sets", "## Shared"). The mark comment
+# (`<!-- act:... -->`), if present, decides over the heading word. But a heading neither marked nor
+# recognized (in particular a translated heading with no mark yet, `R-work-language`) is *not*
+# assumed to be some other section — that would silently drop a project's overrides and own rules
+# the moment their heading is translated. Such an unrecognized heading falls back to the rule from
+# before this section tracking existed: read "replaces"/"- ..." by shape alone, wherever they sit.
+# A recognized-other section still gets a --validate finding for a "replaces" line or an own-rule-
+# shaped bullet (`- \`ID\`: ...`) found there, instead of silently discarding it.
+RE_SECTION_MARK = re.compile(r"^<!--\s*act:(?P<name>[a-z0-9-]+)\s*-->\s*$", re.IGNORECASE)
+RE_TOP_HEADING = re.compile(r"^##\s+(?P<title>.+?)\s*$")
+MARK_TO_SECTION = {"overrides": "overrides", "own-rules": "own-rules"}
+HEADING_TO_SECTION_FALLBACK = {"overrides": "overrides", "own rules": "own-rules"}
+# English headings the template actually uses for something other than overrides/own rules — a
+# trailing " — ..." (as in "## Shared — every role, including sub-agents") is stripped before the
+# lookup. Anything not in here or the fallback above (in particular any translated heading without
+# a mark) counts as unrecognized, not as "some other section" (see comment above).
+KNOWN_OTHER_HEADINGS = {
+    "known deviations", "rule sets", "rule sets from the template",
+    "shared", "coding", "orchestrator only",
+}
+
 
 def normalize_set_path(raw: str) -> str:
     """A set path as written in a project file, in any of its forms — "@../../.act/coding/x.md"
@@ -187,6 +212,7 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
     own_rules: list[OwnRule] = []
     findings: list[tuple[int, str]] = []
     current_set: Optional[ProjectSet] = None
+    current_section: Optional[str] = None  # None until the first "## " section is seen
 
     total = len(lines)
     i = 0
@@ -234,6 +260,23 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             continue
 
         if line[:1] not in (" ", "\t"):
+            mark = RE_SECTION_MARK.match(stripped)
+            if mark:
+                # An explicit mark is always a recognized section, even one this script has no
+                # special handling for ("excluded" — see the gating below).
+                current_section = MARK_TO_SECTION.get(mark.group("name").lower(), "excluded")
+                continue
+            heading = RE_TOP_HEADING.match(stripped)
+            if heading:
+                title_key = heading.group("title").split("—", 1)[0].strip().lower()
+                if title_key in HEADING_TO_SECTION_FALLBACK:
+                    current_section = HEADING_TO_SECTION_FALLBACK[title_key]
+                elif title_key in KNOWN_OTHER_HEADINGS:
+                    current_section = "excluded"
+                else:
+                    current_section = "unknown"
+                continue
+
             if area.name == "core":
                 core_set = RE_CORE_SET.match(stripped)
                 if core_set:
@@ -244,15 +287,25 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     findings.append((line_no, "expected '@<path>.md' or '`<path>.md`'"))
                     continue
 
-            replaces = RE_REPLACES.match(stripped)
-            if replaces:
-                overrides.append(Override(id=replaces.group("id"), text=replaces.group("text"), line=line_no))
-                continue
-            if RE_REPLACES_LOOSE.match(stripped):
-                findings.append((line_no, "expected '- replaces `ID`: <text>'"))
+            # "unknown" (no mark, heading not recognized — in particular a translated heading with
+            # no mark yet) and "None" (before the first "## " section) fall back to the old,
+            # section-agnostic reading, so a project file is never silently stripped of its
+            # overrides and own rules just because its headings were translated.
+            if current_section in (None, "unknown", "overrides"):
+                replaces = RE_REPLACES.match(stripped)
+                if replaces:
+                    overrides.append(Override(id=replaces.group("id"), text=replaces.group("text"), line=line_no))
+                    continue
+                if RE_REPLACES_LOOSE.match(stripped):
+                    findings.append((line_no, "expected '- replaces `ID`: <text>'"))
+                    continue
+            elif current_section == "excluded" and RE_REPLACES_LOOSE.match(stripped):
+                findings.append((line_no,
+                    "'replaces' found outside '## Overrides' (section recognized as something "
+                    "else) — ignored"))
                 continue
 
-            if stripped.startswith("- "):
+            if current_section in (None, "unknown", "own-rules") and stripped.startswith("- "):
                 own = RE_OWN.match(stripped)
                 text_parts = [(own.group("text") if own else stripped[2:]).strip()]
                 # Indented continuation lines (B131) belong to this same rule's text, joined with
@@ -270,6 +323,13 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                 own_rules.append(OwnRule(id=own.group("id") if own else None,
                                           text=" ".join(text_parts), line=line_no))
                 continue
+            if current_section == "excluded" and stripped.startswith("- "):
+                own = RE_OWN.match(stripped)
+                if own and own.group("id"):
+                    findings.append((line_no,
+                        "rule-shaped bullet found outside '## Own rules' (section recognized as "
+                        "something else) — ignored"))
+                    continue
             # heading or prose in the project's own language — not read by the mechanism.
 
     return ProjectFile(path=path, sets=sets, overrides=overrides, own_rules=own_rules, findings=findings)

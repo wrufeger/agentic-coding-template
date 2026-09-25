@@ -18,8 +18,14 @@ by `act-doctor`.
    never explorer and doc-writer within the same pair.
 3. Fold in what the wave produced: a new interface or table into `architecture.md`/`features.md`,
    a newly learned convention into `coding_rules.md`, changed tests into `testing.md`, a severe
-   failure into `docs/project/incidents/`.
+   failure into `docs/project/incidents/`. Maintaining `testing.md`: check that the runner it names
+   actually exists and that its command isn't interactive (no unattended install prompt), same
+   check as before any test run (`.act/agents/builder.md`).
 4. `doc-writer` updates `docs/README.md` (index, data-as-of dates).
+
+A full pass across all doc areas logs a journal entry whose title starts with `act-audit-docs`
+(`entries.py new ledger "act-audit-docs: ..."`); a spot check of one area skips the entry — this is
+how session start tells how long ago the last full pass ran.
 
 ## Limits
 

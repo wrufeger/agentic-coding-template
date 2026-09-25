@@ -402,6 +402,41 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
     return dest
 
 
+# B102/Q68: `dependency-check: once` (docs/ai/config.md § Dependencies, default) means "runs during
+# setup, then only on demand" — this is the setup side of that; the `regularly` side is
+# checks.session's own staleness note, see _last_ledger_entry_with_prefix()/_dependency_check_note()
+# there.
+DEPENDENCY_CHECK_NOTE_SUFFIX = "-dependency-check.md"
+
+
+def dependency_check_note_text() -> str:
+    """The one-time inbox entry `dependency-check: once` asks for right after setup."""
+    return (
+        "kind: todo\nfor: all\nstatus: open\n\n"
+        "# Check dependencies once\n\n"
+        "`dependency-check` in `docs/ai/config.md` is `once`: run `act-deps` now to inventory "
+        "dependency age and known gaps (see `.act/skills/act-deps/SKILL.md`) — after this, it runs "
+        "only on demand, not again at every setup.\n"
+    )
+
+
+def write_dependency_check_note(root: Path, dependency_check: str, plan: bool = False) -> Optional[Path]:
+    """Write docs/ai/inbox/todo-<stamp>-dependency-check.md when `dependency-check` (read from the
+    config.md this run just wrote/kept) is `once` and no such entry exists yet (any stamp — a
+    second `init` run must not add a second one). Returns the path that was (plan: would be)
+    written, else None."""
+    if dependency_check.strip().lower() != "once":
+        return None
+    inbox = root / INBOX_DIR
+    if inbox.is_dir() and any(inbox.glob(f"*{DEPENDENCY_CHECK_NOTE_SUFFIX}")):
+        return None
+    dest = inbox / inbox_entry_filename("todo", "dependency-check")
+    if not plan:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        write_text_lf(dest, dependency_check_note_text())
+    return dest
+
+
 # ---------------------------------------------------------------------------
 # docs/ai/inbox/ — the one place everything waiting on a person lives (ADR-9, T75). Every entry
 # carries a `kind:` header field (question | todo | report | note, see INBOX_KINDS); a file without

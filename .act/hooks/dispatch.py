@@ -285,6 +285,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("worker_docs_ai", "check_worker_docs_ai"),           # worker writes under docs/ai/ (R-role-worker)
     ("worker_git_write", "check_worker_git_write"),       # worker runs a mutating git command (R-role-worker)
     ("commit_pathspec", "check_commit_pathspec"),         # git add -A / . / commit -a (R-code-commit)
+    ("git_reset_hard", "check_git_reset_hard"),           # git reset --hard on a dirty tree (R-safe-git-reset)
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
     ("secret_scan", "check_secret_scan"),                 # secrets in the diff before commit (R-safe-no-secret-diff)
     ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate)

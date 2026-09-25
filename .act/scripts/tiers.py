@@ -25,51 +25,52 @@ from pathlib import Path
 from typing import Optional
 
 import actlib
+import frontmatter
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter: split / render (single-line fields only). Safe for two things only: reading a
-# single known field back out (e.g. "tier"/"variant-of" below), and building a *brand-new*
-# .claude/agents/<name>.md from a .act/bridges/agents/<name>.md template, which this project
-# authors and keeps single-line on purpose. NOT safe to round-trip a file this function did not
-# just generate itself -- a project's own already-materialized file may carry a comment, a folded
-# scalar (`description: >` plus continuation lines), a YAML list (`tools:\n  - Read`), or a key
-# with a digit in it (`_FIELD_RE` below does not match those), and reconstructing the frontmatter
-# from split_frontmatter()'s (fields, order) pair silently drops all of that. Refreshing an
-# already-materialized file's `model`/`effort` therefore never goes through here -- see
-# _apply_resolved_fields() further down, which rewrites those two lines in place instead.
+# Frontmatter: split / render, built on frontmatter.parse_frontmatter() (`B111.1` -- this used to
+# be its own, separately-permissive regex/field parser; a project's own already-materialized file
+# may carry a comment, a folded scalar (`description: >` plus continuation lines), or a YAML list
+# (`tools:\n  - Read`), and the shared parser now reads those instead of silently dropping them.
+# Safe for two things: reading a single known field back out (e.g. "tier"/"variant-of" below), and
+# building a *brand-new* .claude/agents/<name>.md from a .act/bridges/agents/<name>.md template,
+# which this project authors and keeps single-line on purpose. A file whose frontmatter the parser
+# cannot read with confidence (frontmatter.ParseResult.ok is False -- an opener that never closes,
+# or a line that is neither "key: value", quoted, a block-scalar/continuation line, nor blank) is
+# treated the same as "no frontmatter block at all": ({}, text, []) -- this module never aborts a
+# session start over a malformed file, it just leaves that file's model/effort unresolved (see
+# refresh_project_bridge_frontmatter() further down). Refreshing an already-materialized file's
+# `model`/`effort` never goes through here at all -- see _apply_resolved_fields() further down,
+# which rewrites those two lines in place instead, byte for byte, without a structured re-parse.
 # ---------------------------------------------------------------------------
-
-_FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n(.*)\Z", re.DOTALL)
-_FIELD_RE = re.compile(r"^([a-zA-Z_-]+):\s*(.*)$")
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, str], str, list[str]]:
     """Split a bridge/role file into (fields, body, field_order). `fields` maps each frontmatter
     key to its raw value; `field_order` is the keys in the order they appeared, so a rewrite can
-    keep it. Returns ({}, text, []) if `text` has no "---\\n...\\n---\\n" block at all -- callers
-    treat that as "nothing to resolve here", not an error."""
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
+    keep it. Returns ({}, text, []) if `text` has no "---\\n...\\n---\\n" block at all, or one the
+    shared parser could not read with confidence -- callers treat both the same, as "nothing to
+    resolve here", not an error (frontmatter.parse_frontmatter()'s docstring)."""
+    result = frontmatter.parse_frontmatter(text)
+    if not result.ok:
         return {}, text, []
-    fields: dict[str, str] = {}
-    order: list[str] = []
-    for line in match.group(1).splitlines():
-        field_match = _FIELD_RE.match(line)
-        if field_match:
-            key, value = field_match.groups()
-            fields[key] = value
-            order.append(key)
-    return fields, match.group(2), order
+    return result.fields, result.body, result.order
 
 
 def render_frontmatter(fields: dict[str, str], order: list[str], body: str) -> str:
     """Inverse of split_frontmatter: `order` (a key may appear at most once) with each key's
-    current value from `fields` (a key in `order` but missing from `fields` is dropped)."""
+    current value from `fields` (a key in `order` but missing from `fields` is dropped). A value
+    that needs quoting to read back as the same value (frontmatter.quote_value() -- e.g. one
+    containing ": ", since split_frontmatter() only ever hands back the quote-stripped value) is
+    quoted again here; a plain value that never needed quoting is written exactly as before
+    (`B111.1` follow-up review of `T76`: writing every value back unquoted produced invalid YAML,
+    e.g. description: "Use when: a thing" turning into an unquoted "description: Use when: a
+    thing")."""
     lines = ["---"]
     for key in order:
         if key in fields:
-            lines.append(f"{key}: {fields[key]}")
+            lines.append(f"{key}: {frontmatter.quote_value(fields[key])}")
     lines.append("---")
     return "\n".join(lines) + "\n" + body
 

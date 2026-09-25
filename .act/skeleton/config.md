@@ -48,9 +48,21 @@ tool's own interface displays — see `docs/README.md` for the per-tool display 
 | :--- | :--- |
 | `dependency-check` | once |
 
-`never` \| `once` \| `regularly`. `once` runs the `act-deps` check during setup and afterwards only
-on request; `regularly` repeats it on the periodic review; `never` skips it. Today only the
-`act-deps` skill itself reads this key — no mechanism runs it automatically yet.
+`never` \| `once` \| `regularly`. `once` (default) leaves a one-time inbox entry right after `init`
+asking to run `act-deps`, then only on request (`B102`); `regularly` instead notes at session
+start when the last `act-deps` run (a journal entry titled `act-deps: ...`) is older than 30 days;
+`never` does neither — the skill itself still runs on explicit request either way.
+
+## Docs audit
+
+| Key | Value |
+| :--- | :--- |
+| `docs-audit-due` | 30d/100c |
+
+`<n>d/<n>c` \| `off`. At session start, a note (at most once a day) when the last full
+`act-audit-docs` sweep (a journal entry titled `act-audit-docs: ...`) is older than this many days
+*or* this many commits, or once only when there is none yet — never a blocker, and only while
+`docs/project/` exists. A missing or malformed value counts as `30d/100c`.
 
 ## Checks
 
@@ -66,6 +78,7 @@ refuses") treats `block` as `warn`.
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `worker-write-scope` | block | a worker writing outside its assignment's `Write scope:` line (`R-cost-delegate`) — `warn` reports without blocking, `off` skips it |
 | `commit-pathspec` | block | `git add -A`, `git add .`, `git add --all`, `git commit -a` — stage by pathspec instead (`R-code-commit`) |
+| `git-reset-hard` | block | `git reset --hard` (Bash/PowerShell, also `git -C <dir> ...`) while the affected working tree has uncommitted changes (untracked files count as changes too) or its own working tree cannot be determined — `git stash`/`git reset --soft` first (`R-safe-git-reset`) |
 | `recursive-delete` | block | recursive delete from the shell (`rm -r`, `rmdir /s`, `Remove-Item -Recurse`, `find -delete`) — delete with the language's own means or file by file (`R-safe-no-shell-delete`) |
 | `secret-scan` | block | `git commit` while the staged diff holds a key/token pattern, a private key, an `.env` file or a high-entropy assignment; a line carrying `act:allow-secret` is exempt (`R-safe-no-secret-diff`) |
 | `worker-docs-ai` | block | a worker writing under `docs/ai/` — only the orchestrator writes there (`R-role-worker`) |

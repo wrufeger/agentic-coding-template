@@ -362,17 +362,31 @@ skips the items already written unchanged instead of refusing them. After each s
 `.act-local/adopt/drafts/<same path>`):
 
 - `docs/project/coding_rules.md` and `docs/README.md` (adopted into themselves, step 2): only the
-  project's own passages go in, found with the same diff as the `origin` (step 2). The
-  predecessor's own text stays out — its `Datenstand` line, the section "Vorgefertigte
-  Regelsätze" and other scaffold prose the template's version replaces; the legacy copy keeps it.
-  Wording unchanged; only heading levels move.
-  - `coding_rules.md`: below `## Own rules` (after its marker and comment line), the old top level
-    becoming `###` (`#` -> `###`, `##` -> `####`, …).
-  - `docs/README.md`: at the end of the template's version, the old top level becoming `##`
-    (`#` -> `##`, `##` -> `###`, …). In its old index table, a row whose file is gone after the
-    adoption (moved to legacy or removed) is left out, and so is a footnote only such rows refer
-    to (`¹`) — the template's rows already name the new places, and the legacy copy keeps the
-    whole old table; every other row and line stays as it is.
+  project's own passages go in, found with the same diff as the `origin` (step 2), and cut
+  byte-identical into a file the same way a `body_file` above is cut. The predecessor's own text
+  stays out of that cut — its `Datenstand` line, the section "Vorgefertigte Regelsätze" and other
+  scaffold prose the template's version replaces; the legacy copy keeps it. From there, a
+  mechanical helper does the insertion — heading levels and the target file's line endings are
+  exactly the two things a hand edit got wrong once; own text and where it goes in stay your call,
+  not the script's:
+
+  ```bash
+  python .act/scripts/adopt_passages.py --target <dir> --into coding --from <cut file> --plan
+  python .act/scripts/adopt_passages.py --target <dir> --into coding --from <cut file>
+  python .act/scripts/adopt_passages.py --target <dir> --into readme --from <cut file> --plan
+  python .act/scripts/adopt_passages.py --target <dir> --into readme --from <cut file>
+  ```
+
+  `--into coding` inserts at the end of `docs/project/coding_rules.md`'s `## Own rules` section
+  (after its marker and comment line), the old top level becoming `###` (`#` -> `###`,
+  `##` -> `####`, …); `--into readme` appends at the end of `docs/README.md`, the old top level
+  becoming `##` (`#` -> `##`, `##` -> `###`, …) — wording never changes, and a rerun with the same
+  cut file changes nothing (`--plan` first, as with every other write in this skill). In the old
+  index table of `docs/README.md`, a row whose file is gone after the adoption (moved to legacy or
+  removed) is left out of the cut by hand, and so is a footnote only such rows refer to (`¹`) —
+  the template's rows already name the new places, and the legacy copy keeps the whole old table;
+  every other row and line stays as it is. Several own passages for the same target go into one
+  cut file, in their original order — one `adopt_passages.py` run per target, not one per passage.
 - A doc that moves into `docs/project/` (step 2): copy it byte-identical to its target,
   `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`.
 - An own skill or agent: copy it byte-identical to its target:

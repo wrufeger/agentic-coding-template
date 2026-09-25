@@ -47,6 +47,15 @@ open|answered|done` stays English, in examples too), config keys and values, cod
 as they are, since the mechanism reads those, never the words. Then drop the mark line; from then
 on the file is the project's.
 
+## `R-work-second-check` — A workaround needs a second, independent check
+
+summary: verify character/encoding doubts via file and reader tool, never console or a pipe; a workaround only after independent confirmation
+
+When in doubt about characters (umlauts, encoding), check via the file and a reading tool, never
+via console output or a pipe — on Windows, terminal redirection mangles umlauts while the stored
+data stays correct UTF-8. More generally: a workaround is only committed to after a second,
+independent check confirms the diagnosis, not on the first plausible explanation.
+
 ## `R-role-worker` — What a worker may and may not do
 
 summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git, no sub-workers

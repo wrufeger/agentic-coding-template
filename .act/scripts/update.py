@@ -271,7 +271,8 @@ def step_check_local_changes(
         via_git = differences is not None
         if differences is None:
             return (
-                "no MANIFEST.json to compare against, git unavailable too -> treated as no detectable local change",
+                "cannot tell hand edits under .act/ without git history or MANIFEST.json — "
+                "they will be replaced",
                 None, [],
             )
 
@@ -458,7 +459,7 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # separately in step_new_role_bridges(): an existing one is only touched again when its role's row
 # in docs/ai/config.md § Roles changed (sync_dependent_files()), otherwise only a role new since
 # the last update gets a bridge created.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers")
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter")
 
 
 def _project_tools(root: Path) -> list[str]:
@@ -904,12 +905,28 @@ def _bridge_edited(
 def _in_git_history(root: Path, rel: str) -> bool:
     """Whether `rel` was ever committed — a missing role bridge that was, and that no snapshot or
     lock entry explains otherwise, was deleted by the project, not never created (F13 fallback for
-    a checkout without .act-local/last-applied.json yet)."""
+    a checkout without .act-local/last-applied.json yet). Single-path convenience wrapper around
+    _paths_in_git_history() below — prefer that one for more than a handful of paths (B118.16a:
+    one `git log` call for the whole set instead of one per path)."""
+    return bool(_paths_in_git_history(root, [rel]))
+
+
+def _paths_in_git_history(root: Path, rels: list[str]) -> set[str]:
+    """Which of `rels` were ever committed, found with a single `git log` call across all of them
+    (B118.16a) instead of one call per path — step_new_role_bridges() below can otherwise ask this
+    once per missing role bridge. A commit touching any of `rels` lists every path it touched
+    under `--name-only`; intersecting that combined output with `rels` is enough to answer "ever
+    committed" for each one, without needing to know *which* commit did it."""
+    if not rels:
+        return set()
     try:
-        result = _git(["log", "-1", "--format=%H", "--", rel], cwd=root, check=False)
+        result = _git(["log", "--format=", "--name-only", "--", *rels], cwd=root, check=False)
     except (OSError, ValueError):
-        return False
-    return result.returncode == 0 and bool(result.stdout.strip())
+        return set()
+    if result.returncode != 0:
+        return set()
+    rel_set = set(rels)
+    return {line for line in result.stdout.splitlines() if line in rel_set}
 
 
 def _role_bridge_targets(new_init, root: Path, tools: list[str]) -> tuple[dict[str, Path], dict[str, Path]]:
@@ -926,7 +943,7 @@ def step_new_role_bridges(
     changed_roles: frozenset[str] = frozenset(), force_all: bool = False,
     old_overrides: Optional[dict[str, dict[str, str]]] = None,
     known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
-) -> tuple[str, list[Path], list[str]]:
+) -> tuple[str, list[Path], list[str], bool]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
     applicable role — new or already existing — that does not have one yet (`Q71`).
     An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
@@ -948,19 +965,22 @@ def step_new_role_bridges(
     the same way — a project's own "...-high" role without that field is never touched.
 
     `notes`, if given, collects messages the same way step_fetch() above does. Returns (summary,
-    touched_paths, reset_or_removed_edited) — the last one for sync_dependent_files()'s inbox
-    entry."""
+    touched_paths, reset_or_removed_edited, had_failure) — the last one true when a bridge that
+    should have been created or refreshed could not be written (an OSError/UnicodeDecodeError from
+    write_agent_bridge_file, independent of whether `notes` was given): sync_dependent_files() uses
+    it to skip writing its snapshot on such a run (B118.16c), so the failed bridge is retried on
+    the next comparison instead of silently counting as already applied."""
     if plan:
         return (
             "would create bridges for roles new since the last update, and any missing "
             "'-high' variant, leaving existing and deleted files untouched unless their role's "
             "row in docs/ai/config.md changed",
-            [], [],
+            [], [], False,
         )
 
     new_init = _import_fresh_init(root / ".act" / "scripts")
     if new_init is None:
-        return "could not load agent_bridge_targets() from the updated template", [], []
+        return "could not load agent_bridge_targets() from the updated template", [], [], True
     tools = _project_tools(root)
     base_targets, variant_targets = _role_bridge_targets(new_init, root, tools)
     targets = {**base_targets, **variant_targets}
@@ -972,10 +992,23 @@ def step_new_role_bridges(
 
     created, restored, reset, left_deleted, kept_failed, dropped = [], [], [], [], [], []
     touched: list[Path] = []
+    had_failure = False
 
     def _role_of(dest_rel: str) -> str:
         stem = Path(dest_rel).stem
         return stem[: -len("-high")] if dest_rel in variant_targets else stem
+
+    # B118.16a: precompute which missing bridges need the git-history fallback, then ask once
+    # for the whole batch rather than once per file inside the loop below — the loop's own
+    # branching (is_file/follows_value/removed_by_user/known) is deterministic ahead of time,
+    # since none of it depends on state the loop itself mutates.
+    _needs_git_check = [
+        dest_rel for dest_rel in sorted(targets)
+        if not (root / dest_rel).is_file()
+        and not (force_all or _role_of(dest_rel) in changed_roles)
+        and dest_rel not in removed_by_user and dest_rel not in known
+    ]
+    _history_hits = _paths_in_git_history(root, _needs_git_check)
 
     for dest_rel, source_path in sorted(targets.items()):
         dest_path = root / dest_rel
@@ -990,7 +1023,7 @@ def step_new_role_bridges(
             continue
         elif follows_value:
             bucket = restored
-        elif dest_rel in removed_by_user or dest_rel in known or _in_git_history(root, dest_rel):
+        elif dest_rel in removed_by_user or dest_rel in known or dest_rel in _history_hits:
             if dest_rel not in removed_by_user:
                 removed_by_user.append(dest_rel)
             left_deleted.append(dest_rel)
@@ -1004,12 +1037,15 @@ def step_new_role_bridges(
         except (OSError, UnicodeDecodeError) as exc:
             if notes is not None:
                 notes.append(f"{dest_rel}: skipped, could not create ({exc.__class__.__name__})")
+            had_failure = True
             continue
         if ok:
             bucket.append(dest_rel)
             touched.append(dest_path)
             if dest_rel in removed_by_user:
                 removed_by_user.remove(dest_rel)
+        else:
+            had_failure = True
 
     # A changed role's template-generated "-high" variant the new value no longer calls for (e.g.
     # the role moved to tier "expert", or to the top reasoning step).
@@ -1029,6 +1065,7 @@ def step_new_role_bridges(
         edited = _bridge_edited(new_init, root, dest_path, role, source_path, True, tiers_data, reference_overrides)
         if edited and not _backup_file(backup_dir, dest_rel, dest_path):
             kept_failed.append(dest_rel)
+            had_failure = True
             continue
         try:
             dest_path.unlink()
@@ -1053,7 +1090,7 @@ def step_new_role_bridges(
             ("kept (backup failed)", kept_failed),
         ) if items
     ]
-    return ("; ".join(parts) if parts else "no new roles or variants"), touched, reset
+    return ("; ".join(parts) if parts else "no new roles or variants"), touched, reset, had_failure
 
 
 # ---------------------------------------------------------------------------
@@ -1385,8 +1422,9 @@ def sync_dependent_files(
                 parts.append(f"roles: {removed_summary}")
             touched.extend(removed_paths)
 
+    role_bridges_failed = False
     if always_run or changed_roles or claude_joined:
-        role_summary, role_touched, roles_reset = step_new_role_bridges(
+        role_summary, role_touched, roles_reset, role_bridges_failed = step_new_role_bridges(
             root, False, notes, changed_roles=changed_roles, force_all=claude_joined,
             old_overrides=old_roles, known=state["known"], backup_dir=backup_dir, brief=brief,
         )
@@ -1395,7 +1433,13 @@ def sync_dependent_files(
         touched.extend(role_touched)
         reset_edited.extend(roles_reset)
 
-    _write_snapshot(root, current, new_init)
+    # B118.16c: a role bridge that could not be written must not count as "applied" — skip the
+    # snapshot write so the next comparison (this same config value vs. the still-old snapshot)
+    # retries it, instead of silently treating the failed write as done.
+    if not role_bridges_failed:
+        _write_snapshot(root, current, new_init)
+    elif notes is not None:
+        notes.append("snapshot not updated: at least one role bridge failed to write — will retry next run")
     if reset_edited:
         inbox_entry = _report_reset_edits(root, backup_dir, reset_edited)
         if inbox_entry is not None:
@@ -1928,6 +1972,14 @@ def _finish_update(
         commit_paths.append(rescue_dir)
     commit_summary = step_commit(root, False, no_commit, commit_paths)
     print(f"[act]   commit: {commit_summary}")
+
+    # A successful update makes any pending background-check result stale (B110.5) -- drop it
+    # rather than let session.py's SessionStart hook report an "update available" the lock no
+    # longer agrees with. Best-effort: a missing file is the common case, not an error.
+    try:
+        (root / ".act-local" / "update-check-result.json").unlink()
+    except OSError:
+        pass
 
     if notes:
         print(f"[act] done - {len(notes)} open point(s)")

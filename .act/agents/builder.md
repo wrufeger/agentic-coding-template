@@ -25,6 +25,11 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 ## Before the report
 
+Before running a test: check the runner and the test files actually exist (`docs/ai/config.md` §
+commands, `docs/project/testing.md`); if not, skip the run and report it instead of installing
+anything. Watch the runtime of a single command: one running unusually long (e.g. `npx` triggering
+an install and waiting on input) gets aborted and re-run narrower, not left to hang.
+
 Run the project's required checks (`docs/ai/config.md` § commands: lint, typecheck, tests) and
 state the result.
 

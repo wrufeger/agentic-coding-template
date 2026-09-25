@@ -94,6 +94,7 @@ import init
 import manifest as manifest_mod
 import rules
 import script_docs
+import settings_load
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +144,7 @@ KIND_LABELS: dict[str, str] = {
     "config-key": "Outdated keys in docs/ai/config.md",
     "status-value": "Unknown `status:` values in entry headers",
     "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
+    "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -357,11 +359,38 @@ RE_FENCE = re.compile(r"^(`{3,}|~{3,})")
 RE_INLINE_CODE = re.compile(r"(`+).*?\1")
 
 
+RE_RULE_ID_HEADING = re.compile(r"^#{1,6}\s+`([\w-]+)`")
+
+
+def _rule_ids_in_file(path: Path) -> set[str]:
+    """IDs defined by `## \\`R-name\\` — ...`-style headings in a rules/coding-rules file (the
+    convention used across `.act/rules/` and `.act/coding/`)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return set()
+    ids: set[str] = set()
+    for line in text.splitlines():
+        match = RE_RULE_ID_HEADING.match(line)
+        if match:
+            ids.add(match.group(1))
+    return ids
+
+
 def _target_exists(root: Path, target: str) -> bool:
-    base = target.split("#", 1)[0]
+    base, _, anchor = target.partition("#")
     if base.startswith(".act/"):
-        return actlib.resolve(rules.strip_template_prefix(base)) is not None
-    return (root / base).is_file()
+        found = actlib.resolve(rules.strip_template_prefix(base))
+        if found is None:
+            return False
+        resolved = found[0]
+    else:
+        resolved = root / base
+        if not resolved.is_file():
+            return False
+    if anchor and resolved.suffix == ".md":
+        return anchor in _rule_ids_in_file(resolved)
+    return True
 
 
 def _inline_code_ranges(line: str) -> list[tuple[int, int]]:
@@ -571,6 +600,45 @@ def check_legacy_questions_dir(root: Path) -> list[Finding]:
         message=(f"{len(leftover)} file(s) still here; obsolete since migration 001-one-inbox — "
                  "questions live in docs/ai/inbox/ (kind: question)"),
     )]
+
+
+def check_local_role_frontmatter(root: Path) -> list[Finding]:
+    """B111.2: a hand-written own role or skill under docs/ai/local/agents/*.md or
+    docs/ai/local/skills/*/SKILL.md may carry the same risky frontmatter keys settings_load.py's
+    import validator already refuses on the bundled-import path (_AGENT_RISKY_KEYS/
+    _SKILL_RISKY_KEYS) — reused here rather than a second copy of the list, so the two stay in
+    sync. A hand-written unit never goes through that validator at all, so this is the only place
+    that ever looks; a finding is informational (this is init.py's own worker/high-permission
+    role territory, allowed by hand), not an error."""
+    findings: list[Finding] = []
+    local_dir = root / "docs" / "ai" / "local"
+    candidates: list[tuple[Path, tuple[str, ...]]] = []
+    agents_dir = local_dir / "agents"
+    if agents_dir.is_dir():
+        for path in sorted(agents_dir.glob("*.md")):
+            if path.name.lower() != "readme.md":
+                candidates.append((path, settings_load._AGENT_RISKY_KEYS))
+    skills_dir = local_dir / "skills"
+    if skills_dir.is_dir():
+        for skill_path in sorted(skills_dir.iterdir()):
+            skill_md = skill_path / "SKILL.md"
+            if skill_path.is_dir() and skill_md.is_file():
+                candidates.append((skill_md, settings_load._SKILL_RISKY_KEYS))
+    for path, risky_keys in candidates:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fields, ok, _error = settings_load._strict_frontmatter(text)
+        if not ok:
+            continue  # unparseable frontmatter is its own concern, not this check's to report
+        found = [k for k in risky_keys if k.lower() in fields]
+        if found:
+            findings.append(Finding(
+                path=_rel(path, root), line=None, kind="local-risky-frontmatter",
+                message=f"hand-written unit carries elevated-permission key(s): {', '.join(found)}",
+            ))
+    return findings
 
 
 def check_unreadable_entries(root: Path) -> list[Finding]:
@@ -1083,6 +1151,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_duplicate_units(root)
     findings += check_duplicate_entry_ids(root)
     findings += check_legacy_questions_dir(root)
+    findings += check_local_role_frontmatter(root)
     findings += check_unreadable_entries(root)
     findings += check_hooks(root)
     findings += check_settings_scripts(root)

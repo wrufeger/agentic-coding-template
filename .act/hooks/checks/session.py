@@ -41,6 +41,10 @@ from .common import _check_mode
 
 __all__ = [
     "_current_branch", "_STATUS_RE", "_count_inbox_waiting",
+    "_DOCS_AUDIT_TITLE_PREFIX", "_LEDGER_HEADING_RE", "_LEDGER_CREATED_RE",
+    "_LEDGER_DATE_IN_NAME_RE", "_parse_docs_audit_due", "_ledger_entry_date",
+    "_last_ledger_entry_with_prefix", "_last_docs_audit_entry", "_commits_since", "_docs_audit_note",
+    "_DEPENDENCY_CHECK_TITLE_PREFIX", "_DEPENDENCY_CHECK_DUE_DAYS", "_dependency_check_note",
     "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_active_topics",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
@@ -108,6 +112,203 @@ def _count_inbox_waiting(root: Path) -> int:
     return count
 
 
+# ---------------------------------------------------------------------------
+# B76, Q42 a — docs-audit freshness at session start: a hint, never a blocker, on how long ago the
+# last full `act-audit-docs` sweep ran (skills/act-audit-docs/SKILL.md: a full pass logs a journal
+# entry whose title starts with "act-audit-docs", a spot check of one area does not). "Full" is
+# decided purely by that title prefix, never by which files a partial pass touched.
+# ---------------------------------------------------------------------------
+
+_DOCS_AUDIT_TITLE_PREFIX = "act-audit-docs"
+_LEDGER_HEADING_RE = re.compile(r"^#\s+(.*)$")
+_LEDGER_CREATED_RE = re.compile(r"^created:\s*(.+)$", re.IGNORECASE)
+_LEDGER_DATE_IN_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
+
+
+def _parse_docs_audit_due(raw: str) -> "tuple[int, int]":
+    """Parse the `docs-audit-due` value (docs/ai/config.md § Docs audit), e.g. "30d/100c" -> (30,
+    100). Falls back to the template default (30, 100) for a missing or malformed value -- same
+    "an unrecognized value is treated as absent" rule _check_mode follows for the block/warn/off
+    checks, just for a value shape of its own."""
+    match = re.match(r"^\s*(\d+)\s*d\s*/\s*(\d+)\s*c\s*$", raw, re.IGNORECASE)
+    if not match:
+        return 30, 100
+    return int(match.group(1)), int(match.group(2))
+
+
+def _ledger_entry_date(lines: list[str], filename: str) -> Optional[date]:
+    """The date a journal entry counts as made on: the `created:` header field
+    (entries.py writes an ISO timestamp there) if present and parseable, else the
+    `YYYY-MM-DD-` date prefix every ledger filename carries (entries.py new ledger <title>).
+    None if neither yields a usable date."""
+    for line in lines[:5]:  # created: is always the first line
+        created_match = _LEDGER_CREATED_RE.match(line.strip())
+        if created_match:
+            try:
+                return datetime.fromisoformat(created_match.group(1).strip()).date()
+            except ValueError:
+                break
+    name_match = _LEDGER_DATE_IN_NAME_RE.match(filename)
+    if name_match:
+        try:
+            return date.fromisoformat(name_match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _last_ledger_entry_with_prefix(root: Path, title_prefix: str) -> "tuple[Optional[date], bool]":
+    """(most recent date of a journal entry whose `# ` heading starts with `title_prefix`, whether
+    the ledger directory exists at all). None as the date means either the directory does not
+    exist, or it exists but holds no matching entry -- the caller tells the two apart via the
+    second element. Shared by `_docs_audit_note` (prefix `act-audit-docs`, B76/Q42 a) and the
+    `dependency-check: regularly` staleness note (prefix `act-deps`, B102/Q68) rather than each
+    keeping its own copy of the same ledger scan.
+
+    Filters by filename first (the ledger filename carries the same slug the heading does,
+    `entries.py new ledger <title>`) before reading a file in full: with a project of any size,
+    reading every ledger entry just to check its heading is wasteful when the filename already
+    rules almost all of them out."""
+    ledger_dir = root / "docs" / "ai" / "work" / "ledger"
+    if not ledger_dir.is_dir():
+        return None, False
+    slug_start = title_prefix.lower().replace(" ", "-")
+    best: Optional[date] = None
+    for path in ledger_dir.glob("*.md"):
+        if path.name.lower() == "readme.md":
+            continue
+        name_lower = path.name.lower()
+        # entries.py new ledger <title> names the file "<YYYY-MM-DD>-<slug>.md" -- the slug (the
+        # title, lowercased/hyphenated) follows the date prefix, so a filename that does not
+        # contain the wanted slug at all cannot hold a matching heading either.
+        if slug_start not in name_lower:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        title: Optional[str] = None
+        for line in lines:
+            heading_match = _LEDGER_HEADING_RE.match(line)
+            if heading_match:
+                title = heading_match.group(1).strip()
+                break
+        if title is None or not title.startswith(title_prefix):
+            continue
+        when = _ledger_entry_date(lines, path.name)
+        if when is not None and (best is None or when > best):
+            best = when
+    return best, True
+
+
+def _last_docs_audit_entry(root: Path) -> "tuple[Optional[date], bool]":
+    """(most recent date of a full act-audit-docs sweep, whether the ledger directory exists at
+    all) -- see `_last_ledger_entry_with_prefix`."""
+    return _last_ledger_entry_with_prefix(root, _DOCS_AUDIT_TITLE_PREFIX)
+
+
+def _commits_since(root: Path, when: date) -> int:
+    """Number of commits on HEAD authored since `when` (inclusive of that day) -- 0 on any error
+    (no git, not a repository, timeout): silence over a wrong number, same as every other
+    best-effort sub-step in this module."""
+    try:
+        # A bare "--since=YYYY-MM-DD" is parsed against the current time of day (review finding
+        # c) -- a commit made earlier *today*, before this hook's own clock time, would otherwise
+        # be silently excluded from "since `when`". Pinning the time to midnight makes the whole
+        # of `when`'s day count, matching what a human reading "since 2026-08-01" expects.
+        result = subprocess.run(
+            ["git", "rev-list", "--count", f"--since={when.isoformat()}T00:00:00", "HEAD"],
+            cwd=root, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    if result.returncode != 0:
+        return 0
+    try:
+        return int(result.stdout.strip())
+    except ValueError:
+        return 0
+
+
+def _docs_audit_note(root: Path, config: dict[str, str]) -> Optional[str]:
+    """One-time-per-state hint (never a blocker, Q42 a): how long ago the last full
+    `act-audit-docs` sweep ran, in days and commits, once either exceeds the `docs-audit-due`
+    threshold; or, once only, that there is no such entry on record yet at all. Only while
+    `docs/project/` exists -- nothing to audit otherwise, so neither note fires without it (review
+    finding b: the docstring already said this, the "overdue" branch did not actually check it).
+    `off` skips the whole check.
+
+    The overdue note is throttled to once a day (review finding a: config.md calls it a "one-time
+    note", but a session start recurs many times a day -- including a resume/compact, which is not
+    a fresh session in any way that matters here) via `.act-local/cache.json`'s
+    `docs_audit_overdue_last_noted`, the same per-day-state pattern `_check_update_awareness`'s
+    `_already_checked_today` uses for its own once-a-day network check."""
+    if not (root / "docs" / "project").is_dir():
+        return None
+    raw = config.get("docs-audit-due", "").strip()
+    if raw.lower() == "off":
+        return None
+    days_due, commits_due = _parse_docs_audit_due(raw)
+
+    when, _ledger_exists = _last_docs_audit_entry(root)
+    if when is None:
+        cache = actlib.read_cache()
+        if cache.get("docs_audit_never_noted"):
+            return None
+        actlib.write_cache({"docs_audit_never_noted": True})
+        return "[act] note: no full docs audit on record yet -- act-audit-docs when convenient"
+
+    age_days = (date.today() - when).days
+    commits_since = _commits_since(root, when)
+    if age_days <= days_due and commits_since <= commits_due:
+        return None
+    cache = actlib.read_cache()
+    today = date.today().isoformat()
+    if cache.get("docs_audit_overdue_last_noted") == today:
+        return None
+    actlib.write_cache({"docs_audit_overdue_last_noted": today})
+    return (f"[act] note: docs last fully audited {age_days} days / {commits_since} commits ago "
+            "-- act-audit-docs when convenient")
+
+
+# ---------------------------------------------------------------------------
+# B102/Q68 — `dependency-check: regularly` staleness note at session start: same shape as
+# `_docs_audit_note` above (fixed 30-day threshold, no commit count -- `act-deps` has no config.md
+# knob for that), reusing `_last_ledger_entry_with_prefix` instead of its own ledger scan.
+# ---------------------------------------------------------------------------
+
+_DEPENDENCY_CHECK_TITLE_PREFIX = "act-deps"
+_DEPENDENCY_CHECK_DUE_DAYS = 30
+
+
+def _dependency_check_note(root: Path, config: dict[str, str]) -> Optional[str]:
+    """With `dependency-check: regularly`, a note (at most once a day, per state, same pattern as
+    `_docs_audit_note`'s own overdue note) once the last `act-deps` run (a journal entry titled
+    `act-deps: ...`) is older than 30 days, or once only when none is on record yet. `never` and
+    `once` (the skeleton default) print nothing here: `once` is entirely init.py's one-time inbox
+    entry (`actlib.write_dependency_check_note`), not a recurring session-start note."""
+    mode = config.get("dependency-check", "once").strip().lower()
+    if mode != "regularly":
+        return None
+    when, _ledger_exists = _last_ledger_entry_with_prefix(root, _DEPENDENCY_CHECK_TITLE_PREFIX)
+    cache = actlib.read_cache()
+    if when is None:
+        if cache.get("dependency_check_never_noted"):
+            return None
+        actlib.write_cache({"dependency_check_never_noted": True})
+        return ("[act] note: no `act-deps` run on record yet -- act-deps when convenient "
+                "(dependency-check: regularly)")
+    age_days = (date.today() - when).days
+    if age_days <= _DEPENDENCY_CHECK_DUE_DAYS:
+        return None
+    today = date.today().isoformat()
+    if cache.get("dependency_check_overdue_last_noted") == today:
+        return None
+    actlib.write_cache({"dependency_check_overdue_last_noted": today})
+    return (f"[act] note: last act-deps run {age_days} days ago -- act-deps when convenient "
+            "(dependency-check: regularly)")
+
+
 def _refresh_board(root: Path) -> None:
     """Run .act/scripts/board.py if it exists yet (a parallel task builds it); do nothing,
     silently, otherwise — per the build order for this script (T15 depends only on T14)."""
@@ -144,6 +345,17 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
     Returns (changed, refreshed): `changed` are destinations left alone because they were
     edited locally; `refreshed` are destinations re-derived from the template (or that would
     have been, under write=False).
+
+    B118 (d): each file is written and cached individually rather than batching the cache write
+    until after the whole loop — a read/write failure partway through the map (a locked file, a
+    permission error) used to leave every file processed *before* the failure both unrecorded in
+    the cache and outside the caller's `touched` list (built from `refreshed`, since that append
+    happened before the write was even attempted), so a bridge the update genuinely rewrote never
+    made it into the commit and then looked "edited locally" at every later run because its
+    recorded hash never caught up with what was actually on disk. Now a failure on one file only
+    ever costs that one file (left for the next run to retry, its old recorded hash still
+    matching its unwritten content) — every file already written stays written, cached, and
+    reported.
     """
     cache = actlib.read_cache()
     generated = cache["generated"]
@@ -167,14 +379,19 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str]]:
             changed.append(dest_rel)
             continue
 
-        refreshed.append(dest_rel)
-        if write:
+        if not write:
+            refreshed.append(dest_rel)
+            continue
+
+        try:
             content = source_path.read_text(encoding="utf-8")
             actlib.write_text_lf(dest_path, content)
             generated[dest_rel] = actlib.generated_hash(dest_path)
-
-    if write and refreshed:
+        except (OSError, UnicodeDecodeError):
+            continue  # left for the next run; every file already handled above stays reported
+        refreshed.append(dest_rel)
         actlib.write_cache({"generated": generated})
+
     return changed, refreshed
 
 
@@ -249,10 +466,12 @@ def _mark_checked_today(root: Path) -> None:
         pass
 
 
-def _remote_update_available(root: Path) -> Optional[bool]:
+def _remote_update_available(root: Path) -> Optional[str]:
     """None if the check could not be made at all (no source/commit recorded, no network, the
     source is not a git remote/repo, or it took too long) -- always silent in that case, never a
-    reported error (dispatch.py's docstring: a SessionStart check fails open). True/False otherwise.
+    reported error (dispatch.py's docstring: a SessionStart check fails open). Otherwise the
+    remote's current commit hash (which may equal the lock's own commit -- the caller decides
+    what that means; see _run_update_check_worker).
 
     Only ever called from _run_update_check_worker(), i.e. inside the detached background
     process _spawn_update_check_worker() starts -- never directly from the SessionStart hook, so
@@ -296,7 +515,7 @@ def _remote_update_available(root: Path) -> Optional[bool]:
     if not output:
         return None
     remote_commit = output.split()[0].strip()
-    return bool(remote_commit) and remote_commit != commit
+    return remote_commit or None
 
 
 def _update_check_result_path(root: Path) -> Path:
@@ -308,7 +527,13 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
     _run_update_check_worker() run (see _spawn_update_check_worker) -- consuming it means the
     note surfaces exactly once, on the first SessionStart after the background check finished,
     same as the old synchronous check only ever reported it once (the run that found it). Silent
-    on any I/O problem; a missing file (nothing pending) is the common case, not an error."""
+    on any I/O problem; a missing file (nothing pending) is the common case, not an error.
+
+    The file only ever records `remote_commit` (B110.5) -- never a stale "available" flag by
+    itself, so a project that ran `update.py` between the background check and this session
+    doesn't get told about an update it already has: the note fires only if `remote_commit` still
+    differs from the *current* lock's `template.commit`, re-read here rather than trusted from
+    whatever the worker saw at the time."""
     path = _update_check_result_path(root)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -318,28 +543,39 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
         path.unlink()
     except OSError:
         pass
-    if isinstance(data, dict) and data.get("available"):
-        return "[act] note: a template update is available -- run `python .act/scripts/update.py`"
-    return None
+    if not isinstance(data, dict):
+        return None
+    remote_commit = data.get("remote_commit")
+    if not remote_commit:
+        return None
+    lock = actlib.read_lock()
+    current_commit = (lock.get("template") or {}).get("commit") or ""
+    if remote_commit == current_commit:
+        return None
+    return "[act] note: a template update is available -- run `python .act/scripts/update.py`"
 
 
 def _run_update_check_worker(root: Path) -> int:
     """Body of the detached background process _spawn_update_check_worker() launches: the actual
     network lookup, isolated from the SessionStart hook so its result can only ever help the
-    *next* session, never delay this one. Writes update-check-result.json on a conclusive
-    True/False; leaves any existing file alone on None (inconclusive), so a stale-but-valid
-    earlier result is not clobbered by a run that itself couldn't tell. Always exits 0 -- nothing
-    reads this process's own exit code, and every exception here must stay inside this process."""
+    *next* session, never delay this one. Writes update-check-result.json with the remote commit
+    found (B110.5); leaves any existing file alone when the lookup was inconclusive (None), so a
+    stale-but-valid earlier result is not clobbered by a run that itself couldn't tell. Whether
+    that remote commit still means "update available" is decided later, by
+    _consume_pending_update_note() against the lock as it stands then -- not here, since this
+    process's result may sit unread across more than one later `update.py` run. Always exits 0 --
+    nothing reads this process's own exit code, and every exception here must stay inside this
+    process."""
     try:
-        available = _remote_update_available(root)
+        remote_commit = _remote_update_available(root)
     except Exception:
         return 0
-    if available is None:
+    if remote_commit is None:
         return 0
     try:
         path = _update_check_result_path(root)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"available": bool(available)}) + "\n", encoding="utf-8")
+        path.write_text(json.dumps({"remote_commit": remote_commit}) + "\n", encoding="utf-8")
     except OSError:
         pass
     return 0
@@ -844,6 +1080,20 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         language_line = None
     if language_line:
         print(language_line)
+
+    try:
+        audit_note = _docs_audit_note(root, config)
+    except Exception:
+        audit_note = None  # B76: informational only, must never block the session
+    if audit_note:
+        print(audit_note)
+
+    try:
+        dependency_note = _dependency_check_note(root, config)
+    except Exception:
+        dependency_note = None  # B102: informational only, must never block the session
+    if dependency_note:
+        print(dependency_note)
 
     mode = _check_mode(config, "session-start-refresh", default="block")
     if mode == "off":

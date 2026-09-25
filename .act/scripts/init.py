@@ -1608,6 +1608,27 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
     return dest, f"{_relative_label(dest, root)}: {verb} (docs scaffold still English, translate into {docs_language})"
 
 
+def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], str]:
+    """B102/Q68: `dependency-check: once` (the skeleton's default, docs/ai/config.md § Dependencies)
+    means the check "runs during setup and then only on demand" — this leaves the one-time inbox
+    entry that turns that into an actual prompt to run `act-deps`, so `once` is not merely a
+    stated intent. Reads the value from the config.md this run just wrote (docking onto a project
+    keeps its own value); a plan run without a config.md yet assumes the skeleton default `once`,
+    same fallback shape as step_translate_note."""
+    config_path = root / "docs" / "ai" / "config.md"
+    dependency_check = "once"
+    if not plan and config_path.is_file():
+        dependency_check = actlib.read_config().get("dependency-check", "once")
+    if dependency_check.strip().lower() != "once":
+        return None, ""
+    if plan:
+        return None, "would note in the inbox: check dependencies once (`act-deps`)"
+    dest = actlib.write_dependency_check_note(root, dependency_check, plan)
+    if dest is None:
+        return None, "dependency check: entry already exists"
+    return dest, f"{_relative_label(dest, root)}: created (dependency-check: once — run `act-deps`)"
+
+
 # ---------------------------------------------------------------------------
 # Inbox note for open points
 # ---------------------------------------------------------------------------
@@ -1801,6 +1822,9 @@ def main(argv: list[str]) -> int:
     translate_path, translate_message = step_translate_note(root, plan, cfg)
     if translate_message:
         materialize_messages.append(translate_message)
+    dependency_check_path, dependency_check_message = step_dependency_check_note(root, plan)
+    if dependency_check_message:
+        materialize_messages.append(dependency_check_message)
     _print_step(6, "; ".join(materialize_messages))
 
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)
@@ -1819,6 +1843,8 @@ def main(argv: list[str]) -> int:
         commit_paths.append(inbox_path)
     if translate_path is not None and not plan:
         commit_paths.append(translate_path)
+    if dependency_check_path is not None and not plan:
+        commit_paths.append(dependency_check_path)
     _print_step(10, step_commit(root, plan, args.no_commit, commit_paths))
 
     if notes:

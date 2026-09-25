@@ -53,7 +53,8 @@ from .shell_targets import (
 
 __all__ = [
     "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE",
-    "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_parse_write_scope", "_worker_scopes_dir",
+    "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_external_directories",
+    "_external_pattern", "_scope_pattern", "_parse_write_scope", "_worker_scopes_dir",
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
@@ -143,6 +144,95 @@ def _root_relative_pattern(pattern: str, root: Path) -> tuple[Optional[str], Opt
     return (remainder if rel_str == "." else f"{rel_str}/{remainder}"), None
 
 
+def _external_directories(root: Path) -> list[Path]:
+    """Every directory named in `permissions.additionalDirectories`, read from `.claude/
+    settings.json` and `.claude/settings.local.json` under `root` (both, local's own entries added
+    to the project's — the same two files Claude Code itself reads its own additionalDirectories
+    from), each resolved to an absolute path — a relative entry (the usual case: `../sibling`) the
+    same way Claude Code reads it itself, relative to the project root (B138). Best-effort: a
+    missing, unreadable or malformed settings file simply contributes nothing; this is read fresh
+    on every call rather than cached, matching how little else in this module caches project state."""
+    directories: list[Path] = []
+    for name in ("settings.json", "settings.local.json"):
+        data = _read_json_object(root / ".claude" / name)
+        if data is None:
+            continue
+        permissions = data.get("permissions")
+        entries = permissions.get("additionalDirectories") if isinstance(permissions, dict) else None
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, str) or not entry:
+                continue
+            native = _to_native_path(entry.replace("\\", "/"))
+            try:
+                candidate = Path(native)
+                resolved = candidate.resolve() if candidate.is_absolute() else (root / native).resolve()
+            except OSError:
+                continue
+            directories.append(resolved)
+    return directories
+
+
+def _external_pattern(native_pattern: str, root: Path) -> Optional[str]:
+    """A `Write scope:` pattern's resolved absolute-POSIX form (glob remainder kept, see
+    _split_glob_prefix) if its glob-free prefix resolves inside one of `root`'s own
+    `permissions.additionalDirectories` (B138) — a worker's assignment can then name a path in a
+    sibling checkout, e.g. `../template-next/.act/**` (written relative to the project root, same
+    as any other Write scope pattern) or the equivalent absolute path. None if it resolves inside
+    none of them — deliberately not an error on its own; the caller still has its own out-of-root
+    message to fall back to. `native_pattern` is resolved from `root` when it is not already
+    absolute, same as a Write scope pattern always is."""
+    prefix, remainder = _split_glob_prefix(native_pattern)
+    if not prefix:
+        return None
+    try:
+        prefix_path = Path(prefix)
+        resolved_prefix = prefix_path.resolve() if prefix_path.is_absolute() else (root / prefix).resolve()
+    except OSError:
+        return None
+    for directory in _external_directories(root):
+        try:
+            resolved_prefix.relative_to(directory)
+        except ValueError:
+            continue
+        rel_str = str(resolved_prefix).replace("\\", "/")
+        return rel_str if not remainder else f"{rel_str}/{remainder}"
+    return None
+
+
+def _scope_pattern(pattern: str, root: Path) -> tuple[Optional[str], Optional[str]]:
+    """One `Write scope:` pattern (already "/"-normalized, no trailing slash), turned into the form
+    _matches_scope compares a write target against: project-root-relative for the ordinary case, or
+    — since B138 — the pattern's own resolved absolute-POSIX form when it names a directory listed
+    in `root`'s `permissions.additionalDirectories` instead (a worker's assignment reaching into a
+    sibling checkout pulled in that way). Tried in order: _root_relative_pattern for an absolute
+    pattern (unchanged, B127); left unchanged, without touching the filesystem, for a relative
+    pattern that plainly stays inside the project root (the overwhelmingly common case — anything
+    not starting with ".."); _external_pattern for an absolute pattern _root_relative_pattern
+    refused, or a relative one starting with ".."; an out-of-root error otherwise, naming both ways
+    a pattern is accepted (project-root-relative, or under additionalDirectories)."""
+    if _is_absolute_target(pattern):
+        rel, error = _root_relative_pattern(pattern, root)
+        if not error:
+            return rel, None
+        external = _external_pattern(_to_native_path(pattern), root)
+        if external is not None:
+            return external, None
+    elif not pattern.startswith("..") or (len(pattern) > 2 and pattern[2] not in "/\\"):
+        return pattern, None  # relative, stays inside the project root -- unchanged, as always
+    else:
+        external = _external_pattern(pattern, root)
+        if external is not None:
+            return external, None
+    message = (
+        f"[act] write scope pattern is outside the project root: {pattern} "
+        "(a Write scope pattern is project-root-relative, or leads into a directory listed in "
+        "permissions.additionalDirectories, R-cost-delegate)"
+    )
+    return None, message
+
+
 def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dict]:
     """Parse the first `Write scope: ...` line out of an assignment prompt (see _SCOPE_LINE_RE for
     the accepted line shapes: an optional bullet, patterns optionally backtick-wrapped and/or
@@ -172,7 +262,7 @@ def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dic
         if trailing_slash:
             pattern = pattern[:-1]
         if root is not None:
-            pattern, error = _root_relative_pattern(pattern, root)
+            pattern, error = _scope_pattern(pattern, root)
             if error:
                 return {"mode": "error", "message": error}
         if trailing_slash:
@@ -379,10 +469,14 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
     """Turn a write-target path (absolute Windows, forward-slash, or Git-Bash `/d/...` form, or
     one already relative — resolved against `base`, not always `root`: a Bash target is relative to
     the tool call's own `cwd`, tracked forward through any `cd` the command made, see
-    shell_targets._bash_write_targets) into a project-root-relative POSIX path for glob matching.
-    None if it cannot be placed under `root` at all — an out-of-root target never matches any
-    pattern (it is out of scope by definition, shell_targets' module docstring step 4), except the
-    worker's own scratchpad, which the caller checks separately before ever calling this."""
+    shell_targets._bash_write_targets) into the form _matches_scope compares against: project-root-
+    relative POSIX when it resolves under `root`, same as always; its own resolved absolute-POSIX
+    form otherwise (B138) — still out of scope by definition (shell_targets' module docstring step
+    4) unless the scope's own patterns include a matching absolute-POSIX one, which only happens for
+    a pattern resolved under `permissions.additionalDirectories` (_external_pattern); every other
+    out-of-root target still matches nothing there either. None only if the path cannot be resolved
+    to an absolute path at all. The worker's own scratchpad is exempted separately by the caller,
+    before this is ever called."""
     if not raw:
         return None
     candidate = _to_native_path(raw)
@@ -390,10 +484,13 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
         path = Path(candidate)
         if not path.is_absolute():
             path = Path(_to_native_path(base)) / candidate
-        rel = path.resolve().relative_to(root.resolve())
+        resolved = path.resolve()
     except (OSError, ValueError):
         return None
-    return rel.as_posix()
+    try:
+        return resolved.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(resolved).replace("\\", "/")
 
 
 def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
@@ -412,7 +509,20 @@ def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
 
 
 def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatch(rel_posix, pattern) for pattern in patterns)
+    """True if `rel_posix` matches one of `patterns` — but an absolute target (one
+    _normalize_candidate_path could not resolve under the project root, B138) is only ever compared
+    against a pattern that is itself absolute, i.e. one _external_pattern already resolved under
+    `permissions.additionalDirectories`. Without this split, `fnmatch` cannot tell "*.py" (an
+    ordinary, project-root-relative pattern) from a path with slashes in it — `*` matches "/" too —
+    so an absolute target the caller never meant to allow (`D:/dev/rufeger/elsewhere/evil.py`, a
+    sibling checkout never listed in additionalDirectories) matched a plain `*.py`/`*.md` scope
+    outright (T76 review, 2026-09-25). A relative target is likewise only compared against relative
+    patterns, for the same reason in the other direction."""
+    is_absolute_target = _is_absolute_target(rel_posix)
+    return any(
+        _is_absolute_target(pattern) == is_absolute_target and fnmatch.fnmatch(rel_posix, pattern)
+        for pattern in patterns
+    )
 
 
 def _write_scope_message(target: str, scope: dict) -> str:

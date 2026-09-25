@@ -30,6 +30,15 @@ confirmation, then execute — never the other way round.
 A write that repeats runs through a reviewed script under `docs/ai/local/scripts/` (readable, repeatable,
 not a freely worded one-off command) instead of changing command lines each time.
 
+## Making something visible is its own approval
+
+Creating a draft is not publishing it, and setting a status is not proof of publication. Making
+something visible to others (draft → published) needs its own dated approval, separate from the
+approval to create the draft. Write exactly the approved scope — approved 3 of 7 items means write
+3, not 7. Afterwards, confirm with an independent piece of evidence (a fresh read, an outside
+view), not with the tool's own success message. If an already-executed action looks wrong, never
+"correct" it with a second unapproved action — ask first.
+
 ## Deletion, production deployment, rights changes
 
 Permanently deleting data or accounts, deploying to production, and changing rights or access are

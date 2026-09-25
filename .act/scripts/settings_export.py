@@ -256,12 +256,22 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
     """Every text file under docs/ai/local/<subdir>/, each as one "[+] <relpath>" entry pointing
     at "files/<area_name>/<relpath>" (Q61c). Returns (area_or_None, {relpath: file text}) — the
     caller scans/redacts the file text separately and writes it into the zip under that same path,
-    so a leaked value inside a script/checklist is caught exactly like a leaked value in a rule."""
+    so a leaked value inside a script/checklist is caught exactly like a leaked value in a rule.
+
+    A file that matches a template unit of the same shape/name is a project's *override* of that
+    template file (actlib.resolve() — the same "docs/ai/local/<path> wins over .act/<path>" rule a
+    checklist/script/skill uses), not an own file of its own (`B111.4`, review of `T24`) — exporting
+    it as a plain "[+] <relpath>" would hand the next project a file that silently starts
+    overriding the same template unit there too, exactly like build_agents_area() above already
+    refuses for an own role. Skipped, with one stderr note per skipped name, same as there:
+    "scripts"/"checklists" match by relpath directly (a script/checklist is a flat file, no
+    sub-folder of its own), "skills" match by the first path segment (a skill's own folder)."""
     base = root / "docs" / "ai" / "local" / subdir
     if not base.is_dir():
         return None, {}
+    template_dir = root / ".act" / subdir
     template_skills_dir = root / ".act" / "skills"
-    skipped_skill_overrides: set[str] = set()
+    skipped_overrides: set[str] = set()
     entries: list[sf.SettingsEntry] = []
     contents: dict[str, str] = {}
     for path in sorted(base.rglob("*")):
@@ -277,11 +287,17 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
             if (template_skills_dir / skill_name).is_dir():
                 # Same "override, not own" case as build_agents_area() above, for a
                 # docs/ai/local/skills/<name>/ whose name matches a template skill.
-                if skill_name not in skipped_skill_overrides:
-                    skipped_skill_overrides.add(skill_name)
+                if skill_name not in skipped_overrides:
+                    skipped_overrides.add(skill_name)
                     print(f"settings_export.py: skipped override {skill_name} (template skill) — "
                           "not exported as an own skill", file=sys.stderr)
                 continue
+        elif area_name in ("scripts", "checklists") and (template_dir / rel).is_file():
+            if rel not in skipped_overrides:
+                skipped_overrides.add(rel)
+                print(f"settings_export.py: skipped override {rel} (template {area_name[:-1]}) — "
+                      f"not exported as an own {area_name[:-1]}", file=sys.stderr)
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
