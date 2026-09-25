@@ -6,7 +6,7 @@ and archived.
 | `kind` | id | who creates it | lifecycle |
 | :--- | :--- | :--- | :--- |
 | `question` | `Q<n>` | assistant (`entries.py new question`) | `open` -> `answered` (reply below the question) -> `done` -> archive |
-| `todo` | none | assistant or human; a task for a human, only once it is actionable (`B33`) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset) | `open` -> `done` -> archive |
+| `todo` | none | assistant or human; a task for a human, filed only once it is actionable (code pushed, questions answered) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset) | `open` -> `done` -> archive |
 | `report` | none | a tool's own read-only report of what it found or did: `doctor --inbox`, `act-adopt` (adoption report) | `open` -> `done` (read) -> archive |
 | `note` | none | human; the assistant replies below it | `open` -> `answered` -> `done` -> archive |
 
@@ -19,7 +19,7 @@ Each file opens with header fields, in this order (a field a given entry does no
 
 ```text
 id: Q101            # questions only
-formerly: ...        # team mode only, the pre-assignment filename (entries.py assign)
+formerly: T29        # an id the entry had in an older numbering (adoption, --formerly)
 kind: todo          # question | todo | report | note; omitted = todo
 for: all            # or a workspace identity - who it is addressed to
 status: open        # open -> answered -> done
@@ -30,5 +30,5 @@ File names: an entry with an id is `<ID>-<slug>.md` (e.g. `Q101-...md`); one wit
 `<kind>-<YYYYMMDD-HHMM>-<slug>.md` (e.g. `report-20260925-1830-adoption.md`). In team mode, before
 an id is assigned: `<P>-<identity>-<YYYYMMDD-HHMM>-<slug>.md`, renamed by `entries.py assign`.
 
-`done` is finished and gets archived to `docs/ai/work/archive/` — by any `kind`, questions
-included.
+`done` is finished and gets archived to `docs/ai/work/archive/`, whatever its `kind` —
+questions included.
