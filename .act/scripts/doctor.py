@@ -47,6 +47,10 @@
 #           15. (T75) leftover files under docs/ai/questions/ (besides its own README.md) — the
 #               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
 #               someone still writes to at the old location with an older checkout falls here.
+#           16. (T76 Welle D.6) a role/tier whose recorded usage.py outcomes cross a threshold
+#               (13-model-tiers.md § 7): raise proposed at 8+ outcomes with 40%+ reworked/escalated,
+#               lower proposed at 20+ outcomes with none reworked/escalated — a finding only, never
+#               a live change to docs/ai/config.md.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -145,6 +149,7 @@ KIND_LABELS: dict[str, str] = {
     "status-value": "Unknown `status:` values in entry headers",
     "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
+    "tier-proposal": "Tier proposals from worker outcomes (R-role-outcome)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -1049,6 +1054,60 @@ def check_manifest_drift(root: Path) -> list[Finding]:
     return findings
 
 
+# ---------------------------------------------------------------------------
+# 16. Tier proposals from recorded worker outcomes (T76 Welle D.6,
+#     docs/project/concepts/ai-dev-app/13-model-tiers.md § 7 "Lernen aus Fehlern")
+# ---------------------------------------------------------------------------
+
+# Thresholds are this check's own proposal (the concept names the shape, not exact numbers): at
+# least 8 outcomes for a role/tier with 40%+ reworked/escalated suggests raising the tier; at
+# least 20 outcomes with none reworked/escalated suggests a lower tier may suffice. Either way this
+# only ever writes a finding (surfaced via --inbox) -- never docs/ai/config.md itself
+# (13-model-tiers.md's own "never silently switched" decision).
+_TIER_PROPOSAL_MIN_RAISE = 8
+_TIER_PROPOSAL_RAISE_RATIO = 0.4
+_TIER_PROPOSAL_MIN_LOWER = 20
+
+
+def check_tier_proposal(root: Path) -> list[Finding]:
+    """Reads .act-local/usage.json's per-role/tier outcome counts (usage.py --outcome, recorded by
+    the orchestrator per R-role-outcome after every worker acceptance/rework/escalation) and
+    proposes raising or lowering a role's tier once its outcomes cross one of the thresholds above.
+    A proposal only, surfaced as a finding -- deciding and editing docs/ai/config.md stays with the
+    human/orchestrator. Silent if usage.py cannot be imported or the store is empty."""
+    try:
+        import usage
+    except ImportError:
+        return []
+    store = usage.consolidate(root)
+    findings: list[Finding] = []
+    for role in sorted(store.get("roles", {})):
+        outcomes = store["roles"][role].get("outcomes") or {}
+        for tier in sorted(outcomes):
+            counts = outcomes[tier] or {}
+            accepted = counts.get("accepted", 0)
+            reworked = counts.get("reworked", 0)
+            escalated = counts.get("escalated", 0)
+            total = accepted + reworked + escalated
+            trouble = reworked + escalated
+            tier_label = tier or "(no tier)"
+            if total >= _TIER_PROPOSAL_MIN_RAISE and trouble / total >= _TIER_PROPOSAL_RAISE_RATIO:
+                findings.append(Finding(
+                    path=".act-local/usage.json", line=None, kind="tier-proposal",
+                    message=(f"role `{role}` at tier `{tier_label}`: {trouble}/{total} outcomes "
+                             "reworked or escalated -- consider a higher tier "
+                             "(R-role-outcome)"),
+                ))
+            elif total >= _TIER_PROPOSAL_MIN_LOWER and trouble == 0:
+                findings.append(Finding(
+                    path=".act-local/usage.json", line=None, kind="tier-proposal",
+                    message=(f"role `{role}` at tier `{tier_label}`: {total} outcomes accepted, "
+                             "none reworked or escalated -- a lower tier may be possible "
+                             "(R-role-outcome)"),
+                ))
+    return findings
+
+
 def check_script_docs(root: Path) -> list[Finding]:
     # The generated README.md embeds each script's own `--help` text, whose exact wording depends
     # on the interpreter's argparse (Python 3.9: "optional arguments:", 3.10+: "options:") — a
@@ -1161,6 +1220,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_status_values(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
+    findings += check_tier_proposal(root)
 
     return findings, effective
 

@@ -620,12 +620,21 @@ def is_valid_hooks_container(data) -> bool:
 def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[str]]:
     """Merges bridge_data["hooks"] (a parsed .act/bridges/*.json hook bridge, e.g.
     settings.hooks.json) onto `current` (a parsed .claude/settings.json, or {} for a fresh one),
-    event by event, via merge_hook_event_entries(). Returns (new_settings, changed_events) —
-    changed_events is empty when every event's entries already match the bridge, the caller's
-    signal to leave the file on disk untouched. Never raises: a malformed `current`/`bridge_data`
-    (not a dict, "hooks" not a dict, an event's value not a list, ...) is treated as empty rather
-    than crashing --catch-up (T46 review finding 6); a caller that wants to report the shape as
-    invalid instead of silently normalizing it checks is_valid_hooks_container() first."""
+    event by event, via merge_hook_event_entries(). Also merges bridge_data["statusLine"] onto
+    `current["statusLine"]` via merge_settings_status_line() (T76 Welle D, Q106a) — a second,
+    unrelated top-level key of the same settings.json, folded into this one function rather than
+    given its own call site so init.py's/update.py's existing single call to this function (see
+    _merge_settings_hooks) picks it up without either needing to change. A change there is reported
+    back the same way a changed hook event is: by the literal string "statusLine" appearing in the
+    returned `changed_events` list, even though it is not itself an event name — every caller of
+    this function only ever joins that list into a message or checks whether it is empty, never
+    matches an entry against a specific event name (T76 Welle D review). Returns
+    (new_settings, changed_events) — changed_events is empty when every event's entries and the
+    status line already match the bridge, the caller's signal to leave the file on disk untouched.
+    Never raises: a malformed `current`/`bridge_data` (not a dict, "hooks" not a dict, an event's
+    value not a list, ...) is treated as empty rather than crashing --catch-up (T46 review finding
+    6); a caller that wants to report the shape as invalid instead of silently normalizing it checks
+    is_valid_hooks_container() first."""
     current = current if isinstance(current, dict) else {}
     bridge_hooks = bridge_data.get("hooks") if isinstance(bridge_data, dict) else None
     bridge_hooks = bridge_hooks if isinstance(bridge_hooks, dict) else {}
@@ -649,7 +658,100 @@ def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[s
         new_current["hooks"] = hooks
     else:
         new_current.pop("hooks", None)
+    new_current, status_line_changed = merge_settings_status_line(new_current, bridge_data)
+    if status_line_changed:
+        changed_events.append("statusLine")
     return new_current, changed_events
+
+
+# ---------------------------------------------------------------------------
+# statusLine (T76 Welle D, Q106a) — Claude Code's persistent status line, one small script
+# (.act/hooks/statusline.py) the same bridge (settings.hooks.json) now also carries as a top-level
+# "statusLine" key. Unlike a hook, a statusLine entry is a single dict, not a per-event list, so it
+# gets its own small "is this still ours" check (_is_ours_status_line()) instead of reusing
+# is_ours_hook(): "ours" only ever replaces "ours", a project's own statusLine (any command that
+# does not match this exact template-generated one) is never touched, matching every other bridge's
+# "the project's own choice always wins" rule.
+# ---------------------------------------------------------------------------
+
+def status_line_command() -> str:
+    """The exact shell command for the template's statusLine bridge entry: the same
+    interpreter-detection prologue the hook commands use (_HOOK_COMMAND_PREFIX), invoking
+    .act/hooks/statusline.py with no event argument (it takes none, unlike dispatch.py) and no
+    trailing "; true" — a statusLine command's stdout is read as the line to show regardless of its
+    exit code, but a missing interpreter or file must still resolve to an empty line rather than an
+    error banner, hence the same "exit 0 either way" guard as every other generated hook command."""
+    return (
+        f'{_HOOK_COMMAND_PREFIX}; do "$c" -c \'import sys; sys.exit(0 if sys.version_info>=(3,9) '
+        'else 1)\' >/dev/null 2>&1 && { P="$c"; break; }; done; '
+        'D="${CLAUDE_PROJECT_DIR:-.}/.act/hooks/statusline.py"; '
+        'if [ -z "$P" ]; then exit 0; fi; if [ ! -f "$D" ]; then exit 0; fi; "$P" "$D"'
+    )
+
+
+def _is_ours_status_line(entry) -> bool:
+    """True if `entry` (current["statusLine"]) is exactly this template's own generated entry —
+    matched the same way is_ours_hook() matches a hook: by exact command text, not merely by also
+    invoking statusline.py somehow. A project's own statusLine that happens to differ in any way
+    (a wrapped call, extra flags, a completely different script) is correctly left alone."""
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("type") == "command" and entry.get("command") == status_line_command()
+
+
+def _user_wide_status_line_path() -> Path:
+    """Claude Code's own user-wide settings file, via Path.home() so a redirected HOME/USERPROFILE
+    (a test, a probe) is honored the same way the rest of this module resolves a user-level path —
+    never hard-coded to one platform's profile layout."""
+    return Path.home() / ".claude" / "settings.json"
+
+
+def _user_wide_status_line() -> Optional[dict]:
+    """The "statusLine" entry from the user-wide settings file, or None. Read-only, best-effort: a
+    missing file, one that isn't valid JSON, or a "statusLine" that isn't a dict all just mean
+    "nothing to report" here — this check exists only to notice a person's own choice, never to
+    validate or touch that file."""
+    try:
+        data = json.loads(_user_wide_status_line_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    status = data.get("statusLine") if isinstance(data, dict) else None
+    return status if isinstance(status, dict) else None
+
+
+def merge_settings_status_line(current: dict, bridge_data: dict) -> tuple[dict, bool]:
+    """Merges bridge_data["statusLine"] onto current["statusLine"]: added when the project has none
+    yet, replaced when the project's current one is still exactly this template's own previously
+    generated entry (_is_ours_status_line()) — so a project that has since set its own statusLine
+    keeps it untouched forever, the same "a project's own choice, once set, always wins" rule every
+    other bridge here follows (merge_settings_env, is_ours_hook). Before adding or replacing, also
+    checks the user-wide settings file (_user_wide_status_line(), read-only): a person who already
+    set a status line for themselves, once, for every project, is not silently shadowed by one this
+    project's own settings.json would otherwise gain — the project is left with none, and the
+    reason goes to stderr in one line (`.act/skeleton/config.md` says how to turn either off).
+    Returns (new_current, changed); changed is False and new_current is `current` itself, unchanged,
+    when there is nothing to add/replace — the caller's signal that the file needs no write for this
+    part either. Never raises: a malformed `current`/`bridge_data` (not a dict, "statusLine" not a
+    dict) is treated as empty/absent, same convention as merge_settings_hooks/merge_settings_env."""
+    current = current if isinstance(current, dict) else {}
+    bridge_status = bridge_data.get("statusLine") if isinstance(bridge_data, dict) else None
+    if not isinstance(bridge_status, dict):
+        return current, False
+    existing = current.get("statusLine")
+    if existing == bridge_status:
+        return current, False
+    if existing is not None and not _is_ours_status_line(existing):
+        return current, False  # the project's own statusLine always wins, never overwritten
+    if _user_wide_status_line() is not None:
+        print(
+            f"actlib: a user-wide statusLine is already set ({_user_wide_status_line_path()}) — "
+            "this project keeps none of its own (docs/ai/config.md tells you how to turn either off)",
+            file=sys.stderr,
+        )
+        return current, False
+    new_current = dict(current)
+    new_current["statusLine"] = bridge_status
+    return new_current, True
 
 
 def merge_settings_env(current: dict, bridge_data: dict) -> tuple[dict, bool]:

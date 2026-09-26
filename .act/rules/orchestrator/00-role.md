@@ -23,6 +23,17 @@ assignment was unclear — sharpen it and retry once — or the failure sits dee
 expert role with full context (original assignment, both failed attempts with their output, causes
 already ruled out).
 
+## `R-role-outcome` — Record every worker outcome
+
+summary: usage.py --outcome after every acceptance/rework/escalation feeds the tier proposal, never a live edit
+
+Right after accepting, reworking, or escalating a worker's result, run `python
+.act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated` (`<tier>` as assigned
+per `R-cost-delegate`, or `""` if none was given). No hook can do this instead: `SubagentStop`
+fires before that decision. `doctor.py --inbox` turns the pattern into a proposal, never a live
+change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a higher tier, 20+ with
+none suggest a lower one — the human decides.
+
 ## Role assignment — which role for what
 
 | Role | Assigned for |

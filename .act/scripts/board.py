@@ -59,6 +59,10 @@ LEDGER_FALLBACK = Path("docs/ai/work/ledger.md")
 LEDGER_FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)\.md$")
 TASKS_DIR = Path("docs/ai/work/tasks")
 BACKLOG_DIR = Path("docs/ai/work/backlog")
+# Q65a: a task's working state ("Stand ...") lives here (entries.py state), gitignored, never in
+# the versioned task file itself — read_task_titles() shows the last non-blank line next to the
+# task's title.
+STATE_DIR = Path(".act-local/state")
 FOR_RE = re.compile(r"(?im)^for:\s*(.+?)\s*$")
 STATUS_RE = re.compile(r"(?im)^status:\s*(\S+)\s*$")
 ID_RE = re.compile(r"(?im)^id:\s*(\S+)\s*$")
@@ -221,13 +225,30 @@ def _read_created(path: Path) -> Optional[str]:
     return match.group(1).strip() if match else None
 
 
+def _last_state_line(root: Path, task_filename: str) -> Optional[str]:
+    """The last non-blank line of .act-local/state/<task_filename> (entries.py state, Q65a), or
+    None if that file does not exist, is empty, or cannot be read as UTF-8 — the same, ungenerated
+    working-state note a fresh session would otherwise have to reconstruct from the task file
+    alone."""
+    try:
+        text = (root / STATE_DIR / task_filename).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            return line.strip()
+    return None
+
+
 def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]]:
-    """Return up to `limit` task titles from docs/ai/work/tasks/, oldest first by "created:"
-    (_timeline_key(), same normalization the inbox uses), or None if the directory does not exist.
-    Filename order alone no longer sorts chronologically once an id is embedded in the name
-    (ADR-9, T75: "T1-..." .. "T5-..." then "T10-..-T13-.." would otherwise sort ahead of "T2-..",
-    and a team-mode name awaiting an id sorts by its identity prefix, not by when it was written).
-    Title is the file's first Markdown heading, or the filename stem if there is none."""
+    """Return up to `limit` "<title>" or "<title> — <last state line>" strings from
+    docs/ai/work/tasks/, oldest first by "created:" (_timeline_key(), same normalization the inbox
+    uses), or None if the directory does not exist. Filename order alone no longer sorts
+    chronologically once an id is embedded in the name (ADR-9, T75: "T1-..." .. "T5-..." then
+    "T10-..-T13-.." would otherwise sort ahead of "T2-..", and a team-mode name awaiting an id
+    sorts by its identity prefix, not by when it was written). Title is the file's first Markdown
+    heading, or the filename stem if there is none; a task with a working state recorded via
+    `entries.py state` (Q65a) gets that state's last line appended."""
     tasks_dir = root / TASKS_DIR
     if not tasks_dir.is_dir():
         return None
@@ -235,7 +256,12 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
         (p for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md"),
         key=lambda p: _timeline_key(_read_created(p), p.name, newest_first=False),
     )
-    return [(_first_heading(path) or path.stem) for path in files[:limit]]
+    titles = []
+    for path in files[:limit]:
+        title = _first_heading(path) or path.stem
+        state = _last_state_line(root, path.name)
+        titles.append(f"{title} — {state}" if state else title)
+    return titles
 
 
 def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list[str]]:

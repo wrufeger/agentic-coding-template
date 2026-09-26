@@ -36,6 +36,7 @@
 #       [--for <identity>]        todo/report/note only (default all; a question is always "all")
 #       [--body-file <path>]      body below the heading, copied verbatim (UTF-8)
 #   python .act/scripts/entries.py assign                  # hand out ids still missing (and rename)
+#   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line (Q65a)
 #   python .act/scripts/entries.py list [<kind>]            # id/filename + title, per kind
 #   python .act/scripts/entries.py check                    # report a duplicate or unreadable entry
 #
@@ -50,6 +51,16 @@
 #     or one line saying there was nothing to do (including "team" mode + wrong/undetermined
 #     default branch) — never touches a file that already has one. Exit 0 always; assigning ids is
 #     never a failure.
+#   "state": Q65a (2026-09-20) splits a task's versioned goal/check-criteria from its unversioned
+#     working state ("State ...: step 3 running, next step ..."), which lives under
+#     .act-local/state/ (gitignored — .gitignore already covers .act-local/) instead of inside the
+#     task file. Finds the task under docs/ai/work/tasks/ whose header carries "id: <T-id>"
+#     (used_ids()-style scan, task kind only), appends one line "State <YYYY-MM-DD HH:MM>: <text>"
+#     to .act-local/state/<that task file's name> (creating the directory on first use), and prints
+#     "entries: appended state for <id> to .act-local/state/<name>", exit 0. Refuses (exit 2,
+#     nothing written) with a reason on stderr if the id is not a task id, no task with that id
+#     exists, or the text is empty. board.py reads the same file back and shows its last non-blank
+#     line next to the task's title.
 #   "list": one "== <kind> ==" heading per kind shown, then one "<id-or-'(unassigned)'>  <file> —
 #     <title>" line per entry ("-" instead of the id for ledger/todo/report/note, which never
 #     carry one), oldest first (filename order); an inbox entry is listed once, under its own
@@ -142,6 +153,10 @@ _LEGACY_PATTERNS = (
 # still lands above it. A plain {"ids": [...]} list, tolerant of a missing/unreadable file (then
 # nothing is reserved — the safer default is the same "not yet known about" as before this fix).
 RESERVED_IDS_PATH = Path(".act-local/adopt/reserved-ids.json")
+# Q65a: a task's working state ("State ...") lives here, gitignored, never in the versioned task
+# file itself — see cmd_state()/board.py's read_task_titles().
+STATE_DIR = Path(".act-local/state")
+
 STATUS_VALUES = ("open", "answered")
 _HEADER_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")
 
@@ -725,6 +740,47 @@ def cmd_assign(root: Path) -> int:
     return 0
 
 
+def _task_path_for_id(root: Path, raw_id: str) -> tuple[Optional[Path], Optional[str]]:
+    """(task file path, canonical id) for `raw_id`, or (None, None) with a reason string as the
+    third element consumed by the caller — see cmd_state(). Scans docs/ai/work/tasks/ only (not
+    the archive, not the other kinds sharing a prefix table): a task's working state is only ever
+    written while the task is still open."""
+    match = _ID_ARG_RE.match(raw_id.strip())
+    if not match or match.group(1).upper() != KIND_PREFIX["task"]:
+        return None, f"{raw_id!r}: not a task id (a task id is T<n>, optionally one sub-letter)"
+    canonical = _canonical_id(raw_id.strip())
+    task_dir = root / KIND_DIR["task"]
+    if task_dir.is_dir():
+        for path in sorted(task_dir.glob("*.md")):
+            if path.name.lower() == "readme.md":
+                continue
+            text = _safe_read(path)
+            if text is not None and _entry_id(text) == canonical:
+                return path, None
+    return None, f"{canonical}: no open task with this id under {KIND_DIR['task'].as_posix()}"
+
+
+def cmd_state(root: Path, raw_id: str, text_words: list[str]) -> int:
+    text = " ".join(text_words).strip()
+    if not text:
+        print("entries: state text must not be empty — nothing written", file=sys.stderr)
+        return 2
+    result = _task_path_for_id(root, raw_id)
+    path, problem = result
+    if path is None:
+        print(f"entries: {problem} — nothing written", file=sys.stderr)
+        return 2
+    state_dir = root / STATE_DIR
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / path.name
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(state_path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"State {stamp}: {text}\n")
+    entry_id = _entry_id(_safe_read(path) or "") or _canonical_id(raw_id.strip())
+    print(f"entries: appended state for {entry_id} to {_rel(state_path, root)}")
+    return 0
+
+
 def cmd_list(root: Path, kind: Optional[str]) -> int:
     # actlib.INBOX_DIR is shared by four kinds (question/todo/report/note): a section here lists
     # only the entries whose own actlib.inbox_kind() matches it, so each inbox file is shown once,
@@ -796,6 +852,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("assign", help="hand out ids still missing ('team' mode: only on the default branch)")
 
+    state_help = ("append a working-state line for an open task to .act-local/state/ — needs an id "
+                  "already assigned; in 'team' mode a task awaiting one (filename only) has no `state` "
+                  "target yet")
+    p_state = sub.add_parser("state", help=state_help, description=state_help)
+    p_state.add_argument("id", metavar="T-ID", help="the task's id, e.g. T12")
+    p_state.add_argument("text", nargs="+", help='the state line\'s text, e.g. "step 3 running, next: ..."')
+
     p_list = sub.add_parser("list", help="list entries, optionally filtered by kind")
     p_list.add_argument("kind", nargs="?", choices=new_kind_choices,
                         help="task | backlog | ledger | question | todo | report | note (inbox: alias for todo)")
@@ -822,6 +885,8 @@ def main(argv: list[str]) -> int:
                        args.recipient, args.body_file)
     if args.command == "assign":
         return cmd_assign(root)
+    if args.command == "state":
+        return cmd_state(root, args.id, args.text)
     if args.command == "list":
         return cmd_list(root, args.kind)
     if args.command == "check":

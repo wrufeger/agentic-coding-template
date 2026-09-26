@@ -439,6 +439,25 @@ def _template_dev_checkout_reason(root: Path) -> str:
     return ""
 
 
+# Files init itself leaves behind in every project it sets up -- .act-lock.json (step 9,
+# step_lock_and_cache) and docs/ai/config.md (step 6, materialized from the skeleton) -- and that a
+# template clone never has: neither is tracked in the template's own repository (its docs live under
+# .act/skeleton/). Either one alone counts: a run with --no-commit, or one that broke off after step
+# 6, has the config file on disk but no lock yet.
+_SET_UP_PROJECT_MARKERS = (".act-lock.json", "docs/ai/config.md")
+
+
+def _set_up_project_reason(root: Path) -> str:
+    """Non-empty reason string if `root` is a project that already went through init -- an in-place
+    run (no --target) must refuse there, see main() (T76 wave D review, round 2: step 2 would rename
+    the project's branch to 'template' and rebuild 'main' as an orphan, the B130 check above never
+    covers a project). "" for a plain clone or a directory init has never touched."""
+    found = [name for name in _SET_UP_PROJECT_MARKERS if (root / name).is_file()]
+    if not found:
+        return ""
+    return f"this is already a set-up project ({' and '.join(found)} present)"
+
+
 class GitInPlaceResult(NamedTuple):
     """Return shape of step_git_in_place -- a plain tuple used to read like keyword arguments at
     both ends (review HIGH/B142/T76 S1+S3 added the last three fields, see below)."""
@@ -1308,6 +1327,627 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
     return f"{_relative_label(dest, root)}: added/updated {', '.join(parts)}", True
 
 
+# ---------------------------------------------------------------------------
+# Step 6 helper -- Weg C: carry over a source project's own deviations (concept
+# docs/project/concepts/ai-dev-app/08-new-project.md lines 60-125, decided 2026-09-20, Q56d, backlog
+# B91). `--target <dir>` run from a checkout that is itself an already set-up project (its own
+# docs/ai/config.md exists) carries that project's own rule/coding-rule deviations plus its whole
+# docs/ai/local/ tree into the freshly materialized target -- never the `use:` set selection
+# (coding_rules.md), never work state (docs/ai/inbox/, docs/ai/work/, docs/project/ beyond the two
+# named sections). What does not fit (a group id the target has no match for) is named in the
+# inbox, never silently dropped. `--no-local` opts out.
+# ---------------------------------------------------------------------------
+
+def _configured_project_root(path: Path) -> bool:
+    """Whether `path` is itself an already set-up project (not a plain template clone) -- same
+    signal `_ask_feedback_mode` already uses for "has this project made its own choice yet"."""
+    return (path / "docs" / "ai" / "config.md").is_file()
+
+
+def _insert_after_mark(text: str, mark_name: str, new_lines: list[str]) -> tuple[str, bool]:
+    """Insert `new_lines` right after the `<!-- act:<mark_name> -->` line in `text`. (text, False)
+    unchanged if the mark is not present at all (a template version with a different section
+    layout -- nothing to insert into)."""
+    marker = f"<!-- act:{mark_name} -->"
+    idx = text.find(marker)
+    if idx == -1:
+        return text, False
+    insert_at = idx + len(marker)
+    return text[:insert_at] + "\n\n" + "\n".join(new_lines) + text[insert_at:], True
+
+
+def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bool,
+                      dest_was_preexisting: bool, notes: list[str]) -> Optional[str]:
+    """One area (docs/ai/rules.md or docs/project/coding_rules.md): copy the source project's
+    switched-off groups (with their reason) and its '## Overrides'/'## Own rules' sections into
+    the target's freshly materialized file of the same area -- only for a group id the target file
+    already carries a checkbox line for (a set the target never enabled has none, so the `use:`
+    selection itself is never touched here). Never overwrites a target file that already has
+    overrides/own rules of its own, and never touches one at all if it pre-dates this run
+    (`dest_was_preexisting`, B143#4b): docking `--target` onto an already set-up project whose file
+    just has no '## Overrides'/'## Own rules' section yet still means a person made those checkbox
+    choices on purpose -- only a file this run itself materialized from the skeleton is fair game."""
+    source_path = source_root / area.project_file
+    dest_path = root / area.project_file
+    if not source_path.is_file() or not dest_path.is_file():
+        return None
+    if dest_was_preexisting:
+        return None
+    source_project = rules.parse_project_file(source_path, area)
+    has_deviation = source_project.overrides or source_project.own_rules or any(
+        not group.enabled for pset in source_project.sets for group in pset.groups.values()
+    )
+    if not has_deviation:
+        return None
+
+    target_project = rules.parse_project_file(dest_path, area)
+    if target_project.overrides or target_project.own_rules:
+        return (f"{area.name}: {_relative_label(dest_path, root)} already has its own overrides/"
+                "own rules, left unchanged")
+
+    source_group_state = {
+        gid: group for pset in source_project.sets for gid, group in pset.groups.items()
+    }
+    target_group_ids = {gid for pset in target_project.sets for gid in pset.groups}
+
+    lines = dest_path.read_text(encoding="utf-8").splitlines()
+    toggled: list[str] = []
+    for pset in target_project.sets:
+        for gid, group in pset.groups.items():
+            source_group = source_group_state.get(gid)
+            if source_group is None or source_group.enabled:
+                continue
+            idx = group.line - 1
+            lines[idx] = re.sub(r"\[[xX]\]", "[ ]", lines[idx], count=1)
+            if source_group.reason and "—" not in lines[idx]:
+                lines[idx] = lines[idx].rstrip() + f" — {source_group.reason}"
+            toggled.append(gid)
+
+    missing = sorted(gid for gid in source_group_state if gid not in target_group_ids)
+
+    override_lines = [f"- replaces `{o.id}`: {o.text}" for o in source_project.overrides]
+    own_rule_lines = [
+        (f"- `{r.id}`: {r.text}" if r.id else f"- {r.text}") for r in source_project.own_rules
+    ]
+
+    text = "\n".join(lines) + "\n"
+    inserted: list[str] = []
+    if override_lines:
+        text, ok = _insert_after_mark(text, "overrides", override_lines)
+        if ok:
+            inserted.append(f"{len(override_lines)} override(s)")
+    if own_rule_lines:
+        text, ok = _insert_after_mark(text, "own-rules", own_rule_lines)
+        if ok:
+            inserted.append(f"{len(own_rule_lines)} own rule(s)")
+
+    parts: list[str] = []
+    if toggled:
+        parts.append(f"{len(toggled)} group(s) switched off ({', '.join(sorted(toggled))})")
+    if inserted:
+        parts.append(", ".join(inserted))
+    if missing:
+        notes.append(
+            f"Source project deviation(s) for {', '.join(missing)} could not be carried over "
+            f"into {_relative_label(dest_path, root)} -- the target has no matching group there."
+        )
+        parts.append(f"{len(missing)} id(s) skipped, see inbox")
+    if not parts:
+        return None
+    if plan:
+        return f"{area.name}: would carry over {', '.join(parts)}"
+    actlib.write_text_lf(dest_path, text)
+    return f"{area.name}: carried over {', '.join(parts)}"
+
+
+_SECRET_LIKE_NAMES = re.compile(r"(?i)^\.env(\..*)?$")
+
+
+def _git_tracked_files(repo_root: Path, subpath: str) -> Optional[list[str]]:
+    """Repo-root-relative (posix) paths of files `repo_root`'s own git tracks under `subpath` --
+    None if `repo_root` is not a git checkout (or the command fails), never an empty list mistaken
+    for "not a repo". Untracked and gitignored files never show up here at all (B143#2) -- the
+    caller does not need to special-case them separately."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--", subpath],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.decode("utf-8", errors="replace")
+    return [p for p in raw.split("\0") if p]
+
+
+def _git_head_blobs(repo_root: Path, subpath: str) -> Optional[dict[str, str]]:
+    """Repo-root-relative (posix) path -> mode ("100644"/"100755" a file, "120000" a symlink) of
+    every blob under `subpath` in `repo_root`'s HEAD commit -- None if there is no HEAD to read
+    (a repository without commits) or the command fails. Submodule entries (type "commit") are
+    left out: nothing to copy there. `-z`: paths raw, never quoted."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "HEAD", "--", subpath],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    blobs: dict[str, str] = {}
+    for record in result.stdout.decode("utf-8", errors="replace").split("\0"):
+        meta, _tab, path = record.partition("\t")
+        fields = meta.split()
+        if len(fields) >= 3 and fields[1] == "blob" and path:
+            blobs[path] = fields[0]
+    return blobs
+
+
+def _git_differs_from_head(repo_root: Path, subpath: str) -> set[str]:
+    """Tracked files under `subpath` whose index or working tree differs from HEAD -- a staged or
+    unstaged edit, a file added but not committed, a local delete -- repo-root-relative posix.
+    Empty when there is no HEAD or the command fails (nothing could be copied from HEAD then
+    either, and the caller reports that on its own)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "diff", "HEAD", "--name-only", "-z", "--", subpath],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return set()
+    if result.returncode != 0:
+        return set()
+    return {p for p in result.stdout.decode("utf-8", errors="replace").split("\0") if p}
+
+
+def _git_head_blob_bytes(repo_root: Path, rel: str) -> Optional[bytes]:
+    """Content of `rel` exactly as HEAD has it, raw bytes -- `git cat-file blob` applies neither
+    eol conversion nor a textconv filter, so binary content survives -- None if unreadable."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_root), "cat-file", "blob", f"HEAD:{rel}"],
+            capture_output=True, check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _carry_over_local_dir(
+    root: Path, source_root: Path, plan: bool, notes: list[str],
+) -> tuple[Optional[str], list[Path]]:
+    """Copy of the source project's docs/ai/local/ (its own rule/skill/agent/script/checklist
+    overrides) into the target. Git-tracked files only (B143#2, review of T76 wave D): an
+    untracked or gitignored file under the source's docs/ai/local/ (a machine-local note, a
+    stray `.env`) is data the source project itself chose to keep out of its own history and
+    never leaves it through this copy either. Content comes from the source's HEAD commit, never
+    from its working tree (T76 wave D review, round 2): a tracked file the source is still
+    editing -- an unstaged or staged edit, a file added but never committed -- has not been
+    decided for its own history yet, so it does not leave the project through this copy either
+    (the line B143#2 already drew, applied to content); the copy then equals what a fresh clone
+    of the source at HEAD would hold, the one state the source can name later. Whatever differs
+    is named in the inbox instead of silently taken along or silently dropped. A committed file
+    is still skipped, and named in the inbox, if it is a symlink (the link target could point
+    anywhere) or its name looks like a secret (`.env`, `.env.*`). Never overwrites a file the
+    target already has. Returns (summary, list of dest paths actually copied -- for the caller's
+    commit pathspec, never a whole-directory add that would sweep in the target's own untracked
+    files too)."""
+    source_dir = source_root / "docs" / "ai" / "local"
+    if not source_dir.is_dir():
+        return None, []
+    tracked = _git_tracked_files(source_root, "docs/ai/local")
+    if tracked is None:
+        notes.append(
+            f"docs/ai/local of the source project ({source_root}) is not tracked by git there -- "
+            "nothing was copied from it; review it by hand."
+        )
+        return "docs/ai/local: source not tracked by git, skipped", []
+    tracked_set = set(tracked)
+    # Named separately from `skipped_unsafe` below -- these were never even a candidate (git
+    # itself never offered them), so "not copied" is expected, but still worth naming: the source
+    # project might not realize a file it meant to share sits outside its own git tracking.
+    untracked = sorted(
+        p.relative_to(source_root).as_posix()
+        for p in source_dir.rglob("*")
+        if (p.is_file() or p.is_symlink()) and "__pycache__" not in p.parts
+        and p.relative_to(source_root).as_posix() not in tracked_set
+    )
+    committed = _git_head_blobs(source_root, "docs/ai/local")
+    differing = _git_differs_from_head(source_root, "docs/ai/local") if committed is not None else set()
+
+    dest_dir = root / "docs" / "ai" / "local"
+    created = 0
+    skipped_existing = 0
+    skipped_unsafe: list[str] = []
+    not_committed: list[str] = []
+    uncommitted_edits: list[str] = []
+    unreadable: list[str] = []
+    copied: list[Path] = []
+    for rel in sorted(tracked):
+        src = source_root / rel
+        rel_to_local = Path(rel).relative_to("docs/ai/local")
+        mode = committed.get(rel) if committed is not None else None
+        if mode is None:
+            not_committed.append(rel)  # in the index only (staged, never committed), or no HEAD at all
+            continue
+        # Symlink by HEAD's own mode *or* by the working tree (a checkout without symlink support
+        # materializes a 120000 entry as a plain file, an owner may have swapped a file for a link
+        # locally) -- either way it is not copied.
+        if mode == "120000" or src.is_symlink() or _SECRET_LIKE_NAMES.match(Path(rel).name):
+            skipped_unsafe.append(rel)
+            continue
+        dest = dest_dir / rel_to_local
+        if dest.is_file():
+            skipped_existing += 1
+            continue
+        if not plan:
+            content = _git_head_blob_bytes(source_root, rel)
+            if content is None:
+                unreadable.append(rel)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(content)
+        created += 1
+        copied.append(dest)
+        if rel in differing:
+            uncommitted_edits.append(rel)
+    if not (created or skipped_existing or skipped_unsafe or untracked or not_committed or unreadable):
+        return None, []
+    summary = f"docs/ai/local: {'would copy' if plan else 'copied'} {created} file(s) as committed in the source (HEAD)"
+    if skipped_existing:
+        summary += f", {skipped_existing} already present"
+    if skipped_unsafe:
+        summary += f", {len(skipped_unsafe)} skipped (symlink or secret-like name)"
+        notes.append(
+            "docs/ai/local of the source project had file(s) not copied (symlink or secret-like "
+            f"name): {', '.join(skipped_unsafe)} -- review and copy them by hand if they are "
+            "actually needed."
+        )
+    if uncommitted_edits:
+        summary += f", {len(uncommitted_edits)} with uncommitted edit(s) in the source (HEAD version taken)"
+        notes.append(
+            "docs/ai/local of the source project has uncommitted edit(s) to tracked file(s) -- copied "
+            f"as last committed there (HEAD), the working-tree edits were not taken along: "
+            f"{', '.join(uncommitted_edits)} -- commit them in the source project and copy them by "
+            "hand if they are meant to be shared."
+        )
+    if not_committed:
+        summary += f", {len(not_committed)} tracked but never committed, skipped"
+        notes.append(
+            "docs/ai/local of the source project has tracked file(s) without a committed version "
+            f"(staged only, or a repository without commits) -- not copied: {', '.join(not_committed)} "
+            "-- commit them in the source project first, then copy them by hand if they are meant "
+            "to be shared."
+        )
+    if unreadable:
+        summary += f", {len(unreadable)} could not be read from HEAD"
+        notes.append(
+            "docs/ai/local of the source project: file(s) could not be read from its HEAD commit "
+            f"(`git cat-file blob` failed), not copied: {', '.join(unreadable)} -- review by hand."
+        )
+    if untracked:
+        summary += f", {len(untracked)} untracked/gitignored file(s) skipped"
+        notes.append(
+            "docs/ai/local of the source project had untracked/gitignored file(s), not copied "
+            f"(never file content, only the path -- R-safe-no-secret-log): {', '.join(untracked)} "
+            "-- review and copy them by hand (add to git first) if they are actually meant to be shared."
+        )
+    return summary, (copied if not plan else [])
+
+
+def step_source_project(
+    root: Path, plan: bool, source_checkout: Path, take_local: bool,
+    dest_was_preexisting: dict[str, bool], notes: list[str],
+) -> tuple[Optional[str], list[Path]]:
+    """Weg C entry point, called only in `--target` mode (see main()). `source_checkout` is the
+    checkout init.py is running from (source_act.parent) -- the project whose own deviations get
+    carried over, if it has any of its own to begin with. `dest_was_preexisting` says, per
+    `area.project_file`, whether the target already had that file before this run materialized it
+    (B143#4b) -- passed straight through to `_carry_over_area`. Returns the summary plus the list
+    of `docs/ai/local/` dest paths this run actually copied (B143#1: for the caller's commit
+    pathspec, never the whole directory)."""
+    if not take_local:
+        return "source project: --no-local -- skipped", []
+    if not _configured_project_root(source_checkout):
+        return None, []
+    summaries: list[str] = []
+    for area in (rules.AREAS["core"], rules.AREAS["coding"]):
+        summary = _carry_over_area(
+            root, source_checkout, area, plan, dest_was_preexisting.get(area.project_file, False), notes,
+        )
+        if summary:
+            summaries.append(summary)
+    local_summary, copied = _carry_over_local_dir(root, source_checkout, plan, notes)
+    if local_summary:
+        summaries.append(local_summary)
+    if not summaries:
+        return "source project: nothing to take over", []
+    return "source project: " + "; ".join(summaries), copied
+
+
+# ---------------------------------------------------------------------------
+# Step 6 helper -- Owner profile (Q103 a1/b1/c1, concept 08 SS "Voreinstellungen"). Read only as an
+# init source, never as a runtime load path (settings_export.py's own docstring). Genuinely one
+# profile file: settings_export.profile_dir()/"settings.md" -- imported via settings_load.py's own
+# analyze()/apply machinery rather than a second read of the settings-file format. Runs after
+# step_source_project so precedence falls out of the file state it compares against: a group/id
+# the source project already carried over is no longer "new" by the time this runs, so the profile
+# only ever fills a genuine gap, never overrides a Weg C decision.
+# ---------------------------------------------------------------------------
+
+def _profile_display_path() -> str:
+    """Platform-generic form of the owner profile's location for text that ends up committed
+    (B143#4 LOW) -- the real, absolute path (with the OS user name in it under Windows) is fine to
+    print to the terminal, never to write into a file that lands in the project's own history."""
+    if sys.platform == "win32":
+        return r"%APPDATA%\act\settings.md"
+    return "~/.config/act/settings.md"
+
+
+def _profile_entry_lines(result) -> list[str]:
+    """Compact 'id + kind' summary of what an owner profile would apply -- no rule/file text, just
+    enough to identify each entry (Q103 a1: the todo names the entries, not just that some exist)."""
+    lines = [f"[{r.entry.area}] {r.entry.symbol} `{r.entry.id}`"
+             for r in result.resolutions if r.action == "apply"]
+    lines.extend(f"[{item['area']}] {item['dest']} (new file)"
+                 for item in result.file_plan if item["status"] == "new")
+    return lines
+
+
+def step_owner_profile(
+    root: Path, plan: bool, interactive: bool, take_profile: bool, auto_apply: bool,
+    notes: list[str],
+) -> tuple[str, list[Path]]:
+    """`auto_apply` (`--profile`, Q103 a1's "catch up" path) shows the same entry list an
+    interactive run would, but applies it right away without asking -- for a deliberate, explicit
+    re-run of `init.py` on an already set-up project, not for a run that merely happens to be
+    interactive."""
+    import settings_export
+    import settings_load
+
+    if not take_profile:
+        return "owner profile: --no-profile -- skipped", []
+
+    profile_path = settings_export.profile_dir() / "settings.md"
+    if not profile_path.is_file():
+        return "owner profile: none found", []
+    try:
+        source = settings_load.load_source(profile_path)
+    except (OSError, ValueError, KeyError) as exc:
+        notes.append(f"Owner profile at {_profile_display_path()} could not be read ({exc}) -- review it by hand.")
+        return f"owner profile: {profile_path} -- could not be read, see inbox", []
+
+    result = settings_load.analyze(root, [source])
+    settings_load.plan_files(root, [source], result)
+    settings_load.plan_units(root, [source], result)
+    settings_load.mark_unreviewed_without_judgments(result)
+    entry_lines = _profile_entry_lines(result)
+    display_path = _profile_display_path()
+
+    # An entry that needs a verdict (settings_load marks it "skip" plus a finding) is not in
+    # entry_lines, but must still reach the inbox rather than vanish.
+    if not entry_lines and not result.findings:
+        return "owner profile: found, nothing new to add", []
+
+    if not auto_apply and not interactive:
+        review_note = (f"\n  plus {len(result.findings)} entr(ies) that need review before they could apply"
+                       if result.findings else "")
+        notes.append(
+            f"An owner profile is available at {display_path} but was not applied automatically "
+            "(non-interactive run). Entries it would add:\n  " + ("\n  ".join(entry_lines) or "(none directly)")
+            + review_note +
+            "\nReview it and, if it fits, apply it: `python .act/scripts/init.py --profile` run "
+            "inside this project (no `--target`: in a project that is already set up, init.py "
+            "runs the owner-profile step alone and commits only what it wrote -- nothing else is "
+            f"touched), or `python .act/scripts/settings_load.py plan {display_path}` then `apply` "
+            "the same path."
+        )
+        return f"owner profile: found at {display_path} -> non-interactive, left for the inbox", []
+
+    if entry_lines:
+        print(f"Owner profile at {display_path} would add:")
+        for line in entry_lines:
+            print(f"  {line}")
+        if not auto_apply:
+            answer = _ask("Apply the owner profile above?", "n", True).strip().lower()
+            if answer not in ("y", "yes", "j", "ja"):
+                return "owner profile: found, declined", []
+    if plan:
+        return f"owner profile: would apply {display_path}", []
+
+    rule_messages = settings_load.write_resolutions(root, result)
+    file_messages = settings_load.write_files(root, result, True)
+    bridge_messages = settings_load.write_unit_bridges(root, result)
+    written_paths = [root / item["dest"] for item in result.file_plan if item.get("written")]
+    written_paths.extend(_resolution_area_files(root, result))
+    written_paths.extend(_owner_profile_bridge_paths(root, result))
+    if result.findings:
+        inbox_path, _is_new = settings_load.write_inbox(root, result.findings, result.setup_required, [source])
+        if inbox_path is not None:
+            written_paths.append(inbox_path)
+    applied = sum(1 for _message, ok in rule_messages if ok) + len(file_messages) + len(bridge_messages)
+    summary = f"owner profile: applied {applied} item(s) from {display_path}"
+    if result.findings:
+        summary += f", {len(result.findings)} finding(s) in the inbox"
+    return summary, written_paths
+
+
+def _owner_profile_bridge_paths(root: Path, result) -> list[Path]:
+    """Re-derives the destination paths `settings_load.write_unit_bridges()` may just have written
+    for a "new" agents/skills item, without duplicating its write logic or changing its return
+    type (out of this assignment's write scope) -- checked by the file now existing, same
+    "written, not just planned" test `write_unit_bridges()` itself already uses. Listing a path it
+    did not actually touch after all costs nothing: the caller's commit pathspec skips anything
+    that does not exist (B143#1)."""
+    written_items = [item for item in result.file_plan
+                      if item["area"] in ("agents", "skills") and item["status"] == "new"
+                      and (root / item["dest"]).is_file()]
+    if not written_items:
+        return []
+    tools = [t.strip().lower() for t in actlib.read_config().get("tools", "").split(",") if t.strip()]
+    paths: list[Path] = []
+    if "claude-code" in tools:
+        for item in written_items:
+            if item["area"] != "agents":
+                continue
+            dest = root / ".claude" / "agents" / f"{Path(item['path']).stem}.md"
+            if dest.is_file():
+                paths.append(dest)
+    for item in written_items:
+        if item["area"] != "skills":
+            continue
+        for dest_root, tool_gate in SKILL_TARGET_DIRS:
+            if not _skill_target_active(tool_gate, tools):
+                continue
+            dest = root / dest_root / item["path"]
+            if dest.is_file():
+                paths.append(dest)
+    return paths
+
+
+def _resolution_area_files(root: Path, result) -> list[Path]:
+    """The rule files (docs/ai/rules.md, docs/project/coding_rules.md) `settings_load.
+    write_resolutions()` edits for the entries it applies -- for the caller's commit pathspec. In a
+    full run those files are already among step 6's `touched_bridges`; a profile-only run
+    (run_profile_only, `init.py --profile` in a set-up project) has no such list and would otherwise
+    leave the very file the profile changed out of its own commit. Listing a file the write then
+    did not change after all costs nothing: an unchanged path stages nothing."""
+    import settings_load
+    files: list[Path] = []
+    for resolution in result.resolutions:
+        if resolution.action != "apply":
+            continue
+        area_key = settings_load.SETTINGS_TO_RULES_AREA.get(resolution.entry.area)
+        if area_key is None:
+            continue
+        path = root / rules.AREAS[area_key].project_file
+        if path not in files:
+            files.append(path)
+    return files
+
+
+def step_source_and_profile(
+    root: Path, plan: bool, interactive: bool, source_checkout: Path,
+    take_local: bool, take_profile: bool, auto_apply: bool, dest_was_preexisting: dict[str, bool],
+    notes: list[str],
+) -> tuple[str, list[Path]]:
+    """Combined Weg C (source project, concept 08) + owner profile entry point (Q103 b1, B143#3c).
+    Interactive (or `auto_apply`, `--profile`): one list with provenance per entry, one question --
+    covers whichever of the two sources has something to offer, applies both together or neither;
+    `auto_apply` shows the same list but skips the question (Q103 a1's "catch up" path). Plain
+    non-interactive, no `--profile`: unchanged split behavior -- Weg C stays applied by default
+    (concept 08's own default, `--no-local` opts out of it), the profile stays for the inbox
+    instead (Q103 a1, `--no-profile` opts out of even that note)."""
+    if not interactive and not auto_apply:
+        source_summary, source_paths = step_source_project(
+            root, plan, source_checkout, take_local, dest_was_preexisting, notes,
+        )
+        profile_summary, profile_paths = step_owner_profile(
+            root, plan, False, take_profile, False, notes,
+        )
+        summary = "; ".join(s for s in (source_summary, profile_summary) if s)
+        return summary, [*source_paths, *profile_paths]
+
+    # Interactive: preview both sources without writing anything (plan=True / analyze-only), build
+    # one combined list, ask once.
+    import settings_export
+    import settings_load
+
+    combined_lines: list[str] = []
+    has_source = take_local and _configured_project_root(source_checkout)
+    if has_source:
+        preview_notes: list[str] = []  # discarded -- a real note only makes sense once actually applied
+        for area in (rules.AREAS["core"], rules.AREAS["coding"]):
+            summary = _carry_over_area(
+                root, source_checkout, area, True,
+                dest_was_preexisting.get(area.project_file, False), preview_notes,
+            )
+            if summary:
+                combined_lines.append(f"[source project] {summary}")
+        local_summary, _copied = _carry_over_local_dir(root, source_checkout, True, preview_notes)
+        if local_summary:
+            combined_lines.append(f"[source project] {local_summary}")
+
+    profile_display = _profile_display_path()
+    profile_source = None
+    profile_result = None
+    if take_profile:
+        profile_path = settings_export.profile_dir() / "settings.md"
+        if profile_path.is_file():
+            try:
+                profile_source = settings_load.load_source(profile_path)
+            except (OSError, ValueError, KeyError) as exc:
+                notes.append(f"Owner profile at {_profile_display_path()} could not be read ({exc}) -- review it by hand.")
+            if profile_source is not None:
+                profile_result = settings_load.analyze(root, [profile_source])
+                settings_load.plan_files(root, [profile_source], profile_result)
+                settings_load.plan_units(root, [profile_source], profile_result)
+                settings_load.mark_unreviewed_without_judgments(profile_result)
+                combined_lines.extend(
+                    f"[owner profile] {line}" for line in _profile_entry_lines(profile_result)
+                )
+                if profile_result.findings:
+                    combined_lines.append(
+                        f"[owner profile] {len(profile_result.findings)} entr(ies) need review -- listed in the inbox"
+                    )
+
+    if not combined_lines:
+        source_summary = None
+        if not take_local:
+            source_summary = "source project: --no-local -- skipped"
+        elif has_source:
+            source_summary = "source project: nothing to take over"
+        profile_summary = None
+        if not take_profile:
+            profile_summary = "owner profile: --no-profile -- skipped"
+        elif profile_source is None:
+            profile_summary = "owner profile: none found"
+        return "; ".join(s for s in (source_summary, profile_summary) if s), []
+
+    print("The following would be carried over into this project:")
+    for line in combined_lines:
+        print(f"  {line}")
+    if not auto_apply:
+        answer = _ask("Apply the above?", "n", True).strip().lower()
+        if answer not in ("y", "yes", "j", "ja"):
+            return "source project/owner profile: shown, declined", []
+    if plan:
+        return "source project/owner profile: would apply " + "; ".join(combined_lines), []
+
+    committed: list[Path] = []
+    summaries: list[str] = []
+    if has_source:
+        source_summary, source_paths = step_source_project(
+            root, False, source_checkout, True, dest_was_preexisting, notes,
+        )
+        if source_summary:
+            summaries.append(source_summary)
+        committed.extend(source_paths)
+    if profile_result is not None and profile_source is not None:
+        rule_messages = settings_load.write_resolutions(root, profile_result)
+        file_messages = settings_load.write_files(root, profile_result, True)
+        bridge_messages = settings_load.write_unit_bridges(root, profile_result)
+        written_paths = [root / item["dest"] for item in profile_result.file_plan if item.get("written")]
+        written_paths.extend(_resolution_area_files(root, profile_result))
+        written_paths.extend(_owner_profile_bridge_paths(root, profile_result))
+        if profile_result.findings:
+            inbox_path, _is_new = settings_load.write_inbox(
+                root, profile_result.findings, profile_result.setup_required, [profile_source],
+            )
+            if inbox_path is not None:
+                written_paths.append(inbox_path)
+        applied = sum(1 for _m, ok in rule_messages if ok) + len(file_messages) + len(bridge_messages)
+        profile_summary = f"owner profile: applied {applied} item(s) from {profile_display}"
+        if profile_result.findings:
+            profile_summary += f", {len(profile_result.findings)} finding(s) in the inbox"
+        summaries.append(profile_summary)
+        committed.extend(written_paths)
+    return "; ".join(summaries), committed
+
+
 def step_materialize(
     root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec],
     notes: Optional[list[str]] = None, is_target: bool = False, template_commit: str = "",
@@ -1719,7 +2359,18 @@ def step_own_files(
 def step_lock_and_cache(
     root: Path, plan: bool, template_origin: str, template_commit: str,
     generated: dict[str, Path], copies: dict[str, dict],
+    generated_hashes: Optional[dict[str, str]] = None,
 ) -> str:
+    """`generated_hashes` (T76 wave D review, round 3): the fingerprint of each generated bridge
+    exactly as step 6 wrote it -- read by main() right after step_materialize, *before* the same
+    run's carry-over (Weg C, owner profile) edits docs/ai/rules.md or coding_rules.md (a group
+    switched off with its reason, an own rule). Hashing here, after those edits, used to record
+    the edited state as "generated": the first session start (checks/session.py _refresh_bridges,
+    likewise update.py's refresh) then saw an "unchanged" bridge and wrote it back raw from
+    .act/bridges/, silently dropping everything carried over (orchestrator's own run, 2026-09-26).
+    With the pre-carry-over hash recorded, the edited file counts as "edited locally" from the
+    start -- the same state as a checkbox the owner unticks by hand, which the refresh leaves
+    alone. Falls back to hashing here when not given (nothing edited in between)."""
     version, disk_commit = _read_version_file(root)
     # Prefer the commit read straight from the template checkout's own git history
     # (step_git_in_place/step_git_target); .act/VERSION's "commit=" line is only the fallback for
@@ -1764,7 +2415,9 @@ def step_lock_and_cache(
             _update.record_applied(root)
         except Exception:
             pass
-    hashes = {rel: actlib.generated_hash(path) for rel, path in generated.items() if path.is_file()}
+    if generated_hashes is None:
+        generated_hashes = {rel: actlib.generated_hash(path) for rel, path in generated.items() if path.is_file()}
+    hashes = dict(generated_hashes)
     if not plan:
         actlib.write_cache({"generated": hashes})
     return (
@@ -1801,7 +2454,12 @@ def _remove_old_template_branch(root: Path, plan: bool, old_branch_tip: str) -> 
     return f"old 'template' branch removed{short_tip}"
 
 
-def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> str:
+INIT_COMMIT_MESSAGE = "chore: initialize project from template"
+PROFILE_COMMIT_MESSAGE = "chore: apply owner profile (init.py --profile)"
+
+
+def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
+                message: str = INIT_COMMIT_MESSAGE) -> str:
     if no_commit:
         # Returns before any `git add`, so nothing is staged either -- say so plainly instead of
         # the previous, inaccurate "staged/unstaged" (review finding T58#7).
@@ -1815,7 +2473,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
     diff = _git(["diff", "--cached", "--name-only"], cwd=root)
     if not diff.stdout.strip():
         return "nothing staged, no commit made"
-    _git(["commit", "-m", "chore: initialize project from template"], cwd=root)
+    _git(["commit", "-m", message], cwd=root)
     sha = _git(["rev-parse", "--short", "HEAD"], cwd=root).stdout.strip()
     return f"committed {len(rels)} path(s) as {sha}"
 
@@ -1934,6 +2592,39 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
 
 
 # ---------------------------------------------------------------------------
+# `init.py --profile` inside a project that is already set up (Q103 a1's "catch up" path)
+# ---------------------------------------------------------------------------
+
+def run_profile_only(root: Path, plan: bool, interactive: bool, no_commit: bool, reason: str) -> int:
+    """What `init.py --profile` does inside a project that already went through init (no
+    `--target`; main() lands here instead of refusing, T76 wave D review round 2): the owner
+    profile a non-interactive first run only left a todo for is applied now, and nothing else
+    happens. Exactly one step -- step_owner_profile with `auto_apply` (entries shown, applied
+    without a question, whatever needs a verdict goes to the settings inbox) -- then a commit of
+    the paths that step wrote plus its own inbox note, if any. Nothing of a full run: no step 2
+    (the branch rename and orphan rebuild the guard in main() exists to prevent), no bridges, no
+    skeleton, no lock, and no .act-local/cache.json rewrite either -- a docs/ai/rules.md the
+    profile changed then no longer matches its recorded hash, which is exactly the "edited locally,
+    left alone" state the session-start bridge refresh preserves (checks/session.py
+    _refresh_bridges); re-recording the hash would hand the file back to that refresh."""
+    print(f"[act] --profile: {reason} -> owner-profile step only, nothing else is touched")
+    notes: list[str] = []
+    summary, written_paths = step_owner_profile(root, plan, interactive, True, True, notes)
+    print(f"  {summary}")
+    owner = actlib.read_config().get("owner", "").strip() or "unknown"
+    inbox_path = _write_inbox_note(root, owner, notes, plan)
+    commit_paths = list(written_paths)
+    if inbox_path is not None:
+        commit_paths.append(inbox_path)
+    print(f"  {step_commit(root, plan, no_commit, commit_paths, message=PROFILE_COMMIT_MESSAGE)}")
+    if notes:
+        print(f"[act] done - {len(notes)} open point(s) " + ("would go to" if plan else "left in") + " docs/ai/inbox/")
+    else:
+        print("[act] done - no open points")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1947,16 +2638,34 @@ def main(argv: list[str]) -> int:
         except (AttributeError, ValueError):
             pass
 
-    parser = argparse.ArgumentParser(description="Turn a template checkout into a project, or dock onto an existing directory.")
+    parser = argparse.ArgumentParser(
+        description="Turn a template checkout into a project, or dock onto an existing directory "
+                    "(--target). Inside a project that is already set up, only --profile runs (see "
+                    "there); bringing .act/ up to date is update.py's job.",
+    )
     parser.add_argument("--target", help="create/dock in this directory instead of the current checkout")
     parser.add_argument("--plan", action="store_true", help="show what would happen, change nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; take defaults, log open points to the inbox")
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
+    parser.add_argument("--no-local", action="store_true",
+                        help="--target only: don't carry over the source checkout's own rule/coding-rule "
+                             "deviations and docs/ai/local/ (Weg C, on by default)")
+    parser.add_argument("--no-profile", action="store_true",
+                        help="don't offer the owner profile at %%APPDATA%%\\act\\settings.md / "
+                             "~/.config/act/settings.md (Q103, on by default)")
+    parser.add_argument("--profile", action="store_true",
+                        help="apply the owner profile without asking (its entries are shown first). "
+                             "Inside a project that is already set up (no --target) this is the only "
+                             "step that runs -- nothing else is touched, only what it wrote is "
+                             "committed (Q103 a1's 'catch up' path after a non-interactive first "
+                             "run); in a fresh clone or with --target it is part of the full run")
     parser.add_argument("--language-docs", metavar="CODE",
                         help="language of docs/ (e.g. de) instead of asking; default en (R-work-language)")
     parser.add_argument("--language-chat", metavar="CODE",
                         help="chat language (a code, or auto = follow the owner's messages) instead of asking")
     args = parser.parse_args(argv)
+    if args.profile and args.no_profile:
+        parser.error("--profile and --no-profile contradict each other")
 
     plan = args.plan
     source_act = Path(__file__).resolve().parent.parent  # .act/
@@ -2020,6 +2729,37 @@ def main(argv: list[str]) -> int:
             )
             sys.exit(1)
 
+        # T76 wave D review (round 2, HIGH): a project that already went through init -- its own
+        # .act-lock.json (step 9) or docs/ai/config.md (step 6) is there -- is never "a clone to
+        # turn into a project" again. Step 2 would rename its current branch to 'template' and
+        # rebuild 'main' as an orphan with none of the project's own history on it; the B130 check
+        # above cannot catch this (a project is neither the dev checkout nor a multi-worktree
+        # repository). Refused here, read-only, before step_config's questions -- with one
+        # deliberate exception: `--profile`, Q103 a1's "catch up" path, runs the owner-profile
+        # step alone (run_profile_only) and nothing else.
+        set_up_reason = _set_up_project_reason(root)
+        if set_up_reason:
+            if args.profile:
+                return run_profile_only(root, plan, actlib.is_interactive() and not plan, args.no_commit, set_up_reason)
+            consequence = (
+                "step 2 would rename the current branch to 'template' and rebuild 'main' as an "
+                "orphan branch without this project's own history"
+            )
+            advice = (
+                "to apply the owner profile here, run 'init.py --profile' (in a set-up project only "
+                "that step runs); to bring .act/ up to date, run 'python .act/scripts/update.py'; "
+                "to build a new project from this one, run 'init.py --target <dir>'"
+            )
+            if plan:
+                print(f"[act] {set_up_reason}; would refuse to run in place ({consequence}); nothing changed; {advice}")
+                return 0
+            print(
+                f"init.py: {set_up_reason} -- refusing to run in place: {consequence}; nothing was "
+                f"changed; {advice}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     interactive = actlib.is_interactive() and not plan
     notes: list[str] = []
 
@@ -2071,15 +2811,45 @@ def main(argv: list[str]) -> int:
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
+    # B143#4b: whether the target already had its own docs/ai/rules.md / coding_rules.md *before*
+    # this run -- captured here, before step_materialize can create either from the skeleton, so
+    # `_carry_over_area` only ever touches a file this run itself materialized, never a docked
+    # project's own already-established checkbox choices.
+    dest_was_preexisting = {
+        area.project_file: (root / area.project_file).is_file()
+        for area in (rules.AREAS["core"], rules.AREAS["coding"])
+    } if is_target else {}
+
     materialize_messages, generated, touched_bridges, copies = step_materialize(
         root, plan, cfg, selected_bridges, notes, is_target=is_target, template_commit=verify_commit,
     )
+    # Fingerprint of every generated bridge exactly as written -- taken now, before this step's
+    # carry-over below (Weg C / owner profile) may edit docs/ai/rules.md or coding_rules.md; step 9
+    # records these instead of re-hashing the edited files (see step_lock_and_cache). Nothing else
+    # between here and step 9 touches a generated file: step 7 writes .gitignore/.gitattributes,
+    # step 8 README.md/LICENSE only.
+    generated_hashes = {rel: actlib.generated_hash(path) for rel, path in generated.items() if path.is_file()}
     translate_path, translate_message = step_translate_note(root, plan, cfg)
     if translate_message:
         materialize_messages.append(translate_message)
     dependency_check_path, dependency_check_message = step_dependency_check_note(root, plan)
     if dependency_check_message:
         materialize_messages.append(dependency_check_message)
+    imported_paths: list[Path] = []
+    if is_target:
+        combined_summary, combined_paths = step_source_and_profile(
+            root, plan, interactive, source_act.parent, not args.no_local, not args.no_profile,
+            args.profile, dest_was_preexisting, notes,
+        )
+        if combined_summary:
+            materialize_messages.append(combined_summary)
+        imported_paths.extend(combined_paths)
+    else:
+        profile_summary, profile_paths = step_owner_profile(
+            root, plan, interactive, not args.no_profile, args.profile, notes,
+        )
+        materialize_messages.append(profile_summary)
+        imported_paths.extend(profile_paths)
     _print_step(6, "; ".join(materialize_messages))
 
     gitfiles_messages, touched_gitfiles = step_git_files(root, plan)
@@ -2098,10 +2868,17 @@ def main(argv: list[str]) -> int:
         _print_step(8, step_own_files(root, plan, interactive, cfg, verify_commit, notes))
         own_root_files = [p for p in (root / "README.md", root / "LICENSE") if p.is_file()]
 
-    _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies))
+    _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
-    commit_paths = [root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles, *own_root_files]
+    commit_paths = [
+        root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles, *own_root_files,
+        # Weg C (docs/ai/local/ copy) and the owner-profile import (scripts/checklists/agents/
+        # skills + their tool bridges) each report exactly the paths they wrote (B143#1) -- never a
+        # whole-directory add (`docs/ai/local`, `.claude`, `.agents`), which would sweep in
+        # anything else already sitting there, including a target's own untracked files.
+        *imported_paths,
+    ]
     if inbox_path is not None:
         commit_paths.append(inbox_path)
     if translate_path is not None and not plan:

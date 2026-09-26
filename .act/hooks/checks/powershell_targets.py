@@ -102,15 +102,15 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Optional
 
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
     _git_targets,
+    _is_absolute_target,
     _is_dynamic_target,
-    _to_native_path,
+    _resolve_path,
 )
 
 __all__ = [
@@ -585,16 +585,10 @@ def _resolve_ps_target(raw: Optional[str], cwd: Optional[str]) -> Optional[str]:
         return None
     if _is_dynamic_target(raw):
         return raw
-    native = _to_native_path(raw)
-    try:
-        path = Path(native)
-        if not path.is_absolute():
-            if cwd is None:
-                return raw
-            path = Path(_to_native_path(cwd)) / native
-        return path.resolve().as_posix()
-    except (OSError, ValueError):
+    if not _is_absolute_target(raw) and cwd is None:
         return raw
+    resolved = _resolve_path(raw, cwd)
+    return resolved.as_posix() if resolved is not None else raw
 
 
 def _resolve_cd_target(target: Optional[str], cwd: Optional[str]) -> Optional[str]:
@@ -603,16 +597,10 @@ def _resolve_cd_target(target: Optional[str], cwd: Optional[str]) -> Optional[st
     relative one while `cwd` is already unknown) — see _flush_ps_statement."""
     if not target or _is_dynamic_target(target):
         return None
-    native = _to_native_path(target)
-    try:
-        path = Path(native)
-        if not path.is_absolute():
-            if cwd is None:
-                return None
-            path = Path(_to_native_path(cwd)) / native
-        return str(path.resolve())
-    except (OSError, ValueError):
+    if not _is_absolute_target(target) and cwd is None:
         return None
+    resolved = _resolve_path(target, cwd)
+    return str(resolved) if resolved is not None else None
 
 
 def _flush_ps_statement(

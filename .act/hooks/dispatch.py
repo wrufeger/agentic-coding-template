@@ -284,6 +284,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("write_scope", "check_worker_write_scope"),          # check 1c — per-worker write scope (R-cost-delegate)
     ("worker_docs_ai", "check_worker_docs_ai"),           # worker writes under docs/ai/ (R-role-worker)
     ("worker_git_write", "check_worker_git_write"),       # worker runs a mutating git command (R-role-worker)
+    ("mcp_ide", "check_mcp_ide"),                          # IDE MCP tool calls, classified and reused (T76 Welle D)
     ("commit_pathspec", "check_commit_pathspec"),         # git add -A / . / commit -a (R-code-commit)
     ("git_reset_hard", "check_git_reset_hard"),           # git reset --hard on a dirty tree (R-safe-git-reset)
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
@@ -325,10 +326,52 @@ _OBSERVERS = (
 # call instead of letting it through: exit code 1 would count as "not blocking" for the harness,
 # so a broken guard would silently open the door it is meant to keep shut. Every other check
 # fails open with one line on stderr — a broken convenience check must not stop all work.
-_FAIL_CLOSED = {"write_guard", "nesting_guard", "write_scope"}
+_FAIL_CLOSED = {"write_guard", "nesting_guard", "write_scope", "mcp_ide"}
 # Only tools that can write or start a worker are refused by a broken guard — reading stays
 # possible, so the assistant can still look into what broke.
 _FAIL_CLOSED_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Agent", "Task"}
+
+def _mcp_call_needs_mcp_ide(tool_name: str, payload: dict) -> bool:
+    """True when a *working* checks.mcp_ide.check_mcp_ide could have denied this call -- i.e.
+    whether _check_failed's fallback below (mcp_ide broken) must deny it too, rather than letting
+    it through the way mcp_ide.py's own final `return 0` would for anything it does not classify
+    (review finding 4b: a broken mcp_ide used to deny *every* `mcp__` call, even a plainly
+    read-only one on an unrelated server, which is a strictly worse outcome than the bug this check
+    exists to guard against). A server with no IDE evidence at all (Gmail, Docs, ...) must stay
+    untouched here exactly as it would with a working mcp_ide.
+
+    Judged from checks.mcp_ide_tables -- the class tables mcp_ide.py itself reads, kept in a module
+    of their own with nothing in it that can fail -- so a runtime error inside check_mcp_ide() and
+    an import error of mcp_ide.py come out the same (T76 wave D review, finding LOW: the two used
+    to differ, exit 2 vs. 0 for the orchestrator's own `create_new_file`): a shell- or
+    write-classified tool denies for everyone (a working check can deny the orchestrator there,
+    via the .act/ write-guard); an exec-classified one for a worker only (a working check never
+    denies the orchestrator there, it only prints a note); a read tool never; an unlisted tool on an
+    IDE-named server (checks.session._is_ide_server_name, already loaded by this module's own
+    wildcard import above -- the one part of the definition that never depends on mcp_ide.py) for
+    a worker only, as the working check would. Only if even the tables module cannot be used is
+    every call on an IDE-named server refused, worker or not, reads included: with no table left to
+    tell `read_file` from `create_new_file`, "cannot evaluate" denies, and the message names
+    doctor.py."""
+    if not tool_name.startswith("mcp__"):
+        return False
+    rest = tool_name[len("mcp__"):]
+    server, sep, suffix = rest.partition("__")
+    if not sep or not server or not suffix:
+        return False  # not even shaped like an MCP tool call
+    ide_named = _is_ide_server_name(server)
+    try:
+        tables = importlib.import_module("checks.mcp_ide_tables")
+        tool_class = tables._tool_class(suffix)
+    except Exception:  # noqa: BLE001 — not even the tables are usable: nothing left to classify with
+        return ide_named
+    if tool_class in ("shell", "write"):
+        return True
+    if tool_class == "exec":
+        return _is_worker(payload)
+    if tool_class == "read":
+        return False
+    return ide_named and _is_worker(payload)
 
 
 def _load(module_name: str, func_name: str):
@@ -349,7 +392,19 @@ def _load(module_name: str, func_name: str):
 
 
 def _check_failed(module_name: str, reason: str, payload: dict) -> int:
-    if module_name in _FAIL_CLOSED and payload.get("tool_name") in _FAIL_CLOSED_TOOLS:
+    tool_name = payload.get("tool_name")
+    if module_name == "mcp_ide":
+        # mcp_ide is only ever this check's business for an actual `mcp__...` call (see
+        # mcp_ide.check_mcp_ide's own early `return 0` for anything else) — an unrelated Bash/
+        # Write/Agent call must never be denied just because this one, unrelated check is broken
+        # (review finding 4a). Within an MCP call, fail closed only where a working check would
+        # actually have looked at all (_mcp_call_needs_mcp_ide, review finding 4b) — a plainly
+        # read-only or unrecognized MCP tool passes through the same as mcp_ide.py's own final
+        # `return 0` would for it, broken check or not.
+        applies = isinstance(tool_name, str) and _mcp_call_needs_mcp_ide(tool_name, payload)
+    else:
+        applies = tool_name in _FAIL_CLOSED_TOOLS
+    if module_name in _FAIL_CLOSED and applies:
         print(f"[act] check {module_name} failed ({reason}) — refusing to be safe; "
               "run .act/scripts/doctor.py", file=sys.stderr)
         return 2

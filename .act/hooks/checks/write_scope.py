@@ -48,6 +48,7 @@ from .shell_targets import (
     _bash_write_targets,
     _is_absolute_target,
     _is_dynamic_target,
+    _resolve_path,
     _to_native_path,
 )
 
@@ -475,20 +476,18 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
     4) unless the scope's own patterns include a matching absolute-POSIX one, which only happens for
     a pattern resolved under `permissions.additionalDirectories` (_external_pattern); every other
     out-of-root target still matches nothing there either. None only if the path cannot be resolved
-    to an absolute path at all. The worker's own scratchpad is exempted separately by the caller,
-    before this is ever called."""
+    to an absolute path at all. Both the target and `root` go through shell_targets._resolve_path
+    (the shared normalization — a `\\\\?\\D:\\...` or `\\\\localhost\\D$\\...` spelling of an in-scope
+    path is judged as the in-scope path it is, T76 wave D review finding M-c). The worker's own
+    scratchpad is exempted separately by the caller, before this is ever called."""
     if not raw:
         return None
-    candidate = _to_native_path(raw)
-    try:
-        path = Path(candidate)
-        if not path.is_absolute():
-            path = Path(_to_native_path(base)) / candidate
-        resolved = path.resolve()
-    except (OSError, ValueError):
+    resolved = _resolve_path(raw, base)
+    if resolved is None:
         return None
+    root_resolved = _resolve_path(str(root)) or root.resolve()
     try:
-        return resolved.relative_to(root.resolve()).as_posix()
+        return resolved.relative_to(root_resolved).as_posix()
     except ValueError:
         return str(resolved).replace("\\", "/")
 
@@ -497,14 +496,16 @@ def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
     """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload) —
     exempt from write-scope enforcement per shell_targets' module docstring step 4 (a worker's temp
     files are never "the project" in the sense a Write scope line means)."""
+    if not _is_absolute_target(raw):
+        return False
+    target = _resolve_path(raw)
+    scratchpad = _resolve_path(scratchpad_dir)
+    if target is None or scratchpad is None:
+        return False
     try:
-        target = Path(_to_native_path(raw))
-        if not target.is_absolute():
-            return False
-        target = target.resolve()
-        target.relative_to(Path(scratchpad_dir).resolve())
+        target.relative_to(scratchpad)
         return True
-    except (OSError, ValueError):
+    except ValueError:
         return False
 
 

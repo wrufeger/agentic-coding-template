@@ -302,15 +302,18 @@ options:
 Call: direct
 
 ```text
-usage: entries.py [-h] {new,assign,list,check} ...
+usage: entries.py [-h] {new,assign,state,list,check} ...
 
 Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
 todo | report | note).
 
 positional arguments:
-  {new,assign,list,check}
+  {new,assign,state,list,check}
     new                 create a new entry file
     assign              hand out ids still missing ('team' mode: only on the default branch)
+    state               append a working-state line for an open task to .act-local/state/ — needs
+                        an id already assigned; in 'team' mode a task awaiting one (filename only)
+                        has no `state` target yet
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
 
@@ -346,6 +349,22 @@ options:
 
 ```text
 usage: entries.py assign [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `entries.py state`
+
+```text
+usage: entries.py state [-h] T-ID text [text ...]
+
+append a working-state line for an open task to .act-local/state/ — needs an id already assigned;
+in 'team' mode a task awaiting one (filename only) has no `state` target yet
+
+positional arguments:
+  T-ID        the task's id, e.g. T12
+  text        the state line's text, e.g. "step 3 running, next: ..."
 
 options:
   -h, --help  show this help message and exit
@@ -419,10 +438,12 @@ options:
 Call: direct
 
 ```text
-usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit]
-               [--language-docs CODE] [--language-chat CODE]
+usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
+               [--no-profile] [--profile] [--language-docs CODE] [--language-chat CODE]
 
-Turn a template checkout into a project, or dock onto an existing directory.
+Turn a template checkout into a project, or dock onto an existing directory (--target). Inside a
+project that is already set up, only --profile runs (see there); bringing .act/ up to date is
+update.py's job.
 
 options:
   -h, --help            show this help message and exit
@@ -430,6 +451,15 @@ options:
   --plan                show what would happen, change nothing
   --non-interactive     never prompt; take defaults, log open points to the inbox
   --no-commit           do everything except the final commit
+  --no-local            --target only: don't carry over the source checkout's own rule/coding-rule
+                        deviations and docs/ai/local/ (Weg C, on by default)
+  --no-profile          don't offer the owner profile at %APPDATA%\act\settings.md /
+                        ~/.config/act/settings.md (Q103, on by default)
+  --profile             apply the owner profile without asking (its entries are shown first).
+                        Inside a project that is already set up (no --target) this is the only
+                        step that runs -- nothing else is touched, only what it wrote is committed
+                        (Q103 a1's 'catch up' path after a non-interactive first run); in a fresh
+                        clone or with --target it is part of the full run
   --language-docs CODE  language of docs/ (e.g. de) instead of asking; default en (R-work-
                         language)
   --language-chat CODE  chat language (a code, or auto = follow the owner's messages) instead of

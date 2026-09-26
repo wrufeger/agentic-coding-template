@@ -77,8 +77,10 @@ from __future__ import annotations
 
 import bisect
 import io
+import os
 import re
 import shlex
+import socket
 import sys
 from pathlib import Path
 from typing import Optional
@@ -87,12 +89,14 @@ __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
     "_WRITE_REDIRECT_OPS", "_FD_DUP_WORD_RE", "_LINE_CONTINUATION_RE", "_MIDWORD_HASH_RE",
     "_HASH_PLACEHOLDER", "_RAW_REDIRECT_RE", "_BACKTICK_SPAN_RE", "_HEREDOC_OPEN_RE",
-    "_MAX_SCAN_DEPTH", "_GITBASH_DRIVE_RE", "_IGNORABLE_TARGETS", "_DYNAMIC_TARGET_RE",
+    "_MAX_SCAN_DEPTH", "_GITBASH_DRIVE_RE", "_WIN32_PREFIXED_DRIVE_RE", "_WIN32_PREFIXED_UNC_RE",
+    "_WIN32_ADMIN_SHARE_RE", "_LOCAL_HOST_NAMES", "_IGNORABLE_TARGETS", "_DYNAMIC_TARGET_RE",
     "_SIMPLE_DIR_RE", "_ASSIGNMENT_RE", "_RESERVED_PREFIXES", "_WRAPPER_COMMANDS",
     "_WRAPPER_ARG_RE", "_WRAPPER_VALUE_FLAGS", "_SHELL_NAMES", "_ALL_OPERAND_WRITERS",
     "_LAST_OPERAND_WRITERS", "_VALUE_FLAGS", "_SED_INPLACE_FLAG_RE", "_GIT_GLOBAL_VALUE_FLAGS",
     "_GIT_WRITES_TEMPLATE_GUARD", "_GIT_WRITES_WORKER_SCOPE", "_Token", "_Target", "_Bases",
-    "_NO_HEREDOC_MARKERS", "_to_native_path", "_is_ignorable_write_target", "_is_dynamic_target",
+    "_NO_HEREDOC_MARKERS", "_local_host_names", "_to_native_path", "_is_remote_unc", "_resolve_path",
+    "_is_ignorable_write_target", "_is_dynamic_target",
     "_is_absolute_target", "_NewlineKeepingStream", "_ShellLexer", "_split_operator_run",
     "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
     "_line_mode_tokens", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
@@ -133,6 +137,29 @@ _MAX_SCAN_DEPTH = 4
 # treat it the same as a Windows-native absolute path. Only ever rewritten on win32 — elsewhere a
 # leading "/x/..." is an ordinary absolute path and must be left alone.
 _GITBASH_DRIVE_RE = re.compile(r"^[\\/]([A-Za-z])[\\/](.*)$")
+# Three more spellings Windows accepts for a path on a local drive, each of which Path.resolve()
+# hands back *verbatim* rather than as the plain drive form every check compares against (T76 wave
+# D review, 2026-09-26, finding M-c: a `Write` of `\\?\D:\proj\.act\x.md` or of
+# `\\localhost\D$\proj\.act\x.md` resolved to exactly that text, so `_is_under_project_act`'s
+# prefix test against `D:\proj\.act` never matched and the write-guard let it through — the same
+# hole for the docs/ai/ guard and, in the other direction, a worker's in-scope path judged out of
+# scope). All three are mapped to the plain drive form by _to_native_path, before *and* after
+# resolving (a `\\?\Volume{...}\` path resolves to `\\?\D:\...`, i.e. the prefix can appear on the
+# way out even when it was not on the way in):
+#   - the extended-length / device prefix in front of a drive: `\\?\D:\x`, `\\.\D:\x` -> `D:\x`
+#     (only with a drive letter right behind it — `\\.\pipe\x` and friends are not file paths and
+#     stay as they are);
+#   - the extended-length UNC form: `\\?\UNC\host\share\x` -> `\\host\share\x` (then judged like
+#     any other UNC path, i.e. by the next rule when it is an administrative share);
+#   - an administrative share of *this* machine: `\\localhost\D$\x`, `\\127.0.0.1\D$\x`,
+#     `\\<this computer's name>\D$\x` -> `D:\x`. A share on any other host is left alone: it is not
+#     this project (a worker's write there is out of its root-relative scope anyway), and no check
+#     ever touches the network to find out more — an unreachable host would stall the hook, which
+#     the harness reads as "allow".
+_WIN32_PREFIXED_DRIVE_RE = re.compile(r"^[\\/]{2}[?.][\\/](?=[A-Za-z]:)")
+_WIN32_PREFIXED_UNC_RE = re.compile(r"^[\\/]{2}\?[\\/]UNC(?=[\\/])", re.IGNORECASE)
+_WIN32_ADMIN_SHARE_RE = re.compile(r"^[\\/]{2}(?P<host>[^\\/]+)[\\/](?P<drive>[A-Za-z])\$(?=[\\/]|$)")
+_LOCAL_HOST_NAMES = frozenset({"localhost", "127.0.0.1", "::1", "[::1]"})
 
 # A "target" that is not a file in the project: the null device in its Unix and Windows spellings
 # and the standard streams (`ls src 2>/dev/null`, `cmd >NUL 2>&1`, `echo x >/dev/stderr`).
@@ -209,14 +236,89 @@ _Target = tuple[str, Optional[str]]  # (raw target, base directory for a relativ
 _Bases = frozenset  # frozenset[Optional[str]] — the directories the shell may be in at that point
 
 
+def _local_host_names() -> frozenset:
+    """Every name under which a UNC path can address *this* machine without touching the network
+    (see _WIN32_ADMIN_SHARE_RE): the loopback spellings in _LOCAL_HOST_NAMES plus this computer's
+    own name (`COMPUTERNAME`, `socket.gethostname()` — both local lookups, never DNS). Lower-case,
+    since Windows host names are case-insensitive."""
+    names = set(_LOCAL_HOST_NAMES)
+    for candidate in (os.environ.get("COMPUTERNAME"), _safe_hostname()):
+        if candidate:
+            names.add(candidate.lower())
+    return frozenset(names)
+
+
+def _safe_hostname() -> str:
+    try:
+        return socket.gethostname()
+    except OSError:
+        return ""
+
+
 def _to_native_path(raw: str) -> str:
-    """Rewrite a Git-Bash-style absolute path to its native Windows drive form; left unchanged
-    everywhere else. See _GITBASH_DRIVE_RE."""
+    """Rewrite an absolute path to the one native Windows drive form every check compares
+    against, on win32 only; left unchanged everywhere else. Handles a Git-Bash-style path
+    (`/c/work/x` -> `C:/work/x`, _GITBASH_DRIVE_RE) and the three alternative spellings of a local
+    drive path listed above _WIN32_PREFIXED_DRIVE_RE (`\\\\?\\D:\\x`, `\\\\?\\UNC\\localhost\\D$\\x`,
+    `\\\\localhost\\D$\\x` -> `D:\\x`). Idempotent, and meant to be applied both to a raw target and
+    to what Path.resolve() returns for it — see _resolve_path."""
+    if sys.platform != "win32":
+        return raw
     match = _GITBASH_DRIVE_RE.match(raw)
-    if match and sys.platform == "win32":
+    if match:
         drive, rest = match.groups()
         return f"{drive.upper()}:/{rest}"
-    return raw
+    text = _WIN32_PREFIXED_DRIVE_RE.sub("", raw, count=1)
+    # `\\?\UNC\host\...` -> `\\host\...`: the match ends right before the separator that follows
+    # "UNC", so one backslash plus that separator gives the two a UNC path starts with.
+    text = _WIN32_PREFIXED_UNC_RE.sub(lambda _m: "\\", text, count=1)
+    share = _WIN32_ADMIN_SHARE_RE.match(text)
+    if share and share.group("host").lower().rstrip(".") in _local_host_names():
+        rest = text[share.end():]
+        text = f"{share.group('drive').upper()}:{rest or chr(92)}"
+    return text
+
+
+def _is_remote_unc(path: Path) -> bool:
+    """True for a UNC path (`\\\\host\\share\\...`) whose host is not this machine (see
+    _local_host_names) — a `\\\\?\\`/`\\\\.\\` device-namespace path is *not* remote (its "host" is
+    `?` or `.`). Such a path must never be handed to Path.resolve(): on Windows that opens the
+    path to ask the filesystem for its final name, i.e. a network round trip — measured at 21 s
+    for an unroutable host on 2026-09-26, longer than a hook has, and a hook that times out reads
+    as "allow" to the harness."""
+    drive = path.drive
+    if not drive.startswith(("\\\\", "//")):
+        return False
+    host = re.split(r"[\\/]", drive.lstrip("\\/"), maxsplit=1)[0]
+    return host not in ("?", ".") and host.lower().rstrip(".") not in _local_host_names()
+
+
+def _resolve_path(raw: str, base: Optional[str] = None) -> Optional[Path]:
+    """`raw` as one absolute, resolved, native path — the single way every check turns a write
+    target into something it can compare against a project directory (write-guard, docs/ai/
+    guard, worker write scope, scratchpad exemption, the PowerShell scanner's own resolution and
+    checks/mcp_ide.py's translated targets all go through here). A relative `raw` is joined onto
+    `base` first (None back when there is no `base` to join it onto — the caller decides what an
+    unplaceable target means for it); both sides pass through _to_native_path before resolving,
+    and the *resolved* text passes through it once more, since Path.resolve() itself can hand
+    back the `\\\\?\\` form (see _WIN32_PREFIXED_DRIVE_RE). A UNC path to another host
+    (_is_remote_unc) is only normalized lexically (os.path.normpath: `.`/`..` collapsed), never
+    resolved — no network round trip from a hook; it is out of this project's root either way,
+    unless the project itself lives on that share, in which case the same lexical form is what its
+    root compares as too. None on any error resolving it (never raises) — again the caller's own
+    fail-closed/fail-open choice, exactly as before."""
+    try:
+        candidate = Path(_to_native_path(raw))
+        if not candidate.is_absolute():
+            if base is None:
+                return None
+            candidate = Path(_to_native_path(base)) / candidate
+        if _is_remote_unc(candidate):
+            return Path(os.path.normpath(str(candidate)))
+        resolved = candidate.resolve()
+    except (OSError, ValueError):
+        return None
+    return Path(_to_native_path(str(resolved)))
 
 
 def _is_ignorable_write_target(raw: str) -> bool:

@@ -2,6 +2,10 @@
   "env": {
     "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"
   },
+  "statusLine": {
+    "type": "command",
+    "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/statusline.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\""
+  },
   "hooks": {
     "SessionStart": [
       {

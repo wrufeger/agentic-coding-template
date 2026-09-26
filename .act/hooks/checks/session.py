@@ -45,7 +45,9 @@ __all__ = [
     "_LEDGER_DATE_IN_NAME_RE", "_parse_docs_audit_due", "_ledger_entry_date",
     "_last_ledger_entry_with_prefix", "_last_docs_audit_entry", "_commits_since", "_docs_audit_note",
     "_DEPENDENCY_CHECK_TITLE_PREFIX", "_DEPENDENCY_CHECK_DUE_DAYS", "_dependency_check_note",
-    "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_active_topics",
+    "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_IDE_SERVER_NAME_HINTS",
+    "_IDE_SERVER_EXACT_NAMES", "_is_ide_server_name", "_servers_match_ide_hint", "_user_mcp_servers",
+    "_same_project_path", "_ide_mcp_connected", "_active_topics",
     "_bootstrap_marker", "_first_line", "_is_bootstrap_copy",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
@@ -924,6 +926,130 @@ _TOPIC_SWITCHES: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
     ("feedback", "feedback", lambda value: value.strip().lower() not in ("", "off")),
 )
 
+# "ide" (topics/ide.md) is not gated by a docs/ai/config.md switch like the two above -- it is
+# detected instead, from whether an IDE-shaped MCP server is actually configured for this project
+# (T76 Welle D, Q104 a): reading it never runs anything, only .mcp.json and Claude's own settings
+# files, the same sources Claude Code itself reads its MCP server list from. A name or command
+# containing one of these (case-insensitive) counts as "IDE-shaped" -- best-effort, JetBrains'
+# `idea` MCP plugin is the only one confirmed as of this writing; a project using a different IDE
+# MCP server under an unrecognized name sees "ide" inactive until this list is extended (project
+# override: docs/ai/local/.act/hooks/checks/session.py per R-work-override).
+_IDE_SERVER_NAME_HINTS = ("idea", "jetbrains", "intellij", "pycharm", "webstorm", "rider", "clion")
+# Server names that count as an IDE server only when they match *exactly* (case-insensitive), never
+# as a substring: Claude Code's own IDE integration (the VS Code and JetBrains extensions) registers
+# its server as plain `ide` -- its tools reach the hooks as `mcp__ide__executeCode` and
+# `mcp__ide__getDiagnostics` (T76 wave D review, 2026-09-26, finding M-a) -- and "ide" as a
+# substring would match "provider", "video", "guide" and the like in any server name or command.
+# It is never configured in .mcp.json or ~/.claude.json (the extension injects it), so this mainly
+# serves checks/mcp_ide.py's own "is this an IDE server" judgment; _servers_match_ide_hint honours
+# it too, for a project that happens to name a configured server exactly that.
+_IDE_SERVER_EXACT_NAMES = frozenset({"ide"})
+
+
+def _is_ide_server_name(server: str) -> bool:
+    """True if `server` (an MCP server's own name, as in `mcp__<server>__<tool>` or a config
+    file's `mcpServers` key) counts as an IDE server: exactly one of _IDE_SERVER_EXACT_NAMES, or
+    containing one of _IDE_SERVER_NAME_HINTS -- case-insensitive either way. The one definition
+    checks/mcp_ide.py and dispatch.py's fail-closed fallback share with the topic detection here."""
+    lowered = server.lower()
+    return lowered in _IDE_SERVER_EXACT_NAMES or any(hint in lowered for hint in _IDE_SERVER_NAME_HINTS)
+
+
+def _servers_match_ide_hint(servers: dict) -> bool:
+    """True if some entry of `servers` (an `mcpServers` object: name -> {"command": ...,
+    "args": [...], "url": ...}) has a name that is an IDE server's (_is_ide_server_name) or a
+    command/args/url that looks like a JetBrains-family IDE server (see _IDE_SERVER_NAME_HINTS).
+    Shared by every source _ide_mcp_connected reads from -- project-local config files and the
+    owner's user-wide one alike."""
+    for name, entry in servers.items():
+        if _is_ide_server_name(str(name)):
+            return True
+        haystack = str(name)
+        if isinstance(entry, dict):
+            for field in ("command", "url"):
+                value = entry.get(field)
+                if isinstance(value, str):
+                    haystack += " " + value
+            args = entry.get("args")
+            if isinstance(args, list):
+                haystack += " " + " ".join(a for a in args if isinstance(a, str))
+        haystack = haystack.lower()
+        if any(hint in haystack for hint in _IDE_SERVER_NAME_HINTS):
+            return True
+    return False
+
+
+def _user_mcp_servers(root: Path) -> list:
+    """Every `mcpServers` object the owner's user-wide `~/.claude.json` carries that could apply to
+    this project (review finding 6): a JetBrains IDE's own MCP server is often registered there,
+    user-wide, rather than in a project-local `.mcp.json` -- `_ide_mcp_connected` reading only
+    project-local files never sees it. Two places in that file define one: the top-level
+    `mcpServers` object (Claude Code's own user-wide default, applied to every project) and
+    `projects[<root>].mcpServers` (a project-specific addition/override Claude Code also reads
+    from there, keyed by this project's own absolute path). Read-only, and only ever these two
+    objects' own keys (server name, `command`/`args`/`url`) are ever looked at or returned -- never
+    any other content the file might carry (session history, OAuth tokens, other projects'
+    entries). Best-effort: a missing, unreadable, or malformed file contributes nothing; read once,
+    as a whole, rather than incrementally -- this file can be large (home-directory session
+    state), but a second, independent parse pass over it would cost more than one plain
+    `json.loads` already does."""
+    path = Path.home() / ".claude.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    found: list = []
+    top_servers = data.get("mcpServers")
+    if isinstance(top_servers, dict):
+        found.append(top_servers)
+    projects = data.get("projects")
+    if isinstance(projects, dict):
+        for key, project_entry in projects.items():
+            if not isinstance(key, str) or not _same_project_path(key, root):
+                continue
+            if isinstance(project_entry, dict):
+                project_servers = project_entry.get("mcpServers")
+                if isinstance(project_servers, dict):
+                    found.append(project_servers)
+    return found
+
+
+def _same_project_path(key: str, root: Path) -> bool:
+    """True if `key` (a `projects` key of `~/.claude.json`) names `root`. Claude Code writes those
+    keys in POSIX form even on Windows (`D:/dev/x`, confirmed against a real file on 2026-09-26),
+    while `str(root)` is `D:\\dev\\x` -- a plain dict lookup never matched there (T76 wave D
+    review, finding LOW). Compared after os.path.normcase/normpath on both sides, so neither slash
+    direction nor drive-letter case matters; no filesystem access."""
+    return os.path.normcase(os.path.normpath(key)) == os.path.normcase(os.path.normpath(str(root)))
+
+
+def _ide_mcp_connected(root: Path) -> bool:
+    """True if some configured MCP server's name or command looks like a JetBrains-family IDE
+    server (see _IDE_SERVER_NAME_HINTS) -- read from .mcp.json and .claude/settings*.json under
+    `root` (the "mcpServers" object each of those files can carry), and from the owner's user-wide
+    `~/.claude.json` (review finding 6: `_user_mcp_servers`, since a JetBrains plugin's own server
+    is often registered there instead of in a project-local file). Best-effort and read-only: a
+    missing/unreadable/malformed file simply contributes nothing, never an error."""
+    candidates = [root / ".mcp.json", root / ".claude" / "settings.json", root / ".claude" / "settings.local.json"]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        servers = data.get("mcpServers") if isinstance(data, dict) else None
+        if isinstance(servers, dict) and _servers_match_ide_hint(servers):
+            return True
+    for servers in _user_mcp_servers(root):
+        if _servers_match_ide_hint(servers):
+            return True
+    return False
+
 
 def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
     """(topic name, path to show) for every topic in _TOPIC_SWITCHES whose switch is active, in
@@ -943,6 +1069,15 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
         else:
             path, _origin = resolved
             active.append((name, path.relative_to(root).as_posix()))
+    # "ide" is not one of _TOPIC_SWITCHES' config-driven entries -- it is detected instead, see
+    # _ide_mcp_connected's own docstring (T76 Welle D, Q104 a).
+    if _ide_mcp_connected(root):
+        resolved = actlib.resolve("rules/topics/ide.md")
+        if resolved is None:
+            active.append(("ide", "missing"))
+        else:
+            path, _origin = resolved
+            active.append(("ide", path.relative_to(root).as_posix()))
     return active
 
 

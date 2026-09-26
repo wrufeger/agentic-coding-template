@@ -48,7 +48,7 @@ from typing import Optional
 import actlib
 
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
-from .shell_targets import _GIT_WRITES_WORKER_SCOPE, _bash_write_targets, _is_dynamic_target, _to_native_path
+from .shell_targets import _GIT_WRITES_WORKER_SCOPE, _bash_write_targets, _is_dynamic_target, _resolve_path
 from .write_guard import _guard_root, _resolve_against
 from .write_scope import _within_scratchpad
 
@@ -68,11 +68,14 @@ _DOCS_AI_MESSAGE = (
 
 
 def _is_under_project_docs_ai(resolved: Path, root: Path) -> bool:
-    """True if `resolved` (an absolute, already-resolved path) lies inside `root`'s own docs/ai/ —
-    the only tree this check protects (B139, mirrors write_guard.py's _is_under_project_act): a
-    target outside `root` entirely (a sibling checkout's docs/ai/, deliberately edited from a
+    """True if `resolved` (an absolute, already-resolved path, from shell_targets._resolve_path)
+    lies inside `root`'s own docs/ai/ — the only tree this check protects (B139, mirrors
+    write_guard.py's _is_under_project_act, including its normalization of both sides): a target
+    outside `root` entirely (a sibling checkout's docs/ai/, deliberately edited from a
     template-maintenance project) is not this check's business."""
-    docs_ai_root = (root / "docs" / "ai").resolve()
+    docs_ai_root = _resolve_path(str(root / "docs" / "ai"))
+    if docs_ai_root is None:
+        docs_ai_root = (root / "docs" / "ai").resolve()
     return resolved == docs_ai_root or docs_ai_root in resolved.parents
 
 
@@ -105,9 +108,8 @@ def _bash_targets_docs_ai(
             if _DOCS_AI_PATH_RE.search(raw):
                 return True
             continue
-        try:
-            resolved = (Path(_to_native_path(base)) / _to_native_path(raw)).resolve()
-        except (OSError, ValueError):
+        resolved = _resolve_path(raw, base)
+        if resolved is None:
             return True  # cannot place it -- fail toward blocking, same as write_guard.py
         if _is_under_project_docs_ai(resolved, root):
             return True

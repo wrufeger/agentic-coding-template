@@ -39,7 +39,8 @@ Explicitly cleared to run unattended ("I'll be away", "let it run through"):
 - Everything left is blocked: **stop**, don't build on a guess.
 - Anything irreversible stays untouched even if it blocks the rest — being away is not approval
   (`R-safe-approval`).
-- Journal and task status updated as they happen (`R-work-record-now`), not from memory later.
+- Journal and task status updated as they happen (`R-work-record-now`), not from memory later —
+  working state via `entries.py state <id> <text>`, not in the task file itself.
 - On return: **one** summary — done with evidence, still open and why, the bundled questions.
 
 ## Limits

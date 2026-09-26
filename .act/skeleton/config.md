@@ -33,6 +33,18 @@ same number; until then the file name is what you cite. File name, location and 
 same either way, so you can switch back and forth at any time — IDs already assigned stay as they
 are, only later ones follow the new value.
 
+## Status line
+
+Claude Code's status line (`statusLine` in `.claude/settings.json`) shows what is waiting for you
+in `docs/ai/inbox/` and how many open tasks there are — set by the template the first time there is
+none yet. To turn it off for good: set your own `statusLine` command, even a trivial one — the
+template only ever replaces its own previously generated entry, never a different one, so yours
+then stays untouched by every later update. Removing the `statusLine` key outright turns it off
+only until the next `init`/`update` run, which finds none set and adds the template's entry again
+(unless a user-wide one exists by then, see below) — not a lasting way to turn it off. If a
+user-wide `statusLine` already exists (`~/.claude/settings.json`), the project is left with none of
+its own from the start, so the two never overlap — a one-line note says so at setup/update time.
+
 ## Output depth
 
 | Key | Value |
@@ -84,6 +96,7 @@ refuses") treats `block` as `warn`.
 | `security-check` | local | `off` \| `local` \| `deps` \| `full`, not the usual block/warn/off. `off` runs nothing here; `local`/`deps`/`full` run the dangerous-pattern scan (Art A: `eval`/`exec`, `shell=True`, `pickle.loads`, `yaml.load` without a SafeLoader, `v-html`, `innerHTML =`, SQL built by string concatenation, ... — only for a coding rule set the project has checked on in `docs/project/coding_rules.md`) on `git commit`, stopping the first hit once per file and pattern with its location; the repeat goes through, and a line carrying `act:allow-danger` is exempt. A doc file (`.md`, `.txt`, `.rst`) and anything under `.act/` are never scanned (prose and the template's own files, not project code). `deps` and `full` behave like `local` for now — the library-vulnerability lookup (Art B, e.g. `pip-audit`/`npm audit`/`osv-scanner`) and the deep check (Art C, Semgrep/a `reviewer` pass) are not built yet, pending a decision on network access |
 | `worker-docs-ai` | block | a worker writing under `docs/ai/` — only the orchestrator writes there (`R-role-worker`) |
 | `worker-git-write` | block | a worker running a git command that changes the tree or history (`commit`, `add`, `stash`, `checkout`, `reset`, `restore`, `merge`, `rebase`, `clean`, `push`) (`R-role-worker`) |
+| `ide-mcp` | block | a connected IDE MCP server's own tools (`execute_terminal_command`, `apply_patch`, `execute_run_configuration`, ...), classified as shell/write/exec-without-target and checked the same way the matching standard tool would be — a target this cannot evaluate denies rather than passing through unchecked; `warn` reports without blocking, `off` skips it (`topics/ide.md`) |
 | `worker-cap` | block | a worker's tool calls beyond its `Cap: <n>` line (without one: `light` 10, `standard` 40, `elevated` 60, `high`/`expert` 80) — a note at the cap, refused from 1.5 × the cap (`R-cost-delegate`) |
 | `status-poll` | block | repeated status queries on a running worker with no real work in between — refused from the second in a row (`R-cost-wait`) |
 | `encoding-hint` | block | writing to a file that is not UTF-8 — the first write per session and file is stopped once with a note, the repeat goes through; `warn` only notes after the write (`R-code-encoding`) |

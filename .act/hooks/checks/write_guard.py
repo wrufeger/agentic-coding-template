@@ -23,8 +23,7 @@ import actlib
 from .common import _TOOL_PATH_FIELDS, _check_mode
 from .powershell_targets import _powershell_write_targets
 from .shell_targets import (
-    _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_absolute_target, _is_dynamic_target,
-    _to_native_path,
+    _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_dynamic_target, _resolve_path,
 )
 
 __all__ = [
@@ -43,25 +42,26 @@ _PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)")
 
 
 def _is_under_project_act(resolved: Path, root: Path) -> bool:
-    """True if `resolved` (an absolute, already-resolved path) lies inside `root`'s own .act/ —
-    the only tree this check protects (B137, 2026-09-25): a target outside `root` entirely, even
-    one whose own path happens to contain a `.act/` segment (a sibling checkout's template tree,
-    edited on purpose from a template-maintenance project), is not this check's business."""
-    act_root = (root / ".act").resolve()
+    """True if `resolved` (an absolute, already-resolved path — from _resolve_path, so already in
+    the plain native drive form) lies inside `root`'s own .act/ — the only tree this check protects
+    (B137, 2026-09-25): a target outside `root` entirely, even one whose own path happens to
+    contain a `.act/` segment (a sibling checkout's template tree, edited on purpose from a
+    template-maintenance project), is not this check's business. `root` itself goes through the
+    same _resolve_path, so both sides of the comparison are spelled the same way (a
+    `CLAUDE_PROJECT_DIR` handed over in the `\\\\?\\` form would otherwise never match its own
+    targets)."""
+    act_root = _resolve_path(str(root / ".act"))
+    if act_root is None:
+        act_root = (root / ".act").resolve()
     return resolved == act_root or act_root in resolved.parents
 
 
 def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:
     """`raw` resolved to an absolute path: as-is if already absolute, else joined onto
-    `base_cwd` first. None on any error resolving it (never raises) — the caller then falls back
-    to the raw-text check."""
-    try:
-        candidate = Path(_to_native_path(raw))
-        if not candidate.is_absolute():
-            candidate = Path(_to_native_path(base_cwd)) / candidate
-        return candidate.resolve()
-    except (OSError, ValueError):
-        return None
+    `base_cwd` first (shell_targets._resolve_path — the shared normalization, so a `\\\\?\\`- or
+    admin-share-spelled target compares like any other). None on any error resolving it (never
+    raises) — the caller then falls back to the raw-text check."""
+    return _resolve_path(raw, base_cwd)
 
 
 def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> bool:
@@ -81,9 +81,8 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
             if _PROTECTED_PATH_RE.search(raw):
                 return True
             continue
-        try:
-            resolved = (Path(_to_native_path(base)) / _to_native_path(raw)).resolve()
-        except (OSError, ValueError):
+        resolved = _resolve_path(raw, base)
+        if resolved is None:
             return True  # cannot place it — fail closed, see the module docstring
         if _is_under_project_act(resolved, root):
             return True
@@ -116,12 +115,8 @@ def _powershell_targets_protected_path(command: str, base_cwd: str, root: Option
             if _PROTECTED_PATH_RE.search(target):
                 return True
             continue
-        try:
-            resolved = (
-                Path(_to_native_path(target)).resolve() if _is_absolute_target(target)
-                else (Path(_to_native_path(base_cwd)) / _to_native_path(target)).resolve()
-            )
-        except (OSError, ValueError):
+        resolved = _resolve_path(target, base_cwd)
+        if resolved is None:
             return True  # cannot place it — fail closed, see the module docstring
         if _is_under_project_act(resolved, root):
             return True

@@ -24,12 +24,17 @@ summary: no interim reports, questions in the inbox, short closing summary
 
 Reply only when the answer is final — not while it still depends on running workers or pending
 findings, and never with one worker's report while others are still running. On a long run a
-one-line status is fine ("builder done, now review and tests"). In chat, ask only the question
-work cannot continue without; every other question goes to `docs/ai/inbox/` as `kind: question`
-(one file per question, `entries.py new question <title>`) and is not repeated in chat. Close with a short
-summary — done · next · problems · to discuss — short, but without dropping anything that
-matters, and name new questions and tasks together in one closing line ("New questions: Q12–Q14,
-new task T7"). Details only on request.
+one-line status is fine ("builder done, now review and tests"). A turn triggered only by a
+worker's completion notice ends with no text at all, or at most one line — never a multi-sentence
+status recap — except when that very notice makes the answer final: then the short closing summary
+below follows. In chat, ask only the question work cannot continue without; every other question
+goes to `docs/ai/inbox/` as `kind: question` (one file per question, `entries.py new question
+<title>`) and is not repeated in chat — a decision question is created *only* as that inbox file,
+chat names at most its id (e.g. "see Q108"), never restates the question itself. An inbox entry
+the human has already answered is booked and archived in the same turn that notices the answer,
+never left open. Close with a short summary — done · next · problems · to discuss — short, but
+without dropping anything that matters, and name new questions and tasks together in one closing
+line ("New questions: Q12–Q14, new task T7"). Details only on request.
 
 ## `R-human-language` — Talk in the owner's language
 

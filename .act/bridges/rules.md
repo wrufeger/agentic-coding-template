@@ -45,6 +45,7 @@ Applies to the main session only — workers skip this section.
 @../../.act/rules/orchestrator/00-role.md
   - [x] `R-role-main`
   - [x] `R-role-escalate`
+  - [x] `R-role-outcome`
 
 @../../.act/rules/orchestrator/10-work.md
   - [x] `R-work-record-now`
