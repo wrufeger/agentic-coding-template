@@ -62,8 +62,8 @@ real; it takes its defaults and logs every open point (name, owner, stack, tools
 it could not decide) to the project's inbox instead of asking. Check
 `python .act/scripts/init.py --help` for the exact flags before running it — `--language-docs`,
 `--language-chat`, `--no-commit` — and pass what step 2 established. Afterward, go through the
-inbox note "Open points from init.py" with the owner and enter the answers into
-`docs/ai/config.md`.
+`todo-*-init-notes.md` inbox entry ("Open points from `init.py`" / German "Offene Punkte von
+`init.py`") with the owner and enter the answers into `docs/ai/config.md`.
 
 **Way 2:** ask for the path if not given yet, then check it:
 
@@ -81,4 +81,8 @@ inbox note "Open points from init.py" with the owner and enter the answers into
 In three sentences: where the project's board and open questions live now
 (`docs/ai/work/`, `docs/ai/questions/`, `docs/ai/inbox/`), that the assistant's rules and skills
 are live from here on, and what to look at first (an inbox note `init` left, or the adoption
-table for way 2's second path).
+table for way 2's second path). One of those notes may offer `security-check: deps` (only when
+`init` found a tool installed that Art B — the dependency-vulnerability scan,
+`.act/scripts/security_scan.py` — could use, and only while `security-check` is still `local`, the
+default): ask the owner whether to turn it on, and only if they say yes, set it to `deps` in
+`docs/ai/config.md` yourself — `init` never switches it there on its own.

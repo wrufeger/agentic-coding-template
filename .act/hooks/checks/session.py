@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import io
 import json
 import os
@@ -29,6 +30,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -38,6 +40,7 @@ import manifest
 import tiers
 
 from .common import _check_mode
+from .danger_scan import _security_check_level
 
 __all__ = [
     "_current_branch", "_STATUS_RE", "_count_inbox_waiting",
@@ -53,6 +56,10 @@ __all__ = [
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
     "_remote_update_available", "_update_check_result_path", "_consume_pending_update_note",
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
+    "_security_scan_state_path", "_security_scan_already_checked_today",
+    "_mark_security_scan_checked_today", "_security_scan_result_path", "_run_security_scan_worker",
+    "_spawn_security_scan_worker", "_consume_pending_security_scan_note",
+    "_check_security_scan_awareness",
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
@@ -696,6 +703,197 @@ def _check_update_awareness(root: Path, config: dict[str, str]) -> tuple[list[st
         _mark_checked_today(root)
         _spawn_update_check_worker(root)
     return pre_notes, post_notes
+
+
+# ---------------------------------------------------------------------------
+# B117 Art B — daily dependency-vulnerability scan at session start (`security-check: deps`/`full`,
+# docs/ai/config.md § Checks): the same background-worker shape `_check_update_awareness` already
+# established for the update check, reused here rather than a second polling mechanism —
+# `security_scan.run_scan()` can itself take tens of seconds (a real network lookup through
+# osv-scanner/npm/composer/pip-audit), which must never delay a session start any more than `git
+# ls-remote` is allowed to (see `_remote_update_available`'s own docstring for the measured cost of
+# getting this wrong).
+# ---------------------------------------------------------------------------
+
+def _security_scan_state_path(root: Path) -> Path:
+    return root / ".act-local" / "security-scan-check.json"
+
+
+def _security_scan_already_checked_today(root: Path) -> bool:
+    try:
+        data = json.loads(_security_scan_state_path(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("last_checked") == date.today().isoformat()
+
+
+def _mark_security_scan_checked_today(root: Path) -> None:
+    path = _security_scan_state_path(root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"last_checked": date.today().isoformat()}) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _security_scan_result_path(root: Path) -> Path:
+    return root / ".act-local" / "security-scan-result.json"
+
+
+def _run_security_scan_worker(
+    root: Path, state_hash: Optional[str] = None, lock_paths: "Optional[list[Path]]" = None,
+) -> int:
+    """Body of the detached background process `_spawn_security_scan_worker()` launches: the
+    actual dependency-vulnerability scan, isolated from the SessionStart hook and from
+    checks/deps_scan.py's own PreToolUse hook alike, so its result can only ever help a *later*
+    check, never delay the one that triggered it (same reasoning as `_run_update_check_worker`'s
+    own docstring). Two modes:
+      - daily (root only): every lock file `security_scan.detect_lock_files` finds; writes
+        `security-scan-result.json` (every unaccepted high/critical finding) for the SessionStart
+        note — unchanged contract, severity/acceptance already filtered here;
+      - request (`state_hash` plus `lock_paths`, spawned by checks/deps_scan.py for one commit):
+        exactly those lock files and nothing else (2026-09-27 review 2, m7). The state hash is
+        computed *before* the scan and again *after* it (`security_scan.lock_set_digest`); the
+        result is recorded (`security_scan.write_result_cache`, under the before-hash) only when
+        both agree — a lock file that changed while the tool ran gets no cached answer at all
+        rather than the old content's answer filed under the new digest (review 2, C1). The
+        running marker for `state_hash` is cleared on every exit path, so a later commit never
+        waits on a run that is over.
+    Always exits 0 — nothing reads this process's own exit code, and every exception here must
+    stay inside this process (`Exception` is caught deliberately broad here, unlike a normal check:
+    this is the one place nothing else can ever observe or log a failure, so silently doing nothing
+    is the only available fallback — narrower, specific exceptions are used everywhere a caller
+    could still see and act on one, per CR-python-basics)."""
+    try:
+        import security_scan  # deferred: a session start never pays for this unless actually used
+    except ImportError:
+        return 0
+    if state_hash is not None:
+        if not security_scan.is_state_hash(state_hash):
+            return 0  # never our own spawn's argv -- and never a file name to touch
+        try:
+            paths = [Path(path) for path in (lock_paths or [])]
+            before = security_scan.lock_set_digest(paths) if paths else None
+            if before is not None:
+                result = security_scan.run_scan(root, security_scan.lock_files_from_paths(paths))
+                if security_scan.lock_set_digest(paths) == before:
+                    security_scan.write_result_cache(root, before, result, [str(path) for path in paths])
+        except Exception:  # noqa: BLE001 — see the docstring: nothing else can observe this failure
+            pass
+        finally:
+            security_scan.clear_running_marker(root, state_hash)
+        return 0
+    try:
+        result = security_scan.run_scan(root, security_scan.detect_lock_files(root))
+        accepted = security_scan.load_accepted(root)
+        unaccepted_high = [
+            finding for finding in result.findings
+            if finding.severity in ("critical", "high")
+            and not security_scan.is_accepted(finding.advisory_id, accepted)
+        ]
+    except Exception:  # noqa: BLE001 — see the docstring: nothing else can observe this failure
+        return 0
+    try:
+        path = _security_scan_result_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"findings": [dataclasses.asdict(f) for f in unaccepted_high]}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+    return 0
+
+
+def _spawn_security_scan_worker(
+    root: Path, state_hash: Optional[str] = None, lock_paths: "Optional[list[Path]]" = None,
+) -> bool:
+    """Fire-and-forget: launches dispatch.py's own "_security-scan-worker" internal event as a
+    fully detached background process, mirroring `_spawn_update_check_worker` exactly (see that
+    function's own docstring for the platform-specific detach details -- stdin/stdout/stderr all go
+    to DEVNULL, never a pipe back to this process). With `state_hash`/`lock_paths` the worker runs
+    in request mode (see `_run_security_scan_worker`). Returns whether the process was started at
+    all -- the caller that wrote a running marker for it clears that marker on False (2026-09-27
+    review 2, m6: a swallowed spawn failure used to leave every later commit waiting on a worker
+    that never existed)."""
+    script = Path(__file__).resolve().parent.parent / "dispatch.py"
+    args = [sys.executable, str(script), "_security-scan-worker", str(root)]
+    if state_hash is not None:
+        args.append(state_hash)
+        args.extend(str(path) for path in (lock_paths or []))
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        else:
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, close_fds=True,
+            )
+    except OSError:
+        return False
+    return True
+
+
+def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
+    """Reads and deletes `security-scan-result.json`, written by a previous
+    `_run_security_scan_worker()` run -- consuming it means the note surfaces exactly once, on the
+    first SessionStart after the background scan finished (same contract as
+    `_consume_pending_update_note`). Silent on any I/O problem; a missing file (nothing pending, or
+    the last scan found nothing to report) is the common case, not an error."""
+    path = _security_scan_result_path(root)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    if not isinstance(data, dict):
+        return None
+    findings = data.get("findings")
+    if not isinstance(findings, list) or not findings:
+        return None
+    shown = findings[:5]
+    rest = len(findings) - len(shown)
+    more = f" (+{rest} more)" if rest > 0 else ""
+    parts = [
+        f"{item.get('package', '?')} {item.get('version', '?')} "
+        f"({item.get('advisory_id', '?')}, {item.get('severity', '?')})"
+        for item in shown if isinstance(item, dict)
+    ]
+    if not parts:
+        return None
+    return ("[act] security-check (deps): unaccepted dependency vulnerability: "
+            + "; ".join(parts) + more + " -- see `python .act/scripts/security_scan.py --deps`")
+
+
+def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[str]":
+    """Check B117 Art B's own session-start half (docs/ai/config.md § Checks, `security-check:
+    deps`/`full` only -- `off`/`local` never scan here): once a day, kick off a detached background
+    scan (`_spawn_security_scan_worker`) and report a *previous* run's finding, if any
+    (`_consume_pending_security_scan_note`) -- same split `_check_update_awareness` already takes
+    for its own remote lookup, never a synchronous scan inside the hook itself. Returns the
+    post-status-line notes (empty list for `off`/`local`, or while nothing is pending yet). Never
+    raises -- the caller already wraps this in its own try/except, same as every other best-effort
+    sub-step here."""
+    level = _security_check_level(config)
+    if level not in ("deps", "full"):
+        return []
+    post_notes: list[str] = []
+    pending = _consume_pending_security_scan_note(root)
+    if pending:
+        post_notes.append(pending)
+    if not _security_scan_already_checked_today(root):
+        _mark_security_scan_checked_today(root)
+        _spawn_security_scan_worker(root)
+    return post_notes
 
 
 # ---------------------------------------------------------------------------
@@ -1413,6 +1611,11 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             print(note)
     except Exception:
         pass  # template-awareness is informational only, must never block the session
+
+    try:
+        post_update_notes.extend(_check_security_scan_awareness(root, config))
+    except Exception:
+        pass  # security-check's own daily scan is informational only, must never block the session
 
     rules_delivered: Optional[int] = None
     for key, compact in (("full", False), ("compact", True)):

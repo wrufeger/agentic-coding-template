@@ -441,8 +441,9 @@ reference list):
   `python`, `bash`, `node`, …; a bare, `./` or `$CLAUDE_PROJECT_DIR/` path) this adoption removed
   — a `delete` or `legacy` row — is removed, an emptied hook group or event with it; everything
   else stays byte for byte. A script that is only an argument, a `Read`/`Edit`/`Write` rule and an
-  entry on a script still on disk are never touched. The report lists under "Remove it by hand, or
-  check" instead: every entry when the file's layout cannot be reproduced exactly, an entry whose
+  entry on a script still on disk are never touched. The report lists these under its own settings
+  heading instead ("Remove it by hand, or check" / German "Von Hand entfernen, oder prüfen"):
+  every entry when the file's layout cannot be reproduced exactly, an entry whose
   script was already missing before the adoption (it stays) or went with an `adopt` row, a
   `statusLine` on such a script, and every entry in `.claude/settings.local.json` (a local file,
   the owner's). The file is left unstaged (group 2 in step 8).
@@ -475,8 +476,9 @@ python .act/scripts/doctor.py --target <dir>
 
 **By hand only what the report names.** `doctor` still reports every hook command and every
 `Bash(...)` permission in `.claude/settings.json` (and, read-only, `.claude/settings.local.json`)
-that names a script no longer in the project. After `--finish` those are only the entries the
-report lists under "Remove it by hand, or check": the orchestrator settles them with the owner
+that names a script no longer in the project. After `--finish` those are only the entries under
+that same heading ("Remove it by hand, or check" / German "Von Hand entfernen, oder prüfen"): the
+orchestrator settles them with the owner
 before committing and edits `settings.json` in place (it goes with group 2); `settings.local.json`
 is the owner's to clean. A script that should have stayed needed `keep` in step 2 — after
 `--finish` it is gone with its row. Afterwards `doctor.py --target <dir>` reports 0 findings.

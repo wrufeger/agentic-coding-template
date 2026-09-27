@@ -231,41 +231,17 @@ def _set_config_value(root: Path, key: str, value: str) -> bool:
 
 
 def _read_config_at(root: Path) -> dict[str, str]:
-    """Same table-parsing as actlib.read_config(), for an explicit `root` instead of
-    actlib.repo_root() (which always resolves from the current working directory). Needed for
-    --target (B124: act-adopt runs this script from the template checkout against a project being
-    adopted elsewhere) — actlib.py itself is out of scope for that change, so its private helpers
-    are reused here rather than duplicating their logic; keep this in lockstep with
-    actlib.read_config() if that one changes."""
-    path = root / "docs" / "ai" / "config.md"
-    config: dict[str, str] = {}
-    if not path.is_file():
-        return config
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return config
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped.startswith("|") or not stripped.endswith("|"):
-            continue
-        inner = stripped[1:-1]
-        cells = [cell.strip() for cell in inner.split("|")]
-        if len(cells) < 2:
-            continue
-        key, value = cells[0].strip("`").strip(), cells[1]
-        if not key:
-            continue
-        if actlib._is_separator_cell(key) and actlib._is_separator_cell(value):
-            continue
-        if actlib._is_header_row(lines, index):
-            continue
-        config[key] = value
-    return config
+    """`actlib.read_config(root)` under this script's own name — kept as a thin alias (rather than
+    rewriting every call site below to `actlib.read_config(root)` directly) since B124 predates
+    `read_config()` taking an explicit `root`; now that it does, this is the one place that would
+    need to change if the two ever diverged again."""
+    return actlib.read_config(root)
 
 
 def _read_lock_at(root: Path) -> dict:
-    """Same as actlib.read_lock(), for an explicit `root` — see _read_config_at()'s docstring."""
+    """Same as actlib.read_lock(), for an explicit `root` (actlib.read_lock() takes none) — needed
+    for --target the same way _read_config_at() used to be, before actlib.read_config() itself
+    grew a `root` parameter."""
     data = actlib._read_json(root / ".act-lock.json")
     if data is None:
         return actlib._default_lock()
@@ -676,15 +652,19 @@ def _write_protocol(root: Path, payload: dict, endpoint: str) -> Path:
     return path
 
 
-def _write_journal_entry(root: Path, title: str) -> None:
+def _write_journal_entry(root: Path, title_en: str, title_de: str) -> None:
     """One journal entry per successful send (docs/ai/work/ledger/, via entries.py's own `new`) —
-    date, kind (batch/direct), entry count and schema version only, in `title`; NEVER the sent
+    date, kind (batch/direct), entry count and schema version only, in the title; NEVER the sent
     content or an entry's own title (Q65b — the local protocol under .act-local/feedback/sent/ is
-    the full record; this is only the project's own note that a send happened). A failure here is
-    reported on stderr but never turns an already-successful send into a failure."""
+    the full record; this is only the project's own note that a send happened). The title follows
+    `language-docs` (R-work-language, actlib.localized()) — `title_en`/`title_de` are the two
+    fixed variants a caller already built, not a template this function fills in itself, since it
+    is a plain sentence rather than a `.format()`-shaped one. A failure here is reported on
+    stderr but never turns an already-successful send into a failure."""
     try:
         import entries
-        entries.cmd_new(root, "ledger", [title])
+        language = actlib.docs_language(root)
+        entries.cmd_new(root, "ledger", [actlib.localized(language, title_en, title_de)])
     except Exception as exc:  # noqa: BLE001 - a journal-entry failure must never fail the send
         print(f"feedback: could not write journal entry ({exc})", file=sys.stderr)
 
@@ -936,7 +916,10 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
     state.pop("last_reminder", None)
     _write_state(root, state)
     _clear_outbox(root)
-    _write_journal_entry(root, f"Feedback sent: batch ({len(entries)} entries, schema {SCHEMA_BATCH})")
+    _write_journal_entry(
+        root, f"Feedback sent: batch ({len(entries)} entries, schema {SCHEMA_BATCH})",
+        f"Feedback gesendet: Sammelversand ({len(entries)} Einträge, Schema {SCHEMA_BATCH})",
+    )
     protocol_list = ", ".join(p.relative_to(root).as_posix() for p in protocol_paths)
     print(f"feedback sent ({len(entry_chunks)} send(s), {len(entries)} entries). "
           f"Protocol: {protocol_list}.")
@@ -999,7 +982,10 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
         return 2
 
     protocol_path = _write_protocol(root, payload, endpoint)
-    _write_journal_entry(root, f"Feedback sent: direct message (schema {SCHEMA_DIRECT})")
+    _write_journal_entry(
+        root, f"Feedback sent: direct message (schema {SCHEMA_DIRECT})",
+        f"Feedback gesendet: Direktnachricht (Schema {SCHEMA_DIRECT})",
+    )
     print(f"message sent (HTTP {code}). Protocol: {protocol_path.relative_to(root).as_posix()}.")
     return 0
 

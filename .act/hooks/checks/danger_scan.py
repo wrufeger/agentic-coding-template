@@ -77,13 +77,16 @@ import actlib
 from .common import _shell_command
 from .encoding_hint import _reader_key
 from .secret_scan import (
+    _check_deadline,
     _diff_entries,
     _diff_sections,
     _git_commit_invocations,
+    _repo_toplevel,
     _run_git,
     _GIT_TIMEOUT,
     _MAX_DIFF_BYTES,
     _TIME_BUDGET,
+    _WHOLE_TREE_PATHSPEC,
 )
 
 __all__ = [
@@ -289,15 +292,20 @@ def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
 
+    # every git call runs from the repository's top level, same as secret_scan._scan_commit: with
+    # `diff.relative=true` a diff from a subdirectory silently drops everything outside it
+    # (2026-09-27 review 3, m3); the pathspecs handed in are absolute or top-anchored
+    toplevel = _repo_toplevel(cwd, budget())
+    git_cwd = toplevel or cwd
     staged = _run_git(
-        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], cwd, budget(),
+        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
     )
     if staged is not None:
         _scan_diff_text(staged, patterns, findings)
 
     if invocation["all"] and len(findings) < _MAX_FINDINGS:
         unstaged = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], cwd, budget(),
+            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
         )
         if unstaged is not None:
             _scan_diff_text(unstaged, patterns, findings)
@@ -306,24 +314,31 @@ def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline
         if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
             break
         raw_path = entry["path"]
-        path_diff = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
-            cwd, budget(),
-        )
-        if path_diff is not None:
-            _scan_diff_text(path_diff, patterns, findings)
+        if raw_path != _WHOLE_TREE_PATHSPEC:
+            # the whole-tree entry's own unstaged diff is the `all` pass above (always set with it)
+            path_diff = _run_git(
+                ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
+                git_cwd, budget(),
+            )
+            if path_diff is not None:
+                _scan_diff_text(path_diff, patterns, findings)
         if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
             break
-        ls_args = ["ls-files", "--others", "-z", "--", raw_path]
+        if toplevel is None:
+            break  # nowhere to join root-relative names onto
+        # --full-name + the top level, same as secret_scan._scan_commit (2026-09-27 review 2, C2):
+        # root-relative names from a subdirectory too -- which is also what keeps
+        # _is_scannable_path's `.act/` and doc-file exemptions meaningful there
+        ls_args = ["ls-files", "--others", "--full-name", "-z", "--", raw_path]
         if not entry["forced"]:
             ls_args.insert(2, "--exclude-standard")
-        untracked = _run_git(ls_args, cwd, budget())
+        untracked = _run_git(ls_args, toplevel, budget())
         if untracked is None:
             continue
         for rel in filter(None, untracked.split("\0")):
             if len(findings) >= _MAX_FINDINGS:
                 break
-            _scan_new_file(Path(cwd) / rel, rel, patterns, findings)
+            _scan_new_file(Path(toplevel) / rel, rel, patterns, findings)
     return findings
 
 
@@ -398,7 +413,7 @@ def check_danger_scan(payload: dict) -> int:
 
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-    deadline = time.monotonic() + _TIME_BUDGET
+    deadline = _check_deadline(payload, _TIME_BUDGET)
     invocations = _git_commit_invocations(command, base_cwd, deadline, {})
     if not invocations:
         return 0

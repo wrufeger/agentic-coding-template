@@ -70,6 +70,8 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "manifest.py": {"kind": "direct"},
     "rules.py": {"kind": "direct"},
     "script_docs.py": {"kind": "direct"},
+    "security_deep.py": {"kind": "direct", "note": "used by skill `act-release` with `security-check: full`"},
+    "security_scan.py": {"kind": "direct", "note": "also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`"},
     "settings_export.py": {"kind": "skill", "skill": "act-export-settings"},
     "settings_format.py": {"kind": "library"},
     "settings_load.py": {"kind": "skill", "skill": "act-load-settings"},

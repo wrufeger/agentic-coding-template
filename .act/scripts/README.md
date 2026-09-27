@@ -23,6 +23,8 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
+| `security_deep.py` | Security check "Art C" (concept docs/project/concepts/ai-dev-app/14-security-check.md, `Q86a`-`Q86c` all decided "a"): a deep… | direct (used by skill `act-release` with `security-check: full`) |
+| `security_scan.py` | Security check Art B (concept docs/project/concepts/ai-dev-app/14-security-check.md, `Q86a`-`Q86c` all decided "a"): a live… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
@@ -534,6 +536,40 @@ Generate .act/scripts/README.md from every script's own --help output.
 options:
   -h, --help  show this help message and exit
   --check     compare disk against the generated text, write nothing, exit 1 on any difference
+```
+
+## `security_deep.py`
+
+Call: direct (used by skill `act-release` with `security-check: full`)
+
+```text
+usage: security_deep.py [-h] [--since REF | --all] [--json] [--force]
+
+Deep security scan (Art C) over the files changed since a ref, via Semgrep.
+
+options:
+  -h, --help   show this help message and exit
+  --since REF  scan files changed since REF instead of the latest tag
+  --all        scan the whole tree instead of only changed files
+  --json       print findings as a JSON array instead of text
+  --force      run even when docs/ai/config.md's security-check is not 'full'
+```
+
+## `security_scan.py`
+
+Call: direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`)
+
+```text
+usage: security_scan.py [-h] [--deps] [--json]
+
+Security check Art B -- dependency-vulnerability scan via osv-scanner or an ecosystem's own audit
+tool (npm audit / composer audit / pip-audit). Read-only except for the chosen tool's own network
+lookup; never installs or builds anything.
+
+options:
+  -h, --help  show this help message and exit
+  --deps      run the scan and print a summary
+  --json      with --deps: print the result as JSON instead of text
 ```
 
 ## `settings_export.py`

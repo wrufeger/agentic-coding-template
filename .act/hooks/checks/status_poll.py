@@ -60,6 +60,14 @@
 # session issuing one tool call at a time, so its own state file never sees concurrent writers the
 # way a worker's shared count file can.
 #
+# Follow-up (T77/B114, Q109 8 a, 2026-09-27): check_status_poll used to bump the streak *before*
+# deciding whether to deny, so the second-in-a-row poll that triggered the deny was itself counted
+# into the streak it was denied over — mirrors the same fix in worker_cap.py's check_worker_cap,
+# for the same reason: _bump_consecutive_polls now takes an optional `deny_threshold` and, in
+# `block` mode, skips the write and reports the call as denied instead of bumping the streak;
+# `warn` mode passes no threshold and keeps bumping on every poll exactly as before (it never
+# denies here in the first place). See _bump_consecutive_polls' own docstring.
+#
 # Follow-up review (2026-09-23, BLOCK on the version before this comment): a streak used to
 # survive indefinitely (only the 24h file-hygiene TTL ever cleared it), so a poll right after a
 # fresh human turn — or one 20 minutes after the previous poll, with real work in between that
@@ -147,31 +155,52 @@ def _streak_still_active(entry: dict) -> bool:
     return when is not None and when >= datetime.now(timezone.utc) - timedelta(seconds=_STREAK_TTL_SECONDS)
 
 
-def _bump_consecutive_polls(root: Path, session_id: object, is_poll: bool) -> Optional[int]:
-    """Update and return this session's consecutive-status-query streak: incremented when
-    `is_poll` and the previous streak is still active (_streak_still_active), reset to 1 when
+def _bump_consecutive_polls(
+    root: Path, session_id: object, is_poll: bool, deny_threshold: Optional[int] = None,
+) -> "tuple[Optional[int], bool]":
+    """Update and return (this session's consecutive-status-query streak, denied): incremented
+    when `is_poll` and the previous streak is still active (_streak_still_active), reset to 1 when
     `is_poll` but there was no usable previous streak, reset to 0 (and still written, so the
-    file's timestamp stays fresh) when not `is_poll`. None only when session_id cannot be used as
-    a filename at all — nothing to track, never blocks the call over it."""
+    file's timestamp stays fresh) when not `is_poll`. (None, False) only when session_id cannot be
+    used as a filename at all — nothing to track, never blocks the call over it.
+
+    `deny_threshold` (T77/B114, Q109 8 a): when given, `is_poll` is set, and incrementing would
+    reach or exceed it, the *count* is left unchanged (previous_streak, True) is returned instead
+    of the incremented value) — the poll check_status_poll is about to deny must never count
+    towards its own streak (it never happened, from the streak's point of view); a later,
+    genuinely new poll starts counting from the same streak value this denied one saw, not from
+    one past it. The timestamp is still written on a deny (T77/B114 review, finding 2): without
+    that, a continuous poll loop would let the streak's `ts` go stale after 120s
+    (_STREAK_TTL_SECONDS) purely because every poll past the first got denied before it could
+    refresh it, so one poll would slip through as "first again" every 120s forever — writing
+    `{"consecutive": previous, "ts": now}` on deny keeps the window anchored to the *last poll*,
+    not the last *allowed* one, while still never bumping the count itself. `None` (the `warn`-mode
+    caller's choice) means "always write, never deny here", the original behavior."""
     path = _state_file(root, session_id)
     if path is None:
-        return None
+        return None, False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
-        return None
+        return None, False
 
     entry = _read_json_object(path)
     previous = entry.get("consecutive") if entry and _streak_still_active(entry) else None
+    denied = False
     if is_poll:
-        consecutive = (previous + 1) if isinstance(previous, int) else 1
+        prospective = (previous + 1) if isinstance(previous, int) else 1
+        if deny_threshold is not None and prospective >= deny_threshold:
+            consecutive = previous if isinstance(previous, int) else 0
+            denied = True
+        else:
+            consecutive = prospective
     else:
         consecutive = 0
 
     new_entry = {"consecutive": consecutive, "ts": datetime.now(timezone.utc).isoformat()}
     if _atomic_write_json(path, new_entry):
         _prune_stale_state(path.parent, skip=path)
-    return consecutive
+    return consecutive, denied
 
 
 def check_status_poll(payload: dict) -> int:
@@ -196,15 +225,21 @@ def check_status_poll(payload: dict) -> int:
         return 0
 
     is_poll = tool_name in _STATUS_POLL_TOOL_NAMES
-    consecutive = _bump_consecutive_polls(root, payload.get("session_id"), is_poll)
-    if consecutive is None or not is_poll or consecutive < 2:
+    # `warn` mode never denies here, so it must never withhold the streak update either (T77/
+    # B114) — only `block` mode passes an actual threshold ("second in a row").
+    threshold_for_call = 2 if mode != "warn" else None
+    consecutive, denied = _bump_consecutive_polls(
+        root, payload.get("session_id"), is_poll, deny_threshold=threshold_for_call,
+    )
+    if consecutive is None or not is_poll:
         return 0
 
-    if mode == "warn":
+    if denied:
+        print(_STATUS_POLL_MESSAGE, file=sys.stderr)
+        return 2
+    if consecutive >= 2:  # warn mode only reaches here (block already denied above via `denied`)
         print(_STATUS_POLL_MESSAGE)
-        return 0
-    print(_STATUS_POLL_MESSAGE, file=sys.stderr)
-    return 2
+    return 0
 
 
 def observe(event: str, payload: dict) -> None:

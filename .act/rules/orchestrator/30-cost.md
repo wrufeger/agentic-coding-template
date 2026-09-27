@@ -4,7 +4,7 @@ summary: delegation tiers and caps, waiting on workers, scripting recurring chec
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: tier, scope/duration estimate, and a mechanically checked cap
+summary: tier, scope/duration estimate, a mechanically checked cap, small assignments
 
 Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
 implementation, `elevated` for review/security judgment, `expert` only for an escalation after two
@@ -18,8 +18,12 @@ note on reaching the cap ("cap reached — deliver your current state now") and 
 the cap onward — wrap up and report rather than push past it. Need more reasoning for one assignment
 without raising the role's tier itself: name its `-high` variant instead (same tier, one reasoning
 step further — see `docs/ai/config.md` § Roles for a permanent override). Read large files in
-excerpts rather than in full. Only the orchestrator starts workers; a worker's proposal to split its
-task comes back to the orchestrator, which cuts and starts the new assignments itself.
+excerpts rather than in full. Cut assignments small: a judgment assignment (a verdict per entry or
+per file) covers about 10–12 units per worker — with more, the verdicts turn shallow while every
+further tool call re-reads a growing context; rework goes out as a new, short assignment instead of
+continuing a worker whose context is already full; plain reading and counting suits `light`. Only
+the orchestrator starts workers; a worker's proposal to split its task comes back to the
+orchestrator, which cuts and starts the new assignments itself.
 
 Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
 patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`

@@ -852,6 +852,10 @@ def cmd_apply(root: Path, plan: bool) -> int:
     to_rescue = {path: files for path, files in to_rescue.items() if files}
 
     no_commit = init_supports_no_commit()
+    # No --language-docs here: the source's own language only becomes known once step 5
+    # (adopt_config.py) parses the old AI-CONFIG.md/template.json, which runs after --apply —
+    # init.py has already written docs/ai/config.md (English default) by then. adopt_config.py
+    # sets `language-docs` itself from what it finds (see its own docstring).
     init_cmd = [sys.executable, str(SCRIPTS_DIR / "init.py"), "--target", str(root), "--non-interactive"]
     if no_commit:
         init_cmd.append("--no-commit")
@@ -1870,59 +1874,78 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     moved = state.get("moved", {})
     by_action = {a: [r for r in rows if r["action"] == a and (a == "adopt" or r["path"] not in moved)] for a in ACTIONS}
 
+    # Every heading/table-header/fixed phrase below follows `language-docs` (R-work-language) —
+    # `root` is already a set-up project by the time --finish runs this, so its own config.md is
+    # the source of truth, same helper every other writer in this template uses.
+    language = actlib.docs_language(root)
+    L = lambda en, de: actlib.localized(language, en, de)  # noqa: E731
+
     def adopted_note(row: dict) -> str:
         if row["path"] in state.get("bridged", []):
-            return " (now a bridge)"
+            return " (" + L("now a bridge", "jetzt eine Brücke") + ")"
         if row["path"] in moved:
-            how = "into itself" if row["path"] in _targets(row) else "original moved before init"
-            return f" ({how}; original in legacy: {_code(moved[row['path']])})"
+            how = L("into itself", "in sich selbst") if row["path"] in _targets(row) \
+                else L("original moved before init", "Original vor init verschoben")
+            return f" ({how}; " + L("original in legacy", "Original im Legacy-Archiv") + f": {_code(moved[row['path']])})"
         return ""
 
+    none = L("none", "keine")
     settings_removed, settings_notes, unmarked, refs_file = extra
     out = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}", "",
-           "# Adoption report (`adopt.py --finish`)", "",
-           f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
-           "adopt.py. Review the branch, then commit per path or drop it.", "", "## Adopted (source → target)", ""]
+           L("# Adoption report (`adopt.py --finish`)", "# Übernahmebericht (`adopt.py --finish`)"), "",
+           L(f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
+             "adopt.py. Review the branch, then commit per path or drop it.",
+             f"Branch `{state.get('branch', BRANCH)}` (von `{state.get('base_branch', '?')}`), nichts von adopt.py "
+             "committet. Branch prüfen, dann je Pfad committen oder verwerfen."),
+           "", L("## Adopted (source → target)", "## Übernommen (Quelle → Ziel)"), ""]
     out += [f"- {_code(r['path'])} → {', '.join(_code(t) for t in _targets(r))}{adopted_note(r)}"
-            for r in by_action["adopt"]] or ["- none"]
-    out += ["", "## `act:default` mark removed (adopted content, no longer scaffold)", ""]
-    out += [f"- {_code(rel)}" for rel in unmarked] or ["- none"]
-    out += ["", f"## Entries in {_code(SETTINGS_FILE)} removed (they ran a removed script; not staged)", ""]
-    out += [f"- {_code(line)}" for line in settings_removed] or ["- none"]
+            for r in by_action["adopt"]] or [f"- {none}"]
+    out += ["", L("## `act:default` mark removed (adopted content, no longer scaffold)",
+                  "## Marke `act:default` entfernt (übernommener Inhalt, kein Gerüst mehr)"), ""]
+    out += [f"- {_code(rel)}" for rel in unmarked] or [f"- {none}"]
+    out += ["", L(f"## Entries in {_code(SETTINGS_FILE)} removed (they ran a removed script; not staged)",
+                  f"## Einträge in {_code(SETTINGS_FILE)} entfernt (sie riefen ein entferntes Script auf; nicht vorgemerkt)"), ""]
+    out += [f"- {_code(line)}" for line in settings_removed] or [f"- {none}"]
     if settings_notes:
-        out += ["", "Remove it by hand, or check:", ""] + [f"- {_code(line)}" for line in settings_notes]
-    out += ["", "## Own skills and roles bridged (as `act-load-settings` does)", ""]
-    out += [f"- {_code('docs/ai/local/' + unit)}" for unit in state.get("own_units", [])] or ["- none"]
-    out += ["", "## Moved to legacy (byte-identical, see `.act-local/adopt/legacy-checksums.json`)", ""]
-    out += [f"- {_code(old)} → {_code(new)}" for old, new in moved.items()] or ["- none"]
-    out += ["", "## Deleted", ""]
-    out += [f"- {_code(r['path'])}" for r in by_action["delete"]] or ["- none"]
-    out += ["", "## Kept in place", ""]
-    out += [f"- {_code(r['path'])}" for r in by_action["keep"]] or ["- none"]
-    out += ["", f"## doctor.py (exit {doctor[0]})", ""]
-    out += [f"- {line}" for line in doctor[1][:30]] or ["- no findings"]
+        out += ["", L("Remove it by hand, or check:", "Von Hand entfernen, oder prüfen:"), ""] \
+               + [f"- {_code(line)}" for line in settings_notes]
+    out += ["", L("## Own skills and roles bridged (as `act-load-settings` does)",
+                  "## Eigene Skills und Rollen verbrückt (wie `act-load-settings`)"), ""]
+    out += [f"- {_code('docs/ai/local/' + unit)}" for unit in state.get("own_units", [])] or [f"- {none}"]
+    out += ["", L("## Moved to legacy (byte-identical, see `.act-local/adopt/legacy-checksums.json`)",
+                  "## Ins Legacy-Archiv verschoben (bytegleich, siehe `.act-local/adopt/legacy-checksums.json`)"), ""]
+    out += [f"- {_code(old)} → {_code(new)}" for old, new in moved.items()] or [f"- {none}"]
+    out += ["", L("## Deleted", "## Gelöscht"), ""]
+    out += [f"- {_code(r['path'])}" for r in by_action["delete"]] or [f"- {none}"]
+    out += ["", L("## Kept in place", "## An Ort und Stelle belassen"), ""]
+    out += [f"- {_code(r['path'])}" for r in by_action["keep"]] or [f"- {none}"]
+    out += ["", L(f"## doctor.py (exit {doctor[0]})", f"## doctor.py (Exit {doctor[0]})"), ""]
+    out += [f"- {line}" for line in doctor[1][:30]] or ["- " + L("no findings", "keine Befunde")]
     changes, left = refs
-    out += ["", f"## References in {REFS_SCOPE} rewritten (link target only, not staged)", ""]
+    out += ["", L(f"## References in {REFS_SCOPE} rewritten (link target only, not staged)",
+                  f"## Verweise in {REFS_SCOPE} umgeschrieben (nur Verweisziel, nicht vorgemerkt)"), ""]
     if len(changes) > REFS_IN_REPORT:
-        out += [f"- {len(changes)} rewritten — the full list: {_code(refs_file or REFS_FILE)}"]
+        out += ["- " + L(f"{len(changes)} rewritten — the full list: {_code(refs_file or REFS_FILE)}",
+                        f"{len(changes)} umgeschrieben — die volle Liste: {_code(refs_file or REFS_FILE)}")]
     else:
-        out += [f"- {_code(line)}" for line in changes] or ["- none"]
+        out += [f"- {_code(line)}" for line in changes] or [f"- {none}"]
     # B129.6: a raw line per left-unchanged reference ran to 143 lines in the first real adoption —
     # too long for a human; grouped by target (old path/text mentioned) instead, the full list
     # stays at refs_file (write_references()).
-    out += ["", f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text), by target", ""]
+    out += ["", L(f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text), by target",
+                  f"## Verweise in {REFS_SCOPE} unverändert gelassen (kein Nachfolger, mehrdeutig, reiner Text), nach Ziel"), ""]
     grouped = group_left_by_target(left)
     if grouped:
-        out += ["| Target | Count | Files |", "| :--- | ---: | :--- |"]
+        out += [f"| {L('Target', 'Ziel')} | {L('Count', 'Anzahl')} | {L('Files', 'Dateien')} |", "| :--- | ---: | :--- |"]
         for target, count, files in grouped:
             shown = ", ".join(_code(f) for f in files[:5])
             if len(files) > 5:
-                shown += f", +{len(files) - 5} more"
+                shown += ", " + L(f"+{len(files) - 5} more", f"+{len(files) - 5} weitere")
             out.append(f"| {_code(target)} | {count} | {shown} |")
-        out += ["", f"full list: {_code(refs_file or REFS_FILE)}"]
+        out += ["", L(f"full list: {_code(refs_file or REFS_FILE)}", f"volle Liste: {_code(refs_file or REFS_FILE)}")]
     else:
-        out += ["- none"]
-    out += ["", "## Accounting", "", "```text", *[line.strip() for line in acc], "```", ""]
+        out += [f"- {none}"]
+    out += ["", L("## Accounting", "## Bilanz"), "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("\n".join(out), encoding="utf-8")
     return dest

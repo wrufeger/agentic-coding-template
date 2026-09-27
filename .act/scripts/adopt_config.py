@@ -440,7 +440,7 @@ def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Op
     return slug
 
 
-def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[Path]:
+def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str = "en") -> Optional[Path]:
     """Bring the docs/ai/inbox/todo-<stamp>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
     adoption just filled in, instead of leaving it to say `for: unknown` or list config defaults
@@ -449,7 +449,11 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[P
     machine-written `for:` line — a human's own comment further down the file is never touched.
     Does nothing under `plan`, without such a file, or when this run set nothing (a repeat run, or
     one with no old config to draw from). The `for:` line sits below `kind: todo` in the header
-    now (init.py's own _write_inbox_note()), not necessarily on line 0 — found by prefix instead."""
+    now (init.py's own _write_inbox_note()), not necessarily on line 0 — found by prefix instead.
+    `language` (`language-docs`, R-work-language) picks the heading text this appends; the marker
+    lookup below checks both language variants, so a repeat run in either language after
+    `language-docs` changed between two adoption runs still finds the section already there
+    instead of appending it a second time."""
     if plan:
         return None
     dest = _init_notes_path(root)
@@ -469,10 +473,16 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool) -> Optional[P
             if new_owner:
                 lines[for_index] = f"for: {new_owner}"
                 changed = True
-    marker = "## Filled in by `adopt_config.py`"
-    if marker not in "\n".join(lines):
+    marker = actlib.localized(language, "## Filled in by `adopt_config.py`",
+                              "## Ausgefüllt von `adopt_config.py`")
+    markers_either_language = ("## Filled in by `adopt_config.py`", "## Ausgefüllt von `adopt_config.py`")
+    joined = "\n".join(lines)
+    if not any(candidate in joined for candidate in markers_either_language):
         keys = sorted({r["new"] for r in set_rows})
-        lines += ["", marker, "", f"Now set in docs/ai/config.md: {', '.join(f'`{k}`' for k in keys)}."]
+        note_text = actlib.localized(
+            language, "Now set in docs/ai/config.md: {}.", "Jetzt gesetzt in docs/ai/config.md: {}.",
+        ).format(", ".join(f"`{k}`" for k in keys))
+        lines += ["", marker, "", note_text]
         changed = True
     if not changed:
         return None
@@ -624,9 +634,14 @@ def _fence(text: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-def render(root: Path, data: dict, plan: bool) -> str:
+def render(root: Path, data: dict, plan: bool, language: str = "en") -> str:
     def rel(path: Optional[Path]) -> str:
         return path.relative_to(root).as_posix() if path else "none"
+
+    L = lambda en, de: actlib.localized(language, en, de)  # noqa: E731 - local shorthand, this
+    # function's own headings/table headers/placeholders only (R-work-language: this report
+    # becomes part of a file under docs/ once the `act-adopt` skill embeds it as an inbox entry's
+    # body, so it follows `language-docs` the same as any other writer here).
 
     # No leading "# ..." title here (T62 C3): this report becomes the *body* of an
     # inbox entry the `act-adopt` skill titles itself (entries.py always writes its own
@@ -634,20 +649,24 @@ def render(root: Path, data: dict, plan: bool) -> str:
     # heading. The standalone copy under .act-local/adopt/config-report.md loses nothing by it;
     # the "Source: ..." line already says what this is.
     out = [f"Source: `{rel(data['source'])}` · fallback: `{rel(data['template_json'])}` · target: `{CONFIG.as_posix()}`"
-           + (" · plan only, nothing written" if plan else "")
+           + (" · " + L("plan only, nothing written", "nur Plan, nichts geschrieben") if plan else "")
            + (f" · {data['encoding_note']}" if data.get("encoding_note") else ""), "",
-           "## Mapped", "", "| Old key | Old value | Key | Result |", "| :--- | :--- | :--- | :--- |"]
+           f"## {L('Mapped', 'Übernommen')}", "",
+           f"| {L('Old key', 'Alter Schlüssel')} | {L('Old value', 'Alter Wert')} | {L('Key', 'Schlüssel')} | {L('Result', 'Ergebnis')} |",
+           "| :--- | :--- | :--- | :--- |"]
     out += [f"| {_cell(r['key'])} | {_cell(r['value'])} | `{r['new']}` | {_cell(r['result'])} |" for r in data["mapped"]] \
-        or ["| — | — | — | nothing to map |"]
-    out += ["", "## No counterpart", "", "| Old key | Old value | Section | Note |", "| :--- | :--- | :--- | :--- |"]
+        or [f"| — | — | — | {L('nothing to map', 'nichts zu übernehmen')} |"]
+    out += ["", f"## {L('No counterpart', 'Keine Entsprechung')}", "",
+            f"| {L('Old key', 'Alter Schlüssel')} | {L('Old value', 'Alter Wert')} | {L('Section', 'Abschnitt')} | {L('Note', 'Hinweis')} |",
+            "| :--- | :--- | :--- | :--- |"]
     out += [f"| {_cell(r['key'])} | {_cell(r['value'])} | {_cell(r['section'])} | {_cell(r['note'])} |"
-            for r in data["unmapped"]] or ["| — | — | — | none |"]
-    out += ["", "## Free text (no counterpart — the owner decides where it goes)", ""]
+            for r in data["unmapped"]] or [f"| — | — | — | {L('none', 'keine')} |"]
+    out += ["", f"## {L('Free text (no counterpart — the owner decides where it goes)', 'Freitext (keine Entsprechung — der Owner entscheidet, wohin damit)')}", ""]
     if not data["passages"]:
-        out.append("- none")
+        out.append(f"- {L('none', 'keine')}")
     for p in data["passages"]:
         fence = _fence(p["text"])
-        out += [f"### {p['section']} (lines {p['first']}–{p['last']})", "", f"{fence}text", p["text"], fence, ""]
+        out += [f"### {p['section']} ({L('lines', 'Zeilen')} {p['first']}–{p['last']})", "", f"{fence}text", p["text"], fence, ""]
     return "\n".join(out).rstrip("\n") + "\n"
 
 
@@ -686,7 +705,12 @@ def main(argv: list[str]) -> int:
 
     cfg = ConfigFile(config_path)
     data = build(root, source, template_json, cfg, args.plan)
-    report = render(root, data, args.plan)
+    # The report's own headings/table headers follow `language-docs` too (R-work-language) — read
+    # after build(), which may just have set it itself from the old AI-CONFIG.md's `Sprache` row,
+    # so a fresh German adoption's report comes out German from this very run, not only the next.
+    current = {k: v for k in ("language-docs", "language") if (v := cfg.get(k)) is not None}
+    docs_language = actlib.language_settings(current)[1]
+    report = render(root, data, args.plan, docs_language)
     print(report, end="")
     changed = sum(1 for r in data["mapped"] if r["result"].startswith("set"))
     if not args.plan:
@@ -697,10 +721,8 @@ def main(argv: list[str]) -> int:
     would = sum(1 for r in data["mapped"] if r["result"].startswith("would set"))
     # A docs language other than English leaves the scaffold init wrote to translate (R-work-language):
     # one inbox entry, the same one init.py writes when it is asked for that language itself.
-    current = {k: v for k in ("language-docs", "language") if (v := cfg.get(k)) is not None}
-    docs_language = actlib.language_settings(current)[1]
     note = actlib.write_translate_note(root, docs_language, args.plan)
-    init_notes = _update_init_notes(root, data["mapped"], args.plan)
+    init_notes = _update_init_notes(root, data["mapped"], args.plan, docs_language)
     identity_slug = _update_workspace_identity(root, data["mapped"], args.plan)
     print(f"[adopt-config] {changed or would} value(s) {'would be ' if args.plan else ''}set, "
           f"{len(data['unmapped'])} key(s) without counterpart, {len(data['passages'])} free-text passage(s)"

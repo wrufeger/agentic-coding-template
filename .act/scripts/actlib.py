@@ -239,7 +239,7 @@ def write_last_applied(data: dict) -> dict:
 # docs/ai/config.md — project configuration as a Markdown key/value table
 # ---------------------------------------------------------------------------
 
-def read_config() -> dict[str, str]:
+def read_config(root: Optional[Path] = None) -> dict[str, str]:
     """
     Read docs/ai/config.md as a simple key/value table: the first two cells of any Markdown table
     row are taken as (key, value), so a third column such as "Guards" in the Checks table is
@@ -247,8 +247,12 @@ def read_config() -> dict[str, str]:
     skipped.
     Robust against a missing file and against lines that are not a two-cell table row — those are
     silently ignored rather than raising.
+
+    `root` defaults to repo_root() (cwd-based); pass it explicitly when the caller already has a
+    project root apart from cwd (adopt.py/adopt_config.py/feedback.py running --target against a
+    project elsewhere, a probe doing the same).
     """
-    path = repo_root() / "docs" / "ai" / "config.md"
+    path = (root or repo_root()) / "docs" / "ai" / "config.md"
     config: dict[str, str] = {}
     if not path.is_file():
         return config
@@ -334,6 +338,26 @@ def language_settings(config: dict[str, str]) -> tuple[str, str]:
     return normalize_language(chat, allow_auto=True) or chat, normalize_language(docs) or docs
 
 
+def docs_language(root: Optional[Path] = None) -> str:
+    """`language-docs` for `root` (default: repo_root()) — the language every file this
+    template's own scripts write under docs/ (inbox entries, reports, journal titles) follows
+    (`R-work-language`). A thin wrapper over read_config()/language_settings() so a writer needs
+    neither name itself."""
+    return language_settings(read_config(root))[1]
+
+
+def localized(language: str, en: str, de: str) -> str:
+    """`en` or `de`, picked by `language` (typically docs_language()'s return value) — the one
+    shared lookup every fixed heading/label a script writes under docs/ goes through instead of
+    each writer spelling out its own "if language == 'de'" branch (backlog B118#18). `de` for
+    German and its regional variants (`de-AT`), `en` for English and anything else this table does
+    not (yet) cover — the scaffold itself only ships those two languages today, so an unlisted
+    code falls back to English rather than guessing. Only ever used for prose a person reads
+    (a heading, a table header, a status label) — never for a mark, a header field, a config key/
+    value, code or a path (those stay exactly as written, R-work-language)."""
+    return de if language.strip().lower().split("-")[0] == "de" else en
+
+
 def remembered_chat_language() -> Optional[str]:
     """The chat language remembered for this person on this machine (`board.py --chat-language`,
     .act-local/identity.json, never versioned) — used only while `language-chat` is `auto`."""
@@ -366,21 +390,45 @@ def scaffold_default_files(root: Path) -> list[str]:
 
 
 def translate_note_text(language: str, files: list[str]) -> str:
-    """The inbox entry asking for the one-time scaffold translation (`R-work-language`)."""
+    """The inbox entry asking for the one-time scaffold translation (`R-work-language`) — its own
+    prose follows `language` too (B118#18): the project reading it has already set `language-docs`
+    away from English, so an English-only note would be as stale as the scaffold it points at."""
     lines = [
         "kind: todo", "for: all", "status: open", "",
-        f"# docs scaffold is still English (`act:default`) — translate it into {language}", "",
-        f"`language-docs` in `docs/ai/config.md` is `{language}`, but these scaffold files are still "
-        "the template's English text:", "",
+        localized(
+            language,
+            f"# docs scaffold is still English (`act:default`) — translate it into {language}",
+            f"# Doku-Gerüst ist noch Englisch (`act:default`) — ins {language} übersetzen",
+        ),
+        "",
+        localized(
+            language,
+            f"`language-docs` in `docs/ai/config.md` is `{language}`, but these scaffold files are still "
+            "the template's English text:",
+            f"`language-docs` in `docs/ai/config.md` ist `{language}`, aber diese Gerüstdateien sind noch "
+            "der englische Text der Vorlage:",
+        ),
+        "",
     ]
     lines.extend(f"- `{rel}`" for rel in files)
     lines += [
-        "", "Translate once, file by file (`R-work-language`): headings, table headers, status words "
-        "in prose and hint texts only. Leave unchanged: marks (`<!-- act:... -->`), header fields "
-        "and their values (`status: open|answered|done` stays English, in examples too), config "
-        "keys and values, code, paths, and anything a person wrote. Then remove the `act:default` "
-        "line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays English, "
-        "the template keeps it current.",
+        "",
+        localized(
+            language,
+            "Translate once, file by file (`R-work-language`): headings, table headers, status words "
+            "in prose and hint texts only. Leave unchanged: marks (`<!-- act:... -->`), header fields "
+            "and their values (`status: open|answered|done` stays English, in examples too), config "
+            "keys and values, code, paths, and anything a person wrote. Then remove the `act:default` "
+            "line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays English, "
+            "the template keeps it current.",
+            "Einmal übersetzen, Datei für Datei (`R-work-language`): nur Überschriften, Tabellenköpfe "
+            "und Statuswörter im Fließtext sowie Hinweistexte. Unverändert lassen: Marken "
+            "(`<!-- act:... -->`), Kopf-Felder und ihre Werte (`status: open|answered|done` bleibt "
+            "Englisch, auch in Beispielen), Konfigurationsschlüssel und -werte, Code, Pfade, und alles, "
+            "was ein Mensch geschrieben hat. Danach die `act:default`-Zeile (Zeile 1) aus der Datei "
+            "entfernen. `docs/ai/rules.md` gehört nicht dazu: sie bleibt Englisch, die Vorlage hält sie "
+            "aktuell.",
+        ),
     ]
     return "\n".join(lines) + "\n"
 
@@ -409,14 +457,21 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
 DEPENDENCY_CHECK_NOTE_SUFFIX = "-dependency-check.md"
 
 
-def dependency_check_note_text() -> str:
-    """The one-time inbox entry `dependency-check: once` asks for right after setup."""
+def dependency_check_note_text(language: str = "en") -> str:
+    """The one-time inbox entry `dependency-check: once` asks for right after setup, in `language`
+    (`language-docs`, R-work-language, B118#18)."""
     return (
         "kind: todo\nfor: all\nstatus: open\n\n"
-        "# Check dependencies once\n\n"
-        "`dependency-check` in `docs/ai/config.md` is `once`: run `act-deps` now to inventory "
-        "dependency age and known gaps (see `.act/skills/act-deps/SKILL.md`) — after this, it runs "
-        "only on demand, not again at every setup.\n"
+        + localized(language, "# Check dependencies once", "# Abhängigkeiten einmal prüfen") + "\n\n"
+        + localized(
+            language,
+            "`dependency-check` in `docs/ai/config.md` is `once`: run `act-deps` now to inventory "
+            "dependency age and known gaps (see `.act/skills/act-deps/SKILL.md`) — after this, it runs "
+            "only on demand, not again at every setup.\n",
+            "`dependency-check` in `docs/ai/config.md` ist `once`: jetzt `act-deps` ausführen, um Alter "
+            "und bekannte Lücken der Abhängigkeiten zu erfassen (siehe `.act/skills/act-deps/SKILL.md`) — "
+            "danach läuft es nur noch auf Anfrage, nicht mehr bei jedem Setup.\n",
+        )
     )
 
 
@@ -433,7 +488,7 @@ def write_dependency_check_note(root: Path, dependency_check: str, plan: bool = 
     dest = inbox / inbox_entry_filename("todo", "dependency-check")
     if not plan:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        write_text_lf(dest, dependency_check_note_text())
+        write_text_lf(dest, dependency_check_note_text(docs_language(root)))
     return dest
 
 

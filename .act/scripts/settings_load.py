@@ -1576,8 +1576,9 @@ def write_inbox(
     if not findings and not setup_required:
         return None, False
 
+    language = actlib.docs_language(root)
     lines = ["kind: todo", "for: all", "status: open", f"created: {date.today().isoformat()}", "",
-             "# settings import findings", "",
+             actlib.localized(language, "# settings import findings", "# Befunde beim Settings-Import"), "",
              "Source file(s): " + ", ".join(s.label for s in sources), ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]

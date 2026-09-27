@@ -68,6 +68,15 @@
 # file). The "cap exceeded" hint only matters in `warn` mode: in `block` mode, a call at or past
 # 1.5x the cap is denied by check_worker_cap before it ever runs, so PostToolUse never fires for it.
 #
+# Follow-up (T77/B114, Q109 8 a, 2026-09-27): check_worker_cap used to increment the running
+# counter (_register_worker_call) *before* deciding whether to deny — so the very call that first
+# crossed 1.5x the cap, and every retried call after it, was counted as "used" even though it was
+# refused, and kept the counter growing forever past the threshold on repeated retries. Smallest
+# fix: _register_worker_call now takes an optional `deny_threshold` and, in the one mode
+# (`block`) where a threshold applies, skips the write and reports the call as denied instead of
+# incrementing — `warn` mode passes no threshold at all, so it keeps counting every call exactly
+# as before (it never denies here in the first place). See _register_worker_call's own docstring.
+#
 # Follow-up review (2026-09-23, BLOCK on the version before this comment): `_CAP_LINE_RE` /
 # `_TIER_LINE_RE` used to require `Cap:`/`Tier:` at the start of a line, missing the shape real
 # assignment headers actually use ("Tier: standard · Estimate: ... · Cap: 95." — Tier at the
@@ -398,32 +407,47 @@ def _locked(count_path: Path, timeout: float = _LOCK_TIMEOUT, poll: float = _LOC
                 pass
 
 
-def _register_worker_call(root: Path, agent_id: str) -> Optional[int]:
-    """Atomically increment this worker's running tool-call counter, returning the new count
-    (None when agent_id is not a safe filename — never counted, not an error, mirrors
-    write_scope's same convention for an unsafe id). Counting only ever happens here, in
-    check_worker_cap (PreToolUse); note_worker_cap (PostToolUse) only reads what this wrote for
-    the same tool call, never increments a second time. Other fields already in the entry
-    (`hinted_cap`, `hinted_exceeded` — see note_worker_cap) are carried over unchanged, not
-    overwritten by this increment."""
+def _register_worker_call(
+    root: Path, agent_id: str, deny_threshold: Optional[int] = None,
+) -> "tuple[Optional[int], bool]":
+    """Atomically increment this worker's running tool-call counter, returning
+    (new_count_or_None, denied) — None only when agent_id is not a safe filename (never counted,
+    not an error, mirrors write_scope's same convention for an unsafe id). Counting only ever
+    happens here, in check_worker_cap (PreToolUse); note_worker_cap (PostToolUse) only reads what
+    this wrote for the same tool call, never increments a second time. Other fields already in the
+    entry (`hinted_cap`, `hinted_exceeded` — see note_worker_cap) are carried over unchanged, not
+    overwritten by this increment.
+
+    `deny_threshold` (T77/B114, Q109 8 a): when given and incrementing would reach or exceed it,
+    the increment is skipped and (previous_count, True) is returned instead — the call
+    check_worker_cap is about to deny must never inflate the very counter that denied it (the
+    counter otherwise kept growing on every retried call past the threshold, forever, even though
+    each one was refused). `None` (the `warn`-mode caller's choice — see check_worker_cap) means
+    "always increment, never deny here", the original behavior. Peek-then-write happens inside the
+    same locked section as the write itself, so no other process's call can slip in between the
+    read and the decision."""
     path = _count_file(root, agent_id)
     if path is None:
-        return None
+        return None, False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
-        return None
+        return None, False
 
     with _locked(path):
         entry = _read_json_object(path) or {}
         previous = entry.get("count")
-        count = (previous + 1) if isinstance(previous, int) else 1
+        previous = previous if isinstance(previous, int) else 0
+        prospective = previous + 1
+        if deny_threshold is not None and prospective >= deny_threshold:
+            return previous, True
+        count = prospective
         new_entry = dict(entry)
         new_entry["count"] = count
         new_entry["ts"] = datetime.now(timezone.utc).isoformat()
         if _atomic_write_json(path, new_entry):
             _prune_stale_entries(path.parent, skip=path)
-    return count
+    return count, False
 
 
 def check_worker_cap(payload: dict) -> int:
@@ -462,14 +486,18 @@ def check_worker_cap(payload: dict) -> int:
 
     agent_id = payload.get("agent_id")
     cap = _resolve_worker_cap(root, payload)
-    count = _register_worker_call(root, agent_id)
+    deny_threshold = (cap * 3 + 1) // 2  # ceil(1.5 * cap)
+    # `warn` mode never denies here, so it must never withhold the increment either (T77/B114) —
+    # only `block` mode passes an actual threshold, meaning "deny before counting" applies to it
+    # alone; a warn-mode call always gets counted, exactly as before this fix.
+    threshold_for_call = deny_threshold if mode != "warn" else None
+    count, denied = _register_worker_call(root, agent_id, deny_threshold=threshold_for_call)
     if count is None:
         return 0  # agent_id not a safe filename -- nothing to enforce against
 
-    deny_threshold = (cap * 3 + 1) // 2  # ceil(1.5 * cap)
-    if count >= deny_threshold and mode != "warn":
+    if denied:
         print(
-            f"[act] cap of {cap} tool calls exceeded ({count} so far) — "
+            f"[act] cap of {cap} tool calls exceeded ({count + 1} so far) — "
             "deliver your state via your final report",
             file=sys.stderr,
         )

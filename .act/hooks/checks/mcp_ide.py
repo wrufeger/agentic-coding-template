@@ -24,8 +24,8 @@
 #                       recognizes Bash's own write syntax) and this module has no way to know which
 #                       shell the call actually ran in. The reused checks: the template write-guard,
 #                       the docs/ai/ guard, the worker write-scope guard, the worker git-write
-#                       guard, `git reset --hard`, a recursive delete, and the secret/danger scan
-#                       (all `PreToolUse` checks that already understand a Bash or PowerShell
+#                       guard, `git reset --hard`, a recursive delete, and the secret/danger/deps
+#                       scan (all `PreToolUse` checks that already understand a Bash or PowerShell
 #                       command via `checks.common._shell_command`). Each translation runs once per
 #                       base directory too (`_shell_cwd_variants`): with the call's own
 #                       `projectPath` as the shell's `cwd` when given — an IDE terminal runs in the
@@ -175,6 +175,7 @@ import actlib
 
 from .common import _check_mode, _is_worker
 from .danger_scan import check_danger_scan
+from .deps_scan import check_deps_scan
 from .git_reset_hard import check_git_reset_hard
 from .mcp_ide_tables import _EXEC_TOOLS, _READ_TOOLS, _SHELL_TOOL_ARGS, _WRITE_TOOL_FIELDS, _tool_class
 from .recursive_delete import check_recursive_delete
@@ -227,6 +228,7 @@ _SHELL_REUSE_CHECKS = (
     check_recursive_delete,
     check_secret_scan,
     check_danger_scan,
+    check_deps_scan,
 )
 
 # Reused, in this order, for a translated "write" call.

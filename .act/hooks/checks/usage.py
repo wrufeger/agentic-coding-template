@@ -42,14 +42,17 @@
 #     one place .act-local/usage/events/ actually shrinks again (2026-09-23 review, point 1: it
 #     only ever grew otherwise). Budgeted, see that function's own docstring.
 #
-# Known limit (2026-09-23 review, point 4): this observer sees a PreToolUse *before* any check
-# runs (dispatch.py's own fixed order), so a role start, skill call, script call or checklist read
-# is counted here even when a later check in the chain denies it (worker-cap, write-scope,
-# nesting-guard, ...) — a denied attempt looks the same as a successful one in usage.json. Not
-# fixed: dispatch.py would have to run the observers *after* the checks to tell them apart, which
-# would also delay every check by the observer's own (small but nonzero) cost, and a check that
-# specifically wants its own denials counted already has usage.record() for that (see above) — it
-# is the "checks" category, not "roles"/"skills"/..., that is meant to hold rejection counts.
+# Fixed (T77/B114, Q109 8 a; was "Known limit", 2026-09-23 review, point 4): this observer used to
+# see a PreToolUse *before* any check ran (dispatch.py's own fixed order), so a role start, skill
+# call, script call or checklist read was counted here even when a later check in the chain denied
+# it (worker-cap, write-scope, nesting-guard, ...) — a denied attempt looked the same as a
+# successful one in usage.json. dispatch.py now runs its PreToolUse observers *after* the checks
+# (dispatch._run_pre_tool_use_observers) and skips this observer outright when the call was denied
+# — this module's own observe() is therefore never called at all for a denied PreToolUse call any
+# more, and every count below only ever reflects a call that actually ran. A check that wants its
+# own denials counted (as opposed to simply not miscounting them here) still has usage.record() for
+# that (see above) — the "checks" category, not "roles"/"skills"/..., is what holds rejection
+# counts on purpose.
 #
 # Concurrency: many dispatch.py processes can run at once — parallel worker tool calls fire their
 # own PreToolUse hooks concurrently (CLAUDE.md § Logging: only the Agent-call/SubagentStart/-Stop
@@ -157,8 +160,10 @@ def _tier_from_prompt(prompt: str) -> str:
 
 
 def observe(event: str, payload: dict) -> None:
-    """Called by dispatch.py for every hook event, before any check runs. See this module's
-    docstring for what is recorded from which event; anything else is a silent no-op."""
+    """Called by dispatch.py for every hook event — for PreToolUse specifically only after every
+    check has run and allowed the call (T77/B114, see this module's own "Fixed" paragraph above),
+    for every other event before any check runs. See this module's docstring for what is recorded
+    from which event; anything else is a silent no-op."""
     try:
         root = actlib.repo_root()
     except RuntimeError:

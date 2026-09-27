@@ -6,10 +6,23 @@
 #          like `git -C x commit`, a nested shell, or a simple git alias) — for orchestrator and
 #          worker alike (Q75 a: the dispatcher is the only gate, no separate git hook). What gets
 #          checked is exactly what the commit would take:
-#            - `git diff --cached -U0` in the commit's own directory (always);
+#            - `git diff --cached -U0` (always) -- every git call of the walk runs from the
+#              repository's top level, not the commit's own directory: with `diff.relative=true` a
+#              diff from a subdirectory silently drops everything outside it (2026-09-27 review 3,
+#              m3; the pathspecs handed in are absolute or top-anchored, so nothing else changes);
 #            - with `-a`/`--all`, or an earlier `git add -u|--update|-A|--all|--no-ignore-removal`
-#              (or `git add` with no paths at all) in the same chain, also `git diff -U0`
-#              (unstaged changes to every tracked file, not just the ones named);
+#              *without a pathspec* (or `git add` with no paths at all, or `git add :/`) in the
+#              same chain, also `git diff -U0` (unstaged changes to every tracked file, not just the
+#              ones named) -- with a pathspec (`git add -A src`) git stages only under it, so only
+#              the per-path walk below runs for it (review 3, M1);
+#            - after an earlier `git add -A|--all|--no-ignore-removal` without a pathspec (or
+#              `--pathspec-from-file`, or `git add :/`) in the same chain, also every new, untracked
+#              file in the whole working tree (git's own `:/` pathspec, _WHOLE_TREE_PATHSPEC -- from
+#              a subdirectory too, where a bare `git ls-files` stops at the current directory;
+#              2026-09-27 review 2, C2); new files are read via the repository's top level
+#              (`--full-name`), so a name in a finding is root-relative whichever directory the
+#              commit runs from. A short flag counts inside a cluster too (`-fA`, `-Av`; review 3,
+#              m2), and `git stage` is read as `git add`;
 #            - `git commit <pathspec>`'s own trailing pathspec operands (message/author/etc.
 #              options and their values excluded — see _COMMIT_VALUE_FLAGS), and any `git add
 #              <paths>` earlier in the same chain (not staged yet when this PreToolUse call
@@ -17,7 +30,8 @@
 #              plus the content of any new, untracked file under it (`git ls-files --others`,
 #              *without* `--exclude-standard` when that `add` used `-f`/`--force` — a forced add
 #              can stage a gitignored file, e.g. `.env`, that `--exclude-standard` would otherwise
-#              hide from view here too);
+#              hide from view here too); a top-anchored magic pathspec (`:/src`, `:(top)src`) is
+#              handed to git as written, every other operand resolved to an absolute path first;
 #            - `git merge|cherry-pick|revert|rebase|am --continue` — only the staged diff (these
 #              commit whatever is already staged, no working-tree pass).
 #          A `bash -c '...'`/`sh -c '...'`, `powershell`/`pwsh -Command '...'`, or `cmd /c ...`
@@ -58,8 +72,12 @@
 #          instead of octal escapes) and, for diff, `--no-textconv` (do not run a configured
 #          textconv filter — closer to what is actually being committed).
 #
-#          Timeout-aware: a fixed ~4.5s budget (the hook's own timeout is 10s) shared across every
-#          git subprocess call (including alias lookups) and file read for this check. Running out
+#          Timeout-aware: a fixed ~4.5s budget shared across every git subprocess call (including
+#          alias lookups) and file read for this check, capped further by the hook-wide deadline
+#          (_check_deadline: dispatch.py's own start, payload["_act_hook_started"], plus
+#          _HOOK_BUDGET -- inside the harness's 10s hook timeout; the secret, danger and deps scans
+#          run back to back in one hook call, so their budgets must not simply add up, 2026-09-27
+#          review 2, m5). Running out
 #          of it never blocks by itself — only a note ("not fully checked") — but real findings
 #          from the part that *was* scanned still hold the commit.
 #
@@ -95,10 +113,18 @@
 #     (an unrelated feature — `-diff` makes git treat the file as binary outright) — accepted gap,
 #     not worked around here (2026-09-23 review);
 #   - `--pathspec-from-file` (on `add` or `commit`) is treated as "scan everything", the same as
-#     `-a`/`-A` — its file is not read to recover the actual path list.
+#     `-a`/`-A` — its file is not read to recover the actual path list;
+#   - a pathspec whose magic is relative to the directory git runs in (`:(glob)*.txt`, `:!secrets`,
+#     `:(icase)x`) is not understood: it is resolved like a plain file name and matches nothing, and
+#     an exclude in it is not applied to the other operands (a file it excludes is still scanned --
+#     over-inclusive, never a miss elsewhere); only a top-anchored one (`:/x`, `:(top)x`) is handed
+#     to git as written (2026-09-27 review 3);
+#   - a `git add -u|-A "$dir"` whose operand cannot be placed keeps the flag's widest reading (the
+#     whole tree), over-inclusive on purpose -- a plain `git add "$dir"` stays invisible, as above.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 import re
@@ -141,9 +167,13 @@ __all__ = [
     "_entropy_threshold", "_shannon_entropy", "_looks_like_placeholder", "_normalized_key",
     "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
     "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries",
-    "_scan_diff_text", "_scan_new_file", "_run_git", "_resolve_dir", "_resolve_alias",
+    "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
     "_git_call", "_nested_command", "_simple_commands", "_tokenize_chain",
     "_git_commit_invocations", "_scan_commit", "_pending_file", "_queue_note",
+    "_ADD_UNTRACKED_FLAGS", "_WHOLE_TREE_PATHSPEC", "_HOOK_BUDGET", "_hook_deadline", "_check_deadline",
+    "_ADD_SUBCOMMANDS", "_ADD_VALUE_FLAGS", "_ADD_ALL_LETTERS", "_ADD_UNTRACKED_LETTERS",
+    "_ADD_FORCE_LETTERS", "_SHORT_CLUSTER_RE", "_WHOLE_TREE_OPERANDS", "_SHORT_MAGIC_RE",
+    "_LONG_MAGIC_RE", "_AddFlags", "_add_flags", "_is_top_anchored_pathspec", "_resolve_pathspec",
     "check_secret_scan", "note_secret_scan",
 ]
 
@@ -154,6 +184,10 @@ _MAX_FINDINGS = 5
 # Kept well under the hook's own ~10s timeout, shared across every subprocess call (diff, ls-files,
 # alias lookups) and file read this check makes for one PreToolUse invocation.
 _TIME_BUDGET = 4.5
+# Hook-wide cap, seconds after dispatch.py's own start (payload["_act_hook_started"]): the harness
+# kills a PreToolUse hook at 10 s, and this check, danger_scan and deps_scan run back to back in
+# that one process -- each caps its own deadline with _check_deadline() (2026-09-27 review 2, m5).
+_HOOK_BUDGET = 8.0
 _GIT_TIMEOUT = 3.0
 _ALIAS_TIMEOUT = 1.5
 _MAX_NESTED_DEPTH = 3
@@ -217,7 +251,8 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 _DIFF_GIT_HEADER_RE = re.compile(r"^diff --git a/(.*) b/(.*)$", re.M)
 _HEX_ONLY_RE = re.compile(r"^[0-9a-fA-F]+$")
 
-_KNOWN_SUBCOMMANDS = {"add", "commit", "merge", "cherry-pick", "revert", "rebase", "am"}
+_ADD_SUBCOMMANDS = frozenset({"add", "stage"})  # `git stage` is git's own synonym for `git add`
+_KNOWN_SUBCOMMANDS = {"add", "stage", "commit", "merge", "cherry-pick", "revert", "rebase", "am"}
 _CONTINUE_SUBCOMMANDS = {"merge", "cherry-pick", "revert", "rebase", "am"}
 # git-commit options that consume the next word as their own value — never a pathspec operand
 # (2026-09-23 review, item 1).
@@ -225,9 +260,36 @@ _COMMIT_VALUE_FLAGS = frozenset({
     "-m", "-F", "-C", "-c", "-t",
     "--author", "--date", "--fixup", "--squash", "--cleanup", "--trailer", "--template",
 })
-# `git add` flags that stage changes repo-wide, not just the named paths (item 2).
+# git-add options that consume the next word as their own value (`--chmod=+x` is the documented
+# spelling, git's option parser takes `--chmod +x` as well) -- never a pathspec operand.
+_ADD_VALUE_FLAGS = frozenset({"--pathspec-from-file", "--chmod"})
+# `git add` flags that stage changes repo-wide, not just the named paths (item 2) -- when the add
+# names no pathspec at all: git >= 2.0 reads `-A`/`-u` without a pathspec as the whole working tree
+# (from a subdirectory too), with a pathspec they only widen what is staged *under* it, which the
+# per-path walk in _scan_commit covers on its own (2026-09-27 review 3, M1). A short flag is also
+# read from inside a cluster (`-fA`, `-Av`; _SHORT_CLUSTER_RE -- git add has no short option that
+# takes a value, so every letter of a cluster is a flag; review 3, m2).
 _ADD_ALL_FLAGS = frozenset({"-u", "--update", "-A", "--all", "--no-ignore-removal"})
 _ADD_FORCE_FLAGS = frozenset({"-f", "--force"})
+# The subset of _ADD_ALL_FLAGS that also stages *untracked* files (`-u`/`--update` never does): such
+# an add contributes one whole-tree entry (_WHOLE_TREE_PATHSPEC, git's own "top of the working tree"
+# pathspec magic) to the commit's add_paths, so _scan_commit's new-file walk covers the whole tree --
+# from a subdirectory too (2026-09-27 review 2, C2).
+_ADD_UNTRACKED_FLAGS = frozenset({"-A", "--all", "--no-ignore-removal"})
+_ADD_ALL_LETTERS = frozenset("uA")
+_ADD_UNTRACKED_LETTERS = frozenset("A")
+_ADD_FORCE_LETTERS = frozenset("f")
+_SHORT_CLUSTER_RE = re.compile(r"^-[A-Za-z]+$")
+_WHOLE_TREE_PATHSPEC = ":/"
+# A pathspec operand that is git's own "everything from the top of the working tree": as an operand
+# it means the same as `-A` with no pathspec (unstaged pass plus the whole-tree entry).
+_WHOLE_TREE_OPERANDS = frozenset({":/", ":(top)"})
+# Pathspec magic (gitglossary "pathspec"): short form `:` plus signature characters from `/` (top)
+# and `!`/`^` (exclude), optionally closed by another `:`; long form `:(word,word)pattern`. Only a
+# *top-anchored* one reads the same from whichever directory git runs in, so only that kind is
+# handed to git unchanged (_resolve_pathspec).
+_SHORT_MAGIC_RE = re.compile(r"^:([/!^]*)")
+_LONG_MAGIC_RE = re.compile(r"^:\(([^)]*)\)")
 
 _GIT_COMMIT_FALLBACK_RE = re.compile(r"\bgit\b.{0,80}?\bcommit\b", re.S)
 
@@ -463,6 +525,40 @@ def _run_git(args: list[str], cwd: str, timeout: float) -> Optional[str]:
     return result.stdout if result.returncode == 0 else None
 
 
+def _repo_toplevel(cwd: str, timeout: float) -> Optional[str]:
+    """`git rev-parse --show-toplevel` for `cwd`, or None -- the base every root-relative name git
+    reports (`diff --name-only`, `ls-files --full-name`) is joined onto, never `cwd` itself, which
+    may be a subdirectory of the repository (shared by this module, danger_scan and deps_scan)."""
+    output = _run_git(["rev-parse", "--show-toplevel"], cwd, timeout)
+    if not output:
+        return None
+    stripped = output.strip()
+    return stripped or None
+
+
+def _hook_deadline(payload: dict) -> Optional[float]:
+    """The monotonic instant by which every check in this hook call must have answered --
+    dispatch.py's own start (payload["_act_hook_started"], set in its _run_checks) plus
+    _HOOK_BUDGET -- or None when the payload carries no start (a direct call from a probe, or a
+    check reused outside dispatch.py's PreToolUse run)."""
+    started = payload.get("_act_hook_started")
+    if isinstance(started, bool) or not isinstance(started, (int, float)):
+        return None
+    return float(started) + _HOOK_BUDGET
+
+
+def _check_deadline(payload: dict, budget: float) -> float:
+    """now + `budget`, capped by `_hook_deadline(payload)` when there is one -- the deadline a
+    check hands to its own git/file work. May already lie in the past when earlier checks used the
+    hook's time up; every consumer treats "no time left" as "not fully checked", never as a reason
+    to block or to run past the hook's own timeout."""
+    deadline = time.monotonic() + budget
+    hook_deadline = _hook_deadline(payload)
+    if hook_deadline is not None:
+        deadline = min(deadline, hook_deadline)
+    return deadline
+
+
 def _resolve_dir(raw: str, base: str) -> Optional[str]:
     """`raw` (a `-C`/`cd` argument or a `git add`/commit pathspec) resolved to an absolute native
     path against `base`, or None if it cannot be placed (still shell-expanded, or resolution
@@ -477,6 +573,58 @@ def _resolve_dir(raw: str, base: str) -> Optional[str]:
         return str(path.resolve())
     except OSError:
         return None
+
+
+@dataclasses.dataclass(frozen=True)
+class _AddFlags:
+    """What one `git add`'s own flags say about its reach: `all` (`-u`/`-A`: unstaged changes to
+    tracked files beyond any named path), `untracked` (`-A`: new files too), `forced` (`-f`: ignored
+    files too), `from_file` (`--pathspec-from-file`: the path list sits in a file this module does
+    not read -- treated as the whole tree, see the module docstring's known limits)."""
+    all: bool = False
+    untracked: bool = False
+    forced: bool = False
+    from_file: bool = False
+
+
+def _add_flags(args: list[str]) -> _AddFlags:
+    """The _AddFlags of one `git add`'s arguments: a long form matched whole, a short flag also
+    inside a cluster (`-fA`, `-Av` -- git add has no short option that takes a value, so every
+    letter of a cluster is a flag; 2026-09-27 review 3, m2). Words after `--` are operands."""
+    all_flag = untracked = forced = from_file = False
+    for arg in args:
+        if arg == "--":
+            break
+        if arg == "--pathspec-from-file" or arg.startswith("--pathspec-from-file="):
+            from_file = True
+        letters = frozenset(arg[1:]) if _SHORT_CLUSTER_RE.match(arg) else frozenset()
+        all_flag = all_flag or arg in _ADD_ALL_FLAGS or bool(letters & _ADD_ALL_LETTERS)
+        untracked = untracked or arg in _ADD_UNTRACKED_FLAGS or bool(letters & _ADD_UNTRACKED_LETTERS)
+        forced = forced or arg in _ADD_FORCE_FLAGS or bool(letters & _ADD_FORCE_LETTERS)
+    return _AddFlags(all=all_flag, untracked=untracked, forced=forced, from_file=from_file)
+
+
+def _is_top_anchored_pathspec(raw: str) -> bool:
+    """True for a pathspec carrying git's `top` magic (`:/x`, `:!/x`, `:(top)x`, `:(top,glob)x`):
+    matched against the working tree from its top, so it reads the same from whichever directory
+    a later git call runs in."""
+    long_form = _LONG_MAGIC_RE.match(raw)
+    if long_form:
+        return "top" in long_form.group(1).split(",")
+    short_form = _SHORT_MAGIC_RE.match(raw)
+    return bool(short_form) and "/" in short_form.group(1)
+
+
+def _resolve_pathspec(raw: str, base: str) -> Optional[str]:
+    """A `git add`/`git commit` pathspec operand the way _scan_commit hands it back to git: a
+    top-anchored magic pathspec unchanged (_is_top_anchored_pathspec), anything else resolved to an
+    absolute path against `base` (_resolve_dir) -- None if it cannot be placed. Magic relative to
+    the directory git runs in (`:(glob)x`, `:!x`, `:(icase)x`) is not carried along by this walk;
+    such an operand goes through _resolve_dir like a plain name and matches nothing (a known limit,
+    see the module docstring)."""
+    if _is_top_anchored_pathspec(raw):
+        return raw
+    return _resolve_dir(raw, base)
 
 
 def _resolve_alias(name: str, cwd: str, timeout: float, cache: dict) -> Optional[str]:
@@ -558,7 +706,7 @@ def _git_call(
         if resolved in _KNOWN_SUBCOMMANDS:
             subcommand = resolved
 
-    if subcommand == "add":
+    if subcommand in _ADD_SUBCOMMANDS:
         return {"kind": "add", "args": sub_args, "directory": directory}
     if subcommand == "commit":
         return {"kind": "commit", "args": sub_args, "directory": directory}
@@ -695,20 +843,30 @@ def _git_commit_invocations(
 
         if call["kind"] == "add":
             args = call["args"]
-            forced = any(arg in _ADD_FORCE_FLAGS for arg in args)
-            if (
-                any(arg in _ADD_ALL_FLAGS for arg in args)
-                or "--pathspec-from-file" in args
-                or any(arg.startswith("--pathspec-from-file=") for arg in args)
-            ):
-                pending_all = True
-            operands, _values = _operands(args)
-            if not operands:
-                pending_all = True
+            flags = _add_flags(args)
+            operands, _values = _operands(args, _ADD_VALUE_FLAGS)
+            # `git add :/` is git's own "everything from the top" -- read like `-A` with no pathspec
+            whole_tree = flags.from_file or any(op in _WHOLE_TREE_OPERANDS for op in operands)
+            operands = [op for op in operands if op not in _WHOLE_TREE_OPERANDS]
+            add_paths: list[dict] = []
+            unplaced = False
             for raw_path in operands:
-                resolved_path = _resolve_dir(raw_path, call_cwd)
-                if resolved_path is not None:
-                    pending_add_paths.append({"path": resolved_path, "forced": forced})
+                resolved_path = _resolve_pathspec(raw_path, call_cwd)
+                if resolved_path is None:
+                    unplaced = True  # `git add -A "$dir"`: reach unknown, -A/-u keep their widest reading
+                else:
+                    add_paths.append({"path": resolved_path, "forced": flags.forced})
+            # No pathspec at all: `-u`/`-A` stage the whole tree (git >= 2.0, from a subdirectory
+            # too) and a bare `git add` is read the same way, over-inclusive on purpose. With a
+            # pathspec, `-A`/`-u` only widen what is staged *under* it, which the per-path walk in
+            # _scan_commit already covers exactly -- so `git add -A src` gets neither the unstaged
+            # whole-tree pass nor the whole-tree entry (2026-09-27 review 3, M1); the whole-tree
+            # entry is what lets the new-file walk see untracked files anywhere (review 2, C2).
+            if whole_tree or not operands or (flags.all and unplaced):
+                pending_all = True
+            if whole_tree or (flags.untracked and (not operands or unplaced)):
+                pending_add_paths.append({"path": _WHOLE_TREE_PATHSPEC, "forced": flags.forced})
+            pending_add_paths.extend(add_paths)
 
         elif call["kind"] == "commit":
             args = call["args"]
@@ -724,7 +882,7 @@ def _git_commit_invocations(
             operands, _values = _operands(args, _COMMIT_VALUE_FLAGS)
             extra_paths = list(pending_add_paths)
             for raw_path in operands:
-                resolved_path = _resolve_dir(raw_path, call_cwd)
+                resolved_path = _resolve_pathspec(raw_path, call_cwd)
                 if resolved_path is not None:
                     extra_paths.append({"path": resolved_path, "forced": False})
             invocations.append({"cwd": call_cwd, "all": all_flag, "add_paths": extra_paths})
@@ -750,8 +908,18 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
 
+    # Every git call of the walk runs from the repository's top level, never the commit's own
+    # directory: with `diff.relative=true` a diff from a subdirectory names only the files under
+    # it, relative to it -- a staged `.env` at the root would silently vanish from a `cd sub && git
+    # commit`. From the top level the output is complete and root-relative whichever directory the
+    # commit runs from, without `--no-relative` (git >= 2.28 only); the pathspecs handed in are
+    # absolute or top-anchored, so the result is otherwise the same (2026-09-27 review 3, m3).
+    toplevel = _repo_toplevel(cwd, budget())
+    if toplevel is None:
+        incomplete = True  # not a repository (git commit itself would fail), or out of time
+    git_cwd = toplevel or cwd
     staged = _run_git(
-        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], cwd, budget(),
+        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
     )
     if staged is None:
         incomplete = True
@@ -760,7 +928,7 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
 
     if invocation["all"] and len(findings) < _MAX_FINDINGS:
         unstaged = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], cwd, budget(),
+            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
         )
         if unstaged is None:
             incomplete = True
@@ -774,23 +942,30 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
             incomplete = True
             break
         raw_path = entry["path"]
-        path_diff = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
-            cwd, budget(),
-        )
-        if path_diff is None:
-            incomplete = True
-        else:
-            _scan_diff_text(path_diff, findings, oversized)
+        if raw_path != _WHOLE_TREE_PATHSPEC:
+            # the whole-tree entry's own unstaged diff is the `all` pass above (always set with it)
+            path_diff = _run_git(
+                ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
+                git_cwd, budget(),
+            )
+            if path_diff is None:
+                incomplete = True
+            else:
+                _scan_diff_text(path_diff, findings, oversized)
 
         if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
             if deadline - time.monotonic() <= 0:
                 incomplete = True
             break
-        ls_args = ["ls-files", "--others", "-z", "--", raw_path]
+        if toplevel is None:
+            break  # nowhere to join root-relative names onto (already noted as incomplete above)
+        # --full-name: root-relative names whichever subdirectory the commit runs from, read via
+        # the top level -- a bare `ls-files` from a subdirectory would also stop at that
+        # subdirectory without an explicit pathspec (2026-09-27 review 2, C2)
+        ls_args = ["ls-files", "--others", "--full-name", "-z", "--", raw_path]
         if not entry["forced"]:
             ls_args.insert(2, "--exclude-standard")
-        untracked = _run_git(ls_args, cwd, budget())
+        untracked = _run_git(ls_args, toplevel, budget())
         if untracked is None:
             incomplete = True
             continue
@@ -800,7 +975,7 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
             if deadline - time.monotonic() <= 0:
                 incomplete = True
                 break
-            _scan_new_file(Path(cwd) / rel, rel, findings, oversized)
+            _scan_new_file(Path(toplevel) / rel, rel, findings, oversized)
     if oversized:
         incomplete = True
     return findings, incomplete, oversized
@@ -850,7 +1025,7 @@ def check_secret_scan(payload: dict) -> int:
         # merge/cherry-pick/revert/rebase/am --continue or an alias resolving to `commit` never
         # contains the literal substring "commit" itself, so the filter can only be this broad
 
-    deadline = time.monotonic() + _TIME_BUDGET
+    deadline = _check_deadline(payload, _TIME_BUDGET)
     invocations = _git_commit_invocations(command, _base_cwd(payload), deadline, {})
     if not invocations:
         return 0

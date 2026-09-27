@@ -153,6 +153,39 @@ KIND_LABELS: dict[str, str] = {
 }
 KIND_ORDER = list(KIND_LABELS)
 
+# German counterpart of KIND_LABELS, same keys — used only for the report *written under docs/*
+# (write_inbox(), R-work-language via actlib.localized()); the console printer (_print_report)
+# stays in KIND_LABELS' own English regardless of `language-docs`, since terminal output is not a
+# file under docs/ and so outside that rule's scope.
+KIND_LABELS_DE: dict[str, str] = {
+    "validate": "Schema- und Satz-/Gruppenverweise (rules.py --validate)",
+    "import": "Regeldateien, die Claude Code nicht lädt (rules.py --imports)",
+    "dead-id": "Tote Kennungen (überschrieben/aus, aber aus der Vorlage verschwunden)",
+    "use-missing": "Abgewählter Regelsatz mit fehlendem Ziel",
+    "override-stale": "Überschriebene Regel, deren Vorlagentext sich geändert hat",
+    "ref-missing": "Kaputte Verweise",
+    "duplicate-unit": "Doppelte Scripte/Agenten/Skills",
+    "duplicate-id": "Doppelte Eintragskennungen (Aufgabe/Backlog/Frage)",
+    "entry-unreadable": "Eintragsdateien, die sich nicht als UTF-8 lesen lassen",
+    "hook": "Fehlende Hook-Einträge",
+    "settings-script": "Hook-/Berechtigungseinträge, die auf ein fehlendes Script zeigen",
+    "manifest": ".act/MANIFEST.json weicht ab",
+    "script-docs": ".act/scripts/README.md veraltet (script_docs.py)",
+    "unknown-tool": "Unbekannte Werkzeugkennung(en) in docs/ai/config.md (`tools`)",
+    "config-key": "Veraltete Schlüssel in docs/ai/config.md",
+    "status-value": "Unbekannte `status:`-Werte in Eintragsköpfen",
+    "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit Migration 001-one-inbox)",
+    "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
+    "tier-proposal": "Stufenvorschläge aus Worker-Ergebnissen (R-role-outcome)",
+}
+
+
+def _kind_label(kind: str, language: str) -> str:
+    """The heading text for `kind` in the docs/ report (write_inbox()), picked by `language`
+    (`language-docs`) via actlib.localized() — KIND_LABELS' own English for any language that
+    resolves to it, KIND_LABELS_DE for German."""
+    return actlib.localized(language, KIND_LABELS[kind], KIND_LABELS_DE[kind])
+
 
 def _rel(path: Path, root: Path) -> str:
     try:
@@ -1163,13 +1196,15 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
         while dest.exists():  # the counter goes before the slug, so the glob above still finds it
             dest = inbox_dir / f"report-{stamp}-{n}-doctor.md"
             n += 1
+    language = actlib.docs_language(root)
+    title = actlib.localized(language, "# doctor findings", "# Doctor-Befunde")
     lines = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}",
-              "", "# doctor findings", ""]
+              "", title, ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
         if not group:
             continue
-        lines.append(f"## {KIND_LABELS[kind]}")
+        lines.append(f"## {_kind_label(kind, language)}")
         lines.append("")
         lines.extend(f"- {f.render()}" for f in group)
         lines.append("")

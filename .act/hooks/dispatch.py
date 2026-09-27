@@ -21,7 +21,9 @@
 #          before returning 2, same as every existing check) and add ("<name>", "check_<name>")
 #          to _PRE_TOOL_USE_CHECKS at the position it should run in. A listed module that does
 #          not exist yet is skipped. Observers (event log, usage counter) work the same way via
-#          _OBSERVERS, with observe(event, payload) -> None; they see every event and never block.
+#          _OBSERVERS, with observe(event, payload) -> None; for every event but PreToolUse they see
+#          it before any check runs and never block — for PreToolUse specifically they run *after*
+#          the checks instead (see the "PreToolUse" paragraph under Usage below).
 #
 #          PostToolUse runs every entry in _POST_TOOL_USE_NOTES — signature
 #          note_<name>(payload: dict) -> str | None — collecting whatever text each one returns
@@ -82,13 +84,18 @@
 #   ... with the hook's JSON payload piped in on stdin (may be empty or malformed; handled).
 #
 #   <event> is the hook event name. "PreToolUse" runs the checks, "PostToolUse" and
-#   "PostToolUseFailure" both run the notes, "SessionStart" the session handler; every event
-#   (these four and e.g. SubagentStart, SubagentStop, UserPromptSubmit, Notification, SessionEnd)
-#   first goes to the observers. Anything else exits 0 — an unknown event must never break the
-#   caller's hook chain. "UserPromptSubmit --act-check" is a second, separate invocation of this
-#   same event (its own synchronous entry in .act/bridges/settings.hooks.json, alongside the
-#   plain "UserPromptSubmit" one, which stays async and unchanged) — see the fast-path block near
-#   the top of this file, before the heavy imports, and "Output format" below.
+#   "PostToolUseFailure" both run the notes, "SessionStart" the session handler; every event but
+#   "PreToolUse" (these three and e.g. SubagentStart, SubagentStop, UserPromptSubmit, Notification,
+#   SessionEnd) goes to the observers first, unconditionally. "PreToolUse" is the one exception
+#   (T77/B114, Q109 8 a): its observers run *after* its checks, and only for a call the checks
+#   allow — see _run_pre_tool_use_observers' own docstring for why a call the checks deny must
+#   never reach usage.py's role/skill/script/checklist counters (it never happened, from the
+#   counters' point of view), while checks.event_log.observe still runs for it, marked as a denial
+#   (R-safe-block: every block is logged). Anything else exits 0 — an unknown event must never
+#   break the caller's hook chain. "UserPromptSubmit --act-check" is a second, separate invocation
+#   of this same event (its own synchronous entry in .act/bridges/settings.hooks.json, alongside
+#   the plain "UserPromptSubmit" one, which stays async and unchanged) — see the fast-path block
+#   near the top of this file, before the heavy imports, and "Output format" below.
 #
 # Output format:
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
@@ -129,6 +136,14 @@
 #                 process (see main() below). Not documented to the harness, not something a hook
 #                 config ever names.
 #
+#   "_security-scan-worker" <root> [<state-hash> <lock-file>...]: the same kind of internal-only
+#                 event, launched by checks.session._spawn_security_scan_worker() — with the root
+#                 alone for the daily dependency-vulnerability scan at session start (security-
+#                 check: deps/full, B117 Art B), with a state hash and the lock files one commit
+#                 touches for checks/deps_scan.py's commit check — its own background process so
+#                 `security_scan.run_scan()`'s tool call never delays a session start or a commit's
+#                 own PreToolUse hook, mirroring "_update-check-worker".
+#
 #   "UserPromptSubmit --act-check" (T67): the prompt is not "/act"/"/act <name>", or it is a
 #                 worker's own payload — exit 0, nothing on stdout (the common case, checked
 #                 before any of manifest.py/tiers.py/checks.session is imported). On a match:
@@ -160,8 +175,16 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import time
 
 from pathlib import Path  # noqa: E402
+
+# When this hook process began its own work -- every PreToolUse check receives it as
+# payload["_act_hook_started"] (see _run_checks) and caps its own time budget against it
+# (checks/secret_scan._check_deadline): the harness kills a PreToolUse hook at 10 s
+# (.act/bridges/settings.hooks.json), and the secret, danger and deps scans run back to back in
+# this one process, so their individual budgets must not simply add up (2026-09-27 review 2, m5).
+_HOOK_STARTED = time.monotonic()
 
 # Must run before importing anything under .act/ (actlib/manifest/tiers, the checks package):
 # compiled caches go to the system temp directory instead of __pycache__/ folders under the
@@ -278,6 +301,14 @@ del _compat_module
 # exit code. See the header comment above for how to add one. Each entry is (module under checks/,
 # function name); a module that does not exist yet is skipped, so a check can be registered here
 # before it is built (stage 5 builds several in parallel, one module each).
+#
+# Order note (T77/B114, review finding 1, 2026-09-27): worker_cap and status_poll are deliberately
+# the LAST two entries — both can deny based on their own running counter/streak (worker's tool-call
+# count, orchestrator's consecutive-poll streak), and that counter/streak must never be bumped for a
+# call another, earlier check goes on to deny anyway (e.g. encoding_hint refusing a worker's Write to
+# a non-UTF-8 file must not also count that call against the worker's cap). Every check ahead of them
+# here — including deps_scan, which can also deny — runs first for the same reason; a future check
+# that can deny stays ahead of these two unless it specifically needs to see their denial first.
 _PRE_TOOL_USE_CHECKS = (
     ("write_guard", "check_write_guard"),                 # check 1  — .act/ template write-guard
     ("nesting_guard", "check_worker_nesting_guard"),      # check 1b — no sub-sub-agents (R-role-worker)
@@ -290,9 +321,10 @@ _PRE_TOOL_USE_CHECKS = (
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
     ("secret_scan", "check_secret_scan"),                 # secrets in the diff before commit (R-safe-no-secret-diff)
     ("danger_scan", "check_danger_scan"),                 # dangerous patterns in the diff before commit (security-check, B117 Art A)
-    ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate)
-    ("status_poll", "check_status_poll"),                 # repeated status queries (R-cost-wait)
+    ("deps_scan", "check_deps_scan"),                     # dependency vulnerabilities in a touched lock file (security-check, B117 Art B)
     ("encoding_hint", "check_encoding_hint"),             # non-UTF-8 target, note only (R-code-encoding)
+    ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate) — last on purpose, see above
+    ("status_poll", "check_status_poll"),                 # repeated status queries (R-cost-wait) — last on purpose, see above
 )
 
 # PostToolUse / PostToolUseFailure notes, all of them run every time for either event (no "first
@@ -304,11 +336,14 @@ _POST_TOOL_USE_NOTES = (
     ("worker_cap", "note_worker_cap"),        # cap-reached / cap-exceeded hints (R-cost-delegate)
     ("encoding_hint", "note_encoding_hint"),  # `warn` mode's one-time non-UTF-8 note (R-code-encoding)
     ("secret_scan", "note_secret_scan"),      # `warn` mode / incomplete scan after a commit (R-safe-no-secret-diff)
+    ("deps_scan", "note_deps_scan"),          # lower-severity/accepted findings after a commit (security-check, B117 Art B)
 )
 
-# Observers see every hook event before any check runs and never block: signature
-# observe(event: str, payload: dict) -> None; an exception inside one is swallowed. Used for
-# the event log (topic "logging") and the usage counter. Same skip-if-missing rule as above.
+# Observers see every hook event and never block: signature observe(event: str, payload: dict) ->
+# None; an exception inside one is swallowed. For every event but PreToolUse they run before any
+# check does; for PreToolUse itself they run *after* the checks instead (_run_pre_tool_use_observers
+# below, T77/B114). Used for the event log (topic "logging") and the usage counter. Same
+# skip-if-missing rule as above.
 _OBSERVERS = (
     ("event_log", "observe"),
     ("usage", "observe"),
@@ -412,7 +447,13 @@ def _check_failed(module_name: str, reason: str, payload: dict) -> int:
     return 0
 
 
-def _run_checks(payload: dict) -> int:
+def _run_checks(payload: dict) -> "tuple[int, str | None]":
+    """(exit code, denying module's name) — the name is None on allow (exit code 0), and passed on
+    to _run_pre_tool_use_observers so checks.event_log.observe can name the check that denied
+    (finding 5, T77/B114 review) instead of only recording that *some* check did."""
+    # a copy, never the caller's own dict (same stance as _run_pre_tool_use_observers): the checks
+    # see the hook's own start for their shared time budget, the observers and the log do not
+    checked_payload = dict(payload, _act_hook_started=_HOOK_STARTED)
     for module_name, func_name in _PRE_TOOL_USE_CHECKS:
         func, reason = _load(module_name, func_name)
         if func is None:
@@ -421,12 +462,12 @@ def _run_checks(payload: dict) -> int:
             result = _check_failed(module_name, reason, payload)
         else:
             try:
-                result = func(payload)
+                result = func(checked_payload)
             except Exception as exc:  # noqa: BLE001
                 result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload)
         if result != 0:
-            return result
-    return 0
+            return result, module_name
+    return 0, None
 
 
 def _run_observers(event: str, payload: dict) -> None:
@@ -438,6 +479,47 @@ def _run_observers(event: str, payload: dict) -> None:
             func(event, payload)
         except Exception:  # noqa: BLE001 — an observer must never break the hook chain
             pass
+
+
+def _run_pre_tool_use_observers(payload: dict, denied: bool, denied_by: "str | None" = None) -> None:
+    """PreToolUse's own observer run (T77/B114, Q109 8 a): a call one of _PRE_TOOL_USE_CHECKS
+    denies must never be counted by usage.py's role/skill/script/checklist counters, nor logged as
+    an unqualified success — the fix is to run the observers *after* _run_checks, for this one
+    event only, and skip every counting observer outright when the call was denied.
+
+    Allowed call (denied=False): unchanged behavior, every observer in _OBSERVERS runs exactly as
+    it always has (_run_observers(event, payload)).
+
+    Denied call (denied=True): only checks.event_log.observe still runs (R-safe-block: every
+    block is logged, even a harmless one) — with payload["_act_denied"] = True and, when known,
+    payload["_act_denied_by"] = denied_by (the module name from _run_checks, e.g. "encoding_hint")
+    set on a *copy* of payload (never mutate the caller's own dict) so it can log the line as a
+    denial naming which check denied it, rather than as a "delegate"/DEBUG "tool" line or an
+    unqualified "denied". usage.observe, status_poll.observe and tips.observe are skipped
+    entirely: none of them has any business seeing a call that never actually happened. (status_
+    poll.observe/tips.observe only react to UserPromptSubmit anyway, so skipping them here changes
+    nothing for PreToolUse — spelled out because _OBSERVERS is a shared list, not to imply either
+    one used to fire here.)
+
+    Considered and rejected: passing `denied` as a third argument to every observer's own
+    observe(event, payload) — this module's own header documents that signature as
+    "observe(event: str, payload: dict) -> None" for every registered observer, a contract other
+    checks/notes also rely on (see the header's "Backward compatibility" paragraph); widening it
+    everywhere for the sake of the one observer that needs the flag would be a bigger, riskier
+    change than reusing the payload dict already every observer's only channel."""
+    if not denied:
+        _run_observers("PreToolUse", payload)
+        return
+    func, _reason = _load("event_log", "observe")
+    if func is None:
+        return
+    extra = {"_act_denied": True}
+    if denied_by:
+        extra["_act_denied_by"] = denied_by
+    try:
+        func("PreToolUse", dict(payload, **extra))
+    except Exception:  # noqa: BLE001 — an observer must never break the hook chain
+        pass
 
 
 def _run_post_tool_use_notes(payload: dict) -> list[str]:
@@ -484,16 +566,27 @@ def main(argv: list[str]) -> int:
     # extra argv entry here can never fall through to "no event named".
     if len(argv) == 2 and argv[0] == "_update-check-worker":
         return _run_update_check_worker(Path(argv[1]))
+    if len(argv) >= 2 and argv[0] == "_security-scan-worker":
+        # argv[1] the project root; optionally argv[2] a state hash and argv[3:] the lock files a
+        # commit touches, for checks/deps_scan.py (see checks.session._run_security_scan_worker)
+        state_hash = argv[2] if len(argv) >= 3 else None
+        return _run_security_scan_worker(Path(argv[1]), state_hash, [Path(arg) for arg in argv[3:]])
 
     if len(argv) != 1:
         return 0  # no event named — nothing to dispatch, never an error for the caller
 
     event = argv[0]
     payload = _early_payload if _early_payload is not None else _read_payload()
-    _run_observers(event, payload)
 
     if event == "PreToolUse":
-        return _run_checks(payload)
+        # Checks run first, observers second (T77/B114) — the reverse of every other event, and
+        # the reverse of this module's own order before this fix. See _run_pre_tool_use_observers'
+        # own docstring for why a denied call must never reach a counting observer at all.
+        result, denied_by = _run_checks(payload)
+        _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
+        return result
+
+    _run_observers(event, payload)
     if event in ("PostToolUse", "PostToolUseFailure"):
         _emit_post_tool_use_notes(event, payload)
         return 0  # notes never block

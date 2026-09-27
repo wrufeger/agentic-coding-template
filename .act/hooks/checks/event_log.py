@@ -26,6 +26,22 @@
 #          facts for its own caller): PreToolUse for "Agent"/"Task" carries tool_use_id and
 #          tool_input.prompt; every worker call carries agent_id/agent_type, the orchestrator's
 #          own calls carry neither.
+#
+#          PreToolUse denial (T77/B114, Q109 8 a): dispatch.py now runs its PreToolUse observers
+#          *after* the checks (see dispatch.py's own header and
+#          dispatch._run_pre_tool_use_observers), so this module is the only observer still called
+#          for a call one of the checks denied — with payload["_act_denied"] = True and, when
+#          dispatch.py knows it, payload["_act_denied_by"] = "<check module name>" (e.g.
+#          "encoding_hint") set on that call. This module logs that case as its own "denied" line,
+#          naming the denying check (or "check" as a fallback when _act_denied_by is missing — a
+#          call still denied should never be logged as if nothing happened just because the name
+#          did not make it through), at WARN (review finding 5: a block is a rule actually stopping
+#          the assistant, closer in severity to the ERROR "failed" line than to an ordinary INFO
+#          status line) instead of the usual "delegate" line or the DEBUG-gated "tool" one — a plain
+#          call gets its normal treatment, but a denial is never buried behind DEBUG the way an
+#          ordinary tool call is (R-safe-block: every block is logged, even a harmless one); it
+#          still respects the project's own `log-level` floor the same way every other line here
+#          does (only ERROR now suppresses it, same as it would the "delegate" line).
 
 from __future__ import annotations
 
@@ -162,6 +178,20 @@ def observe(event: str, payload: dict) -> None:
         tool_name = payload.get("tool_name")
         tool_input = payload.get("tool_input")
         tool_input = tool_input if isinstance(tool_input, dict) else {}
+
+        if payload.get("_act_denied") is True:
+            # A check denied this call (dispatch.py's own PreToolUse observer ordering — see this
+            # module's docstring) — logged as its own "denied" line at WARN (review finding 5),
+            # well below the project's default INFO floor, so a reader who never raised log-level
+            # still sees it (R-safe-block), even though it would otherwise have been an unremarkable
+            # DEBUG "tool" line. Names the denying check (dispatch._run_checks' own module name,
+            # passed through as _act_denied_by) so the line answers "denied by what", not only
+            # "denied".
+            label = _resolve_label(cfg, payload, session_id, agent_id, now)
+            arg = _short_arg_for_tool(str(tool_name), tool_input)
+            denied_by = payload.get("_act_denied_by") or "check"
+            log.write_line(cfg, "WARN", label, "denied", f"{denied_by}: {tool_name} {arg}")
+            return
 
         if tool_name in ("Agent", "Task") and not agent_id:
             # Only the orchestrator's own delegation calls — a worker attempting this is a

@@ -50,6 +50,7 @@ from typing import NamedTuple, Optional, TypedDict, Union
 import actlib
 import manifest
 import rules
+import security_scan
 import tiers
 
 
@@ -672,15 +673,27 @@ def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str,
     template, by definition of being the one docking .act/ onto `root` (Q73a, backlog B105).
     `template_commit` is that same checkout's HEAD (empty if it has none/is not a git repo) --
     same reasoning as step_git_in_place's template_commit, just read from a different repo since
-    `root` itself has no history yet to read it from."""
+    `root` itself has no history yet to read it from.
+
+    The initial branch is pinned to 'main' exactly like step_git_in_place's own 'git init' branch
+    (B140 a) -- otherwise it follows this machine's `init.defaultBranch` (often 'main', but
+    'master' or a custom default are common too, same reasoning as the in-place comment above).
+    Only a repository this call creates itself gets that treatment: an existing repository at
+    `root` (the first branch below) is left untouched, branch included -- the adopt path
+    (adopt.py calling this with an existing project's repo already in place) must never move a
+    project's own branch out from under it. 'git init' followed by 'git symbolic-ref HEAD
+    refs/heads/main' works on Git versions before 2.28 too (no '-b main' needed), unlike 'git init
+    -b main'/'git branch -m main', and is safe before the first commit: it only moves the unborn
+    HEAD, nothing is renamed or rewritten."""
     template_source = _checkout_source(source_act.parent)
     template_commit = _git(["rev-parse", "HEAD"], cwd=source_act.parent, check=False).stdout.strip()
     if (root / ".git").exists():
         return "target already has a repository, left unchanged", template_source, template_commit
     if plan:
-        return "would run 'git init' in target", template_source, template_commit
+        return "would run 'git init' in target (branch 'main')", template_source, template_commit
     _git(["init"], cwd=root)
-    return "ran 'git init' in target", template_source, template_commit
+    _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
+    return "ran 'git init' in target (branch 'main')", template_source, template_commit
 
 
 # ---------------------------------------------------------------------------
@@ -2524,6 +2537,98 @@ def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], 
 
 
 # ---------------------------------------------------------------------------
+# B117/Q86a a — offer `security-check: deps` once a tool Art B could use is actually installed on
+# this machine (never switch the value silently, see step_security_check_offer's own docstring).
+# ---------------------------------------------------------------------------
+
+SECURITY_CHECK_OFFER_NOTE_SUFFIX = "-security-check-deps.md"
+
+
+def security_check_offer_note_text(root: Path, tools: dict[str, str]) -> str:
+    language = actlib.docs_language(root)
+    tool_list = ", ".join(sorted(tools))
+    heading = actlib.localized(
+        language,
+        "# Turn on the dependency-vulnerability check?",
+        "# Die Abhängigkeits-Sicherheitsprüfung einschalten?",
+    )
+    body = actlib.localized(
+        language,
+        f"`security-check` in `docs/ai/config.md` is `local` (the default): only Art A (dangerous "
+        f"patterns) runs on commit. This machine already has {tool_list} installed, which Art B "
+        "(a live dependency-vulnerability lookup, `.act/scripts/security_scan.py`) can use — set "
+        "`security-check` to `deps` in `docs/ai/config.md` to turn it on (see that file's own "
+        "`security-check` row for what it does and does not cover). Left as `local` until you "
+        "decide — this note does not change the value itself.\n",
+        f"`security-check` in `docs/ai/config.md` steht auf `local` (Vorgabe): nur Art A "
+        f"(gefährliche Muster) läuft beim Commit. Auf dieser Maschine ist bereits {tool_list} "
+        "installiert, was Art B (eine Live-Abfrage bekannter Abhängigkeits-Schwachstellen, "
+        "`.act/scripts/security_scan.py`) nutzen kann — `security-check` in `docs/ai/config.md` "
+        "auf `deps` setzen, um sie einzuschalten (siehe die `security-check`-Zeile dort für Umfang "
+        "und Grenzen). Bleibt auf `local`, bis entschieden ist — dieser Hinweis ändert den Wert "
+        "nicht selbst.\n",
+    )
+    return f"kind: todo\nfor: all\nstatus: open\n\n{heading}\n\n{body}"
+
+
+def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], str]:
+    """B117/Q86a a: `init` offers `security-check: deps` (never switches to it silently) once an
+    installed tool actually matches a lock file this project has (2026-09-27 review, item 16: not
+    merely "some tool from `TOOL_NAMES` is on PATH" -- a machine with npm installed but no
+    `package-lock.json` here has nothing Art B could use yet) — an inbox note, the same
+    non-interactive shape `step_dependency_check_note` already uses for its own one-time ask, since
+    `init.py` never prompts on its own (`actlib.is_interactive()` reads false from the assistant's
+    own Bash tool). Only while the project's own `security-check` value is still the skeleton
+    default `local` — a project that already chose `off`/`deps`/`full` for itself is never
+    second-guessed here. A plan run without a config.md yet, one with no lock file at all, or one
+    whose scan turns up nothing installed for the lock files it does have, offers/notes nothing.
+    Writes directly with actlib's own public inbox helpers (`INBOX_DIR`/`inbox_entry_filename`/
+    `write_text_lf`) rather than a new actlib function of its own, the same way every other
+    `step_*` function here already uses them."""
+    config_path = root / "docs" / "ai" / "config.md"
+    security_check = "local"
+    if not plan and config_path.is_file():
+        security_check = actlib.read_config().get("security-check", "local")
+    if security_check.strip().lower() != "local":
+        return None, ""
+    try:
+        lock_files = security_scan.detect_lock_files(root)
+    except OSError as exc:
+        print(f"[act] security-check offer: could not scan for lock files ({exc})", file=sys.stderr)
+        lock_files = {}
+    if not lock_files:
+        return None, ""
+    try:
+        tools = security_scan.available_tools()
+    except OSError as exc:
+        print(f"[act] security-check offer: could not detect installed tools ({exc})", file=sys.stderr)
+        tools = {}
+    relevant: dict[str, str] = {}
+    if "osv-scanner" in tools:
+        relevant["osv-scanner"] = tools["osv-scanner"]
+    if "npm" in lock_files and "npm" in tools:
+        relevant["npm"] = tools["npm"]
+    if "composer" in lock_files and "composer" in tools:
+        relevant["composer"] = tools["composer"]
+    if "pip-audit" in tools and any(
+        path.name in security_scan.PIP_AUDIT_LOCK_NAMES for path in lock_files.get("python", [])
+    ):
+        relevant["pip-audit"] = tools["pip-audit"]
+    if not relevant:
+        return None, ""
+    if plan:
+        return None, "would note in the inbox: offer security-check: deps (a tool is installed)"
+    inbox = root / actlib.INBOX_DIR
+    if inbox.is_dir() and any(inbox.glob(f"*{SECURITY_CHECK_OFFER_NOTE_SUFFIX}")):
+        return None, "security-check offer: entry already exists"
+    dest = inbox / actlib.inbox_entry_filename("todo", "security-check-deps")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    actlib.write_text_lf(dest, security_check_offer_note_text(root, relevant))
+    return dest, (f"{_relative_label(dest, root)}: created (security-check: deps offer — "
+                  f"{', '.join(sorted(relevant))} installed)")
+
+
+# ---------------------------------------------------------------------------
 # Inbox note for open points
 # ---------------------------------------------------------------------------
 
@@ -2584,8 +2689,13 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
         n += 1
     if blocking is not None or plan:
         return None if plan else dest
+    title = actlib.localized(
+        actlib.docs_language(root),
+        "# Open points from `init.py` (non-interactive run)",
+        "# Offene Punkte von `init.py` (nicht-interaktiver Lauf)",
+    )
     lines = ["kind: todo", f"for: {owner}", "status: open", f"created: {date.today().isoformat()}",
-              "", "# Open points from `init.py` (non-interactive run)", ""]
+              "", title, ""]
     lines.extend(f"- {note}" for note in notes)
     actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # B134: LF regardless of platform
     return dest
@@ -2835,6 +2945,9 @@ def main(argv: list[str]) -> int:
     dependency_check_path, dependency_check_message = step_dependency_check_note(root, plan)
     if dependency_check_message:
         materialize_messages.append(dependency_check_message)
+    security_check_offer_path, security_check_offer_message = step_security_check_offer(root, plan)
+    if security_check_offer_message:
+        materialize_messages.append(security_check_offer_message)
     imported_paths: list[Path] = []
     if is_target:
         combined_summary, combined_paths = step_source_and_profile(
@@ -2885,6 +2998,8 @@ def main(argv: list[str]) -> int:
         commit_paths.append(translate_path)
     if dependency_check_path is not None and not plan:
         commit_paths.append(dependency_check_path)
+    if security_check_offer_path is not None and not plan:
+        commit_paths.append(security_check_offer_path)
     commit_message = step_commit(root, plan, args.no_commit, commit_paths)
     # The old 'template' branch is only ever removed once a real commit landed on the new 'main'
     # (never under --plan, --no-commit, or a run that had nothing to commit) *and*
