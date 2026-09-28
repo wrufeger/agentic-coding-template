@@ -8,9 +8,11 @@ rule sets per language, and the scripts that keep all of it reproducible: set up
 here, adopt it into one that already exists, keep it current later, and check its own state for
 drift.
 
-**Status: rebuild in progress.** This replaces the template's previous generation, which lived
-spread across the repository root; everything now lives under `.act/`, in English, for
-stdlib-only Python 3.9+. The previous generation stays usable for projects already built on it.
+**Version 2.** This replaces the template's previous generation, which lived spread across the
+repository root; everything now lives under `.act/`, in English, for stdlib-only Python 3.9+. The
+previous generation stays available, frozen, on the branch `v1`. A project built on it moves over
+with `act-adopt` (see below) — never by merging or pulling this `main`; details in `UMZUG.md` on
+`v1` (German).
 
 ## Getting started
 
@@ -155,8 +157,7 @@ both written regardless of which tools are selected. Beyond that, one tool at a 
 generated bridge, wired into `init`'s tool list and `step_thin_bridges`; **Claude Code is the only
 one built so far** — `CLAUDE.md`, `.claude/settings.json` (hooks), `.claude/skills/`, and
 `.claude/agents/` role bridges with a model/effort tier resolved per role, none of which another
-tool reads. Nothing tool-specific for Codex, Copilot, Gemini CLI, or Cursor exists yet in this
-rebuild.
+tool reads. Nothing tool-specific for Codex, Copilot, Gemini CLI, or Cursor exists yet.
 
 ## Language
 

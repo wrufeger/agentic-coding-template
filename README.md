@@ -4,8 +4,9 @@
 A thin, versioned layer that gives any project the same working agreement with its AI assistant:
 rules, coding rule sets, a session dispatcher, and the scripts that keep them in sync.
 
-**Status: rebuild in progress.** This branch (`next`) carries the new layer under `.act/` only.
-The previous generation of this template lives on `main` and stays usable for existing projects.
+**Version 2.** This branch carries the new layer under `.act/` only. The previous generation of
+this template stays available, frozen, on the branch `v1`; existing projects move over with
+`act-adopt`.
 
 **Getting started, in short:** clone this, open the folder in your AI assistant, and say what you
 want — it checks for Python, asks whether the project goes right here or in another folder, and
