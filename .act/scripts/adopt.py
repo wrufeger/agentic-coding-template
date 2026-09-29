@@ -26,7 +26,7 @@
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
 # Usage:
-#   python .act/scripts/adopt.py --target <project> --apply [--plan]
+#   python .act/scripts/adopt.py --target <project> --apply [--plan] [--language-docs <code>] [--language-chat <code|auto>]
 #   python .act/scripts/adopt.py --target <project> --finish [--plan]
 #   python .act/scripts/adopt.py --target <project> --abort [--plan] [--force]   # the way back
 #   (--plan: validate and print what would happen, change nothing)
@@ -797,7 +797,8 @@ def way_back(root: Path) -> str:
     return f"python {Path(__file__).name} --target {root} --abort"
 
 
-def cmd_apply(root: Path, plan: bool) -> int:
+def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
+              language_chat: Optional[str] = None) -> int:
     state_path = root / ADOPT_DIR / "state.json"
     state = _read_json(state_path)
     if state and state.get("state") in ("applied", "finished"):
@@ -852,11 +853,16 @@ def cmd_apply(root: Path, plan: bool) -> int:
     to_rescue = {path: files for path, files in to_rescue.items() if files}
 
     no_commit = init_supports_no_commit()
-    # No --language-docs here: the source's own language only becomes known once step 5
-    # (adopt_config.py) parses the old AI-CONFIG.md/template.json, which runs after --apply —
-    # init.py has already written docs/ai/config.md (English default) by then. adopt_config.py
-    # sets `language-docs` itself from what it finds (see its own docstring).
+    # --language-docs/--language-chat are passed on only when given (B148 1): the skill fixes the
+    # language before --apply (from the sighting's language hint, else with the owner), so init.py
+    # writes docs/ai/config.md and its own todos in it right away. Without them init.py starts
+    # with its English default, and adopt_config.py (step 5) sets `language-docs` afterwards from
+    # an old AI-CONFIG.md/template.json if there is one — a project without either stays English.
     init_cmd = [sys.executable, str(SCRIPTS_DIR / "init.py"), "--target", str(root), "--non-interactive"]
+    if language_docs:
+        init_cmd += ["--language-docs", language_docs]
+    if language_chat:
+        init_cmd += ["--language-chat", language_chat]
     if no_commit:
         init_cmd.append("--no-commit")
     prefix = "would " if plan else ""
@@ -886,6 +892,9 @@ def cmd_apply(root: Path, plan: bool) -> int:
         "branch": BRANCH, "base_branch": base, "base_commit": base_commit,
         "moved": {}, "removed_at_apply": [], "rescued": {}, "created": [],
         "actions": {row["path"]: row["action"] for row in rows},
+        # What --apply was told explicitly: adopt_config.py treats these keys as project values (B148 1).
+        "languages": {key: value for key, value in (("language-docs", language_docs),
+                                                    ("language-chat", language_chat)) if value},
     }
     _git(root, "checkout", "-q", "-b", BRANCH)
     _write_json(state_path, new_state)
@@ -1320,6 +1329,7 @@ REFS_IN_REPORT = 50  # more references than this: the report names REFS_FILE ins
 REFS_FILE = f"{ADOPT_DIR}/references.txt"            # the full list, written by every --finish
 REFS_PLAN_FILE = f"{ADOPT_DIR}/references.plan.txt"  # the same list, written by --finish --plan
 REFS_SCOPE = "docs/project/ and docs/README.md"     # where references are bent
+REFS_SCOPE_DE = "docs/project/ und docs/README.md"  # the same, for a German report (B148 2)
 
 
 DOC_SUFFIXES = {".md", ".txt", ".rst", ".adoc"}
@@ -1923,7 +1933,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     out += [f"- {line}" for line in doctor[1][:30]] or ["- " + L("no findings", "keine Befunde")]
     changes, left = refs
     out += ["", L(f"## References in {REFS_SCOPE} rewritten (link target only, not staged)",
-                  f"## Verweise in {REFS_SCOPE} umgeschrieben (nur Verweisziel, nicht vorgemerkt)"), ""]
+                  f"## Verweise in {REFS_SCOPE_DE} umgeschrieben (nur Verweisziel, nicht vorgemerkt)"), ""]
     if len(changes) > REFS_IN_REPORT:
         out += ["- " + L(f"{len(changes)} rewritten — the full list: {_code(refs_file or REFS_FILE)}",
                         f"{len(changes)} umgeschrieben — die volle Liste: {_code(refs_file or REFS_FILE)}")]
@@ -1933,7 +1943,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     # too long for a human; grouped by target (old path/text mentioned) instead, the full list
     # stays at refs_file (write_references()).
     out += ["", L(f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text), by target",
-                  f"## Verweise in {REFS_SCOPE} unverändert gelassen (kein Nachfolger, mehrdeutig, reiner Text), nach Ziel"), ""]
+                  f"## Verweise in {REFS_SCOPE_DE} unverändert gelassen (kein Nachfolger, mehrdeutig, reiner Text), nach Ziel"), ""]
     grouped = group_left_by_target(left)
     if grouped:
         out += [f"| {L('Target', 'Ziel')} | {L('Count', 'Anzahl')} | {L('Files', 'Dateien')} |", "| :--- | ---: | :--- |"]
@@ -2265,6 +2275,10 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is
   refused ("content not adopted?").
+--apply --language-docs <code> --language-chat <code|auto>: passed on to init.py (B148 1), so the
+  docs language and the init todos are right from the start. They are recorded in state.json
+  ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md
+  only where none was given.
 --apply refuses a detached HEAD. It backs up .claude/settings.json (init.py merges hooks into it).
 --abort: the way back after --apply or a stopped --apply, resumable (state.json is rewritten after
   every step). Refused while {BRANCH} carries a commit other than init.py's, and while work was
@@ -2293,6 +2307,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan", action="store_true", help="validate and show what would happen, change nothing")
     parser.add_argument("--force", action="store_true",
                         help=f"with --abort: copy work done since --apply to {ABORTED_ROOT}/ first, then abort")
+    parser.add_argument("--language-docs", metavar="CODE",
+                        help="with --apply: language of docs/ (e.g. de), passed on to init.py; default en")
+    parser.add_argument("--language-chat", metavar="CODE",
+                        help="with --apply: chat language (a code, or auto), passed on to init.py")
     return parser
 
 
@@ -2304,6 +2322,19 @@ def main(argv: list) -> int:
             pass
     args = build_parser().parse_args(argv)
     root = Path(args.target).expanduser().resolve()
+    if (args.language_docs or args.language_chat) and not args.apply:
+        print("adopt.py: --language-docs/--language-chat only go with --apply", file=sys.stderr)
+        return 2
+    import actlib
+    languages: dict[str, Optional[str]] = {}
+    for option, value, allow_auto in (("--language-docs", args.language_docs, False),
+                                      ("--language-chat", args.language_chat, True)):
+        code = actlib.normalize_language(value, allow_auto=allow_auto) if value else None
+        if value and code is None:
+            print(f"adopt.py: {option} {value!r} is not a language code (e.g. en, de"
+                  f"{', or auto' if allow_auto else ''})", file=sys.stderr)
+            return 2
+        languages[option] = code
     if not root.is_dir():
         print(f"adopt.py: target is not a directory: {root}", file=sys.stderr)
         return 2
@@ -2313,7 +2344,9 @@ def main(argv: list) -> int:
     try:
         if args.abort:
             return cmd_abort(root, args.plan, args.force)
-        return cmd_apply(root, args.plan) if args.apply else cmd_finish(root, args.plan)
+        if args.apply:
+            return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"])
+        return cmd_finish(root, args.plan)
     except Refused as exc:
         print("refused:", file=sys.stderr)
         for problem in exc.problems:

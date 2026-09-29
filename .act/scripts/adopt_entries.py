@@ -377,7 +377,7 @@ def _expected_text(row: dict, item: dict) -> str:
     if item["kind"] in actlib.INBOX_KINDS:
         header_lines.append(f"kind: {item['kind']}")
         header_lines.append("for: all" if item["kind"] == "question"
-                            else f"for: {(item['for'] or 'all').strip()}")
+                            else f"for: {entries._recipient_value(item['for'])}")
         header_lines.append(f"status: {item['status'] or 'open'}")
     header_lines.append("created: PLACEHOLDER")
     return "\n".join(header_lines) + "\n\n" + f"# {item['title'].strip()}\n\n" + (item["body"] or "")

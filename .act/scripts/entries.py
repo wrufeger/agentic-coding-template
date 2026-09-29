@@ -242,6 +242,13 @@ def _identity_slug(root: Path) -> str:
     return _slugify(value) if isinstance(value, str) and value.strip() else "unknown"
 
 
+def _recipient_value(recipient: Optional[str]) -> str:
+    """The `for:` header value for `--for`: "all" (also the default) stays, anything else in the
+    identity's short form (B147: `--for "Wolfgang Rufeger"` writes `wolfgang-rufeger`)."""
+    text = (recipient or "all").strip() or "all"
+    return "all" if text.lower() == "all" else actlib.recipient_slug(text)
+
+
 def _rename_with_id(path: Path, entry_id: str) -> Path:
     """Rename `path` to "<entry_id>-<slug>.md" in the same directory (cmd_assign()'s second half,
     after _insert_id() has written the header) — slug via _derive_slug(path.stem). A name collision
@@ -625,7 +632,7 @@ def create_entry(
             # is never filed to just one person's own queue, so it is always "all" regardless of
             # `recipient`.
             header_lines.append(f"kind: {kind}")
-            header_lines.append("for: all" if kind == "question" else f"for: {(recipient or 'all').strip()}")
+            header_lines.append("for: all" if kind == "question" else f"for: {_recipient_value(recipient)}")
             header_lines.append(f"status: {status or 'open'}")
         header_lines.append(f"created: {created_at}")
 

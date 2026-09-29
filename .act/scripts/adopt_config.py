@@ -27,7 +27,9 @@
 #   `language-docs` other than English also leaves a docs/ai/inbox/todo-<stamp>-translate-scaffold.md
 #   entry (the scaffold init wrote is still English, R-work-language) unless one exists already. An
 #   old AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
-#   always German — and its "Mapped" row says that this is an assumption. `Coding-Guidelines`
+#   always German — and its "Mapped" row says that this is an assumption. A language given to
+#   adopt.py --apply (state.json "languages") is a project value instead: no assumption, no
+#   overwrite from the language row, the row reads "kept: set at --apply" (B148 1). `Coding-Guidelines`
 #   checks the named sets (plus whatever their `requires:` pulls in) straight in
 #   docs/project/coding_rules.md, group checkboxes included (T62 I2) — its "Mapped" row says which
 #   were newly checked, already checked, or matched no rule set. A lint/typecheck/test command
@@ -37,6 +39,9 @@
 #   non-interactive run) is still around, it is updated in place — `for: unknown` becomes the
 #   adopted owner, and a short "Filled in by adopt_config.py" section lists what else this run
 #   set (T62 I3); the human's own wording there, if any, is only ever appended to, never edited.
+#   Its "Project config uses defaults for: ..." line loses every key this run set (and a language
+#   already set by adopt.py --apply --language-docs/--language-chat); a note with nothing left in
+#   it is removed (B148 1).
 #   --plan: the same report ("would set"), nothing written. Exit 0 on success, on --plan, and when
 #   nothing to adopt was found at all (no AI-CONFIG.md, no .claude/template.json with values —
 #   the normal case for a project that was never the old template); 2 if the target has no
@@ -405,8 +410,8 @@ _IDENTITY_PLACEHOLDERS = {None, "unknown", "user"}
 
 
 def _slugify_owner(owner: str) -> str:
-    """Same rule as init.py's step_workspace_identity()."""
-    return re.sub(r"[^a-z0-9]+", "-", owner.strip().lower()).strip("-") or "user"
+    """Same rule as init.py's step_workspace_identity() (actlib.identity_slug)."""
+    return actlib.identity_slug(owner)
 
 
 def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Optional[str]:
@@ -440,6 +445,62 @@ def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Op
     return slug
 
 
+# init.py's line in the init-notes todo (step_config, non-interactive): the config keys it left at a
+# default. Each label below is what init.py prints for one key; adopt_config removes the ones it
+# has set since (B148 1), so the note never lists a key that has a value by now.
+_DEFAULTS_NOTE_RE = re.compile(r"^- Project config uses defaults for: (.*?) — review docs/ai/config\.md\.\s*$")
+_LANGUAGE_DEFAULTS_LABEL = "language-chat/language-docs (auto/en)"
+_DEFAULTS_LABELS = {"stack": "stack", "commands (lint)": "lint", "commands (typecheck)": "typecheck",
+                    "commands (test)": "test"}
+
+
+def _prune_defaults_note(lines: list[str], set_keys: set[str], language_set: set[str]) -> bool:
+    """Drop from init.py's "Project config uses defaults for: ..." line every key this run has set
+    (`set_keys`: the `new` names of the "set" rows; `language_set`: which of language-chat/
+    language-docs hold a non-default value in config.md now). The line disappears when nothing is
+    left of it. Returns True if a line changed."""
+    covered = {label for key, label in _DEFAULTS_LABELS.items() if key in set_keys}
+    for index, line in enumerate(lines):
+        match = _DEFAULTS_NOTE_RE.match(line)
+        if not match:
+            continue
+        remaining: list[str] = []
+        for label in (part.strip() for part in match.group(1).split(",")):
+            if label == _LANGUAGE_DEFAULTS_LABEL:
+                if "language-docs" in language_set and "language-chat" in language_set:
+                    continue
+                if "language-docs" in language_set:
+                    label = "language-chat (auto)"
+                elif "language-chat" in language_set:
+                    label = "language-docs (en)"
+            elif label == "language-docs (en)" and "language-docs" in language_set:
+                continue
+            elif label == "language-chat (auto)" and "language-chat" in language_set:
+                continue
+            elif label in covered:
+                continue
+            remaining.append(label)
+        new_line = (f"- Project config uses defaults for: {', '.join(remaining)} — review docs/ai/config.md."
+                    if remaining else None)
+        if new_line == line:
+            return False
+        if new_line is None:
+            del lines[index]
+        else:
+            lines[index] = new_line
+        return True
+    return False
+
+
+def _note_is_empty(lines: list[str]) -> bool:
+    """True if `lines` (a note file) hold only the header block, the title and blank lines — nothing
+    a person would still read or has written."""
+    body = lines
+    if "" in lines:
+        body = lines[lines.index("") + 1:]
+    return all(not line.strip() or line.startswith("# ") for line in body)
+
+
 def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str = "en") -> Optional[Path]:
     """Bring the docs/ai/inbox/todo-<stamp>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
@@ -471,8 +532,23 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
         if for_index is not None:
             new_owner = owner_row["result"].split(":", 1)[1].strip()
             if new_owner:
-                lines[for_index] = f"for: {new_owner}"
+                lines[for_index] = f"for: {_slugify_owner(new_owner)}"
                 changed = True
+    # B148 1: the "uses defaults for" line must not list what this run (or --language-docs at
+    # --apply) has set since. A note with nothing left in it is removed instead of rewritten.
+    current_config = ConfigFile(root / CONFIG) if (root / CONFIG).is_file() else None
+    language_set = set()
+    if current_config is not None:
+        for key in ("language-chat", "language-docs"):
+            value = (current_config.get(key) or "").strip().strip("`")
+            if value and value not in DEFAULTS[key]:
+                language_set.add(key)
+    language_set |= {r["new"] for r in set_rows if r["new"] in ("language-chat", "language-docs")}
+    if _prune_defaults_note(lines, {r["new"] for r in set_rows}, language_set):
+        changed = True
+        if _note_is_empty(lines):
+            dest.unlink()
+            return dest
     marker = actlib.localized(language, "## Filled in by `adopt_config.py`",
                               "## Ausgefüllt von `adopt_config.py`")
     markers_either_language = ("## Filled in by `adopt_config.py`", "## Ausgefüllt von `adopt_config.py`")
@@ -509,6 +585,18 @@ def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
     except UnicodeDecodeError:
         return raw.decode("cp1252", errors="replace"), (
             f"read as Windows-1252, not UTF-8 ({source.name}) — some bytes matched neither and were replaced")
+
+
+def _languages_from_apply(root: Path) -> dict[str, str]:
+    """The languages adopt.py --apply was given explicitly (state.json "languages", B148 1):
+    {"language-docs": "en", ...}, empty if none or no state file."""
+    try:
+        state = json.loads((root / adopt.ADOPT_DIR / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    languages = state.get("languages") if isinstance(state, dict) else None
+    return {k: v for k, v in languages.items() if k in ("language-docs", "language-chat") and isinstance(v, str)} \
+        if isinstance(languages, dict) else {}
 
 
 def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg: ConfigFile, plan: bool) -> dict:
@@ -550,7 +638,8 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
             unmapped.append({"key": tj_key, "value": value, "section": ".claude/template.json values",
                              "line": None, "note": f"not used: {source.name if source else 'the old file'} says {have['value']!r}"})
 
-    if source is not None and not any(KEY_MAP.get(k) == "language-docs" for k in by_old):
+    fixed = _languages_from_apply(root)
+    if source is not None and "language-docs" not in fixed and not any(KEY_MAP.get(k) == "language-docs" for k in by_old):
         by_old["(no language row)"] = {
             "key": "(no language row)", "value": ASSUMED_DOCS_LANGUAGE, "section": "(assumption)",
             "line": None, "origin": source.name, "target": "language-docs",
@@ -571,7 +660,10 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
             continue
         value, note = translate(new_key, row["value"])
         current = cfg.get(new_key)
-        if value is None:
+        if new_key in fixed:
+            # B148 1: given to adopt.py --apply, so a project value — never guessed or overwritten.
+            result = f"kept: set at --apply ({fixed[new_key]})"
+        elif value is None:
             result = f"not set: {note}"
         elif current is None:
             result = f"not set: config.md has no `{new_key}` row"
@@ -728,7 +820,8 @@ def main(argv: list[str]) -> int:
           f"{len(data['unmapped'])} key(s) without counterpart, {len(data['passages'])} free-text passage(s)"
           + ("" if args.plan else f"; report: {REPORT.as_posix()}")
           + (f"; {'would write' if args.plan else 'wrote'} {note.relative_to(root).as_posix()}" if note else "")
-          + (f"; updated {init_notes.relative_to(root).as_posix()}" if init_notes else "")
+          + (f"; {'updated' if init_notes.exists() else 'removed (nothing left in it)'} "
+             f"{init_notes.relative_to(root).as_posix()}" if init_notes else "")
           + (f"; {'would set' if args.plan else 'set'} .act-local/identity.json identity to '{identity_slug}'"
              if identity_slug else ""))
     return 0

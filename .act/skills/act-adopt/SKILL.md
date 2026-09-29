@@ -65,6 +65,24 @@ part is `predecessor` even where it would be `project-doc`), and every row carri
 ADR folders (`adr/`, `adrs/`, `decisions/`, `decision-records/`) are `project-doc`; a dated file
 (`YYYY-MM-DD…`) in `journal(s)/` or `docs/journal(s)/` is `log`.
 
+**Show the owner the sighting's hints (`B148`).** Besides the table, the sighting prints
+`-- … --` info lines (also in `scan.json` under `info`; a row's own hint is `(hint: …)`). Read
+them out to the owner before step 2, none is a classification:
+
+- `language hint: …` — an old `AI-CONFIG.md` stands at the root; the line proposes the docs language
+  for step 4 (its `Sprache` row, or `de` as an assumption where it has none).
+- `possible home-made work system: …` — files whose name or folder uses a word a home-grown board
+  or hand-over system uses (`board`, `chatlog`, `umbau`, `weiter`, `handover`, a `memory/` folder,
+  also behind an `@` marker such as `@board.md`), anywhere in the project, not only in `docs/ai/`.
+  Such a row is `unknown` with hint `work?` (even under `docs/`, where it would otherwise be
+  `project-doc`) — the class is never `work` or `log` from a hint alone. Ask the owner what these
+  files are — a board, a task list, a journal, copies of an assistant's memory — and set the
+  action from the answer: `legacy` (with `"confirmed": true` on an `unknown` row) keeps them
+  byte-identical in the archive, and their open items become entries in step 6, read from the
+  legacy copy; plain documentation stays `keep`. Put the owner's answer into the row's `note`.
+- `foreign ids: …` — documents that use numbers shaped like this template's own ids (`T12`,
+  `B16`, `Q3`). See step 2.
+
 ## 2. Propose the table
 
 Build `<dir>/.act-local/adopt/table.json`: `{"rows": [...]}`, exactly one row per `scan.json` row
@@ -155,6 +173,24 @@ still carries the predecessor's own placeholder steps (an `echo "TODO` line nami
 `adopt_config.py` reads `template.json`'s values in step 5 from wherever it now is — its own place,
 or its legacy copy (renamed, `B128`) once `--apply` moved it there.
 
+**Foreign ids with the template's prefixes (`B148`).** An old document may number its own sections
+`A1`–`A4`, `B5`–`B8`, `B16`, `T3` … — the same prefixes and shape as this template's `T`/`B`/`Q`
+ids. Once the items behind them get new entries, `B16` in the adopted wording means something else
+than the new entry `B16`. The sighting's `foreign ids: …` line names the documents it found by
+pattern (`project-doc`/`unknown` files with two or more distinct ids); spotting the same in the old
+`work` files is your reading in step 6 (`legacy_ids()` of `entries.py` only keeps ids of the old
+template's own headings, never numbers inside prose). Where the adoption meets such ids — wording
+that stays as it is, or that becomes an entry body — offer the owner the choice before step 3:
+
+- **Keep the old numbers** as they are, and put a note sentence above every adopted block that
+  uses them ("Numbers in this block are the old list's own, not this project's entry ids."); or
+- **Give new numbers** (new entries take the next free ids), the old number in `formerly`, the same
+  note sentence above the old wording, and the references in `docs/project/` that name an old
+  number changed to the new one — a wording change in the project's own docs, so only with the
+  owner's yes, listed in the report.
+
+Record the choice in the row's `note`; a row without foreign ids needs neither.
+
 **Targets now, where they are fixed.** Fill `target` in this step whenever the destination is
 already known — `docs/project/coding_rules.md` and `docs/README.md` as above, `docs/ai/config.md`
 for the old `AI-CONFIG.md`, the `docs/ai/local/...` path of an own skill or agent. `--apply`
@@ -202,10 +238,24 @@ runs until the table is accepted as it stands (or after those corrections, valid
 
 ## 4. Apply
 
+**Settle the language first (`B148`).** `init.py` writes `docs/ai/config.md` in the docs language and
+gives its own todos (`dependency-check`, `security-check-deps`, `init-notes`) titles in it (their
+bullet points stay English), and a `translate-scaffold` note is only written for a language other than English — so the language has
+to be known before `--apply`, not after step 5. Take it from the sighting's `language hint: …` line
+(an old `AI-CONFIG.md`); with no such line, propose the owner's language after `R-human-language`
+(the chat language, remembered per machine, else recognized from the owner's own messages) and
+let the owner confirm or choose another one. The chat language is normally `auto`. Then pass both:
+
 ```bash
-python .act/scripts/adopt.py --target <dir> --apply --plan   # dry run first, changes nothing
-python .act/scripts/adopt.py --target <dir> --apply          # branch act-adopt, then run it
+python .act/scripts/adopt.py --target <dir> --apply --plan --language-docs <code> --language-chat <code|auto>
+python .act/scripts/adopt.py --target <dir> --apply --language-docs <code> --language-chat <code|auto>
 ```
+
+`--plan` first, changes nothing. Both options go straight to `init.py --target` and are recorded in
+`state.json` as fixed by the owner: step 5 never overrides them, whatever the old `AI-CONFIG.md` says
+(its report row reads "kept: set at --apply"). Without them `init.py` writes English, and step 5 can
+still set `language-docs` from an old `AI-CONFIG.md`. The `mode`
+has no option here: `init.py` derives it from the Git authors (step 5).
 
 Refuses on an existing `act-adopt` branch, a detached HEAD, or a working tree that is not clean
 (only `.act-local/` may be untracked). Creates and switches to `act-adopt`, backs up
@@ -214,7 +264,8 @@ Refuses on an existing `act-adopt` branch, a detached HEAD, or a working tree th
 `init.py` writes a file itself or carries the name of a template skill/agent (a `keep` row at
 such a place stays and `init.py` leaves it; a `keep` row colliding by skill/agent name moves; a
 `delete` row there is removed right away) — then runs
-`init.py --target <dir> --non-interactive --no-commit` and stages the moves. `CLAUDE.md` and
+`init.py --target <dir> --non-interactive --no-commit` (with the languages given above) and stages
+the moves. `CLAUDE.md` and
 `AGENTS.md` stay in place until `--finish`. `<dir>/.act-local/adopt/state.json` records the
 result: `moved` (old path -> legacy path), `removed_at_apply` (`delete` rows removed before
 `init.py`), `created` (the files `init.py` wrote where nothing was versioned before — never a
@@ -233,10 +284,12 @@ retry; fix the cause (a path too long: `core.longpaths`, step 2) and start again
 ## 5. Settings — check `docs/ai/config.md` before anything else
 
 `init.py` ran non-interactively, so `docs/ai/config.md` holds its defaults: `name` the folder
-name, `owner` the Git `user.name` (else `unknown`), `language-chat` `auto`, `language-docs` `en`,
-`stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode` `solo` or `team` from the
-number of distinct real author e-mails (placeholder and test identities left out). It says so in
-`docs/ai/inbox/todo-<timestamp>-init-notes.md` ("Project config uses defaults for: ...").
+name, `owner` the Git `user.name` (else `unknown`), `language-chat`/`language-docs` what step 4
+passed (else `auto`/`en`), `stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode`
+`solo` or `team` from the number of distinct real author e-mails (placeholder and test identities
+left out). It says so in `docs/ai/inbox/todo-<timestamp>-init-notes.md` ("Project config uses
+defaults for: ..."); `adopt_config.py` takes every key it sets out of that line afterwards, and
+removes the note when nothing is left in it.
 
 ```bash
 python .act/scripts/adopt_config.py --target <dir> --plan   # show the report, write nothing
@@ -251,8 +304,8 @@ pulls in) with their group lines in `docs/project/coding_rules.md`; that is no m
 coding rules — step 6 still does that. Everything else — unknown keys, values without a
 counterpart, every free-text passage with its line numbers — lands in
 `<dir>/.act-local/adopt/config-report.md` (no title of its own: the inbox entry of step 6 gives
-it one). It also brings the init notes up to date (`for:` the adopted owner, a section naming what
-it set). Without any old configuration (no `AI-CONFIG.md`, no `template.json` values) it prints
+it one). It also brings the init notes up to date (`for:` the adopted owner as the workspace identity, the
+"uses defaults for" line reduced to what is still a default, a section naming what it set). Without any old configuration (no `AI-CONFIG.md`, no `template.json` values) it prints
 "nothing to adopt" and exits 0 — the normal case for a project that never used the old
 template; there is no report and no config inbox item then.
 
@@ -261,12 +314,14 @@ Then compare `docs/ai/config.md` with the old project by hand and correct it (or
 typecheck or test command that names a path the adoption removes (a predecessor script on
 `delete`/`legacy`) is set as given and flagged in the report ("command refers to a path that the
 adoption removes"): settle it with the owner — drop it, or point it at what replaces it.
-`adopt_config.py` sets `language-docs` from the old template's `Sprache` row (`Deutsch` -> `de`);
-an old `AI-CONFIG.md` without any language row gets `de` too, marked as an assumption in the report
-(the old template was always German) — confirm it with the owner. It never sets `language-chat`
-(stays `auto`) or `mode`. A `language-docs` other than English leaves
-`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` (from `adopt_config.py`, or from you by hand if you
-set it yourself: `init.py` wrote the scaffold in English, marked `act:default`) — translate that
+Where step 4 passed no `--language-docs`, `adopt_config.py` sets `language-docs` from the old
+template's `Sprache` row (`Deutsch` -> `de`); an old `AI-CONFIG.md` without any language row gets `de`
+too, marked as an assumption in the report (the old template was always German) — confirm it with
+the owner. A language passed in step 4 (`--language-docs`/`--language-chat`) is kept as given, no
+assumption and no overwrite. It never sets `language-chat` (stays as passed, else `auto`) or `mode`. A `language-docs` other than English leaves
+`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` (from `init.py` when step 4 passed the
+language, else from `adopt_config.py`, or from you by hand if you set it yourself: `init.py` wrote
+the scaffold in English, marked `act:default`) — translate that
 scaffold once as `R-work-language` describes, never the adopted content, whose translation is a
 separate assignment offered in the report, done only on request. This has to be right before
 step 6 and 7: `--finish` chooses the bridges by `tools` (without `claude-code` there, an adopted
@@ -401,7 +456,8 @@ skips the items already written unchanged instead of refusing them. After each s
   every other row and line stays as it is. Several own passages for the same target go into one
   cut file, in their original order — one `adopt_passages.py` run per target, not one per passage.
 - A doc that moves into `docs/project/` (step 2): copy it byte-identical to its target,
-  `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`.
+  `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`. A new
+  file there needs a line in the docs index `docs/README.md` (`--finish` does not write it — step 8).
 - An own skill or agent: copy it byte-identical to its target:
 
   ```bash
@@ -527,18 +583,24 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
    unit's other files), and `.claude/settings.json` as it is now — `init.py`'s merged hooks and
    the entries `--finish` or the orchestrator removed in step 7 in one commit, since a pathspec
    commit always takes the whole file (the report lists the removed entries).
-3. **One commit per source** — an `adopt` row's `target` files (entries, proposals,
+3. **One commit per target** — an `adopt` row's `target` files (entries, proposals,
    `docs/ai/config.md`, `docs/project/coding_rules.md`, `docs/README.md`,
    `docs/ai/local/<unit>`); for a `legacy` row, the entry files `entries-map.json` lists under its
    `source_path` (they are nobody's table target, so they are easy to miss). A path that is both
    moved and a target — `docs/README.md` or `docs/project/coding_rules.md` adopted into itself —
-   goes here with its source, not into group 1 or 2 (its legacy copy is in group 1).
+   goes here with its source, not into group 1 or 2 (its legacy copy is in group 1). Where several
+   sources feed one target (five `project-doc` files into `docs/project/architecture.md`, several
+   work files into the same entry set), that is one commit for the target, not one per source —
+   name the sources in its message. Rows without a shared target stay one commit each.
 4. **What `--finish` did** — `state.json`'s `bridged` and `removed_at_finish` paths, the tool
    copies it printed for own units (`skills: <path>: created`, role bridges), and the adoption
    report (`state.json`'s `report`).
-5. **References** — the files under `docs/project/`, and `docs/README.md`, whose links `--finish`
+5. **References and the docs index** — the files under `docs/project/`, and `docs/README.md`, whose links `--finish`
    bent: `git -C <dir> status --porcelain -- docs/project docs/README.md` lists them as modified;
    one that already belongs to group 2 or 3 (a table target, a file `init.py` wrote) stays there.
+   `--finish` only bends links: **a new `docs/project/` target gets no line in the docs index
+   `docs/README.md`** — add one per new file by hand, or in `act-commit` step 5 ("Docs index: new
+   files go into `docs/README.md`"), before this commit, and count `docs/README.md` here.
 
 Before the first commit, check the grouping: every line of
 `git status --porcelain --untracked-files=all` (both sides of a rename) falls under exactly one

@@ -169,6 +169,23 @@ def read_identity() -> Optional[dict]:
     return _read_json(_identity_path())
 
 
+def identity_slug(text: str) -> str:
+    """The short form of a person's name that serves as a workspace identity and as the value of a
+    `for:` header ("Wolfgang Rufeger" -> "wolfgang-rufeger"): lowercase, every run of characters
+    outside [a-z0-9] collapsed to one "-", trimmed; "user" if nothing survives. init.py forms the
+    identity in `.act-local/identity.json` with it, and board.py forms it from a `for:` value before
+    comparing (B147), so a hand-written full name still finds its owner."""
+    return re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-") or "user"
+
+
+def recipient_slug(text: str) -> str:
+    """The short form of a `for:` value (B147): identity_slug(), but a value with nothing in
+    [a-z0-9] (`张伟`, `???`) stays as its trimmed lowercase raw text instead of collapsing to
+    "user" — else every such name would count as the person whose identity is `user`."""
+    raw = text.strip().lower()
+    return re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or raw
+
+
 def write_identity(data: dict) -> dict:
     """Merge `data` (expected keys: identity, workspace, created) onto .act-local/identity.json,
     creating the .act-local/ directory if needed. Returns the merged dict actually written."""

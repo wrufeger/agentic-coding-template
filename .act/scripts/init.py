@@ -358,7 +358,9 @@ def step_config(root: Path, interactive: bool, notes: list[str],
             label
             for label, value in (("stack", stack), ("lint", lint_cmd), ("typecheck", typecheck_cmd), ("test", test_cmd))
             if not value or value == "unspecified"
-        ] + ([] if chat_given and docs_given else ["language-chat/language-docs (auto/en)"])
+        ] + ([] if chat_given and docs_given
+             else ["language-chat/language-docs (auto/en)"] if not chat_given and not docs_given
+             else ["language-docs (en)"] if not docs_given else ["language-chat (auto)"])
         if missing:
             notes.append(
                 "Project config uses defaults for: " + ", ".join(missing) + " — review docs/ai/config.md."
@@ -737,7 +739,7 @@ def step_identity(root: Path, plan: bool, interactive: bool, notes: list[str]) -
 def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
     if actlib.read_identity() is not None:
         return "already present, left unchanged"
-    slug = re.sub(r"[^a-z0-9]+", "-", owner.strip().lower()).strip("-") or "user"
+    slug = actlib.identity_slug(owner)
     workspace = uuid.uuid4().hex[:12]
     if not plan:
         actlib.write_identity({"identity": slug, "workspace": workspace, "created": date.today().isoformat()})
@@ -2694,7 +2696,7 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
         "# Open points from `init.py` (non-interactive run)",
         "# Offene Punkte von `init.py` (nicht-interaktiver Lauf)",
     )
-    lines = ["kind: todo", f"for: {owner}", "status: open", f"created: {date.today().isoformat()}",
+    lines = ["kind: todo", f"for: {actlib.identity_slug(owner)}", "status: open", f"created: {date.today().isoformat()}",
               "", title, ""]
     lines.extend(f"- {note}" for note in notes)
     actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # B134: LF regardless of platform

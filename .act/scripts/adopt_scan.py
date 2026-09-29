@@ -41,7 +41,11 @@
 #   Default: a table grouped by class, each row "<path>  [<kind>]  size=<n>  age=<date>  -- <reason>"
 #     (plus " (note: <note>)" and/or " (hint: <class>?)" when a row carries one, "  [<origin>]" with
 #     a predecessor template, and "  -> <proposed action>"), a per-class count
-#     line, one informational line per git submodule ("not scanned: submodule <path>"), and — if
+#     line, one informational line per git submodule ("not scanned: submodule <path>"), a
+#     "language hint: ..." line while an old AI-CONFIG.md stands at the root (the docs language to
+#     pass to adopt.py --apply, B148 1), a "possible home-made work system: ..." line for files
+#     that look like one (the rows carry hint "work?", B148 3), a "foreign ids: ..." line for
+#     documents that use T/B/Q numbers like the template's own (B148 4), and — if
 #     the target has a predecessor template (a .claude/template.json) — one hint line naming its
 #     base_commit. Never a finding/judgement, just a sighting.
 #   --json: the same content as {"target", "generated", "predecessor_hint", "info": [...],
@@ -243,12 +247,27 @@ TEMPLATE_UNIT_NAME_NOTE = (
 # match "adr"); a name is split on `-_. ` into tokens, every folder segment likewise.
 # ---------------------------------------------------------------------------
 
-_TOKEN_SPLIT_RE = re.compile(r"[-_.\s]+")
+# "@" splits too (B148 3): people mark their own working files "@board.md", "@weiter.md"; the token
+# is then "board"/"weiter", not "@board".
+_TOKEN_SPLIT_RE = re.compile(r"[-_.\s@]+")
 
 HINT_AI_CONFIG_NAMES = {name.lower() for name in ROOT_AI_CONFIG} | {"copilot-instructions.md"}
 HINT_AI_LOG_RE = re.compile(r"^ai\.log(\..+\.bak|\.state\.json|\.raw\.jsonl)?$", re.IGNORECASE)
 HINT_LOG_TOKENS = SIGNED_LOG_TOKENS
 HINT_WORK_TOKENS = SIGNED_WORK_TOKENS | {"todo"}
+# B148 3: words home-made work systems use for their files (an old board, a chat log, a rebuild list,
+# a "continue here" note, a handover folder). Whole tokens, anywhere in the path outside the signed
+# docs/ai/ too; the result is only ever a "work?" hint, never a class: on an "unknown" row, or — under
+# a docs/ folder, unless the name starts with "@" — on a row that stays a project-doc. The
+# words are chosen so ordinary project files stay out: `umbau`, `weiter` and `chatlog` are whole
+# tokens no code or doc file name has by accident (`weiterentwicklung` or `umbauplan` are other
+# tokens and do not match); `handover` is the one word that can name an ordinary hand-over
+# document, which costs at most a hint the owner dismisses. `memory` counts only as a FOLDER
+# segment (copies of an assistant's memory files live in a `memory/` folder) — never as a file
+# name or part of one, since `docs/memory-model.md` is ordinary documentation.
+OWN_SYSTEM_TOKENS = {"chatlog", "umbau", "weiter", "handover"}
+OWN_SYSTEM_FOLDER_TOKENS = {"memory"}
+OWN_SYSTEM_REASON = "probably the project's own work system, not a template file — owner decides"
 HINT_MACHINERY_SEGMENTS = {"agents", "skills", "commands", "prompts", "hooks", "scripts", "rules"}
 LOG_HEADING_KEYWORDS = {"ledger", "journal", "protokoll", "archiv", "archive"}
 WORK_HEADING_KEYWORDS = {"aufgaben", "tasks", "backlog", "fragen", "questions", "todo"}
@@ -779,7 +798,15 @@ def heuristic_hint(root: Path, rel_posix: str) -> Optional[tuple[str, str]]:
     for hint, keywords in (("log?", HINT_LOG_TOKENS), ("work?", HINT_WORK_TOKENS)):
         hit = sorted(tokens & keywords)
         if hit:
-            return hint, f"name/folder keyword '{hit[0]}'"
+            reason = f"name/folder keyword '{hit[0]}'"
+            if hint == "work?" and p.name.startswith("@"):  # only a "@"-marked name says "own system"
+                reason +=f" — {OWN_SYSTEM_REASON}"
+            return hint, reason
+    own_hit = sorted(tokens & OWN_SYSTEM_TOKENS)
+    for folder in folders:
+        own_hit += sorted(_tokens(folder) & OWN_SYSTEM_FOLDER_TOKENS)
+    if own_hit:
+        return "work?", f"name/folder keyword '{own_hit[0]}' — {OWN_SYSTEM_REASON}"
     for index, folder in enumerate(folders[:-1]):
         if folder.startswith(".") and folders[index + 1].lower() in HINT_MACHINERY_SEGMENTS:
             return "ai-machinery?", f"folder '{folder}/{folders[index + 1]}' looks like AI tooling"
@@ -846,6 +873,11 @@ def classify_doc(root: Path, rel_posix: str, signed_ai: bool) -> tuple[str, str,
     # -- heuristics: at most unknown + hint --
     found = heuristic_hint(root, rel_posix)
     if found:
+        # B148 3: under docs/ a hit on the "own work system" words (`handover`, `weiter`, `memory/`
+        # ...) is only a hint on an otherwise ordinary project-doc; a "@"-marked name is not.
+        if (OWN_SYSTEM_REASON in found[1] and not name.startswith("@") and found[0] == "work?"
+                and any(f.lower() == DOCS_SEGMENT for f in folders)):
+            return "project-doc", f"located under a docs/ folder ({found[1]})", None, found[0]
         return "unknown", found[1], None, found[0]
 
     if any(f.lower() == DOCS_SEGMENT for f in folders):
@@ -1316,7 +1348,100 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
     propose_dying_folder_readmes(rows)
     rows.sort(key=lambda r: (CLASS_ORDER.index(r.cls) if r.cls in CLASS_ORDER else len(CLASS_ORDER), r.path))
     info = [f"not scanned: submodule {path}" for path in submodules]
+    info += language_info(root) + own_system_info(rows) + foreign_id_info(root, rows, pred is not None)
     return rows, predecessor_hint(root, pred), info
+
+
+LANGUAGE_ROW_RE = re.compile(r"(?im)^\|\s*Sprache\s*\|\s*([^|]*?)\s*\|")
+
+
+def language_info(root: Path) -> list[str]:
+    """One info line (B148 1) proposing the docs language while an old AI-CONFIG.md is still at the
+    root: its `Sprache` row (`Deutsch` -> `de`), or `de` as an assumption when it has no language
+    row (the old template was always German — the same assumption adopt_config.py makes later).
+    The skill settles the language BEFORE `adopt.py --apply` and passes it as --language-docs, so
+    init.py writes its own todos in it. No old AI-CONFIG.md -> no line: ask the owner instead."""
+    path = root / "AI-CONFIG.md"
+    if not path.is_file():
+        return []
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return []
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    match = LANGUAGE_ROW_RE.search(text)
+    value = match.group(1).strip() if match else ""
+    code = actlib.normalize_language(value) if value else None
+    if code:
+        return [f"language hint: the old AI-CONFIG.md names '{value}' -> docs language '{code}' "
+                f"(pass --language-docs {code} to adopt.py --apply; confirm with the owner)"]
+    if value:
+        return [f"language hint: the old AI-CONFIG.md names '{value}', which is no language code or name "
+                f"known here — ask the owner which docs language to pass as --language-docs"]
+    return ["language hint: the old AI-CONFIG.md has no language row; the old template was always German -> "
+            "docs language 'de' is likely (pass --language-docs de to adopt.py --apply; confirm with the owner)"]
+
+
+def own_system_info(rows: list[Row]) -> list[str]:
+    """One info line (B148 3) naming the "unknown" rows whose name or folder looks like a home-made
+    work system (board, chat log, rebuild list, handover, ...): a hint for the owner, nothing is
+    classified. The skill shows it at step 1."""
+    paths = [r.path for r in rows if r.cls in ("unknown", "project-doc") and r.hint == "work?" and OWN_SYSTEM_REASON in r.reason]
+    if not paths:
+        return []
+    shown = ", ".join(paths[:5]) + (f", +{len(paths) - 5} more" if len(paths) > 5 else "")
+    return [f"possible home-made work system: {len(paths)} file(s) ({shown}) — hint only, nothing is classified; "
+            f"show it to the owner and ask what these files are"]
+
+
+# Ids of the same shape as this template's own (T12, B16, Q3) inside a foreign document (B148 4).
+FOREIGN_ID_RE = re.compile(r"(?<![A-Za-z0-9_/.#-])([TBQ][0-9]{1,4})(?![A-Za-z0-9_-])")
+FOREIGN_ID_MIN_DISTINCT = 2      # one "B2" in a sentence is no numbering scheme
+FOREIGN_ID_CLASSES = {"project-doc", "unknown"}  # work/log rows carry the old template's own ids on purpose
+FOREIGN_ID_READ_BYTES = 512 * 1024
+
+
+QUARTER_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d\d(?!\d)")
+
+
+def _is_quarter(text: str, match: "re.Match[str]") -> bool:
+    """Q1-Q4 right beside a year ("Q3 2026", "2026-Q3", "Q3/2026") is a quarter, not an id."""
+    if not (match.group(1)[0] == "Q" and match.group(1)[1:] in ("1", "2", "3", "4")):
+        return False
+    around = text[max(0, match.start() - 6):match.start()] + " " + text[match.end():match.end() + 6]
+    return QUARTER_YEAR_RE.search(around) is not None
+
+
+def foreign_id_info(root: Path, rows: list[Row], has_predecessor: bool = False) -> list[str]:
+    """One info line naming documents that use ids shaped like this template's (T/B/Q + number),
+    two or more distinct ones per file: once adopted, `B16` in that text means something else than
+    the new entry `B16` (B148 4). Reads project-doc and unknown files only, up to
+    FOREIGN_ID_READ_BYTES each; a hint, nothing is classified."""
+    found: list[tuple[str, list[str]]] = []
+    for row in rows:
+        if row.kind != "file" or row.cls not in FOREIGN_ID_CLASSES or not _is_document(row.path):
+            continue
+        try:
+            with open(root / row.path, "rb") as handle:
+                text = handle.read(FOREIGN_ID_READ_BYTES).decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        ids = sorted({m.group(1) for m in FOREIGN_ID_RE.finditer(text) if not _is_quarter(text, m)},
+                     key=lambda s: (s[0], int(s[1:])))
+        if len(ids) >= FOREIGN_ID_MIN_DISTINCT:
+            found.append((row.path, ids))
+    if not found:
+        return []
+    shown = "; ".join(f"{path} ({', '.join(ids[:4])}{', …' if len(ids) > 4 else ''})" for path, ids in found[:5])
+    more = f"; +{len(found) - 5} more" if len(found) > 5 else ""
+    if has_predecessor:  # the old template's own entries carry such ids on purpose: only worth a look
+        return [f"foreign ids: check {len(found)} document(s) with T/B/Q numbers ({shown}{more}) — do they name the old "
+                f"template's own entries, or another numbering? Ask the owner (skill act-adopt, step 2)"]
+    return [f"foreign ids: {len(found)} document(s) use T/B/Q numbers like the template's own ({shown}{more}) — "
+            f"after adoption the same number can mean two things; ask the owner (skill act-adopt, step 2)"]
 
 
 def write_scan_json(root: Path, rows: list[Row], hint: Optional[str], info: list[str]) -> dict:
@@ -1379,7 +1504,9 @@ ALLOW-LIST (exact, case-sensitive) — the only way into the four classes with a
                 question(s)/frage(n)/board/inbox
 Signed docs/ai/: holds at least two of board.md, tasks.md, ledger.md, questions.md, backlog.md,
 or the target has .claude/template.json. Any keyword hit elsewhere yields only "unknown" with a
-hint ("log?"). A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
+hint ("log?"). The same goes for the words chatlog, umbau, weiter, handover (whole tokens, anywhere in
+the path, "@" counts as a separator) and a folder named memory: unknown + hint "work?" and an info line
+"possible home-made work system" — a hint for the owner, never a class. A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
 never followed. Git-ignored rows keep their class and get a "git-ignored/local" note.
 project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 

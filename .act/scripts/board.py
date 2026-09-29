@@ -401,7 +401,11 @@ def _group_by_recipient(entries: list[dict], identity: Optional[str]) -> tuple[l
     other: list[dict] = []
     for entry in entries:
         target = (entry["for"] or "").strip().lower()
-        if identity and target == identity.strip().lower():
+        # B147: compare in the short form on both sides, so a hand-written `for: Wolfgang Rufeger`
+        # finds the identity `wolfgang-rufeger`. "all" and an empty value keep their meaning.
+        if target and target != "all":
+            target = actlib.recipient_slug(target)
+        if identity and target and target == actlib.recipient_slug(identity):
             mine.append(entry)
         elif target == "all":
             all_entries.append(entry)

@@ -47,18 +47,23 @@ Call: direct (used by skill `act-adopt` (stage 6))
 
 ```text
 usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
+                [--language-docs CODE] [--language-chat CODE]
 
 Carry out an approved adoption table: move legacy sources, install the template, then bridge/remove adopted sources. Never commits.
 
 options:
-  -h, --help    show this help message and exit
-  --target DIR  the project to adopt (a git repository)
-  --apply       branch, legacy moves, init.py --target
-  --finish      bridges, removals, settings entries, marks, references, doctor, inbox report
-  --abort       the way back after --apply: undo it, delete the branch
-  --plan        validate and show what would happen, change nothing
-  --force       with --abort: copy work done since --apply to .act-local/adopt/aborted/ first,
-                then abort
+  -h, --help            show this help message and exit
+  --target DIR          the project to adopt (a git repository)
+  --apply               branch, legacy moves, init.py --target
+  --finish              bridges, removals, settings entries, marks, references, doctor, inbox
+                        report
+  --abort               the way back after --apply: undo it, delete the branch
+  --plan                validate and show what would happen, change nothing
+  --force               with --abort: copy work done since --apply to .act-local/adopt/aborted/
+                        first, then abort
+  --language-docs CODE  with --apply: language of docs/ (e.g. de), passed on to init.py; default
+                        en
+  --language-chat CODE  with --apply: chat language (a code, or auto), passed on to init.py
 
 TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
   path       as in scan.json          class   as in scan.json (must match)
@@ -133,6 +138,10 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
   refused ("content not adopted?").
+--apply --language-docs <code> --language-chat <code|auto>: passed on to init.py (B148 1), so the
+  docs language and the init todos are right from the start. They are recorded in state.json
+  ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md
+  only where none was given.
 --apply refuses a detached HEAD. It backs up .claude/settings.json (init.py merges hooks into it).
 --abort: the way back after --apply or a stopped --apply, resumable (state.json is rewritten after
   every step). Refused while act-adopt carries a commit other than init.py's, and while work was
@@ -227,7 +236,9 @@ ALLOW-LIST (exact, case-sensitive) — the only way into the four classes with a
                 question(s)/frage(n)/board/inbox
 Signed docs/ai/: holds at least two of board.md, tasks.md, ledger.md, questions.md, backlog.md,
 or the target has .claude/template.json. Any keyword hit elsewhere yields only "unknown" with a
-hint ("log?"). A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
+hint ("log?"). The same goes for the words chatlog, umbau, weiter, handover (whole tokens, anywhere in
+the path, "@" counts as a separator) and a folder named memory: unknown + hint "work?" and an info line
+"possible home-made work system" — a hint for the owner, never a class. A symlink/junction at an allow-listed place is one "unknown" row ("link to …"),
 never followed. Git-ignored rows keep their class and get a "git-ignored/local" note.
 project-doc also covers ADR folders: adr/, adrs/, decisions/, decision-records/.
 
