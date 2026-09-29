@@ -23,7 +23,8 @@
 #
 # `--into coding`  -> docs/project/coding_rules.md, inserted at the end of the "Own rules" section,
 #                     old top heading level shifted to "###" (a passage with no heading of its own
-#                     is inserted as is, unshifted).
+#                     is inserted as is, unshifted); a "*" or "+" list marker at the start of a line
+#                     (outside code fences) becomes "-", so the list is read as own rules (Q113).
 # `--into readme`  -> docs/README.md, appended at the end of the file, old top heading level
 #                     shifted to "##".
 #
@@ -53,6 +54,11 @@ RE_TOP_HEADING = re.compile(r"^##\s+.*$")
 # character and at least the same length) — a "heading" inside one is example text, never shifted
 # or counted towards the passage's shallowest level.
 RE_FENCE = re.compile(r"^\s{0,3}(?P<fence>`{3,}|~{3,})")
+# A "*" or "+" list marker at the start of a line (indented or not) — rules.py reads own rules as
+# "- " bullets, and also "*"/"+" since Q113, but the inserted text is normalized to "- " (`--into
+# coding` only). A thematic break ("* * *", "+ + +") is not a list item.
+RE_ALT_BULLET = re.compile(r"^(?P<indent>[ \t]*)(?P<mark>[*+])(?P<space>[ \t]+)(?P<rest>.*)$")
+RE_THEMATIC_BREAK = re.compile(r"^\s*(?:\*\s*){3,}$|^\s*(?:\+\s*){3,}$")
 
 TARGETS = {
     "coding": {"path": "docs/project/coding_rules.md", "level": 3},
@@ -119,6 +125,32 @@ def shift_headings(text: str, target_level: int) -> str:
     return "\n".join(out)
 
 
+def normalize_bullets(text: str) -> str:
+    """`text` (already "\\n"-normalized) with every "*" or "+" list marker at the start of a line
+    outside a fenced code block turned into "-" (indentation and the text after it untouched) — so
+    an adopted "*" list is read as own rules by rules.py. Anything else, a fence's content
+    included, stays byte for byte; text with no such marker comes back unchanged."""
+    out: list[str] = []
+    fence: Optional[str] = None
+    for line in text.split("\n"):
+        fence_match = RE_FENCE.match(line)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] \
+                    and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            out.append(line)
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            out.append(line)
+            continue
+        bullet = RE_ALT_BULLET.match(line)
+        if bullet and not RE_THEMATIC_BREAK.match(line):
+            line = f"{bullet.group('indent')}-{bullet.group('space')}{bullet.group('rest')}"
+        out.append(line)
+    return "\n".join(out)
+
+
 def _own_rules_section_bounds(lines: list[str]) -> tuple[int, int]:
     """(content_start, content_end): the "Own rules" section's content (into `lines`, split on
     "\\n") — everything between the `<!-- act:own-rules -->` mark itself and the next top-level
@@ -163,11 +195,16 @@ def build_result(target_text: str, into: str, passage: str) -> tuple[str, bool]:
     or with the block inserted."""
     block = shift_headings(passage.strip("\n"), TARGETS[into]["level"])
     if into == "coding":
+        block = normalize_bullets(block)
         lines = target_text.split("\n")
         content_start, end = _own_rules_section_bounds(lines)
         head = lines[:content_start]
         tail = lines[end:]
         body = "\n".join(lines[content_start:end]).strip("\n")
+        # A block adopted earlier by an older adopt_passages.py still has its "*"/"+" markers (Q113):
+        # compare the normalized form of the existing text too, so a rerun does not add it twice.
+        if body and _contains_block(normalize_bullets(body), block):
+            return target_text, False
         new_body, changed = _append_block(body, block)
         if not changed:
             return target_text, False

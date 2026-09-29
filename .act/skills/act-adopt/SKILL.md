@@ -448,13 +448,42 @@ skips the items already written unchanged instead of refusing them. After each s
   `--into coding` inserts at the end of `docs/project/coding_rules.md`'s `## Own rules` section
   (after its marker and comment line), the old top level becoming `###` (`#` -> `###`,
   `##` -> `####`, …); `--into readme` appends at the end of `docs/README.md`, the old top level
-  becoming `##` (`#` -> `##`, `##` -> `###`, …) — wording never changes, and a rerun with the same
+  becoming `##` (`#` -> `##`, `##` -> `###`, …) — wording never changes (the one exception:
+  `--into coding` writes a `*`/`+` list marker at the start of a line, outside code fences, as
+  `- `, so `rules.py` reads the list as own rules), and a rerun with the same
   cut file changes nothing (`--plan` first, as with every other write in this skill). In the old
   index table of `docs/README.md`, a row whose file is gone after the adoption (moved to legacy or
   removed) is left out of the cut by hand, and so is a footnote only such rows refer to (`¹`) —
   the template's rows already name the new places, and the legacy copy keeps the whole old table;
   every other row and line stays as it is. Several own passages for the same target go into one
   cut file, in their original order — one `adopt_passages.py` run per target, not one per passage.
+- **Rules are adopted so that they are loaded and followed (`B146`).** A rule the old project
+  wrote down (coding standards in `coding_rules.md`/`coding_rules.d/`, working rules in
+  `CLAUDE.md`/`AGENTS.md`/`AI-CONFIG.md`) is not left as text that only sits in a file. Decide per
+  rule, before the cut file for `coding_rules.md` is made:
+  - **It matches a rule or group of the template** (`R-…` in `docs/ai/rules.md`, `CR-<set>-<group>`
+    in `docs/project/coding_rules.md`; `python .act/scripts/rules.py --list`, or
+    `rules.py <id>` for the full text — for an `R-…` id `rules.py --area core <id>`): it becomes an **override**, one line
+    ``- replaces `<ID>`: <the project's wording>`` under `## Overrides` of that file (after the
+    `<!-- act:overrides -->` mark, the placeholder comment there may stay) — not a second copy under
+    "Own rules". Write it by hand in the same line format `rules.py` reads; a script would only
+    save one line, and the wording is your judgment call. A `replaces` line **replaces the whole
+    text** of that rule or group (`rules.py` prints only the override text for it): if the old
+    project's rule covers just part of a group, do not replace the group — adopt it as an own rule
+    — or the override carries the complete adapted group text.
+  - **It matches none:** it stays an **own rule** under `## Own rules` — through the cut file and
+    `adopt_passages.py --into coding` (lists come out as `- ` bullets), or, for `docs/ai/rules.md`,
+    as a ``- `ID`: text`` line by hand. A bare `- text` bullet counts as an own rule too.
+  - Check it afterwards: `python .act/scripts/rules.py --list` and `--area core --list` show
+    every override as `[~]` and every own rule as `[+]`; `--validate` (and `--area core
+    --validate`) must not stay silent about a heading or prose under "Own rules" that carries a
+    rule — a `note:` line there means `rules.py` did not read that text (it is missing from `--list`
+    and from the effective text; Claude Code still loads the file whole through its import);
+    rewrite it as bullets. An `unclosed code fence` finding means everything after it is ignored. Every
+    adopted rule appears in one of these lists, otherwise it is not in force.
+  - Record the decision per rule in the `note` of the table row it came from (for example
+    `coding rules: 4 rules -> 2 x replaces CR-python-basics/CR-python-tests (full group text), 2 own rules`), so the
+    report can list what replaced what.
 - A doc that moves into `docs/project/` (step 2): copy it byte-identical to its target,
   `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`. A new
   file there needs a line in the docs index `docs/README.md` (`--finish` does not write it — step 8).

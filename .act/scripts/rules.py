@@ -25,7 +25,9 @@
 #   --list: "[symbol] id — summary" per set, one indented "[symbol] id[ — reason]" per group below
 #     it (symbols: "=" unchanged, "~" overridden, "-" switched off, "+" own addition).
 #   --validate: one finding per line as "<path>:<line>: <message>", nothing printed and exit 0 if
-#     there are no findings.
+#     there are no findings. Text under "Own rules" that is not read as a rule (a heading, prose, a
+#     table, a code fence) follows as "<path>:<line>: note: <message>", one per run of such lines —
+#     a note never changes the exit code. Own rules are "- ", "* " or "+ " bullets.
 #   --imports: "reached <n>:" and one indented root-relative path per file Claude Code loads, in
 #     load order, then "unresolved <n>:" and one "<file>:<line>: @<target> — <reason>" per import
 #     it cannot follow (exit 1 if there is any). Same rule as Claude Code (T64): relative to the
@@ -101,6 +103,8 @@ class ProjectFile:
     overrides: list[Override]
     own_rules: list[OwnRule]
     findings: list[tuple[int, str]]  # (line, message) — schema-level problems found while parsing
+    # (line, message) — text under "Own rules" that is not read as a rule; a note, never a finding
+    hints: list[tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -132,12 +136,18 @@ RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]{0,2})\](?!
 RE_USE = re.compile(r"^use:\s*(?P<path>\S+)\s*$")
 # The reason separator is an em dash; an en dash or "--" (what people type instead) counts the same.
 RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:(?:—|–|--)\s*(?P<reason>.+))?$")
-RE_REPLACES = re.compile(r"^-\s*replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
-RE_REPLACES_LOOSE = re.compile(r"^-\s*replaces\b.*$")
+# "- replaces ..." — and, like an own rule, "* replaces ..." / "+ replaces ..." (Q113).
+RE_REPLACES = re.compile(r"^(?:-\s*|[*+]\s+)replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
+RE_REPLACES_LOOSE = re.compile(r"^(?:-\s*|[*+]\s+)replaces\b.*$")
 # A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is
 # written relative to docs/ai/ since T64 ("@../../.act/..."), the pre-T64 "@.act/..." still parses.
 RE_CORE_SET = re.compile(r"^(?:@(?:\.\./)*|`)?(?P<path>\.act/\S+?\.md)`?$")
-RE_OWN = re.compile(r"^-\s+(?:`(?P<id>[^`]+)`:\s*)?(?P<text>.*)$")
+# An own rule is a "- ", "* " or "+ " bullet (Q113: a hand-written or adopted "*" list counted as prose
+# before and silently dropped every rule in it).
+RE_BULLET = re.compile(r"^[-*+]\s+")
+# "* * *" / "- - -" is a thematic break, not a bullet.
+RE_THEMATIC_BREAK = re.compile(r"^(?:\*\s*){3,}$|^(?:-\s*){3,}$|^(?:\+\s*){3,}$")
+RE_OWN = re.compile(r"^[-*+]\s+(?:`(?P<id>[^`]+)`:\s*)?(?P<text>.*)$")
 RE_HEADING = re.compile(r"^##\s+`(?P<id>[^`]+)`\s*(?:—\s*(?P<title>.+))?\s*$")
 RE_HEADER_FIELD = re.compile(r"^(?P<key>summary|requires|retired):\s*(?P<value>.*)$", re.IGNORECASE)
 
@@ -199,11 +209,36 @@ def strip_template_prefix(path: str) -> str:
 # Parsing the project file (docs/project/coding_rules.md or docs/ai/rules.md)
 # ---------------------------------------------------------------------------
 
+@dataclass
+class _UnreadRun:
+    """A run of text under "Own rules" that is not read as a rule (hint bookkeeping)."""
+    line: int
+    count: int
+    snippet: str
+
+
+def _fence_open(line: str) -> Optional[str]:
+    """The fence string ("```", "~~~~", ...) if `line` opens a fenced code block, else None. As in
+    CommonMark, a backtick fence whose info string contains a backtick is inline code ("```x``` is
+    ..."), not a fence."""
+    match = RE_FENCE.match(line)
+    if not match:
+        return None
+    fence = match.group("fence")
+    if fence[0] == "`" and "`" in line[match.end():]:
+        return None
+    return fence
+
+
+def _is_bullet(stripped: str) -> bool:
+    return bool(RE_BULLET.match(stripped)) and not RE_THEMATIC_BREAK.match(stripped)
+
+
 def _is_new_item(raw: str, stripped: str) -> bool:
     """True if `raw` starts a new list item/checkbox rather than continuing the previous one — a
-    bullet ("- ..." or "- [ ] ...", indented or not) or a near-miss checkbox mark. Used by
-    parse_project_file to know where an own rule's continuation lines end (B131)."""
-    return stripped.startswith("- ") or bool(RE_CHECKBOX_LOOSE.match(raw))
+    bullet ("- ...", "* ...", "+ ..." or "- [ ] ...", indented or not) or a near-miss checkbox mark.
+    Used by parse_project_file to know where an own rule's continuation lines end (B131)."""
+    return _is_bullet(stripped) or bool(RE_CHECKBOX_LOOSE.match(raw))
 
 
 def parse_project_file(path: Path, area: Area) -> ProjectFile:
@@ -214,6 +249,30 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
     findings: list[tuple[int, str]] = []
     current_set: Optional[ProjectSet] = None
     current_section: Optional[str] = None  # None until the first "## " section is seen
+    hints: list[tuple[int, str]] = []
+    # Text under "Own rules" that is not read as a rule, merged per run (blank lines do not break
+    # a run); at most one entry.
+    pending: list[_UnreadRun] = []
+    fence: Optional[str] = None
+    fence_line = 0
+    in_comment = False
+
+    def flush_pending() -> None:
+        if pending:
+            run = pending[0]
+            shown = run.snippet if len(run.snippet) <= 40 else run.snippet[:40] + "…"
+            hints.append((run.line, f"{run.count} line(s) under 'Own rules' not read as rules (heading, "
+                                 f"prose, table or code, starting \"{shown}\") — write each rule as "
+                                 "a '- ' bullet, optionally '- `ID`: text'"))
+            pending.clear()
+
+    def note_unread(number: int, text: str) -> None:
+        if current_section != "own-rules":
+            return
+        if pending:
+            pending[0].count += 1
+        else:
+            pending.append(_UnreadRun(line=number, count=1, snippet=text))
 
     total = len(lines)
     i = 0
@@ -224,6 +283,29 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
         line = raw.rstrip()
         stripped = line.strip()
         if not stripped:
+            continue
+
+        # An HTML comment (the template's own "one item per rule" hint) is neither rule nor text.
+        if in_comment:
+            in_comment = "-->" not in stripped
+            continue
+        if fence is None and stripped.startswith("<!--") and not RE_SECTION_MARK.match(stripped):
+            in_comment = "-->" not in stripped
+            continue
+
+        # A fenced code block is example text: nothing inside is read as a rule, a set line or an
+        # override (Q113); under "Own rules" it counts as unread text.
+        fence_match = RE_FENCE.match(line)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] \
+                    and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            note_unread(line_no, stripped)
+            continue
+        opened = _fence_open(line)
+        if opened is not None:
+            fence, fence_line = opened, line_no
+            note_unread(line_no, stripped)
             continue
 
         checkbox = RE_CHECKBOX.match(line)
@@ -265,10 +347,12 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             if mark:
                 # An explicit mark is always a recognized section, even one this script has no
                 # special handling for ("excluded" — see the gating below).
+                flush_pending()
                 current_section = MARK_TO_SECTION.get(mark.group("name").lower(), "excluded")
                 continue
             heading = RE_TOP_HEADING.match(stripped)
             if heading:
+                flush_pending()
                 title_key = heading.group("title").split("—", 1)[0].strip().lower()
                 if title_key in HEADING_TO_SECTION_FALLBACK:
                     current_section = HEADING_TO_SECTION_FALLBACK[title_key]
@@ -306,7 +390,8 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     "else) — ignored"))
                 continue
 
-            if current_section in (None, "unknown", "own-rules") and stripped.startswith("- "):
+            if current_section in (None, "unknown", "own-rules") and _is_bullet(stripped):
+                flush_pending()
                 own = RE_OWN.match(stripped)
                 text_parts = [(own.group("text") if own else stripped[2:]).strip()]
                 # Indented continuation lines (B131) belong to this same rule's text, joined with
@@ -317,23 +402,34 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     cont_raw = lines[i]
                     cont_stripped = cont_raw.strip()
                     if not cont_stripped or cont_raw[:1] not in (" ", "\t") \
-                            or _is_new_item(cont_raw, cont_stripped):
+                            or _is_new_item(cont_raw, cont_stripped) or _fence_open(cont_raw):
                         break
                     text_parts.append(cont_stripped)
                     i += 1
                 own_rules.append(OwnRule(id=own.group("id") if own else None,
                                           text=" ".join(text_parts), line=line_no))
                 continue
-            if current_section == "excluded" and stripped.startswith("- "):
+            if current_section == "excluded" and _is_bullet(stripped):
                 own = RE_OWN.match(stripped)
                 if own and own.group("id"):
                     findings.append((line_no,
                         "rule-shaped bullet found outside '## Own rules' (section recognized as "
                         "something else) — ignored"))
                     continue
-            # heading or prose in the project's own language — not read by the mechanism.
+            # heading or prose in the project's own language — not read by the mechanism (under
+            # "Own rules" it is reported as a hint, see ProjectFile.hints).
+            note_unread(line_no, stripped)
+        else:
+            # Indented text nothing above consumed (a nested bullet, an indented paragraph or
+            # table): under "Own rules" it is not read either — a hint like any other unread text.
+            note_unread(line_no, stripped)
 
-    return ProjectFile(path=path, sets=sets, overrides=overrides, own_rules=own_rules, findings=findings)
+    flush_pending()
+    if fence is not None:
+        findings.append((fence_line, f"unclosed code fence opened at line {fence_line} — rest of "
+                                     "the file ignored"))
+    return ProjectFile(path=path, sets=sets, overrides=overrides, own_rules=own_rules,
+                       findings=findings, hints=hints)
 
 
 # ---------------------------------------------------------------------------
@@ -779,10 +875,13 @@ def main(argv: list[str]) -> int:
 
     if args.validate:
         findings = cmd_validate(project, area, root)
-        if findings:
-            print("\n".join(findings))
-            return 1
-        return 0
+        # Hints (text under "Own rules" that is not read as a rule) follow the findings, marked
+        # "note:" — they never change the exit code (Q113).
+        rel = project.path.relative_to(root).as_posix()
+        notes = [f"{rel}:{line}: note: {message}" for line, message in project.hints]
+        if findings or notes:
+            print("\n".join(findings + notes))
+        return 1 if findings else 0
 
     if args.list:
         sys.stdout.write(cmd_list(project, area))
