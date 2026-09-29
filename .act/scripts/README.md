@@ -17,8 +17,10 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
+| `forge.py` | A small REST client for the project's git host (GitHub, GitHub Enterprise, GitLab.com and self-hosted GitLab) — the one script the skills… | skills `act-pr`, `act-issue`, `act-integrations` (reads are direct; every write shows a preview and needs `--apply` after the human's "yes" (`topics/live-systems.md`)) |
 | `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
+| `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
@@ -446,6 +448,42 @@ options:
   --yes                 with --send and mode 'confirm': actually send after showing the payload
 ```
 
+## `forge.py`
+
+Call: skills `act-pr`, `act-issue`, `act-integrations` (reads are direct; every write shows a preview and needs `--apply` after the human's "yes" (`topics/live-systems.md`))
+
+```text
+usage: forge.py [-h] [--root ROOT] [--remote REMOTE] [--json] <command> ...
+
+REST client for GitHub and GitLab issues and pull/merge requests (stdlib only). Writes only
+preview unless --apply is given. The token comes from the environment or .env, never from the
+command line.
+
+positional arguments:
+  <command>
+    detect          show host, kind, project, API base, where the access comes from and whether
+                    the token may go to the host
+    whoami          the user the token belongs to
+    project         name, default branch, visibility and URL of the project
+    default-branch  the project's default branch
+    target-branch   branch for pull requests: config, remote default, or development/develop/main
+    issues          list issues
+    issue           show one issue
+    prs             list pull/merge requests
+    branch-name     branch name for an issue
+    create-issue    create an issue (preview without --apply)
+    comment         comment on an issue (preview without --apply)
+    close-issue     close an issue (preview without --apply)
+    create-pr       create a pull/merge request (preview without --apply)
+    close-pr        close a pull/merge request (preview without --apply)
+
+options:
+  -h, --help        show this help message and exit
+  --root ROOT       project root (default: found from the current directory)
+  --remote REMOTE   git remote to use (default: origin, else the only one)
+  --json            print one JSON document instead of text
+```
+
 ## `init.py`
 
 Call: direct
@@ -477,6 +515,25 @@ options:
                         language)
   --language-chat CODE  chat language (a code, or auto = follow the owner's messages) instead of
                         asking
+```
+
+## `integrations.py`
+
+Call: skill `act-integrations` (`status` alone is direct)
+
+```text
+usage: integrations.py [-h] <command> ...
+
+Find and probe (read-only) the ways to the repo host and issue tracker, and keep the result in
+docs/project/integrations.md. Never writes to a live system.
+
+positional arguments:
+  <command>
+    check     detect, probe read-only, optionally write the file
+    status    exit 0 if the file exists and is fresh, else 3
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## `log.py`

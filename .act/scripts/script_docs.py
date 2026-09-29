@@ -48,7 +48,8 @@ HELP_COLUMNS = "100"
 #   "library" — no CLI (no `if __name__ == "__main__":`), imported only.
 #   "direct"  — run as-is, no judgement call needed.
 #   "skill"   — better run through the named skill: a judgement call is involved (requires
-#               "skill", checked against the directory names under .act/skills/).
+#               "skill", checked against the directory names under .act/skills/; several skills
+#               that use the same script are given comma-separated: "act-pr, act-issue").
 # "note" (optional): one short qualifier shown in parentheses next to the call, for a script that
 # is partly the other kind (e.g. a --plan/read-only mode that is direct even though the full run
 # needs a skill).
@@ -64,8 +65,10 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "entries.py": {"kind": "direct"},
     "feedback.py": {"kind": "skill", "skill": "act-feedback", "note": "`--status`/`--due` alone are direct"},
     "feedback_privacy.py": {"kind": "library"},
+    "forge.py": {"kind": "skill", "skill": "act-pr, act-issue, act-integrations", "note": "reads are direct; every write shows a preview and needs `--apply` after the human's \"yes\" (`topics/live-systems.md`)"},
     "frontmatter.py": {"kind": "library"},
     "init.py": {"kind": "direct"},
+    "integrations.py": {"kind": "skill", "skill": "act-integrations", "note": "`status` alone is direct"},
     "log.py": {"kind": "direct"},
     "manifest.py": {"kind": "direct"},
     "rules.py": {"kind": "direct"},
@@ -200,8 +203,9 @@ def generate(root: Path) -> str:
             raise ScriptDocsError(f"{name}: no entry in SCRIPT_INFO — add one before regenerating")
         kind = info["kind"]
         skill = info.get("skill")
-        if skill and skill not in known_skills:
-            raise ScriptDocsError(f"{name}: SCRIPT_INFO names skill '{skill}', not found under .act/skills/")
+        for skill_name in _skill_names(skill):
+            if skill_name not in known_skills:
+                raise ScriptDocsError(f"{name}: SCRIPT_INFO names skill '{skill_name}', not found under .act/skills/")
         has_cli = _has_cli(path)
         if kind == "library" and has_cli:
             raise ScriptDocsError(f"{name}: marked \"library\" in SCRIPT_INFO but has a __main__ entry point")
@@ -219,10 +223,19 @@ def generate(root: Path) -> str:
     return _render(entries)
 
 
+def _skill_names(skill: Optional[str]) -> list[str]:
+    """The skill names of a SCRIPT_INFO "skill" value: one name, or several separated by commas."""
+    return [part.strip() for part in (skill or "").split(",") if part.strip()]
+
+
 def _call_cell(entry: dict) -> str:
     if entry["kind"] == "library":
         return "library"
-    cell = "direct" if entry["kind"] == "direct" else f"skill `{entry['skill']}`"
+    skills = _skill_names(entry.get("skill"))
+    if entry["kind"] == "direct":
+        cell = "direct"
+    else:
+        cell = f"skill{'s' if len(skills) > 1 else ''} " + ", ".join(f"`{s}`" for s in skills)
     if entry.get("note"):
         cell += f" ({entry['note']})"
     return cell

@@ -39,6 +39,32 @@ approval to create the draft. Write exactly the approved scope — approved 3 of
 view), not with the tool's own success message. If an already-executed action looks wrong, never
 "correct" it with a second unapproved action — ask first.
 
+## Repo host and issue tracker
+
+Creating a pull/merge request, an issue or a comment, and closing one, are writes to a live system
+(GitHub, GitLab) and follow the rules above with these specifics:
+
+- **Approval:** a preview plus the human's explicit "yes" in the chat, per action, is the dated
+  approval for exactly that action. Show what will be sent — target, title, text, labels — and write
+  exactly that, nothing more; one "yes" covers one action, never the next one. A draft PR/MR is not
+  a published one: making it ready is its own "yes" (see "Making something visible" above), and `forge.py` cannot do it —
+  the human in the web interface, or the orchestrator after that "yes".
+- **Way back:** close it, never delete it (`forge.py close-pr`, `close-issue`); a comment stays and
+  is followed by a correcting one (or edited in the web interface), once the human agrees — closing
+  does not undo a comment. No backup is needed (see "Before any changing action"): these writes
+  create something new and overwrite nothing.
+- **Journal:** right after the action, an entry with the link (`entries.py new ledger ...`, the
+  link `forge.py` printed) and the approval — the "yes" in the chat with its date and what it
+  covered.
+- **Script:** `.act/scripts/forge.py` is the vetted script for these recurring writes. It shows a
+  preview and sends only with `--apply`, and never takes the token from the command line. This
+  differs on purpose from "Recurring writes go through a script" above, which names
+  `docs/ai/local/scripts/` — a template-shipped script counts as vetted, no copy needed there.
+- **Push:** pushing the branch a PR/MR needs is the orchestrator's alone, after its own "yes".
+  A worker never pushes, and never applies these writes.
+- Reading (projects, issues, PR/MR lists) stays free. Probing which access exists is
+  `.act/scripts/integrations.py` (`act-integrations`), which never tries a write.
+
 ## Deletion, production deployment, rights changes
 
 Permanently deleting data or accounts, deploying to production, and changing rights or access are

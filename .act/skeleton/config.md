@@ -76,6 +76,28 @@ start when the last `act-deps` run (a journal entry titled `act-deps: ...`) is o
 *or* this many commits, or once only when there is none yet — never a blocker, and only while
 `docs/project/` exists. A missing or malformed value counts as `30d/100c`.
 
+## Git hosting
+
+| Key | Value |
+| :--- | :--- |
+| `target-branch` | auto |
+| `forge` | auto |
+| `forge-host` | auto |
+
+`target-branch` is the branch a pull/merge request goes into. `auto` takes the remote's default
+branch, else the first of `development`, `develop`, `main` that exists; a branch name fixes it (the
+skill `act-pr` enters the value you confirm). `forge` is the host software of the `origin` remote:
+`auto` tells GitHub from GitLab by the host name (`github.com`, `gitlab.com`), else by a read-only
+probe of the host; `github` or `gitlab` sets it for a self-hosted instance. Empty, `(not set)` and a
+missing key all count as `auto`, so a project from before this section needs no change.
+`forge-host` names a self-hosted instance (one host name, or a comma list) that may receive the token;
+`auto` or empty means none. `forge.py` sends a token only to `github.com` (`api.github.com`),
+`gitlab.com`, a host named here or the host of `ACT_FORGE_API_URL` (an explicit override, for tests and
+proxies), and never over `http://` except to loopback. Enter a host only after the human confirmed it —
+this keeps a global token from going to a foreign host. Without it reads run without a token; `whoami`,
+`issues --mine` and every write stop with a hint before any request. A confirmed host reached over
+`http://` gets the same treatment until its address is `https://`.
+
 ## Checks
 
 Each check below runs before the action it names; `block` refuses the action, `warn` allows it

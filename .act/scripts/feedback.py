@@ -37,8 +37,9 @@
 #              `feedback` is normally switched on directly in docs/ai/config.md, never via
 #              --enable at all.
 #            - "mcp_server" and "usage" (skill/script invocation counts) are not collected: this
-#              template stage has neither an MCP catalog nor a usage-counting hook yet. `tools`
-#              (counts of agents/skills/scripts on disk) stands in for scope "c" until those land.
+#              template stage collects neither which servers of the MCP catalog (.act/mcp-catalog.md)
+#              a project uses nor has a usage-counting hook yet. `tools` (counts of
+#              agents/skills/scripts on disk) stands in for scope "c" until those land.
 #            - The adaptive cadence threshold drops the old "lower it after a template update"
 #              factor (no reliable per-date update log to read yet); the ignored/postponed/
 #              consecutive-sends factors are kept.

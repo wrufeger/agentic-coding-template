@@ -11,7 +11,7 @@ summary: dated approval, backup, and way back before irreversible or outward act
 
 Writing to a live system, permanent deletion, deployment, and rights/access changes need the
 human's dated approval for this exact case, plus a backup and a stated way back beforehand.
-Reading stays free. Details: `topics/live-systems.md`.
+Reading stays free. Details: `topics/live-systems.md` (also for PRs, issues and comments).
 
 ## `R-safe-no-secret-cli` — Never a secret on the command line
 
