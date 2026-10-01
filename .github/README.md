@@ -1,28 +1,33 @@
 <!-- act:template-readme -->
 # act — agentic coding template
 
-A working agreement between you and your AI coding assistant, set up in any project — a new one or
-one that already exists. You set the goals and decide; the assistant plans, hands bounded pieces to
-sub-agents, checks their results, and keeps the project's state in the repository, so the next
-session picks up exactly where the last one stopped. Everything lives in one thin layer, `.act/`,
-that a single command keeps current; all it needs is Python 3.9+.
+Turns your AI coding assistant into a reliable member of the team — in a new project or one that
+already exists. You set the goals and decide; the assistant plans, hands the work to specialized
+sub-agents, proves its results, and keeps the project's state in the repository, so every session
+picks up where the last one stopped. Setting it up takes one sentence in the chat.
 
-What the assistant holds itself to — an excerpt:
+What you get:
 
-- **Done means proven.** A test run, a commit, or an outside check backs every "done"; anything
-  else is reported as "not verified".
-- **Concept before code.** An idea gets options and a decision first, then it is built.
-- **You decide.** Open questions are collected in an inbox (`docs/ai/inbox/`), bundled — never
-  decided silently, never scattered through the chat.
-- **Nothing irreversible without your yes** — no deployment, deletion, write to a live system,
-  pull request or issue comment without approval for that exact case.
-- **No secrets** on the command line, in a commit, or in a log — every commit is scanned first.
-- **One orchestrator, bounded workers.** Sub-agents get a role, a write scope, and a cap on their
-  tool calls; only the main session commits, and never with `git add -A`.
-- **Recorded right away.** Tasks, decisions, and the journal land in `docs/ai/` as they happen,
-  not reconstructed at the end.
-- **The project has the last word.** Every rule can be switched off or replaced in
-  `docs/ai/rules.md`.
+- **Ready-made skills and agents.** More than twenty skills for everyday development — from idea to
+  task, bug fixes with a failing test first, refactoring, performance, test gaps, dependency
+  updates, releases, pull requests, design, accessibility — and nine sub-agent roles (builder,
+  reviewer, explorer, test-writer, debugger, …), each with its own model and effort tier.
+- **A structured process with sensible rules.** Concept before code, "done" only with evidence,
+  nothing irreversible without your yes, no secrets in commands, commits, or logs; in Claude Code,
+  hooks enforce the mechanical ones before every action. Coding rules for eleven languages and
+  frameworks — Python, TypeScript, Java, C#, Go, PHP, SQL, Bash, Vue, Nuxt, Tailwind — switched on
+  to match the stack it detects.
+- **Documentation, tests, and a record of the work, as a matter of course.** Every step lands in a
+  journal, tasks and decisions in `docs/ai/`; the project docs in `docs/project/` are kept in line
+  with the code, with a reminder when a check is due; bugs get a test before the fix, and the
+  project's tests run before every commit.
+- **Template updates and feedback.** `act-update` brings in a newer template state with a diff and
+  your consent, never touching your own settings or docs. Optional, privacy-filtered feedback tells
+  the template what worked and what was missing.
+- **Yours to configure and extend.** One file, `docs/ai/config.md`, steers workflow, checks, roles,
+  and languages. Every rule can be switched off or replaced; your own rules, coding rules, skills,
+  and agent roles sit next to the template's. Questions and tasks for you wait in one inbox, and a
+  board shows what is in progress.
 
 ## Getting started
 
@@ -65,7 +70,7 @@ for it and walks you through installing it if it is missing:
 - **macOS:** https://www.python.org/downloads/
 - **Linux:** the distribution's package manager.
 
-### Without an assistant
+### Setup by hand — Without an assistant
 
 For a **new project**, the setup runs entirely without AI. In a terminal, `init.py` asks for name,
 owner, stack, lint and test commands, tools, and languages, then works through ten fixed steps and
@@ -107,7 +112,7 @@ follow them; Claude Code also calls them by name (`/act-bug`).
 replaces `.act/`, and runs any due migrations. The project's own settings, docs, and working files
 are never touched; `act-doctor` checks for drift any time.
 
-## Feedback to the template — off by default
+## Feedback
 
 A project can report back what helped or was missing in the working method — never anything about
 the project itself. Off until switched on in `docs/ai/config.md`; even then no file leaves the
