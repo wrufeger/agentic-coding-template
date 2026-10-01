@@ -12,7 +12,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
-| `board.py` | Generate the per-branch board at .act-local/board-<branch>.md — a fully derived snapshot (current branch, last commit, dirty state, recent… | direct |
+| `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
@@ -284,14 +284,17 @@ least 20 characters) is the template's.
 Call: direct
 
 ```text
-usage: board.py [-h] [--chat-language CODE]
+usage: board.py [-h] [--chat-language CODE] [--shared]
 
-Write the per-branch board to .act-local/board-<branch>.md.
+Write the board view chosen by `board` in docs/ai/config.md: docs/ai/board.md (docs, shared) or
+.act-local/board-<branch>.md (local).
 
 options:
   -h, --help            show this help message and exit
   --chat-language CODE  remember the chat language recognized for this person on this machine
                         (.act-local/identity.json) while language-chat is auto, then exit
+  --shared              with `board: shared`: also write the versioned docs/ai/board-<identity>.md
+                        (act-commit calls it; a plain run never touches that file)
 ```
 
 ## `doctor.py`
@@ -356,7 +359,8 @@ options:
   --formerly OLD_ID     header line "formerly: <old id>"
   --status {open,answered}
                         question/todo/report/note entry (default open)
-  --for IDENTITY        todo/report/note entry: recipient (default all)
+  --for IDENTITY        task/todo/report/note entry: recipient (todo/report/note default all, task
+                        default this identity; all = shared)
   --body-file PATH      body below the heading, copied verbatim (UTF-8)
 ```
 

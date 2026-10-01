@@ -146,6 +146,7 @@ KIND_LABELS: dict[str, str] = {
     "script-docs": ".act/scripts/README.md out of date (script_docs.py)",
     "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
     "config-key": "Outdated keys in docs/ai/config.md",
+    "config-value": "Invalid values in docs/ai/config.md",
     "status-value": "Unknown `status:` values in entry headers",
     "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
@@ -173,6 +174,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "script-docs": ".act/scripts/README.md veraltet (script_docs.py)",
     "unknown-tool": "Unbekannte Werkzeugkennung(en) in docs/ai/config.md (`tools`)",
     "config-key": "Veraltete Schlüssel in docs/ai/config.md",
+    "config-value": "Ungültige Werte in docs/ai/config.md",
     "status-value": "Unbekannte `status:`-Werte in Eintragsköpfen",
     "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit Migration 001-one-inbox)",
     "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
@@ -945,6 +947,28 @@ def check_legacy_config_keys(root: Path) -> list[Finding]:
     )]
 
 
+# Allowed values of config keys board.py and the inbox rules read; an empty value means the default.
+_CONFIG_VALUES = {
+    "board": ("docs", "shared", "local"),
+    "board-others": ("on", "off"),
+    "inbox-decisions": ("immediate", "at-start"),
+}
+
+
+def check_config_values(root: Path) -> list[Finding]:
+    """One finding per config.md key in _CONFIG_VALUES whose value is none of the allowed ones."""
+    config = actlib.read_config(root)
+    findings: list[Finding] = []
+    for key, allowed in _CONFIG_VALUES.items():
+        value = config.get(key, "").strip()
+        if value and value.lower() not in allowed:
+            findings.append(Finding(
+                path="docs/ai/config.md", line=None, kind="config-value",
+                message=f"`{key}` is {value!r} — use {' | '.join(allowed)}",
+            ))
+    return findings
+
+
 _UNRESOLVED_RE = re.compile(r"^(?P<path>.*?):(?P<line>\d+): (?P<message>.*)$")
 
 
@@ -1251,6 +1275,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_settings_scripts(root)
     findings += check_unknown_tools(root)
     findings += check_legacy_config_keys(root)
+    findings += check_config_values(root)
     findings += check_imports(root)
     findings += check_status_values(root)
     findings += check_manifest_drift(root)

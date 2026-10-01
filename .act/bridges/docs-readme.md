@@ -12,6 +12,7 @@ this file directly for anything those two miss — it stays a plain table, not a
 | :--- | :--- | :--- | :--- |
 | `docs/project/coding_rules.md` | Which rule sets/groups are on for this stack | <today> | before writing or reviewing code |
 | `docs/ai/config.md` | Project configuration — steers the assistant | <today> | before any task; re-read after a change |
+| `docs/ai/board.md` | Board — generated overview of what is open (not versioned by default, see `board` in `config.md`) | <today> | at session start, for the current picture |
 | `docs/ai/rules.md` | Orchestrator-only rule digest, loaded at session start | <today> | orchestrator, every session (automatic) |
 | `docs/ai/inbox/`, `docs/ai/proposals/` | Things waiting for a decision: questions, tasks for a human, tool reports, notes, proposed rule changes | <today> | at session start, and before starting a new task |
 | `docs/ai/work/tasks/`, `docs/ai/work/backlog/` | Open tasks (the assistant's own work) and backlog items | <today> | when picking a task or grooming the backlog |

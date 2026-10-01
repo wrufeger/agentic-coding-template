@@ -26,8 +26,18 @@ What you get:
   the template what worked and what was missing.
 - **Yours to configure and extend.** One file, `docs/ai/config.md`, steers workflow, checks, roles,
   and languages. Every rule can be switched off or replaced; your own rules, coding rules, skills,
-  and agent roles sit next to the template's. Questions and tasks for you wait in one inbox, and a
-  board shows what is in progress.
+  and agent roles sit next to the template's. Everything waiting for you — questions and tasks —
+  sits in one inbox, and a board under `docs/ai/` shows what is in progress.
+
+**What it costs, and when it pays off.** The rules load at the start of every session — roughly
+8,000–9,000 tokens with one coding rule set (an estimate from file size; after the first turn most
+of it comes from the prompt cache) — and about as much again for each sub-agent. On top of that,
+the assistant does more per task than it would without the template: tests as evidence, a review
+before acceptance, a journal entry, questions booked in the inbox. That pays off once a project
+lives longer than one session — when work is handed over between sessions or people, when existing
+code gets changed or fixed, or when a mistake such as a leaked secret or an irreversible step would
+be expensive. For a one-off script, a throwaway prototype, or a quick question, it costs more than
+it saves. A measured comparison with and without the template is in preparation.
 
 ## Getting started
 
@@ -128,11 +138,12 @@ A project set up from here has three places that matter:
   roles, hooks, and scripts. Never edited in the project (a project version goes to `docs/ai/local/`
   instead), replaced as a whole by `act-update`.
 - **`docs/ai/`** — the working state, versioned with the code: settings (`config.md`), the rules
-  in effect (`rules.md`), inbox, tasks, backlog, and journal.
+  in effect (`rules.md`), inbox, tasks, backlog, and journal — plus the generated board
+  (`board.md`, not versioned by default; refreshed at session start and after a merge).
 - **`docs/project/`** — the project's own documentation, including which coding rule sets apply.
 
 Around them sit the small files each tool reads (`CLAUDE.md`, `AGENTS.md`, `.claude/`,
-`.agents/skills/`) and `.act-local/`, which stays on your machine: the board, local state, caches.
+`.agents/skills/`) and `.act-local/`, which stays on your machine: local state and caches.
 
 ## Tools
 

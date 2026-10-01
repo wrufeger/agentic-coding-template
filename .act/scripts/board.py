@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Generate the per-branch board at .act-local/board-<branch>.md — a fully derived
-#          snapshot (current branch, last commit, dirty state, recent journal entries, one
-#          "Waiting for you" list drawn from the single inbox at docs/ai/inbox/ (16-inbox-
-#          questions-tasks.md, Q100 b), open tasks, backlog items). Nothing here is
-#          hand-maintained; every run overwrites the file from scratch. Stdlib only.
+# Purpose: Generate the board — a fully derived snapshot (current branch, last commit, dirty
+#          state, recent journal entries, one "Waiting for you" list drawn from the single inbox
+#          at docs/ai/inbox/ (16-inbox-questions-tasks.md), open tasks, open decisions
+#          in the backlog, backlog items). Nothing here is hand-maintained; every run overwrites
+#          the file from scratch. Where it goes is the `board` key in docs/ai/config.md:
+#          `docs` (default) docs/ai/board.md, gitignored, heading names the branch;
+#          `local` .act-local/board-<branch>.md; `shared` keeps the same local view in
+#          docs/ai/board.md and never rewrites a versioned file on a plain run — only
+#          `--shared` (called by act-commit) also writes docs/ai/board-<identity>.md, versioned,
+#          without volatile lines (no last commit, no working tree, no timestamp: two runs
+#          without content change are byte-identical).
+#          Tasks carry `for: <identity>`: "Open tasks" lists this identity's, `all` and
+#          unassigned ones; with `board-others` on (default with `mode: team`) a section
+#          "Others" lists the tasks for other people and, in the `shared` local view, the open
+#          tasks from every other docs/ai/board-*.md. Stdlib only.
 #
 #          Alongside the board, every run also (re)writes .act-local/inbox-<identity>.md: a
 #          generated, read-only view collecting the full text of every open or answered inbox
@@ -19,12 +29,16 @@
 #
 # Usage:
 #   python .act/scripts/board.py
+#   python .act/scripts/board.py --shared             # `board: shared`: also the versioned board
 #   python .act/scripts/board.py --chat-language de   # remember the owner's chat language here
 #
 # Output format:
-#   Writes .act-local/board-<branch>.md (gitignored) and .act-local/inbox-<identity>.md
-#   (gitignored), then prints one summary line to stdout, e.g. "board: wrote
-#   .act-local/board-next.md (branch=next, ledger=3, waiting=2, tasks=5, backlog=1)".
+#   Writes the view chosen by `board` (docs/ai/board.md, or .act-local/board-<branch>.md for
+#   `local`) and .act-local/inbox-<identity>.md (gitignored), then prints one summary line to
+#   stdout, e.g. "board: wrote docs/ai/board.md (mode=docs, branch=next, ledger=3, waiting=2,
+#   tasks=5, backlog=1)". `--shared` adds docs/ai/board-<identity>.md (a second summary line);
+#   without an identity it writes none and says so on stderr. An unknown `board` value behaves
+#   as `docs` and prints one note to stderr. All files are written with LF line endings.
 #   --chat-language: one line "board: chat language '<code>' remembered ..."; exit 2 if the value
 #   is no language code.
 #
@@ -59,6 +73,9 @@ LEDGER_FALLBACK = Path("docs/ai/work/ledger.md")
 LEDGER_FILENAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+)\.md$")
 TASKS_DIR = Path("docs/ai/work/tasks")
 BACKLOG_DIR = Path("docs/ai/work/backlog")
+BOARD_MODES = ("docs", "shared", "local")
+DECISION_RE = re.compile(r"(?im)^decision:\s*(\S+)\s*$")
+OTHERS_LIMIT = 10     # per list in the "Others" section
 # Q65a: a task's working state ("Stand ...") lives here (entries.py state), gitignored, never in
 # the versioned task file itself — read_task_titles() shows the last non-blank line next to the
 # task's title.
@@ -249,6 +266,20 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
     sorts by its identity prefix, not by when it was written). Title is the file's first Markdown
     heading, or the filename stem if there is none; a task with a working state recorded via
     `entries.py state` (Q65a) gets that state's last line appended."""
+    tasks = read_tasks(root)
+    if tasks is None:
+        return None
+    return [_task_text(task) for task in tasks[:limit]]
+
+
+def _task_text(task: dict) -> str:
+    return f"{task['title']} — {task['state']}" if task["state"] else task["title"]
+
+
+def read_tasks(root: Path) -> Optional[list[dict]]:
+    """Every task under docs/ai/work/tasks/ as {"title", "for", "state"}, oldest first (same order
+    as read_task_titles()), or None if the directory does not exist. "for" is the header's `for:`
+    value or None; "state" the last working-state line or None."""
     tasks_dir = root / TASKS_DIR
     if not tasks_dir.is_dir():
         return None
@@ -256,12 +287,77 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
         (p for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md"),
         key=lambda p: _timeline_key(_read_created(p), p.name, newest_first=False),
     )
-    titles = []
-    for path in files[:limit]:
+    tasks: list[dict] = []
+    for path in files:
+        try:
+            header = actlib.header_block(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            header = ""
+        for_match = FOR_RE.search(header)
+        tasks.append({
+            "title": _first_heading(path) or path.stem,
+            "for": for_match.group(1).strip() if for_match else None,
+            "state": _last_state_line(root, path.name),
+        })
+    return tasks
+
+
+def _is_own_task(task: dict, identity: Optional[str]) -> bool:
+    """A task is this person's (or shared) if it names this identity or `all`, carries no `for:`,
+    or if this checkout has no identity at all (nothing to tell it apart from). Short-form
+    comparison like _group_by_recipient()."""
+    target = (task["for"] or "").strip().lower()
+    if not target or target == "all" or not identity:
+        return True
+    return actlib.recipient_slug(target) == actlib.recipient_slug(identity)
+
+
+def read_open_decisions(root: Path) -> list[str]:
+    """"<id> — <title>" for every backlog entry whose header says `decision: open` 
+    (used with `inbox-decisions: at-start`), sorted by file name; an empty list if there is none
+    (the board then leaves the section out)."""
+    backlog_dir = root / BACKLOG_DIR
+    if not backlog_dir.is_dir():
+        return []
+    found: list[str] = []
+    for path in sorted(backlog_dir.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        try:
+            header = actlib.header_block(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        match = DECISION_RE.search(header)
+        if not match or match.group(1).strip().lower() != "open":
+            continue
+        id_match = ID_RE.search(header)
         title = _first_heading(path) or path.stem
-        state = _last_state_line(root, path.name)
-        titles.append(f"{title} — {state}" if state else title)
-    return titles
+        found.append(f"{id_match.group(1)} — {title}" if id_match else title)
+    return found
+
+
+def read_other_boards(root: Path, own_name: str) -> list[tuple[str, list[str]]]:
+    """For `shared` mode: (person, open tasks) from every other docs/ai/board-*.md — the lines of
+    its "## Open tasks" section, "(none)" dropped. `own_name` is this board's own file, skipped.
+    Sorted by file name; a file that cannot be read is skipped."""
+    found: list[tuple[str, list[str]]] = []
+    for path in sorted((root / "docs" / "ai").glob("board-*.md")):
+        if path.name == own_name:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        tasks: list[str] = []
+        inside = False
+        for line in lines:
+            if line.startswith("## "):
+                inside = line.strip() == "## Open tasks"
+                continue
+            if inside and line.startswith("- ") and line.strip() != "- (none)":
+                tasks.append(line[2:].strip())
+        found.append((path.stem[len("board-"):], tasks))
+    return found
 
 
 def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list[str]]:
@@ -433,9 +529,17 @@ def render_board(
     answered_entries: Optional[list[str]],
     task_titles: Optional[list[str]],
     backlog_titles: Optional[list[str]],
-    generated_at: str,
+    generated_at: Optional[str],
+    *,
+    heading: Optional[str] = None,
+    decisions: Optional[list[str]] = None,
+    others: Optional[list[str]] = None,
 ) -> str:
-    lines: list[str] = [f"# Board — {branch_label}", ""]
+    """`generated_at` None (mode `shared`) leaves the timestamp out; with `commit` and `dirty` None
+    as well the output holds nothing volatile. `heading` replaces the branch in the title;
+    `decisions` (open decisions in the backlog) and `others` (section "Others", None = off) are
+    left out when empty/None respectively."""
+    lines: list[str] = [f"# Board — {heading or branch_label}", ""]
 
     if commit is not None or dirty is not None:
         lines.append("## Status")
@@ -481,6 +585,19 @@ def render_board(
             lines.append("- (none)")
         lines.append("")
 
+    if others is not None:
+        lines.append("## Others")
+        if others:
+            lines.extend(f"- {entry}" for entry in others)
+        else:
+            lines.append("- (none)")
+        lines.append("")
+
+    if decisions:
+        lines.append("## Open decisions in backlog")
+        lines.extend(f"- {entry}" for entry in decisions)
+        lines.append("")
+
     if backlog_titles is not None:
         lines.append("## Backlog")
         if backlog_titles:
@@ -490,7 +607,8 @@ def render_board(
         lines.append("")
 
     lines.append("---")
-    lines.append(f"Generated {generated_at}. This file is generated — edits here are lost on the next run.")
+    stamp = f"Generated {generated_at}." if generated_at else "Generated."
+    lines.append(f"{stamp} This file is generated — edits here are lost on the next run.")
     lines.append("")
     return "\n".join(lines)
 
@@ -541,10 +659,15 @@ def main(argv: list[str]) -> int:
             pass
 
     parser = argparse.ArgumentParser(
-        prog="board.py", description="Write the per-branch board to .act-local/board-<branch>.md.")
+        prog="board.py",
+        description="Write the board view chosen by `board` in docs/ai/config.md: docs/ai/board.md (docs, "
+                    "shared) or .act-local/board-<branch>.md (local).")
     parser.add_argument("--chat-language", metavar="CODE",
                         help="remember the chat language recognized for this person on this machine "
                              "(.act-local/identity.json) while language-chat is auto, then exit")
+    parser.add_argument("--shared", action="store_true",
+                        help="with `board: shared`: also write the versioned docs/ai/board-<identity>.md "
+                             "(act-commit calls it; a plain run never touches that file)")
     args = parser.parse_args(argv)
 
     root = actlib.repo_root()
@@ -564,15 +687,65 @@ def main(argv: list[str]) -> int:
     commit = get_last_commit(root) if branch is not None else None
     dirty = has_changes(root) if branch is not None else None
     branch_label = branch if branch is not None else "(no git)"
-    filename = f"board-{sanitize_branch(branch) if branch is not None else 'no-git'}.md"
+
+    config = actlib.read_config(root)
+    board_mode = config.get("board", "").strip().lower() or "docs"
+    if board_mode not in BOARD_MODES:
+        print(f"board: unknown board value {config.get('board', '').strip()!r} in docs/ai/config.md "
+              f"(docs | shared | local) — using docs", file=sys.stderr)
+        board_mode = "docs"
+    others_value = config.get("board-others", "").strip().lower()
+    if others_value not in ("on", "off"):
+        others_value = "on" if config.get("mode", "").strip().lower() == "team" else "off"
 
     identity_data = actlib.read_identity()
     my_identity = identity_data.get("identity") if identity_data else None
 
     ledger_entries = read_ledger_entries(root)
     inbox_entries = read_inbox_entries(root)
-    task_titles = read_task_titles(root)
+    all_tasks = read_tasks(root)
+    task_titles: Optional[list[str]] = None
+    others: Optional[list[str]] = None
+    if all_tasks is not None:
+        own_tasks = [t for t in all_tasks if _is_own_task(t, my_identity)]
+        task_titles = [_task_text(t) for t in own_tasks[:TASKS_LIMIT]]
+    known_titles = [t["title"] for t in (all_tasks or [])]
+    other_tasks = [t for t in (all_tasks or []) if not _is_own_task(t, my_identity)]
+    others_own_files: list[str] = []
+    if others_value == "on":
+        others_own_files = [f"{t['title']} — for {t['for']}" for t in other_tasks[:OTHERS_LIMIT]]
+
+    def others_with_boards(skip_name: str) -> list[str]:
+        merged = list(others_own_files)
+        for person, person_tasks in read_other_boards(root, skip_name):
+            for text in person_tasks[:OTHERS_LIMIT]:
+                if any(text == title or text.startswith(f"{title} — ") for title in known_titles):
+                    continue  # already known from a task file (own, shared or someone else's)
+                merged.append(f"{text} — {person}")
+        return merged
+
     backlog_titles = read_backlog_titles(root)
+    decisions = read_open_decisions(root)
+
+    slug = actlib.recipient_slug(my_identity) if my_identity else ""
+    own_board_name = f"board-{slug}.md" if slug and slug != "unknown" else ""
+    versioned_name: Optional[str] = None
+    if board_mode == "shared" and args.shared:
+        if own_board_name:
+            versioned_name = own_board_name
+        else:
+            print("board: no usable identity in .act-local/identity.json — the versioned "
+                  "docs/ai/board-<identity>.md is not written, only the local view", file=sys.stderr)
+    if board_mode == "local":
+        board_rel = Path(".act-local") / f"board-{sanitize_branch(branch) if branch is not None else 'no-git'}.md"
+    else:
+        board_rel = Path("docs") / "ai" / "board.md"
+    if others_value == "on":
+        # the local view of `shared` mode also lists what the others committed; the versioned file
+        # (written below) stays free of it, so it depends on this person's own files only
+        others = others_with_boards(own_board_name) if board_mode == "shared" else others_own_files
+    else:
+        others = None
 
     if inbox_entries is not None:
         open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=_sort_key)
@@ -602,18 +775,26 @@ def main(argv: list[str]) -> int:
     content = render_board(
         branch_label, commit, dirty, ledger_entries, waiting_mine, waiting_all,
         waiting_other_count, answered_entries, task_titles, backlog_titles, generated_at,
+        heading=None, decisions=decisions, others=others,
     )
 
-    board_path = root / ".act-local" / filename
-    board_path.parent.mkdir(parents=True, exist_ok=True)
-    board_path.write_text(content, encoding="utf-8")
+    board_path = root / board_rel
+    actlib.write_text_lf(board_path, content)
+
+    if versioned_name is not None:
+        versioned_content = render_board(
+            branch_label, None, None, ledger_entries, waiting_mine, waiting_all,
+            waiting_other_count, answered_entries, task_titles, backlog_titles, None,
+            heading=my_identity, decisions=decisions,
+            others=others_own_files if others_value == "on" else None,
+        )
+        actlib.write_text_lf(root / "docs" / "ai" / versioned_name, versioned_content)
 
     # Written on every run, even when the inbox directory does not exist yet (view_entries is
     # then simply empty) — a fresh checkout still gets a file to read, "Nothing waiting.".
     view_filename = f"inbox-{sanitize_identity(my_identity)}.md"
     view_path = root / ".act-local" / view_filename
-    view_path.parent.mkdir(parents=True, exist_ok=True)
-    view_path.write_text(render_inbox_view(view_entries, root), encoding="utf-8")
+    actlib.write_text_lf(view_path, render_inbox_view(view_entries, root))
 
     ledger_count = len(ledger_entries) if ledger_entries is not None else 0
     waiting_total = (
@@ -623,9 +804,11 @@ def main(argv: list[str]) -> int:
     backlog_count = len(backlog_titles) if backlog_titles is not None else 0
     rel = board_path.relative_to(root).as_posix()
     print(
-        f"board: wrote {rel} (branch={branch_label}, ledger={ledger_count}, "
+        f"board: wrote {rel} (mode={board_mode}, branch={branch_label}, ledger={ledger_count}, "
         f"waiting={waiting_total}, tasks={task_count}, backlog={backlog_count})"
     )
+    if versioned_name is not None:
+        print(f"board: wrote docs/ai/{versioned_name} (versioned, mode=shared)")
     return 0
 
 

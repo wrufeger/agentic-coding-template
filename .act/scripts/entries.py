@@ -33,7 +33,9 @@
 #       [--id <T|B|Q><n>[a-z]]    keep this id (task/backlog/question only; refused if it is taken)
 #       [--formerly <old id>]     header line "formerly: <old id>"
 #       [--status open|answered]  question/todo/report/note only (default open)
-#       [--for <identity>]        todo/report/note only (default all; a question is always "all")
+#       [--for <identity>]        task/todo/report/note only (todo/report/note default all; a task
+#                                 defaults to this checkout's identity, `all` = shared; a question
+#                                 is always "all")
 #       [--body-file <path>]      body below the heading, copied verbatim (UTF-8)
 #   python .act/scripts/entries.py assign                  # hand out ids still missing (and rename)
 #   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line (Q65a)
@@ -240,6 +242,12 @@ def _identity_slug(root: Path) -> str:
     has no "identity" value (never blocks entry creation on it)."""
     value = (actlib.read_identity() or {}).get("identity")
     return _slugify(value) if isinstance(value, str) and value.strip() else "unknown"
+
+
+def _own_identity() -> Optional[str]:
+    """This checkout's identity in short form (.act-local/identity.json), or None if there is none."""
+    value = (actlib.read_identity() or {}).get("identity")
+    return actlib.recipient_slug(value) if isinstance(value, str) and value.strip() else None
 
 
 def _recipient_value(recipient: Optional[str]) -> str:
@@ -590,8 +598,8 @@ def validate_entry(
     if status is not None and (kind not in actlib.INBOX_KINDS or status not in STATUS_VALUES):
         problems.append(f"--status {status!r}: only a question, todo, report, or note entry takes one, "
                         f"and only {' | '.join(STATUS_VALUES)}")
-    if recipient is not None and (kind not in ("todo", "report", "note") or not _single_line(recipient)):
-        problems.append("--for: only a todo, report, or note entry takes a recipient "
+    if recipient is not None and (kind not in ("task", "todo", "report", "note") or not _single_line(recipient)):
+        problems.append("--for: only a task, todo, report, or note entry takes a recipient "
                         "(one line; a question is always for all)")
     return problems
 
@@ -627,6 +635,13 @@ def create_entry(
             header_lines.append(f"id: {assigned_id}")
         if formerly is not None:
             header_lines.append(f"formerly: {formerly.strip()}")
+        if kind == "task":
+            # a task says whose work it is — the current workspace identity unless --for names
+            # someone else ("all" = shared). Without an identity (no identity.json) no field is
+            # written; the board counts such a task as shared.
+            task_for = _recipient_value(recipient) if recipient is not None else _own_identity()
+            if task_for:
+                header_lines.append(f"for: {task_for}")
         if kind in actlib.INBOX_KINDS:
             # Q63b: every entry waiting on a person carries "for:" — "all" by default; a question
             # is never filed to just one person's own queue, so it is always "all" regardless of
@@ -854,7 +869,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--status", choices=STATUS_VALUES,
                        help="question/todo/report/note entry (default open)")
     p_new.add_argument("--for", dest="recipient", metavar="IDENTITY",
-                       help="todo/report/note entry: recipient (default all)")
+                       help="task/todo/report/note entry: recipient (todo/report/note default all, "
+                            "task default this identity; all = shared)")
     p_new.add_argument("--body-file", metavar="PATH", help="body below the heading, copied verbatim (UTF-8)")
 
     sub.add_parser("assign", help="hand out ids still missing ('team' mode: only on the default branch)")

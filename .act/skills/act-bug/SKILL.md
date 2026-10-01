@@ -26,5 +26,6 @@ cleanup found along the way, and not for a fix nobody could actually trigger.
 Can't reproduce it: document what was reported, what was tried, and where reproduction failed
 instead of fixing on suspicion; ask the human when something's missing (credentials, test data, a
 specific environment). Anything else noticed along the way goes to the backlog, not into this
-assignment. `R-role-escalate` applies unchanged — two failed rounds at the same thing, then the
-expert role, never a third identical attempt.
+assignment — booked with its open decisions per `inbox-decisions` (`R-human-ask`).
+`R-role-escalate` applies unchanged — two failed rounds at the same thing, then the expert role,
+never a third identical attempt.

@@ -24,7 +24,9 @@ code already answers, so research comes before the question round, never after.
    is one, ordered by how much each blocks, with one line on what happens if it stays unanswered.
    File the same questions in the inbox (`entries.py new question <title>` per question, `kind:
    question`) so the answer has somewhere to land — the board's Waiting section already surfaces
-   them, no separate inbox entry needed.
+   them, no separate inbox entry needed. Under `inbox-decisions: at-start` this is where a backlog
+   entry's `decision: open` points get asked; under `immediate` they are already in the inbox —
+   still check the backlog entries in scope for any left over.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked
    ready. A question left open keeps its task on hold — never started "on best guess".
 7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration — the plan

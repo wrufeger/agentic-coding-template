@@ -21,9 +21,10 @@
 #          before returning 2, same as every existing check) and add ("<name>", "check_<name>")
 #          to _PRE_TOOL_USE_CHECKS at the position it should run in. A listed module that does
 #          not exist yet is skipped. Observers (event log, usage counter) work the same way via
-#          _OBSERVERS, with observe(event, payload) -> None; for every event but PreToolUse they see
-#          it before any check runs and never block — for PreToolUse specifically they run *after*
-#          the checks instead (see the "PreToolUse" paragraph under Usage below).
+#          _OBSERVERS, with observe(event, payload) -> None (checks/board_refresh.py, for instance,
+#          regenerates the board after a PostToolUse of a git merge/pull/rebase/switch/...); for
+#          every event but PreToolUse they see it before any check runs and never block — for
+#          PreToolUse specifically they run *after* the checks instead (see the "PreToolUse" paragraph under Usage below).
 #
 #          PostToolUse runs every entry in _POST_TOOL_USE_NOTES — signature
 #          note_<name>(payload: dict) -> str | None — collecting whatever text each one returns
@@ -50,8 +51,9 @@
 #          hookSpecificOutput does support additionalContext, hookEventName "PostToolUseFailure".
 #          Deliberately NOT given the same pre-import, pre-observer fast exit that PostToolUse's
 #          early block above has (see that block's own comment): that exit runs before
-#          _run_observers, which is safe for PostToolUse only because none of _OBSERVERS reacts to
-#          a plain "PostToolUse" event — but checks.event_log.observe *does* have a dedicated
+#          _run_observers, which is safe for PostToolUse only because the observers that react to
+#          a plain "PostToolUse" event (board_refresh) only care about tools in
+#          _POST_TOOL_USE_TOOLS (Bash, PowerShell), which the early block lets through — but checks.event_log.observe *does* have a dedicated
 #          PostToolUseFailure branch (the "[error]" log line, every failure, any tool, worker or
 #          not) that must keep firing regardless of which tool failed. Skipping straight past that
 #          would silently drop failure logging for every tool outside _POST_TOOL_USE_TOOLS (Read,
@@ -348,6 +350,7 @@ _OBSERVERS = (
     ("event_log", "observe"),
     ("usage", "observe"),
     ("status_poll", "observe"),  # resets the poll streak on UserPromptSubmit (R-cost-wait)
+    ("board_refresh", "observe"),  # regenerates the board after PostToolUse of git merge/pull/...
     ("tips", "observe"),         # minute/hour reminders on UserPromptSubmit — the one observer
                                  # that prints, and only for that event: UserPromptSubmit runs
                                  # async (.act/bridges/settings.hooks.json), so plain stdout is

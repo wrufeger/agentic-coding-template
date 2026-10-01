@@ -9,4 +9,6 @@ renamed by `entries.py assign`. Read by `.act/scripts/board.py` for the board; m
 `docs/ai/work/archive/` once accepted (`docs/ai/work/archive/README.md`). The current working
 state ("Stand ...") never goes into this file — it goes to the gitignored
 `.act-local/state/<this file's name>` via `python .act/scripts/entries.py state <T-id> <text>`,
-which the board then shows next to the task title.
+which the board then shows next to the task title. The header also carries `for: <identity>` (whose
+task it is; `entries.py new task` writes the current identity, `--for` changes it, `all` or no
+field = shared); the board lists tasks for others apart (`board-others` in `docs/ai/config.md`).

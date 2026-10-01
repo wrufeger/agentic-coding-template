@@ -7,6 +7,10 @@
 /CLAUDE.md merge=ours
 /AGENTS.md merge=ours
 /docs/ai/rules.md merge=ours
+# Per-person board file of `board: shared`, written with LF. `merge=ours` only takes effect where
+# the driver above is registered; otherwise a normal merge applies, and the next commit rewrites
+# the file anyway (act-commit runs `board.py --shared`).
+/docs/ai/board-*.md merge=ours text eol=lf
 # .act/MANIFEST.json hashes the bytes on disk: without a fixed line ending, a checkout with
 # core.autocrlf=true would report every text file under .act/ as changed by hand.
 /.act/** text=auto eol=lf

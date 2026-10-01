@@ -36,7 +36,8 @@
 #   formerly   the old id of another scheme, written as "formerly: <old id>"
 #   body       text below the heading, verbatim   | body_file  a UTF-8 file holding it instead
 #   status     open | answered | done (question/todo/report/note) | for   recipient identity
-#              (todo/report/note only — a question is always "for: all")
+#              (task/todo/report/note — a question is always "for: all"; a task without one
+#              gets this checkout's identity)
 #   target     rules | coding | checklists | config               (proposal only, required)
 #   author     free text for the header                (proposal only; default: see below)
 # Unknown keys are refused, so a misspelt field is never dropped silently. "target"/"author" on
@@ -374,6 +375,12 @@ def _expected_text(row: dict, item: dict) -> str:
         header_lines.append(f"id: {entry_id}")
     if item["formerly"] is not None:
         header_lines.append(f"formerly: {item['formerly'].strip()}")
+    if item["kind"] == "task":
+        # a task carries `for:` too (create_entry(): the item's value, else this identity)
+        task_for = (entries._recipient_value(item["for"]) if item["for"] is not None
+                    else entries._own_identity())
+        if task_for:
+            header_lines.append(f"for: {task_for}")
     if item["kind"] in actlib.INBOX_KINDS:
         header_lines.append(f"kind: {item['kind']}")
         header_lines.append("for: all" if item["kind"] == "question"

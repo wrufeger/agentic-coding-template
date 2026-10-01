@@ -19,7 +19,9 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    option, with its consequences.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
    question <title>` — writes `kind: question` and `for: all` into the header, `Q63b`), options
-   labeled, recommendation marked. Nothing built, no task filed, before it's answered.
+   labeled, recommendation marked. Nothing built, no task filed, before it's answered. Any other
+   open decision that comes up while filing goes into the inbox too, or stays on the backlog item
+   as `decision: open` under `inbox-decisions: at-start` (`R-human-ask`).
 5. **Estimate for the chosen path only**: scope, missing tooling (library, MCP server, rule set,
    a skill that doesn't exist yet — its own step, not "along the way"), a rough task breakdown
    with goal and acceptance check, and an ADR in `docs/project/decisions.md`.

@@ -3,3 +3,5 @@
 __pycache__/
 ai.log
 ai.log.*.bak
+# Board in the default `board: docs` mode: regenerated per person, never versioned (harmless in other modes)
+docs/ai/board.md

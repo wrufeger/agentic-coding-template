@@ -51,6 +51,20 @@
 #          key-name gate already keeps ordinary code/prose out, so the bar itself can sit lower). A
 #          line containing the marker `act:allow-secret`, or a value that reads as a placeholder
 #          (`<token>`, `${VAR}`, `xxx...`, `changeme`, `example`, ...), is never reported.
+#          An *unquoted* value that is code rather than a literal is never measured, but only in a
+#          source-code file (_SOURCE_EXTENSIONS: .py .js .ts .vue .php .java .go .cs ... ; the path
+#          comes from the diff section / new-file name), never on a comment line (leading `#`,
+#          `//`, `/*`, `*`, `--`, `<!--`) or after a comment marker earlier on the line, and never
+#          for a value that looks generated (two or more separate digit runs, `Ab3dEf9Gh...`):
+#          a call (identifier or member path directly followed by `(` -- a keyword argument whose
+#          value is a function call), a member-access path (a field copied from a request body,
+#          `req.body.<field>`) or a plain identifier. In every other file
+#          (`.env*`, .ini, .cfg, .conf, .properties, .yaml/.yml, .toml, shell scripts, Dockerfile,
+#          docs, no or unknown extension) a bare value is a literal and stays measured, whatever
+#          its shape. A quoted value is always measured.
+#          All findings are named in the hold message, up to _MAX_FINDINGS one by one, then "+N more"
+#          with the total and the affected files, so one round of marking is enough;
+#          the scan itself stops collecting at _MAX_COLLECTED.
 #          Deliberately not flagged, by construction rather than as a special case: a lockfile's
 #          `"integrity": "sha512-..."`/`"resolved": "..."` or a bare UUID never matches the
 #          assignment rule, because their key names are not in the credential vocabulary.
@@ -79,7 +93,9 @@
 #          run back to back in one hook call, so their budgets must not simply add up, 2026-09-27
 #          review 2, m5). Running out
 #          of it never blocks by itself — only a note ("not fully checked") — but real findings
-#          from the part that *was* scanned still hold the commit.
+#          from the part that *was* scanned still hold the commit. The note says which limit hit
+#          (_incomplete_note): the time budget (or a failed git call), and/or the files skipped for
+#          size, named.
 #
 #          PreToolUse's plain stdout (the `warn`-mode hold message, the "not fully checked" note)
 #          is transcript-only and never reaches the model on an allowed (exit 0) call — confirmed
@@ -159,7 +175,8 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_ALLOW_MARK", "_ENV_ALLOWED", "_MAX_DIFF_BYTES", "_MAX_FINDINGS", "_TIME_BUDGET",
+    "_ALLOW_MARK", "_ENV_ALLOWED", "_MAX_DIFF_BYTES", "_MAX_FINDINGS", "_MAX_COLLECTED", "_TIME_BUDGET",
+    "_SOURCE_EXTENSIONS", "_MEMBER_ACCESS_RE", "_IDENTIFIER_RE", "_CALL_RE", "_is_source_file", "_incomplete_note",
     "_GIT_TIMEOUT", "_ALIAS_TIMEOUT", "_MAX_NESTED_DEPTH", "_NOTES_DIRNAME",
     "_SAFE_SESSION_ID_RE", "_KNOWN_PATTERNS", "_KEY_VALUE_RE", "_PLACEHOLDER_RE", "_HUNK_RE",
     "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
@@ -180,7 +197,10 @@ __all__ = [
 _ALLOW_MARK = "act:allow-secret"
 _ENV_ALLOWED = {".env.example", ".env.sample", ".env.template"}
 _MAX_DIFF_BYTES = 2 * 1024 * 1024
-_MAX_FINDINGS = 5
+# Findings named one by one in the hold message; the rest is counted ("+N more", total, files).
+_MAX_FINDINGS = 30
+# The scan itself stops collecting here (a runaway diff), so the whole list is nearly always complete.
+_MAX_COLLECTED = 500
 # Kept well under the hook's own ~10s timeout, shared across every subprocess call (diff, ls-files,
 # alias lookups) and file read this check makes for one PreToolUse invocation.
 _TIME_BUDGET = 4.5
@@ -331,8 +351,62 @@ def _normalized_key(key: str) -> str:
     return _KEY_SEPARATOR_RE.sub("-", _CAMEL_BOUNDARY_RE.sub("-", key))
 
 
-def _match_secret(line: str) -> Optional[tuple[str, str]]:
-    """(kind, matched value) for the first thing in `line` that looks like a secret, or None. The
+_MEMBER_ACCESS_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*(?:\??\.[A-Za-z_$][A-Za-z0-9_$]*)+$")
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+# Source-code files, where an unquoted value after `key =`/`key:` is an expression (a variable, a
+# member path, a call), not a literal. Everything else -- `.env*`, .ini/.cfg/.conf/.properties,
+# .yaml/.yml/.toml, no extension, any unknown extension, shell scripts (`KEY=value` is a literal
+# there) -- reads a bare value as a literal and keeps measuring it.
+_SOURCE_EXTENSIONS = frozenset({
+    ".py", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx", ".vue", ".svelte", ".php",
+    ".java", ".kt", ".kts", ".go", ".cs", ".rb", ".rs", ".swift", ".scala", ".c", ".h", ".cpp", ".hpp",
+    ".cc", ".dart", ".lua",
+})
+
+
+def _is_source_file(path: Optional[str]) -> bool:
+    if not path:
+        return False
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name.startswith(".env"):
+        return False
+    return os.path.splitext(name)[1] in _SOURCE_EXTENSIONS
+
+
+_CALL_RE = re.compile(r"^[A-Za-z_$][\w$.?]*\(")
+_COMMENT_PREFIXES = ("#", "//", "/*", "*", "--", "<!--")
+# Markers that open a comment somewhere before the value on the same line (`x = f()  # key=...`).
+# Found inside a string literal they cost an exemption, never a finding -- the safe direction.
+_INLINE_COMMENT_MARKERS = ("#", "//", "/*", "<!--")
+_DIGIT_RUN_RE = re.compile(r"[0-9]+")
+
+
+def _looks_random(value: str) -> bool:
+    """Two or more separate digit runs between letters (`Ab3dEf9Gh`) -- how generated keys look, and
+    how hand-written names (`sha256Hash`, `oauth2Client`, `req.body.accessToken`) rarely do."""
+    return len(_DIGIT_RUN_RE.findall(value)) >= 2
+
+
+def _is_expression_value(value: str, path: Optional[str], line: str = "", start: int = 0) -> bool:
+    """True for an unquoted value that is code, not a literal: a call (`name(` / `a.b(`), a member
+    path (`req.body.accessToken`) or a plain identifier -- in a source-code file only, never on a
+    comment line or after a comment marker earlier on the line (`start` is where the key=value
+    candidate begins), and never for a value that looks generated (_looks_random) -- so a key left
+    in a trailing comment, a docstring, a template literal or a JSX attribute is still measured."""
+    if not _is_source_file(path) or line.lstrip().startswith(_COMMENT_PREFIXES):
+        return False
+    if any(marker in line[:start] for marker in _INLINE_COMMENT_MARKERS):
+        return False
+    if _looks_random(value):
+        return False
+    shapes = (_CALL_RE, _MEMBER_ACCESS_RE, _IDENTIFIER_RE)
+    return any(shape.match(value) for shape in shapes)
+
+
+def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """(kind, matched value) for the first thing in `line` that looks like a secret, or None. `path`
+    (the file the line came from, when known) decides whether an unquoted identifier is code or a
+    literal (_is_expression_value); a quoted value is always measured. The
     caller is responsible for the `act:allow-secret` exemption — checked once per line before this
     is even called, not repeated here. Every key=value-shaped candidate on the line is tried in
     turn (finditer, not just the first match) — a line can carry more than one such pair, and an
@@ -343,9 +417,11 @@ def _match_secret(line: str) -> Optional[tuple[str, str]]:
             return kind, match.group(0)
     for match in _KEY_VALUE_RE.finditer(line):
         key = match.group("qkey") or match.group("key")
-        value = match.group("dq") or match.group("sq") or match.group("bare")
+        quoted = match.group("dq") or match.group("sq")
+        value = quoted or match.group("bare")
         if (
             value
+            and not (not quoted and _is_expression_value(value, path, line, match.start()))
             and not _looks_like_placeholder(value)
             and feedback_privacy.SECRET_WORDS.search(_normalized_key(key))
             and _shannon_entropy(value) >= _entropy_threshold(value)
@@ -373,11 +449,36 @@ def _format_finding(finding: dict) -> str:
 
 def _build_message(findings: list[dict]) -> str:
     shown = findings[:_MAX_FINDINGS]
-    rest = len(findings) - len(shown)
-    more = f" (+{rest} more)" if rest > 0 else ""
+    rest = findings[_MAX_FINDINGS:]
+    more = ""
+    if rest:
+        files = sorted({f["file"] for f in rest})
+        listed = ", ".join(files[:5]) + (f", +{len(files) - 5} more files" if len(files) > 5 else "")
+        capped = f", scan stopped at {_MAX_COLLECTED}" if len(findings) >= _MAX_COLLECTED else ""
+        more = f" (+{len(rest)} more, {len(findings)} findings in total{capped}; also in: {listed})"
     return (
         "[act] commit held: possible secret in " + "; ".join(_format_finding(f) for f in shown)
         + more + " — remove it or mark the line act:allow-secret"
+    )
+
+
+def _incomplete_note(timed_out: bool, oversized: list[str]) -> str:
+    """The "not fully checked" note, saying which limit hit: the time budget (_TIME_BUDGET per
+    check, _HOOK_BUDGET from the hook's own start; a git call that failed or timed out counts here
+    too) and/or files skipped for size (_MAX_DIFF_BYTES, named)."""
+    reasons: list[str] = []
+    if timed_out:
+        reasons.append(
+            f"time budget used up ({_TIME_BUDGET:g}s for this check, {_HOOK_BUDGET:g}s for the whole "
+            "hook) or a git call failed"
+        )
+    if oversized:
+        shown = ", ".join(oversized[:5])
+        more = f" (+{len(oversized) - 5} more)" if len(oversized) > 5 else ""
+        reasons.append(f"skipped for size (over {_MAX_DIFF_BYTES // (1024 * 1024)} MB each): {shown}{more}")
+    return (
+        "[act] secret-scan: not fully checked — " + "; ".join(reasons)
+        + " — review it yourself before committing"
     )
 
 
@@ -459,26 +560,26 @@ def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]
 
 
 def _scan_diff_text(diff_text: str, findings: list[dict], oversized: list[str]) -> None:
-    """Append findings (up to _MAX_FINDINGS total) from `diff_text` in place, per file section —
+    """Append findings (up to _MAX_COLLECTED total) from `diff_text` in place, per file section —
     a section over _MAX_DIFF_BYTES is skipped and its name appended to `oversized` instead of
     scanned; every other section in the same diff is still scanned normally (item 7)."""
     for section in _diff_sections(diff_text):
-        if len(findings) >= _MAX_FINDINGS:
+        if len(findings) >= _MAX_COLLECTED:
             return
         if len(section.encode("utf-8", "replace")) > _MAX_DIFF_BYTES:
             oversized.append(_section_file_name(section) or "?")
             continue
         for file, is_new, lines in _diff_entries(section):
-            if len(findings) >= _MAX_FINDINGS:
+            if len(findings) >= _MAX_COLLECTED:
                 return
             if is_new and _is_env_filename(file):
                 findings.append({"file": file, "line": None, "kind": "new .env file", "value": None})
             for line_no, content in lines:
-                if len(findings) >= _MAX_FINDINGS:
+                if len(findings) >= _MAX_COLLECTED:
                     return
                 if _ALLOW_MARK in content:
                     continue
-                hit = _match_secret(content)
+                hit = _match_secret(content, file)
                 if hit is not None:
                     kind, value = hit
                     findings.append({"file": file, "line": line_no, "kind": kind, "value": value})
@@ -502,11 +603,11 @@ def _scan_new_file(path: Path, rel: str, findings: list[dict], oversized: list[s
     except OSError:
         return
     for line_no, content in enumerate(text.splitlines(), start=1):
-        if len(findings) >= _MAX_FINDINGS:
+        if len(findings) >= _MAX_COLLECTED:
             return
         if _ALLOW_MARK in content:
             continue
-        hit = _match_secret(content)
+        hit = _match_secret(content, rel)
         if hit is not None:
             kind, value = hit
             findings.append({"file": rel, "line": line_no, "kind": kind, "value": value})
@@ -894,16 +995,17 @@ def _git_commit_invocations(
     return invocations
 
 
-def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, list[str]]:
+def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, list[str], bool]:
     """Findings for one commit-like invocation, plus whether scanning was cut short (timeout or a
     diff section/file over 2MB — an incomplete scan is never grounds to block on its own, only to
-    note) and the names of any file skipped for size."""
+    note), the names of any file skipped for size, and whether time (or a failed git call) was
+    what cut it short -- the two reasons get distinct wording in check_secret_scan's note."""
     findings: list[dict] = []
     oversized: list[str] = []
-    incomplete = False
+    incomplete = timed_out = False
     cwd = invocation["cwd"]
     if not os.path.isdir(cwd):
-        return findings, False, oversized
+        return findings, False, oversized, False
 
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
@@ -916,30 +1018,30 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
     # absolute or top-anchored, so the result is otherwise the same (2026-09-27 review 3, m3).
     toplevel = _repo_toplevel(cwd, budget())
     if toplevel is None:
-        incomplete = True  # not a repository (git commit itself would fail), or out of time
+        incomplete = timed_out = True  # not a repository (git commit itself would fail), or out of time
     git_cwd = toplevel or cwd
     staged = _run_git(
         ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
     )
     if staged is None:
-        incomplete = True
+        incomplete = timed_out = True
     else:
         _scan_diff_text(staged, findings, oversized)
 
-    if invocation["all"] and len(findings) < _MAX_FINDINGS:
+    if invocation["all"] and len(findings) < _MAX_COLLECTED:
         unstaged = _run_git(
             ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
         )
         if unstaged is None:
-            incomplete = True
+            incomplete = timed_out = True
         else:
             _scan_diff_text(unstaged, findings, oversized)
 
     for entry in invocation["add_paths"]:
-        if len(findings) >= _MAX_FINDINGS:
+        if len(findings) >= _MAX_COLLECTED:
             break
         if deadline - time.monotonic() <= 0:
-            incomplete = True
+            incomplete = timed_out = True
             break
         raw_path = entry["path"]
         if raw_path != _WHOLE_TREE_PATHSPEC:
@@ -949,13 +1051,13 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
                 git_cwd, budget(),
             )
             if path_diff is None:
-                incomplete = True
+                incomplete = timed_out = True
             else:
                 _scan_diff_text(path_diff, findings, oversized)
 
-        if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
+        if len(findings) >= _MAX_COLLECTED or deadline - time.monotonic() <= 0:
             if deadline - time.monotonic() <= 0:
-                incomplete = True
+                incomplete = timed_out = True
             break
         if toplevel is None:
             break  # nowhere to join root-relative names onto (already noted as incomplete above)
@@ -967,18 +1069,18 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
             ls_args.insert(2, "--exclude-standard")
         untracked = _run_git(ls_args, toplevel, budget())
         if untracked is None:
-            incomplete = True
+            incomplete = timed_out = True
             continue
         for rel in filter(None, untracked.split("\0")):
-            if len(findings) >= _MAX_FINDINGS:
+            if len(findings) >= _MAX_COLLECTED:
                 break
             if deadline - time.monotonic() <= 0:
-                incomplete = True
+                incomplete = timed_out = True
                 break
             _scan_new_file(Path(toplevel) / rel, rel, findings, oversized)
     if oversized:
         incomplete = True
-    return findings, incomplete, oversized
+    return findings, incomplete, oversized, timed_out
 
 
 def _pending_file(root: Path, session_id: str) -> Optional[Path]:
@@ -1032,16 +1134,18 @@ def check_secret_scan(payload: dict) -> int:
 
     findings: list[dict] = []
     incomplete = False
+    timed_out = False
     oversized: list[str] = []
     for invocation in invocations:
         if time.monotonic() >= deadline:
-            incomplete = True
+            incomplete = timed_out = True
             break
-        more, inv_incomplete, inv_oversized = _scan_commit(invocation, deadline)
+        more, inv_incomplete, inv_oversized, inv_timed_out = _scan_commit(invocation, deadline)
         findings.extend(more)
         incomplete = incomplete or inv_incomplete
+        timed_out = timed_out or inv_timed_out
         oversized.extend(inv_oversized)
-        if len(findings) >= _MAX_FINDINGS:
+        if len(findings) >= _MAX_COLLECTED:
             break
 
     if findings:
@@ -1054,14 +1158,7 @@ def check_secret_scan(payload: dict) -> int:
         return 2
 
     if incomplete:
-        note = (
-            "[act] secret-scan: diff too large or scan timed out — not fully checked, "
-            "review it yourself before committing"
-        )
-        if oversized:
-            shown = ", ".join(oversized[:5])
-            more = f" (+{len(oversized) - 5} more)" if len(oversized) > 5 else ""
-            note += f" (skipped: {shown}{more})"
+        note = _incomplete_note(timed_out, oversized)
         print(note)
         _queue_note(payload, note)
     return 0

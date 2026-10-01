@@ -11,12 +11,20 @@ answer left unread blocks whatever depends on it from stalling behind it.
 
 ## `R-human-ask` — Bundle questions; never decide one yourself
 
-summary: bundled questions upfront, stated assumptions, no silent decisions
+summary: bundled questions upfront, stated assumptions, no silent decisions, inbox-decisions
 
 Questions are bundled at the start of a block, not dropped in one at a time as they occur.
 Mid-task, ask only if continuing without an answer would mean discarding the work already done. An
 open question is never decided on its own initiative — a recommendation is fine, an assumption must
 be stated as an assumption, never silently promoted to a decision.
+
+Where an open decision waits follows `inbox-decisions` in `docs/ai/config.md`. With `immediate`
+(the default), an open decision that arises while booking a finding, a backlog item or a task, and
+every step only the human can take and can take now, goes into the inbox in the same step (question
+or todo, `R-human-chat`), and the booked entry names its id — the inbox always shows everything
+waiting. With `at-start`, a backlog entry may keep its open decisions, marked `decision: open` in
+its header, and they are asked when work on it starts (`act-prepare`); a task's open decisions are
+always in the inbox.
 
 ## `R-human-chat` — Answer once, briefly, when the answer is final
 

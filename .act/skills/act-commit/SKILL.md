@@ -32,8 +32,10 @@ secures the result.
    isn't recorded yet, older entries left as they are otherwise.
 5. **Docs index.** New files go into `docs/README.md`; check the data-as-of note on files that
    changed.
-6. **Commit by pathspec.** `git add <path …>` — never a catch-all. What gets committed is accepted
-   work, not a time slice; several commits per session are normal. Short message in the repo's own
+6. **Commit by pathspec.** With `board: shared` in `docs/ai/config.md`, first run
+   `python .act/scripts/board.py --shared` and add `docs/ai/board-<identity>.md` to the pathspec of
+   this same commit (only `--shared` writes that versioned file; a plain run never does).
+   `git add <path …>` — never a catch-all. What gets committed is accepted work, not a time slice; several commits per session are normal. Short message in the repo's own
    style, attribution as given for the running session. Don't silently sweep up another session's
    uncommitted changes — look at them, then decide.
 7. **Report to the human.** Result first, evidence (hash, test numbers), open points and questions

@@ -45,6 +45,35 @@ only until the next `init`/`update` run, which finds none set and adds the templ
 user-wide `statusLine` already exists (`~/.claude/settings.json`), the project is left with none of
 its own from the start, so the two never overlap — a one-line note says so at setup/update time.
 
+## Board
+
+| Key | Value |
+| :--- | :--- |
+| `board` | docs |
+| `board-others` | |
+
+`board`: `docs` (default) \| `shared` \| `local` — where the generated board goes. `docs`:
+`docs/ai/board.md`, gitignored, one per checkout; its heading names the branch. `shared`: keeps the
+local view in `docs/ai/board.md` and writes the versioned per-person board
+`docs/ai/board-<identity>.md` (no last commit, no working tree, no timestamp) at commit time, by
+`act-commit`. `local`: `.act-local/board-<branch>.md`. The local view is regenerated at session
+start and after git commands in the session that change the checked-out state (merge, pull,
+rebase, switch, checkout …); a versioned file is never rewritten by that. `board-others`: `on` \| `off` — a section for tasks
+assigned to others (`for:` in the task header); with `shared` it also lists the others' committed
+boards. Empty means `on` with `mode: team`, `off` otherwise.
+
+## Inbox
+
+| Key | Value |
+| :--- | :--- |
+| `inbox-decisions` | immediate |
+
+`immediate` (default) \| `at-start`. `immediate`: every open decision, and every step only a person
+can take and can take now, goes into `docs/ai/inbox/` as soon as it is booked, so the inbox always
+shows everything waiting. `at-start`: a backlog entry may keep its open decisions — header
+`decision: open`, listed on the board — until work on it starts (`act-prepare`); a task always has
+them in the inbox (`R-human-ask`).
+
 ## Output depth
 
 | Key | Value |
