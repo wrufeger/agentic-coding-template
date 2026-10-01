@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — dangerous-pattern scan before a commit (PreToolUse), the local part of the
-#          security check (concept docs/project/concepts/ai-dev-app/14-security-check.md, `Q86a`-
-#          `Q86c` all decided "a"): "Art A" of three. Only Art A is built here — Art B (live
-#          library-vulnerability lookup via `pip-audit`/`npm audit`/`osv-scanner`, needs a decision
-#          on network access) and Art C (Semgrep / a `reviewer` security pass) are not, per the
-#          assignment; the `security-check` key already has four values so a project's config does
-#          not have to change again once B/C land.
+#          security check (a decided concept): "Art A" of three. Only Art A is built here — Art B
+#          (live library-vulnerability lookup via `pip-audit`/`npm audit`/`osv-scanner`, needs a
+#          decision on network access) and Art C (Semgrep / a `reviewer` security pass) are not, per
+#          the assignment; the `security-check` key already has four values so a project's config
+#          does not have to change again once B/C land.
 #
 #          Triggers on the exact same `git commit`-like calls as checks/secret_scan.py, reusing its
 #          own chain/alias/nested-shell walker (_git_commit_invocations) rather than a second one —
@@ -25,7 +24,7 @@
 #          agnostic rather than tied to a file extension) — enabling a coding set is what turns a
 #          pattern group on, not the file being edited.
 #
-#          Verbatim from the concept's decided behaviour (`Q86c` a, "the same form as the encoding
+#          Verbatim from the concept's decided behaviour ("the same form as the encoding
 #          hint"): a hit stops the first commit once, with the finding's location and reason: the
 #          *second* attempt against the very same (reader, file, pattern) goes through — "eval is
 #          sometimes the right call". This is exactly checks/encoding_hint.py's own block-mode
@@ -41,15 +40,15 @@
 #          `off` runs nothing here at all; `local`/`deps`/`full` all run exactly this module (Art
 #          A) — `deps`/`full` do not yet run B/C, so for now they behave like `local`, honestly
 #          documented as "not built yet" in the config skeleton rather than silently accepted. An
-#          unrecognized or missing value falls back to `local` (the concept's own default, `Q86a`
-#          a: "Standard local").
+#          unrecognized or missing value falls back to `local` (the concept's own default:
+#          "Standard local").
 #
 # Known limits:
 #   - the SQL-string-concatenation patterns are a rough heuristic (an SQL keyword near a quote-and-
 #     `+` or an f-string/template-literal placeholder) - a real query builder's `.format()`/`%`-
 #     style call is not covered, and a false positive on ordinary string handling near the word
 #     "select" is possible; documented as an open point for the concept rather than tuned further
-#     here (2026-09-25, T76 wave C part 2);
+#     here (2026-09-25, review);
 #   - `yaml.load(...)` without `SafeLoader` is detected by *absence* of the word "SafeLoader"
 #     anywhere on the same added line — a `Loader=` argument written on a following line (a call
 #     split across lines) is invisible, same class of limit secret_scan.py already accepts for its
@@ -57,7 +56,7 @@
 #   - if docs/project/coding_rules.md cannot be read or parsed at all (missing file, a rules.py
 #     bug), this check fails open (no patterns are known to be enabled, so nothing is scanned) -
 #     a broken rules.py must not lock out every commit, the same stance checks/session.py takes for
-#     its own `import rules` (T64);
+#     its own `import rules`;
 #   - patterns run against the whole added line, not the language of the file it lives in - a
 #     Python file happening to contain a Vue-shaped `v-html=` string could be flagged if the
 #     project has the Vue coding set enabled too; accepted for the same reason secret_scan.py does
@@ -135,7 +134,7 @@ class DangerPattern(NamedTuple):
 #     object (`model.eval()` in PyTorch, `session.exec(select(...))` in SQLModel, JS `re.exec(s)`,
 #     `$obj->system(...)` in PHP) is not mistaken for the dangerous top-level builtin — `\b` alone
 #     matches right after a `.`, which is exactly the boundary a method call sits on (2026-09-26,
-#     review of T76 wave C part 2).
+#     review).
 DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
     ".act/coding/python.md": (
         DangerPattern("python-eval-exec", "eval()/exec()", re.compile(r"(?<![\w.])(?:eval|exec)\s*\(")),
@@ -191,7 +190,7 @@ DANGER_PATTERNS[".act/coding/nuxt.md"] = DANGER_PATTERNS[".act/coding/vue.md"]
 
 def _security_check_level(config: dict[str, str]) -> str:
     """`security-check` from docs/ai/config.md, normalized to one of _SECURITY_CHECK_LEVELS -
-    falls back to "local" (the concept's own default, `Q86a` a) for a missing or unrecognized
+    falls back to "local" (the concept's own default) for a missing or unrecognized
     value, same fail-toward-the-default stance _check_mode takes for the block/warn/off checks."""
     value = config.get("security-check", "").strip().lower()
     return value if value in _SECURITY_CHECK_LEVELS else "local"
@@ -204,7 +203,7 @@ def _enabled_coding_sets(root: Path) -> set[str]:
     file is missing or rules.py cannot be imported/parsed - see the module docstring's "Known
     limits"."""
     try:
-        import rules  # deferred: a broken rules.py must never lock out every commit (T64 stance)
+        import rules  # deferred: a broken rules.py must never lock out every commit
     except Exception:
         return set()
     path = root / "docs" / "project" / "coding_rules.md"

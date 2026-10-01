@@ -6,7 +6,7 @@ summary: inbox order, bundled questions, short final chat answers, chat language
 
 summary: clearing answered inbox entries before other work
 
-Process inbox entries the human has already answered before starting anything else (`B85`) — an
+Process inbox entries the human has already answered before starting anything else — an
 answer left unread blocks whatever depends on it from stalling behind it.
 
 ## `R-human-ask` — Bundle questions; never decide one yourself
@@ -38,7 +38,7 @@ status recap — except when that very notice makes the answer final: then the s
 below follows. In chat, ask only the question work cannot continue without; every other question
 goes to `docs/ai/inbox/` as `kind: question` (one file per question, `entries.py new question
 <title>`) and is not repeated in chat — a decision question is created *only* as that inbox file,
-chat names at most its id (e.g. "see Q108"), never restates the question itself. An inbox entry
+chat names at most its id (e.g. "see Q<n>"), never restates the question itself. An inbox entry
 the human has already answered is booked and archived in the same turn that notices the answer,
 never left open. Close with a short summary — done · next · problems · to discuss — short, but
 without dropping anything that matters, and name new questions and tasks together in one closing

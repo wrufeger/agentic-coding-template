@@ -6,7 +6,7 @@
 #          half of skill `act`. Built so the `/act` UserPromptSubmit fast path
 #          (.act/hooks/dispatch.py) never has to walk `.act/skills/`/`docs/ai/local/skills/` by
 #          hand: it imports this module and calls render() once a prompt actually matches
-#          "/act"/"/act <name>" (T67 — the skill used to make the model read every SKILL.md by
+#          "/act"/"/act <name>" (the skill used to make the model read every SKILL.md by
 #          hand, seven tool calls, ~74s for one `/act`).
 #
 #          Skill discovery follows the same override rule as everywhere else in this template
@@ -27,7 +27,7 @@
 #   Table: header line, blank line, then per skill a "  /<name>" line (two-space indent, plus
 #   " (own)"/" (overridden)" for a project skill under docs/ai/local/skills/ — see Skill.marker)
 #   and, below it, the description with its trigger sentence (the first one starting "Use ...")
-#   cut off, wrapped to 96 columns with a six-space indent on every line (T67 live-probe: long
+#   cut off, wrapped to 96 columns with a six-space indent on every line (live probe: long
 #   descriptions used to wrap flush-left, unreadable against the name column).
 #   Unknown name: "Unknown skill '<name>'." on its own line, then a blank line, then the table —
 #   never an error exit, since the caller (the hook included) always wants something shown.
@@ -44,7 +44,7 @@ from typing import NamedTuple, Optional
 import actlib
 import tiers
 
-WIDTH = 96          # wrap width for the table's description lines (T67, live-probe feedback)
+WIDTH = 96          # wrap width for the table's description lines
 INDENT = "      "   # six spaces — description lines, under the two-space-indented "/<name>" line
 
 # Sentence-lead marker for the trigger half of a description (see _short_description()) — every

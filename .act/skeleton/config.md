@@ -27,7 +27,7 @@ counts for both.
 slot, and the matching check is skipped (`R-code-commit`).
 
 `mode` is `solo` or `team`, and it changes **one** thing: when an entry gets its short ID. In
-`solo` the assistant assigns it right away (`Q66`, `T19`, `B99`) and carries on. In `team` only
+`solo` the assistant assigns it right away and carries on. In `team` only
 whoever files the entry on the default branch assigns it, so two people can never hand out the
 same number; until then the file name is what you cite. File name, location and format are the
 same either way, so you can switch back and forth at any time — IDs already assigned stay as they
@@ -90,7 +90,7 @@ tool's own interface displays — see `docs/README.md` for the per-tool display 
 | `dependency-check` | once |
 
 `never` \| `once` \| `regularly`. `once` (default) leaves a one-time inbox entry right after `init`
-asking to run `act-deps`, then only on request (`B102`); `regularly` instead notes at session
+asking to run `act-deps`, then only on request; `regularly` instead notes at session
 start when the last `act-deps` run (a journal entry titled `act-deps: ...`) is older than 30 days;
 `never` does neither — the skill itself still runs on explicit request either way.
 

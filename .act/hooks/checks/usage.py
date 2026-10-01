@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Observer for the template's local usage counter (T41). This module only turns hook
+# Purpose: Observer for the template's local usage counter. This module only turns hook
 #          events into tiny, one-shot event files — the schema, the consolidation step that folds
 #          them into .act-local/usage.json, and the CLI (--show/--outcome/--unused/--reset) all
 #          live in .act/scripts/usage.py; read that file's header first. Registered in
@@ -42,7 +42,7 @@
 #     one place .act-local/usage/events/ actually shrinks again (2026-09-23 review, point 1: it
 #     only ever grew otherwise). Budgeted, see that function's own docstring.
 #
-# Fixed (T77/B114, Q109 8 a; was "Known limit", 2026-09-23 review, point 4): this observer used to
+# Fixed (was "Known limit", 2026-09-23 review, point 4): this observer used to
 # see a PreToolUse *before* any check ran (dispatch.py's own fixed order), so a role start, skill
 # call, script call or checklist read was counted here even when a later check in the chain denied
 # it (worker-cap, write-scope, nesting-guard, ...) — a denied attempt looked the same as a
@@ -161,7 +161,7 @@ def _tier_from_prompt(prompt: str) -> str:
 
 def observe(event: str, payload: dict) -> None:
     """Called by dispatch.py for every hook event — for PreToolUse specifically only after every
-    check has run and allowed the call (T77/B114, see this module's own "Fixed" paragraph above),
+    check has run and allowed the call (see this module's own "Fixed" paragraph above),
     for every other event before any check runs. See this module's docstring for what is recorded
     from which event; anything else is a silent no-op."""
     try:
@@ -229,8 +229,9 @@ def _observe_user_prompt(root, payload: dict) -> None:
         return
     if _is_harness_message(prompt):
         # A worker's report or a task-finished notice never starts with "/" anyway (it opens with
-        # "<...", T44 live probe), so _slash_command already falls through to None below without
-        # this — kept explicit rather than relying on that shape, the same defense-in-depth
+        # "<...", seen in a live probe), so _slash_command already falls through to None below
+        # without this — kept explicit rather than relying on that shape, the same
+        # defense-in-depth
         # checks.event_log/checks.tips apply for the same payload field (2026-09-23).
         return
     command = _slash_command(prompt)

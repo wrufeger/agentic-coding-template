@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Check — MCP tool calls from a connected IDE server (JetBrains `idea` today, PreToolUse,
-#          T76 Welle D, `Q104` a). The checks under this package hang on the tool names the
+# Purpose: Check — MCP tool calls from a connected IDE server (JetBrains `idea`
+#          today, PreToolUse). The checks under this package hang on the tool names the
 #          standard harness uses (`Bash`, `PowerShell`, `Write`, `Edit`, ...) — an MCP server
 #          brings its own tool names for the same actions (`execute_terminal_command`,
 #          `apply_patch`, `execute_sql_query`, ...) and runs straight past every one of them
@@ -96,11 +96,11 @@
 #          A tool's argument the mapping expects but does not find as a non-empty string/list
 #          (missing, wrong type, or a patch with no path the parser recognizes) is never silently
 #          let through — "cannot evaluate this call's target" denies the same as a real hit would,
-#          per the concept's own rule for this (`docs/project/concepts/ai-dev-app/03-core-rules.md`
-#          § "Andere Wege zu denselben Aktionen"): "kann eine Prüfung die Argumente eines Werkzeugs
+#          per the concept's own rule for this (§ "Andere Wege zu denselben
+#          Aktionen"): "kann eine Prüfung die Argumente eines Werkzeugs
 #          nicht auswerten, lehnt sie ab, statt es durchzulassen". `_WRITE_TOOL_FIELDS` reflects the
 #          real JetBrains `idea` MCP server's own schemas, loaded from a live session on 2026-09-26
-#          (orchestrator, T76 Welle D): `apply_patch` takes `input` (alias `patch`) holding the
+#          (orchestrator): `apply_patch` takes `input` (alias `patch`) holding the
 #          patch text itself, in either the Codex format (`*** Add File: <p>` / `*** Update File:
 #          <p>` / `*** Delete File: <p>` / `*** Move to: <p>`) or a unified diff — either a bare
 #          `--- a/<p>` / `+++ b/<p>` pair, or a full git-extended header (`diff --git a/<p> b/<p>`,
@@ -456,7 +456,7 @@ def _write_target_base(tool_input: dict) -> Optional[str]:
 def _project_root() -> Optional[Path]:
     """The project this hook run belongs to, or None if it cannot be determined (not inside a
     template-managed project at all): found the way write_guard.py's check 1 finds it
-    (_guard_root -- `CLAUDE_PROJECT_DIR`, else dispatch.py's own location, B137), with
+    (_guard_root -- `CLAUDE_PROJECT_DIR`, else dispatch.py's own location), with
     actlib.repo_root() from the current directory as the last resort -- best-effort, same fallback
     shape as _rename_worker_scope's own try/except."""
     root = _guard_root()

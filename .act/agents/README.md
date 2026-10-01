@@ -16,7 +16,7 @@ per role, or set outright, in `docs/ai/config.md` § Roles — into the generate
 project's configured tools. A second file, `.claude/agents/<name>-high.md`
 (`agent_bridge_variant_targets()`), gets the same resolution with the reasoning bumped one step
 further — the runtime choice of giving one assignment more reasoning without ever writing a real
-model ID into an assignment (`Q71`). No variant is generated for a role whose template reasoning is
+model ID into an assignment. No variant is generated for a role whose template reasoning is
 already the top of the tool's reasoning scale (`expert-solver`).
 
 **No sub-sub-agents (`R-role-worker`):** a role's `tools` list never includes `Agent`/`Task` — a

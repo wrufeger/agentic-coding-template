@@ -30,7 +30,7 @@
 #     a note never changes the exit code. Own rules are "- ", "* " or "+ " bullets.
 #   --imports: "reached <n>:" and one indented root-relative path per file Claude Code loads, in
 #     load order, then "unresolved <n>:" and one "<file>:<line>: @<target> — <reason>" per import
-#     it cannot follow (exit 1 if there is any). Same rule as Claude Code (T64): relative to the
+#     it cannot follow (exit 1 if there is any). Same rule as Claude Code: relative to the
 #     importing file, at most four hops below the start file, never inside a code span or block.
 #   Errors (unknown area, missing project file, unknown id, bad arguments): one line on stderr,
 #     exit 1 (2 for a bad command line), never a traceback.
@@ -136,14 +136,14 @@ RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]{0,2})\](?!
 RE_USE = re.compile(r"^use:\s*(?P<path>\S+)\s*$")
 # The reason separator is an em dash; an en dash or "--" (what people type instead) counts the same.
 RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:(?:—|–|--)\s*(?P<reason>.+))?$")
-# "- replaces ..." — and, like an own rule, "* replaces ..." / "+ replaces ..." (Q113).
+# "- replaces ..." — and, like an own rule, "* replaces ..." / "+ replaces ...".
 RE_REPLACES = re.compile(r"^(?:-\s*|[*+]\s+)replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
 RE_REPLACES_LOOSE = re.compile(r"^(?:-\s*|[*+]\s+)replaces\b.*$")
 # A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is
-# written relative to docs/ai/ since T64 ("@../../.act/..."), the pre-T64 "@.act/..." still parses.
+# written relative to docs/ai/ ("@../../.act/..."), the older "@.act/..." still parses.
 RE_CORE_SET = re.compile(r"^(?:@(?:\.\./)*|`)?(?P<path>\.act/\S+?\.md)`?$")
-# An own rule is a "- ", "* " or "+ " bullet (Q113: a hand-written or adopted "*" list counted as prose
-# before and silently dropped every rule in it).
+# An own rule is a "- ", "* " or "+ " bullet (a hand-written or adopted "*" list must not count as
+# prose and silently drop every rule in it).
 RE_BULLET = re.compile(r"^[-*+]\s+")
 # "* * *" / "- - -" is a thematic break, not a bullet.
 RE_THEMATIC_BREAK = re.compile(r"^(?:\*\s*){3,}$|^(?:-\s*){3,}$|^(?:\+\s*){3,}$")
@@ -151,7 +151,7 @@ RE_OWN = re.compile(r"^[-*+]\s+(?:`(?P<id>[^`]+)`:\s*)?(?P<text>.*)$")
 RE_HEADING = re.compile(r"^##\s+`(?P<id>[^`]+)`\s*(?:—\s*(?P<title>.+))?\s*$")
 RE_HEADER_FIELD = re.compile(r"^(?P<key>summary|requires|retired):\s*(?P<value>.*)$", re.IGNORECASE)
 
-# Section tracking inside a project file (B-follow-up to B77): "replaces" and bare "- ..." bullets
+# Section tracking inside a project file: "replaces" and bare "- ..." bullets
 # at the top level are only read as overrides/own rules while the surrounding top-level ("## ")
 # section is actually "## Overrides"/"## Own rules" — never inside "## Known deviations" (own text
 # in its own right, one line per accepted deviation, not a rule) or a heading recognized as some
@@ -179,7 +179,7 @@ KNOWN_OTHER_HEADINGS = {
 
 def normalize_set_path(raw: str) -> str:
     """A set path as written in a project file, in any of its forms — "@../../.act/coding/x.md"
-    (an import, relative to the project file, T64), the pre-T64 "@.act/coding/x.md", "`...`" or a
+    (an import, relative to the project file), the older "@.act/coding/x.md", "`...`" or a
     bare ".act/coding/x.md" — as the root-relative ".act/coding/x.md" every other function here
     expects."""
     path = raw.strip().strip("`")
@@ -237,7 +237,7 @@ def _is_bullet(stripped: str) -> bool:
 def _is_new_item(raw: str, stripped: str) -> bool:
     """True if `raw` starts a new list item/checkbox rather than continuing the previous one — a
     bullet ("- ...", "* ...", "+ ..." or "- [ ] ...", indented or not) or a near-miss checkbox mark.
-    Used by parse_project_file to know where an own rule's continuation lines end (B131)."""
+    Used by parse_project_file to know where an own rule's continuation lines end."""
     return _is_bullet(stripped) or bool(RE_CHECKBOX_LOOSE.match(raw))
 
 
@@ -294,7 +294,7 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             continue
 
         # A fenced code block is example text: nothing inside is read as a rule, a set line or an
-        # override (Q113); under "Own rules" it counts as unread text.
+        # override; under "Own rules" it counts as unread text.
         fence_match = RE_FENCE.match(line)
         if fence is not None:
             if fence_match and fence_match.group("fence")[0] == fence[0] \
@@ -394,7 +394,7 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                 flush_pending()
                 own = RE_OWN.match(stripped)
                 text_parts = [(own.group("text") if own else stripped[2:]).strip()]
-                # Indented continuation lines (B131) belong to this same rule's text, joined with
+                # Indented continuation lines belong to this same rule's text, joined with
                 # single spaces, up to the next blank line, the next bullet/checkbox (indented or
                 # not — _is_new_item), or the next unindented line (heading or a new top-level
                 # entry) — whichever comes first.
@@ -644,7 +644,7 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Coding sets as imports (T64) — a checked set is an "@" import, so Claude Code loads it; an
+# Coding sets as imports — a checked set is an "@" import, so Claude Code loads it; an
 # unchecked one stays a bare path, which Claude Code never follows
 # ---------------------------------------------------------------------------
 
@@ -683,7 +683,7 @@ def sync_coding_imports(root: Path, write: bool = True) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Import check (T64) — follows "@" imports from CLAUDE.md the way Claude Code does
+# Import check — follows "@" imports from CLAUDE.md the way Claude Code does
 # (code.claude.com/docs/en/memory.md, "Import additional files"): relative to the file that holds
 # the import, absolute and "~/" paths as they are, at most four hops below the start file, never
 # inside a code span, a fenced or indented code block, or an HTML comment (Claude Code strips
@@ -876,7 +876,7 @@ def main(argv: list[str]) -> int:
     if args.validate:
         findings = cmd_validate(project, area, root)
         # Hints (text under "Own rules" that is not read as a rule) follow the findings, marked
-        # "note:" — they never change the exit code (Q113).
+        # "note:" — they never change the exit code.
         rel = project.path.relative_to(root).as_posix()
         notes = [f"{rel}:{line}: note: {message}" for line, message in project.hints]
         if findings or notes:

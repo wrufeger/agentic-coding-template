@@ -3,7 +3,7 @@
 #
 # Purpose: Generate the board — a fully derived snapshot (current branch, last commit, dirty
 #          state, recent journal entries, one "Waiting for you" list drawn from the single inbox
-#          at docs/ai/inbox/ (16-inbox-questions-tasks.md), open tasks, open decisions
+#          at docs/ai/inbox/, open tasks, open decisions
 #          in the backlog, backlog items). Nothing here is hand-maintained; every run overwrites
 #          the file from scratch. Where it goes is the `board` key in docs/ai/config.md:
 #          `docs` (default) docs/ai/board.md, gitignored, heading names the branch;
@@ -20,8 +20,7 @@
 #          Alongside the board, every run also (re)writes .act-local/inbox-<identity>.md: a
 #          generated, read-only view collecting the full text of every open or answered inbox
 #          entry addressed to this identity or to "all", so reading one file is enough — replying
-#          still happens in the entry file itself (16-inbox-questions-tasks.md § "Board und
-#          Leseansicht").
+#          still happens in the entry file itself.
 #
 #          `--chat-language` instead remembers the chat language recognized for this person on
 #          this machine while `language-chat` is `auto` (R-human-language) — per checkout in
@@ -76,7 +75,7 @@ BACKLOG_DIR = Path("docs/ai/work/backlog")
 BOARD_MODES = ("docs", "shared", "local")
 DECISION_RE = re.compile(r"(?im)^decision:\s*(\S+)\s*$")
 OTHERS_LIMIT = 10     # per list in the "Others" section
-# Q65a: a task's working state ("Stand ...") lives here (entries.py state), gitignored, never in
+# A task's working state ("Stand ...") lives here (entries.py state), gitignored, never in
 # the versioned task file itself — read_task_titles() shows the last non-blank line next to the
 # task's title.
 STATE_DIR = Path(".act-local/state")
@@ -243,7 +242,7 @@ def _read_created(path: Path) -> Optional[str]:
 
 
 def _last_state_line(root: Path, task_filename: str) -> Optional[str]:
-    """The last non-blank line of .act-local/state/<task_filename> (entries.py state, Q65a), or
+    """The last non-blank line of .act-local/state/<task_filename> (entries.py state), or
     None if that file does not exist, is empty, or cannot be read as UTF-8 — the same, ungenerated
     working-state note a fresh session would otherwise have to reconstruct from the task file
     alone."""
@@ -261,11 +260,11 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
     """Return up to `limit` "<title>" or "<title> — <last state line>" strings from
     docs/ai/work/tasks/, oldest first by "created:" (_timeline_key(), same normalization the inbox
     uses), or None if the directory does not exist. Filename order alone no longer sorts
-    chronologically once an id is embedded in the name (ADR-9, T75: "T1-..." .. "T5-..." then
+    chronologically once an id is embedded in the name ("T1-..." .. "T5-..." then
     "T10-..-T13-.." would otherwise sort ahead of "T2-..", and a team-mode name awaiting an id
     sorts by its identity prefix, not by when it was written). Title is the file's first Markdown
     heading, or the filename stem if there is none; a task with a working state recorded via
-    `entries.py state` (Q65a) gets that state's last line appended."""
+    `entries.py state` gets that state's last line appended."""
     tasks = read_tasks(root)
     if tasks is None:
         return None
@@ -373,13 +372,13 @@ def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list
 
 
 # ---------------------------------------------------------------------------
-# The one inbox (docs/ai/inbox/) — 16-inbox-questions-tasks.md, Q100 b
+# The one inbox (docs/ai/inbox/)
 # ---------------------------------------------------------------------------
 
 def read_inbox_entries(root: Path) -> Optional[list[dict]]:
     """
     Return every open or answered entry in actlib.INBOX_DIR as a dict, or None if that directory
-    does not exist. A "done" entry is never returned (B85: done never appears as waiting).
+    does not exist. A "done" entry is never returned.
 
     Each dict carries:
       - "path": the Path to the file
@@ -410,7 +409,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
         status_match = STATUS_RE.search(header)
         status = status_match.group(1).strip().lower() if status_match else "open"
         if status not in ("open", "answered"):
-            continue  # "done" (or anything unrecognized) never shows up as waiting (B85)
+            continue  # "done" (or anything unrecognized) never shows up as waiting
 
         kind = actlib.inbox_kind(text)
         for_match = FOR_RE.search(header)
@@ -482,22 +481,21 @@ def _timeline_key(created: Optional[str], name: str, *, newest_first: bool) -> t
 
 
 def _sort_key(entry: dict) -> tuple:
-    """Newest first: _timeline_key() on "created:"/the filename (16-inbox-questions-tasks.md §
-    "Board und Leseansicht") — an entry with neither always sorts last, never first just because
-    this list itself reads newest-first."""
+    """Newest first: _timeline_key() on "created:"/the filename — an entry with neither always sorts last, never first
+    just because this list itself reads newest-first."""
     return _timeline_key(entry["created"], entry["path"].name, newest_first=True)
 
 
 def _group_by_recipient(entries: list[dict], identity: Optional[str]) -> tuple[list[dict], list[dict], list[dict]]:
     """Split `entries` (already sorted newest-first) into (mine, all, other) — an entry with no
-    "for:" field at all falls into "other" (Q63b), same as a value that names neither this
+    "for:" field at all falls into "other", same as a value that names neither this
     identity nor "all"."""
     mine: list[dict] = []
     all_entries: list[dict] = []
     other: list[dict] = []
     for entry in entries:
         target = (entry["for"] or "").strip().lower()
-        # B147: compare in the short form on both sides, so a hand-written `for: Wolfgang Rufeger`
+        # Compare in the short form on both sides, so a hand-written `for: Wolfgang Rufeger`
         # finds the identity `wolfgang-rufeger`. "all" and an empty value keep their meaning.
         if target and target != "all":
             target = actlib.recipient_slug(target)
@@ -621,7 +619,7 @@ def render_inbox_view(entries: list[dict], root: Path) -> str:
     """
     The full text of every open or answered entry addressed to this identity or "all", newest
     first, one section per entry — a single file to read; replying still happens in the entry
-    file itself (16-inbox-questions-tasks.md § "Board und Leseansicht"). `entries` is expected
+    file itself. `entries` is expected
     already filtered (mine + all, open + answered) and sorted newest-first by the caller.
     """
     lines: list[str] = [

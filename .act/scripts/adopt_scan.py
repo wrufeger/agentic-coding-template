@@ -43,9 +43,9 @@
 #     a predecessor template, and "  -> <proposed action>"), a per-class count
 #     line, one informational line per git submodule ("not scanned: submodule <path>"), a
 #     "language hint: ..." line while an old AI-CONFIG.md stands at the root (the docs language to
-#     pass to adopt.py --apply, B148 1), a "possible home-made work system: ..." line for files
-#     that look like one (the rows carry hint "work?", B148 3), a "foreign ids: ..." line for
-#     documents that use T/B/Q numbers like the template's own (B148 4), and — if
+#     pass to adopt.py --apply), a "possible home-made work system: ..." line for files
+#     that look like one (the rows carry hint "work?"), a "foreign ids: ..." line for
+#     documents that use T/B/Q numbers like the template's own, and — if
 #     the target has a predecessor template (a .claude/template.json) — one hint line naming its
 #     base_commit. Never a finding/judgement, just a sighting.
 #   --json: the same content as {"target", "generated", "predecessor_hint", "info": [...],
@@ -204,7 +204,7 @@ PREDECESSOR_DOCS = {
     "docs/ai/ai-config-hilfe.md", "docs/ai/resources.md",
 }
 PREDECESSOR_PREFIXES = ("docs/ai/template-feedback/", "docs/project/coding_rules.d/")
-# Predecessor files the generic doc scan never reaches (no document extension, B129.8): sighted by
+# Predecessor files the generic doc scan never reaches (no document extension): sighted by
 # name whenever a predecessor exists, never blindly deleted. template.json/TEMPLATE-LICENSE: the
 # project's own marker and license file — always proposed "legacy", their history stays readable.
 PREDECESSOR_MARKER_FILES = {".claude/template.json", ".claude/TEMPLATE-LICENSE"}
@@ -217,7 +217,7 @@ CI_PLACEHOLDER_HINTS = ("create-project.py", "checklists.md")
 # nothing once the new template replaces the whole area — a template-only copy is proposed delete,
 # like a tooling file, not kept legacy for its own sake: docs/project/coding_rules.d/*, a block of
 # pre-fabricated rule stubs .act/coding/ replaces wholesale. docs/ai/template-feedback/ stays out of
-# this set on purpose — its own docs remain historically useful even unmodified (T65 review).
+# this set on purpose — its own docs remain historically useful even unmodified.
 PREDECESSOR_DELETE_IF_TEMPLATE_ONLY_PREFIXES = ("docs/project/coding_rules.d/",)
 PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
 ORIGIN_TEMPLATE = "template only"
@@ -247,7 +247,7 @@ TEMPLATE_UNIT_NAME_NOTE = (
 # match "adr"); a name is split on `-_. ` into tokens, every folder segment likewise.
 # ---------------------------------------------------------------------------
 
-# "@" splits too (B148 3): people mark their own working files "@board.md", "@weiter.md"; the token
+# "@" splits too: people mark their own working files "@board.md", "@weiter.md"; the token
 # is then "board"/"weiter", not "@board".
 _TOKEN_SPLIT_RE = re.compile(r"[-_.\s@]+")
 
@@ -255,7 +255,7 @@ HINT_AI_CONFIG_NAMES = {name.lower() for name in ROOT_AI_CONFIG} | {"copilot-ins
 HINT_AI_LOG_RE = re.compile(r"^ai\.log(\..+\.bak|\.state\.json|\.raw\.jsonl)?$", re.IGNORECASE)
 HINT_LOG_TOKENS = SIGNED_LOG_TOKENS
 HINT_WORK_TOKENS = SIGNED_WORK_TOKENS | {"todo"}
-# B148 3: words home-made work systems use for their files (an old board, a chat log, a rebuild list,
+# Words home-made work systems use for their files (an old board, a chat log, a rebuild list,
 # a "continue here" note, a handover folder). Whole tokens, anywhere in the path outside the signed
 # docs/ai/ too; the result is only ever a "work?" hint, never a class: on an "unknown" row, or — under
 # a docs/ folder, unless the name starts with "@" — on a row that stays a project-doc. The
@@ -289,7 +289,7 @@ class Row:
     age: str     # "YYYY-MM-DD"
     cls: str
     reason: str
-    note: Optional[str] = None  # caution for the later adoption step (T51), e.g. "never delete"
+    note: Optional[str] = None  # caution for the later adoption step, e.g. "never delete"
     hint: Optional[str] = None  # only on "unknown": what a heuristic suspects, e.g. "log?"
     origin: Optional[str] = None    # with a predecessor template: "template only" | "own text: n lines" | unknown
     proposed: Optional[str] = None  # the proposed action (adopt | legacy | keep | delete), never binding
@@ -873,7 +873,7 @@ def classify_doc(root: Path, rel_posix: str, signed_ai: bool) -> tuple[str, str,
     # -- heuristics: at most unknown + hint --
     found = heuristic_hint(root, rel_posix)
     if found:
-        # B148 3: under docs/ a hit on the "own work system" words (`handover`, `weiter`, `memory/`
+        # Under docs/ a hit on the "own work system" words (`handover`, `weiter`, `memory/`
         # ...) is only a hint on an otherwise ordinary project-doc; a "@"-marked name is not.
         if (OWN_SYSTEM_REASON in found[1] and not name.startswith("@") and found[0] == "work?"
                 and any(f.lower() == DOCS_SEGMENT for f in folders)):
@@ -972,7 +972,7 @@ class Predecessor:
     def is_verified_prefixed(self, rel: str) -> bool:
         """A PREDECESSOR_PREFIXES match confirmed present in the base_commit tree — unlike
         is_prefixed() alone, never true for a file the project added on its own under the same
-        directory (T65: docs/project/coding_rules.d/our-api.md, a project's own file, must not be
+        directory (docs/project/coding_rules.d/our-api.md, a project's own file, must not be
         swept into "predecessor" just because the directory as a whole is the predecessor's; with
         the tree unreachable there is no way to tell, so this stays False and the row is left
         alone — the same "nothing proposed blind without evidence" stance as elsewhere here)."""
@@ -1247,7 +1247,7 @@ def propose_dying_folder_readmes(rows: list[Row]) -> None:
     proposed delete or legacy follows them — by its own origin, template_only -> delete, else
     legacy — instead of the generic ai-machinery default ("keep" for an own-text file outside
     SKILL_AGENT_PARENTS): a README describing a folder whose scripts are all gone or archived is
-    not current documentation worth keeping in place either (T65: .claude/scripts/README.md of a
+    not current documentation worth keeping in place either (.claude/scripts/README.md of a
     predecessor, own text, describing only scripts every one of which was proposed delete). Mutates
     row.proposed in place; called after every row already has its generic proposal."""
     by_parent: dict[str, list[Row]] = {}
@@ -1282,7 +1282,7 @@ def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row
     directory prefix with the predecessor, without itself being part of its tree, stays project-doc
     — e.g. docs/project/coding_rules.d/our-api.md, a file the project added on its own under a
     directory whose *other* files are the predecessor's, is not itself "a named part of the
-    predecessor template" (T65 review: the old is_explicit() check swept it in on the directory
+    predecessor template" (the old is_explicit() check swept it in on the directory
     prefix alone, misclassifying an own file with a reason that was simply false for it). Its
     non-document tooling (PREDECESSOR_TOOL_FILES) is sighted here by name."""
     seen = {r.path for r in rows}
@@ -1298,7 +1298,7 @@ def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row
             # is_prefixed but not is_verified_prefixed: own content (or the tree is unreachable, so
             # membership can't be confirmed either way) under a directory that is otherwise the
             # predecessor's — stays project-doc/keep, but flagged so the directory's fate isn't
-            # silently decided out from under it (T65 review).
+            # silently decided out from under it.
             prefix = next(p for p in PREDECESSOR_PREFIXES if r.path.startswith(p))
             r.note = "; ".join(filter(None, (r.note, (
                 f"under {prefix} — a predecessor-template directory whose other files may be proposed "
@@ -1307,7 +1307,7 @@ def mark_predecessor(scan: Scan, pred: Predecessor, rows: list[Row]) -> list[Row
     for rel in sorted(PREDECESSOR_TOOL_FILES - seen):
         if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
             rows.append(scan.file_row(rel, "predecessor", "tooling file of the predecessor template"))
-    # B129.8: named predecessor files no document extension lets the generic doc scan reach.
+    # Named predecessor files no document extension lets the generic doc scan reach.
     for rel in sorted((PREDECESSOR_MARKER_FILES | {PREDECESSOR_CI_FILE}) - seen):
         if _exists_exact(scan.root, rel) and not link_target(scan.root, rel):
             reason = ("marker file of the predecessor template" if rel in PREDECESSOR_MARKER_FILES
@@ -1356,7 +1356,7 @@ LANGUAGE_ROW_RE = re.compile(r"(?im)^\|\s*Sprache\s*\|\s*([^|]*?)\s*\|")
 
 
 def language_info(root: Path) -> list[str]:
-    """One info line (B148 1) proposing the docs language while an old AI-CONFIG.md is still at the
+    """One info line proposing the docs language while an old AI-CONFIG.md is still at the
     root: its `Sprache` row (`Deutsch` -> `de`), or `de` as an assumption when it has no language
     row (the old template was always German — the same assumption adopt_config.py makes later).
     The skill settles the language BEFORE `adopt.py --apply` and passes it as --language-docs, so
@@ -1386,7 +1386,7 @@ def language_info(root: Path) -> list[str]:
 
 
 def own_system_info(rows: list[Row]) -> list[str]:
-    """One info line (B148 3) naming the "unknown" rows whose name or folder looks like a home-made
+    """One info line naming the "unknown" rows whose name or folder looks like a home-made
     work system (board, chat log, rebuild list, handover, ...): a hint for the owner, nothing is
     classified. The skill shows it at step 1."""
     paths = [r.path for r in rows if r.cls in ("unknown", "project-doc") and r.hint == "work?" and OWN_SYSTEM_REASON in r.reason]
@@ -1397,7 +1397,7 @@ def own_system_info(rows: list[Row]) -> list[str]:
             f"show it to the owner and ask what these files are"]
 
 
-# Ids of the same shape as this template's own (T12, B16, Q3) inside a foreign document (B148 4).
+# Ids of the same shape as this template's own (T12, B16, Q3) inside a foreign document.
 FOREIGN_ID_RE = re.compile(r"(?<![A-Za-z0-9_/.#-])([TBQ][0-9]{1,4})(?![A-Za-z0-9_-])")
 FOREIGN_ID_MIN_DISTINCT = 2      # one "B2" in a sentence is no numbering scheme
 FOREIGN_ID_CLASSES = {"project-doc", "unknown"}  # work/log rows carry the old template's own ids on purpose
@@ -1418,7 +1418,7 @@ def _is_quarter(text: str, match: "re.Match[str]") -> bool:
 def foreign_id_info(root: Path, rows: list[Row], has_predecessor: bool = False) -> list[str]:
     """One info line naming documents that use ids shaped like this template's (T/B/Q + number),
     two or more distinct ones per file: once adopted, `B16` in that text means something else than
-    the new entry `B16` (B148 4). Reads project-doc and unknown files only, up to
+    the new entry `B16`. Reads project-doc and unknown files only, up to
     FOREIGN_ID_READ_BYTES each; a hint, nothing is classified."""
     found: list[tuple[str, list[str]]] = []
     for row in rows:
@@ -1514,7 +1514,7 @@ PREDECESSOR (the target has .claude/template.json): a row that would be "unknown
 base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
 config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
 .claude/mcp-katalog.md, .mcp.json.example) — including .claude/template.json, .claude/TEMPLATE-
-LICENSE and .github/workflows/ci.yml (B129.8), which no document extension lets the generic doc
+LICENSE and .github/workflows/ci.yml, which no document extension lets the generic doc
 scan reach, so they are sighted by name here too, proposed "legacy" (template.json,
 TEMPLATE-LICENSE: never a blind delete) or, for ci.yml, "legacy" only while it still carries the
 predecessor's own placeholder steps (an `echo "TODO` line naming create-project.py or

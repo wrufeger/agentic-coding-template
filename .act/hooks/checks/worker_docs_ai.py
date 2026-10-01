@@ -4,7 +4,7 @@
 # Purpose: Check — a worker writing under docs/ai/ (PreToolUse, R-role-worker):
 #          only the orchestrator writes docs/ai/ — a worker returns its
 #          result and lets the orchestrator record it. No exception for docs/ai/local/: that
-#          directory holds the *project's* override of a template file (ADR-5), still something
+#          directory holds the *project's* override of a template file, still something
 #          only the orchestrator decides to write, not a worker's scratch space (a worker's
 #          scratch space is scratchpad_dir, exempted the same way checks/write_scope.py exempts
 #          it via _within_scratchpad — reused here, not copied). The orchestrator's own calls are
@@ -13,8 +13,8 @@
 #          Shape mirrors checks/write_guard.py (protected-path regex over a Write/Edit/MultiEdit/
 #          NotebookEdit path field, or a Bash/PowerShell write-target scan via shell_targets),
 #          scoped to workers only — write_guard.py already covers .act/ for everyone, including
-#          the orchestrator; this check is the docs/ai/ analogue, worker-only. Like write_guard.py
-#          (B137), only the *calling* project's own <root>/docs/ai/ is protected — a determinable
+#          the orchestrator; this check is the docs/ai/ analogue, worker-only. Like write_guard.py,
+#          only the *calling* project's own <root>/docs/ai/ is protected — a determinable
 #          target outside `root` (a sibling checkout's docs/ai/) is not this check's business, and
 #          `root` is found the same way (checks.write_guard._guard_root, reused here): the
 #          `CLAUDE_PROJECT_DIR` a hook always receives, else dispatch.py's own location, `cwd` only
@@ -27,7 +27,7 @@
 #     — is more fragile than requiring none). A directory literally named "somedocs" with an "ai"
 #     child would over-block; accepted as the safe-side tradeoff, same as write_guard.py's. This
 #     text-only match is also the fallback used whenever a target's base/root cannot be
-#     determined at all (B139: fail toward blocking, same as write_guard.py).
+#     determined at all (fail toward blocking, same as write_guard.py).
 #   - PowerShell commands are scanned with the same Bash-oriented tokenizer as Bash ones
 #     (shell_targets._bash_write_targets) — best effort per this stage's assignment. A native
 #     PowerShell write cmdlet that shell_targets does not know as a "write command"
@@ -69,7 +69,7 @@ _DOCS_AI_MESSAGE = (
 
 def _is_under_project_docs_ai(resolved: Path, root: Path) -> bool:
     """True if `resolved` (an absolute, already-resolved path, from shell_targets._resolve_path)
-    lies inside `root`'s own docs/ai/ — the only tree this check protects (B139, mirrors
+    lies inside `root`'s own docs/ai/ — the only tree this check protects (mirrors
     write_guard.py's _is_under_project_act, including its normalization of both sides): a target
     outside `root` entirely (a sibling checkout's docs/ai/, deliberately edited from a
     template-maintenance project) is not this check's business."""
@@ -89,12 +89,12 @@ def _bash_targets_docs_ai(
     themselves paths worth checking here; a worker's `git add`/`git commit`/... is blocked outright
     by checks/worker_git_write.py regardless of what path it names, so this check does not need to
     special-case every write-ish git subcommand itself. A target inside the worker's own
-    scratchpad_dir (write_scope._within_scratchpad, B139) is exempt, same as check_worker_write_
+    scratchpad_dir (write_scope._within_scratchpad) is exempt, same as check_worker_write_
     scope treats it — a worker's scratch space is never "docs/ai/" in the sense R-role-worker
     means. A target whose base directory is unknown, that contains a shell variable/substitution,
     or whose own project `root` could not be determined is judged denied only if its own text
-    names docs/ai — mirrors checks/write_guard.py's _bash_targets_protected_path exactly (B137/
-    B139: a *determinable* target is resolved and checked against `root`'s own docs/ai/ only,
+    names docs/ai — mirrors checks/write_guard.py's _bash_targets_protected_path exactly (a
+    *determinable* target is resolved and checked against `root`'s own docs/ai/ only,
     never against the raw text — a sibling checkout's docs/ai/ is not this project's to protect)."""
     for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE):
         if (
@@ -121,7 +121,7 @@ def _targets_docs_ai(
 ) -> bool:
     """True if this tool call's write target lands under `root`'s own docs/ai/. Unknown tools
     never match — same convention as write_guard.py's _targets_protected_path. A target inside the
-    worker's own scratchpad_dir is exempt first (B139, see _bash_targets_docs_ai). The Write/Edit/
+    worker's own scratchpad_dir is exempt first (see _bash_targets_docs_ai). The Write/Edit/
     MultiEdit/NotebookEdit path field, once past that exemption, is resolved against `base_cwd` and
     checked against `root`'s own docs/ai/ the same way write_guard.py's _targets_protected_path
     does it (_resolve_against) — falling back to a plain, normcase/normpath'd regex search
@@ -153,7 +153,7 @@ def check_worker_docs_ai(payload: dict) -> int:
     """Check: deny a worker's write under `root`'s own docs/ai/ (R-role-worker). The orchestrator's
     own calls (no agent_id in the payload, see common._is_worker) are never checked — it is who is
     *allowed* to write there. `root` is found the same way write_guard.py's check 1 finds it
-    (_guard_root, B137/B139): CLAUDE_PROJECT_DIR when it names a real template-managed project,
+    (_guard_root): CLAUDE_PROJECT_DIR when it names a real template-managed project,
     else dispatch.py's own location, `base_cwd` only as a last resort via actlib.repo_root — so an
     unresolvable root falls back to the raw-text judgment everywhere above, never to a crash."""
     config = actlib.read_config()

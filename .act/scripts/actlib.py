@@ -84,7 +84,7 @@ def _read_json(path: Path) -> Optional[dict]:
     UTF-8, or not a JSON object (never raises for those cases — callers fall back to a default).
     `ValueError` covers both `json.JSONDecodeError` and `UnicodeDecodeError` (both are subclasses
     of it) — a state file with a few corrupted bytes is treated the same as one that was never
-    written yet, not as a reason to abort the caller (F9, T60: read_last_applied() previously left
+    written yet, not as a reason to abort the caller (read_last_applied() previously left
     `UnicodeDecodeError` uncaught, which made update.py abort mid-run and left `.act/` already
     replaced)."""
     if not path.is_file():
@@ -118,17 +118,17 @@ def _default_lock() -> dict:
     return {
         # "source": the template's own address (its git remote URL at the time this project last
         # fetched from it, or a local path if it had none) -- never a git remote in the project
-        # itself; see init.py's _checkout_source()/step_git_in_place() and Q73a.
+        # itself; see init.py's _checkout_source()/step_git_in_place().
         # "manifest_sha256": sha256 of the .act/MANIFEST.json this project last applied -- lets
         # dispatch.py tell a project .act/ that was pulled in by some other means (e.g. a plain
         # `git pull` of the shared history) from one update.py actually applied, even though both
-        # leave .act/ matching its own MANIFEST.json (Q73a).
+        # leave .act/ matching its own MANIFEST.json.
         "template": {"version": "", "commit": "", "source": "", "manifest_sha256": ""},
         "migrations_applied": [],
         "removed_by_user": [],
         # "bridges_applied": per text-block bridge (currently ".gitignore"/".gitattributes"), the
         # exact line list this project had last applied -- merge_text_block()'s baseline for "only
-        # add what's new since then" (T46 review finding 4). Absent for a project from before this
+        # add what's new since then". Absent for a project from before this
         # tracking existed; see _append_block()'s fallback for that case.
         "bridges_applied": {},
     }
@@ -174,12 +174,12 @@ def identity_slug(text: str) -> str:
     `for:` header ("Wolfgang Rufeger" -> "wolfgang-rufeger"): lowercase, every run of characters
     outside [a-z0-9] collapsed to one "-", trimmed; "user" if nothing survives. init.py forms the
     identity in `.act-local/identity.json` with it, and board.py forms it from a `for:` value before
-    comparing (B147), so a hand-written full name still finds its owner."""
+    comparing, so a hand-written full name still finds its owner."""
     return re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-") or "user"
 
 
 def recipient_slug(text: str) -> str:
-    """The short form of a `for:` value (B147): identity_slug(), but a value with nothing in
+    """The short form of a `for:` value: identity_slug(), but a value with nothing in
     [a-z0-9] (`张伟`, `???`) stays as its trimmed lowercase raw text instead of collapsing to
     "user" — else every such name would count as the person whose identity is `user`."""
     raw = text.strip().lower()
@@ -220,8 +220,8 @@ def write_cache(data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # .act-lock.json § applied — the docs/ai/config.md values the dependent files were last synced
 # for (`tools`, every role's Roles-table entry, the role bridges present then), so update.py's
-# sync_dependent_files() (T60 part B) can tell a session start with nothing to do from one where a
-# value moved. Versioned inside the lock (G1, T60): config.md and the copies are per branch, so
+# sync_dependent_files() can tell a session start with nothing to do from one where a
+# value moved. Versioned inside the lock: config.md and the copies are per branch, so
 # the record of what they were synced for travels with them — a per-checkout file read a branch
 # switch as a value change. A .act-local/last-applied.json from before is read as a fallback
 # until the first write, which removes it.
@@ -318,7 +318,7 @@ def _is_separator_cell(cell: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Languages (T61) — chat and docs language from docs/ai/config.md, and the `act:default` mark on
+# Languages — chat and docs language from docs/ai/config.md, and the `act:default` mark on
 # docs scaffold files still in the template's English. The mechanism reads marks, never words:
 # a scaffold file translated by hand keeps working as long as its marks and header fields stay.
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ def normalize_language(value: str, allow_auto: bool = False) -> Optional[str]:
 def language_settings(config: dict[str, str]) -> tuple[str, str]:
     """(chat language, docs language) from a read_config() result. `language-chat` defaults to
     "auto" (follow the owner's own messages), `language-docs` to "en". A config.md from before
-    T61 carries one `language` key; it still counts, as the value for both."""
+    the language split carries one `language` key; it still counts, as the value for both."""
     legacy = config.get("language", "").strip()
     chat = config.get("language-chat", "").strip() or legacy or "auto"
     docs = config.get("language-docs", "").strip() or (legacy if legacy.lower() != "auto" else "") or "en"
@@ -366,7 +366,7 @@ def docs_language(root: Optional[Path] = None) -> str:
 def localized(language: str, en: str, de: str) -> str:
     """`en` or `de`, picked by `language` (typically docs_language()'s return value) — the one
     shared lookup every fixed heading/label a script writes under docs/ goes through instead of
-    each writer spelling out its own "if language == 'de'" branch (backlog B118#18). `de` for
+    each writer spelling out its own "if language == 'de'" branch. `de` for
     German and its regional variants (`de-AT`), `en` for English and anything else this table does
     not (yet) cover — the scaffold itself only ships those two languages today, so an unlisted
     code falls back to English rather than guessing. Only ever used for prose a person reads
@@ -408,7 +408,7 @@ def scaffold_default_files(root: Path) -> list[str]:
 
 def translate_note_text(language: str, files: list[str]) -> str:
     """The inbox entry asking for the one-time scaffold translation (`R-work-language`) — its own
-    prose follows `language` too (B118#18): the project reading it has already set `language-docs`
+    prose follows `language` too: the project reading it has already set `language-docs`
     away from English, so an English-only note would be as stale as the scaffold it points at."""
     lines = [
         "kind: todo", "for: all", "status: open", "",
@@ -467,7 +467,7 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
     return dest
 
 
-# B102/Q68: `dependency-check: once` (docs/ai/config.md § Dependencies, default) means "runs during
+# `dependency-check: once` (docs/ai/config.md § Dependencies, default) means "runs during
 # setup, then only on demand" — this is the setup side of that; the `regularly` side is
 # checks.session's own staleness note, see _last_ledger_entry_with_prefix()/_dependency_check_note()
 # there.
@@ -476,7 +476,7 @@ DEPENDENCY_CHECK_NOTE_SUFFIX = "-dependency-check.md"
 
 def dependency_check_note_text(language: str = "en") -> str:
     """The one-time inbox entry `dependency-check: once` asks for right after setup, in `language`
-    (`language-docs`, R-work-language, B118#18)."""
+    (`language-docs`, R-work-language)."""
     return (
         "kind: todo\nfor: all\nstatus: open\n\n"
         + localized(language, "# Check dependencies once", "# Abhängigkeiten einmal prüfen") + "\n\n"
@@ -510,7 +510,7 @@ def write_dependency_check_note(root: Path, dependency_check: str, plan: bool = 
 
 
 # ---------------------------------------------------------------------------
-# docs/ai/inbox/ — the one place everything waiting on a person lives (ADR-9, T75). Every entry
+# docs/ai/inbox/ — the one place everything waiting on a person lives. Every entry
 # carries a `kind:` header field (question | todo | report | note, see INBOX_KINDS); a file without
 # one — an older entry, or a hand-written one — counts as DEFAULT_INBOX_KIND ("todo"), never as an
 # error. Only `question` also carries an id (`Q<n>`, handed out by entries.py the same way a task or
@@ -556,33 +556,33 @@ def inbox_kind(text: str) -> str:
 # (.gitattributes/.gitignore). Shared by init.py (first write, a project's own .act/ already on
 # disk) and update.py (reconciling an *existing* project against a newer template state — a
 # project initialized before a bridge existed, or before a later template revision changed it,
-# otherwise never gets it, T46).
+# otherwise never gets it).
 # ---------------------------------------------------------------------------
 
 _HOOK_COMMAND_PREFIX = 'P=""; for c in python3 python'
 
 
 def _hook_command_suffix(event: str) -> str:
-    """The current (post-B126) form: the invocation ends by handing dispatch.py the path this
+    """The current form: the invocation ends by handing dispatch.py the path this
     command built into `$D` earlier — `"${CLAUDE_PROJECT_DIR:-.}"` anchored, never a bare relative
     ".act/hooks/dispatch.py" (see .act/bridges/settings.hooks.json). A relative path is read
     against the *hook's own* current directory, which a Bash tool's own lasting `cd` moves for the
-    rest of the session (B126, 2026-09-25) — Python then can't find the file and exits 2, which
+    rest of the session — Python then can't find the file and exits 2, which
     Claude Code reads as "block", for every tool call, not just Bash's."""
     return f'"$P" "$D" {event}'
 
 
 def _hook_command_suffix_old_form(event: str) -> str:
-    """The pre-B126 form (bare relative ".act/hooks/dispatch.py"), still recognized by
+    """The older form (bare relative ".act/hooks/dispatch.py"), still recognized by
     is_ours_hook so update.py's reconcile replaces it with the current form instead of leaving it
     behind as an unrecognized, un-mergeable duplicate in a project that has not run update.py
-    since B126."""
+    since that form changed."""
     return f'"$P" .act/hooks/dispatch.py {event}'
 
 
 # Per event, every extra fixed argument this template's own hooks may pass dispatch.py beyond the
 # plain "dispatch.py <event>" call — currently only UserPromptSubmit's dedicated "/act" fast-path
-# entry (T67, .act/bridges/settings.hooks.json), a second, synchronous hook for that one event
+# entry (.act/bridges/settings.hooks.json), a second, synchronous hook for that one event
 # next to the plain async one, reaching dispatch.py's own early-exit branch (see its header). Not
 # a general "any extra args count" rule on purpose (see is_ours_hook's docstring) — each variant
 # is listed here explicitly, same precision as the plain suffix itself.
@@ -593,8 +593,9 @@ _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
 
 def _hook_command_suffixes(event: str) -> list[str]:
     """Every exact tail this template's own hook commands for `event` are known to end with,
-    current form first: the current $D-anchored form, the pre-B126 bare-relative form (still
-    produced by a project that has not run update.py since B126), and, for the one event with an
+    current form first: the current $D-anchored form, the older bare-relative form (still
+    produced by a project that has not run update.py since it changed), and, for the one event with
+    an
     extra fixed argument, each of those two with that argument appended too."""
     bases = [_hook_command_suffix(event), _hook_command_suffix_old_form(event)]
     extra_args = _HOOK_COMMAND_EXTRA_ARGS.get(event, ())
@@ -603,10 +604,12 @@ def _hook_command_suffixes(event: str) -> list[str]:
 
 def is_ours_hook(hook, event: str) -> bool:
     """True if `hook` (one item of a settings.json hook-entry's own "hooks" list) is exactly this
-    template's generated wrapper for `event` — matched by its *exact* command text (review T46
-    finding 3, replacing an earlier substring check): the fixed interpreter-detection prologue
+    template's generated wrapper for `event` — matched by its *exact* command text (not a
+    substring
+    check):
+    the fixed interpreter-detection prologue
     this template always uses, ending in the literal dispatch.py invocation for this event (one of
-    _hook_command_suffixes(event) — current or pre-B126 form, normally one fixed-argument variant
+    _hook_command_suffixes(event) — current or older form, normally one fixed-argument variant
     each, see that function), optionally followed by "; true" for the events that must never block
     the harness. A project's own hook that merely happens to also invoke dispatch.py (e.g.
     "python3 .act/hooks/dispatch.py PreToolUse --project-flag") does not match any of these exact
@@ -652,7 +655,7 @@ def merge_hook_event_entries(
     updated in place and a hook the bridge no longer defines (e.g. a retired matcher) is dropped
     instead of left behind as a stale duplicate. An entry that loses its only (template) hook is
     dropped; an entry that keeps a surviving project hook stays, at its own position, with just
-    that hook (T46 review finding 3). Non-dict entries are left exactly where they are. Returns
+    that hook. Non-dict entries are left exactly where they are. Returns
     (new_entries, changed) — changed is False when the result is byte-for-byte the input, the
     caller's signal that nothing needs writing (keeps a second run a true no-op)."""
     kept: list = []
@@ -672,7 +675,7 @@ def is_valid_hooks_container(data) -> bool:
     """True if `data` is shaped enough to merge into as a settings.json: a dict whose optional
     "hooks" key, if present, is itself a dict mapping event name -> list of entry dicts. Anything
     else (hooks: null, a list instead of a dict, an entry that is not itself a dict, ...) is a
-    shape this template's merge was never meant to repair (T46 review finding 6) — the caller
+    shape this template's merge was never meant to repair — the caller
     reports it and leaves the file exactly as it is, rather than half-merging into something that
     was never a valid settings file to begin with."""
     if not isinstance(data, dict):
@@ -693,19 +696,20 @@ def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[s
     """Merges bridge_data["hooks"] (a parsed .act/bridges/*.json hook bridge, e.g.
     settings.hooks.json) onto `current` (a parsed .claude/settings.json, or {} for a fresh one),
     event by event, via merge_hook_event_entries(). Also merges bridge_data["statusLine"] onto
-    `current["statusLine"]` via merge_settings_status_line() (T76 Welle D, Q106a) — a second,
+    `current["statusLine"]` via merge_settings_status_line() — a second,
     unrelated top-level key of the same settings.json, folded into this one function rather than
     given its own call site so init.py's/update.py's existing single call to this function (see
     _merge_settings_hooks) picks it up without either needing to change. A change there is reported
     back the same way a changed hook event is: by the literal string "statusLine" appearing in the
     returned `changed_events` list, even though it is not itself an event name — every caller of
     this function only ever joins that list into a message or checks whether it is empty, never
-    matches an entry against a specific event name (T76 Welle D review). Returns
+    matches an entry against a specific event name. Returns
     (new_settings, changed_events) — changed_events is empty when every event's entries and the
     status line already match the bridge, the caller's signal to leave the file on disk untouched.
     Never raises: a malformed `current`/`bridge_data` (not a dict, "hooks" not a dict, an event's
-    value not a list, ...) is treated as empty rather than crashing --catch-up (T46 review finding
-    6); a caller that wants to report the shape as invalid instead of silently normalizing it checks
+    value not a list, ...) is treated as empty rather than crashing --catch-up; a caller that wants
+    to report the shape as invalid instead of silently
+    normalizing it checks
     is_valid_hooks_container() first."""
     current = current if isinstance(current, dict) else {}
     bridge_hooks = bridge_data.get("hooks") if isinstance(bridge_data, dict) else None
@@ -737,7 +741,7 @@ def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[s
 
 
 # ---------------------------------------------------------------------------
-# statusLine (T76 Welle D, Q106a) — Claude Code's persistent status line, one small script
+# statusLine — Claude Code's persistent status line, one small script
 # (.act/hooks/statusline.py) the same bridge (settings.hooks.json) now also carries as a top-level
 # "statusLine" key. Unlike a hook, a statusLine entry is a single dict, not a per-event list, so it
 # gets its own small "is this still ours" check (_is_ours_status_line()) instead of reusing
@@ -828,7 +832,7 @@ def merge_settings_status_line(current: dict, bridge_data: dict) -> tuple[dict, 
 
 def merge_settings_env(current: dict, bridge_data: dict) -> tuple[dict, bool]:
     """Merges bridge_data["env"] (e.g. settings.hooks.json's top-level "env" key —
-    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1, B126: without it a Bash tool's own `cd` survives
+    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1: without it a Bash tool's own `cd` survives
     across tool calls, breaking the hooks' file lookup by relative path) onto `current["env"]`.
     Additive only — adds a key `current` does not already have, never overwrites or removes a key
     the project set itself, even to a different value. Returns (new_current, changed); `changed`
@@ -859,10 +863,12 @@ def _classify_block_lines(
     that recorded state — so a line the project has since deliberately deleted is never silently
     reinstated, only what the template genuinely added since then. Without a recorded state (an
     old project, from before this tracking existed) this falls back to "add whatever is missing
-    from the file", same as before (T46 review finding 4). Of the candidates, one already present
+    from the file", same as before. Of the candidates, one already present
     verbatim needs nothing; one conflicting with the project's own line — a gitignore `!pattern`
     negation, or, for a multi-token line such as a .gitattributes entry, a different existing line
-    for the same leading pattern — is never applied, only reported back as a conflict."""
+    for the same leading pattern — is never applied, only reported back as a conflict. Comment and
+    blank lines travel with the pattern line that follows them: they are added only together with
+    it, so a reworded comment alone never leaves an orphan line at the end of a project's file."""
     existing_lines = existing_text.splitlines()
     existing_set = set(existing_lines)
     block_lines = block_text.splitlines()
@@ -874,14 +880,20 @@ def _classify_block_lines(
 
     to_add: list[str] = []
     conflicts: list[str] = []
-    for line in candidates:
-        if line in existing_set:
+    pending_notes: list[str] = []  # comment/blank candidates waiting for the pattern line they describe
+    candidate_set = set(candidates)
+    for line in block_lines:  # in block order, so a note belongs to the next pattern line below it
+        is_note = not line.strip() or line.lstrip().startswith("#")
+        if line not in candidate_set or line in existing_set:
+            if not is_note:
+                pending_notes = []  # the notes above described a line that needs nothing
             continue
-        if not line.strip() or line.lstrip().startswith("#"):
-            to_add.append(line)
+        if is_note:
+            pending_notes.append(line)
             continue
         if ("!" + line) in existing_set:
             conflicts.append(line)
+            pending_notes = []
             continue
         tokens = line.split()
         if len(tokens) > 1:
@@ -894,7 +906,10 @@ def _classify_block_lines(
             )
             if conflicting is not None:
                 conflicts.append(line)
+                pending_notes = []
                 continue
+        to_add.extend(pending_notes)
+        pending_notes = []
         to_add.append(line)
     return to_add, conflicts
 
@@ -904,7 +919,7 @@ def merge_text_block(
 ) -> tuple[str, list[str]]:
     """Appends whatever lines of `block_text` still need adding (see _classify_block_lines) to
     `existing_text`, as a single appended chunk in the block's own order — not the whole block
-    wholesale, so a project that only has an older subset of it gets just the missing lines (T46).
+    wholesale, so a project that only has an older subset of it gets just the missing lines.
     Returns (new_text, added_lines); added_lines is empty when nothing needed to change, the
     caller's signal to leave the file untouched. A single blank line separates the appended chunk
     from existing content; an empty `existing_text` gets the chunk verbatim. A candidate that
@@ -928,7 +943,7 @@ def text_block_conflicts(
     existing_text: str, block_text: str, applied_lines: Optional[list[str]] = None,
 ) -> list[str]:
     """The subset of merge_text_block()'s candidate lines that were *not* applied because the
-    project already carries a conflicting line for the same pattern (T46 review finding 4) — for
+    project already carries a conflicting line for the same pattern — for
     a caller that wants to name them in its summary instead of silently leaving them out."""
     _to_add, conflicts = _classify_block_lines(existing_text, block_text, applied_lines)
     return conflicts
@@ -941,7 +956,7 @@ def text_block_conflicts(
 # "ollama") — the same set adopt_config.TOOL_MAP maps onto. .act/tiers.json historically used the
 # CLI-flavoured "codex-cli"/"copilot-cli"/"gemini-cli" for the same three tools; a project's
 # `tools` value written in that spelling silently matched no SKILL_TARGET_DIRS gate at all, so no
-# .agents/skills/ was ever created for it (F10, T60). Callers normalize through this table instead
+# .agents/skills/ was ever created for it. Callers normalize through this table instead
 # of comparing raw strings; an id not listed here (including every already-canonical one) is
 # returned unchanged by normalize_tool() — the caller's own job to flag as unknown against
 # KNOWN_TOOLS, see doctor.py's check_unknown_tools().
@@ -1001,7 +1016,7 @@ def write_text_lf(path: Path, text: str) -> None:
     Every generated bridge and scaffold/docs file must come out the same way `.gitattributes`
     (`* text=auto eol=lf`) checks the very same file out as — otherwise the "unchanged since
     generated" hash comparison in .act-local/cache.json flips on nothing but the checkout's own
-    line endings (B134). `open()`'s own `newline` parameter has always accepted this value, unlike
+    line endings. `open()`'s own `newline` parameter has always accepted this value, unlike
     `Path.write_text(..., newline=...)` (Python 3.10+), which this project's floor (3.9) lacks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
@@ -1012,7 +1027,7 @@ def normalized_sha256(path: Path) -> str:
     """SHA-256 of `path` with CRLF folded to LF first — unless it holds a NUL byte (binary) — the
     same folding manifest.py's content_hash() applies to every file under .act/. A generated
     bridge or scaffold file checked out or written with CRLF must hash the same as its LF
-    counterpart (B134), so a comparison against this hash never flips on line endings alone."""
+    counterpart, so a comparison against this hash never flips on line endings alone."""
     data = path.read_bytes()
     if b"\x00" not in data:
         data = data.replace(b"\r\n", b"\n")
@@ -1022,15 +1037,16 @@ def normalized_sha256(path: Path) -> str:
 def generated_hash(path: Path) -> str:
     """The hash to record in .act-local/cache.json's "generated" map right after (re)writing a
     generated file: normalized_sha256(), so the recorded value reads the same back regardless of
-    which platform generated it (B134)."""
+    which platform generated it."""
     return normalized_sha256(path)
 
 
 def generated_unchanged(path: Path, recorded_hash: str) -> bool:
     """True if `path` still matches what .act-local/cache.json's "generated" map recorded for it
     at generation time. Compared with line endings normalized first (normalized_sha256()), so a
-    checkout's line endings alone never make an untouched generated file look "changed locally"
-    (B134). A cache entry from before this fix recorded the raw-byte hash (sha256_file()) — that
+    checkout's line endings alone never make an untouched generated file look "changed locally". A
+    cache entry from before this fix recorded the raw-byte hash
+    (sha256_file()) — that
     still counts as unchanged too, so an existing project's cache does not spuriously flag every
     bridge as edited the first time it runs against this fix. Also covers the CRLF variant of that
     same old raw-byte form: a session start once wrote the file with CRLF and recorded its raw

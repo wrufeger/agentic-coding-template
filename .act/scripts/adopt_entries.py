@@ -6,14 +6,14 @@
 #          script only checks that list and writes one entry file per item — task/backlog/ledger/
 #          question/todo/report/note through entries.py's own validate_entry()/create_entry() (the
 #          same files `entries.py new` writes; "question"/"todo"/"report"/"note" all land under
-#          docs/ai/inbox/ now, 16-inbox-questions-tasks.md § "Orte" — "question" keeps its `Q<n>`
+#          docs/ai/inbox/ now — "question" keeps its `Q<n>`
 #          id, the other three never carry one), "proposal" through its own write_proposal() below
 #          (proposals are not one of entries.py's kinds: no id, filed straight under
 #          docs/ai/proposals/ with the header its own README asks for). "inbox" is accepted as an
 #          old-batch alias for "todo" (normalized before anything else runs) so a batch written
 #          against the old format still works. It decides nothing: on the first doubt the whole
 #          batch is refused and nothing is written.
-#          Old ids of the kind's own scheme are kept ("id", Q79 a); any other old number goes into
+#          Old ids of the kind's own scheme are kept ("id"); any other old number goes into
 #          "formerly" and the entry gets the next free id (solo) or none yet (team) — a proposal
 #          never has an id either way. The body is written exactly as given, so the human's wording
 #          survives byte for byte; a name collision on disk (proposal or any other kind) never
@@ -44,19 +44,18 @@
 # anything but a proposal, "id"/"status"/"for" on a proposal, or "formerly"/"status"/"for"/"target"/
 # "author"/"body"/"body_file" on a reserved item are refused the same way — a proposal never
 # carries an id, and docs/ai/proposals/README.md's header has no room for them; a reserved item
-# writes no file at all, only its id (B118, 6).
+# writes no file at all, only its id.
 # "ledger" is deliberately not a kind here: a journal/protocol source is always a `log` row in the
 # adoption table (action "legacy"), never reinterpreted as a new entry.
 # A source whose scan or table note marks it protected (adopt.py's own PROTECTED_MARKERS — "never
 # bridge"/"git-ignored/local": a local, git-ignored file adopt.py itself never moves or deletes) is
-# refused for every kind, on the script's own account — not merely because the skill text said so
-# (B118, 15 first part).
+# refused for every kind, on the script's own account — not merely because the skill text said so.
 #
 # Output format:
 #   A "refused:" block listing every problem (stderr, exit 1), or one line per entry
 #   ("would create" / "created" <kind> <id> <path> <- <source>, "reserved"/"already reserved
 #   <id>" for a reserved item, "skipped (already written, unchanged)" for an item a stopped
-#   earlier run already wrote byte-for-byte — B118, 12), a per-kind count line, and the map path.
+#   earlier run already wrote byte-for-byte), a per-kind count line, and the map path.
 #   Exit 0 on success and on --plan; 1 if refused or a write failed midway (the map then lists what
 #   was written, and a re-run with the same batch picks up where it stopped instead of refusing the
 #   whole batch again); 2 on a usage error (target missing, no .act/, unreadable batch).
@@ -92,11 +91,11 @@ RESERVED_ONLY_FIELDS = {"formerly", "status", "for", "target", "author", "body",
 # (header comment above, "\"ledger\" is deliberately not a kind here") — a journal/protocol source
 # is always a `log` row in the adoption table, never reinterpreted as an entry through this script.
 # "inbox" is kept here only as an old-batch alias, normalized to "todo" in load_batch() before
-# anything else sees it (16-inbox-questions-tasks.md § "Arten in der Inbox").
+# anything else sees it.
 ADOPT_KINDS = {"task", "backlog", "question", "todo", "report", "note", "inbox",
                PROPOSAL_KIND, RESERVED_KIND}
 
-# B118 (15, first part): adopt.py's own scan/table notes and protection markers, read here
+# adopt.py's own scan/table notes and protection markers, read here
 # read-only (mirrors adopt.py's _note_of()/_is_protected(), never imports adopt.py itself — that
 # module has heavier side effects on import than this script needs).
 SCAN_PATH = Path(".act-local/adopt/scan.json")
@@ -148,8 +147,7 @@ def _default_author(src: Optional[tuple[str, Optional[int]]]) -> str:
 
 def _protected_sources(root: Path) -> set[str]:
     """Every scan.json path whose scan or table note marks it protected — same two markers, same
-    "scan note; table note" join as adopt.py's own _note_of()/_is_protected() (B118, 15 first
-    part). Missing or unreadable scan.json/table.json: nothing is known protected here (adopt.py
+    "scan note; table note" join as adopt.py's own _note_of()/_is_protected(). Missing or unreadable scan.json/table.json: nothing is known protected here (adopt.py
     itself refuses --apply/--finish long before this script would ever run against such a
     target)."""
     scan = _read_json(root / SCAN_PATH) or {}
@@ -174,7 +172,7 @@ def _key(rel: str) -> str:
 
 def _source_is_protected(path: str, protected: set[str]) -> bool:
     """Whether `path` is a protected scan/table row itself, or sits *below* one that names a
-    folder (B118, 15 second part) — a folder-level "never bridge"/"git-ignored/local" row must
+    folder — a folder-level "never bridge"/"git-ignored/local" row must
     guard every file under it, not just an exact match on that row's own path. Compared at "/"
     segment boundaries, so a protected row "foo" never falsely protects "foobar/baz.txt"."""
     key = _key(path)
@@ -184,9 +182,8 @@ def _source_is_protected(path: str, protected: set[str]) -> bool:
 def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
     """Merge `ids` into entries.RESERVED_IDS_PATH (a plain {"ids": [...]} list, deduplicated) so
     entries.py's _next_id() keeps landing above an old id the content step decided not to give a
-    live entry at all (B118, 6). Returns the ids that were actually new — an id already present is
-    silently idempotent, the same "retry is harmless" contract every other kind here has (B118,
-    12)."""
+    live entry at all. Returns the ids that were actually new — an id already present is
+    silently idempotent, the same "retry is harmless" contract every other kind here has."""
     path = root / entries.RESERVED_IDS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     data = _read_json(path)
@@ -257,7 +254,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             problems.append(f"{where}: unknown kind {kind!r} "
                             "(task | backlog | question | todo | report | note | proposal | reserved)")
             continue
-        # B118 (15, first part): refused on the script's own account, for every kind — not left to
+        # Refused on the script's own account, for every kind — not left to
         # the skill text alone.
         if src is not None and _source_is_protected(src[0], protected):
             problems.append(f"{where}: source {src[0]!r} is protected (adopt.py's scan/table note: "
@@ -297,7 +294,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
         else:
             status = raw.get("status")
             # entries.validate_entry() only knows entries.py new's own "open"/"answered" — "done"
-            # is an adoption-only value (an old, already-settled entry, ADR-9 T75) for a question
+            # is an adoption-only value (an old, already-settled entry) for a question
             # or another inbox kind; it never blocks validate_entry's other checks, and the "done"
             # value itself is still written below (create_entry() writes status verbatim).
             checked_status = None if status == "done" and kind in actlib.INBOX_KINDS else status
@@ -393,7 +390,7 @@ def _expected_text(row: dict, item: dict) -> str:
 def _row_file(root: Path, row: dict) -> Optional[Path]:
     """The file `row` (an entries-map.json row from a previous, possibly stopped, run) points to,
     or None if it cannot be found at all. Tolerant of the docs/ai/questions/ -> docs/ai/inbox/
-    migration (ADR-9, T75, 16-inbox-questions-tasks.md): if the row's own path no longer exists,
+    migration: if the row's own path no longer exists,
     the same filename is tried under actlib.INBOX_DIR instead — a row surviving from before the
     migration would otherwise look unwritten and adopt the same entry a second time."""
     path = root / str(row.get("file", ""))
@@ -405,12 +402,12 @@ def _row_file(root: Path, row: dict) -> Optional[Path]:
 
 def _row_matches(root: Path, row: dict, item: dict) -> bool:
     """Whether `row` (an entries-map.json row from a previous, possibly stopped, run) already
-    holds this exact item — B118 (12): a re-run of the same batch then skips it instead of
+    holds this exact item: a re-run of the same batch then skips it instead of
     refusing the whole batch as "already adopted". Compares id/formerly (and, for a proposal,
     target/author) as a cheap early exit, then the file's own text against _expected_text(),
     volatile timestamp line stripped from both — the *whole* reconstructed text, not merely a
     trailing-body check, so a shortened or emptied body, or a changed status/for, is a real
-    conflict, not a retry, and stays refused (B118, review finding 1: `text.endswith(body)` used to
+    conflict, not a retry, and stays refused (`text.endswith(body)` used to
     let a truncated body and, worse, an emptied one (`return True` unconditionally) slip through as
     "unchanged", and status/for were never compared at all)."""
     if item["id"] and (row.get("id") or None) != item["id"]:
@@ -437,7 +434,7 @@ def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str
     """(problems, skip): conflicts with what is already on disk — a kept id that is taken (an
     entry or the archive — never a legacy collection file, see entries.used_ids()), an item
     adopted before with different content — and, separately, `skip`: index -> file for an item a
-    previous run already wrote byte-for-byte (B118, 12; see _row_matches()). A reserved item (no
+    previous run already wrote byte-for-byte (see _row_matches()). A reserved item (no
     file, entries.RESERVED_IDS_PATH instead) is never "done" here — merging it is idempotent on
     its own, checked in run()."""
     problems: list[str] = []
@@ -470,7 +467,7 @@ def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str
 def plan_ids(root: Path, items: list[dict], reserved: tuple[str, ...] = ()) -> None:
     """Fill item["planned"] with the id each item will get: kept ids first (they are written
     first), then the next free ones in batch order — "team" mode leaves those empty.
-    `reserved`: this same batch's "reserved" ids (B118, review finding 2). The real run merges
+    `reserved`: this same batch's "reserved" ids. The real run merges
     them into entries.RESERVED_IDS_PATH before it lets entries.create_entry() compute each id
     (see run()), so entries._next_id() already sees them on disk by then; --plan never calls that
     merge, so without also treating them as used here, --plan would show a lower id (e.g. "would
@@ -506,9 +503,9 @@ def run(root: Path, batch_path: Path, plan: bool) -> int:
     problems, skip = check_target(root, items, mapping)
     if problems:
         raise Refused(problems)
-    # B118 (6): a "reserved" item writes no file, just an id that must stay unused — merged into
+    # A "reserved" item writes no file, just an id that must stay unused — merged into
     # entries.RESERVED_IDS_PATH separately below, never through create_entry()/plan_ids().
-    # B118 (12): an item a stopped earlier run already wrote byte-for-byte (`skip`) is left alone —
+    # An item a stopped earlier run already wrote byte-for-byte (`skip`) is left alone —
     # neither rewritten nor allowed to consume a fresh id.
     reserved_idx = [i for i, item in enumerate(items) if item["kind"] == RESERVED_KIND]
     write_items = [item for i, item in enumerate(items) if i not in skip and i not in set(reserved_idx)]

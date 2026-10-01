@@ -5,8 +5,8 @@
 #          docs/ai/local/ -- used to be two: tiers.py's split_frontmatter() (single-line fields
 #          only, built for the template's own generated bridge files) and settings_load.py's
 #          _strict_frontmatter() (a hand-rolled parser gating an import's risky-key/name checks).
-#          Two parsers meant two places that could each be wrong about the same shape (`B111.1`,
-#          review of `T24`) -- this module reads a BOM, CRLF, single/double-quoted values, and a
+#          Two parsers meant two places that could each be wrong about the same shape (found
+#          in review) -- this module reads a BOM, CRLF, single/double-quoted values, and a
 #          multi-line value (a ">"/"|" block scalar or a plain indented continuation), which is the
 #          shape Claude Code frontmatter actually uses (see .act/agents/*.md, .act/skills/*/SKILL.md
 #          and the generated .act/bridges/agents/*.md -- none of the template's own files need the
@@ -96,7 +96,7 @@ def parse_frontmatter(text: str) -> ParseResult:
     are tolerated too (a project's own hand-authored file is not always byte-perfect); a missing
     trailing newline right after the closing fence (file ends exactly at "---") is tolerated as
     well. A "#"-led comment line, at any indentation, is skipped outside a block scalar (the old
-    pre-`B111.1` parser did too -- a project's own hand-authored file may carry one). Returns
+    earlier separate parser did too -- a project's own hand-authored file may carry one). Returns
     (fields={}, order=[], body=text, ok=True) -- not an error -- when the first non-blank line is
     not exactly "---": callers treat that as "nothing to resolve here"."""
     working = text.lstrip("﻿")
@@ -155,7 +155,7 @@ def parse_frontmatter(text: str) -> ParseResult:
             i += 1
             continue
         if block_mode is None and raw_line.lstrip(" \t").startswith("#"):
-            # A YAML comment line, at any indentation -- the old (pre-`B111.1`) tiers.py parser
+            # A YAML comment line, at any indentation -- the old (earlier) tiers.py parser
             # skipped these too; only outside a block scalar, where a "#"-led line is data, not a
             # comment (a block scalar's own dedent step (_finish_block()) already handles a
             # comment-shaped line inside one no differently from any other content line).

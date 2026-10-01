@@ -2,9 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: The first migration ever shipped (contract: .act/scripts/update.py step 8) — folds
-#          docs/ai/questions/ into docs/ai/inbox/ (Q100 b, ADR-9,
-#          docs/project/concepts/ai-dev-app/16-inbox-questions-tasks.md § "Entscheidung ... und
-#          Bauvorgabe"):
+#          docs/ai/questions/ into docs/ai/inbox/:
 #            1. Every docs/ai/questions/*.md file (not README.md) moves to docs/ai/inbox/, gets a
 #               "kind: question" header line (right after "id:"/"formerly:", before "for:"), and is
 #               renamed to "<ID>-<slug>.md" where ID is its own "id:" header value and slug is its
@@ -29,7 +27,7 @@
 #               copy (no marker, or a different one) is left alone and named in the description.
 #          A rename happens on the filesystem (Path.rename), never "git mv" — update.py's own
 #          step_commit stages both the old (now-missing) and the new path from the touched-paths
-#          list this module returns (git F11 handling already covers a tracked file that vanished).
+#          list this module returns (git handling already covers a tracked file that vanished).
 #          Every rename target is checked for a pre-existing file right before the rename itself (a
 #          collision is reported, never overwritten — Path.rename() raises on Windows but silently
 #          replaces the target on POSIX, so the check must happen on our side either way).
@@ -64,7 +62,7 @@ RENAME_DIRS = (TASKS_DIR, BACKLOG_DIR, ARCHIVE_DIR, INBOX_DIR)
 # byte (legacy/) and already-decided proposals (proposals/), each with its own naming scheme.
 ARCHIVE_EXCLUDE = (f"{ARCHIVE_DIR}/legacy", f"{ARCHIVE_DIR}/proposals")
 
-# Which id prefix is valid in which location (16-inbox-questions-tasks.md § "Entscheidung"):
+# Which id prefix is valid in which location:
 # questions/inbox only ever carry "Q", tasks only "T", backlog only "B", archive keeps all three
 # since anything can end up there.
 _ALLOWED_ID_PREFIXES = {

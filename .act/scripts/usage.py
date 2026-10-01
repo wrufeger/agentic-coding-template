@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Local usage counter (T41) — how often each role starts, at which tier/model; how often
+# Purpose: Local usage counter — how often each role starts, at which tier/model; how often
 #          each skill, slash command, script and checklist is used; how a worker's outcome turned
 #          out at acceptance time. Feeds two later mechanisms without any extra bookkeeping of
-#          their own: the tips-that-fade-once-a-feature-is-used condition `unused:<key>` (T42,
-#          is_unused() below) and the
+#          their own: the tips-that-fade-once-a-feature-is-used condition `unused:<key>`
+#          (is_unused() below) and the
 #          per-role/tier tier proposal (roles.<name>.outcomes below, via
 #          --outcome). Stdlib only. Never sent anywhere (only the *pattern*, not this project's
 #          own numbers, ever goes
 #          out — via the ordinary Feedback mechanism, not this script).
 #
-# Store: .act-local/usage.json (gitignored — decided: purely local, see the task order for T41).
+# Store: .act-local/usage.json (gitignored — decided: purely local, see above).
 #        Recording never touches that file directly, though — see "Concurrency" below and
 #        .act/hooks/checks/usage.py's own header (the observer that calls record_event() for
 #        every hook event). Both files' headers are meant to be read together; this one owns the
@@ -53,7 +53,7 @@
 #   "tool_input.model was absent" — kept distinct from an actual value, on purpose, so a tip or a
 #   report can tell "workers of this role never carry a tier" from "they always run 'light'".
 #
-# is_unused(root, key) — the `unused:<key>` tip condition (T42, not built here):
+# is_unused(root, key) — the `unused:<key>` tip condition (not built here):
 #   `key` is either bare ("reviewer", "act-a11y", "deps", "worker-cap") — matched against every
 #   category, first hit in category order (roles, skills, commands, scripts, checklists, checks)
 #   wins — or prefixed with one of those exact category names and a colon ("skills:act-a11y") to
@@ -386,7 +386,7 @@ def consolidate_at_session_start(root: Path) -> dict:
 
 def is_unused(root: Path, key: str) -> bool:
     """True iff `key` was never recorded with a count > 0 — the `unused:<key>` tip condition
-    (T42). See this module's header for the bare-vs-prefixed key scheme."""
+    See this module's header for the bare-vs-prefixed key scheme."""
     store = consolidate(root)
     prefix, sep, rest = key.partition(":")
     if sep and prefix in _CATEGORIES:

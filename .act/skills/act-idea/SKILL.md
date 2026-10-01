@@ -18,7 +18,7 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    **options** (description, pros, cons, effort each), **recommendation**. "Do nothing" is a real
    option, with its consequences.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
-   question <title>` — writes `kind: question` and `for: all` into the header, `Q63b`), options
+   question <title>` — writes `kind: question` and `for: all` into the header), options
    labeled, recommendation marked. Nothing built, no task filed, before it's answered. Any other
    open decision that comes up while filing goes into the inbox too, or stays on the backlog item
    as `decision: open` under `inbox-decisions: at-start` (`R-human-ask`).

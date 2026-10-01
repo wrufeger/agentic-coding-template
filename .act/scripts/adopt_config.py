@@ -29,19 +29,19 @@
 #   old AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
 #   always German — and its "Mapped" row says that this is an assumption. A language given to
 #   adopt.py --apply (state.json "languages") is a project value instead: no assumption, no
-#   overwrite from the language row, the row reads "kept: set at --apply" (B148 1). `Coding-Guidelines`
+#   overwrite from the language row, the row reads "kept: set at --apply". `Coding-Guidelines`
 #   checks the named sets (plus whatever their `requires:` pulls in) straight in
-#   docs/project/coding_rules.md, group checkboxes included (T62 I2) — its "Mapped" row says which
+#   docs/project/coding_rules.md, group checkboxes included — its "Mapped" row says which
 #   were newly checked, already checked, or matched no rule set. A lint/typecheck/test command
 #   that names a path the adoption is removing (`.act-local/adopt/table.json` action
 #   delete/legacy, or simply nothing left on disk) is still set as given, but flagged in its
-#   result (T62 C1). If the most recent docs/ai/inbox/todo-<stamp>-init-notes.md (init.py's
+#   result. If the most recent docs/ai/inbox/todo-<stamp>-init-notes.md (init.py's
 #   non-interactive run) is still around, it is updated in place — `for: unknown` becomes the
 #   adopted owner, and a short "Filled in by adopt_config.py" section lists what else this run
-#   set (T62 I3); the human's own wording there, if any, is only ever appended to, never edited.
+#   set; the human's own wording there, if any, is only ever appended to, never edited.
 #   Its "Project config uses defaults for: ..." line loses every key this run set (and a language
 #   already set by adopt.py --apply --language-docs/--language-chat); a note with nothing left in
-#   it is removed (B148 1).
+#   it is removed.
 #   --plan: the same report ("would set"), nothing written. Exit 0 on success, on --plan, and when
 #   nothing to adopt was found at all (no AI-CONFIG.md, no .claude/template.json with values —
 #   the normal case for a project that was never the old template); 2 if the target has no
@@ -72,7 +72,7 @@ KEY_MAP: dict[str, str] = {
     "lint-befehl": "commands:0", "typecheck-befehl": "commands:1", "test-befehl": "commands:2",
     "ki-werkzeuge": "tools", "feedback": "feedback", "feedback-takt": "feedback-cadence",
     "feedback-umfang": "feedback-scope", "logging": "logging", "logging-tiefe": "log-level",
-    # T61: the old template's one language row (`| Sprache | Deutsch |`, until it was dropped for a
+    # The old template's one language row (`| Sprache | Deutsch |`, until it was dropped for a
     # fixed German) is the docs language (R-work-language); the chat language stays `auto`.
     "sprache": "language-docs",
 }
@@ -83,7 +83,7 @@ TEMPLATE_JSON_KEYS = {"PROJEKTNAME": "projektname", "AUFTRAGGEBER": "auftraggebe
                       "TEST_BEFEHL": "test-befehl"}
 NOTES: dict[str, str] = {}
 # The old key whose value is a comma list of rule-set names (Nuxt/Vue/TypeScript/SQL/...) — routed
-# straight into docs/project/coding_rules.md's checkboxes (init.enable_coding_sets, T62 I2) instead
+# straight into docs/project/coding_rules.md's checkboxes (init.enable_coding_sets) instead
 # of the plain key/value mapping below; never added to KEY_MAP so the main loop skips it.
 CODING_GUIDELINES_KEY = "coding-guidelines"
 
@@ -119,7 +119,7 @@ NOT_SET = "(not set)"
 EMPTY_VALUES = {"", "—", "–", "-"}
 # An absolute path (POSIX "/...", Windows "C:/..."/"C:\\...", a UNC "\\\\host\\...") or a
 # "scheme://" URL — _removed_command_paths() never treats one of these as something the
-# adoption could have removed (T62 F6).
+# adoption could have removed.
 _ABS_OR_URL_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\/]|\w+://)")
 
 
@@ -190,7 +190,7 @@ def read_template_values(path: Optional[Path]) -> dict[str, str]:
 
 
 def _first_existing(root: Path, rel: str) -> Optional[Path]:
-    # The legacy copy of a tool-config path is renamed (B128, adopt.legacy_rel()) so no AI tool
+    # The legacy copy of a tool-config path is renamed (adopt.legacy_rel()) so no AI tool
     # reads it as its own configuration from inside the archive — check under that name, not `rel`.
     for candidate in (root / rel, root / LEGACY_ROOT / adopt.legacy_rel(rel)):
         if candidate.is_file():
@@ -283,7 +283,7 @@ def _git_user(root: Path) -> str:
 def _apply_coding_guidelines(root: Path, row: dict, plan: bool) -> dict:
     """Turn one old `Coding-Guidelines` row (a comma list of rule-set names) into a "Mapped" report
     row, actually checking the named sets in docs/project/coding_rules.md along the way
-    (init.enable_coding_sets — T62 I2). Unlike the plain key/value mapping below, there is no
+    (init.enable_coding_sets). Unlike the plain key/value mapping below, there is no
     single `docs/ai/config.md` cell to compare against a default, so the report says what
     happened directly instead of "set"/"kept"/"same"."""
     names = {p.strip().lower() for p in row["value"].strip("`").split(",") if p.strip()}
@@ -309,7 +309,7 @@ def _apply_coding_guidelines(root: Path, row: dict, plan: bool) -> dict:
 def _record_coding_rules_touch(root: Path) -> None:
     """Leaves a small, separate record at .act-local/adopt/config-touched.json — {"paths": {<rel
     path>: {"sha256", "changed_by"}}} — with the post-write hash of docs/project/coding_rules.md,
-    for adopt.py's own --finish (a different builder, T62 review finding) to tell apart from
+    for adopt.py's own --finish (a different builder) to tell apart from
     "nobody filled this in": --finish's `target_hashes` snapshot is taken right after init.py runs,
     before this script checks any boxes, so its own "content not adopted?" comparison already sees
     a real change here and needs nothing from this file to stay correct today — this record is
@@ -356,8 +356,8 @@ def _removed_command_paths(root: Path, command: str, table_rows: list[dict]) -> 
     to remove: listed in `table_rows` with action `delete`/`legacy` (e.g. the predecessor
     template's own `.claude/scripts/*.py`), or — with no table at hand — simply nothing left on
     disk once a glob's literal prefix is stripped. Used to flag a just-adopted command before it
-    silently breaks (T62 C1); the command's value itself is still set unchanged, this only adds to
-    the report. Skips an absolute path or a URL-like token outright (T62 F6 review finding) — it
+    silently breaks; the command's value itself is still set unchanged, this only adds to
+    the report. Skips an absolute path or a URL-like token outright — it
     is never something the adoption could have removed, and `root.glob()` raises
     `NotImplementedError` on a non-relative pattern; the glob call itself stays guarded too, in
     case a pattern is otherwise malformed."""
@@ -388,7 +388,7 @@ def _init_notes_path(root: Path) -> Optional[Path]:
     read from .act-local/adopt/state.json's "created" list (adopt.py records every path init.py
     left behind there right after running it), rather than guessing by filename recency, which
     could just as well pick up a stale note left over from an unrelated, earlier init.py run in
-    the same project (T62 review finding). Falls back to the most recently dated file under
+    the same project. Falls back to the most recently dated file under
     docs/ai/inbox/ when there is no state.json to read at all (adopt_config.py run standalone,
     without adopt.py --apply first) — the same guess this function made before."""
     try:
@@ -415,7 +415,7 @@ def _slugify_owner(owner: str) -> str:
 
 
 def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Optional[str]:
-    """.act-local/identity.json `identity` set to the adopted owner's slug (B129.9), once this run
+    """.act-local/identity.json `identity` set to the adopted owner's slug, once this run
     actually set `owner` and the current identity is still a placeholder (`unknown`/`user`) or the
     file/key is missing altogether — never overwrites an identity a real init.py run already
     picked for this checkout. Reads/writes the file by `root` directly rather than through
@@ -447,7 +447,7 @@ def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Op
 
 # init.py's line in the init-notes todo (step_config, non-interactive): the config keys it left at a
 # default. Each label below is what init.py prints for one key; adopt_config removes the ones it
-# has set since (B148 1), so the note never lists a key that has a value by now.
+# has set since, so the note never lists a key that has a value by now.
 _DEFAULTS_NOTE_RE = re.compile(r"^- Project config uses defaults for: (.*?) — review docs/ai/config\.md\.\s*$")
 _LANGUAGE_DEFAULTS_LABEL = "language-chat/language-docs (auto/en)"
 _DEFAULTS_LABELS = {"stack": "stack", "commands (lint)": "lint", "commands (typecheck)": "typecheck",
@@ -505,7 +505,7 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
     """Bring the docs/ai/inbox/todo-<stamp>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
     adoption just filled in, instead of leaving it to say `for: unknown` or list config defaults
-    that no longer apply (T62 I3): its `for:` line becomes the adopted owner once one was set, and
+    that no longer apply: its `for:` line becomes the adopted owner once one was set, and
     a short section lists every other key this run set. Only ever appends or rewrites the
     machine-written `for:` line — a human's own comment further down the file is never touched.
     Does nothing under `plan`, without such a file, or when this run set nothing (a repeat run, or
@@ -534,7 +534,7 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
             if new_owner:
                 lines[for_index] = f"for: {_slugify_owner(new_owner)}"
                 changed = True
-    # B148 1: the "uses defaults for" line must not list what this run (or --language-docs at
+    # The "uses defaults for" line must not list what this run (or --language-docs at
     # --apply) has set since. A note with nothing left in it is removed instead of rewritten.
     current_config = ConfigFile(root / CONFIG) if (root / CONFIG).is_file() else None
     language_set = set()
@@ -571,7 +571,7 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
 
 def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
     """Decode the old AI-CONFIG.md: UTF-8 first, else Windows-1252 (common for a hand-edited file
-    from an older editor) instead of silently dropping characters via errors="replace" (B118).
+    from an older editor) instead of silently dropping characters via errors="replace".
     Returns the text plus a note for the report when the fallback was used or even that failed."""
     if source is None:
         return "", None
@@ -588,7 +588,7 @@ def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
 
 
 def _languages_from_apply(root: Path) -> dict[str, str]:
-    """The languages adopt.py --apply was given explicitly (state.json "languages", B148 1):
+    """The languages adopt.py --apply was given explicitly (state.json "languages"):
     {"language-docs": "en", ...}, empty if none or no state file."""
     try:
         state = json.loads((root / adopt.ADOPT_DIR / "state.json").read_text(encoding="utf-8"))
@@ -661,7 +661,7 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
         value, note = translate(new_key, row["value"])
         current = cfg.get(new_key)
         if new_key in fixed:
-            # B148 1: given to adopt.py --apply, so a project value — never guessed or overwritten.
+            # Given to adopt.py --apply, so a project value — never guessed or overwritten.
             result = f"kept: set at --apply ({fixed[new_key]})"
         elif value is None:
             result = f"not set: {note}"
@@ -735,7 +735,7 @@ def render(root: Path, data: dict, plan: bool, language: str = "en") -> str:
     # becomes part of a file under docs/ once the `act-adopt` skill embeds it as an inbox entry's
     # body, so it follows `language-docs` the same as any other writer here).
 
-    # No leading "# ..." title here (T62 C3): this report becomes the *body* of an
+    # No leading "# ..." title here: this report becomes the *body* of an
     # inbox entry the `act-adopt` skill titles itself (entries.py always writes its own
     # "# <title>" heading first) — a second, identical H1 right below it read as a doubled
     # heading. The standalone copy under .act-local/adopt/config-report.md loses nothing by it;
@@ -789,7 +789,7 @@ def main(argv: list[str]) -> int:
         return 2
     template_json = _first_existing(root, ".claude/template.json")
     if source is None and not read_template_values(template_json):
-        # Not an error (T62 C2): a project that was never the old template has no AI-CONFIG.md and
+        # Not an error: a project that was never the old template has no AI-CONFIG.md and
         # no .claude/template.json with values to begin with — the normal case, not a failure of
         # this run. No report is written; there is nothing to report.
         print("adopt_config.py: nothing to adopt — no old configuration found")

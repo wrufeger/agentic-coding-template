@@ -6,8 +6,7 @@
 #          .act/tiers.json (the template's tier -> model table) and docs/ai/config.md's
 #          "## Roles" table (a project's own override; a filled-in model there wins over the tier
 #          lookup entirely). Used by init.py/update.py when materializing/refreshing
-#          .claude/agents/<name>.md (and its "-high" variant,
-#          `Q71`) and by .act/hooks/dispatch.py's session-start-refresh, which re-derives only the
+#          .claude/agents/<name>.md (and its "-high" variant) and by .act/hooks/dispatch.py's session-start-refresh, which re-derives only the
 #          `model`/`effort` frontmatter fields of an already-existing bridge -- everything else in
 #          that file, including a project's own text below the frontmatter, is left untouched.
 #
@@ -29,7 +28,7 @@ import frontmatter
 
 
 # ---------------------------------------------------------------------------
-# Frontmatter: split / render, built on frontmatter.parse_frontmatter() (`B111.1` -- this used to
+# Frontmatter: split / render, built on frontmatter.parse_frontmatter() (this used to
 # be its own, separately-permissive regex/field parser; a project's own already-materialized file
 # may carry a comment, a folded scalar (`description: >` plus continuation lines), or a YAML list
 # (`tools:\n  - Read`), and the shared parser now reads those instead of silently dropping them.
@@ -64,7 +63,7 @@ def render_frontmatter(fields: dict[str, str], order: list[str], body: str) -> s
     that needs quoting to read back as the same value (frontmatter.quote_value() -- e.g. one
     containing ": ", since split_frontmatter() only ever hands back the quote-stripped value) is
     quoted again here; a plain value that never needed quoting is written exactly as before
-    (`B111.1` follow-up review of `T76`: writing every value back unquoted produced invalid YAML,
+    (a review found that writing every value back unquoted produced invalid YAML,
     e.g. description: "Use when: a thing" turning into an unquoted "description: Use when: a
     thing")."""
     lines = ["---"]
@@ -132,7 +131,7 @@ def resolve_tier(
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """(model_alias, effort_or_None, problem_or_None) for one (tier, reasoning) pair under `tool`.
     `problem` distinguishes three *reportable* reasons the pair could not be resolved from the one
-    *silent, documented* reason (`Q29`, see .act/tiers.json's own
+    *silent, documented* reason (see .act/tiers.json's own
     "_comment"): a tool present in tiers.json with an empty "tiers" table has deliberately no
     researched mapping yet, so (None, None, None) there is normal, not a bug -- callers leave the
     role's existing model/effort untouched without telling anyone.

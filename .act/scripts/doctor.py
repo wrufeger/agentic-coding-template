@@ -18,37 +18,37 @@
 #               matching .act/ file;
 #            8. hook entries .act/bridges/settings.hooks.json defines that .claude/settings.json
 #               is missing, or a template-generated entry .claude/settings.json still carries that
-#               the bridge no longer defines (outdated or a duplicate left over from before T46's
+#               the bridge no longer defines (outdated or a duplicate left over from before the
 #               merge fix) — only checked when "claude-code" is one of the project's configured
 #               tools, per docs/ai/config.md.
 #            9. .act/MANIFEST.json drift against the .act/ tree on disk, wherever a MANIFEST.json
 #               exists to compare against — a project that hand-edited .act/ since its last
 #               update, or the template's own checkout if its maintainer forgot `manifest.py
-#               --write` before committing an .act/ change (Q73a).
+#               --write` before committing an .act/ change.
 #           10. a short id (T<n>/B<n>/Q<n>) assigned to more than one entry file under
-#               docs/ai/work/ or docs/ai/inbox/ — the merge-safety net Q62a/Q65c call for,
+#               docs/ai/work/ or docs/ai/inbox/ — the merge-safety net for team work,
 #               reusing entries.py's own scan (entries.find_duplicate_ids()) rather than repeating
 #               it here; plus, from the same scan, an entry file that isn't valid UTF-8 at all
 #               (entries.find_unreadable_entries()) — this template never lets a decode failure
 #               abort a run, here or in entries.py itself.
 #           11. an outdated config.md key: the single `language` still in place of
-#               `language-chat`/`language-docs` (T61) — still read, one note to replace it.
+#               `language-chat`/`language-docs` — still read, one note to replace it.
 #           12. an entry whose `status:` header value is none the mechanism knows (open, answered,
 #               done) — e.g. translated along with the scaffold; board.py and the session start
 #               count only those values (R-work-language).
 #           13. a hook command or a `Bash(...)` permission entry in .claude/settings.json (and,
 #               read-only, .claude/settings.local.json) that names a project script path which no
 #               longer exists — left over after an adoption replaced the old template's scripts
-#               (T54, D1). Never touches either file, only reports.
-#           14. (T64) an @-import Claude Code cannot follow from CLAUDE.md (relative to the
+#               (the old scripts are gone). Never touches either file, only reports.
+#           14. an @-import Claude Code cannot follow from CLAUDE.md (relative to the
 #               importing file, at most four hops, rules.resolve_imports), every rule file
 #               under .act/rules/shared|orchestrator/ docs/ai/rules.md names but does not import,
 #               and every checked coding set that does not load.
-#           15. (T75) leftover files under docs/ai/questions/ (besides its own README.md) — the
+#           15. leftover files under docs/ai/questions/ (besides its own README.md) — the
 #               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
 #               someone still writes to at the old location with an older checkout falls here.
-#           16. (T76 Welle D.6) a role/tier whose recorded usage.py outcomes cross a threshold
-#               (13-model-tiers.md § 7): raise proposed at 8+ outcomes with 40%+ reworked/escalated,
+#           16. a role/tier whose recorded usage.py outcomes cross a threshold
+#               raise proposed at 8+ outcomes with 40%+ reworked/escalated,
 #               lower proposed at 20+ outcomes with none reworked/escalated — a finding only, never
 #               a live change to docs/ai/config.md.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
@@ -557,7 +557,7 @@ def check_duplicate_units(root: Path) -> list[Finding]:
     .claude/skills/x/SKILL.md, both hand-made with no .act/ template and no copy/bridge/override
     behind either, is two — that one is reported. Grouping by bare filename alone would have
     falsely flagged two unrelated, legitimately hand-made skills as duplicates of each other, since
-    every skill's file is named SKILL.md (confirmed 2026-09-22, review of T24)."""
+    every skill's file is named SKILL.md."""
     tools = _configured_tools(actlib.read_config())
     lock = actlib.read_lock()
     copy_dests = set(init.copy_targets(root, tools).keys()) | set(lock.get("copies", {}).keys())
@@ -610,7 +610,7 @@ def check_duplicate_units(root: Path) -> list[Finding]:
 
 # ---------------------------------------------------------------------------
 # 10. Duplicate entry ids — thin wrapper around entries.find_duplicate_ids(), the merge-safety net
-#     Q62a/Q65c call for on top of the filename-as-identity scheme itself.
+#     on top of the filename-as-identity scheme itself.
 # ---------------------------------------------------------------------------
 
 def check_duplicate_entry_ids(root: Path) -> list[Finding]:
@@ -626,8 +626,8 @@ def check_duplicate_entry_ids(root: Path) -> list[Finding]:
 
 def check_legacy_questions_dir(root: Path) -> list[Finding]:
     """15. A project still has docs/ai/questions/ files besides its own README.md — e.g. a
-    colleague on a pre-T75 checkout still filing a question there. Migration 001-one-inbox moved
-    the format to docs/ai/inbox/ (kind: question); this is a per-project drift check, not a
+    colleague on a checkout from before the one-inbox format still filing a question there. Migration 001-one-inbox
+    moved the format to docs/ai/inbox/ (kind: question); this is a per-project drift check, not a
     duplicate of the migration itself."""
     questions_dir = root / "docs" / "ai" / "questions"
     if not questions_dir.is_dir():
@@ -643,7 +643,7 @@ def check_legacy_questions_dir(root: Path) -> list[Finding]:
 
 
 def check_local_role_frontmatter(root: Path) -> list[Finding]:
-    """B111.2: a hand-written own role or skill under docs/ai/local/agents/*.md or
+    """A hand-written own role or skill under docs/ai/local/agents/*.md or
     docs/ai/local/skills/*/SKILL.md may carry the same risky frontmatter keys settings_load.py's
     import validator already refuses on the bundled-import path (_AGENT_RISKY_KEYS/
     _SKILL_RISKY_KEYS) — reused here rather than a second copy of the list, so the two stay in
@@ -722,7 +722,7 @@ def check_hooks(root: Path) -> list[Finding]:
             settings = {}
     if not actlib.is_valid_hooks_container(settings):
         # hooks: null, settings.json not an object, an entry that isn't one, ... — same shape
-        # init.py's/update.py's merge already refuses to touch (T46 review finding 6); doctor
+        # init.py's/update.py's merge already refuses to touch; doctor
         # reports it the same way rather than crashing or half-comparing against it.
         return [Finding(path=_rel(settings_path, root), line=None, kind="hook",
                          message="not a valid hooks structure, left unchanged")]
@@ -731,16 +731,16 @@ def check_hooks(root: Path) -> list[Finding]:
     bridge_hooks = bridge.get("hooks", {}) if isinstance(bridge, dict) else {}
 
     findings = []
-    # The union, not just the bridge's own events (T46 review finding 7): a "ours" hook can sit
+    # The union, not just the bridge's own events: a "ours" hook can sit
     # under an event the bridge no longer defines at all (the template retired the whole event),
     # not only under one where it still defines *other* entries — that case must be reported too.
     for event in sorted(set(bridge_hooks) | set(existing_hooks)):
         bridge_entries = bridge_hooks.get(event, [])
         existing_entries = existing_hooks.get(event, [])
-        # Classified and counted per *hook*, not per entry (T46 review finding 3): a project hook
+        # Classified and counted per *hook*, not per entry: a project hook
         # sharing an entry with a template hook (same matcher) must never make that whole entry
-        # count as "ours", and an extra copy of a hook the bridge still wants exactly once (T46's
-        # duplicate scenario) needs counting, not just membership, to be caught at all.
+        # count as "ours", and an extra copy of a hook the bridge still wants exactly once
+        # (a duplicate) needs counting, not just membership, to be caught at all.
         bridge_hook_counts = Counter(
             json.dumps(hook, sort_keys=True)
             for entry in bridge_entries if isinstance(entry, dict)
@@ -768,7 +768,7 @@ def check_hooks(root: Path) -> list[Finding]:
         # What's left over in existing_ours_counts once every bridge hook is accounted for: a
         # template-generated hook (recognized by its exact command form, see actlib.is_ours_hook)
         # the bridge no longer wants — either an older matcher/event the template retired, or a
-        # stale duplicate left over from before T46's fix to the merge logic. update.py reconciles
+        # stale duplicate left over from before the merge logic was fixed. update.py reconciles
         # this; doctor only reports it.
         if existing_ours_counts - bridge_hook_counts:
             findings.append(Finding(
@@ -785,7 +785,7 @@ def check_hooks(root: Path) -> list[Finding]:
 # 13. Hook commands / Bash(...) permissions in .claude/settings.json (and, read-only,
 #     .claude/settings.local.json) naming a project script that no longer exists — left over once
 #     an adoption swapped an old template's scripts for this one's, but Claude Code itself never
-#     complains about a dead permission or hook command (T54, D1).
+#     complains about a dead permission or hook command.
 # ---------------------------------------------------------------------------
 
 # A relative script path such as ".claude/scripts/foo.py" or ".act/hooks/dispatch.py" embedded in a
@@ -798,11 +798,11 @@ RE_SETTINGS_SCRIPT_PATH = re.compile(
 
 # Claude Code expands `$CLAUDE_PROJECT_DIR` (also written `${CLAUDE_PROJECT_DIR}`, quoted
 # `"$CLAUDE_PROJECT_DIR"`, or with a bash default-value fallback `${CLAUDE_PROJECT_DIR:-.}`, this
-# template's own form since B126) to the project root in a hook command — all these forms name a
+# template's own form) to the project root in a hook command — all these forms name a
 # script relative to `root`, same as a plain relative path, but none of them match
 # RE_SETTINGS_SCRIPT_PATH above: the plain form matches it *without* the "$" and is then checked
 # as the literal (nonexistent) path "CLAUDE_PROJECT_DIR/...", and the quoted/braced/default-value
-# forms don't match at all (T62 F8 review finding; `:-.` form added B126).
+# forms don't match at all (a quoted form once slipped through).
 RE_PROJECT_DIR_SCRIPT = re.compile(
     r'"?\$\{?CLAUDE_PROJECT_DIR(?::-[^}]*)?\}?"?/((?:[\w.-]+/)*[\w.-]+\.(?:py|sh|bash|ps1|js|mjs|cjs|ts))'
 )
@@ -832,7 +832,7 @@ def _missing_settings_scripts(root: Path, settings_path: Path) -> tuple[int, lis
     """(total occurrences, distinct paths) of a script named in `settings_path`'s hook commands or
     Bash(...) permission entries that does not exist under `root` — total counts every hook/
     permission occurrence (a script named twice across entries counts twice), distinct is the same
-    set of paths first-seen order, deduplicated (T65: the old single list conflated the two —
+    set of paths first-seen order, deduplicated (an earlier single list conflated the two —
     "5 shown, +1 more" claimed to be a count of entries while it was really the count of distinct
     paths, understating a settings file that names the same handful of missing scripts across many
     entries). (0, []) if the file is missing, not valid JSON, or not an object — same "never crash
@@ -844,7 +844,7 @@ def _missing_settings_scripts(root: Path, settings_path: Path) -> tuple[int, lis
     except OSError:
         return 0, []
     try:
-        # utf-8-sig strips a BOM when present (T62 F7: plain "utf-8" left it in front of "{" and
+        # utf-8-sig strips a BOM when present (plain "utf-8" left it in front of "{" and
         # json.loads failed on it, so a BOM'd settings.local.json was silently skipped instead of
         # actually checked) and decodes plain UTF-8 exactly as before. A file in some other
         # encoding still can't be read here — same "skip, never crash" stance as before, just
@@ -908,7 +908,7 @@ def check_settings_scripts(root: Path) -> list[Finding]:
     return findings
 
 
-# Unknown tool identifiers configured in docs/ai/config.md's `tools` value (F10, T60) — a typo, or
+# Unknown tool identifiers configured in docs/ai/config.md's `tools` value — a typo, or
 # a spelling actlib.normalize_tool() does not recognize either (e.g. one carried over unchanged
 # from .act/tiers.json's now-retired "-cli" convention, "gemini-cli" say). Reported here rather
 # than only failing silently at init.py's SKILL_TARGET_DIRS gate, since a project can also
@@ -932,7 +932,7 @@ def check_unknown_tools(root: Path) -> list[Finding]:
 
 
 def check_legacy_config_keys(root: Path) -> list[Finding]:
-    """One note for a config.md from before T61: the single `language` key still counts (for
+    """One note for a config.md from before the split: the single `language` key still counts (for
     chat and docs alike, actlib.language_settings), but the two keys that replace it are missing."""
     config = actlib.read_config()
     if "language" not in config or "language-chat" in config or "language-docs" in config:
@@ -973,10 +973,10 @@ _UNRESOLVED_RE = re.compile(r"^(?P<path>.*?):(?P<line>\d+): (?P<message>.*)$")
 
 
 def check_imports(root: Path) -> list[Finding]:
-    """14. (T64) What Claude Code actually loads, followed from CLAUDE.md exactly the way it does
+    """14. What Claude Code actually loads, followed from CLAUDE.md exactly the way it does
     (rules.resolve_imports): every import it cannot follow, and every rule file that should load
     but does not — a rule file under .act/rules/shared|orchestrator/ (named in docs/ai/rules.md
-    but not imported, or not named there at all) and every checked coding set. Before T64 the
+    but not imported, or not named there at all) and every checked coding set. Formerly the
     imports resolved against the wrong folder and not one rule file loaded; this is the check
     that would have shown it. Skipped without a CLAUDE.md (Claude Code is not a configured tool)."""
     if not (root / "CLAUDE.md").is_file():
@@ -1002,10 +1002,10 @@ def check_imports(root: Path) -> list[Finding]:
             if rel in loaded:
                 continue
             wanted = rules.import_path(rel, core_rel)
-            # Only a file docs/ai/rules.md names without importing it (backticks, the pre-T64
+            # Only a file docs/ai/rules.md names without importing it (backticks, the older
             # "@.act/..." form) — one whose line was dropped is switched off on purpose, as the
             # bridge offers ("drop an import line to switch off its whole area"); a file new in
-            # the template reaches an unchanged copy through the bridge refresh (T64, F4).
+            # the template reaches an unchanged copy through the bridge refresh.
             if rel not in named or (core_rel, named[rel]) in reported:
                 continue  # not named, or already reported above as an import it cannot follow
             findings.append(Finding(
@@ -1067,7 +1067,7 @@ def check_status_values(root: Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
-#    committing (Q73a: the template ships its own MANIFEST.json now, so this same comparison
+#    committing (the template ships its own MANIFEST.json now, so this same comparison
 #    that update.py's step 2 already runs against a project's copy also catches the template
 #    maintainer's own checkout going stale — one comparison, reused, no separate git-hook wiring
 #    to install and keep working across clones/worktrees).
@@ -1112,15 +1112,14 @@ def check_manifest_drift(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
-# 16. Tier proposals from recorded worker outcomes (T76 Welle D.6,
-#     docs/project/concepts/ai-dev-app/13-model-tiers.md § 7 "Lernen aus Fehlern")
+# 16. Tier proposals from recorded worker outcomes
 # ---------------------------------------------------------------------------
 
-# Thresholds are this check's own proposal (the concept names the shape, not exact numbers): at
+# Thresholds are this check's own proposal, not a fixed standard: at
 # least 8 outcomes for a role/tier with 40%+ reworked/escalated suggests raising the tier; at
 # least 20 outcomes with none reworked/escalated suggests a lower tier may suffice. Either way this
 # only ever writes a finding (surfaced via --inbox) -- never docs/ai/config.md itself
-# (13-model-tiers.md's own "never silently switched" decision).
+# (a tier is never silently switched).
 _TIER_PROPOSAL_MIN_RAISE = 8
 _TIER_PROPOSAL_RAISE_RATIO = 0.4
 _TIER_PROPOSAL_MIN_LOWER = 20
@@ -1190,7 +1189,7 @@ def check_script_docs(root: Path) -> list[Finding]:
 def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
     # A tool's own report of what it found (finding 12 in the module docstring is one input to
     # this, not a decision by itself) — no action is asked of anyone but reading it, so `kind:
-    # report` (16-inbox-questions-tasks.md § "Arten in der Inbox"), never `todo`. A re-run today
+    # report` (a plain notice), never `todo`. A re-run today
     # replaces today's own file rather than piling up near-duplicates — but only while that file
     # is still `status: open` and unread: once a person has answered it (or it is from an earlier
     # day), overwriting it would erase their words under it (R-human-text) and silently reopen a

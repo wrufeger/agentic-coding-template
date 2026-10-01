@@ -7,15 +7,16 @@
 #          old -> new diff (rule/coding IDs individually), get the user's consent, replace .act/,
 #          refresh the template-owned "copies" living outside .act/, reconcile the
 #          .claude/settings.json hook entries and the .gitattributes/.gitignore template blocks
-#          against whatever init.py last wrote for this project (T46 — a project initialized
+#          against whatever init.py last wrote for this project (a project initialized
 #          before a bridge existed, or before a later template revision changed one, otherwise
 #          never gets it), run any due migrations, hand off to doctor.py, and write
 #          .act-lock.json plus a commit. Stdlib only.
 #
-#          There is no "template" git remote to update from (Q73a) — the template's address lives
+#          There is no "template" git remote to update from — the template's address lives
 #          only in .act-lock.json's `template.source`, set by init.py. A project .act/ that got
 #          replaced by something *other* than this script (e.g. a plain `git pull` of the shared
-#          history some projects still keep from before Q73a) looks, once it lands, exactly like
+#          history some projects still keep from before init.py stopped adding a remote) looks,
+#          once it lands, exactly like
 #          an update.py run that crashed between step 5 and step 10: .act/ already matches a clean
 #          template state, but .act-lock.json/copies/role bridges/migrations are still behind. A
 #          normal run notices this itself (step 3 finds no diff, then resumes instead of reporting
@@ -139,7 +140,7 @@ def _read_version_file(act_dir: Path) -> tuple[str, str]:
 
 def _default_source(root: Path) -> str:
     """The source recorded in .act-lock.json from the last update/init — never a guess. init.py no
-    longer leaves a "template" remote behind (Q73a), but a manually-added one still wins if
+    longer leaves a "template" remote behind, but a manually-added one still wins if
     someone set it up by hand."""
     result = _git(["remote", "get-url", "template"], cwd=root, check=False)
     if result.returncode == 0 and result.stdout.strip():
@@ -168,7 +169,7 @@ def step_fetch(
     itself); a git source (local repo or remote URL) is cloned in full and its HEAD's commit is
     read back, so `step_lock`/`_resume_needed` have the actual fetched commit to record and
     compare against, instead of whatever `.act/VERSION`'s own (often unmaintained) "commit=" line
-    says (Q73a)."""
+    says."""
     src_path = Path(source)
     commit: Optional[str] = None
     if src_path.is_dir() and not (src_path / ".git").exists():
@@ -526,7 +527,7 @@ def _prune_empty_copy_dirs(start: Path, bases: set[Path], root: Path) -> None:
 
 def _new_backup_dir(root: Path) -> Path:
     """A fresh, not yet existing .act-local/backup/<YYYYmmdd-HHMMSS>[-n]/ folder for one
-    sync_dependent_files() run (T60 part B, F3) — one folder per run, so a second run never
+    sync_dependent_files() run — one folder per run, so a second run never
     overwrites the first one's backups. Not created here; _backup_file() creates it on first use."""
     base = root / ".act-local" / "backup"
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -540,7 +541,7 @@ def _new_backup_dir(root: Path) -> Path:
 def _backup_file(backup_dir: Optional[Path], dest_rel: str, dest_path: Path) -> bool:
     """Copies a locally-edited skill copy or role bridge to <backup_dir>/<dest_rel> before
     sync_dependent_files() resets or removes it. Returns whether the backup really landed (same
-    size as the original) — a caller leaves the file untouched whenever it did not (F3: a path
+    size as the original) — a caller leaves the file untouched whenever it did not (a path
     past Windows' 260-character limit, or .act-local/backup blocked by a plain file, must never be
     followed by the overwrite)."""
     if backup_dir is None:
@@ -587,7 +588,7 @@ def _report_reset_edits(root: Path, backup_dir: Path, reset: list[str]) -> Optio
 
 
 def _list_part(label: str, items: list[str], brief: bool) -> str:
-    """One "label: a, b, c" summary part — under `brief` (the session-start note, F12) a long list
+    """One "label: a, b, c" summary part — under `brief` (the session-start note) a long list
     shrinks to its count, so the note stays one readable line."""
     if brief and len(items) > 5:
         return f"{label}: {len(items)} files"
@@ -624,7 +625,7 @@ def _dest_skill_dir(new_init, dest_rel: str) -> Optional[str]:
 
 
 def _fold(data: bytes) -> bytes:
-    """CRLF folded to LF, unless binary — the same rule as manifest.content_hash() (G2: a checkout
+    """CRLF folded to LF, unless binary — the same rule as manifest.content_hash() (a checkout
     with core.autocrlf=true writes every copy with CRLF; that is not an edit)."""
     return data if b"\x00" in data else data.replace(b"\r\n", b"\n")
 
@@ -634,7 +635,7 @@ def _unedited(current: bytes, recorded_sha: Optional[str]) -> bool:
 
 
 def _write_bytes(dest_path: Path, data: bytes) -> bool:
-    """Writes one copy; False instead of an exception on failure (F8: one unwritable file must not
+    """Writes one copy; False instead of an exception on failure (one unwritable file must not
     stop the rest of the run, nor leave the files already written untracked)."""
     try:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -656,10 +657,10 @@ def step_refresh_copies(
     `tools`) -> the project's copy is deleted if it still matches what the template last shipped
     (the project never edited it), or kept and reported "no longer shipped, kept (edited)" if the
     project changed it since; new in the template -> created (or taken over, if a byte-identical
-    file is already there — e.g. from an earlier run that stopped midway, F8). Returns (summary,
+    file is already there — e.g. from an earlier run that stopped midway). Returns (summary,
     new_copies, reset_edited, removed): new_copies is what .act-lock.json's "copies" key should
     become, reset_edited lists the edited copies this run backed up and reset (see
-    `restore_paths` below), removed the files it deleted (for the caller's commit, F11).
+    `restore_paths` below), removed the files it deleted (for the caller's commit).
 
     A sixth case sits outside that list: a project's *own* skill (settings_load.py's
     write_unit_bridges() recorded its copies in the lock the same way, but init.py's
@@ -667,16 +668,16 @@ def step_refresh_copies(
     copy's lock "source" points at a live docs/ai/local/skills/<name>/<file> — that is what tells
     it apart from a copy the template truly stopped shipping (confirmed 2026-09-22: without this
     check the first `update` after importing an own skill deleted it outright). Its copies follow
-    the same tool gate as a template skill's (F5): refreshed in every active SKILL_TARGET_DIRS
+    the same tool gate as a template skill's: refreshed in every active SKILL_TARGET_DIRS
     folder, created in one that became active, removed (unedited only) from one that no longer is.
 
-    `restore_paths`/`restore_dirs` (T60 part B, Q85 a): set by sync_dependent_files() to exactly
+    `restore_paths`/`restore_dirs`: set by sync_dependent_files() to exactly
     the destinations and skill folders a moved `tools` value newly targets — empty for a plain call
     and for any other change, so every case above stays as it was. For those only, a user-deleted
     copy is recreated (its removed_by_user record cleared), and a user-edited one is backed up into
     `backup_dir` (_backup_file) and then reset to the template's version — or, if the backup did
-    not land, left as it is and reported "kept (backup failed)" (F3). `brief` shortens long lists
-    in the summary to a count (session start, F12).
+    not land, left as it is and reported "kept (backup failed)". `brief` shortens long lists
+    in the summary to a count (session start).
 
     If the updated template's init.py cannot be imported (see _import_fresh_init()), this step is
     aborted entirely rather than silently treating every copy as "no longer shipped" — that would
@@ -699,7 +700,7 @@ def step_refresh_copies(
     new_specs: dict[str, Path] = dict(new_init.copy_targets(root, tools))
     copy_bases = {root / dest_root for dest_root, _ in getattr(new_init, "SKILL_TARGET_DIRS", ())}
 
-    # F5: a project's own skill gets a copy in every active skill folder, like a template skill.
+    # A project's own skill gets a copy in every active skill folder, like a template skill.
     local_skills = (root / "docs" / "ai" / "local" / "skills").resolve()
     active_dirs = [d for d, _ in getattr(new_init, "SKILL_TARGET_DIRS", ()) if _skill_dir_active(new_init, d, tools)]
     restore = set(restore_paths)
@@ -735,7 +736,7 @@ def step_refresh_copies(
                 source_path = own  # an own copy outside the usual layout: refreshed as before
             else:
                 # the template stopped shipping this copy (removed, or renamed to a different
-                # path), or its folder's tool left `tools` (F5 for an own skill)
+                # path), or its folder's tool left `tools` (for an own skill)
                 if not dest_path.is_file():
                     continue  # already gone — nothing to remove, nothing left to track
                 try:
@@ -762,7 +763,7 @@ def step_refresh_copies(
             continue
         if not dest_path.is_file():
             if dest_rel in restore:
-                # T60 part B: `tools` moved and newly targets this destination — recreate it and
+                # `tools` moved and newly targets this destination — recreate it and
                 # drop any removed_by_user record instead of leaving it deleted forever.
                 if not _write_bytes(dest_path, data):
                     failed.append(dest_rel)
@@ -791,8 +792,8 @@ def step_refresh_copies(
                 replaced.append(dest_rel)
             _record(dest_rel, source_path, data)
         elif dest_rel in restore:
-            # T60 part B: same trigger, for a locally-edited copy — reset only after the edit is
-            # safely backed up (F3); sync_dependent_files() files one inbox entry for the run.
+            # Same trigger, for a locally-edited copy — reset only after the edit is
+            # safely backed up; sync_dependent_files() files one inbox entry for the run.
             if not _backup_file(backup_dir, dest_rel, dest_path):
                 new_copies[dest_rel] = old_entry
                 backup_failed.append(dest_rel)
@@ -819,7 +820,7 @@ def step_refresh_copies(
             continue
         if existing is not None:
             if _fold(existing) == _fold(data):
-                # byte-identical already — e.g. written by an earlier run that stopped midway (F8)
+                # byte-identical already — e.g. written by an earlier run that stopped midway
                 _record(dest_rel, source_path, data)
                 adopted.append(dest_rel)
                 continue
@@ -835,7 +836,7 @@ def step_refresh_copies(
         created.append(dest_rel)
 
     if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
-        # written only when it changed (G1: "nothing to change" must leave the lock untouched)
+        # written only when it changed ("nothing to change" must leave the lock untouched)
         actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
 
     parts = []
@@ -904,16 +905,17 @@ def _bridge_edited(
 
 def _in_git_history(root: Path, rel: str) -> bool:
     """Whether `rel` was ever committed — a missing role bridge that was, and that no snapshot or
-    lock entry explains otherwise, was deleted by the project, not never created (F13 fallback for
+    lock entry explains otherwise, was deleted by the project, not never created (fallback for
     a checkout without .act-local/last-applied.json yet). Single-path convenience wrapper around
-    _paths_in_git_history() below — prefer that one for more than a handful of paths (B118.16a:
-    one `git log` call for the whole set instead of one per path)."""
+    _paths_in_git_history() below — prefer that one for more than a handful of paths (one
+    `git log`
+    call for the whole set instead of one per path)."""
     return bool(_paths_in_git_history(root, [rel]))
 
 
 def _paths_in_git_history(root: Path, rels: list[str]) -> set[str]:
     """Which of `rels` were ever committed, found with a single `git log` call across all of them
-    (B118.16a) instead of one call per path — step_new_role_bridges() below can otherwise ask this
+    instead of one call per path — step_new_role_bridges() below can otherwise ask this
     once per missing role bridge. A commit touching any of `rels` lists every path it touched
     under `--name-only`; intersecting that combined output with `rels` is enough to answer "ever
     committed" for each one, without needing to know *which* commit did it."""
@@ -945,19 +947,19 @@ def step_new_role_bridges(
     known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
 ) -> tuple[str, list[Path], list[str], bool]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
-    applicable role — new or already existing — that does not have one yet (`Q71`).
+    applicable role — new or already existing — that does not have one yet.
     An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
     here; its `model`/`effort` frontmatter is refreshed separately, by
     step_refresh_role_frontmatter() below.
 
-    A missing bridge the project deleted stays deleted (F13, same rule as a skill copy): it is
+    A missing bridge the project deleted stays deleted (same rule as a skill copy): it is
     recorded in .act-lock.json's removed_by_user as soon as it is recognised as deleted — already
     listed there, in the last snapshot's "bridges" (`known`, see sync_dependent_files()), or ever
     committed (_in_git_history) — and only a missing bridge none of those explain is created as new.
 
     For a role in `changed_roles` (its row in docs/ai/config.md § Roles changed since the last
     snapshot — or every role, with `force_all`, when `claude-code` just joined `tools`), its
-    bridges follow the new value (Q85 a): a missing one is recreated and its removed_by_user record
+    bridges follow the new value: a missing one is recreated and its removed_by_user record
     dropped; an edited one (compared against the rendering under `old_overrides`, the table it was
     generated from — see _bridge_edited()) is backed up into `backup_dir` and regenerated, or left
     as it is and reported "kept (backup failed)" if the backup did not land; a template-generated
@@ -968,7 +970,7 @@ def step_new_role_bridges(
     touched_paths, reset_or_removed_edited, had_failure) — the last one true when a bridge that
     should have been created or refreshed could not be written (an OSError/UnicodeDecodeError from
     write_agent_bridge_file, independent of whether `notes` was given): sync_dependent_files() uses
-    it to skip writing its snapshot on such a run (B118.16c), so the failed bridge is retried on
+    it to skip writing its snapshot on such a run, so the failed bridge is retried on
     the next comparison instead of silently counting as already applied."""
     if plan:
         return (
@@ -998,7 +1000,7 @@ def step_new_role_bridges(
         stem = Path(dest_rel).stem
         return stem[: -len("-high")] if dest_rel in variant_targets else stem
 
-    # B118.16a: precompute which missing bridges need the git-history fallback, then ask once
+    # Precompute which missing bridges need the git-history fallback, then ask once
     # for the whole batch rather than once per file inside the loop below — the loop's own
     # branching (is_file/follows_value/removed_by_user/known) is deterministic ahead of time,
     # since none of it depends on state the loop itself mutates.
@@ -1077,7 +1079,7 @@ def step_new_role_bridges(
             reset.append(dest_rel)
 
     if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
-        # written only when it changed (G1: "nothing to change" must leave the lock untouched)
+        # written only when it changed ("nothing to change" must leave the lock untouched)
         actlib.write_lock({"removed_by_user": sorted(set(removed_by_user))})
 
     parts = [
@@ -1094,7 +1096,7 @@ def step_new_role_bridges(
 
 
 # ---------------------------------------------------------------------------
-# sync_dependent_files() — T60 part B (Q85 a): a docs/ai/config.md value that files depend on
+# sync_dependent_files() — a docs/ai/config.md value that files depend on
 # (`tools` for skill copies and, via `claude-code`, role bridges; a role's row in the "## Roles"
 # table for that role's bridges) gets its dependent files installed after the fact by whichever
 # mechanism notices the change first — update.py or the next session start — compared against the
@@ -1155,7 +1157,7 @@ def _render_tool_bridge(new_init, root: Path, key: str, spec: dict) -> Optional[
 def _sync_tool_bridges(
     new_init, root: Path, old_tools: list[str], new_tools: list[str],
 ) -> tuple[list[str], list[Path]]:
-    """F7: the BRIDGES entries init.py gates on a tool (CLAUDE.md — "verbatim" — and
+    """The BRIDGES entries init.py gates on a tool (CLAUDE.md — "verbatim" — and
     .claude/settings.json's hook entries — "json-merge" — both on `claude-code`) follow that tool
     in `tools`: created (hook entries merged) when it joins; removed when it leaves, but only if
     the file is still exactly what init.py generates (or what cache.json last recorded as
@@ -1204,8 +1206,8 @@ def _sync_tool_bridges(
 
 def _read_tools(root: Path) -> tuple[Optional[list[str]], Optional[str]]:
     """(normalized `tools`, None) — or (None, problem) when nothing may be synced from the row:
-    docs/ai/config.md unreadable or without a `tools` row (F4 — read as "no tools", it would remove
-    every skill copy), or an id actlib.KNOWN_TOOLS does not know (G3 — a typo such as "claude code"
+    docs/ai/config.md unreadable or without a `tools` row (read as "no tools", it would remove
+    every skill copy), or an id actlib.KNOWN_TOOLS does not know (a typo such as "claude code"
     would otherwise read as "claude-code left" and remove the whole Claude integration)."""
     path = root / "docs" / "ai" / "config.md"
     try:
@@ -1238,7 +1240,7 @@ def _dependent_values(root: Path) -> tuple[Optional[dict], Optional[str]]:
 
 
 def _valid_snapshot(last: Optional[dict]) -> bool:
-    """G4: the `applied` record comes from a versioned, hand-editable file — only a well-formed
+    """The `applied` record comes from a versioned, hand-editable file — only a well-formed
     one counts as a snapshot; anything else is treated like none at all."""
     if not isinstance(last, dict):
         return False
@@ -1253,7 +1255,7 @@ def _valid_snapshot(last: Optional[dict]) -> bool:
 def _write_snapshot(root: Path, current: dict, new_init=None) -> None:
     """Records `current` in .act-lock.json § applied, and the role bridges present under it in
     .act-local/cache.json § known_bridges — the files a later run reads as "known", so a missing one
-    of them was deleted by the project (F13; only files that exist, never mere targets, G4). Per
+    of them was deleted by the project (only files that exist, never mere targets). Per
     checkout on purpose: a fresh clone falls back to the git history (_in_git_history)."""
     actlib.write_last_applied(dict(current))
     new_init = new_init if new_init is not None else _import_fresh_init(root / ".act" / "scripts")
@@ -1269,7 +1271,7 @@ def _write_snapshot(root: Path, current: dict, new_init=None) -> None:
 
 def record_applied(root: Path) -> bool:
     """For init.py: records the freshly created project's values as its first snapshot, so the first
-    session start already has something to compare against without writing the lock itself (G1).
+    session start already has something to compare against without writing the lock itself.
     Returns whether a snapshot was written."""
     current, _problem = _dependent_values(root)
     if current is None:
@@ -1279,7 +1281,7 @@ def record_applied(root: Path) -> bool:
 
 
 def _sync_note_once(problem: Optional[str]) -> None:
-    """One session-start note per distinct problem (F4/G3), remembered per checkout in
+    """One session-start note per distinct problem, remembered per checkout in
     .act-local/cache.json — never in the versioned lock."""
     cache = actlib.read_cache()
     if cache.get("sync_note") == problem:
@@ -1313,7 +1315,7 @@ def _compare_snapshot(root: Path) -> dict:
 
 
 def pending_dependent_changes(root: Path) -> Optional[str]:
-    """What a session start under `session-start-refresh: warn` reports instead of syncing (F12):
+    """What a session start under `session-start-refresh: warn` reports instead of syncing:
     the moved values in one short line, nothing written, no scan. None when nothing is pending (or
     no snapshot exists yet)."""
     state = _compare_snapshot(root)
@@ -1338,22 +1340,22 @@ def sync_dependent_files(
     files, called from update.py (`always_run=True`, _finish_update/--catch-up) and from session
     start (.act/hooks/checks/session.py's refresh_session(), `always_run=False`).
 
-    Each dependency is handled on its own (F2): a moved `tools` value restores or resets only the
+    Each dependency is handled on its own: a moved `tools` value restores or resets only the
     skill copies and skill folders it newly targets (copy_targets(new) minus copy_targets(old),
-    own skills included, F5); what it no longer targets is removed by step_refresh_copies()'s "no
-    longer shipped" case (kept if edited). A changed role row touches only that role's bridges
-    (F1). `tools` touches the files that hang on a tool themselves: CLAUDE.md and the hook entries
-    in .claude/settings.json (_sync_tool_bridges, F7) and — via `claude-code` — every role bridge
+    own skills included); what it no longer targets is removed by step_refresh_copies()'s "no
+    longer shipped" case (kept if edited). A changed role row touches only that role's bridges.
+    `tools` touches the files that hang on a tool themselves: CLAUDE.md and the hook entries
+    in .claude/settings.json (_sync_tool_bridges) and — via `claude-code` — every role bridge
     (all restored when it joins, unedited ones removed when it leaves, _remove_role_bridges).
 
-    The comparison runs against .act-lock.json § applied (G1: versioned, so a branch switch is no
+    The comparison runs against .act-lock.json § applied (versioned, so a branch switch is no
     value change). `always_run=True`: both steps always run, as update.py's own job (template-side
     changes) needs; only the comparison decides what is restored, reset or removed.
     `always_run=False`: a plain comparison first — no scan, no write unless a value moved; no
     snapshot yet means nothing to compare against, so nothing happens (update.py or init.py writes
-    the first one). The summary is then brief: only what changed, long lists as a count (F12).
+    the first one). The summary is then brief: only what changed, long lists as a count.
 
-    `tools` unusable — unreadable, missing (F4), or holding an unknown id (G3): nothing is synced
+    `tools` unusable — unreadable, missing, or holding an unknown id: nothing is synced
     and nothing recorded; update.py reports it in its step line, session start prints one note
     per distinct problem.
 
@@ -1433,7 +1435,7 @@ def sync_dependent_files(
         touched.extend(role_touched)
         reset_edited.extend(roles_reset)
 
-    # B118.16c: a role bridge that could not be written must not count as "applied" — skip the
+    # A role bridge that could not be written must not count as "applied" — skip the
     # snapshot write so the next comparison (this same config value vs. the still-old snapshot)
     # retries it, instead of silently treating the failed write as done.
     if not role_bridges_failed:
@@ -1482,7 +1484,7 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
 
 # ---------------------------------------------------------------------------
 # Step 7 — reconcile hook entries (.claude/settings.json) and the .gitattributes/.gitignore
-# template blocks against the just-replaced .act/ (T46: init.py only ever writes these once, at
+# template blocks against the just-replaced .act/ (init.py only ever writes these once, at
 # creation time — a project initialized before a bridge existed, or before a later template
 # revision changed one, is otherwise stuck on whatever it got back then, forever)
 # ---------------------------------------------------------------------------
@@ -1532,7 +1534,7 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
     # Not new_init.step_git_files(): its own touched-list also includes an *unchanged* existing
     # file (right for init.py's own first-ever commit, where the whole file is new either way),
     # which here would sweep a project's own, unrelated, already-uncommitted .gitignore/
-    # .gitattributes edits into "chore: update template" (T46 review finding 2). Call
+    # .gitattributes edits into "chore: update template". Call
     # _append_block() directly instead and only mark a file touched when it actually changed.
     act_dir = root / ".act"
     attrs_msg, attrs_changed = new_init._append_block(
@@ -1559,7 +1561,7 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
 # function returning a description without writing anything, and an apply(root) function that
 # performs the change and returns (description, touched_paths). Neither is documented elsewhere
 # yet — this is the minimal shape that satisfies the spec's "--plan first, then run, repeatable"
-# and is exercised by this script's test fixtures; 001-one-inbox.py (T75, Q100 b) is the first
+# and is exercised by this script's test fixtures; 001-one-inbox.py is the first
 # migration to actually ship it.
 
 def _load_migration(path: Path):
@@ -1665,11 +1667,11 @@ def step_migrate(root: Path, plan: bool) -> tuple[str, list[str], list[Path]]:
 def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]:
     """Re-derives CLAUDE.md/AGENTS.md/docs/ai/rules.md from .act/bridges/ (whichever of them is
     still exactly as it was last generated) before doctor.py runs — the same re-derivation
-    dispatch.py's SessionStart hook does for an unedited copy (checks.session._refresh_bridges,
-    T64). Without this, doctor's import check (check_imports) still sees the *old* docs/ai/
+    dispatch.py's SessionStart hook does for an unedited copy (checks.session._refresh_bridges).
+    Without this, doctor's import check (check_imports) still sees the *old* docs/ai/
     rules.md — the one from before this update replaced .act/rules/ — and reports every rule
     file new in this template revision as "named but not imported", a false positive that would
-    otherwise clear itself only the next time a session starts (B118). Reuses the hook's own
+    otherwise clear itself only the next time a session starts. Reuses the hook's own
     function rather than rebuilding the re-derivation logic a second time, so a later change to
     which bridges dispatch.py re-derives never has to be kept in sync in two places.
 
@@ -1699,7 +1701,7 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
     verb = "would refresh" if plan else "refreshed"
     parts = [f"{verb} {', '.join(refreshed)}"] if refreshed else []
     if bootstrapped:
-        # rev28: a raw `git pull` landed the template's own bootstrap CLAUDE.md/AGENTS.md on top
+        # A raw `git pull` landed the template's own bootstrap CLAUDE.md/AGENTS.md on top
         # of the project's real bridge -- not a local edit, rewritten the same as `refreshed`
         # above, just called out separately so `--catch-up` explains why the "edited locally"
         # rule did not apply here.
@@ -1753,7 +1755,7 @@ def step_lock(
     """`fetched_commit` is what step_fetch actually cloned (None for a plain-directory source, or
     when this is a catch-up run with no fetch at all) — recorded as-is when known, so a later
     session's `git ls-remote` comparison (dispatch.py) has something real to compare against;
-    falls back to .act/VERSION's own "commit=" line otherwise, same as before Q73a."""
+    falls back to .act/VERSION's own "commit=" line otherwise. """
     if plan:
         return "would update .act-lock.json (template.version/commit/source, copies, migrations)"
     version, disk_commit = _read_version_file(root / ".act")
@@ -1773,7 +1775,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
     rels = sorted(rel for rel, p in all_rels.items() if p.exists())
     missing = sorted(rel for rel, p in all_rels.items() if not p.exists())
     if missing:
-        # F11: a file this run deleted goes into the commit too — but only one git still tracks,
+        # A file this run deleted goes into the commit too — but only one git still tracks,
         # named by path (never a tree-wide add); an untracked one has nothing to commit.
         tracked = _git(["ls-files", "--", *missing], cwd=root, check=False)
         rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing})
@@ -1839,7 +1841,7 @@ def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
     """True when .act/ already matches the fetched template (step_show_diff found nothing) but the
     run that put it there never finished going through update.py — either an update.py run that
     crashed between step 5 and step 10, or a project's .act/ having been brought to that state by
-    something other than update.py entirely (e.g. a plain `git pull` of the shared history, Q73a:
+    something other than update.py entirely (e.g. a plain `git pull` of the shared history:
     both look identical from here, and both need the same catch-up). Steps 6-10 then still need to
     run instead of reporting "nothing to update".
 
@@ -1865,13 +1867,13 @@ def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
 # module); steps 6-10 calling into their own top-level functions (not the ones already reached via
 # _import_fresh_init, e.g. step_hooks_and_gitfiles itself) would otherwise run with whatever
 # update.py looked like before this update, and only actually apply their own new behaviour on
-# some *later*, unrelated invocation (T46's original gap, T46 follow-up). If any of the three
+# some *later*, unrelated invocation (the original gap). If any of the three
 # changed, re-exec a fresh process against the now-current update.py --catch-up (.act/ already
 # matches; no fetch/diff/replace needed) so steps 6-10 run under their own current code, in the
 # same overall `update.py` call the user made. Never reached in --plan (that branch returns
 # before step 5's real call).
 #
-# Contract with the child (T46 review finding 1): no new CLI arguments — a future child from an
+# Contract with the child: no new CLI arguments — a future child from an
 # update further down the line would reject one it doesn't know yet — so what the parent already
 # knows and the child cannot recompute for itself (the commit --catch-up's own no-fetch path never
 # learns, and the consent/rescue decisions already made at steps 2/4) crosses via three env vars,
@@ -1932,8 +1934,7 @@ def _relaunch_after_replace(
     if notes:
         env[_SELF_RELAUNCH_NOTES_ENV] = json.dumps(notes)
     # The child's own output must appear after everything this process has already printed, not
-    # interleaved ahead of it -- both share the same inherited stdout/stderr (T46 review finding
-    # 5).
+    # interleaved ahead of it -- both share the same inherited stdout/stderr.
     sys.stdout.flush()
     sys.stderr.flush()
     result = subprocess.run(child_argv, cwd=root, env=env)
@@ -1980,7 +1981,7 @@ def _finish_update(
     commit_summary = step_commit(root, False, no_commit, commit_paths)
     print(f"[act]   commit: {commit_summary}")
 
-    # A successful update makes any pending background-check result stale (B110.5) -- drop it
+    # A successful update makes any pending background-check result stale -- drop it
     # rather than let session.py's SessionStart hook report an "update available" the lock no
     # longer agrees with. Best-effort: a missing file is the common case, not an error.
     try:
@@ -1999,7 +2000,7 @@ def _finish_update(
 
 # ---------------------------------------------------------------------------
 # --catch-up — .act/ was already brought to a clean template state by something other than
-# update.py (e.g. a plain `git pull` of the shared history, Q73a); no fetch, no diff, no replace
+# update.py (e.g. a plain `git pull` of the shared history); no fetch, no diff, no replace
 # needed, only .act-lock.json/copies/role bridges/migrations are behind.
 # ---------------------------------------------------------------------------
 
@@ -2027,7 +2028,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
     # Only under the self-relaunch guard (never for a plain, user-run --catch-up, which must not
     # pick up stale values left over in the calling shell's own environment): the parent's
     # fetched_commit/rescue_active/notes, which this no-fetch path has no way to learn on its own
-    # (T46 review finding 1). See _relaunch_after_replace()'s docstring for the contract.
+    # See _relaunch_after_replace()'s docstring for the contract.
     restarted = os.environ.get(_SELF_RELAUNCH_GUARD_ENV) == "1"
     inherited_fetched_commit = os.environ.get(_SELF_RELAUNCH_FETCHED_COMMIT_ENV) if restarted else None
     inherited_rescue = restarted and os.environ.get(_SELF_RELAUNCH_RESCUE_ENV) == "1"
@@ -2092,7 +2093,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--non-interactive", action="store_true", help="never prompt")
     parser.add_argument("--catch-up", action="store_true", help=(
         "skip the fetch/diff/replace; finish steps 6-10 from the .act/ already on disk (e.g. after "
-        "a plain 'git pull' of the template outside update.py, Q73a) -- refuses unless that tree "
+        "a plain 'git pull' of the template outside update.py) -- refuses unless that tree "
         "still matches its own MANIFEST.json"
     ))
     args = parser.parse_args(argv)

@@ -25,15 +25,15 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
-| `security_deep.py` | Security check "Art C" (concept docs/project/concepts/ai-dev-app/14-security-check.md, `Q86a`-`Q86c` all decided "a"): a deep… | direct (used by skill `act-release` with `security-check: full`) |
-| `security_scan.py` | Security check Art B (concept docs/project/concepts/ai-dev-app/14-security-check.md, `Q86a`-`Q86c` all decided "a"): a live… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
+| `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
+| `security_scan.py` | Security check Art B: a live library-vulnerability lookup against the lock files an ecosystem actually has, run either as a manual command… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
 | `skills.py` | List the project's skills like a man page (name + one-line description from each `SKILL.md`'s frontmatter), or print one skill's `SKILL.md`… | direct (used by skill `act` and by dispatch.py's `/act` fast path) |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
-| `usage.py` | Local usage counter (T41) — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is… | direct |
+| `usage.py` | Local usage counter — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is used… | direct |
 
 ## Libraries (no CLI, imported only)
 
@@ -98,7 +98,7 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
 --apply: clean tree (untracked only under .act-local/), new branch act-adopt (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
   docs/ai/work/archive/legacy/<old path> (sha256 before = after) — with every AI-tool config path segment
-  renamed first (B128: `.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
+  renamed first (`.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
   `.github/agents`/`.github/prompts` -> `_agents`/`_prompts`, `.github/copilot-instructions.md`
   -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
   reads the archived copy as its own configuration) — then staged by path; a git
@@ -117,7 +117,7 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   template's copy mechanism); doctor.py, references to moved/removed paths, report
   docs/ai/inbox/report-<stamp>-adoption-report.md. A reference in docs/project/ and docs/README.md
   to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
-  new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
+  new place (legacy copy, or the one successor of an adopt row), the link target only:
   the target of a Markdown link or of a reference definition `[x]: path` (relative stays
   relative, anchor kept); no other text changes, code blocks never. A path in backticks is text:
   never changed, only listed ("mention in text — not changed") with both readings, relative to
@@ -134,13 +134,13 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   An adopt target (or a file below one that changed since --apply) whose line 1 is
   <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
   stays scaffold to translate).
-  docs/ai/work/archive/legacy/_act-renames.md (act:default, old path -> renamed path table) is written when B128 renamed at
-  least one legacy path; nothing when it did not.
+  docs/ai/work/archive/legacy/_act-renames.md (act:default, old path -> renamed path table) is written when at least one
+  legacy path was renamed; nothing when none was.
   --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
   refused ("content not adopted?").
---apply --language-docs <code> --language-chat <code|auto>: passed on to init.py (B148 1), so the
+--apply --language-docs <code> --language-chat <code|auto>: passed on to init.py, so the
   docs language and the init todos are right from the start. They are recorded in state.json
   ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md
   only where none was given.
@@ -248,7 +248,7 @@ PREDECESSOR (the target has .claude/template.json): a row that would be "unknown
 base_commit tree, or is one of the predecessor's named parts (docs/ai/README.md, checklists.md,
 config-guide.md, ai-config-hilfe.md, resources.md, template-feedback/, docs/project/coding_rules.d/,
 .claude/mcp-katalog.md, .mcp.json.example) — including .claude/template.json, .claude/TEMPLATE-
-LICENSE and .github/workflows/ci.yml (B129.8), which no document extension lets the generic doc
+LICENSE and .github/workflows/ci.yml, which no document extension lets the generic doc
 scan reach, so they are sighted by name here too, proposed "legacy" (template.json,
 TEMPLATE-LICENSE: never a blind delete) or, for ci.yml, "legacy" only while it still carries the
 predecessor's own placeholder steps (an `echo "TODO` line naming create-project.py or
@@ -438,8 +438,7 @@ options:
   --postpone DAYS       pause the due reminder for this many days and count it as a postponement
   --clear               discard every waiting entry, send nothing
   --discard-harvest     remove --target's .act-local/adopt/harvest.md, add nothing to the outbox
-  --target DIR          act on the project at DIR instead of the current checkout (act-adopt,
-                        B124)
+  --target DIR          act on the project at DIR instead of the current checkout (act-adopt)
   --kind {rule,script,skill,workflow,docs,bug,mcp,link}
                         with --add
   --title TITLE         with --add: one line
@@ -509,12 +508,12 @@ options:
   --no-local            --target only: don't carry over the source checkout's own rule/coding-rule
                         deviations and docs/ai/local/ (Weg C, on by default)
   --no-profile          don't offer the owner profile at %APPDATA%\act\settings.md /
-                        ~/.config/act/settings.md (Q103, on by default)
+                        ~/.config/act/settings.md (on by default)
   --profile             apply the owner profile without asking (its entries are shown first).
                         Inside a project that is already set up (no --target) this is the only
                         step that runs -- nothing else is touched, only what it wrote is committed
-                        (Q103 a1's 'catch up' path after a non-interactive first run); in a fresh
-                        clone or with --target it is part of the full run
+                        ('catch up' path after a non-interactive first run); in a fresh clone or
+                        with --target it is part of the full run
   --language-docs CODE  language of docs/ (e.g. de) instead of asking; default en (R-work-
                         language)
   --language-chat CODE  chat language (a code, or auto = follow the owner's messages) instead of
@@ -766,8 +765,8 @@ options:
   --no-commit           do everything except the final commit
   --non-interactive     never prompt
   --catch-up            skip the fetch/diff/replace; finish steps 6-10 from the .act/ already on
-                        disk (e.g. after a plain 'git pull' of the template outside update.py,
-                        Q73a) -- refuses unless that tree still matches its own MANIFEST.json
+                        disk (e.g. after a plain 'git pull' of the template outside update.py) --
+                        refuses unless that tree still matches its own MANIFEST.json
 ```
 
 ## `usage.py`

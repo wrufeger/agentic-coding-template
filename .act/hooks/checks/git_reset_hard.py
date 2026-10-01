@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — `git reset --hard` run against a working tree that has open changes
-#          (PreToolUse, B71, Q37 a): a guardrail next to `R-safe-no-shell-delete` — `reset --hard`
+#          (PreToolUse): a guardrail next to `R-safe-no-shell-delete` — `reset --hard`
 #          throws away uncommitted work exactly the way a recursive delete throws away files, and
 #          this check exists for the same reason that one does. The matching rule text
 #          (`R-safe-git-reset`) is authored elsewhere; this module only enforces it. Unlike
@@ -26,7 +26,7 @@
 #          check does not attempt to follow — is refused the same as a dirty tree (deny by default,
 #          like every neighbour check in this module).
 #
-# Review fixes (2026-09-25, T76 Welle A):
+# Review fixes (2026-09-25, first round):
 #   - a leading `cd`/`pushd`/`Set-Location`/... before the git call (`cd ../other && git reset
 #     --hard`) is now resolved the same way checks/worker_git_write.py's own leading-cd exemption
 #     is: a literal directory operand on the command's very first simple command becomes the base
@@ -43,7 +43,7 @@
 #     first" — `git stash && git reset --hard` in one invocation is still refused, since the status
 #     check runs before either half executes.
 #
-# Review fixes (2026-09-25, T76 Welle B):
+# Review fixes (2026-09-25, second round):
 #   - a directory-change form anywhere in the command other than its very first simple command —
 #     not only a *second* one after an already-recognized leading `cd` — now makes the target "not
 #     determinable": `true && cd ../other && git reset --hard` used to fall through the leading-cd
@@ -57,7 +57,7 @@
 #     refused, and the message no longer claims "git reset --hard refused" for a call that may not
 #     touch reset at all.
 #
-# Review fixes (2026-09-25, T76 Welle B, second review):
+# Review fixes (2026-09-25, third round):
 #   - an inline alias is judged by what it actually runs — its replacement text *with the call's
 #     own arguments appended*, nested aliases followed (`_alias_expansion`) — not by the replacement
 #     text alone: `git -c 'alias.x=!git' x reset --hard` and `git -c alias.a=reset -c alias.b=a b
@@ -70,7 +70,7 @@
 #   - `env -C <dir> git reset --hard` (`--chdir`, either form) runs git in `<dir>`, not the shell's
 #     own directory — refused as "not determinable" (`_prefix_changes_directory`), the same answer
 #     shell_targets.py gives for its write targets; before, the `-C` value was even read as the
-#     command name itself and the call never seen as git at all (command_words.py, B112.2).
+#     command name itself and the call never seen as git at all (command_words.py).
 #   - `find ... -execdir git reset --hard ;` runs git inside whichever directory find matches
 #     (`-okdir` likewise) — refused as "not determinable" (`_has_find_execdir`) for every
 #     `reset --hard` in the same command, since command_words.py hands the exec tail back as a
@@ -314,7 +314,7 @@ def _git_status_is_clean(directory: Path) -> Optional[bool]:
 def check_git_reset_hard(payload: dict) -> int:
     """Check: deny `git reset --hard` while the working tree it targets has uncommitted changes,
     or while that working tree (or the command itself, behind an alias) cannot be determined at
-    all (B71, Q37 a). Runs for every caller."""
+    all. Runs for every caller."""
     config = actlib.read_config()
     mode = _check_mode(config, "git-reset-hard", default="block")
     if mode == "off":

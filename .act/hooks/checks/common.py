@@ -28,7 +28,7 @@ def _read_payload() -> dict:
     Reads raw bytes and decodes as UTF-8 explicitly, mirroring dispatch.py's own early
     PostToolUse read — sys.stdin.read() alone picks the console's legacy code page on Windows
     (e.g. cp1252), which silently mangles non-ASCII bytes in the payload before json.loads ever
-    sees them (live probe T44, 2026-09-23: a prompt's "wörtlich" arrived as "wÃ¶rtlich" in
+    sees them (seen in a live probe, 2026-09-23: a prompt's "wörtlich" arrived as "wÃ¶rtlich" in
     ai.log, and a project path with an umlaut made the .act/ write-guard compare against the
     wrong path). errors="replace" keeps a genuinely undecodable byte from crashing the hook."""
     try:
@@ -68,7 +68,7 @@ _TOOL_PATH_FIELDS = {
 _WORKER_TOOL_NAMES = {"Agent", "Task"}
 
 # Tools that run a shell command line in tool_input.command. Claude Code on Windows offers
-# PowerShell next to Bash (seen live in T34); a check that inspects commands must look at both.
+# PowerShell next to Bash (seen in a live probe); a check that inspects commands must look at both.
 _SHELL_TOOL_NAMES = {"Bash", "PowerShell"}
 
 
@@ -86,7 +86,7 @@ def _shell_command(payload: dict) -> "tuple[str, str] | None":
 
 def _is_worker(payload: dict) -> bool:
     """True when the call comes from a sub-agent: the harness adds agent_id (and agent_type) to a
-    worker's hook payloads and to none of the main session's (live probe T30)."""
+    worker's hook payloads and to none of the main session's (seen in a live probe)."""
     return bool(payload.get("agent_id"))
 
 
@@ -94,8 +94,8 @@ def _is_worker(payload: dict) -> bool:
 # harness itself feeds into the conversation — a worker's SubagentHandback relayed to its caller
 # ("<agent-message from=\"...\">...</agent-message>"), a finished-task notice
 # ("<task-notification>...</task-notification>"), a message from another session, or a system
-# reminder block — confirmed against real payloads, T44 live probe (2026-09-23, a live probe
-# capture's payloads.jsonl): both agent-message and
+# reminder block — confirmed against real payloads from a live probe (2026-09-23,
+# its captured payloads.jsonl): both agent-message and
 # task-notification observed verbatim, opening the prompt right after leading whitespace, no other
 # text before the tag. Neither is something a user "typed" (usage counting, the [user][prompt] log
 # line, and a reminder/tip nudge all assume that), so every consumer of payload.prompt on

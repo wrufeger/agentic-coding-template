@@ -57,7 +57,7 @@
 # stderr (deny) — still used here, unchanged, for the 1.5x-the-cap denial in `block` mode.
 #
 # For the two non-blocking hints ("cap reached" and, in `warn` mode, "cap exceeded"), this module
-# now (after T35 wired PostToolUse into dispatch.py) exports note_worker_cap(payload), registered
+# now (after PostToolUse was wired into dispatch.py) exports note_worker_cap(payload), registered
 # in dispatch.py's _POST_TOOL_USE_NOTES and delivered via that event's own
 # hookSpecificOutput.additionalContext — the field actually documented to reach the model. Division
 # of labor: check_worker_cap (PreToolUse) is the only place that increments the running counter
@@ -68,7 +68,7 @@
 # file). The "cap exceeded" hint only matters in `warn` mode: in `block` mode, a call at or past
 # 1.5x the cap is denied by check_worker_cap before it ever runs, so PostToolUse never fires for it.
 #
-# Follow-up (T77/B114, Q109 8 a, 2026-09-27): check_worker_cap used to increment the running
+# Follow-up (2026-09-27): check_worker_cap used to increment the running
 # counter (_register_worker_call) *before* deciding whether to deny — so the very call that first
 # crossed 1.5x the cap, and every retried call after it, was counted as "used" even though it was
 # refused, and kept the counter growing forever past the threshold on repeated retries. Smallest
@@ -418,7 +418,7 @@ def _register_worker_call(
     entry (`hinted_cap`, `hinted_exceeded` — see note_worker_cap) are carried over unchanged, not
     overwritten by this increment.
 
-    `deny_threshold` (T77/B114, Q109 8 a): when given and incrementing would reach or exceed it,
+    `deny_threshold`: when given and incrementing would reach or exceed it,
     the increment is skipped and (previous_count, True) is returned instead — the call
     check_worker_cap is about to deny must never inflate the very counter that denied it (the
     counter otherwise kept growing on every retried call past the threshold, forever, even though
@@ -487,7 +487,7 @@ def check_worker_cap(payload: dict) -> int:
     agent_id = payload.get("agent_id")
     cap = _resolve_worker_cap(root, payload)
     deny_threshold = (cap * 3 + 1) // 2  # ceil(1.5 * cap)
-    # `warn` mode never denies here, so it must never withhold the increment either (T77/B114) —
+    # `warn` mode never denies here, so it must never withhold the increment either —
     # only `block` mode passes an actual threshold, meaning "deny before counting" applies to it
     # alone; a warn-mode call always gets counted, exactly as before this fix.
     threshold_for_call = deny_threshold if mode != "warn" else None

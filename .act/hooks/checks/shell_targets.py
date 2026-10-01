@@ -38,7 +38,7 @@
 #     2 > f`) once tokenized, so a bare number right before a redirection is dropped as fd;
 #   - only the directory changes listed in _scan_tokens are followed; anything else there makes
 #     the base unknown rather than guessed;
-#   - not recognized as writers at all (B112.3): `patch`, a `tar`/`unzip` extraction into the
+#   - not recognized as writers at all: `patch`, a `tar`/`unzip` extraction into the
 #     implicit current directory (no explicit `-C`/`-d`), `find -delete` with no leading path
 #     operand, `git apply`/`stash`/`reset --hard`/`clean`. `tar -x -C <dir>`, `unzip -d <dir>` and
 #     `find <path> ... -delete` *are* recognized (see _simple_command_targets) since their target
@@ -59,7 +59,7 @@
 #     target from body text that was never going to run as a command (over-scanning, not a missed
 #     write);
 #   - backticks are found by a regex over the already dequoted words (_scan_tokens,
-#     _BACKTICK_SPAN_RE), with no quote context left by then (B112.1, open: a pre-tokenizing mask
+#     _BACKTICK_SPAN_RE), with no quote context left by then (open: a pre-tokenizing mask
 #     of every span was tried on 2026-09-25 and taken out again the same day after failing review
 #     twice — it lost `command_words.py`'s recursion, then mistook an apostrophe inside double
 #     quotes for a single quote, opening more bypasses than it closed). Three consequences: a span
@@ -138,8 +138,8 @@ _MAX_SCAN_DEPTH = 4
 # leading "/x/..." is an ordinary absolute path and must be left alone.
 _GITBASH_DRIVE_RE = re.compile(r"^[\\/]([A-Za-z])[\\/](.*)$")
 # Three more spellings Windows accepts for a path on a local drive, each of which Path.resolve()
-# hands back *verbatim* rather than as the plain drive form every check compares against (T76 wave
-# D review, 2026-09-26, finding M-c: a `Write` of `\\?\D:\proj\.act\x.md` or of
+# hands back *verbatim* rather than as the plain drive form every check compares against (review,
+# 2026-09-26, finding M-c: a `Write` of `\\?\D:\proj\.act\x.md` or of
 # `\\localhost\D$\proj\.act\x.md` resolved to exactly that text, so `_is_under_project_act`'s
 # prefix test against `D:\proj\.act` never matched and the write-guard let it through — the same
 # hole for the docs/ai/ guard and, in the other direction, a worker's in-scope path judged out of
@@ -180,7 +180,7 @@ _WRAPPER_COMMANDS = frozenset(
 # A wrapper's own option or number/duration (`nice -n 5`, `timeout 10s`), skipped before its command.
 _WRAPPER_ARG_RE = re.compile(r"^(?:-.*|\d+(?:\.\d+)?[smhd]?)$")
 # A wrapper's own option that takes a separate following word as its value (`env -u VAR rm`,
-# `timeout -s KILL 5 rm`, `sudo -u name rm`) — that value word must be skipped too (B112.2), not
+# `timeout -s KILL 5 rm`, `sudo -u name rm`) — that value word must be skipped too, not
 # mistaken for the wrapped command itself: on its own it matches neither _WRAPPER_ARG_RE (it does
 # not start with "-" and is not a bare number/duration) nor an assignment, so the skip loop in
 # _simple_command_targets used to stop right there and read the option's value as if it were the
@@ -196,7 +196,7 @@ _WRAPPER_VALUE_FLAGS = {
     # GNU xargs's lowercase `-i`/`-l` take their argument only glued on (`-ifoo`, `-l5`), never as a
     # separate following word — unlike `-I`/`-L`, which do (`-I {}`, `-L 5`); listing `-i`/`-l` here
     # too used to make the loop below eat the next *real* argument as if it were their value
-    # (`xargs -i rm .act/rules/a.md` hid `rm` as `-i`'s value, target invisible; T76 review,
+    # (`xargs -i rm .act/rules/a.md` hid `rm` as `-i`'s value, target invisible; found in review,
     # 2026-09-25) — the general "starts with -" skip already handles the glued form correctly on its
     # own, so they are deliberately left out of this set.
     "xargs": frozenset({"-a", "--arg-file", "-d", "--delimiter", "-E", "-I",
@@ -449,7 +449,7 @@ def _heredoc_terminator(line_positions: dict[str, list[int]], candidates: set[st
     """The smallest line index >= `start` whose stripped text is one of `candidates`, read from
     `line_positions` (every line's stripped text mapped to its own sorted occurrence indices,
     built once per command by _line_mode_tokens) via a binary search per candidate rather than
-    rescanning the remaining lines from `start` to the end (B112.4: that rescan made an unterminated
+    rescanning the remaining lines from `start` to the end (that rescan made an unterminated
     heredoc on every line of a large command quadratic overall — one heredoc per line, each one
     scanning to the end again, 1.4s for 10,000 lines; a lookup here is O(log n) per candidate
     instead)."""
@@ -466,7 +466,7 @@ def _heredoc_terminator(line_positions: dict[str, list[int]], candidates: set[st
 
 def _line_mode_tokens(command: str) -> list[_Token]:
     """Tokenize line by line with heredoc bodies skipped (step 2 of the section comment). A body is
-    skipped only up to a terminator line that exists (found via _heredoc_terminator, B112.4);
+    skipped only up to a terminator line that exists (found via _heredoc_terminator);
     without one, nothing is skipped, so the rest is scanned as commands. The command substitutions
     of an expanded body are kept (as commands of their own after the heredoc line). Raises
     ValueError if any line does not tokenize on its own."""
@@ -644,11 +644,11 @@ def _simple_command_targets(
                     # directory the way `cd`/`git -C` already do would need `dir` threaded back into
                     # `_scan_tokens`'s own bases tracking, which never sees inside a simple command's
                     # own words; simplest correct answer here is "unknown", same as a `cd` this
-                    # module already cannot resolve (T76 review, 2026-09-25).
+                    # module already cannot resolve (review, 2026-09-25).
                     bases_unknown = True
                     index += 1 if arg.startswith("--chdir=") else (2 if index + 1 < len(words) else 1)
                 elif arg in wrapper_value_flags:
-                    # B112.2: `env -u VAR`, `timeout -s KILL`, `sudo -u name` — the value is its own
+                    # `env -u VAR`, `timeout -s KILL`, `sudo -u name` — the value is its own
                     # word, matching neither _WRAPPER_ARG_RE nor an assignment, so it must be
                     # skipped explicitly too or it gets read as the wrapped command's own name.
                     index += 2 if index + 1 < len(words) else 1
@@ -699,7 +699,7 @@ def _simple_command_targets(
     elif name == "dd":
         raw_targets = [arg[3:] for arg in args if arg.startswith("of=")]
     elif name == "tar":
-        # B112.3: only the explicit-directory case is worth the cheap detection here — `tar -x`
+        # Only the explicit-directory case is worth the cheap detection here — `tar -x`
         # into the implicit current directory is still invisible (see the module's Known limits).
         extracting = any(
             arg in ("-x", "--extract", "--get")

@@ -4,9 +4,10 @@
 # Purpose: PowerShell write-target scanner — the PowerShell counterpart of shell_targets.py, for
 #          the same two callers (checks/write_guard.py check 1, checks/write_scope.py check 1c).
 #          Claude Code on Windows offers a `PowerShell` tool next to `Bash` (tool_input.command,
-#          live probe T34); both checks used to look at Bash only. This module answers the same
-#          question shell_targets.py answers for Bash — which paths does a command write to — but
-#          for PowerShell syntax, and with a deliberately different return shape:
+#          seen in a live probe); both checks used to look at Bash only. This module
+#          answers the same question shell_targets.py answers for Bash — which paths does a
+#          command
+#          write to — but for PowerShell syntax, and with a deliberately different return shape:
 #
 #          _powershell_write_targets(command, base_cwd, git_writes, broad=False, depth=0)
 #              -> set[str] | None

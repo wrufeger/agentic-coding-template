@@ -18,15 +18,15 @@ is asked -> `report`; some action is needed (configure, decide, pick up a hint) 
 Each file opens with header fields, in this order (a field a given entry does not use is left out):
 
 ```text
-id: Q101            # questions only
-formerly: T29        # an id the entry had in an older numbering (adoption, --formerly)
+id: Q<n>            # questions only
+formerly: T<n>        # an id the entry had in an older numbering (adoption, --formerly)
 kind: todo          # question | todo | report | note; omitted = todo
 for: all            # or a workspace identity - who it is addressed to
 status: open        # open -> answered -> done
 created: 2026-09-25T18:30
 ```
 
-File names: an entry with an id is `<ID>-<slug>.md` (e.g. `Q101-...md`); one without is
+File names: an entry with an id is `<ID>-<slug>.md` (e.g. `Q<n>-...md`); one without is
 `<kind>-<YYYYMMDD-HHMM>-<slug>.md` (e.g. `report-20260925-1830-adoption.md`). In team mode, before
 an id is assigned: `<P>-<identity>-<YYYYMMDD-HHMM>-<slug>.md`, renamed by `entries.py assign`.
 
@@ -46,7 +46,7 @@ DD.MM.YYYY HH:MM - TITLE
 TEXT
 TEXT
 TEXT
--> questions Q13, Q14 - tasks T12 (references only where they apply)
+-> questions Q<n>, Q<m> - tasks T<k> (references only where they apply)
 ```
 
 At most three lines of text, the last line naming any questions or tasks it produced. At most

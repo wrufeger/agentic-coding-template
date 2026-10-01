@@ -7,7 +7,7 @@
 #          .act/scripts/settings_format.py (data model, parser, serializer, secrets scan) and
 #          reuses .act/scripts/rules.py's project-file parser/classifier instead of re-reading
 #          docs/ai/rules.md or docs/project/coding_rules.md by hand. See settings_format.py's own
-#          docstring (`Q60a`-`Q61d`) for the full detail.
+#          docstring for the full detail.
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
 #          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts`,
@@ -40,7 +40,7 @@
 #       settings.md") — resolved from the environment/Path.home() at run time, never a hard-coded
 #       path (`docs/project/coding_rules.md` § "Pfade außerhalb des Projekts" in the template-pflege
 #       repo). This is the grounds a future `init` reads to hand the same setup to a fresh clone
-#       (`Q57d`) — init.py does not read the profile yet, only this export writes it. An existing
+#       — init.py does not read the profile yet, only this export writes it. An existing
 #       profile file is never silently overwritten: it is renamed to "<name>.bak-<stamp>" first, and
 #       the run says so. Mutually exclusive with --out.
 #
@@ -99,7 +99,7 @@ def build_header(root: Path) -> sf.SettingsHeader:
 
 
 # ---------------------------------------------------------------------------
-# Owner's profile location (`--profile`, Q57d/Q60b) — platform-appropriate, resolved fresh on every
+# Owner's profile location (`--profile`) — platform-appropriate, resolved fresh on every
 # call from the environment/Path.home(), never a hard-coded path (coding_rules.md § "Pfade außerhalb
 # des Projekts"): reading it fresh each time is also what lets a test point HOME/APPDATA/
 # XDG_CONFIG_HOME at a scratch directory without touching the real profile.
@@ -116,7 +116,7 @@ def profile_dir() -> Path:
 def _group_fingerprint(tgroup: "rules.TemplateGroup") -> str:
     """sha256 of a template group's full section body (heading included, same text
     doctor.py._check_overrides() hashes for its own stale-override tracking) — the per-identifier
-    "changed since export" fingerprint (B106.1)."""
+    "changed since export" fingerprint."""
     return hashlib.sha256(tgroup.body.encode("utf-8")).hexdigest()
 
 
@@ -126,7 +126,7 @@ def _group_fingerprint(tgroup: "rules.TemplateGroup") -> str:
 
 def _own_rule_id(prefix: str, own: "rules.OwnRule", used: set[str]) -> str:
     """`id` if the project already gave the own rule one, else a generated "<prefix>-local-<slug>"
-    (Q61b: a settings-file own rule is a normal "R-local-…"/"CR-local-…" rule id, not a free-
+    (a settings-file own rule is a normal "R-local-…"/"CR-local-…" rule id, not a free-
     floating note) — de-duplicated against `used` if the slug collides. The slug is built from the
     *scanned* (secret-redacted) text, not the raw one, and drops any "<setup:...>" placeholder
     outright rather than turning it into slug words — an id must never itself carry a secret
@@ -146,7 +146,7 @@ def _own_rule_id(prefix: str, own: "rules.OwnRule", used: set[str]) -> str:
 def _entry_for_group(symbol: str, group_id: str, project_group: Optional["rules.ProjectGroup"],
                       override: Optional["rules.Override"],
                       fingerprint: Optional[str] = None) -> sf.SettingsEntry:
-    """`fingerprint` (B106.1) is the sha256 of the template group's body text at export time — set
+    """`fingerprint` is the sha256 of the template group's body text at export time — set
     only for "~"/"-" (an "=" entry is unchanged by definition, and a template body has nothing to
     fingerprint for a "+" own rule). settings_load.py compares it against the same group's *current*
     body in the target project to report "changed since export" per identifier, not just per
@@ -300,13 +300,13 @@ def build_agents_area(root: Path) -> tuple[Optional[sf.SettingsArea], dict[str, 
 
 def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Optional[sf.SettingsArea], dict[str, str]]:
     """Every text file under docs/ai/local/<subdir>/, each as one "[+] <relpath>" entry pointing
-    at "files/<area_name>/<relpath>" (Q61c). Returns (area_or_None, {relpath: file text}) — the
+    at "files/<area_name>/<relpath>". Returns (area_or_None, {relpath: file text}) — the
     caller scans/redacts the file text separately and writes it into the zip under that same path,
     so a leaked value inside a script/checklist is caught exactly like a leaked value in a rule.
 
     A file that matches a template unit of the same shape/name is a project's *override* of that
     template file (actlib.resolve() — the same "docs/ai/local/<path> wins over .act/<path>" rule a
-    checklist/script/skill uses), not an own file of its own (`B111.4`, review of `T24`) — exporting
+    checklist/script/skill uses), not an own file of its own — exporting
     it as a plain "[+] <relpath>" would hand the next project a file that silently starts
     overriding the same template unit there too, exactly like build_agents_area() above already
     refuses for an own role. Skipped, with one stderr note per skipped name, same as there:
@@ -507,9 +507,9 @@ def main(argv: list[str]) -> int:
     redacted.setup_required = sf.setup_required_lines(located)
     text = sf.serialize(redacted)
 
-    # No --out and no --profile: the machine-local, gitignored .act-local/export/ (Q74b) — never
+    # No --out and no --profile: the machine-local, gitignored .act-local/export/ — never
     # the project root, so a forgotten export never ends up staged for a commit. --out is used
-    # exactly as given; --profile goes to the Owner's profile instead (Q57d/Q60b).
+    # exactly as given; --profile goes to the Owner's profile instead.
     ext = "zip" if with_files else "md"
     if args.profile:
         out_path = profile_dir() / f"settings.{ext}"

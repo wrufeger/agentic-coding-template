@@ -7,7 +7,7 @@
 #          a settings file instead of a new template state: identical -> nothing twice,
 #          new -> adopt, contradicting -> inbox (or a config-key resolution).
 #
-#          Split as decided (`Q69a`): this script does every *mechanical* judgement itself (new,
+#          Split by design: this script does every *mechanical* judgement itself (new,
 #          identical, dead/retired/stale identifiers, cross-file collisions, an own rule repeated
 #          across files) and writes the result. Anything that needs *content* judgement — does an
 #          imported rule merely restate, extend, or actually contradict one of this project's own
@@ -53,11 +53,11 @@
 #   explicitly. `apply` (never `plan` — a dry run moves nothing) then moves every file it did manage
 #   to load *and* fully resolve to `.act-local/import/done/`, appending a timestamp on a name
 #   collision. "Fully resolve" means nothing from that file was left open (see "Not fully processed
-#   files" below) — such a file stays in `.act-local/import/` instead (T32). An empty or missing
+#   files" below) — such a file stays in `.act-local/import/` instead. An empty or missing
 #   import folder is a clean "nothing to do", exit 0. Explicit `<file...>` paths on the command line
 #   are read from wherever given and are never moved, never offered to --resolve.
 #
-# Not fully processed files (T33): a file stays in `.act-local/import/` when a plain `apply` (no
+# Not fully processed files: a file stays in `.act-local/import/` when a plain `apply` (no
 #   --resolve) left something of it open — a bundled script/checklist/agent/skill that needed --yes
 #   or was declined or refused outright (risky frontmatter, shadowing, a bad path, ...), a candidate
 #   pair nobody judged, or a name/id collision with something already in the project. `apply` prints
@@ -66,7 +66,7 @@
 #   FILE is a fatal error listing the files actually pending, nothing moved) or, on an interactive
 #   run with no matching --resolve, asks the same question with `keep` as the default answer.
 #
-#   --resolve is a pure filing run (T33 review), not a second attempt at applying anything: as soon
+#   --resolve is a pure filing run, not a second attempt at applying anything: as soon
 #   as it is given, every file in `.act-local/import/` not named in a --resolve is left completely
 #   alone — not analyzed, not moved, not touched at all — and even a named file only gets the one
 #   action asked for, nothing from it is applied. No TTY prompt ever happens in this mode (the whole
@@ -234,7 +234,7 @@ def load_source(path: Path) -> SourceFile:
 
 
 # ---------------------------------------------------------------------------
-# Auto-discovery from .act-local/import/ (Q74b) — used when no <file...> is given on the command
+# Auto-discovery from .act-local/import/ — used when no <file...> is given on the command
 # line. Machine-local and gitignored (same folder .gitignore already excludes via ".act-local/"),
 # created on demand here rather than depending on init.py/update.py having done it already, so an
 # older project that predates this feature still works without a migration step.
@@ -276,7 +276,7 @@ def _resolve_input_files(root: Path, args: argparse.Namespace) -> tuple[list[Pat
 def _load_sources_lenient(paths: list[Path]) -> tuple[list[SourceFile], list[Path], list[tuple[Path, str]]]:
     """Like `[load_source(p) for p in paths]`, except one bad file (unparsable settings.md, a
     refused zip) is reported and skipped instead of aborting every other file in the batch — the
-    auto-discovery behavior Q74b asks for ("failed ones stay in place, with a message"). Explicit
+    auto-discovery behavior ("failed ones stay in place, with a message"). Explicit
     command-line paths keep the old all-or-nothing behavior (load_source() called directly, letting
     main()'s outer handler turn a failure into exit 2) — this is only used for auto-discovered
     files. Returns (sources, the paths that produced them — same order, for the done/ move below,
@@ -328,7 +328,7 @@ def _write_skipped_note(done_path: Path, file_label: str, items: list["OpenItem"
     later instead of just vanishing once the source file is out of import/. `applied` is the
     number of rule/file entries this same run actually applied for this file before the partial
     decision — known in the normal apply flow, where write_resolutions()/write_files() ran first.
-    In the pure --resolve filing run nothing is ever applied (T33 review), so that count cannot
+    In the pure --resolve filing run nothing is ever applied, so that count cannot
     honestly be reported; pass None there and the line is left out instead of printing a number
     that was never determined."""
     note_path = done_path.parent / f"{done_path.name}.skipped.md"
@@ -404,7 +404,7 @@ class ImportEntry:
     inline: Optional[str]
     body: Optional[str]
     fingerprint: Optional[str] = None  # sha256 of the template group's body at export time
-                                        # (B106.1) — only set for "~"/"-"; None falls back to the
+                                        # — only set for "~"/"-"; None falls back to the
                                         # coarser version-only "changed since export" check.
 
     @property
@@ -464,7 +464,7 @@ class Finding:
 
 # ---------------------------------------------------------------------------
 # Open items — one entry per thing a source file left unresolved: the basis for the end-of-apply
-# summary and the `--resolve`/interactive follow-up below (T33). Deliberately a narrower set than
+# summary and the `--resolve`/interactive follow-up below. Deliberately a narrower set than
 # `findings` above: a dead id, a judged contradiction, a set-switch decline etc. need a source-file
 # edit to ever change, so they are reported but do not keep a file "open" — the reasons below do, because
 # a rerun (with --yes/--judgments) or a `--resolve` decision can actually resolve them.
@@ -673,7 +673,7 @@ def _template_status(root: Path, area_name: str, gid: str, header: sf.SettingsHe
     set's file basename (e.g. "bash"), not a template group id, so it is checked against the
     template's coding sets instead of `corpus.ids` (which only holds *group* ids).
 
-    `fingerprint` (B106.1) is the sha256 settings_export.py recorded for this id's template body at
+    `fingerprint` is the sha256 settings_export.py recorded for this id's template body at
     export time. When present, "changed since export" is decided per identifier — hashing the
     *current* template body of the same id and comparing — instead of the coarser fallback below
     (an older export with no fingerprint at all, or a whole-set entry, which has no body of its own
@@ -693,8 +693,8 @@ def _template_status(root: Path, area_name: str, gid: str, header: sf.SettingsHe
     lock = actlib.read_lock()
     current_version = (lock.get("template") or {}).get("version", "")
     if header.version and current_version and header.version != current_version:
-        # Fallback for an export written before B106.1 (no per-id fingerprint) — best-effort proxy:
-        # a target project shares no git history with the settings file's source (ADR-5 — "no
+        # Fallback for an export written without per-id fingerprints — best-effort proxy:
+        # a target project shares no git history with the settings file's source ("no
         # merge, no shared history"), so the old rule text at the export's commit cannot be diffed
         # against here. A version mismatch is reported instead of silently trusting a rule the
         # current template may have changed since.
@@ -973,11 +973,11 @@ def mark_new_files_pending(result: Analysis) -> None:
     """Read-only stand-in for what write_files() would report for every "new" bundled-file/unit
     plan item (scripts, checklists, agents, skills — plan_files()/plan_units() fill result.file_plan
     for all four the same way), without writing anything or prompting: used by
-    `apply --resolve FILE=partial`'s single-file analysis (T33), which must never write. A "new"
+    `apply --resolve FILE=partial`'s single-file analysis, which must never write. A "new"
     item always needs --yes (or an interactive yes) to actually land, so from a read-only vantage
     point it is exactly as "open" as write_files() would find it — without this, such an item was
     silently dropped from the partial decision's discarded list instead of being reported (found via
-    the rev33 probe: hi.py vanished from S.zip.skipped.md)."""
+    a probe: hi.py vanished from S.zip.skipped.md)."""
     for item in result.file_plan:
         if item["status"] == "new":
             result.open_items.append(OpenItem(item["file"], item["dest"], REASON_NEEDS_YES))
@@ -1028,7 +1028,7 @@ def _whole_set_pset(project: rules.ProjectFile, set_label: str) -> Optional[rule
     """The project's ProjectSet whose basename is `set_label` ("bash" for .act/coding/bash.md),
     or None if the project does not import that set at all — the same basename rule
     `_toggle_group_off()` uses to find a whole-set checkbox line, factored out so analyze() can
-    ask "is this set currently active?" without duplicating it (Q69a follow-up: an import must
+    ask "is this set currently active?" without duplicating it (an import must
     never switch off a set the project actively uses — see the "-" branch in analyze())."""
     for pset in project.sets:
         label = rules.strip_template_prefix(pset.path).rsplit("/", 1)[-1].removesuffix(".md")
@@ -1051,7 +1051,7 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
             if not pset.enabled:
                 return f"{set_label}: already switched off", False
             lines = project.path.read_text(encoding="utf-8").splitlines()
-            # T64: an unchecked set loses its "@" as well, or Claude Code would still import it.
+            # An unchecked set loses its "@" as well, or Claude Code would still import it.
             lines[pset.line - 1] = rules.coding_set_line(
                 re.sub(r"\[[ xX]\]", "[ ]", lines[pset.line - 1], count=1))
             project.path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
@@ -1206,7 +1206,7 @@ _HINT_KEYS = ("tools", "model")
 
 def _strict_frontmatter(text: str) -> tuple[dict[str, str], bool, Optional[str]]:
     """A frontmatter reader strict enough for the risky-key/name checks in plan_units() to trust,
-    built on the shared frontmatter.parse_frontmatter() (`B111.1` -- this used to be its own
+    built on the shared frontmatter.parse_frontmatter() (formerly its own
     hand-rolled parser; tiers.split_frontmatter() now shares the same parsing code, see that
     module's docstring). A BOM before the opening '---', CRLF line endings, a quoted key, whitespace
     before the colon, or a closing '---' with no trailing newline at EOF are all still-valid
@@ -1507,7 +1507,7 @@ def write_files(root: Path, result: Analysis, yes: bool) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Per-source-file completeness (T32, widened by T33) — a source file may only move to
+# Per-source-file completeness — a source file may only move to
 # .act-local/import/done/ once nothing it contributed is still open. "Open" is exactly what
 # result.open_items records: a bundled file write that needs --yes or was declined, a candidate
 # pair nobody judged, or a name/id collision with something already in the project. Those are
@@ -1570,9 +1570,8 @@ def write_inbox(
     does not disturb the "opens with two header fields" shape every other inbox entry has, per
     .act/skeleton/inbox/README.md). Without this, re-running the same import
     against a target that has not changed piled up a fresh, identically-worded inbox file every
-    time (Q69a follow-up). `kind: todo`, never `report`: a contradiction or a "setup-required" line
-    asks someone to resolve or configure something, not merely to read
-    (16-inbox-questions-tasks.md § "Arten in der Inbox")."""
+    time. `kind: todo`, never `report`: a contradiction or a "setup-required" line
+    asks someone to resolve or configure something, not merely to read."""
     if not findings and not setup_required:
         return None, False
 
@@ -1733,7 +1732,7 @@ def _load_judgments(path: Path) -> dict[str, str]:
 
 
 def _cmd_resolve_only(root: Path, paths: list[Path], resolve_map: dict[str, str]) -> int:
-    """`apply --resolve FILE=ACTION ...`: a pure filing run (T33 review), not a second attempt at
+    """`apply --resolve FILE=ACTION ...`: a pure filing run, not a second attempt at
     applying anything. Only the files named in `resolve_map` are touched at all — every other file
     under `.act-local/import/`, named or not in this call's discovery, is left exactly where it is.
     Nothing is analyzed against the project and nothing is written/applied; `partial` is the only
@@ -1891,8 +1890,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
         # `failures`) stays where it is, not in `loaded_paths`. A file that loaded fine but left
         # something open (needs --yes, an unjudged candidate pair, a name/id collision) also
         # stays by default — moving it to done/ would read as "nothing left to do" next time
-        # (T32) — unless an interactive answer says otherwise here, or a separate
-        # `apply --resolve` call later (T33; see _cmd_resolve_only — this function no longer
+        # — unless an interactive answer says otherwise here, or a separate
+        # `apply --resolve` call later (see _cmd_resolve_only — this function no longer
         # handles --resolve at all, it always exits above before reaching this point).
         incomplete = incomplete_source_labels(result)
         by_file = open_items_by_file(result)

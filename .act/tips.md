@@ -2,7 +2,7 @@
 
 Fixed, English tip texts the SessionStart hook (`.act/hooks/checks/tips.py`) picks from — never
 written by the model itself, so the wording stays stable and never invents a feature the project
-does not actually have (`docs/ai/config.md` § Tips, B104). Each tip is a `### TIP-<slug>` heading,
+does not actually have (`docs/ai/config.md` § Tips). Each tip is a `### TIP-<slug>` heading,
 one `when:` line right under it, and one to two sentences of body text after that — that shape is
 what `tips.py`'s parser reads, so keep new entries in the same form.
 

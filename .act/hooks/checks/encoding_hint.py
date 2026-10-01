@@ -39,7 +39,7 @@
 #
 # Two different keys, two different reasons (review, 2026-09-23):
 #   - the PENDING queue is keyed by `tool_use_id`, not `session_id`: a worker and the main session
-#     share the same `session_id` (only `agent_id` tells them apart, per the T30/T34 live
+#     share the same `session_id` (only `agent_id` tells them apart, per live
 #     probes), so a session-wide queue could hand one caller's note to a *different* caller's
 #     PostToolUse event if two Write/Edit calls to non-UTF-8 files were in flight in the same
 #     session at once. `tool_use_id` is unique per tool call and, per the harness, the SAME value
@@ -101,7 +101,7 @@ _ENCODING_HINT_NOTE = (
 
 def _reader_key(payload: dict) -> Optional[str]:
     """`<session_id>__<agent_id or "main">` — the dedup unit for _hints_file: a *reader*, not a
-    session. A worker and the main session share one session_id (T30/T34 live probes), so keying
+    session. A worker and the main session share one session_id (seen in live probes), so keying
     dedup by session_id alone would let a worker's note about a file silently suppress the
     orchestrator's own first note about that same file, or one worker's note suppress another's.
     None if session_id is missing/unsafe — dedup is then simply skipped (see check_encoding_hint),

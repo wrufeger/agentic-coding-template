@@ -14,7 +14,7 @@ commit) and `R-work-config` (package manager and commands from `docs/ai/config.m
 
 Controlled by `dependency-check` in `docs/ai/config.md` (`never` · `once` · `regularly`, default
 `once`): `once` leaves a one-time inbox entry right after `init` asking to run this once, then only
-on demand (`B102`); `regularly` instead gets a session-start note once the last run is more than 30
+on demand; `regularly` instead gets a session-start note once the last run is more than 30
 days old. A full run logs a journal entry titled `act-deps: ...` — that title is what both the
 `init` entry and the `regularly` note check for, so a spot check of one package should title its
 entry differently if it should not count as covering the whole check.
@@ -28,7 +28,7 @@ entry differently if it should not count as covering the whole check.
    combined.
 3. **Propose before applying.** File the split from step 2 as an inbox entry — the patch/minor
    bundle plus one line per major — and wait for the human's answer before executing any of it;
-   prepared, not applied, until then (`B102`).
+   prepared, not applied, until then.
 4. Before a major, read its changelog for breaking changes (`R-code-version`) instead of guessing;
    search affected call sites first (`explorer` role) when there's more than one.
 5. Apply the step (`builder` role): bump the version, update the lockfile. A code change the

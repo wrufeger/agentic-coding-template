@@ -2,15 +2,16 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — dependency-vulnerability scan before a commit (PreToolUse), the "deps"/"full"
-#          part of the security check (concept docs/project/concepts/ai-dev-app/14-security-check.md,
-#          `Q86a`-`Q86c` all decided "a"): "Art B" of three. Runs only with `security-check: deps`
-#          or `full` in docs/ai/config.md (`danger_scan.py`'s own `_security_check_level`, reused
-#          rather than a second parser here — R-work-override: one place decides the level), and
-#          only when this commit's own diff actually touches a lock file (`.act/scripts/
-#          security_scan.py`'s `LOCK_FILE_NAMES`) — a commit that never touches one costs nothing
-#          beyond the same `git commit`-detection walk `danger_scan.py`/`secret_scan.py` already do
-#          (reused here too, `secret_scan._git_commit_invocations`, rather than a third copy of
-#          "which commit-like call, in which directory").
+#          part of the security check (a decided concept): "Art B" of three. Runs only with
+#          `security-check: deps` or `full` in docs/ai/config.md (`danger_scan.py`'s own
+#          `_security_check_level`, reused rather than a second parser here — R-work-override: one
+#          place decides the level), and only when this commit's own diff actually touches a lock
+#          file (`.act/scripts/security_scan.py`'s `LOCK_FILE_NAMES`) — a commit that never
+#          touches
+#          one costs nothing beyond the same `git commit`-detection walk
+#          `danger_scan.py`/`secret_scan.py` already do (reused here too,
+#          `secret_scan._git_commit_invocations`, rather than a third copy of "which commit-like
+#          call, in which directory").
 #
 #          What is judged: exactly the lock files this commit touches — staged; unstaged with `-a`
 #          or a prior all-staging `git add`; modified or brand-new under a `git add <path>` earlier
@@ -50,7 +51,7 @@
 #          installed or fixed later gets a fresh scan (review 2, M4). A result from an earlier day
 #          is always a miss — the tools' databases move on.
 #
-#          Verdict (`Q86c` a): an unaccepted finding at severity high/critical holds the commit
+#          Verdict: an unaccepted finding at severity high/critical holds the commit
 #          (package, version, advisory id, severity, fixed version, how to accept it — the same
 #          shape secret_scan.py/danger_scan.py already use for their own block message); a lower or
 #          "unknown" severity, or one already accepted (`docs/ai/local/security-accepted.md`, see
@@ -369,7 +370,7 @@ def _build_note_message(findings: "list[security_scan.Finding]", accepted: "dict
 
 
 def _judge(payload: dict, root: Path, result: security_scan.ScanResult) -> int:
-    """The verdict for a finished scan (`Q86c` a): missing tools note once per machine, tool errors
+    """The verdict for a finished scan: missing tools note once per machine, tool errors
     note every time, an unaccepted high/critical finding holds (exit 2), everything else notes."""
     accepted = security_scan.load_accepted(root)
     for missing in result.missing_tools:

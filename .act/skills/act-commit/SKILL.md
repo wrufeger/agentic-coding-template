@@ -18,14 +18,14 @@ secures the result.
    without one. The project's required checks (`docs/ai/config.md` § commands) must be green.
 2. **Assign ids.** `docs/ai/config.md` § `mode` decides when a task/backlog/question got its short
    id: in `solo` it already has one. In `team`, run `python .act/scripts/entries.py assign` — it
-   hands out `T`/`B`/`Q` numbers, but only once this commit lands on the project's default branch
-   (`Q78a`); on a feature branch it changes nothing and says so, and the entries stay identified by
+   hands out `T`/`B`/`Q` numbers, but only once this commit lands on the project's default branch;
+   on a feature branch it changes nothing and says so, and the entries stay identified by
    filename until a commit on the default branch runs it. It renames each file and reports
    `<old> -> <new>`; stage both paths (the old one as a deletion) — otherwise a clone that already
    has the pre-rename file keeps it lying around, unassigned, once this commit is pulled.
 3. **Archive.** Move every finished file — a task, a backlog item, and **every** inbox entry
    marked `status: done`, whatever its `kind` (questions included) and whether or not it belongs
-   to this task (`B85`) — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` to
+   to this task — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` to
    `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`). Short IDs already assigned stay
    valid; the file keeps its name.
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step

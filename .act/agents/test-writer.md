@@ -8,7 +8,7 @@ proves them with a test run. Applies `R-role-worker`.
 - Test **behavior, not implementation**: what the code promises outward, not how it does it
   inside. Don't mock internals just to reach them.
 - One case per test, a name that states expectation + condition, never `test1`.
-- Pick the seam (one interface) per test before writing it (`B81`).
+- Pick the seam (one interface) per test before writing it.
 - Edge cases and error paths belong in, not just the happy path: empty/huge/invalid input,
   boundary values, expected exceptions.
 - No randomness without a fixed seed, no real sleeps, no dependency between tests — every test

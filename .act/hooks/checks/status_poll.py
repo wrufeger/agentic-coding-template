@@ -60,7 +60,7 @@
 # session issuing one tool call at a time, so its own state file never sees concurrent writers the
 # way a worker's shared count file can.
 #
-# Follow-up (T77/B114, Q109 8 a, 2026-09-27): check_status_poll used to bump the streak *before*
+# Follow-up (2026-09-27): check_status_poll used to bump the streak *before*
 # deciding whether to deny, so the second-in-a-row poll that triggered the deny was itself counted
 # into the streak it was denied over — mirrors the same fix in worker_cap.py's check_worker_cap,
 # for the same reason: _bump_consecutive_polls now takes an optional `deny_threshold` and, in
@@ -164,12 +164,12 @@ def _bump_consecutive_polls(
     file's timestamp stays fresh) when not `is_poll`. (None, False) only when session_id cannot be
     used as a filename at all — nothing to track, never blocks the call over it.
 
-    `deny_threshold` (T77/B114, Q109 8 a): when given, `is_poll` is set, and incrementing would
+    `deny_threshold`: when given, `is_poll` is set, and incrementing would
     reach or exceed it, the *count* is left unchanged (previous_streak, True) is returned instead
     of the incremented value) — the poll check_status_poll is about to deny must never count
     towards its own streak (it never happened, from the streak's point of view); a later,
     genuinely new poll starts counting from the same streak value this denied one saw, not from
-    one past it. The timestamp is still written on a deny (T77/B114 review, finding 2): without
+    one past it. The timestamp is still written on a deny (review finding): without
     that, a continuous poll loop would let the streak's `ts` go stale after 120s
     (_STREAK_TTL_SECONDS) purely because every poll past the first got denied before it could
     refresh it, so one poll would slip through as "first again" every 120s forever — writing
@@ -225,8 +225,8 @@ def check_status_poll(payload: dict) -> int:
         return 0
 
     is_poll = tool_name in _STATUS_POLL_TOOL_NAMES
-    # `warn` mode never denies here, so it must never withhold the streak update either (T77/
-    # B114) — only `block` mode passes an actual threshold ("second in a row").
+    # `warn` mode never denies here, so it must never withhold the streak update either —
+    # only `block` mode passes an actual threshold ("second in a row").
     threshold_for_call = 2 if mode != "warn" else None
     consecutive, denied = _bump_consecutive_polls(
         root, payload.get("session_id"), is_poll, deny_threshold=threshold_for_call,
@@ -253,9 +253,10 @@ def observe(event: str, payload: dict) -> None:
     reason every other best-effort write in this module is.
 
     A harness-fed UserPromptSubmit (a worker's report, a task-finished notice — see
-    checks.common._is_harness_message, T44 live probe 2026-09-23) is deliberately NOT treated as
-    "something else happened": it is not the orchestrator doing real work in between two polls,
-    just the harness relaying a message the orchestrator did not ask for and may not even act on
+    checks.common._is_harness_message, seen in a live probe 2026-09-23) is deliberately
+    NOT treated as "something else happened": it is not the orchestrator doing real work in
+    between two polls, just the harness relaying a message the orchestrator did not ask
+    for and may not even act on
     yet — resetting the streak on it would let a poll/poll/(worker message)/poll sequence dodge
     the second-in-a-row denial for free. Only a prompt the user actually typed resets it early;
     everything else still ages out via _STREAK_TTL_SECONDS on its own."""

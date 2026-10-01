@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: T42 — the SessionStart "tip of the day" line and the user's own reminders
-#          (B104). Two
+# Purpose: the SessionStart "tip of the day" line and the user's own reminders. Two
 #          sources feed the same one-line slot, checked in this order:
 #            1. docs/ai/local/reminders.md — the user's own "remind me to ..." lines, one per
 #               line, each with a cadence prefix (session/daily/weekly/once/every <n>[mhdw]) or
@@ -25,7 +24,7 @@
 #
 #          Both are silenced together by `output-depth: sparse` and by any open point at session
 #          start — inbox entries waiting (session.py's own `waiting`, the single inbox at
-#          docs/ai/inbox/, all kinds, 16-inbox-questions-tasks.md) or a feedback reminder
+#          docs/ai/inbox/, all kinds) or a feedback reminder
 #          due (is_feedback_due() below, called by session.py separately so it can also fold into
 #          its own status line) — and never shown twice in the same session (session_id, or twice
 #          in the same calendar day for `tips: occasionally`).
@@ -596,7 +595,7 @@ def observe(event: str, payload: dict) -> None:
     if event != "UserPromptSubmit" or payload.get("agent_id"):
         return
     if _is_harness_message(payload.get("prompt")):
-        # A worker's report or a task-finished notice, not a real user turn (T44 live probe,
+        # A worker's report or a task-finished notice, not a real user turn (seen in a live probe,
         # 2026-09-23, checks.common._is_harness_message) — a minute/hour reminder nudging the user
         # about something makes no sense attached to text they never typed.
         return

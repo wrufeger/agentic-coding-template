@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Security check "Art C" (concept docs/project/concepts/ai-dev-app/14-security-check.md,
-#          `Q86a`-`Q86c` all decided "a"): a deep, cross-language scan with Semgrep over the files
+# Purpose: Security check "Art C": a deep, cross-language scan with Semgrep over the files
 #          changed since a ref (default: the latest tag) or the whole tree (`--all`). Runs only on
 #          request and before a release (`security-check: full`, invoked from the `act-release`
 #          skill) - never on every commit, unlike Art A (checks/danger_scan.py). Art B (library-

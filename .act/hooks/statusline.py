@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Claude Code's `statusLine` command (T76 Welle D, Q106a — 19-keep-inbox-visible.md
-#          option a): a persistent one-line status shown under the chat, so what is waiting for
-#          the human (open inbox entries) never scrolls out of view the way a chat message does.
+# Purpose: Claude Code's `statusLine` command: a persistent one-line status shown under the
+#          chat, so what is waiting for the human (open inbox entries) never scrolls out of view
+#          the way a chat message does.
 #          Reads the JSON Claude Code passes on stdin (see
 #          https://code.claude.com/docs/en/statusline), uses only its "cwd"/"workspace" fields to
 #          find the project, and prints exactly one line — the same "Waiting for you" count

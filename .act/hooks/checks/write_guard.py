@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check 1 — template write-guard (PreToolUse), checked before every other check. Denies
-#          an AI write under .act/**, pointing at docs/ai/local/<path> instead (ADR-5).
+#          an AI write under .act/**, pointing at docs/ai/local/<path> instead.
 #
 # Exit-code contract specific to this check: a mechanism error while checking a candidate write is
 # NOT swallowed the way most other checks fail open. Every other check in this template fails open
@@ -44,7 +44,7 @@ _PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)")
 def _is_under_project_act(resolved: Path, root: Path) -> bool:
     """True if `resolved` (an absolute, already-resolved path — from _resolve_path, so already in
     the plain native drive form) lies inside `root`'s own .act/ — the only tree this check protects
-    (B137, 2026-09-25): a target outside `root` entirely, even one whose own path happens to
+    (2026-09-25): a target outside `root` entirely, even one whose own path happens to
     contain a `.act/` segment (a sibling checkout's template tree, edited on purpose from a
     template-maintenance project), is not this check's business. `root` itself goes through the
     same _resolve_path, so both sides of the comparison are spelled the same way (a
@@ -73,7 +73,7 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
     uses them to switch branches, unstage, and fetch the template's own version of a .act/ file
     back. A target whose directory is unknown (after `pushd`, a `cd $VAR`, inside a subshell, ...),
     that contains a variable, or whose own project `root` could not be determined is denied only
-    if its own text names .act/ — everything else about it cannot be decided here (B137: a
+    if its own text names .act/ — everything else about it cannot be decided here (a
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
     the raw text — a sibling checkout's .act/ is not this project's to protect)."""
     for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
@@ -91,7 +91,7 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
 
 _WRITE_GUARD_MESSAGE = (
     "[act] .act/ belongs to the template and is replaced on update. Put your version in "
-    "docs/ai/local/<same path> — it wins over the template (ADR-5)."
+    "docs/ai/local/<same path> — it wins over the template."
 )
 
 
@@ -106,7 +106,7 @@ def _powershell_targets_protected_path(command: str, base_cwd: str, root: Option
     same operator-based approximation Bash's own scanner falls back to), check 1 cannot afford to
     miss a write it could not parse, since a false allow here survives until the next template
     update silently overwrites it. A *determinable* target (already resolved to an absolute path
-    by the scanner) is checked against `root`'s own .act/ only (B137), same as the Bash side."""
+    by the scanner) is checked against `root`'s own .act/ only, same as the Bash side."""
     targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
     if targets is None:
         return bool(_PROTECTED_PATH_RE.search(command))
@@ -132,7 +132,7 @@ def _targets_protected_path(
     `base_cwd` is the directory a relative Bash/PowerShell/file-tool target is resolved against
     (the tool's own cwd); `root` is the project whose .act/ this check protects (None when it
     could not be determined, e.g. `base_cwd` sits outside any template-managed project) — see
-    _is_under_project_act (B137)."""
+    _is_under_project_act."""
     if tool_name == "Bash":
         command = tool_input.get("command")
         return isinstance(command, str) and _bash_targets_protected_path(command, base_cwd, root)
@@ -159,7 +159,7 @@ def _targets_protected_path(
 
 def _guard_root() -> Optional[Path]:
     """The project root this check protects — never derived from the tool call's own `cwd`
-    (B137: a worker or the running Claude Code session can sit in a sibling project's directory
+    (a worker or the running Claude Code session can sit in a sibling project's directory
     while still writing an absolute path into *this* project's `.act/`, and the guard must catch
     that write regardless of where the process happens to be sitting). Preferred order: the
     `CLAUDE_PROJECT_DIR` environment variable Claude Code sets for every hook invocation, when it
@@ -180,8 +180,8 @@ def _guard_root() -> Optional[Path]:
 
 def check_write_guard(payload: dict) -> int:
     """Check 1: deny an AI write under <project root>/.act/**, pointing at
-    docs/ai/local/<path> instead (ADR-5) — never a write outside that root, even one whose path
-    happens to contain a `.act/` segment (B137: a sibling checkout's template tree, deliberately
+    docs/ai/local/<path> instead — never a write outside that root, even one whose path
+    happens to contain a `.act/` segment (a sibling checkout's template tree, deliberately
     edited from a template-maintenance project, is not this check's business). See this module's
     docstring for why this check's error handling — fail closed, not open — differs from the rest
     of the checks."""

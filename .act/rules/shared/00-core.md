@@ -18,7 +18,7 @@ plan rather than agreeing to be agreeable.
 
 summary: project changes beat template defaults; overrides live under docs/ai/local
 
-A rule or file the project has changed always wins over the template's version (`ADR-5`). Never
+A rule or file the project has changed always wins over the template's version. Never
 edit anything under `.act/` directly; a project-specific version goes into
 `docs/ai/local/<same path>` instead. An unchecked rule, group or set in `docs/ai/rules.md` or
 `docs/project/coding_rules.md` is off, and a `replaces` line wins over a rule's template text

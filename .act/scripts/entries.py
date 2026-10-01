@@ -2,24 +2,23 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Create and account for the project's short-lived entry files — tasks, backlog items,
-#          journal entries, and docs/ai/inbox/ entries (question | todo | report | note, ADR-9,
-#          T75) — one file per entry. A task, backlog item, or question carries a short id ("T12",
+#          journal entries, and docs/ai/inbox/ entries (question | todo | report | note)
+#          — one file per entry. A task, backlog item, or question carries a short id ("T12",
 #          "B7", "Q5") in an "id:" header line; a todo/report/note never does. *When* an id is
-#          written depends on docs/ai/config.md's "mode" key (Q65c/Q66): "solo" gets it right
-#          away, from `new`; "team" leaves it out until `assign` runs it on the project's default
+#          written depends on docs/ai/config.md's "mode" key ("solo" or "team"): "solo" gets it
+#          right away, from `new`; "team" leaves it out until `assign` runs it on the project's default
 #          branch, the same moment a PR number would be handed out — until then, the entry's
 #          filename carries the person's identity and a timestamp instead, and `assign` renames it
-#          once the id is known (Q100 b: the filename always shows an assigned id up front, never
-#          hides it inside the file the way Q62a had it). A journal entry under
+#          once the id is known (the filename always shows an assigned id up front, never
+#          hides it inside the file). A journal entry under
 #          docs/ai/work/ledger/ never gets an id at all, and is never scanned for one either — see
 #          _ID_SCAN_ROOTS.
 #          Every docs/ai/inbox/ entry — anything waiting on a person — carries a "kind:" header
 #          field (question | todo | report | note, actlib.INBOX_KINDS; missing means "todo",
 #          actlib.DEFAULT_INBOX_KIND); "question" is the only one that also carries an id.
 #          docs/ai/questions/ no longer exists as its own directory — a question is an inbox entry
-#          like the rest, just one with an id (see docs/project/concepts/ai-dev-app/
-#          16-inbox-questions-tasks.md).
-#          Adoption (stage 6, Q79 a): `new` also takes an entry over from an older structure — its
+#          like the rest, just one with an id.
+#          Adoption: `new` also takes an entry over from an older structure — its
 #          old id kept (--id, in either mode), or a new id plus "formerly: <old id>" for another
 #          numbering scheme, the body copied byte for byte from --body-file. The next free id also
 #          counts the ids of old collection files moved to docs/ai/work/archive/legacy/ (see
@@ -38,7 +37,7 @@
 #                                 is always "all")
 #       [--body-file <path>]      body below the heading, copied verbatim (UTF-8)
 #   python .act/scripts/entries.py assign                  # hand out ids still missing (and rename)
-#   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line (Q65a)
+#   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line
 #   python .act/scripts/entries.py list [<kind>]            # id/filename + title, per kind
 #   python .act/scripts/entries.py check                    # report a duplicate or unreadable entry
 #
@@ -53,7 +52,7 @@
 #     or one line saying there was nothing to do (including "team" mode + wrong/undetermined
 #     default branch) — never touches a file that already has one. Exit 0 always; assigning ids is
 #     never a failure.
-#   "state": Q65a (2026-09-20) splits a task's versioned goal/check-criteria from its unversioned
+#   "state": splits a task's versioned goal/check-criteria from its unversioned
 #     working state ("State ...: step 3 running, next step ..."), which lives under
 #     .act-local/state/ (gitignored — .gitignore already covers .act-local/) instead of inside the
 #     task file. Finds the task under docs/ai/work/tasks/ whose header carries "id: <T-id>"
@@ -148,14 +147,14 @@ _LEGACY_PATTERNS = (
     r"\|\s*({p})(\d+)([a-z]?)\s*\|",
     r"(?m)^id:\s*({p})(\d+)([a-z]?)\s*$",  # an old per-entry file's own header (_entry_files() skips legacy)
 )
-# B118 (6): an old id whose material the content step (adopt_entries.py) decided not to keep as a
+# An old id whose material the content step (adopt_entries.py) decided not to keep as a
 # live entry at all — a `delete` row `--finish` removes for good, never moved to LEGACY_ROOT either
 # — would otherwise be free to reuse. adopt_entries.py's "reserved" batch kind writes the id here
 # instead of a file; _next_id() reads it back the same way it reads legacy_ids(), so the next id
 # still lands above it. A plain {"ids": [...]} list, tolerant of a missing/unreadable file (then
 # nothing is reserved — the safer default is the same "not yet known about" as before this fix).
 RESERVED_IDS_PATH = Path(".act-local/adopt/reserved-ids.json")
-# Q65a: a task's working state ("State ...") lives here, gitignored, never in the versioned task
+# A task's working state ("State ...") lives here, gitignored, never in the versioned task
 # file itself — see cmd_state()/board.py's read_task_titles().
 STATE_DIR = Path(".act-local/state")
 
@@ -252,7 +251,7 @@ def _own_identity() -> Optional[str]:
 
 def _recipient_value(recipient: Optional[str]) -> str:
     """The `for:` header value for `--for`: "all" (also the default) stays, anything else in the
-    identity's short form (B147: `--for "Wolfgang Rufeger"` writes `wolfgang-rufeger`)."""
+    identity's short form (`--for "Wolfgang Rufeger"` writes `wolfgang-rufeger`)."""
     text = (recipient or "all").strip() or "all"
     return "all" if text.lower() == "all" else actlib.recipient_slug(text)
 
@@ -424,7 +423,7 @@ def reserved_ids(root: Path) -> dict[str, set[str]]:
 def used_ids(root: Path, kind: str) -> set[str]:
     """Every canonical id of `kind`'s prefix a "taken" check must refuse: entry-file headers
     anywhere _entry_files() reaches, archive included — never a legacy collection file's own old
-    id (legacy_ids()). An id that only survives in legacy is free to adopt with --id (Q79 a); it
+    id (legacy_ids()). An id that only survives in legacy is free to adopt with --id; it
     only raises the floor for the *next* id (see _next_id()), it never blocks a kept one."""
     prefix = KIND_PREFIX[kind]
     ids = set()
@@ -442,7 +441,7 @@ def _next_id(root: Path, kind: str, also_used: tuple = ()) -> str:
     carries is never reused), in the legacy collection files (legacy_ids()), so an adopted
     project's next task comes after its highest old one even when that one only survives in
     legacy, and in reserved_ids() (an old id `--finish` deletes for good instead, never moved to
-    legacy — B118 (6)). `also_used`: ids not on disk yet (a batch being planned). Leading zeros and
+    legacy). `also_used`: ids not on disk yet (a batch being planned). Leading zeros and
     sub-letters don't count ("T012" is 12, "Q55a" is 55, via _canonical_id/_id_number)."""
     prefix = KIND_PREFIX[kind]
     numbers = [_id_number(i, prefix) for i in
@@ -610,9 +609,9 @@ def create_entry(
 ) -> tuple[Path, Optional[str]]:
     """Write one entry file, return (path, id written or None). The caller has validated
     (validate_entry()). An explicit `entry_id` is written in either mode — it is an id the entry
-    already had (adoption, Q79 a); without one, "solo" hands out the next free id and "team" leaves
+    already had (adoption); without one, "solo" hands out the next free id and "team" leaves
     it to `assign`. `body` goes below the heading exactly as given (no newline translation).
-    Filename (ADR-9, Q100 b): "ledger" keeps its date-based name; task/backlog/question get
+    Filename: "ledger" keeps its date-based name; task/backlog/question get
     "<id>-<slug>.md" once an id is assigned, else (team mode, no id yet)
     "<P>-<identity>-<stamp>-<slug>.md" for `assign` to rename later; todo/report/note (which never
     carry an id) get "<kind>-<stamp>-<slug>.md" (actlib.inbox_entry_filename())."""
@@ -643,7 +642,7 @@ def create_entry(
             if task_for:
                 header_lines.append(f"for: {task_for}")
         if kind in actlib.INBOX_KINDS:
-            # Q63b: every entry waiting on a person carries "for:" — "all" by default; a question
+            # Every entry waiting on a person carries "for:" — "all" by default; a question
             # is never filed to just one person's own queue, so it is always "all" regardless of
             # `recipient`.
             header_lines.append(f"kind: {kind}")

@@ -4,7 +4,7 @@
 # Purpose: Check — secret scan before a commit (PreToolUse, `R-safe-no-secret-diff`). Triggers on
 #          a Bash/PowerShell call that runs `git commit` (also inside a chain, with global options
 #          like `git -C x commit`, a nested shell, or a simple git alias) — for orchestrator and
-#          worker alike (Q75 a: the dispatcher is the only gate, no separate git hook). What gets
+#          worker alike (decided: the dispatcher is the only gate, no separate git hook). What gets
 #          checked is exactly what the commit would take:
 #            - `git diff --cached -U0` (always) -- every git call of the walk runs from the
 #              repository's top level, not the commit's own directory: with `diff.relative=true` a

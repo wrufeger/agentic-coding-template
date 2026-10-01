@@ -9,9 +9,9 @@
 #            --apply   on a new branch "act-adopt": move every `legacy` row (and every old skill/
 #                      agent that carries the name of a template unit) byte-identical to
 #                      docs/ai/work/archive/legacy/<old path>, its AI-tool config path segments
-#                      renamed first (B128, legacy_rel()) so no tool reads the archived copy as
+#                      renamed first (legacy_rel()) so no tool reads the archived copy as
 #                      its own configuration, then run init.py --target.
-#            --finish  after the content step (skill act-adopt / T52) marked every `adopt` row
+#            --finish  after the content step (skill act-adopt) marked every `adopt` row
 #                      done: turn adopted ai-config files into bridges, remove adopted sources
 #                      and `delete` rows, bridge adopted own skills/roles (targets under
 #                      docs/ai/local/skills|agents/) the way act-load-settings does, drop
@@ -21,7 +21,7 @@
 #                      and docs/README.md to the new place (link targets only), write
 #                      docs/ai/work/archive/legacy/_act-renames.md (old path -> renamed path table;
 #                      not "README.md", which a `legacy` row for a project's own root README.md
-#                      could land at) where B128 renamed anything, run doctor.py, write one inbox
+#                      could land at) where a legacy path was renamed, run doctor.py, write one inbox
 #                      report.
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
@@ -70,12 +70,12 @@ RESCUED_ROOT = ".act-local/adopt/rescued"  # ignored/untracked files out of a mo
 ABORTED_ROOT = ".act-local/adopt/aborted"  # copies of work --abort --force had to discard
 # Not "README.md": a `legacy` row for a root-level README.md (act-adopt/SKILL.md step 6 proposes
 # `keep` for a project-doc README.md, but a table may still choose `legacy`) would land at exactly
-# that path and get silently overwritten by write_legacy_readme() (B128 follow-up) — a name the
+# that path and get silently overwritten by write_legacy_readme() — a name the
 # rename mapping can never itself produce protects it (see the duplicate-destination and
 # LEGACY_README checks in validate()).
 LEGACY_README = f"{LEGACY_ROOT}/_act-renames.md"
 
-# B128: an AI tool reads a `.claude/`, `.codex/`, ... folder or a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`
+# An AI tool reads a `.claude/`, `.codex/`, ... folder or a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`
 # file as its own configuration wherever it sits — including nested below docs/ai/work/archive/legacy/,
 # and including nested anywhere inside a directory a legacy move takes wholesale (e.g. an old
 # `app/.claude/` inside a moved `app/`). Every path a legacy move puts there goes through legacy_rel()
@@ -89,7 +89,7 @@ LEGACY_FILE_RENAME = ("CLAUDE.md", "AGENTS.md", "GEMINI.md", "CLAUDE.local.md")
 
 def legacy_rel(path: str) -> str:
     """`path` (a plain relative posix path, as validate() requires) with every tool-config segment
-    renamed, at any depth, so no AI tool reads the legacy copy as its own configuration (B128): every
+    renamed, at any depth, so no AI tool reads the legacy copy as its own configuration: every
     segment named ``.claude``/``.codex``/``.gemini``/``.cursor``/``.agents`` -> ``_claude``/…,
     wherever it sits (a nested ``app/.claude/`` renamed the same as a top-level one); every
     ``.github`` segment's own ``agents``/``prompts`` child -> ``_agents``/``_prompts`` (its own other
@@ -140,7 +140,7 @@ ACTIONS = ("adopt", "legacy", "keep", "delete")
 # own `confirmed: true`; so does `delete` on a project-doc row (CONFIRM_NEEDED below).
 ALLOWED_ACTIONS: dict = {
     "ai-config": {"adopt", "keep", "legacy", "delete"},
-    # legacy (T65, Q93 open): an old skill/agent/script kept byte-identical in the archive, e.g. on a
+    # legacy (undecided): an old skill/agent/script kept byte-identical in the archive, e.g. on a
     # name collision with a template unit — as scan and skill propose it.
     "ai-machinery": {"adopt", "legacy", "delete", "keep"},
     "work": {"adopt", "legacy", "keep", "delete"},
@@ -161,7 +161,7 @@ PROTECTED_MARKERS = ("never bridge", "git-ignored/local")
 LINK_MARKERS = ("link to ", "contains link ")
 
 # First path segments of source, test and content trees: nothing below them is moved or removed
-# without the row's own `confirmed: true` (T50 review). Any first segment starting with "test"
+# without the row's own `confirmed: true`. Any first segment starting with "test"
 # counts as well (tests/, testing/, test-data/).
 CONTENT_TREES = {
     "src", "lib", "app", "apps", "packages", "server", "client", "pages", "components", "public",
@@ -297,7 +297,7 @@ def _prune_empty_below(base: Path) -> None:
 
 def legacy_rename_nested(dest: Path) -> dict:
     """After a whole directory landed at `dest` byte-identical (a plain move preserves every
-    internal name), rename every file inside whose relative path legacy_rel() would change (B128,
+    internal name), rename every file inside whose relative path legacy_rel() would change (
     any depth — legacy_rel() only rewrites the path string, this makes the file system match it):
     move each such file to its renamed relative location under `dest`, then remove directories left
     empty by that (e.g. a nested `.claude/` once every file below it moved to `_claude/`). Returns
@@ -595,7 +595,7 @@ def legacy_destination_problems(rows: list, moved_first) -> list:
     """Two checks on where --apply's legacy moves would land, run in validate() so a --plan (and
     thus every real --apply, which always validates first) refuses them before anything moves:
     a destination that collides with LEGACY_README (reserved for the rename table
-    write_legacy_readme() writes — B128 follow-up), and two sources landing on the same
+    write_legacy_readme() writes), and two sources landing on the same
     destination (compared case-insensitively, as the file system may), where the second
     os.replace() would otherwise silently overwrite the first."""
     problems = []
@@ -750,7 +750,7 @@ def accounting(root: Path, rows: list, state: dict, phase: str, scan_rows: Optio
             elif any(PurePosixPath(t).parts[:4] in (OWN_SKILLS, OWN_AGENTS) for t in targets):
                 # An own skill/agent: --finish removes it (to_remove), the tool copy is written
                 # separately (bridge_own_units) — "protected" would claim a note nobody wrote
-                # (B118 #14, cosmetic: this branch means the removal has not run yet or failed).
+                # (cosmetic: this branch means the removal has not run yet or failed).
                 source = "source stays (own unit — not yet removed)"
             else:
                 source = "source stays (unexpected, not a protected note)"
@@ -853,7 +853,7 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
     to_rescue = {path: files for path, files in to_rescue.items() if files}
 
     no_commit = init_supports_no_commit()
-    # --language-docs/--language-chat are passed on only when given (B148 1): the skill fixes the
+    # --language-docs/--language-chat are passed on only when given: the skill fixes the
     # language before --apply (from the sighting's language hint, else with the owner), so init.py
     # writes docs/ai/config.md and its own todos in it right away. Without them init.py starts
     # with its English default, and adopt_config.py (step 5) sets `language-docs` afterwards from
@@ -892,7 +892,7 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
         "branch": BRANCH, "base_branch": base, "base_commit": base_commit,
         "moved": {}, "removed_at_apply": [], "rescued": {}, "created": [],
         "actions": {row["path"]: row["action"] for row in rows},
-        # What --apply was told explicitly: adopt_config.py treats these keys as project values (B148 1).
+        # What --apply was told explicitly: adopt_config.py treats these keys as project values.
         "languages": {key: value for key, value in (("language-docs", language_docs),
                                                     ("language-chat", language_chat)) if value},
     }
@@ -910,7 +910,7 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
             before = _files_below(root / path)
             (root / dest).parent.mkdir(parents=True, exist_ok=True)
             os.replace(root / path, root / dest)
-            renamed = legacy_rename_nested(root / dest)  # B128, nested: rename what a plain move left as-is
+            renamed = legacy_rename_nested(root / dest)  # nested: rename what a plain move left as-is
             if renamed:
                 new_state.setdefault("moved_renames", {})[path] = renamed
             new_state["moved"][path] = dest
@@ -985,7 +985,7 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
     new_state["dirty_after_apply"] = tracked_changes(root)
     # A backed-up file (.claude/settings.json) is git-ignored: tracked_changes() never sees it.
     # Its hash right here, once init.py is done, is --abort's own baseline for "changed since
-    # --apply" (B118 #1) — the pre-init backup above is only what gets restored, not that baseline.
+    # --apply" — the pre-init backup above is only what gets restored, not that baseline.
     new_state["backup_after_apply"] = {rel: _sha256(root / rel) for rel in BACKED_UP if (root / rel).is_file()}
     _write_json(state_path, new_state)
     if stage_error:
@@ -1204,7 +1204,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
             baseline = state.get("backup_after_apply", {}).get(original)
             # A tracked file is already handled above ("checkout"): it is back at its pre-apply
             # committed content there, which content_changes()/--force cover if it was edited.
-            # Only a git-ignored one slips past that (B118 #1) — is_tracked() here, not before the
+            # Only a git-ignored one slips past that — is_tracked() here, not before the
             # checkout above, so a file the project untracks only on this branch still counts.
             if (baseline is not None and (root / original).is_file() and not is_tracked(root, original)
                     and _sha256(root / original) != baseline):
@@ -1244,7 +1244,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
 # --finish
 # ---------------------------------------------------------------------------
 
-# A whole word, not negated (B118 #3): "no override"/"not an override" must not count as the
+# A whole word, not negated: "no override"/"not an override" must not count as the
 # note meaning an override, only "override" (or "an override", "override of X", ...) does.
 OVERRIDE_RE = re.compile(r"(?<!no )(?<!not )(?<!not an )(?<!kein )(?<!keine )(?<!keinen )(?<!ohne )(?<!nicht als )\boverrides?\b", re.IGNORECASE)
 
@@ -1329,7 +1329,7 @@ REFS_IN_REPORT = 50  # more references than this: the report names REFS_FILE ins
 REFS_FILE = f"{ADOPT_DIR}/references.txt"            # the full list, written by every --finish
 REFS_PLAN_FILE = f"{ADOPT_DIR}/references.plan.txt"  # the same list, written by --finish --plan
 REFS_SCOPE = "docs/project/ and docs/README.md"     # where references are bent
-REFS_SCOPE_DE = "docs/project/ und docs/README.md"  # the same, for a German report (B148 2)
+REFS_SCOPE_DE = "docs/project/ und docs/README.md"  # the same, for a German report
 
 
 DOC_SUFFIXES = {".md", ".txt", ".rst", ".adoc"}
@@ -1361,7 +1361,7 @@ def successors(rows: list, state: dict, gone: list) -> dict:
 def emptied_folders(root: Path, gone: list, pending: list, succ: dict) -> dict:
     """Folders above a gone source that hold no file once --finish is done (`pending`: sources it
     still removes) -> their legacy folder if there is one, else None — a reference to such a
-    folder is dead as well (T65: docs/project/coding_rules.d/ with every file a delete row)."""
+    folder is dead as well (docs/project/coding_rules.d/ with every file a delete row)."""
     out, full = {}, set()
     for path in dict.fromkeys(gone):
         folder = posixpath.dirname(path)
@@ -1380,7 +1380,7 @@ def emptied_folders(root: Path, gone: list, pending: list, succ: dict) -> dict:
 
 def _tree_paths(root: Path, commit: str) -> frozenset:
     """Every file path (recursively) git tracked at `commit` — the tree before the adoption
-    started, so _new_place() can tell a reference that was already broken there (B118 #20) from
+    started, so _new_place() can tell a reference that was already broken there from
     one the adoption itself left without a successor."""
     result = _git(root, "ls-tree", "-r", "--name-only", commit, check=False)
     return frozenset(line for line in result.stdout.split("\n") if line) if result.returncode == 0 else frozenset()
@@ -1394,7 +1394,7 @@ def _new_place(root: Path, rel: str, succ: dict, before: frozenset = frozenset()
     """(new path or None, why it stays or None, sources `rel` is or lies below). A new place that
     does not exist (a folder adopted into one file: its pages have no place of their own) stays.
     `before`: _tree_paths() at the commit --apply started from — a `rel` missing there already
-    was dead before the adoption touched anything (B118 #20), not a successor the adoption owes."""
+    was dead before the adoption touched anything, not a successor the adoption owes."""
     hits = [(src, new) for src, new in succ.items() if rel == src or rel.startswith(src + "/")]
     sources = [src for src, _new in hits]
     if not hits:
@@ -1420,7 +1420,7 @@ def _mention_re(path: str):
 
 def _reference_files(root: Path, exclude: frozenset = frozenset()) -> list:
     """The files whose references --finish bends (REFS_SCOPE): docs/README.md and every doc file
-    under docs/project/ — except `exclude` (B118 #19: the same set --finish itself is about to
+    under docs/project/ — except `exclude` (the same set --finish itself is about to
     remove, so --plan and the real run scan the same files and count the same)."""
     def kept(rel: str) -> bool:
         return rel not in exclude and not any(rel == e or rel.startswith(e + "/") for e in exclude)
@@ -1434,7 +1434,7 @@ def _reference_files(root: Path, exclude: frozenset = frozenset()) -> list:
 
 
 def _span_readings(root: Path, content: str, folder: str, succ: dict, before: frozenset = frozenset()) -> tuple:
-    """(readings, sources) for a path alone in backticks — text, never changed (Q91 a): read
+    """(readings, sources) for a path alone in backticks — text, never changed: read
     relative to the file's folder and relative to the root (spelled ./ or ../: the folder only; a
     leading /: the root only). `readings` describes every reading that meets a gone source with
     its new place or why there is none ('' if none meets one)."""
@@ -1457,7 +1457,7 @@ def _span_readings(root: Path, content: str, folder: str, succ: dict, before: fr
 def rewrite_references(root: Path, succ: dict, plan: bool, exclude: frozenset = frozenset(),
                        before: frozenset = frozenset()) -> tuple:
     """Dead references in REFS_SCOPE to gone sources (`succ`), bent to the new place — the link
-    target only (Q91 a): the target of a Markdown link `](…)` or of a reference definition
+    target only: the target of a Markdown link `](…)` or of a reference definition
     `[x]: …` outside code, resolved against the file's folder (a leading /: the root), written
     back the same way, anchor kept, only where the new place exists. Nothing else changes: a path
     in backticks is text and only listed ("mention in text — not changed", both readings, see
@@ -1465,7 +1465,7 @@ def rewrite_references(root: Path, succ: dict, plan: bool, exclude: frozenset = 
     touched. Returns (changes, left): '<file>:<line>: <old> -> <new>' each, and
     '<file>:<line>: <path> … (<why>)' for every reference left as it is. With `plan`, nothing is
     written. `exclude`: files --finish itself is about to remove, scanned by neither --plan nor
-    the real run (B118 #19). `before`: see _new_place() (B118 #20)."""
+    the real run. `before`: see _new_place()."""
     changes, left = [], []
     if not succ:
         return changes, left
@@ -1571,7 +1571,7 @@ def refs_summary(refs: tuple) -> str:
 
 
 def group_left_by_target(left: list) -> list:
-    """(target, count, files) per distinct target mentioned in `left` (B129.6: a project can carry
+    """(target, count, files) per distinct target mentioned in `left` (a project can carry
     a few hundred left-unchanged mentions of one old path across docs/project/ — too long for a
     human to read line by line; grouped by the referenced path/text, sorted by count then target,
     `files` sorted and de-duplicated). Each line in `left` is
@@ -1591,7 +1591,7 @@ def group_left_by_target(left: list) -> list:
     return rows
 
 
-# Settings entries that run a removed script (T65): the script a hook command or a Bash(...)
+# Settings entries that run a removed script: the script a hook command or a Bash(...)
 # permission rule executes — the first word of a simple command, or the word after an
 # interpreter — written relative to the project (bare, ./ or through $CLAUDE_PROJECT_DIR), never
 # an absolute path, one into another repository, or a script that is only an argument.
@@ -1685,7 +1685,7 @@ def _json_dump(data, layout: tuple) -> str:
     return json.dumps(data, indent=indent, ensure_ascii=ascii_only).replace("\n", newline) + (newline if final else "")
 
 
-# B129.7a: substring of the predecessor's own inline Python SessionStart hook (checks
+# Substring of the predecessor's own inline Python SessionStart hook (checks
 # docs/ai/config.md by hand, prints its own message, "exit 0" — no script of its own, so
 # _entry_scripts() never has anything to flag it by).
 PREDECESSOR_HOOK_SIGNATURE = "AI-CONFIG-Abgleich"
@@ -1718,7 +1718,7 @@ def prune_settings(root: Path, dead: list, pending: list, plan: bool, gone: list
         """True if the entry goes; lists it in `notes` where it only needs a look."""
         scripts = _entry_scripts(entry, kind)
         if not scripts and kind == "command" and PREDECESSOR_HOOK_SIGNATURE in entry:
-            return True  # B129.7a: the predecessor's own inline hook, runs no script of its own
+            return True  # the predecessor's own inline hook, runs no script of its own
         verdicts = [v for v in (verdict(s) for s in scripts) if v]
         if "dead" in verdicts:
             return True
@@ -1813,14 +1813,14 @@ def strip_default_marks(root: Path, targets: list, plan: bool, created: Optional
 
 
 def legacy_readme_rows(moved: dict) -> list:
-    """(old path, renamed path) for every legacy move this adoption actually renamed (B128,
+    """(old path, renamed path) for every legacy move this adoption actually renamed (
     legacy_rel()) — sorted, ready for a Markdown table row each. Empty when nothing was renamed."""
     return sorted((old, new) for old, new in moved.items() if legacy_rel(old) != old)
 
 
 def write_legacy_readme(root: Path, moved: dict, plan: bool) -> Optional[str]:
     """{LEGACY_README} (`act:default`, English — R-work-language translates it like any other
-    scaffold): why a few paths under the legacy archive differ from their old one (B128 — an AI
+    scaffold): why a few paths under the legacy archive differ from their old one (an AI
     tool reads a `.claude/` folder, or a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` file, as its own
     configuration wherever it sits, archive included) and the old-path -> renamed-path table.
     Written (overwriting an earlier one from the same project) only where this run's `moved`
@@ -1838,7 +1838,7 @@ def write_legacy_readme(root: Path, moved: dict, plan: bool) -> Optional[str]:
         "adoption moved out of the way (`docs/ai/work/archive/legacy/<old path>`) — reference "
         "material only, nothing here is loaded by any tool.",
         "",
-        "A few paths differ from their old one on purpose (`B128`): an AI tool reads a `.claude/` "
+        "A few paths differ from their old one on purpose: an AI tool reads a `.claude/` "
         "folder, or a file named `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, as its own configuration "
         "wherever it sits — nested here included. Those are renamed so nothing here loads again:",
         "",
@@ -1871,8 +1871,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
     """The inbox report. `extra`: (settings entries removed, settings notes, files whose
     act:default mark was removed, path of the full reference list). A pure report of what the
     tool did (reviewing the branch and committing is still up to a human, but nothing here asks
-    for a decision) -- `kind: report`, never `todo` (16-inbox-questions-tasks.md § "Arten in der
-    Inbox")."""
+    for a decision) -- `kind: report`, never `todo` (an inbox kind of its own)."""
     import actlib
     inbox = root / actlib.INBOX_DIR
     when = datetime.now()  # fixed once, so a same-minute retry below keeps the same stamp
@@ -1939,7 +1938,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
                         f"{len(changes)} umgeschrieben — die volle Liste: {_code(refs_file or REFS_FILE)}")]
     else:
         out += [f"- {_code(line)}" for line in changes] or [f"- {none}"]
-    # B129.6: a raw line per left-unchanged reference ran to 143 lines in the first real adoption —
+    # A raw line per left-unchanged reference ran to 143 lines in the first real adoption —
     # too long for a human; grouped by target (old path/text mentioned) instead, the full list
     # stays at refs_file (write_references()).
     out += ["", L(f"## References in {REFS_SCOPE} left unchanged (no successor, ambiguous, plain text), by target",
@@ -2062,18 +2061,18 @@ def cmd_finish(root: Path, plan: bool) -> int:
     for area, name in overrides:
         print(f"[adopt] leave {area[:-1]} {name!r} to the template's copy mechanism (override of a template unit)")
     # Dead references in docs/project/: every source that is gone after this run (not bridged, not
-    # standing again at its place) and its new place, bent mechanically (Q91 a).
+    # standing again at its place) and its new place, bent mechanically.
     gone = [p for p in moved if not os.path.lexists(root / p)] + to_remove + \
            [p for p in state.get("removed_at_apply", []) if not os.path.lexists(root / p)]
     succ = successors(rows, state, gone)
     succ.update(emptied_folders(root, gone, to_remove, succ))
-    # Settings entries that run a script of a delete or legacy row (T65); adopt targets whose
+    # Settings entries that run a script of a delete or legacy row; adopt targets whose
     # act:default mark goes because they now hold adopted content.
     actions_of = {row["path"]: row["action"] for row in rows}
     dead = [p for p in dict.fromkeys(gone) if actions_of.get(p) in ("delete", "legacy")]
     adopt_targets = [t for row in rows if row["action"] == "adopt" for t in _targets(row)
                      if not t.startswith(SUCCESSOR_SKIP)]
-    # Same for --plan and the real run below (B118 #19/#20): neither scans a file this same
+    # Same for --plan and the real run below: neither scans a file this same
     # --finish is about to remove, and both tell a reference dead before the adoption apart from
     # one only missing a successor.
     refs_exclude = frozenset(to_remove)
@@ -2118,7 +2117,7 @@ def cmd_finish(root: Path, plan: bool) -> int:
         "stack": actlib.read_config().get("stack", ""),
         "lint_cmd": "", "typecheck_cmd": "", "test_cmd": "", "tools": tools,
         "mode": actlib.read_config().get("mode", "solo"),
-        # init.py's ProjectConfig gained "feedback_mode" (T58); only the <feedback-mode> token uses it.
+        # init.py's ProjectConfig gained "feedback_mode"; only the <feedback-mode> token uses it.
         "feedback_mode": actlib.read_config().get("feedback", "off"),
     })
     cache = actlib.read_cache()
@@ -2188,7 +2187,7 @@ def cmd_finish(root: Path, plan: bool) -> int:
     print(f"[adopt] report: {report.relative_to(root).as_posix()}")
     harvest = root / ADOPT_DIR / "harvest.md"
     if harvest.is_file():
-        # B124/Q26 b: step 6 wrote candidates for the template while reading the old project; the
+        # Step 6 wrote candidates for the template while reading the old project; the
         # consent question (feedback.py --target) is asked now, not before — see SKILL.md step 7.
         print(f"[adopt] {harvest.relative_to(root).as_posix()} has candidates for the template — "
               f"ask consent now (feedback.py --target {root} ...), see SKILL.md step 7.")
@@ -2233,7 +2232,7 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
 --apply: clean tree (untracked only under .act-local/), new branch {BRANCH} (an existing branch
   refuses; a recorded state prints it and exits 0), `legacy` rows moved byte-identical to
   {LEGACY_ROOT}/<old path> (sha256 before = after) — with every AI-tool config path segment
-  renamed first (B128: `.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
+  renamed first (`.claude`/`.codex`/`.gemini`/`.cursor`/`.agents` -> `_claude`/…,
   `.github/agents`/`.github/prompts` -> `_agents`/`_prompts`, `.github/copilot-instructions.md`
   -> `….legacy`, a `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` at any depth -> `….legacy`, so no tool
   reads the archived copy as its own configuration) — then staged by path; a git
@@ -2252,7 +2251,7 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   template's copy mechanism); doctor.py, references to moved/removed paths, report
   docs/ai/inbox/report-<stamp>-adoption-report.md. A reference in {REFS_SCOPE}
   to a path that is gone — or to a folder the adoption leaves without any file — is bent to its
-  new place (legacy copy, or the one successor of an adopt row), the link target only (Q91 a):
+  new place (legacy copy, or the one successor of an adopt row), the link target only:
   the target of a Markdown link or of a reference definition `[x]: path` (relative stays
   relative, anchor kept); no other text changes, code blocks never. A path in backticks is text:
   never changed, only listed ("mention in text — not changed") with both readings, relative to
@@ -2269,13 +2268,13 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   An adopt target (or a file below one that changed since --apply) whose line 1 is
   <!-- act:default --> loses that line — except docs/ai/config.md (values adopted, its text
   stays scaffold to translate).
-  {LEGACY_README} (act:default, old path -> renamed path table) is written when B128 renamed at
-  least one legacy path; nothing when it did not.
+  {LEGACY_README} (act:default, old path -> renamed path table) is written when at least one
+  legacy path was renamed; nothing when none was.
   --finish --plan shows all of it first. A second --finish says "already finished".
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is
   refused ("content not adopted?").
---apply --language-docs <code> --language-chat <code|auto>: passed on to init.py (B148 1), so the
+--apply --language-docs <code> --language-chat <code|auto>: passed on to init.py, so the
   docs language and the init todos are right from the start. They are recorded in state.json
   ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md
   only where none was given.

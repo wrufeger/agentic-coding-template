@@ -97,7 +97,7 @@ _GLOB_CHARS = frozenset("*?[")
 def _split_glob_prefix(native_pattern: str) -> tuple[str, str]:
     """(literal prefix, glob remainder without a leading "/") split at the last "/" before the
     first "*", "?" or "[" in `native_pattern` — the prefix itself holds no glob character, so it is
-    safe to pass to Path.resolve() (B127: on Python 3.9/Windows, Path("D:/…/src/**").resolve() can
+    safe to pass to Path.resolve() (on Python 3.9/Windows, Path("D:/…/src/**").resolve() can
     raise OSError — WinError 123, "The filename, directory name, or volume label syntax is
     incorrect" — for the glob part alone, which the caller then mistook for "outside the project
     root" and refused every write). No glob character at all: the whole pattern is the prefix,
@@ -118,11 +118,11 @@ def _root_relative_pattern(pattern: str, root: Path) -> tuple[Optional[str], Opt
     Git-Bash `/d/...` form via _to_native_path): drive letter/case and "\\" vs "/" are normalized
     the same way _normalize_candidate_path does it for a write target, since that is what a
     pattern is ultimately matched against (_matches_scope always compares against a root-relative
-    path — B127). A pattern left as-is (already relative) comes back unchanged, (pattern, None).
+    path). A pattern left as-is (already relative) comes back unchanged, (pattern, None).
     An absolute pattern that resolves inside `root` comes back as (root-relative, None). One that
     does not — genuinely outside the project — comes back as (None, message), the message naming
     the pattern and stating that patterns are root-relative. Only the glob-free part of the
-    pattern is ever given to Path.resolve() (see _split_glob_prefix, B127) — a pattern with no
+    pattern is ever given to Path.resolve() (see _split_glob_prefix) — a pattern with no
     glob-free prefix at all (a glob character in its very first segment) is passed through
     unresolved, since there is nothing safe left to resolve."""
     if not _is_absolute_target(pattern):
@@ -150,7 +150,7 @@ def _external_directories(root: Path) -> list[Path]:
     settings.json` and `.claude/settings.local.json` under `root` (both, local's own entries added
     to the project's — the same two files Claude Code itself reads its own additionalDirectories
     from), each resolved to an absolute path — a relative entry (the usual case: `../sibling`) the
-    same way Claude Code reads it itself, relative to the project root (B138). Best-effort: a
+    same way Claude Code reads it itself, relative to the project root. Best-effort: a
     missing, unreadable or malformed settings file simply contributes nothing; this is read fresh
     on every call rather than cached, matching how little else in this module caches project state."""
     directories: list[Path] = []
@@ -178,7 +178,7 @@ def _external_directories(root: Path) -> list[Path]:
 def _external_pattern(native_pattern: str, root: Path) -> Optional[str]:
     """A `Write scope:` pattern's resolved absolute-POSIX form (glob remainder kept, see
     _split_glob_prefix) if its glob-free prefix resolves inside one of `root`'s own
-    `permissions.additionalDirectories` (B138) — a worker's assignment can then name a path in a
+    `permissions.additionalDirectories` — a worker's assignment can then name a path in a
     sibling checkout, e.g. `../template-next/.act/**` (written relative to the project root, same
     as any other Write scope pattern) or the equivalent absolute path. None if it resolves inside
     none of them — deliberately not an error on its own; the caller still has its own out-of-root
@@ -205,10 +205,10 @@ def _external_pattern(native_pattern: str, root: Path) -> Optional[str]:
 def _scope_pattern(pattern: str, root: Path) -> tuple[Optional[str], Optional[str]]:
     """One `Write scope:` pattern (already "/"-normalized, no trailing slash), turned into the form
     _matches_scope compares a write target against: project-root-relative for the ordinary case, or
-    — since B138 — the pattern's own resolved absolute-POSIX form when it names a directory listed
+    — the pattern's own resolved absolute-POSIX form when it names a directory listed
     in `root`'s `permissions.additionalDirectories` instead (a worker's assignment reaching into a
     sibling checkout pulled in that way). Tried in order: _root_relative_pattern for an absolute
-    pattern (unchanged, B127); left unchanged, without touching the filesystem, for a relative
+    pattern (unchanged); left unchanged, without touching the filesystem, for a relative
     pattern that plainly stays inside the project root (the overwhelmingly common case — anything
     not starting with ".."); _external_pattern for an absolute pattern _root_relative_pattern
     refused, or a relative one starting with ".."; an out-of-root error otherwise, naming both ways
@@ -240,12 +240,12 @@ def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dic
     ending in "/"). Returns None if no such line is present at all ("unrestricted" — deliberately
     distinct from a scope that names zero patterns, which cannot happen: an empty pattern list
     falls back to None too). Otherwise {"mode": "none"}, {"mode": "patterns", "patterns": [...]},
-    or — when `root` is given and a pattern is an absolute path outside it (B127) —
+    or — when `root` is given and a pattern is an absolute path outside it —
     {"mode": "error", "message": <str>}, one message for the first such pattern found; that mode is
     only ever surfaced by the caller at the point of an actual write attempt, not at worker start
     (see check_worker_write_scope), since a bad scope is otherwise only recorded, never enforced,
     when nothing is ever written under it. Without `root` (a caller that has none reachable), an
-    absolute pattern is passed through unchanged, same as before B127."""
+    absolute pattern is passed through unchanged, same as before."""
     match = _SCOPE_LINE_RE.search(prompt)
     if not match:
         return None
@@ -472,13 +472,13 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
     the tool call's own `cwd`, tracked forward through any `cd` the command made, see
     shell_targets._bash_write_targets) into the form _matches_scope compares against: project-root-
     relative POSIX when it resolves under `root`, same as always; its own resolved absolute-POSIX
-    form otherwise (B138) — still out of scope by definition (shell_targets' module docstring step
+    form otherwise — still out of scope by definition (shell_targets' module docstring step
     4) unless the scope's own patterns include a matching absolute-POSIX one, which only happens for
     a pattern resolved under `permissions.additionalDirectories` (_external_pattern); every other
     out-of-root target still matches nothing there either. None only if the path cannot be resolved
     to an absolute path at all. Both the target and `root` go through shell_targets._resolve_path
     (the shared normalization — a `\\\\?\\D:\\...` or `\\\\localhost\\D$\\...` spelling of an in-scope
-    path is judged as the in-scope path it is, T76 wave D review finding M-c). The worker's own
+    path is judged as the in-scope path it is, review finding M-c). The worker's own
     scratchpad is exempted separately by the caller, before this is ever called."""
     if not raw:
         return None
@@ -511,14 +511,14 @@ def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
 
 def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
     """True if `rel_posix` matches one of `patterns` — but an absolute target (one
-    _normalize_candidate_path could not resolve under the project root, B138) is only ever compared
+    _normalize_candidate_path could not resolve under the project root) is only ever compared
     against a pattern that is itself absolute, i.e. one _external_pattern already resolved under
     `permissions.additionalDirectories`. Without this split, `fnmatch` cannot tell "*.py" (an
     ordinary, project-root-relative pattern) from a path with slashes in it — `*` matches "/" too —
     so an absolute target the caller never meant to allow (`D:/dev/rufeger/elsewhere/evil.py`, a
     sibling checkout never listed in additionalDirectories) matched a plain `*.py`/`*.md` scope
-    outright (T76 review, 2026-09-25). A relative target is likewise only compared against relative
-    patterns, for the same reason in the other direction."""
+    outright (found in review, 2026-09-25). A relative target is likewise only compared against
+    relative patterns, for the same reason in the other direction."""
     is_absolute_target = _is_absolute_target(rel_posix)
     return any(
         _is_absolute_target(pattern) == is_absolute_target and fnmatch.fnmatch(rel_posix, pattern)
@@ -622,7 +622,7 @@ def check_worker_write_scope(payload: dict) -> int:
         return 0
 
     if scope.get("mode") == "error":
-        # An absolute pattern outside the project root (B127) — refused here, at the first write
+        # An absolute pattern outside the project root — refused here, at the first write
         # attempt, rather than at worker start (_record_worker_scope only records the bad scope,
         # see _parse_write_scope's docstring): a scope nothing is ever written under would
         # otherwise never surface the problem.

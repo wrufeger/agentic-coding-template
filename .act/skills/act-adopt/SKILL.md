@@ -65,7 +65,7 @@ part is `predecessor` even where it would be `project-doc`), and every row carri
 ADR folders (`adr/`, `adrs/`, `decisions/`, `decision-records/`) are `project-doc`; a dated file
 (`YYYY-MM-DD…`) in `journal(s)/` or `docs/journal(s)/` is `log`.
 
-**Show the owner the sighting's hints (`B148`).** Besides the table, the sighting prints
+**Show the owner the sighting's hints.** Besides the table, the sighting prints
 `-- … --` info lines (also in `scan.json` under `info`; a row's own hint is `(hint: …)`). Read
 them out to the owner before step 2, none is a classification:
 
@@ -168,12 +168,12 @@ Why the proposals are what they are, and where to deviate:
 proposed `legacy` — never a blind delete: they are the project's own marker and license file, kept
 readable in the archive), and so is `.github/workflows/ci.yml`, proposed `legacy` only while it
 still carries the predecessor's own placeholder steps (an `echo "TODO` line naming
-`create-project.py`/`checklists.md`), `keep` once the project replaced them with its own (`B129.8`
-— none of the three has a document extension the generic scan would otherwise reach).
+`create-project.py`/`checklists.md`), `keep` once the project replaced them with its own
+(none of the three has a document extension the generic scan would otherwise reach).
 `adopt_config.py` reads `template.json`'s values in step 5 from wherever it now is — its own place,
-or its legacy copy (renamed, `B128`) once `--apply` moved it there.
+or its legacy copy (renamed) once `--apply` moved it there.
 
-**Foreign ids with the template's prefixes (`B148`).** An old document may number its own sections
+**Foreign ids with the template's prefixes.** An old document may number its own sections
 `A1`–`A4`, `B5`–`B8`, `B16`, `T3` … — the same prefixes and shape as this template's `T`/`B`/`Q`
 ids. Once the items behind them get new entries, `B16` in the adopted wording means something else
 than the new entry `B16`. The sighting's `foreign ids: …` line names the documents it found by
@@ -238,7 +238,7 @@ runs until the table is accepted as it stands (or after those corrections, valid
 
 ## 4. Apply
 
-**Settle the language first (`B148`).** `init.py` writes `docs/ai/config.md` in the docs language and
+**Settle the language first.** `init.py` writes `docs/ai/config.md` in the docs language and
 gives its own todos (`dependency-check`, `security-check-deps`, `init-notes`) titles in it (their
 bullet points stay English), and a `translate-scaffold` note is only written for a language other than English — so the language has
 to be known before `--apply`, not after step 5. Take it from the sighting's `language hint: …` line
@@ -330,9 +330,9 @@ without a kept id gets a new id now (`solo`) or none yet (`team`).
 
 ## 6. Fill the content — one worker per target, never "all the docs at once"
 
-**Harvest for the template, alongside reading (`B124`).** Every old source in this step is read
+**Harvest for the template, alongside reading.** Every old source in this step is read
 anyway — while reading it, judge each rule, skill, doc/form convention or code convention against
-one question: **does this help someone who will never see this project?** (`Q25` b+c — the scope
+one question: **does this help someone who will never see this project?** (the scope
 reaches rule files, skills, and doc/form/code conventions alike; a code convention need not become
 a `.act/coding/` bundle of its own, project directory layouts differ too much for that, but a
 transferable idea from one is still worth a line.) A hit gets one line in
@@ -457,7 +457,7 @@ skips the items already written unchanged instead of refusing them. After each s
   the template's rows already name the new places, and the legacy copy keeps the whole old table;
   every other row and line stays as it is. Several own passages for the same target go into one
   cut file, in their original order — one `adopt_passages.py` run per target, not one per passage.
-- **Rules are adopted so that they are loaded and followed (`B146`).** A rule the old project
+- **Rules are adopted so that they are loaded and followed.** A rule the old project
   wrote down (coding standards in `coding_rules.md`/`coding_rules.d/`, working rules in
   `CLAUDE.md`/`AGENTS.md`/`AI-CONFIG.md`) is not left as text that only sits in a file. Decide per
   rule, before the cut file for `coding_rules.md` is made:
@@ -568,12 +568,12 @@ before committing and edits `settings.json` in place (it goes with group 2); `se
 is the owner's to clean. A script that should have stayed needed `keep` in step 2 — after
 `--finish` it is gone with its row. Afterwards `doctor.py --target <dir>` reports 0 findings.
 
-**Ask consent for the harvest now, not before (`B124`, `Q26` b).** `--finish --plan` and `--finish`
+**Ask consent for the harvest now, not before.** `--finish --plan` and `--finish`
 both name `<dir>/.act-local/adopt/harvest.md` when step 6 found anything. Reading `feedback` from
 `<dir>/docs/ai/config.md` decides what happens to it — every command below takes `--target <dir>`
 so it acts on the adopted project, not on this checkout:
 
-- `off` (`Q27` b): nothing is asked, nothing is kept — `python .act/scripts/feedback.py --target
+- `off`: nothing is asked, nothing is kept — `python .act/scripts/feedback.py --target
   <dir> --discard-harvest` removes the file; mention once, in the closing summary, that candidates
   for the template were found but discarded (feedback is off).
 - `manual`: turn every harvest line into an entry (`python .act/scripts/feedback.py --target <dir>

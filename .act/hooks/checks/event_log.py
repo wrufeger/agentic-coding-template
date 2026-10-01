@@ -27,7 +27,7 @@
 #          tool_input.prompt; every worker call carries agent_id/agent_type, the orchestrator's
 #          own calls carry neither.
 #
-#          PreToolUse denial (T77/B114, Q109 8 a): dispatch.py now runs its PreToolUse observers
+#          PreToolUse denial: dispatch.py now runs its PreToolUse observers
 #          *after* the checks (see dispatch.py's own header and
 #          dispatch._run_pre_tool_use_observers), so this module is the only observer still called
 #          for a call one of the checks denied — with payload["_act_denied"] = True and, when

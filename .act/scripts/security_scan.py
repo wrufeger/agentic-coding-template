@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Security check Art B (concept docs/project/concepts/ai-dev-app/14-security-check.md,
-#          `Q86a`-`Q86c` all decided "a"): a live library-vulnerability lookup against the lock
+# Purpose: Security check Art B: a live library-vulnerability lookup against the lock
 #          files an ecosystem actually has, run either as a manual command (`--deps`) or from
 #          `checks/deps_scan.py` before a commit and `checks/session.py` once a day (both reuse
 #          `run_scan`/`available_tools` from here rather than shelling out a second time). Art A

@@ -6,8 +6,8 @@
 #          outside the entry system"). The model — or the worker preparing a batch for it — has
 #          already cut the passage byte-identical from the old source and decided that it is the
 #          project's own text, not the predecessor template's (step 2's diff); this script does not
-#          re-decide any of that. It only does the two things a human hand-edit got wrong once
-#          (B-follow-up to B129.2): shift every heading in the passage down by the same number of
+#          re-decide any of that. It only does the two things a human hand-edit got wrong once:
+#          shift every heading in the passage down by the same number of
 #          levels (the old top level becomes "###" in coding_rules.md, "##" in docs/README.md,
 #          exactly as the skill's table says) and insert the shifted text at the fixed place — the
 #          end of the "Own rules" section (after its `<!-- act:own-rules -->` mark and comment
@@ -24,7 +24,7 @@
 # `--into coding`  -> docs/project/coding_rules.md, inserted at the end of the "Own rules" section,
 #                     old top heading level shifted to "###" (a passage with no heading of its own
 #                     is inserted as is, unshifted); a "*" or "+" list marker at the start of a line
-#                     (outside code fences) becomes "-", so the list is read as own rules (Q113).
+#                     (outside code fences) becomes "-", so the list is read as own rules.
 # `--into readme`  -> docs/README.md, appended at the end of the file, old top heading level
 #                     shifted to "##".
 #
@@ -55,7 +55,7 @@ RE_TOP_HEADING = re.compile(r"^##\s+.*$")
 # or counted towards the passage's shallowest level.
 RE_FENCE = re.compile(r"^\s{0,3}(?P<fence>`{3,}|~{3,})")
 # A "*" or "+" list marker at the start of a line (indented or not) — rules.py reads own rules as
-# "- " bullets, and also "*"/"+" since Q113, but the inserted text is normalized to "- " (`--into
+# "- " bullets, and also "*"/"+" as well, but the inserted text is normalized to "- " (`--into
 # coding` only). A thematic break ("* * *", "+ + +") is not a list item.
 RE_ALT_BULLET = re.compile(r"^(?P<indent>[ \t]*)(?P<mark>[*+])(?P<space>[ \t]+)(?P<rest>.*)$")
 RE_THEMATIC_BREAK = re.compile(r"^\s*(?:\*\s*){3,}$|^\s*(?:\+\s*){3,}$")
@@ -183,7 +183,7 @@ def _append_block(existing: str, block: str) -> tuple[str, bool]:
     """(new_text, changed): `block` appended to `existing` (both already "\\n"-normalized and
     outer-blank-stripped), separated by one blank line — unless `block` is already present
     somewhere in `existing` as its own paragraph, in which case `existing` comes back unchanged.
-    Checked anywhere in `existing`, not only as its trailing block (T76 follow-up): a rerun stays
+    Checked anywhere in `existing`, not only as its trailing block: a rerun stays
     idempotent even after something else was appended after the block in the same section."""
     if existing and _contains_block(existing, block):
         return existing, False
@@ -201,7 +201,7 @@ def build_result(target_text: str, into: str, passage: str) -> tuple[str, bool]:
         head = lines[:content_start]
         tail = lines[end:]
         body = "\n".join(lines[content_start:end]).strip("\n")
-        # A block adopted earlier by an older adopt_passages.py still has its "*"/"+" markers (Q113):
+        # A block adopted earlier by an older adopt_passages.py still has its "*"/"+" markers:
         # compare the normalized form of the existing text too, so a rerun does not add it twice.
         if body and _contains_block(normalize_bullets(body), block):
             return target_text, False

@@ -81,7 +81,7 @@ rewritten without that part.
 ## Where a send is recorded
 
 Every actual send writes a full copy of its payload to `.act-local/feedback/sent/` — gitignored,
-never leaving this checkout (Q65b). Pending entries and small bookkeeping (project id,
+never leaving this checkout. Pending entries and small bookkeeping (project id,
 cadence-learning counters) live in `.act-local/feedback/` alongside it. In the project's own,
 versioned history, a send instead leaves a one-line journal entry under `docs/ai/work/ledger/`
 (via `entries.py`) — date, kind (batch/direct), entry count, schema version, nothing more: never

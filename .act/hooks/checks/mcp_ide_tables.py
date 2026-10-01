@@ -5,7 +5,7 @@
 #          one lookup function, no imports beyond the standard library's typing, deliberately kept
 #          apart from mcp_ide.py itself: dispatch.py's fail-closed fallback (_mcp_call_needs_mcp_ide)
 #          must judge a call by the very same tables whether mcp_ide.py raised while running or
-#          could not be imported at all (T76 wave D review, 2026-09-26, finding LOW: the two failure
+#          could not be imported at all (review, 2026-09-26, finding LOW: the two failure
 #          modes used to judge the same orchestrator `create_new_file` differently — exit 2 after a
 #          runtime error, 0 after an import error). A module with nothing to fail on is the one thing
 #          both paths can still share.
@@ -14,7 +14,7 @@
 #            - shell: one string argument is a command line (`execute_terminal_command`).
 #            - write: the tool names the file(s) it changes — see _WRITE_TOOL_FIELDS for each one's
 #                     real schema (JetBrains `idea` MCP server, live session 2026-09-26; the
-#                     `replace_text_in_file` entry from the 2025.x server per the wave D review,
+#                     `replace_text_in_file` entry from the 2025.x server per a review,
 #                     finding M-b: `pathInProject` plus the old/new text).
 #            - exec:  runs something with no argument any check could evaluate as a path or a
 #                     command line (`execute_run_configuration`, `build_project`, `xdebug_*`, ...,

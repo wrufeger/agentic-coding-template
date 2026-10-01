@@ -33,7 +33,7 @@ Three findings, three offers, **never a silent fix**:
 - **matches** the template rule → offer to drop the project's own rule and check the template one.
 - **goes beyond** it → offer to trim the project's rule down to the remainder (diff proposed, the
   wording stays the human's).
-- **contradicts** it → report only, change nothing — the project's rule still wins (`ADR-5`), but
+- **contradicts** it → report only, change nothing — the project's rule still wins, but
   the human should know the template now thinks differently.
 
 Also flags: a widely-applicable own rule as a template candidate (never sent on its own —

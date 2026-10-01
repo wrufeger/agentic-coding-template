@@ -14,7 +14,7 @@
 #            2. Nothing is ever sent without consent (docs/ai/config.md § Feedback, key
 #               `feedback`) — except a hand-written message via --direct, see there.
 #            3. Every send is LOGGED, in two places: the full payload lands under
-#               .act-local/feedback/sent/ (gitignored, never versioned — Q65b) and, additionally,
+#               .act-local/feedback/sent/ (gitignored, never versioned) and, additionally,
 #               a one-line journal entry (date, kind, entry count, schema version — never the
 #               content) is written to docs/ai/work/ledger/ via entries.py.
 #            4. At most as often as `feedback-cadence` allows; --force lifts that gate for a
@@ -28,7 +28,7 @@
 #              the old script's dual old/new front-matter parsing is dropped outright.
 #            - Pending entries and small bookkeeping (project id, cadence counters) live under
 #              .act-local/feedback/ (gitignored, per checkout) instead of a versioned entry file
-#              per finding — the finished protocol of an actual send lives there too now (Q65b: no
+#              per finding — the finished protocol of an actual send lives there too now (no
 #              versioned copy of a send's full payload at all; a one-line journal entry via
 #              entries.py is the in-repo proof instead, see _write_journal_entry()).
 #              A team therefore gets one project id per checkout, not one per project. The id is
@@ -59,7 +59,7 @@
 #   --target <dir>
 #       Every command below acts on the project at <dir> instead of the checkout this script is
 #       run from — its outbox, its state, its docs/ai/config.md, its .act-lock.json. Needed for
-#       act-adopt (B124), which runs from the template checkout against a project being adopted at
+#       act-adopt, which runs from the template checkout against a project being adopted at
 #       <dir>; without it, every command below acts on the checkout's own project as found by
 #       actlib.repo_root() (walking upward from the current working directory).
 #   python .act/scripts/feedback.py --status
@@ -105,7 +105,7 @@
 #       — that is the proof and is never cleared.
 #   python .act/scripts/feedback.py --target <dir> --discard-harvest
 #       Removes <dir>/.act-local/adopt/harvest.md (act-adopt step 6's local list of candidates for
-#       the template) without adding anything to the outbox — the B124/Q27 b path for
+#       the template) without adding anything to the outbox — the path for
 #       docs/ai/config.md's `feedback: off`. No-op (exit 0) if the file is not there.
 #
 # Output format: plain text; a payload is shown as an indented JSON block. Exit 0 = ok, 1 =
@@ -158,7 +158,7 @@ ORIGIN = "agentic-coding-template/1"
 STATE_DIR_REL = ".act-local/feedback"
 STATE_FILE_REL = ".act-local/feedback/state.json"
 ENTRIES_DIR_REL = ".act-local/feedback/entries"
-# Q65b: the full payload of every send stays local (gitignored) — never versioned, no choice to
+# The full payload of every send stays local (gitignored) — never versioned, no choice to
 # make. The proof for a stranger reading the project's own history is the one-line journal entry
 # _write_journal_entry() adds to docs/ai/work/ledger/, not this file.
 PROTOCOL_DIR_REL = ".act-local/feedback/sent"
@@ -233,7 +233,7 @@ def _set_config_value(root: Path, key: str, value: str) -> bool:
 
 def _read_config_at(root: Path) -> dict[str, str]:
     """`actlib.read_config(root)` under this script's own name — kept as a thin alias (rather than
-    rewriting every call site below to `actlib.read_config(root)` directly) since B124 predates
+    rewriting every call site below to `actlib.read_config(root)` directly) since the adopt flow predates
     `read_config()` taking an explicit `root`; now that it does, this is the one place that would
     need to change if the two ever diverged again."""
     return actlib.read_config(root)
@@ -656,7 +656,7 @@ def _write_protocol(root: Path, payload: dict, endpoint: str) -> Path:
 def _write_journal_entry(root: Path, title_en: str, title_de: str) -> None:
     """One journal entry per successful send (docs/ai/work/ledger/, via entries.py's own `new`) —
     date, kind (batch/direct), entry count and schema version only, in the title; NEVER the sent
-    content or an entry's own title (Q65b — the local protocol under .act-local/feedback/sent/ is
+    content or an entry's own title (the local protocol under .act-local/feedback/sent/ is
     the full record; this is only the project's own note that a send happened). The title follows
     `language-docs` (R-work-language, actlib.localized()) — `title_en`/`title_de` are the two
     fixed variants a caller already built, not a template this function fills in itself, since it
@@ -1077,7 +1077,7 @@ HARVEST_FILE_REL = ".act-local/adopt/harvest.md"
 
 
 def cmd_discard_harvest(root: Path) -> int:
-    """B124/Q27 b: with docs/ai/config.md's `feedback: off`, act-adopt's harvest.md (step 6's
+    """With docs/ai/config.md's `feedback: off`, act-adopt's harvest.md (step 6's
     local list of candidates for the template, written while reading the old project) is deleted
     rather than turned into outbox entries — nothing of it survives. A no-op, not an error, when
     there is nothing to discard (an adoption that found no candidates, or a rerun)."""
@@ -1174,7 +1174,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--discard-harvest", action="store_true",
                         help="remove --target's .act-local/adopt/harvest.md, add nothing to the outbox")
     parser.add_argument("--target", metavar="DIR", default=None,
-                         help="act on the project at DIR instead of the current checkout (act-adopt, B124)")
+                         help="act on the project at DIR instead of the current checkout (act-adopt)")
     parser.add_argument("--kind", choices=KINDS, default=None, help="with --add")
     parser.add_argument("--title", default=None, help="with --add: one line")
     parser.add_argument("--text", default=None, help="with --add: two to six sentences")

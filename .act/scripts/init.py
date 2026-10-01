@@ -6,7 +6,7 @@
 #          config values, resolve git (origin/branch -- in-place, the old history moves to a
 #          'template' branch and 'main' is rebuilt as an orphan; once the first commit below has
 #          landed on it, 'template' is deleted outright so nobody can merge it back into 'main',
-#          T76/Q101b), check git identity, write the per-checkout workspace identity, thin the
+#          once the first commit has landed), check git identity, write the per-checkout workspace identity, thin the
 #          bridges down to the chosen tools, materialize skeleton + bridges (plus skill copies and
 #          role bridges, see copy_targets()/agent_bridge_targets(); in-place, a root CLAUDE.md/
 #          AGENTS.md still carrying the template's own bootstrap marker is replaced by its project
@@ -90,7 +90,7 @@ PLACEHOLDER_EMAIL_SUFFIXES = ("@example.com",)
 
 # Known origins of the template itself (step 2). A repo whose "origin" normalizes to one of these
 # is the template clone itself, not a project's own remote, so "origin" gets removed outright
-# (its address survives only in .act-lock.json's `template.source`, see step_git_in_place — Q73a).
+# (its address survives only in .act-lock.json's `template.source`, see step_git_in_place).
 # Extend this list if the template is ever published under another URL; anything not listed here
 # is always treated as the project's own remote and left untouched.
 # Fallback only. The authoritative source is the "source=" line in .act/VERSION, which the
@@ -119,7 +119,7 @@ def template_remotes(root):
 # "docs-index" is a plain, never-overwritten, token-substituted file too (same write path as
 # "verbatim"), but deliberately its own kind: it is not merge=ours and not re-derived by
 # dispatch.py's fixed 3-entry map (.act/hooks/checks/session.py), so it stays out of cache.json's
-# "generated" hashes — nothing there expects a 4th entry (T59).
+# "generated" hashes — nothing there expects a 4th entry.
 BRIDGES: dict[str, BridgeSpec] = {
     "AGENTS.md": {"dest": "AGENTS.md", "tool": None, "kind": "verbatim"},
     "rules.md": {"dest": "docs/ai/rules.md", "tool": None, "kind": "verbatim"},
@@ -216,7 +216,7 @@ def _get_remote_url(root: Path, name: str) -> str | None:
 def _remote_tracking_commit(root: Path, remote: str, branch: str) -> Optional[str]:
     """SHA of `<remote>/<branch>` if that remote-tracking ref exists, else None -- must be read
     before `remote` is ever touched (`git remote remove` deletes its tracking refs along with it,
-    review HIGH/B142/T76 S1+S3): once gone, there is no way left to tell a plain clone's HEAD apart
+    a review finding): once gone, there is no way left to tell a plain clone's HEAD apart
     from a HEAD that already carries commits of the project's own."""
     result = _git(["rev-parse", "--verify", "-q", f"refs/remotes/{remote}/{branch}"], cwd=root, check=False)
     return result.stdout.strip() if result.returncode == 0 else None
@@ -238,7 +238,7 @@ def _checkout_source(checkout_root: Path) -> str:
     """The address of the template checkout `init.py` is running from: its own "origin" remote
     URL if it has one, else its absolute local path. Used for `--target` mode (step 2), where
     there is no project "origin" to inspect -- the checkout running init.py *is* the template, so
-    its own address is what .act-lock.json's `template.source` needs (Q73a, backlog B105)."""
+    its own address is what .act-lock.json's `template.source` needs (an incident with a renamed remote showed this)."""
     origin = _get_remote_url(checkout_root, "origin")
     return origin if origin else str(checkout_root.resolve())
 
@@ -258,7 +258,7 @@ def _read_version_file(root: Path) -> tuple[str, str]:
 # Step 1 — config values
 # ---------------------------------------------------------------------------
 
-# Offered at init time (T58); config.md itself also accepts "manual" (collect, never auto-send) —
+# Offered at init time; config.md itself also accepts "manual" (collect, never auto-send) —
 # left out here because it is not a useful *first* answer, only something to switch to later.
 _FEEDBACK_ON_MODES = ("confirm", "automatic")
 # Anything that plainly means "no" also means "off" -- never required to type the exact word.
@@ -272,14 +272,14 @@ def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
     `.act/rules/topics/feedback.md`). Asked only on a genuinely fresh setup: skipped once
     `docs/ai/config.md` already exists, since an established project already made its own choice
     there and the writer in step_materialize never overwrites it anyway (covers both a repeat
-    `init` and `--target` docking onto an already set-up project, T58). `interactive` is already
+    `init` and `--target` docking onto an already set-up project). `interactive` is already
     False for both `--non-interactive` and `--plan` (see main()), so both take the same "stays
     off, note left behind" branch already used by this function's other questions — nothing here
     ever sends anything, it only decides what the config.md row will say.
 
     Only `confirm`/`automatic`/an off-alias is accepted (case-insensitive); an empty answer or
     anything else re-asks instead of defaulting to anything -- consent must be typed, never
-    assumed from a stray keystroke (review finding T58#1/#2). After `_FEEDBACK_MAX_ATTEMPTS` bad
+    assumed from a stray keystroke (found in review). After `_FEEDBACK_MAX_ATTEMPTS` bad
     answers it gives up and stays off, same as the non-interactive case."""
     if (root / "docs" / "ai" / "config.md").is_file():
         return "off"
@@ -390,7 +390,7 @@ def _suggest_mode(root: Path, notes: list[str]) -> str:
     `step_identity` uses (`_is_placeholder_identity`) — several name spellings of one person
     (e.g. "Wolfgang" and "Wolfgang Rufeger", same email) must not inflate the count, and a
     throwaway/test identity (e.g. `test <test@example.com>`) must not count as a second author
-    just because it used a different email than the real one (T62 I1: three names, one real
+    just because it used a different email than the real one (seen in practice: three names, one real
     person, used to suggest 'team'). If nothing real is left to compare — every commit looks like
     a placeholder, or there is no history at all — the guess stays 'solo' and a note is left for
     the inbox instead of risking a wrong 'team'.
@@ -427,7 +427,7 @@ def _suggest_mode(root: Path, notes: list[str]) -> str:
 
 def _template_dev_checkout_reason(root: Path) -> str:
     """Non-empty reason string if `root` looks like the template's own development checkout,
-    never a project to build in place (B130): either the maintainer marker
+    never a project to build in place: either the maintainer marker
     '.act-local/template-dev' is present, or 'git worktree list' shows more than one worktree for
     this repository — the template's own dev checkout is routinely one of several worktrees of the
     same repo (e.g. alongside the checkout that became this "next" build). Empty string ("") for a
@@ -452,8 +452,8 @@ _SET_UP_PROJECT_MARKERS = (".act-lock.json", "docs/ai/config.md")
 
 def _set_up_project_reason(root: Path) -> str:
     """Non-empty reason string if `root` is a project that already went through init -- an in-place
-    run (no --target) must refuse there, see main() (T76 wave D review, round 2: step 2 would rename
-    the project's branch to 'template' and rebuild 'main' as an orphan, the B130 check above never
+    run (no --target) must refuse there, see main() (a review found that step 2 would rename
+    the project's branch to 'template' and rebuild 'main' as an orphan, the check above never
     covers a project). "" for a plain clone or a directory init has never touched."""
     found = [name for name in _SET_UP_PROJECT_MARKERS if (root / name).is_file()]
     if not found:
@@ -463,7 +463,7 @@ def _set_up_project_reason(root: Path) -> str:
 
 class GitInPlaceResult(NamedTuple):
     """Return shape of step_git_in_place -- a plain tuple used to read like keyword arguments at
-    both ends (review HIGH/B142/T76 S1+S3 added the last three fields, see below)."""
+    both ends (the last three fields were added after a review finding, see below)."""
     summary: str
     template_source: str
     template_commit: str
@@ -500,7 +500,7 @@ def _old_branch_disposition(
     ref does not exist (no 'origin', a shallow/unusual clone, or -- moot once own_commits is used --
     'origin' never was the template to begin with). own_commits is how many commits HEAD has that
     origin_tip lacks (None if origin_tip itself is None) -- 0 for an untouched clone, more than 0
-    once the owner has committed anything locally before running init (T76 S1). Both must be read
+    once the owner has committed anything locally before running init. Both must be read
     here, before 'git remote remove origin' a few lines below deletes the very ref they read from."""
     if not (has_commit and current):
         return None, None
@@ -515,9 +515,9 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
     """Returns a GitInPlaceResult (see there for each field). template_source is the template's own
     address (its "origin" remote URL, before it gets removed below) if that's what "origin"
     pointed at, else empty -- always recorded into .act-lock.json's `template.source`, never left
-    implicit in a remote (Q73a): a `git remote rename origin template` used to leave the project
+    implicit in a remote: a `git remote rename origin template` used to leave the project
     with a live remote a plain `git pull template main` could update `.act/` through without going
-    anywhere near update.py's copies/bridges/migrations/lock -- see backlog Q73a for the incident
+    anywhere near update.py's copies/bridges/migrations/lock -- that incident is why
     this fixes. `origin` is now removed outright instead, and nothing takes its place.
     template_commit is HEAD of the template checkout *before* the orphan branch below moves it --
     the commit this project was initialized from -- so .act-lock.json's `template.commit` is set
@@ -528,16 +528,16 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
     branch off the old history now on 'template' (True under `plan` too, meaning "would") -- the
     caller (main()) uses it, after the first real commit on the new 'main' actually lands (step
     10), to remove the now-superseded 'template' branch, but only when can_delete_old_branch also
-    holds (Wolfgang 2026-09-25, Q101b: nobody should be able to merge the old history back into
+    holds (Wolfgang 2026-09-25: nobody should be able to merge the old history back into
     'main'; the template's own history stays reachable on GitHub, updates from here on only via
-    update.py -- but that decision assumed an untouched clone, review HIGH/B142/T76 S1+S3: it never
+    update.py -- but that decision assumed an untouched clone, a review found it never
     covered a clone the owner already committed into, or an existing project's repo repurposed in
     place, either of which would lose history found nowhere else). Never True for the "no
     repository"/"no commits yet"/"detached HEAD"/"refused, dirty tree" returns below -- there is no
     'template' branch to remove in any of those cases.
 
     The dirty-tree check below runs first, before 'origin' is touched or the branch renamed --
-    read-only, so a refusal leaves the clone exactly as it was found (review B116/1: it used to run
+    read-only, so a refusal leaves the clone exactly as it was found (a review found it used to run
     after both of those, so a refusal still removed 'origin' -- the only place `template.source`
     could still be read from -- and renamed the branch, with no way back except 'git stash' plus a
     second run that then found 'origin' already gone)."""
@@ -553,7 +553,7 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
             return GitInPlaceResult("no repository found -> ran 'git init' (branch 'main')", "", "", False, "", False, "", "")
         return GitInPlaceResult("no repository found -> would run 'git init' (branch 'main')", "", "", False, "", False, "", "")
 
-    # B130: the template-dev-checkout refusal used to live here. It now runs in main(), before
+    # The template-dev-checkout refusal used to live here. It now runs in main(), before
     # step_config's questions (step 1) rather than only here at step 2 -- see main()'s own comment
     # at the call site. By the time this function runs, that check has already passed.
 
@@ -589,7 +589,7 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
             )
             sys.exit(1)
 
-    # Review HIGH/B142/T76 S1+S3: read before 'origin' is touched below -- 'git remote remove
+    # Review finding: read before 'origin' is touched below -- 'git remote remove
     # origin' takes its tracking refs with it, and those refs are the only way left afterwards to
     # tell an untouched clone's HEAD apart from one the owner already committed into.
     origin_tip, own_commits = _old_branch_disposition(root, plan, has_commit, current)
@@ -629,7 +629,7 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
             parts.append(f"branch '{current}' -> would rename to 'template'")
     if not plan:
         # The dirty-tree check that used to sit here now runs at the top of the function, before
-        # 'origin' or the branch were touched at all -- see the docstring and review B116/1.
+        # 'origin' or the branch were touched at all -- see the docstring.
         _git(["checkout", "--orphan", "main"], cwd=root)
         rm_result = _git(["rm", "-r", "--cached", "."], cwd=root, check=False)
         if rm_result.returncode != 0:
@@ -647,7 +647,7 @@ def step_git_in_place(root: Path, plan: bool) -> GitInPlaceResult:
     else:
         parts.append("would create new orphan branch 'main'")
 
-    # Review HIGH/B142/T76 S1+S3: delete only once *all three* hold -- (a) 'origin' really was the
+    # Review finding: delete only once *all three* hold -- (a) 'origin' really was the
     # template (template_source set), (b) no commits sit on this branch that 'origin' doesn't also
     # have (own_commits == 0, read above before 'origin' was touched), (c) the branch's tip is still
     # exactly the commit 'origin' had (origin_tip == template_commit -- (b) already guarantees this
@@ -672,13 +672,13 @@ def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str,
     """Returns (summary, template_source, template_commit) -- unlike step_git_in_place, `root` has
     no "origin" of its own to inspect (it is brand new or foreign), so `template_source` instead
     comes from the checkout init.py is *running from* (source_act.parent): that checkout is the
-    template, by definition of being the one docking .act/ onto `root` (Q73a, backlog B105).
+    template, by definition of being the one docking .act/ onto `root`.
     `template_commit` is that same checkout's HEAD (empty if it has none/is not a git repo) --
     same reasoning as step_git_in_place's template_commit, just read from a different repo since
     `root` itself has no history yet to read it from.
 
     The initial branch is pinned to 'main' exactly like step_git_in_place's own 'git init' branch
-    (B140 a) -- otherwise it follows this machine's `init.defaultBranch` (often 'main', but
+    -- otherwise it follows this machine's `init.defaultBranch` (often 'main', but
     'master' or a custom default are common too, same reasoning as the in-place comment above).
     Only a repository this call creates itself gets that treatment: an existing repository at
     `root` (the first branch below) is left untouched, branch included -- the adopt path
@@ -768,7 +768,7 @@ the natural place to hand it on to `.act-local/import/` of another checkout.
 
 
 def step_import_folder(root: Path, plan: bool) -> str:
-    """Ensures `.act-local/import/` exists with a short README (Q74b) — created once, never
+    """Ensures `.act-local/import/` exists with a short README — created once, never
     overwritten if the README is already there (same "never overwrite" contract as every other
     generated file in this script). settings_load.py also creates this folder on demand itself
     (so a project that predates this step still works without a migration), but init'ing a fresh
@@ -887,7 +887,7 @@ def _coding_rules_body(root: Path, cfg: ProjectConfig) -> tuple[str, list[str]]:
 
     lines: list[str] = []
     for name in ordered_enabled:
-        # T64: a checked set is written as an import, so Claude Code loads it right after init
+        # A checked set is written as an import, so Claude Code loads it right after init
         lines.append(rules.coding_set_line(f"- [x] use: .act/coding/{name}.md"))
         for group_id in templates[name].groups:
             lines.append(f"  - [x] `{group_id}`")
@@ -917,7 +917,7 @@ def _write_coding_rules(
         raise RuntimeError(f"{src}: missing marker '{_CODING_RULES_MARKER}'")
     body, enabled = _coding_rules_body(root, cfg)
     text = text.replace(_CODING_RULES_MARKER, body.rstrip("\n"))
-    actlib.write_text_lf(dest, text)  # B134: LF regardless of platform, matches .gitattributes
+    actlib.write_text_lf(dest, text)  # LF regardless of platform, matches .gitattributes
     summary = ", ".join(enabled) if enabled else "(none detected)"
     return f"{label}: created — sets enabled: {summary}", True
 
@@ -926,7 +926,7 @@ def enable_coding_sets(root: Path, requested: set[str], plan: bool) -> tuple[lis
     """Check the given coding rule sets — plus whatever their `requires:` pulls in — in an
     *already-existing* docs/project/coding_rules.md, adding each newly-checked set's group
     checkbox lines the same way `_coding_rules_body()` does for init's own detection. Used by
-    `adopt_config.py` (T62 I2) to apply an old project's `Coding-Guidelines` value onto a file
+    `adopt_config.py` to apply an old project's `Coding-Guidelines` value onto a file
     init.py already materialized (init's own writer never overwrites an existing file, so a set
     the old config named but init's own detection missed — e.g. no `pyproject.toml` yet, or a
     stack hint that didn't mention it — would otherwise stay unchecked forever).
@@ -971,7 +971,7 @@ def enable_coding_sets(root: Path, requested: set[str], plan: bool) -> tuple[lis
     # still waiting to be enabled.
     for name in sorted(to_enable, key=lambda n: to_enable[n].line, reverse=True):
         idx = to_enable[name].line - 1
-        lines[idx] = rules.coding_set_line(re.sub(r"\[\s\]", "[x]", lines[idx], count=1))  # T64: + import
+        lines[idx] = rules.coding_set_line(re.sub(r"\[\s\]", "[x]", lines[idx], count=1))  # + import
         group_lines = [f"  - [x] `{gid}`" for gid in templates[name].groups]
         lines[idx + 1:idx + 1] = group_lines
     _write_new_file(dest, "\n".join(lines) + "\n")
@@ -1001,8 +1001,7 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
     present, a tuple of ids needs at least one of them present. Both sides go through
     actlib.normalize_tool() first, so a `tools` value written in a variant spelling
     (.act/tiers.json's now-retired "codex-cli"/"copilot-cli"/"gemini-cli", say) still matches this
-    module's own canonical gate ids instead of silently producing no .agents/skills/ at all (F10,
-    T60)."""
+    module's own canonical gate ids instead of silently producing no .agents/skills/ at all."""
     normalized_tools = {actlib.normalize_tool(t) for t in tools}
     if tool_gate is None:
         return True
@@ -1011,7 +1010,7 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
     return any(actlib.normalize_tool(t) in normalized_tools for t in tool_gate)
 
 
-_SKILLS_NOT_COPIED = {"act-adopt"}  # runs only from the template checkout itself (backlog B118#11)
+_SKILLS_NOT_COPIED = {"act-adopt"}  # runs only from the template checkout itself (it needs the template's own checkout)
 
 
 def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
@@ -1034,7 +1033,7 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     agent_bridge_targets()), a skill copy's legitimacy in doctor.py's check_duplicate_units() comes
     from being recorded in .act-lock.json's "copies", not from this function alone; two hand-placed
     files of the same name with no such record is exactly the mistake that check exists to catch
-    (T25a). `act-load-settings` writes both the docs/ai/local/ file and its .claude/.agents/ copies
+    `act-load-settings` writes both the docs/ai/local/ file and its .claude/.agents/ copies
     itself (settings_load.py's write_unit_bridges()), recording the copy in the lock as it goes —
     this function is not in that path."""
     skills_dir = root / ".act" / "skills"
@@ -1106,7 +1105,7 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     # (agent_bridge_variant_targets() below writes ".claude/agents/<role>-high.md" for those) —
     # otherwise a docs/ai/local/agents/<role>-high.md would slip through as an "own role" here
     # and end up aliased onto what should be the template variant's bridge target instead
-    # (confirmed 2026-09-22, review of T24).
+    # (confirmed 2026-09-22 in review).
     reserved_role_names = {name.lower() for name in template_role_names}
     reserved_role_names |= {f"{name}-high" for name in reserved_role_names}
 
@@ -1125,7 +1124,7 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
     """Every applicable role's "-high" variant destination -> the same .act/bridges/agents/
     source agent_bridge_targets() uses for its base file — the runtime choice of "give this one
     assignment more reasoning" without ever writing a real model ID into an assignment
-    (`Q71`). Only a role whose template bridge declares a
+   . Only a role whose template bridge declares a
     `tier`/`reasoning` pair gets one (an older or hand-authored bridge with a fixed
     `model:` and no `tier:` already has nothing to bump); skipped outright for `tier: expert` or a `reasoning`
     already at the top of the tool's reasoning scale — one step further does not exist there."""
@@ -1159,7 +1158,7 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
 
 
 def _write_new_file(dest: Path, text: str) -> None:
-    """Write a brand-new file with `\\n` line endings, regardless of platform default (B134) --
+    """Write a brand-new file with `\\n` line endings, regardless of platform default --
     see actlib.write_text_lf()."""
     actlib.write_text_lf(dest, text)
 
@@ -1265,7 +1264,7 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
         # Used by .act/bridges/docs-readme.md's "Data as of" column — the day the index itself
         # (and the files it lists) was first written, not a live-updating value.
         "<today>": date.today().isoformat(),
-        # .act/skeleton/config.md § Feedback's `feedback` row (T58) — defaults to "off" via
+        # .act/skeleton/config.md § Feedback's `feedback` row — defaults to "off" via
         # ProjectConfig["feedback_mode"] itself (_ask_feedback_mode's every return path).
         "<feedback-mode>": cfg["feedback_mode"],
     }
@@ -1296,7 +1295,7 @@ def _write_text_file(
     text = src.read_text(encoding="utf-8")
     for token, value in tokens.items():
         text = text.replace(token, value)
-    actlib.write_text_lf(dest, text)  # B134: LF regardless of platform, matches .gitattributes
+    actlib.write_text_lf(dest, text)  # LF regardless of platform, matches .gitattributes
     return f"{label}: created", True
 
 
@@ -1306,9 +1305,9 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
     defines is replaced in place (a changed timeout/matcher/command never ends up as a second,
     duplicate entry), one the bridge no longer defines is removed, and anything the project added
     itself — hooks or env keys alike — is left untouched; an env key (e.g.
-    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR, B126) is only ever added when missing, never
+    CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR) is only ever added when missing, never
     overwritten. Idempotent — a second run against its own output reports no change and leaves the
-    file byte-for-byte identical (T46)."""
+    file byte-for-byte identical."""
     if plan and not src.is_file():
         # --target --plan against a not-yet-created directory: .act/ was never copied, so there
         # is nothing to read from yet — report the intent without touching the filesystem.
@@ -1323,7 +1322,7 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
         current = {}
     if not actlib.is_valid_hooks_container(current):
         # hooks: null, settings.json itself not an object, an entry that isn't one, ... -- never
-        # attempted, never a traceback; --catch-up must not fail permanently on this (T46 review
+        # attempted, never a traceback; --catch-up must not fail permanently on this (found in review
         # finding 6).
         return f"{_relative_label(dest, root)}: not a valid hooks structure, left unchanged", False
     new_current, changed_events = actlib.merge_settings_hooks(current, bridge_data)
@@ -1344,8 +1343,8 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
 
 # ---------------------------------------------------------------------------
 # Step 6 helper -- Weg C: carry over a source project's own deviations (concept
-# docs/project/concepts/ai-dev-app/08-new-project.md lines 60-125, decided 2026-09-20, Q56d, backlog
-# B91). `--target <dir>` run from a checkout that is itself an already set-up project (its own
+# decided 2026-09-20.
+# `--target <dir>` run from a checkout that is itself an already set-up project (its own
 # docs/ai/config.md exists) carries that project's own rule/coding-rule deviations plus its whole
 # docs/ai/local/ tree into the freshly materialized target -- never the `use:` set selection
 # (coding_rules.md), never work state (docs/ai/inbox/, docs/ai/work/, docs/project/ beyond the two
@@ -1379,7 +1378,7 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
     already carries a checkbox line for (a set the target never enabled has none, so the `use:`
     selection itself is never touched here). Never overwrites a target file that already has
     overrides/own rules of its own, and never touches one at all if it pre-dates this run
-    (`dest_was_preexisting`, B143#4b): docking `--target` onto an already set-up project whose file
+    (`dest_was_preexisting`): docking `--target` onto an already set-up project whose file
     just has no '## Overrides'/'## Own rules' section yet still means a person made those checkbox
     choices on purpose -- only a file this run itself materialized from the skeleton is fair game."""
     source_path = source_root / area.project_file
@@ -1461,7 +1460,7 @@ _SECRET_LIKE_NAMES = re.compile(r"(?i)^\.env(\..*)?$")
 def _git_tracked_files(repo_root: Path, subpath: str) -> Optional[list[str]]:
     """Repo-root-relative (posix) paths of files `repo_root`'s own git tracks under `subpath` --
     None if `repo_root` is not a git checkout (or the command fails), never an empty list mistaken
-    for "not a repo". Untracked and gitignored files never show up here at all (B143#2) -- the
+    for "not a repo". Untracked and gitignored files never show up here at all -- the
     caller does not need to special-case them separately."""
     try:
         result = subprocess.run(
@@ -1535,14 +1534,14 @@ def _carry_over_local_dir(
     root: Path, source_root: Path, plan: bool, notes: list[str],
 ) -> tuple[Optional[str], list[Path]]:
     """Copy of the source project's docs/ai/local/ (its own rule/skill/agent/script/checklist
-    overrides) into the target. Git-tracked files only (B143#2, review of T76 wave D): an
+    overrides) into the target. Git-tracked files only: an
     untracked or gitignored file under the source's docs/ai/local/ (a machine-local note, a
     stray `.env`) is data the source project itself chose to keep out of its own history and
     never leaves it through this copy either. Content comes from the source's HEAD commit, never
-    from its working tree (T76 wave D review, round 2): a tracked file the source is still
+    from its working tree (a review finding): a tracked file the source is still
     editing -- an unstaged or staged edit, a file added but never committed -- has not been
     decided for its own history yet, so it does not leave the project through this copy either
-    (the line B143#2 already drew, applied to content); the copy then equals what a fresh clone
+    (the line already drawn for which files count, applied to content); the copy then equals what a fresh clone
     of the source at HEAD would hold, the one state the source can name later. Whatever differs
     is named in the inbox instead of silently taken along or silently dropped. A committed file
     is still skipped, and named in the inbox, if it is a symlink (the link target could point
@@ -1661,8 +1660,8 @@ def step_source_project(
     checkout init.py is running from (source_act.parent) -- the project whose own deviations get
     carried over, if it has any of its own to begin with. `dest_was_preexisting` says, per
     `area.project_file`, whether the target already had that file before this run materialized it
-    (B143#4b) -- passed straight through to `_carry_over_area`. Returns the summary plus the list
-    of `docs/ai/local/` dest paths this run actually copied (B143#1: for the caller's commit
+    -- passed straight through to `_carry_over_area`. Returns the summary plus the list
+    of `docs/ai/local/` dest paths this run actually copied (for the caller's commit
     pathspec, never the whole directory)."""
     if not take_local:
         return "source project: --no-local -- skipped", []
@@ -1684,7 +1683,7 @@ def step_source_project(
 
 
 # ---------------------------------------------------------------------------
-# Step 6 helper -- Owner profile (Q103 a1/b1/c1, concept 08 SS "Voreinstellungen"). Read only as an
+# Step 6 helper -- Owner profile (presets from the owner's profile). Read only as an
 # init source, never as a runtime load path (settings_export.py's own docstring). Genuinely one
 # profile file: settings_export.profile_dir()/"settings.md" -- imported via settings_load.py's own
 # analyze()/apply machinery rather than a second read of the settings-file format. Runs after
@@ -1695,7 +1694,7 @@ def step_source_project(
 
 def _profile_display_path() -> str:
     """Platform-generic form of the owner profile's location for text that ends up committed
-    (B143#4 LOW) -- the real, absolute path (with the OS user name in it under Windows) is fine to
+    -- the real, absolute path (with the OS user name in it under Windows) is fine to
     print to the terminal, never to write into a file that lands in the project's own history."""
     if sys.platform == "win32":
         return r"%APPDATA%\act\settings.md"
@@ -1704,7 +1703,7 @@ def _profile_display_path() -> str:
 
 def _profile_entry_lines(result) -> list[str]:
     """Compact 'id + kind' summary of what an owner profile would apply -- no rule/file text, just
-    enough to identify each entry (Q103 a1: the todo names the entries, not just that some exist)."""
+    enough to identify each entry (the todo names the entries, not just that some exist)."""
     lines = [f"[{r.entry.area}] {r.entry.symbol} `{r.entry.id}`"
              for r in result.resolutions if r.action == "apply"]
     lines.extend(f"[{item['area']}] {item['dest']} (new file)"
@@ -1716,7 +1715,7 @@ def step_owner_profile(
     root: Path, plan: bool, interactive: bool, take_profile: bool, auto_apply: bool,
     notes: list[str],
 ) -> tuple[str, list[Path]]:
-    """`auto_apply` (`--profile`, Q103 a1's "catch up" path) shows the same entry list an
+    """`auto_apply` (`--profile`, the "catch up" path) shows the same entry list an
     interactive run would, but applies it right away without asking -- for a deliberate, explicit
     re-run of `init.py` on an already set-up project, not for a run that merely happens to be
     interactive."""
@@ -1796,7 +1795,7 @@ def _owner_profile_bridge_paths(root: Path, result) -> list[Path]:
     type (out of this assignment's write scope) -- checked by the file now existing, same
     "written, not just planned" test `write_unit_bridges()` itself already uses. Listing a path it
     did not actually touch after all costs nothing: the caller's commit pathspec skips anything
-    that does not exist (B143#1)."""
+    that does not exist."""
     written_items = [item for item in result.file_plan
                       if item["area"] in ("agents", "skills") and item["status"] == "new"
                       and (root / item["dest"]).is_file()]
@@ -1849,13 +1848,13 @@ def step_source_and_profile(
     take_local: bool, take_profile: bool, auto_apply: bool, dest_was_preexisting: dict[str, bool],
     notes: list[str],
 ) -> tuple[str, list[Path]]:
-    """Combined Weg C (source project, concept 08) + owner profile entry point (Q103 b1, B143#3c).
+    """Combined Weg C (source project) + owner profile entry point.
     Interactive (or `auto_apply`, `--profile`): one list with provenance per entry, one question --
     covers whichever of the two sources has something to offer, applies both together or neither;
-    `auto_apply` shows the same list but skips the question (Q103 a1's "catch up" path). Plain
+    `auto_apply` shows the same list but skips the question (the "catch up" path). Plain
     non-interactive, no `--profile`: unchanged split behavior -- Weg C stays applied by default
     (concept 08's own default, `--no-local` opts out of it), the profile stays for the inbox
-    instead (Q103 a1, `--no-profile` opts out of even that note)."""
+    instead (`--no-profile` opts out of even that note)."""
     if not interactive and not auto_apply:
         source_summary, source_paths = step_source_project(
             root, plan, source_checkout, take_local, dest_was_preexisting, notes,
@@ -1975,7 +1974,7 @@ def step_materialize(
     touched: list[Path] = []
     copies: dict[str, dict] = {}  # dest -> {"source", "sha256"}, for .act-lock.json § copies
 
-    # T76/Q101a: the root CLAUDE.md/AGENTS.md a plain clone opens with (marker
+    # The root CLAUDE.md/AGENTS.md a plain clone opens with (marker
     # TEMPLATE_BOOTSTRAP_MARKER) belong to the template, not a project -- never touched in
     # `--target` mode (a target directory never had them to begin with), cleared here in-place so
     # the bridge writer below creates the real project bridge in their place instead of reporting
@@ -2023,10 +2022,10 @@ def step_materialize(
             # own, older `.act/` predates this bridge (it keeps its own `.act/`, never re-copied —
             # see main()'s "already present in target, left unchanged") has no
             # `.act/bridges/docs-readme.md` to read from at all; skip with a message instead of
-            # crashing (review finding T59#4). (2) unlike the others, only mark it `touched` when
+            # crashing. (2) unlike the others, only mark it `touched` when
             # this run actually created it — `dest.is_file()` alone would sweep a project's own,
             # already-existing (and possibly uncommitted) docs/README.md into this run's commit
-            # even though nothing here changed it (review finding T59#5; the same
+            # even though nothing here changed it (the same
             # already-exists-so-touched pattern on the other bridges is intentional there and left
             # alone, see the review's own note).
             src = bridges_dir / key
@@ -2082,11 +2081,11 @@ def _append_block(dest: Path, src: Path, plan: bool) -> tuple[str, bool]:
     """Appends whatever lines of src's template block are missing from dest (see
     actlib.merge_text_block) — not just the whole block once, so a project that already has an
     older subset of it (created before a later template revision added a line) gets just the new
-    lines instead of staying stuck on what init.py wrote at creation time (T46). Only lines new
+    lines instead of staying stuck on what init.py wrote at creation time. Only lines new
     *since* the state this project last applied are ever considered (.act-lock.json §
     bridges_applied[dest.name], refreshed here on every non-plan run) — a project with no such
-    record yet (pre-T46-tracking) falls back to "add whatever is missing" once, same as before
-    (T46 review finding 4). A candidate conflicting with the project's own line (a gitignore `!x`
+    record yet (from before tracking) falls back to "add whatever is missing" once, same as before
+    (found in review). A candidate conflicting with the project's own line (a gitignore `!x`
     negation, or a .gitattributes line already attributing the same pattern differently) is never
     applied, only named in the summary."""
     if plan and not src.is_file():
@@ -2109,7 +2108,7 @@ def _append_block(dest: Path, src: Path, plan: bool) -> tuple[str, bool]:
     actlib.write_lock({"bridges_applied": bridges_applied})
     if not added:
         return f"{dest.name}: already present, left unchanged{suffix}", False
-    actlib.write_text_lf(dest, new_text)  # B134: LF regardless of platform, matches .gitattributes
+    actlib.write_text_lf(dest, new_text)  # LF regardless of platform, matches .gitattributes
     label = "template block appended" if not existing else f"{len(added)} missing line(s) added"
     return f"{dest.name}: {label}{suffix}", True
 
@@ -2139,7 +2138,7 @@ def step_git_files(root: Path, plan: bool) -> tuple[list[str], list[Path]]:
 # Absent, this file is the project's own and step 8 never touches it, interactive or not. The
 # marker alone is *not* enough to act on the file, though (see _retire_template_readme below): it
 # only says the file started as the template's; whether it still matches the template is checked
-# separately, so an edit made after the marker was written is never silently discarded (rev56/loss).
+# separately, so an edit made after the marker was written is never silently discarded.
 TEMPLATE_README_MARKER = "<!-- act:template-readme -->"
 
 
@@ -2156,7 +2155,7 @@ def _has_template_readme_marker(path: Path) -> bool:
 
 
 # First line of the template's own root entry files (CLAUDE.md, AGENTS.md) before a clone is
-# turned into a project (T76, Q101a): tells an AI tool opening the bare clone that it is sitting
+# turned into a project: tells an AI tool opening the bare clone that it is sitting
 # in the template, not a project, and to follow .act/skills/act-setup/SKILL.md. `step_materialize`
 # (step 6) clears a file still carrying this marker so its own bridge-writer creates the real
 # project bridge in its place (see _bootstrap_entry_files below); `--target` and `act-adopt` never
@@ -2194,10 +2193,10 @@ def _retire_template_readme(
     outright once its current content still matches the template's own version at `template_commit`
     byte-for-byte (line endings normalised) is safe -- a project that kept editing the file after
     cloning (marker survives, text changed) would otherwise lose that edit silently the moment
-    `init` runs (rev56/loss, HIGH). A mismatch is left alone, with a note for the inbox instead.
+    `init` runs. A mismatch is left alone, with a note for the inbox instead.
 
     Without a commit to compare against (no repository yet, so nothing to diff), falls back to the
-    marker alone like before T56's review -- but only after backing the current content up to
+    marker alone like before the content check existed -- but only after backing the current content up to
     `.act-local/<backup_name>` first, so a false positive (an edit the marker happened to survive)
     stays recoverable instead of gone.
 
@@ -2243,7 +2242,7 @@ def _bootstrap_entry_files(
     CLAUDE.md (and any future bridge of the same shape, e.g. GEMINI.md, see `root_entry_files`
     below) still carrying TEMPLATE_BOOTSTRAP_MARKER on their first line are the template's own
     (a bare clone opened before `init` -- see the root files themselves and
-    .act/skills/act-setup/SKILL.md, T76/Q101a), so they are removed here to make way for the real
+    .act/skills/act-setup/SKILL.md), so they are removed here to make way for the real
     project bridge; the same verified-match safety net as `_retire_template_readme` applies (a
     file whose marker is gone -- edited after cloning -- is left alone; one somehow edited with the
     marker still on it is left alone too, with a note, rather than discarding the edit). Never
@@ -2376,7 +2375,7 @@ def step_lock_and_cache(
     generated: dict[str, Path], copies: dict[str, dict],
     generated_hashes: Optional[dict[str, str]] = None,
 ) -> str:
-    """`generated_hashes` (T76 wave D review, round 3): the fingerprint of each generated bridge
+    """`generated_hashes`: the fingerprint of each generated bridge
     exactly as step 6 wrote it -- read by main() right after step_materialize, *before* the same
     run's carry-over (Weg C, owner profile) edits docs/ai/rules.md or coding_rules.md (a group
     switched off with its reason, an own rule). Hashing here, after those edits, used to record
@@ -2394,7 +2393,7 @@ def step_lock_and_cache(
     if not commit:
         # Neither source had one this time (e.g. a re-run, possibly after --no-commit, where the
         # running checkout's own HEAD/.act/VERSION momentarily can't be read) -- never blank out a
-        # commit an earlier, successful run already recorded (review finding T58#7). Read the lock
+        # commit an earlier, successful run already recorded. Read the lock
         # file directly by path instead of via actlib.read_lock()/repo_root(): this function is
         # handed `root` explicitly and must not depend on the process's current working directory.
         try:
@@ -2406,7 +2405,7 @@ def step_lock_and_cache(
     if not plan:
         # The baseline update.py checks .act/ against: without it, a hand edit under .act/ would
         # go unnoticed and be overwritten by the first update. Written before the lock below so
-        # its hash (manifest_sha256) can go in the same lock write, not a second one (Q73a: this
+        # its hash (manifest_sha256) can go in the same lock write, not a second one (this
         # is the fingerprint dispatch.py compares against to notice a project .act/ that came from
         # somewhere other than update.py, e.g. a plain `git pull` of the shared history).
         manifest.write_manifest(root / ".act")
@@ -2419,10 +2418,10 @@ def step_lock_and_cache(
         actlib.write_lock({
             "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash},
             "copies": copies,
-            # present from the start, so a later "nothing changed" never has to add it (T60, G1)
+            # present from the start, so a later "nothing changed" never has to add it
             "removed_by_user": list(actlib.read_lock().get("removed_by_user", [])),
         })
-        # .act-lock.json § applied (T60, G1): the values the files just materialized hang on, so the
+        # .act-lock.json § applied: the values the files just materialized hang on, so the
         # first session start has a snapshot to compare against instead of writing the lock itself.
         # Best-effort — without it, the next update.py run records one.
         try:
@@ -2448,10 +2447,10 @@ def step_lock_and_cache(
 def _remove_old_template_branch(root: Path, plan: bool, old_branch_tip: str) -> str:
     """Removes the local 'template' branch step_git_in_place left behind (the clone's old history,
     now superseded by the orphan 'main' step 10 just committed) -- so nobody can later merge it
-    back into 'main' by accident (Wolfgang 2026-09-25, Q101b); the template's own history stays
+    back into 'main' by accident (decided 2026-09-25); the template's own history stays
     reachable on GitHub regardless, and updates from here on only ever come in via update.py, never
     a merge. Called only when GitInPlaceResult.can_delete_old_branch was True (see main()) -- an
-    untouched clone, verified against 'origin' before it was removed (review HIGH/B142/T76 S1+S3;
+    untouched clone, verified against 'origin' before it was removed (a review finding;
     see step_git_in_place/_old_branch_disposition for the conditions checked and why deleting on
     weaker evidence used to lose a project's own commits). Called only once the first real commit on
     the new 'main' has actually landed (see main()) -- deleting it any earlier would risk losing the
@@ -2477,7 +2476,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
                 message: str = INIT_COMMIT_MESSAGE) -> str:
     if no_commit:
         # Returns before any `git add`, so nothing is staged either -- say so plainly instead of
-        # the previous, inaccurate "staged/unstaged" (review finding T58#7).
+        # the previous, inaccurate "staged/unstaged".
         return "would leave uncommitted (--no-commit, nothing staged)" if plan else "left uncommitted (--no-commit, nothing staged)"
     rels = sorted({str(p.relative_to(root)).replace(os.sep, "/") for p in paths if p.exists()})
     if not rels:
@@ -2494,7 +2493,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
 
 
 # ---------------------------------------------------------------------------
-# Inbox note for a docs scaffold that stays English (T61, `R-work-language`)
+# Inbox note for a docs scaffold that stays English (`R-work-language`)
 # ---------------------------------------------------------------------------
 
 def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Optional[Path], str]:
@@ -2518,7 +2517,7 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
 
 
 def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], str]:
-    """B102/Q68: `dependency-check: once` (the skeleton's default, docs/ai/config.md § Dependencies)
+    """`dependency-check: once` (the skeleton's default, docs/ai/config.md § Dependencies)
     means the check "runs during setup and then only on demand" — this leaves the one-time inbox
     entry that turns that into an actual prompt to run `act-deps`, so `once` is not merely a
     stated intent. Reads the value from the config.md this run just wrote (docking onto a project
@@ -2539,7 +2538,7 @@ def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], 
 
 
 # ---------------------------------------------------------------------------
-# B117/Q86a a — offer `security-check: deps` once a tool Art B could use is actually installed on
+# Offer `security-check: deps` once a tool Art B could use is actually installed on
 # this machine (never switch the value silently, see step_security_check_offer's own docstring).
 # ---------------------------------------------------------------------------
 
@@ -2574,7 +2573,7 @@ def security_check_offer_note_text(root: Path, tools: dict[str, str]) -> str:
 
 
 def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], str]:
-    """B117/Q86a a: `init` offers `security-check: deps` (never switches to it silently) once an
+    """`init` offers `security-check: deps` (never switches to it silently) once an
     installed tool actually matches a lock file this project has (2026-09-27 review, item 16: not
     merely "some tool from `TOOL_NAMES` is on PATH" -- a machine with npm installed but no
     `package-lock.json` here has nothing Art B could use yet) — an inbox note, the same
@@ -2635,7 +2634,7 @@ def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], s
 # ---------------------------------------------------------------------------
 
 # Markers of an existing project (its own docs, or another AI tool's files) that init.py itself
-# never merges -- act-adopt does that (backlog B118#9). Checked in --target mode only: in-place
+# never merges -- act-adopt does that. Checked in --target mode only: in-place
 # runs happen inside the template checkout itself, which has none of these yet.
 _ADOPT_HINT_MARKERS = ("docs", "AGENTS.md", "CLAUDE.md", ".claude", "AI-CONFIG.md")
 
@@ -2647,7 +2646,7 @@ def _existing_project_hint(root: Path, source_act: Path) -> str | None:
     # adopt.py --apply writes its own state file at this fixed path *before* it shells out to
     # init.py --target (its ADOPT_DIR + "state.json") -- if it is already there, this run came from
     # act-adopt itself, and telling act-adopt to see act-adopt would be circular noise (review
-    # B116/4). Not a flag or an env var: adopt.py has neither, and this marker it already writes
+    # a review finding). Not a flag or an env var: adopt.py has neither, and this marker it already writes
     # says the same thing without touching adopt.py at all. The one edge case this misses -- a
     # stale state.json left over from an earlier, unrelated adopt attempt -- just suppresses a hint
     # that would have been wrong for a different reason anyway (the project *is* mid-adoption).
@@ -2665,8 +2664,7 @@ def _existing_project_hint(root: Path, source_act: Path) -> str | None:
 
 def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> Path | None:
     # Each note asks the owner to look at (and often fix) something init.py could not decide on
-    # its own -- an action, not just a read -- so `kind: todo` (16-inbox-questions-tasks.md §
-    # "Arten in der Inbox"), never `report`. A second run before this one is answered reuses the
+    # its own -- an action, not just a read -- so `kind: todo`, never `report`. A second run before this one is answered reuses the
     # same file (matched by the fixed "init-notes" slug) instead of adding another -- but only
     # while that file is still open or answered; a `done` one (already acted on) never blocks a
     # fresh note silently.
@@ -2699,17 +2697,17 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
     lines = ["kind: todo", f"for: {actlib.identity_slug(owner)}", "status: open", f"created: {date.today().isoformat()}",
               "", title, ""]
     lines.extend(f"- {note}" for note in notes)
-    actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # B134: LF regardless of platform
+    actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # LF regardless of platform
     return dest
 
 
 # ---------------------------------------------------------------------------
-# `init.py --profile` inside a project that is already set up (Q103 a1's "catch up" path)
+# `init.py --profile` inside a project that is already set up (the "catch up" path)
 # ---------------------------------------------------------------------------
 
 def run_profile_only(root: Path, plan: bool, interactive: bool, no_commit: bool, reason: str) -> int:
     """What `init.py --profile` does inside a project that already went through init (no
-    `--target`; main() lands here instead of refusing, T76 wave D review round 2): the owner
+    `--target`; main() lands here instead of refusing): the owner
     profile a non-interactive first run only left a todo for is applied now, and nothing else
     happens. Exactly one step -- step_owner_profile with `auto_apply` (entries shown, applied
     without a question, whatever needs a verdict goes to the settings inbox) -- then a commit of
@@ -2764,12 +2762,12 @@ def main(argv: list[str]) -> int:
                              "deviations and docs/ai/local/ (Weg C, on by default)")
     parser.add_argument("--no-profile", action="store_true",
                         help="don't offer the owner profile at %%APPDATA%%\\act\\settings.md / "
-                             "~/.config/act/settings.md (Q103, on by default)")
+                             "~/.config/act/settings.md (on by default)")
     parser.add_argument("--profile", action="store_true",
                         help="apply the owner profile without asking (its entries are shown first). "
                              "Inside a project that is already set up (no --target) this is the only "
                              "step that runs -- nothing else is touched, only what it wrote is "
-                             "committed (Q103 a1's 'catch up' path after a non-interactive first "
+                             "committed ('catch up' path after a non-interactive first "
                              "run); in a fresh clone or with --target it is part of the full run")
     parser.add_argument("--language-docs", metavar="CODE",
                         help="language of docs/ (e.g. de) instead of asking; default en (R-work-language)")
@@ -2814,7 +2812,7 @@ def main(argv: list[str]) -> int:
         if not plan:
             os.chdir(root)
 
-        # B130: refuse before asking anything -- when this checkout is the template's own
+        # Refuse before asking anything -- when this checkout is the template's own
         # development checkout, never a project to build in place, this has to be caught before
         # step_config's own questions (step 1), not only once step_git_in_place (step 2) runs --
         # otherwise a refusal still means the owner was asked project name/owner/stack first for
@@ -2841,13 +2839,13 @@ def main(argv: list[str]) -> int:
             )
             sys.exit(1)
 
-        # T76 wave D review (round 2, HIGH): a project that already went through init -- its own
+        # A project that already went through init -- its own
         # .act-lock.json (step 9) or docs/ai/config.md (step 6) is there -- is never "a clone to
         # turn into a project" again. Step 2 would rename its current branch to 'template' and
-        # rebuild 'main' as an orphan with none of the project's own history on it; the B130 check
+        # rebuild 'main' as an orphan with none of the project's own history on it; the check
         # above cannot catch this (a project is neither the dev checkout nor a multi-worktree
         # repository). Refused here, read-only, before step_config's questions -- with one
-        # deliberate exception: `--profile`, Q103 a1's "catch up" path, runs the owner-profile
+        # deliberate exception: `--profile`, the "catch up" path, runs the owner-profile
         # step alone (run_profile_only) and nothing else.
         set_up_reason = _set_up_project_reason(root)
         if set_up_reason:
@@ -2879,7 +2877,7 @@ def main(argv: list[str]) -> int:
                       {"language-docs": args.language_docs, "language-chat": args.language_chat})
     # `--plan` never prompts (`interactive` above is already False for it), so `feedback_mode` is
     # always "off" here even when a real (non-plan) run at a real terminal would ask -- say that
-    # honestly instead of implying "off" is the actual answer (review finding T58#8). Docking
+    # honestly instead of implying "off" is the actual answer. Docking
     # `--target` onto a project that already has docs/ai/config.md is unaffected: it would not ask
     # either way (see _ask_feedback_mode), so no relabeling there.
     feedback_display = repr(cfg["feedback_mode"])
@@ -2923,7 +2921,7 @@ def main(argv: list[str]) -> int:
     selected_bridges, thin_summary = step_thin_bridges(cfg["tools"])
     _print_step(5, thin_summary)
 
-    # B143#4b: whether the target already had its own docs/ai/rules.md / coding_rules.md *before*
+    # Whether the target already had its own docs/ai/rules.md / coding_rules.md *before*
     # this run -- captured here, before step_materialize can create either from the skeleton, so
     # `_carry_over_area` only ever touches a file this run itself materialized, never a docked
     # project's own already-established checkbox choices.
@@ -2974,7 +2972,7 @@ def main(argv: list[str]) -> int:
     # as-is, or left as the project's own) -- always re-added to the new commit here, in-place
     # only: step 2's orphan rebuild of 'main' drops every path from the index, including these two,
     # so leaving them out of `commit_paths` would leave them as untracked residue after step 10's
-    # pathspec commit even though nothing about them needs a human decision (found in T76's own
+    # pathspec commit even though nothing about them needs a human decision (found in a
     # probe, tests/probes/t76-bootstrap; --target never touches them, same reasoning as step 8).
     own_root_files: list[Path] = []
     if is_target:
@@ -2989,7 +2987,7 @@ def main(argv: list[str]) -> int:
     commit_paths = [
         root / ".act", root / ".act-lock.json", *touched_bridges, *touched_gitfiles, *own_root_files,
         # Weg C (docs/ai/local/ copy) and the owner-profile import (scripts/checklists/agents/
-        # skills + their tool bridges) each report exactly the paths they wrote (B143#1) -- never a
+        # skills + their tool bridges) each report exactly the paths they wrote -- never a
         # whole-directory add (`docs/ai/local`, `.claude`, `.agents`), which would sweep in
         # anything else already sitting there, including a target's own untracked files.
         *imported_paths,
@@ -3005,7 +3003,7 @@ def main(argv: list[str]) -> int:
     commit_message = step_commit(root, plan, args.no_commit, commit_paths)
     # The old 'template' branch is only ever removed once a real commit landed on the new 'main'
     # (never under --plan, --no-commit, or a run that had nothing to commit) *and*
-    # can_delete_old_branch held (review HIGH/B142/T76 S1+S3) -- see _remove_old_template_branch
+    # can_delete_old_branch held (a review finding) -- see _remove_old_template_branch
     # and step_git_in_place/_old_branch_disposition.
     commit_landed = commit_message.startswith("committed") or (plan and commit_message.startswith("would commit"))
     if orphan_rebuilt and can_delete_old_branch and not is_target and not args.no_commit and commit_landed:

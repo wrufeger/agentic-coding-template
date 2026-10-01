@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: SessionStart handling — inbox "answered, not yet processed" count (the single inbox at
-#          docs/ai/inbox/, all kinds — question/todo/report/note, 16-inbox-questions-tasks.md,
-#          Q100 b), bridge/role-frontmatter re-derivation, board refresh, sync of the files that
+#          docs/ai/inbox/, all kinds — question/todo/report/note),
+#          bridge/role-frontmatter re-derivation, board refresh, sync of the files that
 #          hang on a
 #          docs/ai/config.md value — skill copies, CLAUDE.md and hook entries on `tools`, a role's
 #          bridges on its "## Roles" row (tier/reasoning/model) — when one moved since the last
-#          snapshot (T60 part B, see update.sync_dependent_files(), imported lazily at that one
+#          snapshot (see update.sync_dependent_files(), imported lazily at that one
 #          call site so a session start
 #          never pays for/depends on `update`'s own imports — entries, rules, ... — just for this
-#          best-effort sub-step, F6, T60), template-awareness notes (check 2b), the active-topics
-#          status line, the import check (T64) and, only as a fallback, a short form of the
+#          best-effort sub-step), template-awareness notes (check 2b), the active-topics
+#          status line, the import check and, only as a fallback, a short form of the
 #          orchestrator-only rules when docs/ai/rules.md does not import them (all gated by
 #          their own docs/ai/config.md row, see _check_mode). refresh_session() is
 #          the single SessionStart entry point dispatch.py calls; everything below feeds into it.
@@ -90,16 +90,16 @@ _STATUS_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE)
 def _count_inbox_waiting(root: Path) -> int:
     """
     Count inbox entries that are "answered, not yet processed": a file in actlib.INBOX_DIR (the
-    single inbox, one file per entry, every kind — question/todo/report/note,
-    16-inbox-questions-tasks.md, Q100 b) whose header says `status: answered`.
+    single inbox, one file per entry, every kind — question/todo/report/note)
+    whose header says `status: answered`.
 
     The header carries `for:` (who it is addressed to, absent for a question), `kind:`, and for a
     question an `id:` too — none of which matter here, only `status:` does. `status` runs `open`
-    -> `answered` -> `done` (a question keeps that same lifecycle since Q100 b; it used to live
-    under docs/ai/questions/, which no longer exists — see 16-inbox-questions-tasks.md): the human
+    -> `answered` -> `done` (a question keeps that same lifecycle; it used to live
+    under docs/ai/questions/, which no longer exists): the human
     (or the assistant, when the answer came up in chat) sets `answered`, and whoever works the
     entry into its place sets `done`. Only `answered` is counted — `open` is still waiting on a
-    person, `done` is finished and never appears here (B85). This one count now covers what used
+    person, `done` is finished and never appears here. This one count now covers what used
     to be two separate counts (inbox entries and questions) before the two lived in one place.
     """
     inbox_dir = root / actlib.INBOX_DIR
@@ -123,7 +123,7 @@ def _count_inbox_waiting(root: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
-# B76, Q42 a — docs-audit freshness at session start: a hint, never a blocker, on how long ago the
+# Docs-audit freshness at session start: a hint, never a blocker, on how long ago the
 # last full `act-audit-docs` sweep ran (skills/act-audit-docs/SKILL.md: a full pass logs a journal
 # entry whose title starts with "act-audit-docs", a spot check of one area does not). "Full" is
 # decided purely by that title prefix, never by which files a partial pass touched.
@@ -171,8 +171,8 @@ def _last_ledger_entry_with_prefix(root: Path, title_prefix: str) -> "tuple[Opti
     """(most recent date of a journal entry whose `# ` heading starts with `title_prefix`, whether
     the ledger directory exists at all). None as the date means either the directory does not
     exist, or it exists but holds no matching entry -- the caller tells the two apart via the
-    second element. Shared by `_docs_audit_note` (prefix `act-audit-docs`, B76/Q42 a) and the
-    `dependency-check: regularly` staleness note (prefix `act-deps`, B102/Q68) rather than each
+    second element. Shared by `_docs_audit_note` (prefix `act-audit-docs`) and the
+    `dependency-check: regularly` staleness note (prefix `act-deps`) rather than each
     keeping its own copy of the same ledger scan.
 
     Filters by filename first (the ledger filename carries the same slug the heading does,
@@ -241,7 +241,7 @@ def _commits_since(root: Path, when: date) -> int:
 
 
 def _docs_audit_note(root: Path, config: dict[str, str]) -> Optional[str]:
-    """One-time-per-state hint (never a blocker, Q42 a): how long ago the last full
+    """One-time-per-state hint (never a blocker): how long ago the last full
     `act-audit-docs` sweep ran, in days and commits, once either exceeds the `docs-audit-due`
     threshold; or, once only, that there is no such entry on record yet at all. Only while
     `docs/project/` exists -- nothing to audit otherwise, so neither note fires without it (review
@@ -282,7 +282,7 @@ def _docs_audit_note(root: Path, config: dict[str, str]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# B102/Q68 — `dependency-check: regularly` staleness note at session start: same shape as
+# `dependency-check: regularly` staleness note at session start: same shape as
 # `_docs_audit_note` above (fixed 30-day threshold, no commit count -- `act-deps` has no config.md
 # knob for that), reusing `_last_ledger_entry_with_prefix` instead of its own ledger scan.
 # ---------------------------------------------------------------------------
@@ -321,7 +321,7 @@ def _dependency_check_note(root: Path, config: dict[str, str]) -> Optional[str]:
 
 def _refresh_board(root: Path) -> None:
     """Run .act/scripts/board.py if it exists yet (a parallel task builds it); do nothing,
-    silently, otherwise — per the build order for this script (T15 depends only on T14)."""
+    silently, otherwise — per the build order for this script."""
     board_script = root / ".act" / "scripts" / "board.py"
     if not board_script.is_file():
         return
@@ -343,13 +343,13 @@ _BRIDGE_MAP = {
 
 def _bootstrap_marker() -> Optional[str]:
     """init.py's TEMPLATE_BOOTSTRAP_MARKER (the first line "<!-- act:bootstrap -->" a bare
-    template clone's own root CLAUDE.md/AGENTS.md carry before `init` ever runs, T76/Q101a),
+    template clone's own root CLAUDE.md/AGENTS.md carry before `init` ever runs),
     imported lazily like `update`/`rules` elsewhere in this module so a session start never pays
     for init.py's own (much larger) import cost unless this one constant is actually needed.
     None if init.py cannot be imported at all -- the caller then treats every bootstrap check as
     "not a bootstrap file", the same fail-open stance every other best-effort note here takes."""
     try:
-        from init import TEMPLATE_BOOTSTRAP_MARKER  # deferred: see the header comment (F6, T60)
+        from init import TEMPLATE_BOOTSTRAP_MARKER  # deferred: see the header comment
     except Exception:
         return None
     return TEMPLATE_BOOTSTRAP_MARKER
@@ -367,7 +367,7 @@ def _is_bootstrap_copy(dest_path: Path, lock_present: bool, marker: Optional[str
     """True when `dest_path` is not the project's own CLAUDE.md/AGENTS.md but a copy of the
     template's own bootstrap file (first line `marker`) that landed on top of it -- a raw `git
     pull` of the template's shared history bringing in its root entry files verbatim rather than
-    going through `update.py` (rev28). Only meaningful once the project is actually set up
+    going through `update.py`. Only meaningful once the project is actually set up
     (`.act-lock.json` present, `lock_present`): a bare clone not yet run through `init` legitimately
     still carries the marker on its own root files, and those are `init`'s job to replace, not
     this one's (see `_bootstrap_entry_files` in init.py)."""
@@ -384,7 +384,7 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
     `git config` no checkout is guaranteed to have. A bridge whose hash no longer matches was
     edited locally and is left untouched either way.
 
-    One exception (rev28): a root CLAUDE.md/AGENTS.md that is not locally edited at all but a raw
+    One exception: a root CLAUDE.md/AGENTS.md that is not locally edited at all but a raw
     copy of the *template's own* bootstrap file (see `_is_bootstrap_copy`) never counts as "edited
     locally" — it never was the project's file to begin with, whatever its recorded hash says — so
     it is rewritten from the template source the same as an unchanged bridge, just reported
@@ -399,7 +399,7 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
     `bootstrapped` are destinations re-derived because they turned out to be the template's own
     bootstrap file instead (or that would have been, under write=False).
 
-    B118 (d): each file is written and cached individually rather than batching the cache write
+    Each file is written and cached individually rather than batching the cache write
     until after the whole loop — a read/write failure partway through the map (a locked file, a
     permission error) used to leave every file processed *before* the failure both unrecorded in
     the cache and outside the caller's `touched` list (built from `refreshed`, since that append
@@ -430,9 +430,9 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
 
         is_bootstrap = _is_bootstrap_copy(dest_path, lock_present, marker)
 
-        # B134: compared with line endings normalized (and still accepts an older, raw-byte
+        # Compared with line endings normalized (and still accepts an older, raw-byte
         # recorded hash) so a checkout's own line endings never make an untouched bridge look
-        # "changed locally" on their own. Skipped for a bootstrap copy (rev28): its hash never
+        # "changed locally" on their own. Skipped for a bootstrap copy: its hash never
         # matches the recorded one either, but that mismatch is not a local edit to preserve.
         if not is_bootstrap and not actlib.generated_unchanged(dest_path, recorded_hash):
             changed.append(dest_rel)
@@ -459,14 +459,14 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
 # ---------------------------------------------------------------------------
 # Check 2b — template awareness at session start: a project .act/ that was brought to a clean
 # template state by something other than update.py (e.g. a plain `git pull` of the shared history
-# some projects still keep from before Q73a), and, at most once a day, whether the template's own
+# some projects still keep from before the lock file recorded a manifest fingerprint), and, at most once a day, whether the template's own
 # remote has moved past what .act-lock.json last recorded. Both read-only, both best-effort — see
 # refresh_session()'s try/except around each call; neither ever raises out of this function.
 # ---------------------------------------------------------------------------
 
 def _manifest_fingerprint(act_dir: Path) -> str:
     """CRLF-folded fingerprint of act_dir/MANIFEST.json, matching what .act-lock.json's
-    template.manifest_sha256 is meant to record (Q73a) -- unlike a raw `actlib.sha256_file()` of
+    template.manifest_sha256 is meant to record -- unlike a raw `actlib.sha256_file()` of
     the file, this is unaffected by the checkout's line endings (core.autocrlf), so a MANIFEST.json
     checked out with CRLF on Windows still fingerprints the same as the LF copy that produced the
     recorded hash. Prefers manifest.py's own `manifest_fingerprint()` (added alongside this fix);
@@ -489,7 +489,7 @@ def _pulled_without_update(root: Path) -> bool:
     """True when .act/ matches its own MANIFEST.json exactly (so not a hand-edit — that is a
     different, already-covered concern, see doctor.py's manifest-drift check) but the fingerprint
     of that MANIFEST.json does not match the one .act-lock.json recorded at the last
-    update.py/init.py run (`template.manifest_sha256`, Q73a) -- the fingerprint that tells a
+    update.py/init.py run (`template.manifest_sha256`) -- the fingerprint that tells a
     project's own regular state apart from one a plain `git pull` (or any other means outside
     update.py) just landed."""
     manifest_path = root / ".act" / "MANIFEST.json"
@@ -590,7 +590,7 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
     same as the old synchronous check only ever reported it once (the run that found it). Silent
     on any I/O problem; a missing file (nothing pending) is the common case, not an error.
 
-    The file only ever records `remote_commit` (B110.5) -- never a stale "available" flag by
+    The file only ever records `remote_commit` -- never a stale "available" flag by
     itself, so a project that ran `update.py` between the background check and this session
     doesn't get told about an update it already has: the note fires only if `remote_commit` still
     differs from the *current* lock's `template.commit`, re-read here rather than trusted from
@@ -620,7 +620,7 @@ def _run_update_check_worker(root: Path) -> int:
     """Body of the detached background process _spawn_update_check_worker() launches: the actual
     network lookup, isolated from the SessionStart hook so its result can only ever help the
     *next* session, never delay this one. Writes update-check-result.json with the remote commit
-    found (B110.5); leaves any existing file alone when the lookup was inconclusive (None), so a
+    found; leaves any existing file alone when the lookup was inconclusive (None), so a
     stale-but-valid earlier result is not clobbered by a run that itself couldn't tell. Whether
     that remote commit still means "update available" is decided later, by
     _consume_pending_update_note() against the lock as it stands then -- not here, since this
@@ -706,7 +706,7 @@ def _check_update_awareness(root: Path, config: dict[str, str]) -> tuple[list[st
 
 
 # ---------------------------------------------------------------------------
-# B117 Art B — daily dependency-vulnerability scan at session start (`security-check: deps`/`full`,
+# Daily dependency-vulnerability scan at session start (`security-check: deps`/`full`,
 # docs/ai/config.md § Checks): the same background-worker shape `_check_update_awareness` already
 # established for the update check, reused here rather than a second polling mechanism —
 # `security_scan.run_scan()` can itself take tens of seconds (a real network lookup through
@@ -875,7 +875,7 @@ def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
 
 
 def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[str]":
-    """Check B117 Art B's own session-start half (docs/ai/config.md § Checks, `security-check:
+    """Check the session-start half of the dependency scan (docs/ai/config.md § Checks, `security-check:
     deps`/`full` only -- `off`/`local` never scan here): once a day, kick off a detached background
     scan (`_spawn_security_scan_worker`) and report a *previous* run's finding, if any
     (`_consume_pending_security_scan_note`) -- same split `_check_update_awareness` already takes
@@ -897,7 +897,7 @@ def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator-only rules (.act/rules/orchestrator/) — since T64/Q92 imported by docs/ai/rules.md
+# Orchestrator-only rules (.act/rules/orchestrator/) — imported by docs/ai/rules.md
 # like the shared ones (marked "main session only, workers skip this section"). The hook hands
 # over a short form only as a fallback, while a locally changed docs/ai/rules.md does not import
 # them yet. See the "Overrides" note on _read_rule_states for the docs/ai/rules.md syntax this
@@ -978,7 +978,7 @@ def _filter_orchestrator_file(
             return
         if section_rule_id is None:
             kept.extend(section_lines)
-        elif section_rule_id in overrides:  # a replacement wins, checked or not (T64)
+        elif section_rule_id in overrides:  # a replacement wins, checked or not
             heading = section_lines[0] if section_lines else f"## `{section_rule_id}`"
             kept.append(f"{heading} (project override)")
             kept.append("")
@@ -1014,7 +1014,7 @@ def _filter_orchestrator_file(
 def _orchestrator_short_lines(
     text: str, enabled: dict[str, bool], overrides: dict[str, str], compact: bool = False
 ) -> tuple[list[str], int]:
-    """T64: one line per rule of one .act/rules/orchestrator/*.md file — its id and heading
+    """One line per rule of one .act/rules/orchestrator/*.md file — its id and heading
     title (or the project's override text, shortened) — instead of the full text, which would
     swell the session-start output with rules that belong in an import (and past 10,000
     characters, Claude Code moves it into a file and shows only a 2,000-character preview). Same
@@ -1042,7 +1042,7 @@ def _orchestrator_short_lines(
 
 
 def _orchestrator_rules_imported(reached: list[str]) -> bool:
-    """True when docs/ai/rules.md already imports the orchestrator files (Q92 option a) — then
+    """True when docs/ai/rules.md already imports the orchestrator files — then
     Claude Code loads them in full and the hook adds nothing."""
     return any(path.startswith(".act/rules/orchestrator/") or path.startswith("docs/ai/local/rules/orchestrator/")
                for path in reached)
@@ -1051,7 +1051,7 @@ def _orchestrator_rules_imported(reached: list[str]) -> bool:
 def _deliver_orchestrator_rules(root: Path, config: dict[str, str], compact: bool = False,
                                 reached: Optional[list[str]] = None) -> Optional[int]:
     """
-    Fallback only (Q92 a): normally docs/ai/rules.md imports the orchestrator rules and this prints
+    Fallback only: normally docs/ai/rules.md imports the orchestrator rules and this prints
     nothing. While a locally changed docs/ai/rules.md does not import them, print a short form of
     .act/rules/orchestrator/*.md (ascending filename order, filtered through _read_rule_states,
     one line per rule, see _orchestrator_short_lines) plus where the full text lives — never the
@@ -1095,7 +1095,7 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str], compact: boo
 
 
 # ---------------------------------------------------------------------------
-# Chat language at session start (R-human-language, Q90) — only while `language-chat` is `auto`:
+# Chat language at session start (R-human-language) — only while `language-chat` is `auto`:
 # the language remembered for this person on this machine (`board.py --chat-language`,
 # .act-local/identity.json), so the assistant does not have to guess it again, or the hint how to
 # remember it once recognized. A fixed `language-chat` needs no line; config.md already says it.
@@ -1126,7 +1126,7 @@ _TOPIC_SWITCHES: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
 
 # "ide" (topics/ide.md) is not gated by a docs/ai/config.md switch like the two above -- it is
 # detected instead, from whether an IDE-shaped MCP server is actually configured for this project
-# (T76 Welle D, Q104 a): reading it never runs anything, only .mcp.json and Claude's own settings
+# -- reading it never runs anything, only .mcp.json and Claude's own settings
 # files, the same sources Claude Code itself reads its MCP server list from. A name or command
 # containing one of these (case-insensitive) counts as "IDE-shaped" -- best-effort, JetBrains'
 # `idea` MCP plugin is the only one confirmed as of this writing; a project using a different IDE
@@ -1136,7 +1136,7 @@ _IDE_SERVER_NAME_HINTS = ("idea", "jetbrains", "intellij", "pycharm", "webstorm"
 # Server names that count as an IDE server only when they match *exactly* (case-insensitive), never
 # as a substring: Claude Code's own IDE integration (the VS Code and JetBrains extensions) registers
 # its server as plain `ide` -- its tools reach the hooks as `mcp__ide__executeCode` and
-# `mcp__ide__getDiagnostics` (T76 wave D review, 2026-09-26, finding M-a) -- and "ide" as a
+# `mcp__ide__getDiagnostics` -- and "ide" as a
 # substring would match "provider", "video", "guide" and the like in any server name or command.
 # It is never configured in .mcp.json or ~/.claude.json (the extension injects it), so this mainly
 # serves checks/mcp_ide.py's own "is this an IDE server" judgment; _servers_match_ide_hint honours
@@ -1219,8 +1219,7 @@ def _user_mcp_servers(root: Path) -> list:
 def _same_project_path(key: str, root: Path) -> bool:
     """True if `key` (a `projects` key of `~/.claude.json`) names `root`. Claude Code writes those
     keys in POSIX form even on Windows (`D:/dev/x`, confirmed against a real file on 2026-09-26),
-    while `str(root)` is `D:\\dev\\x` -- a plain dict lookup never matched there (T76 wave D
-    review, finding LOW). Compared after os.path.normcase/normpath on both sides, so neither slash
+    while `str(root)` is `D:\\dev\\x` -- a plain dict lookup never matched there. Compared after os.path.normcase/normpath on both sides, so neither slash
     direction nor drive-letter case matters; no filesystem access."""
     return os.path.normcase(os.path.normpath(key)) == os.path.normcase(os.path.normpath(str(root)))
 
@@ -1268,7 +1267,7 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
             path, _origin = resolved
             active.append((name, path.relative_to(root).as_posix()))
     # "ide" is not one of _TOPIC_SWITCHES' config-driven entries -- it is detected instead, see
-    # _ide_mcp_connected's own docstring (T76 Welle D, Q104 a).
+    # _ide_mcp_connected's own docstring.
     if _ide_mcp_connected(root):
         resolved = actlib.resolve("rules/topics/ide.md")
         if resolved is None:
@@ -1280,7 +1279,7 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# Session-start output (T64) — one JSON object: `additionalContext` for the model, kept under the
+# Session-start output — one JSON object: `additionalContext` for the model, kept under the
 # 10,000-character cap above which Claude Code moves a hook's output into a file and shows only a
 # preview (hooks.md: "capped at 10,000 characters ... a preview of up to the first 2,000
 # characters"), and one
@@ -1290,13 +1289,13 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
 
 CONTEXT_LIMIT = 9000  # characters; the harness cap is 10,000 per field, this leaves a margin
 _RULES_MARK = "\x00act-orchestrator-rules\x00"
-# Pre-T64 forms Claude Code never loads: "@.act/..." (resolved from docs/ai/) and the orchestrator
-# files listed in backticks instead of imported (Q92 a).
+# Older forms Claude Code never loads: "@.act/..." (resolved from docs/ai/) and the orchestrator
+# files listed in backticks instead of imported.
 _OLD_IMPORT_RE = re.compile(r"^(?:@\.act/|`\.act/rules/orchestrator/)", re.MULTILINE)
 
 
 def _old_rules_imports(root: Path) -> tuple[int, str]:
-    """(count, sha256) of pre-T64 "@.act/..." import lines left in docs/ai/rules.md — Claude Code
+    """(count, sha256) of older "@.act/..." import lines left in docs/ai/rules.md — Claude Code
     resolves them from docs/ai/ and never finds them. (0, "") when there are none."""
     path = root / "docs" / "ai" / "rules.md"
     try:
@@ -1325,7 +1324,7 @@ def _old_imports_note(root: Path) -> Optional[str]:
 
 
 def _changed_bridge_note(root: Path, dest_rel: str) -> Optional[str]:
-    """One note per changed state of a generated bridge that was edited locally (B134): remembered
+    """One note per changed state of a generated bridge that was edited locally: remembered
     by the pair (edited file's own content hash, template source's content hash) in
     .act-local/cache.json ("bridge_change_notes"), same pattern as _old_imports_note()'s
     "rules_import_hint" -- so it is not repeated at every session start while the edit stands, and
@@ -1410,7 +1409,7 @@ def _fit_context(text: str, rules_full: str, rules_compact: str) -> str:
 
 def refresh_session(payload: dict) -> int:
     """Check 2: runs only for SessionStart. Never fails the session. Prints exactly one JSON
-    object (T64): the notes and the status line as `hookSpecificOutput.additionalContext`, one
+    object: the notes and the status line as `hookSpecificOutput.additionalContext`, one
     human-readable line as `systemMessage`; nothing at all outside a template-managed project."""
     state: dict = {}
     rules_text = {"full": "", "compact": ""}
@@ -1469,14 +1468,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     try:
         audit_note = _docs_audit_note(root, config)
     except Exception:
-        audit_note = None  # B76: informational only, must never block the session
+        audit_note = None  # informational only, must never block the session
     if audit_note:
         print(audit_note)
 
     try:
         dependency_note = _dependency_check_note(root, config)
     except Exception:
-        dependency_note = None  # B102: informational only, must never block the session
+        dependency_note = None  # informational only, must never block the session
     if dependency_note:
         print(dependency_note)
 
@@ -1493,7 +1492,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         pass
     state["inbox"] = waiting
 
-    # T42: whether a feedback reminder to the template author is due right now
+    # Whether a feedback reminder to the template author is due right now
     # (.act/scripts/feedback.py --due's own logic) — folded into the status line like the inbox
     # count above, and counted as an "open point" that silences the tip/reminder line below (same
     # reasoning as the inbox count: the thing that is waiting comes first, self-promotion later).
@@ -1519,14 +1518,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     except Exception:
         pass
 
-    # T60 part B: files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
+    # Files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
     # hook entries on `tools`, a role's bridges on its "## Roles" row (tier/reasoning/model) — are
     # synced here when that value moved since the .act-local/last-applied.json snapshot, not only
     # on the next `update.py` run. A plain comparison, no scan unless something moved (see
-    # update.sync_dependent_files()). "block" syncs; "warn" only names what is pending (F12).
+    # update.sync_dependent_files()). "block" syncs; "warn" only names what is pending.
     if mode in ("block", "warn"):
         try:
-            import update  # deferred: see the header comment above (F6, T60)
+            import update  # deferred: see the header comment above 
             if mode == "block":
                 sync_summary, _sync_copies, _sync_touched = update.sync_dependent_files(root, always_run=False)
                 if sync_summary:
@@ -1536,21 +1535,21 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                 if pending:
                     print(f"[act] note: docs/ai/config.md changed ({pending}) -- dependent files would be synced (warn mode, not applied)")
         except Exception as exc:
-            # F8: never silent — a sync that stopped midway is finished by the next session start
+            # Never silent — a sync that stopped midway is finished by the next session start
             # (it keeps its snapshot unwritten) or by update.py --catch-up.
             print(f"[act] note: syncing files that depend on docs/ai/config.md failed ({exc.__class__.__name__}) -- "
                   "retried next session, or run `python .act/scripts/update.py --catch-up`")
 
     for dest_rel in changed_bridges:
         if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
-            continue  # the more specific import note below replaces this one (T64)
+            continue  # the more specific import note below replaces this one
         note = _changed_bridge_note(root, dest_rel)
         if note:
             print(note)
     if mode == "warn":
         for dest_rel in refreshed_bridges:
             print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
-    # rev28: a raw `git pull` can land the template's own bootstrap CLAUDE.md/AGENTS.md (marker
+    # A raw `git pull` can land the template's own bootstrap CLAUDE.md/AGENTS.md (marker
     # "<!-- act:bootstrap -->") on top of the project's real bridge in an already set-up project.
     # _refresh_bridges tells that apart from an actual local edit and rewrites it here — self-
     # resolving, so no once-per-state cache entry like _changed_bridge_note's is needed: once
@@ -1560,7 +1559,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         print(f"[act] note: {dest_rel}: template bootstrap file {verb} the project bridge "
               "(a raw git pull brought it in)")
 
-    # T64: what Claude Code actually loads. A checked coding set becomes an "@" import (and an
+    # What Claude Code actually loads. A checked coding set becomes an "@" import (and an
     # unchecked one loses it) so the checkboxes in docs/project/coding_rules.md decide; a locally
     # changed docs/ai/rules.md still importing "@.act/..." gets one note; then the imports are
     # followed from CLAUDE.md exactly the way Claude Code does (rules.resolve_imports).
@@ -1600,7 +1599,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             print(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")
     # An unknown tier/reasoning value (config.md § Roles or tiers.json) is reported once here as a
     # single line, whatever the role count — previously this only ever surfaced in init.py/
-    # update.py's own notes, never at session start (Q29).
+    # update.py's own notes, never at session start.
     if tier_notes:
         print("[act] note: " + "; ".join(tier_notes))
 
@@ -1640,7 +1639,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # this run just checked, so it reads as a postscript rather than part of this run's status.
     for note in post_update_notes:
         print(note)
-    # T42: at most one line, last of all — either a due reminder from docs/ai/local/reminders.md
+    # At most one line, last of all — either a due reminder from docs/ai/local/reminders.md
     # (user's own, always checked first) or a rotated .act/tips.md tip (config.md § Tips),
     # silenced by `output-depth: sparse` and by any open point above (inbox/feedback
     # due) inside tips.session_line() itself. Same lazy-import-and-swallow pattern as every other

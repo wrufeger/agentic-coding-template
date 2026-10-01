@@ -30,8 +30,7 @@
 # quoting/heredoc handling a second time; only the *grouping* into simple commands and the
 # *recursion* into a nested interpreter are this module's own. Backtick spans are found the same
 # way shell_targets._scan_tokens finds them — a regex over each simple command's dequoted words
-# joined back together (shell_targets.py's "Known limits" name what that cannot tell apart,
-# B112.1).
+# joined back together (shell_targets.py's "Known limits" name what that cannot tell apart).
 #
 # Contract: `_command_word_lists(command)` returns one (words, separator) pair per simple command
 # found at any recursion depth — words is that command's own argv (its own name included as
@@ -108,7 +107,7 @@ _SEGMENT_SPLIT_RE_FALLBACK = _re.compile(r"&&|\|\||[;&|()\n]")
 def _strip_command_prefix(words: list[str]) -> list[str]:
     """Drop leading VAR=value assignments and known wrapper commands (sudo, env, exec, time,
     xargs, ...) plus their own flags — including a flag's separate value word (`env -u VAR`,
-    `env -C dir`, `timeout -s KILL`, `sudo -u name`; shell_targets._WRAPPER_VALUE_FLAGS, B112.2,
+    `env -C dir`, `timeout -s KILL`, `sudo -u name`; shell_targets._WRAPPER_VALUE_FLAGS,
     without which that value was read as the command's own name and the real command behind it
     went unseen) — mirroring shell_targets._simple_command_targets's own prefix-skipping loop (not
     itself exported there, since it is entangled with write-target/cd bookkeeping this module does

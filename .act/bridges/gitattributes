@@ -1,4 +1,4 @@
-# Generated bridges (build note 1, Stage 1): CLAUDE.md, AGENTS.md, and docs/ai/rules.md are
+# Generated bridges: CLAUDE.md, AGENTS.md, and docs/ai/rules.md are
 # written by `.act/scripts/init.py` from `.act/bridges/`. `merge=ours` is a hint for a custom
 # merge driver (`git config merge.ours.driver`); if none is registered on this machine, git
 # falls back to a normal merge. Either way, `.act/hooks/dispatch.py` re-derives an unchanged
@@ -15,7 +15,7 @@
 # core.autocrlf=true would report every text file under .act/ as changed by hand.
 /.act/** text=auto eol=lf
 # Skill copies and role bridges: update.py tells an edited copy from an unchanged one by its hash;
-# a checkout with core.autocrlf=true would otherwise write them with CRLF (T60, G2).
+# a checkout with core.autocrlf=true would otherwise write them with CRLF.
 /.claude/skills/** text eol=lf
 /.agents/skills/** text eol=lf
 /.claude/agents/** text eol=lf

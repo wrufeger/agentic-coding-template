@@ -15,10 +15,10 @@
 #            - parse(text) -> SettingsFile and serialize(settings) -> text, a lossless round trip
 #              for anything this module itself produces (parse(serialize(x)) == x);
 #            - scan(text)/redact(settings), the "review before sharing" secrets check run before
-#              a settings file is written (`Q61d`).
+#              a settings file is written.
 #
 #          Areas are logical categories, not tool paths (`rules`, `coding`, `agents`, `skills`,
-#          `scripts`, `checklists`, `topics` — `Q61a`). Two of them
+#          `scripts`, `checklists`, `topics`). Two of them
 #          (`rules`, `coding`) are what this build stage's exporter fills in; the parser reads
 #          every area structurally the same way ("[symbol] id — inline" + an optional indented or
 #          fenced body), so an area this build does not yet *write* (agents, skills, ...) still
@@ -65,7 +65,7 @@ class SettingsEntry:
     body: Optional[str] = None     # multi-line content, rendered indented below the entry (fenced
                                     # as ```text when symbol == "~", plain indented text otherwise)
     fingerprint: Optional[str] = None  # sha256 of the template group's body at export time — only
-                                        # set for a "~"/"-" entry (B106.1); rendered as "(fp:<hash>)"
+                                        # set for a "~"/"-" entry; rendered as "(fp:<hash>)"
                                         # right after the id, read back by settings_load.py to tell
                                         # "template text unchanged since export" from "changed since
                                         # export" per identifier, instead of only per template
@@ -339,7 +339,7 @@ def serialize(settings: SettingsFile) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Secrets/local-machine-specifics scan ("review before sharing", Q61d)
+# Secrets/local-machine-specifics scan ("review before sharing")
 # ---------------------------------------------------------------------------
 
 @dataclass
