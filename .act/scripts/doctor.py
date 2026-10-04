@@ -51,6 +51,11 @@
 #               raise proposed at 8+ outcomes with 40%+ reworked/escalated,
 #               lower proposed at 20+ outcomes with none reworked/escalated — a finding only, never
 #               a live change to docs/ai/config.md.
+#           17. a git remote whose address points at the template repository (its repository name is
+#               exactly `agentic-coding-template`, or equals the source in .act-lock.json) while the current
+#               branch has no upstream: a plain `git push`/`git pull` then goes to the template, not
+#               to the project's own repository. Reported only — removing the remote stays with the
+#               owner (`git remote remove <name>`).
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -85,6 +90,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -151,6 +157,7 @@ KIND_LABELS: dict[str, str] = {
     "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
     "tier-proposal": "Tier proposals from worker outcomes (R-role-outcome)",
+    "template-remote": "Git remote pointing at the template while the branch has no upstream",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -179,6 +186,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit Migration 001-one-inbox)",
     "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
     "tier-proposal": "Stufenvorschläge aus Worker-Ergebnissen (R-role-outcome)",
+    "template-remote": "Git-Remote zeigt auf die Vorlage, obwohl der Branch keinen Upstream hat",
 }
 
 
@@ -1164,6 +1172,49 @@ def check_tier_proposal(root: Path) -> list[Finding]:
     return findings
 
 
+def _git_out(root: Path, *args: str) -> Optional[str]:
+    """Stdout of a read-only git call in `root`, or None if it fails (no repo, no git, timeout)."""
+    try:
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def check_template_remote(root: Path) -> list[Finding]:
+    """A remote that points at the template repository while the current branch has no upstream:
+    a bare `git push`/`git pull` (also from an IDE) then falls back to that remote. Only a derived
+    project is checked (it has .act-lock.json); the template checkout itself legitimately has the
+    template as its origin. A finding only, never a change to the repository."""
+    if not (root / ".act-lock.json").is_file():
+        return []
+    branch = (_git_out(root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+    if not branch or branch == "HEAD":
+        return []
+    # The configured upstream (`branch.<name>.remote`), not a resolvable remote-tracking ref: one
+    # set with `git push -u` counts even before the first fetch.
+    if (_git_out(root, "config", "--get", f"branch.{branch}.remote") or "").strip():
+        return []
+    try:
+        lock = json.loads((root / ".act-lock.json").read_text(encoding="utf-8"))
+        locked = str((lock.get("template") or {}).get("source") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        locked = ""
+    findings: list[Finding] = []
+    for name in (_git_out(root, "remote") or "").split():
+        url = (_git_out(root, "remote", "get-url", name) or "").strip()
+        if url and actlib.is_template_repo_url(url, locked):
+            findings.append(Finding(
+                path=".git/config", line=None, kind="template-remote",
+                message=(f"remote `{name}` points at the template repository ({url}) and branch "
+                         f"`{branch}` has no upstream: `git push`/`git pull` without a target goes there. "
+                         f"Remove it with `git remote remove {name}` (updates use the source in "
+                         ".act-lock.json), or set the project's own remote as upstream."),
+            ))
+    return findings
+
+
 def check_script_docs(root: Path) -> list[Finding]:
     # The generated README.md embeds each script's own `--help` text, whose exact wording depends
     # on the interpreter's argparse (Python 3.9: "optional arguments:", 3.10+: "options:") — a
@@ -1221,7 +1272,7 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
             n += 1
     language = actlib.docs_language(root)
     title = actlib.localized(language, "# doctor findings", "# Doctor-Befunde")
-    lines = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}",
+    lines = ["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}",
               "", title, ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
@@ -1280,6 +1331,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_tier_proposal(root)
+    findings += check_template_remote(root)
 
     return findings, effective
 

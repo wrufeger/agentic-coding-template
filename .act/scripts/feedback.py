@@ -36,10 +36,15 @@
 #              --plan and --send cover it) and persisted right away — not only on --enable, since
 #              `feedback` is normally switched on directly in docs/ai/config.md, never via
 #              --enable at all.
-#            - "mcp_server" and "usage" (skill/script invocation counts) are not collected: this
-#              template stage collects neither which servers of the MCP catalog (.act/mcp-catalog.md)
-#              a project uses nor has a usage-counting hook yet. `tools` (counts of
-#              agents/skills/scripts on disk) stands in for scope "c" until those land.
+#            - "mcp_server" is not collected: this template stage does not know which servers of
+#              the MCP catalog (.act/mcp-catalog.md) a project uses. With scope "c" a send carries
+#              `tools` (counts of agents/skills/scripts on disk) and `usage`: the invocation counts
+#              from .act-local/usage.json since the previous send (the counts at that send are
+#              kept in state.json, so every send reports only what is new), as
+#              {"since": date, "skills": {name: n}, "scripts": {name: n}} - template skills and
+#              scripts by name (the names listed in .act/MANIFEST.json), everything else (a skill
+#              or script built in the project) only as ONE collective counter `own` in each of the
+#              two maps, never by name.
 #            - The adaptive cadence threshold drops the old "lower it after a template update"
 #              factor (no reliable per-date update log to read yet); the ignored/postponed/
 #              consecutive-sends factors are kept.
@@ -485,6 +490,93 @@ def _tool_counts(root: Path) -> dict:
     return result
 
 
+def _template_names(root: Path) -> tuple[set[str], set[str]]:
+    """Names of the skills and scripts the TEMPLATE ships, read from .act/MANIFEST.json (its keys
+    are paths below .act/). Without a manifest nothing counts as a template name, so every use is
+    reported only as `own` - never a name that might be the project's."""
+    try:
+        data = json.loads((root / ".act" / "MANIFEST.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set(), set()
+    skills: set[str] = set()
+    scripts: set[str] = set()
+    for rel in data if isinstance(data, dict) else ():
+        parts = str(rel).split("/")
+        if len(parts) >= 3 and parts[0] == "skills":
+            skills.add(parts[1])
+        elif len(parts) == 2 and parts[0] == "scripts" and parts[1].endswith(".py"):
+            scripts.add(parts[1][:-3])
+    return skills, scripts
+
+
+def _usage_counts(root: Path) -> dict[str, dict[str, int]]:
+    """Raw invocation counts per category ("skills", "scripts") from .act-local/usage.json,
+    read directly (never consolidated - building a payload must not write). Missing or unreadable
+    file: empty counts."""
+    try:
+        data = json.loads((root / ".act-local" / "usage.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    result: dict[str, dict[str, int]] = {"skills": {}, "scripts": {}}
+    for category in result:
+        section = data.get(category) if isinstance(data, dict) else None
+        for name, entry in (section.items() if isinstance(section, dict) else ()):
+            count = entry.get("count") if isinstance(entry, dict) else None
+            if isinstance(count, int) and count > 0:
+                result[category][str(name)] = count
+    return result
+
+
+def _earliest_first_used(root: Path) -> str:
+    """Earliest `first_used` day over the skills and scripts in .act-local/usage.json, or "" when
+    there is none (missing file, no dates)."""
+    try:
+        data = json.loads((root / ".act-local" / "usage.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    days: list[str] = []
+    for category in ("skills", "scripts"):
+        section = data.get(category) if isinstance(data, dict) else None
+        for entry in (section.values() if isinstance(section, dict) else ()):
+            day = entry.get("first_used") if isinstance(entry, dict) else None
+            if isinstance(day, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                days.append(day)
+    return min(days) if days else ""
+
+
+def _usage_since_last_send(root: Path, state: dict) -> dict:
+    """Scope "c": invocation counts since the previous send - current counts minus the baseline
+    stored in state.json at that send. Template names stay as they are, every other name is added
+    up into the single counter `own`. Names a stranger could recognise never leave the project."""
+    template_skills, template_scripts = _template_names(root)
+    baseline = state.get("usage_baseline")
+    baseline = baseline if isinstance(baseline, dict) else {}
+    counts = _usage_counts(root)
+    usage: dict = {}
+    since = str(state.get("usage_baseline_at") or state.get("last_sent") or "")[:10]
+    if not since:
+        # First send, nothing reported before: everything counted so far, from the earliest day
+        # usage.json knows - or no start date at all when it knows none.
+        since = _earliest_first_used(root)
+    if since:
+        usage["since"] = since
+    for category, known in (("skills", template_skills), ("scripts", template_scripts)):
+        before = baseline.get(category)
+        before = before if isinstance(before, dict) else {}
+        merged: dict[str, int] = {}
+        for name, count in counts[category].items():
+            base = int(before.get(name) or 0)
+            if base > count:
+                base = 0  # usage.json was reset since the baseline was taken: count from zero
+            delta = count - base
+            if delta <= 0:
+                continue
+            key = name if name in known else "own"
+            merged[key] = merged.get(key, 0) + delta
+        usage[category] = merged
+    return usage
+
+
 def _switches(config: dict[str, str]) -> dict:
     """Scope "a": the value of each SWITCHES_WHITELIST key that is actually set — a closed-
     vocabulary settings snapshot, never a project fact. A key config.md does not have (or whose
@@ -546,6 +638,7 @@ def _build_payload(root: Path, config: dict[str, str]) -> dict:
             payload["rule_sets"] = rule_sets
     if "c" in scope:
         payload["tools"] = _tool_counts(root)
+        payload["usage"] = _usage_since_last_send(root, state)
     if state.get("repo_url"):
         payload["repo_url"] = state["repo_url"]
     return payload
@@ -876,6 +969,9 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
                   f"earliest after {hours_min}h. The outbox is kept and goes out next time.")
             return 0
     payload = _build_payload(root, config)
+    # _build_payload may have created and saved the project id (_ensure_project_id); read the state
+    # again so the writes below keep it instead of putting back the copy read before.
+    state = _read_state(root)
     endpoint = _endpoint()
     template_repo = _template_repo(_read_lock_at(root))
     problems = _check_payload(payload, endpoint, template_repo=template_repo)
@@ -898,10 +994,10 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
         chunk_payload = dict(envelope)
         chunk_payload["entries"] = chunk
         if index > 0:
-            # Scope-gated fields (metrics/switches/rule_changes/rule_sets/tools) and repo_url go
+            # Scope-gated fields (metrics/switches/rule_changes/rule_sets/tools/usage) and repo_url go
             # with the first send only - repeating them per chunk would look like several
             # different sends' worth of numbers to whoever reads the protocol.
-            for key in ("metrics", "switches", "rule_changes", "rule_sets", "tools", "repo_url"):
+            for key in ("metrics", "switches", "rule_changes", "rule_sets", "tools", "usage", "repo_url"):
                 chunk_payload.pop(key, None)
         code, error = _post(endpoint, chunk_payload)
         if error:
@@ -909,6 +1005,12 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
             print(f"aborted: {error}{sent_so_far} The remaining outbox is kept.", file=sys.stderr)
             return 2
         protocol_paths.append(_write_protocol(root, chunk_payload, endpoint))
+        if index == 0 and "usage" in chunk_payload:
+            # The chunk carrying the counts went out: they become the baseline right now, so a later
+            # chunk failing does not make the next send report them a second time.
+            state["usage_baseline"] = _usage_counts(root)
+            state["usage_baseline_at"] = time.strftime("%Y-%m-%d")
+            _write_state(root, state)
 
     state["last_sent"] = time.strftime("%Y-%m-%d %H:%M")
     state["reminders_without_reaction"] = 0

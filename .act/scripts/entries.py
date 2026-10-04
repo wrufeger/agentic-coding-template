@@ -162,7 +162,10 @@ _LEGACY_PATTERNS = (
 # instead of a file; _next_id() reads it back the same way it reads legacy_ids(), so the next id
 # still lands above it. A plain {"ids": [...]} list, tolerant of a missing/unreadable file (then
 # nothing is reserved — the safer default is the same "not yet known about" as before this fix).
-RESERVED_IDS_PATH = Path(".act-local/adopt/reserved-ids.json")
+# The list is versioned (a fresh clone keeps it); the old gitignored place is still read during the
+# transition.
+RESERVED_IDS_PATH = Path("docs/ai/work/reserved-ids.json")
+RESERVED_IDS_OLD_PATH = Path(".act-local/adopt/reserved-ids.json")
 # A task's working state ("State ...") lives here, gitignored, never in the versioned task
 # file itself — see cmd_state()/board.py's read_task_titles().
 STATE_DIR = Path(".act-local/state")
@@ -415,27 +418,32 @@ def legacy_ids(root: Path) -> dict[str, set[str]]:
 
 
 def reserved_ids(root: Path) -> dict[str, set[str]]:
-    """prefix -> canonical ids from RESERVED_IDS_PATH (see its comment above) — read the same
+    """prefix -> canonical ids from RESERVED_IDS_PATH and the old place (see the comment above) — read the same
     tolerant way as legacy_ids(): a missing file, bad JSON, or a value that isn't a T/B/Q id is
     skipped rather than raising, so a stray hand-edit never breaks id assignment."""
     found: dict[str, set[str]] = {prefix: set() for prefix in KIND_PREFIX.values()}
-    text = _safe_read(root / RESERVED_IDS_PATH)
+    for rel in (RESERVED_IDS_PATH, RESERVED_IDS_OLD_PATH):
+        _collect_reserved(_safe_read(root / rel), found)
+    return found
+
+
+def _collect_reserved(text: str | None, found: dict[str, set[str]]) -> None:
+    """Add the valid ids of one reserved-ids file's text to `found`; unreadable text adds nothing."""
     if text is None:
-        return found
+        return
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        return found
+        return
     ids = data.get("ids") if isinstance(data, dict) else data
     if not isinstance(ids, list):
-        return found
+        return
     for value in ids:
         if not isinstance(value, str):
             continue
         match = _ID_ARG_RE.match(value.strip())
         if match and match.group(1).upper() in found:
             found[match.group(1).upper()].add(_canonical_id(value.strip()))
-    return found
 
 
 def used_ids(root: Path, kind: str) -> set[str]:
@@ -668,7 +676,7 @@ def create_entry(
     entry_dir = root / KIND_DIR[kind]
     entry_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
-    created_at = now.isoformat(timespec="seconds")
+    created_at = actlib.created_stamp(now)
     team = _mode(root) == "team"
 
     with _EntriesLock(root):

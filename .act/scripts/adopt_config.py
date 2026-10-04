@@ -417,35 +417,64 @@ def _slugify_owner(owner: str) -> str:
     return actlib.identity_slug(owner)
 
 
-def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool) -> Optional[str]:
+def _identity_created_by_init(root: Path, path: Path) -> bool:
+    """Whether init.py created `path` (.act-local/identity.json) in this adoption's own run and
+    nobody changed it since: adopt.py records every git-ignored file init.py left, with its hash,
+    in .act-local/adopt/state.json's "created_ignored". init derives such an identity from
+    `git config user.name` — the person running the adoption, who is not necessarily the owner
+    named in the old configuration."""
+    try:
+        state = json.loads((root / ".act-local" / "adopt" / "state.json").read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    created = state.get("created_ignored") if isinstance(state, dict) else None
+    rel = path.relative_to(root).as_posix()
+    expected = created.get(rel) if isinstance(created, dict) else None
+    return bool(expected) and path.is_file() and adopt._sha256(path) == expected
+
+
+def _update_workspace_identity(root: Path, mapped: list[dict], plan: bool,
+                               mode: str = "solo") -> tuple[Optional[str], Optional[str]]:
     """.act-local/identity.json `identity` set to the adopted owner's slug, once this run
-    actually set `owner` and the current identity is still a placeholder (`unknown`/`user`) or the
-    file/key is missing altogether — never overwrites an identity a real init.py run already
-    picked for this checkout. Reads/writes the file by `root` directly rather than through
-    actlib's read_identity()/write_identity(): those resolve the repo root from the current
-    working directory (actlib.repo_root()), which is not necessarily `root` here. Returns the new
-    slug, or None (nothing to do, or `plan`)."""
+    actually set `owner` and either the current identity is a placeholder (`unknown`/`user`) or
+    the file/key is missing (always rewritten), or init.py created the file in this adoption's own
+    run, it is unchanged since (_identity_created_by_init) and `mode` is not `team` (solo: the
+    adopter is the owner). In `team` mode init's guess is the real adopting person, who may differ
+    from the owner: the file stays and a note names the mismatch. Never overwrites an identity a
+    person or an earlier init.py run picked for this checkout. Reads/writes the file by `root`
+    directly rather than through actlib's read_identity()/write_identity(): those resolve the repo
+    root from the current working directory (actlib.repo_root()), which is not necessarily `root`
+    here. Returns (new slug or None, mismatch note or None); nothing is written with `plan`."""
     owner_row = next((r for r in mapped if r["new"] == "owner" and r["result"].startswith("set")), None)
     if owner_row is None:
-        return None
+        return None, None
     owner = owner_row["result"].split(":", 1)[1].strip()
     if not owner:
-        return None
+        return None, None
     path = root / ".act-local" / "identity.json"
     try:
         current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     except (OSError, ValueError):
         current = {}
-    if not isinstance(current, dict) or current.get("identity") not in _IDENTITY_PLACEHOLDERS:
-        return None
+    if not isinstance(current, dict):
+        return None, None
     slug = _slugify_owner(owner)
+    if current.get("identity") not in _IDENTITY_PLACEHOLDERS:
+        if not _identity_created_by_init(root, path):
+            return None, None
+        if mode.strip().lower() == "team":
+            if current.get("identity") == slug:
+                return None, None
+            return None, (f"workspace identity `{current.get('identity')}` (from git user.name) differs from "
+                          f"the owner `{slug}`; mode is team, so it was left unchanged — edit "
+                          ".act-local/identity.json if this checkout belongs to the owner")
     if plan:
-        return slug
+        return slug, None
     path.parent.mkdir(parents=True, exist_ok=True)
     merged = dict(current)
     merged["identity"] = slug
     path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return slug
+    return slug, None
 
 
 # init.py's line in the init-notes todo (step_config, non-interactive): the config keys it left at a
@@ -493,6 +522,20 @@ def _prune_defaults_note(lines: list[str], set_keys: set[str], language_set: set
             lines[index] = new_line
         return True
     return False
+
+
+_FEEDBACK_OFF_NOTE_PREFIX = "- Feedback to the template author is off (default)"
+
+
+def _prune_feedback_note(lines: list[str]) -> bool:
+    """Drop init.py's "Feedback to the template author is off (default) ..." line once adoption set
+    `feedback` in config.md — the line would otherwise keep claiming the opposite. Returns True if
+    a line was removed."""
+    kept = [line for line in lines if not line.startswith(_FEEDBACK_OFF_NOTE_PREFIX)]
+    if len(kept) == len(lines):
+        return False
+    lines[:] = kept
+    return True
 
 
 def _note_is_empty(lines: list[str]) -> bool:
@@ -552,6 +595,11 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
         if _note_is_empty(lines):
             dest.unlink()
             return dest
+    if any(r["new"] == "feedback" for r in set_rows) and _prune_feedback_note(lines):
+        changed = True
+        if _note_is_empty(lines):
+            dest.unlink()
+            return dest
     marker = actlib.localized(language, "## Filled in by `adopt_config.py`",
                               "## Ausgefüllt von `adopt_config.py`")
     markers_either_language = ("## Filled in by `adopt_config.py`", "## Ausgefüllt von `adopt_config.py`")
@@ -572,10 +620,39 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
     return dest
 
 
+def _decode_mixed(raw: bytes) -> tuple[str, int, int]:
+    """Decode `raw` as UTF-8, but a byte that is not valid UTF-8 as Windows-1252 on its own (a
+    byte cp1252 leaves undefined becomes U+FFFD) — so a mostly-UTF-8 file with a few foreign bytes
+    keeps its correct characters instead of turning all of them into mojibake. Returns the text,
+    the number of non-ASCII characters that decoded as valid UTF-8, and the number of bytes that
+    needed the Windows-1252 fallback."""
+    out: list[str] = []
+    utf8_chars = 0
+    fallback_bytes = 0
+    position = 0
+    while position < len(raw):
+        try:
+            tail = raw[position:].decode("utf-8")
+            out.append(tail)
+            utf8_chars += sum(1 for char in tail if ord(char) > 127)
+            break
+        except UnicodeDecodeError as exc:
+            head = raw[position:position + exc.start].decode("utf-8")
+            out.append(head)
+            utf8_chars += sum(1 for char in head if ord(char) > 127)
+            bad = raw[position + exc.start:position + exc.start + 1]
+            out.append(bad.decode("cp1252", errors="replace"))
+            fallback_bytes += 1
+            position += exc.start + 1
+    return "".join(out), utf8_chars, fallback_bytes
+
+
 def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
-    """Decode the old AI-CONFIG.md: UTF-8 first, else Windows-1252 (common for a hand-edited file
-    from an older editor) instead of silently dropping characters via errors="replace".
-    Returns the text plus a note for the report when the fallback was used or even that failed."""
+    """Decode the old AI-CONFIG.md: UTF-8 first; a file that is UTF-8 apart from a few stray bytes
+    keeps its UTF-8 characters and reads only those bytes as Windows-1252 (_decode_mixed); a file
+    with no valid multi-byte UTF-8 at all is read as Windows-1252 whole (common for a hand-edited
+    file from an older editor). Returns the text plus a note for the report when a fallback was used
+    or even that failed to map every byte."""
     if source is None:
         return "", None
     raw = source.read_bytes()
@@ -583,11 +660,17 @@ def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
         return raw.decode("utf-8"), None
     except UnicodeDecodeError:
         pass
+    text, utf8_chars, fallback_bytes = _decode_mixed(raw)
+    if utf8_chars and fallback_bytes:
+        note = f"read as UTF-8 with some Windows-1252 bytes ({source.name})"
+        if "\uFFFD" in text:
+            note += " -- some bytes matched neither and were replaced"
+        return text, note
     try:
         return raw.decode("cp1252"), f"read as Windows-1252, not UTF-8 ({source.name})"
     except UnicodeDecodeError:
         return raw.decode("cp1252", errors="replace"), (
-            f"read as Windows-1252, not UTF-8 ({source.name}) — some bytes matched neither and were replaced")
+            f"read as Windows-1252, not UTF-8 ({source.name}) -- some bytes matched neither and were replaced")
 
 
 def _languages_from_apply(root: Path) -> dict[str, str]:
@@ -762,6 +845,8 @@ def render(root: Path, data: dict, plan: bool, language: str = "en") -> str:
     for p in data["passages"]:
         fence = _fence(p["text"])
         out += [f"### {p['section']} ({L('lines', 'Zeilen')} {p['first']}–{p['last']})", "", f"{fence}text", p["text"], fence, ""]
+    if data.get("identity_note"):
+        out += ["", f"## {L('Workspace identity', 'Arbeitsplatz-Identität')}", "", f"- {data['identity_note']}"]
     return "\n".join(out).rstrip("\n") + "\n"
 
 
@@ -805,6 +890,9 @@ def main(argv: list[str]) -> int:
     # so a fresh German adoption's report comes out German from this very run, not only the next.
     current = {k: v for k in ("language-docs", "language") if (v := cfg.get(k)) is not None}
     docs_language = actlib.language_settings(current)[1]
+    identity_slug, identity_note = _update_workspace_identity(
+        root, data["mapped"], args.plan, cfg.get("mode") or "solo")
+    data["identity_note"] = identity_note
     report = render(root, data, args.plan, docs_language)
     print(report, end="")
     changed = sum(1 for r in data["mapped"] if r["result"].startswith("set"))
@@ -818,7 +906,6 @@ def main(argv: list[str]) -> int:
     # one inbox entry, the same one init.py writes when it is asked for that language itself.
     note = entries.write_translate_note(root, docs_language, args.plan)
     init_notes = _update_init_notes(root, data["mapped"], args.plan, docs_language)
-    identity_slug = _update_workspace_identity(root, data["mapped"], args.plan)
     print(f"[adopt-config] {changed or would} value(s) {'would be ' if args.plan else ''}set, "
           f"{len(data['unmapped'])} key(s) without counterpart, {len(data['passages'])} free-text passage(s)"
           + ("" if args.plan else f"; report: {REPORT.as_posix()}")
@@ -826,7 +913,8 @@ def main(argv: list[str]) -> int:
           + (f"; {'updated' if init_notes.exists() else 'removed (nothing left in it)'} "
              f"{init_notes.relative_to(root).as_posix()}" if init_notes else "")
           + (f"; {'would set' if args.plan else 'set'} .act-local/identity.json identity to '{identity_slug}'"
-             if identity_slug else ""))
+             if identity_slug else "")
+          + (f"; note: {identity_note}" if identity_note else ""))
     return 0
 
 

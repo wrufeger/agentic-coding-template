@@ -388,6 +388,27 @@ def is_english(language: str) -> bool:
     return language.strip().lower().split("-")[0] in ("en", "english")
 
 
+TEMPLATE_REPO_NAME = "agentic-coding-template"
+
+
+def _normalize_repo_url(url: str) -> str:
+    """A remote address without surrounding blanks, trailing slashes and a `.git` suffix."""
+    return url.strip().rstrip("/").removesuffix(".git").rstrip("/")
+
+
+def is_template_repo_url(url: str, lock_source: str = "") -> bool:
+    """True when a remote address names the template repository: its repository name (the last
+    path part after `/` or `:`, without `.git`) equals `agentic-coding-template` exactly, or the
+    normalized address equals the template source recorded in .act-lock.json. A sibling such as
+    `agentic-coding-template-docs` or a fork `my-agentic-coding-template-x` is not the template."""
+    cleaned = _normalize_repo_url(url)
+    if not cleaned:
+        return False
+    if lock_source.strip() and cleaned == _normalize_repo_url(lock_source):
+        return True
+    return re.split(r"[/:\\]", cleaned)[-1] == TEMPLATE_REPO_NAME
+
+
 def scaffold_default_files(root: Path) -> list[str]:
     """Every file under docs/ whose first line is the `act:default` mark — scaffold text as the
     template ships it, not yet translated or taken over by the project. Sorted, root-relative.
@@ -487,6 +508,13 @@ def dependency_check_note_parts(language: str = "en") -> tuple[str, str]:
 INBOX_DIR = Path("docs/ai/inbox")
 INBOX_KINDS = ("question", "todo", "report", "note")
 DEFAULT_INBOX_KIND = "todo"
+
+
+def created_stamp(when: Optional[datetime] = None) -> str:
+    """The value for an entry's `created:` header field: local time as an ISO timestamp with
+    seconds ("2026-10-04T09:30:12"). Every writer of `created:` uses this one helper so the field
+    never holds a bare date in one entry and a timestamp in the next; readers still accept both."""
+    return (when or datetime.now()).isoformat(timespec="seconds")
 
 
 def entry_stamp(when: Optional[datetime] = None) -> str:

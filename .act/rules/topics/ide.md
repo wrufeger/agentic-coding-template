@@ -13,6 +13,9 @@ Tool names as of the JetBrains MCP server checked 2026-09-26:
   only, or a worker whose assignment carries no `Write scope:` line at all: the tool writes
   wherever the symbol is used, which a bounded `Write scope:` cannot vouch for in advance, so the
   `ide-mcp` check (`docs/ai/config.md` § Checks) blocks it for a worker with one.
+- **Moving** a file that documentation points to: switch off the IDE's "search in comments and
+  strings" option first, or check `git diff --word-diff` over the `*.md` files afterwards — that
+  option has rewritten backtick paths and ordinary prose in Markdown.
 - **Calls and dependencies** via `search_symbol` → `analyze_calls`; a code pattern via
   `search_structural` instead of a regex. More precise than `grep` and fewer follow-up calls. Both
   are read-only and open to every worker.

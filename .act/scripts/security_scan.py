@@ -96,7 +96,7 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -326,6 +326,30 @@ def clear_running_marker(root: Path, state_hash: str) -> None:
         running_marker_path(root, state_hash).unlink()
     except OSError:
         pass
+
+
+def prune_cache(root: Path) -> int:
+    """Deletes the scan cache's files (finished results and markers of dead runs) last modified
+    before today, so the directory does not grow by one entry per lock-file state forever. A
+    cached answer never outlives its day anyway, and a marker from before today belongs to a run
+    long past its time limit. Best-effort like every helper here: returns how many files were
+    removed and never raises on I/O."""
+    start_of_today = datetime.combine(date.today(), datetime.min.time()).timestamp()
+    removed = 0
+    try:
+        entries = list(cache_dir(root).iterdir())
+    except OSError:
+        return 0
+    for path in entries:
+        if not path.name.endswith(".json"):
+            continue
+        try:
+            if path.is_file() and path.stat().st_mtime < start_of_today:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def write_result_cache(root: Path, state_hash: str, result: "ScanResult", files: "list[str]") -> bool:

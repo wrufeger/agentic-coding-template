@@ -884,6 +884,12 @@ def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[
     post-status-line notes (empty list for `off`/`local`, or while nothing is pending yet). Never
     raises -- the caller already wraps this in its own try/except, same as every other best-effort
     sub-step here."""
+    if (root / ".act-local" / "security-scan-cache").is_dir():  # nothing cached, nothing to prune
+        try:
+            import security_scan  # deferred, like in the worker
+            security_scan.prune_cache(root)  # entries from before today never answer anything again
+        except ImportError:
+            pass
     level = _security_check_level(config)
     if level not in ("deps", "full"):
         return []

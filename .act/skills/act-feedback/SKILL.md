@@ -56,9 +56,10 @@ feedback switch, never by a cadence.
 Nothing that only holds for this project — no project name, no paths, no numbers, no code, no
 people. No praise ("works well" helps nobody) — only what concretely helped or was missing.
 
-## Known gap: not yet collected
+## What scope `c` sends
 
-Scope `c` (tool usage) currently reports only counts of agents/skills/scripts on disk — no MCP
-server catalog and no skill/script invocation counter exist yet at this build stage, so those two
-numbers the template's earlier version sent are missing for now (see `feedback.py`'s own header
-comment). Nothing to do about it here; it lands once those mechanisms exist.
+Scope `c` (tool usage) sends the counts of agents/skills/scripts on disk and, since the last
+sending, how often each of the template's own skills and scripts was used (from
+`.act-local/usage.json`). The project's own skills and scripts appear only as one `own` counter
+per kind, never by name, and no MCP server names are sent (see `feedback.py`'s own header comment
+for the exact fields). `--plan` shows the payload without sending it.

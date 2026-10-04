@@ -5,14 +5,14 @@ description: Pull a newer template state into the project - review the diff, giv
 
 # Update the template
 
-Thin wrapper around `python .act/scripts/update.py` — nine steps, always in the same order (full
+Thin wrapper around `python .act/scripts/update.py` — the script runs ten steps, always in the same order (full
 option list in the script's own header comment). No merge, no conflicts to resolve by hand: steps
 1-3 only fetch, diff, and report; nothing from the fetched state runs before consent.
 
 ## Steps
 
 1. `python .act/scripts/update.py --plan` — shows the `.act/` diff (rule/coding IDs individually)
-   and describes steps 5-9, writes nothing. Share the summary with the human.
+   and describes steps 5-10, writes nothing. Share the summary with the human.
 2. Clean working tree first (`git status`) — an unfinished task closes via `act-commit` before an
    update starts.
 3. **Consent before step 5**, where `.act/` gets replaced: rerun the command without `--plan`, or

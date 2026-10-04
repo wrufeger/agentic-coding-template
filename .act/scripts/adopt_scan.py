@@ -1349,7 +1349,55 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
     rows.sort(key=lambda r: (CLASS_ORDER.index(r.cls) if r.cls in CLASS_ORDER else len(CLASS_ORDER), r.path))
     info = [f"not scanned: submodule {path}" for path in submodules]
     info += language_info(root) + own_system_info(rows) + foreign_id_info(root, rows, pred is not None)
+    info += template_remote_info(root)
     return rows, predecessor_hint(root, pred), info
+
+
+TEMPLATE_REMOTE_NAME = "template"
+
+
+def _git_text(root: Path, *args: str) -> Optional[str]:
+    """Stdout of a read-only git call in `root`, or None if it fails (no repo, no git, timeout)."""
+    try:
+        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def template_remote_info(root: Path) -> list[str]:
+    """One info line when a git remote named `template` points at the template repository (its
+    repository name is exactly `agentic-coding-template`, or equals the source in .act-lock.json): the
+    predecessor template's update script created it, and the new template does not use it. Left in
+    place, a `git push`/`git pull` without a target goes to the template, and a pull merges its
+    whole history into the project. The skill proposes removing it (`git remote remove template`);
+    nothing is removed here. The line notes whether the current branch has another way to push
+    (an upstream, or another remote). A remote of that name pointing elsewhere is the owner's own
+    and not mentioned."""
+    url = (_git_text(root, "remote", "get-url", TEMPLATE_REMOTE_NAME) or "").strip()
+    if not url:
+        return []
+    locked = ""
+    try:
+        lock = json.loads((root / ".act-lock.json").read_text(encoding="utf-8"))
+        locked = str((lock.get("template") or {}).get("source") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+    if not actlib.is_template_repo_url(url, locked):
+        return []
+    others = [name for name in (_git_text(root, "remote") or "").split() if name != TEMPLATE_REMOTE_NAME]
+    branch = (_git_text(root, "rev-parse", "--abbrev-ref", "HEAD") or "").strip()
+    has_upstream = bool(branch and (_git_text(root, "config", "--get", f"branch.{branch}.remote") or "").strip())
+    if others or has_upstream:
+        way = "the branch has another way to push (upstream or another remote)"
+    else:
+        way = ("the current branch has NO other remote or upstream: set the project's own remote first, "
+               "otherwise `git push`/`git pull` has no target left")
+    return [f"predecessor leftover: git remote '{TEMPLATE_REMOTE_NAME}' points at the template repository ({url}) — "
+            f"propose removing it (`git remote remove {TEMPLATE_REMOTE_NAME}`; update.py uses the source in "
+            f".act-lock.json); {way}. Never removed automatically"]
 
 
 LANGUAGE_ROW_RE = re.compile(r"(?im)^\|\s*Sprache\s*\|\s*([^|]*?)\s*\|")

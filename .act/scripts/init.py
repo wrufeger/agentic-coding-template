@@ -42,6 +42,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import date
 from pathlib import Path
@@ -294,7 +295,7 @@ def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
     print()
     print("Report back to the template author about the working method?")
     print("- Entries: a short written summary plus a few closed-list settings — never file names/paths, code, or this project's own text.")
-    print("- With the default scope (feedback-scope: a,b,c), a send also adds usage numbers: commit/date counts, days active, file count and size, `ai.log` line counts if logging is on, a random project id (persists across sends, not tied to you), and this project's template base commit. Narrow this with `feedback-scope`.")
+    print("- With the default scope (feedback-scope: a,b,c), a send also adds usage numbers: commit/date counts, days active, file count and size, `ai.log` line counts if logging is on, a random project id (persists across sends, not tied to you), this project's template base commit, and with scope c which template skills/scripts were used since the last send (your own ones only as a count). Narrow this with `feedback-scope`.")
     print("- confirm (recommended): shows the full payload and asks before every send. automatic: sends without asking.")
     print("- Every actual send is also kept locally under '.act-local/feedback/sent/' (gitignored).")
     print("- Off again any time: docs/ai/config.md § Feedback.")
@@ -811,6 +812,51 @@ CODING_SET_DETECTION_ORDER = [
 ]
 
 
+# Database access libraries per ecosystem: a project depending on one of these writes SQL (directly or
+# through a query builder), so the `sql` coding set applies even without a `*.sql` file or `migrations/`.
+_SQL_NPM_PACKAGES = {"kysely", "mysql2", "pg", "better-sqlite3", "knex", "prisma", "@prisma/client",
+                     "drizzle-orm", "typeorm", "sequelize"}
+_SQL_COMPOSER_PACKAGES = {"doctrine/dbal", "illuminate/database"}
+_SQL_PYTHON_PACKAGES = {"sqlalchemy", "psycopg", "psycopg2", "psycopg2-binary", "asyncpg", "pymysql"}
+
+
+def _python_dependency_names(root: Path) -> set[str]:
+    """Lower-cased distribution names found in requirements*.txt and in pyproject.toml (a plain text
+    scan, no TOML parser needed: any quoted or line-leading name followed by a version specifier,
+    extra or end of the string counts). Over-matching a name in a comment is harmless here."""
+    names: set[str] = set()
+    sources = list(root.glob("requirements*.txt"))
+    if (root / "pyproject.toml").is_file():
+        sources.append(root / "pyproject.toml")
+    for source in sources:
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        names.update(match.lower().replace("_", "-")
+                     for match in re.findall(r"(?im)(?:^|[\"'\s,\[])([a-z][a-z0-9._-]*)(?=\s*(?:[=<>~!\[;\"',]|$))", text))
+    return names
+
+
+def _uses_sql_library(root: Path, npm_deps: dict[str, object]) -> bool:
+    """True if package.json (`npm_deps`), composer.json or the Python dependency files name a
+    database library from the lists above."""
+    if _SQL_NPM_PACKAGES & set(npm_deps):
+        return True
+    composer = root / "composer.json"
+    if composer.is_file():
+        try:
+            data = json.loads(composer.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if isinstance(data, dict):
+            for key in ("require", "require-dev"):
+                section = data.get(key)
+                if isinstance(section, dict) and _SQL_COMPOSER_PACKAGES & {str(k).lower() for k in section}:
+                    return True
+    return bool(_SQL_PYTHON_PACKAGES & _python_dependency_names(root))
+
+
 def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str]:
     """Direct hits from the target directory, plus the free-text `stack` config value where its
     text contains a known set's name — before the requires: closure. `known` is every set name
@@ -851,7 +897,7 @@ def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str
     scripts_dir = root / "scripts"
     if any(root.glob("*.sh")) or (scripts_dir.is_dir() and any(scripts_dir.glob("*.sh"))):
         detected.add("bash")
-    if any(root.glob("*.sql")) or (root / "migrations").is_dir():
+    if any(root.glob("*.sql")) or (root / "migrations").is_dir() or _uses_sql_library(root, deps):
         detected.add("sql")
 
     stack_lower = stack_hint.lower()
@@ -1389,7 +1435,25 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
         return None
     if dest_was_preexisting:
         return None
-    source_project = rules.parse_project_file(source_path, area)
+    # Like docs/ai/local/: the source's file as last committed (HEAD), never its working tree --
+    # an edit not committed there is named, not taken along.
+    head_bytes = _git_head_blob_bytes(source_root, area.project_file)
+    if head_bytes is None:
+        notes.append(
+            f"{area.project_file} of the source project is not committed there (no HEAD version) -- "
+            "its rule choices were not carried over; commit it in the source project and copy them by hand."
+        )
+        return None
+    if _git_differs_from_head(source_root, area.project_file):
+        notes.append(
+            f"{area.project_file} of the source project has uncommitted edit(s) -- carried over as last "
+            "committed there (HEAD), the working-tree edits were not taken along; commit them in the "
+            "source project and copy them by hand."
+        )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        head_copy = Path(tmp_dir) / source_path.name
+        head_copy.write_bytes(head_bytes)
+        source_project = rules.parse_project_file(head_copy, area)
     has_deviation = source_project.overrides or source_project.own_rules or any(
         not group.enabled for pset in source_project.sets for group in pset.groups.values()
     )
@@ -1478,7 +1542,7 @@ def _git_tracked_files(repo_root: Path, subpath: str) -> Optional[list[str]]:
 
 
 def _git_head_blobs(repo_root: Path, subpath: str) -> Optional[dict[str, str]]:
-    """Repo-root-relative (posix) path -> mode ("100644"/"100755" a file, "120000" a symlink) of
+    """`repo_root`-relative (posix) path -> mode ("100644"/"100755" a file, "120000" a symlink) of
     every blob under `subpath` in `repo_root`'s HEAD commit -- None if there is no HEAD to read
     (a repository without commits) or the command fails. Submodule entries (type "commit") are
     left out: nothing to copy there. `-z`: paths raw, never quoted."""
@@ -1502,12 +1566,13 @@ def _git_head_blobs(repo_root: Path, subpath: str) -> Optional[dict[str, str]]:
 
 def _git_differs_from_head(repo_root: Path, subpath: str) -> set[str]:
     """Tracked files under `subpath` whose index or working tree differs from HEAD -- a staged or
-    unstaged edit, a file added but not committed, a local delete -- repo-root-relative posix.
+    unstaged edit, a file added but not committed, a local delete -- relative to `repo_root` (posix;
+    `--relative`, so also right when `repo_root` is a subfolder of its git repository).
     Empty when there is no HEAD or the command fails (nothing could be copied from HEAD then
     either, and the caller reports that on its own)."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_root), "diff", "HEAD", "--name-only", "-z", "--", subpath],
+            ["git", "-C", str(repo_root), "diff", "--relative", "HEAD", "--name-only", "-z", "--", subpath],
             capture_output=True, check=False,
         )
     except OSError:
@@ -1522,7 +1587,7 @@ def _git_head_blob_bytes(repo_root: Path, rel: str) -> Optional[bytes]:
     eol conversion nor a textconv filter, so binary content survives -- None if unreadable."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(repo_root), "cat-file", "blob", f"HEAD:{rel}"],
+            ["git", "-C", str(repo_root), "cat-file", "blob", f"HEAD:./{rel}"],  # `./`: relative to repo_root, also a subfolder of its repo
             capture_output=True, check=False,
         )
     except OSError:

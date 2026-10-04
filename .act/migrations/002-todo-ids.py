@@ -14,7 +14,7 @@
 #              "Next free" is one past the highest U number found in the inbox, in the archive
 #              (docs/ai/work/archive/, its legacy/ subtree read for ids only), in the task and backlog
 #              directories, and in the reserved-id list entries.py reads
-#              (.act-local/adopt/reserved-ids.json) — an archived U id is never handed out again.
+#              (docs/ai/work/reserved-ids.json, and the old .act-local/adopt/ place) — an archived U id is never handed out again.
 #              A file with a UTF-8 BOM loses the BOM when its header is rewritten (the id must be the
 #              first thing on the first line, or the header readers would not see it).
 #              apply() holds .act-local/entries.lock while it numbers, with the same create-exclusive,
@@ -51,7 +51,7 @@ INBOX_DIR = "docs/ai/inbox"
 ARCHIVE_DIR = "docs/ai/work/archive"
 LEGACY_DIR = f"{ARCHIVE_DIR}/legacy"
 ID_SCAN_DIRS = ("docs/ai/work/tasks", "docs/ai/work/backlog", ARCHIVE_DIR, INBOX_DIR)
-RESERVED_FILES = (".act-local/adopt/reserved-ids.json",)  # the one list entries.reserved_ids() reads
+RESERVED_FILES = ("docs/ai/work/reserved-ids.json", ".act-local/adopt/reserved-ids.json")  # the lists entries.reserved_ids() reads
 LOCK_FILE = ".act-local/entries.lock"  # the lock entries.py's _EntriesLock takes
 LOCK_TIMEOUT = 5.0
 LOCK_STALE_AFTER = 30.0

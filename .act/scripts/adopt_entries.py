@@ -186,8 +186,11 @@ def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
     silently idempotent, the same "retry is harmless" contract every other kind here has."""
     path = root / entries.RESERVED_IDS_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = _read_json(path)
-    current = set(data.get("ids", [])) if isinstance(data, dict) else set()
+    current: set[str] = set()
+    for old_path in (path, root / entries.RESERVED_IDS_OLD_PATH):  # carry the old place's ids over
+        data = _read_json(old_path)
+        if isinstance(data, dict):
+            current |= set(data.get("ids", []))
     new = sorted(i for i in ids if i not in current)
     if new:
         path.write_text(json.dumps({"ids": sorted(current | set(ids))}, indent=2, ensure_ascii=False) + "\n",
@@ -354,7 +357,7 @@ def _strip_volatile(text: str) -> str:
     return head + sep + body
 
 
-def _expected_text(row: dict, item: dict) -> str:
+def _expected_text(row: dict, item: dict, root: Optional[Path] = None) -> str:
     """The exact file text this run would produce for `item`, mirroring entries.create_entry()/
     write_proposal() header-for-header — using the id this row already carries (an explicit
     `item["id"]` was already checked to match `row["id"]` by the caller; an auto-assigned one keeps
@@ -375,7 +378,7 @@ def _expected_text(row: dict, item: dict) -> str:
     if item["kind"] == "task":
         # a task carries `for:` too (create_entry(): the item's value, else this identity)
         task_for = (entries._recipient_value(item["for"]) if item["for"] is not None
-                    else entries._own_identity())
+                    else entries._own_identity(root))
         if task_for:
             header_lines.append(f"for: {task_for}")
     if item["kind"] in actlib.INBOX_KINDS:
@@ -427,7 +430,7 @@ def _row_matches(root: Path, row: dict, item: dict) -> bool:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
-    return _strip_volatile(text) == _strip_volatile(_expected_text(row, item))
+    return _strip_volatile(text) == _strip_volatile(_expected_text(row, item, root))
 
 
 def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str], dict[int, str]]:

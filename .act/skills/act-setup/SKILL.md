@@ -55,8 +55,8 @@ language as `--language-docs` below):
 python .act/scripts/init.py --plan
 ```
 
-`init.py` never prompts on its own — the assistant's own Bash tool has no terminal for the owner to
-answer into (`actlib.is_interactive()` reads false there), and there are no flags for name, owner,
+Run by the assistant, `init.py` never prompts (in a terminal of their own the owner gets its
+questions) — the assistant's own Bash tool has no terminal for the owner to answer into (`actlib.is_interactive()` reads false there), and there are no flags for name, owner,
 stack or tools to pass along either. Show the plan output, get a go-ahead, then run `init.py` for
 real; it takes its defaults and logs every open point (name, owner, stack, tools, and anything else
 it could not decide) to the project's inbox instead of asking. Check

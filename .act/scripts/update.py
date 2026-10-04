@@ -27,7 +27,8 @@
 #   python .act/scripts/update.py                       # update from .act-lock.json's recorded source
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
 #   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10, write nothing
-#   python .act/scripts/update.py --yes                  # skip the interactive consent prompt (step 4)
+#   python .act/scripts/update.py --allow-downgrade       # accept a fetched state older than (or unrelated to) the installed commit
+#   python .act/scripts/update.py --yes               # skip the interactive consent prompt (step 4)
 #   python .act/scripts/update.py --on-local-changes rescue|discard|abort   # skip the step-2 prompt
 #   python .act/scripts/update.py --non-interactive       # never prompt (implies a default answer)
 #   python .act/scripts/update.py --no-commit             # do everything except the final commit
@@ -36,6 +37,7 @@
 # Output format: one numbered line per step ("[n/10] ..."), 1..10 (--plan stops after 3, then one
 #   descriptive line each for 5-10), plus a closing "[act] done" line. Exit 0 on success or a clean
 #   --plan/abort, 1 if a fatal precondition is not met (no source resolvable, fetch failed, the
+#   fetched state is older than/unrelated to the installed commit without --allow-downgrade, the
 #   user chose abort at step 2 or declined at step 4, or --catch-up found .act/ hand-edited).
 
 from __future__ import annotations
@@ -139,14 +141,45 @@ def _read_version_file(act_dir: Path) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 def _default_source(root: Path) -> str:
-    """The source recorded in .act-lock.json from the last update/init — never a guess. init.py no
-    longer leaves a "template" remote behind, but a manually-added one still wins if
-    someone set it up by hand."""
-    result = _git(["remote", "get-url", "template"], cwd=root, check=False)
-    if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
+    """The source recorded in .act-lock.json from the last update/init comes first. A remote named
+    "template" (left behind by the predecessor template's update script, or added by hand) is
+    taken only when the lock names no source; when both exist and differ, one line says which one
+    was used, so a leftover remote never silently decides where updates come from."""
     lock = actlib.read_lock()
-    return str(lock.get("template", {}).get("source", "") or "")
+    locked = str(lock.get("template", {}).get("source", "") or "")
+    result = _git(["remote", "get-url", "template"], cwd=root, check=False)
+    remote = result.stdout.strip() if result.returncode == 0 else ""
+    if locked:
+        if remote and remote.rstrip("/").removesuffix(".git") != locked.rstrip("/").removesuffix(".git"):
+            print(f"update.py: using the source from .act-lock.json ({locked}); the git remote 'template' "
+                  f"points elsewhere ({remote}) and is ignored.")
+        return locked
+    if remote:
+        print(f"update.py: .act-lock.json names no source; using the git remote 'template' ({remote}).")
+    return remote
+
+
+def _source_origin(root: Path, source: str, explicit: Optional[str]) -> str:
+    """Where `source` came from, in words: the --source option, the source recorded in
+    .act-lock.json, or the git remote 'template'."""
+    if explicit:
+        return "the --source option"
+    locked = str(actlib.read_lock().get("template", {}).get("source", "") or "")
+    if locked and locked == source:
+        return "the source recorded in .act-lock.json"
+    return "the git remote 'template'"
+
+
+def _fetch_failure_message(root: Path, source: str, args: argparse.Namespace, error: Exception) -> str:
+    """The message printed when step 1 fails: what failed, which source, where that source came
+    from, and the way out (name another one with --source/--ref)."""
+    origin = _source_origin(root, source, args.source)
+    ref_part = f" at ref '{args.ref}'" if args.ref else ""
+    return (
+        f"update.py: could not fetch the template from '{source}'{ref_part} (taken from {origin}): {error}\n"
+        "update.py: name another source with --source <path-or-url> (and --ref <tag-or-commit> for a "
+        "specific state), or correct the source recorded in .act-lock.json / the git remote 'template'."
+    )
 
 
 def _reject_symlinks(act_dir: Path) -> None:
@@ -194,6 +227,47 @@ def step_fetch(
         raise RuntimeError(f"fetched checkout has no .act/ directory: {dest}")
     _reject_symlinks(act_dir)
     return act_dir, commit
+
+
+def _history_relation(checkout: Path, fetched: str, installed: str) -> str:
+    """How the fetched commit relates to the installed one (the lock's template.commit), judged by
+    read-only git plumbing inside the fetched checkout: "same", "newer" (installed is an ancestor of
+    fetched, the normal update), "older" (fetched is an ancestor of installed: a downgrade),
+    "unknown" (the installed commit is not in the fetched history at all, or the histories
+    diverged). Nothing from the checkout is executed."""
+    if fetched == installed:
+        return "same"
+    if _git(["cat-file", "-e", f"{installed}^{{commit}}"], cwd=checkout, check=False).returncode != 0:
+        return "unknown"
+    if _git(["merge-base", "--is-ancestor", installed, fetched], cwd=checkout, check=False).returncode == 0:
+        return "newer"
+    if _git(["merge-base", "--is-ancestor", fetched, installed], cwd=checkout, check=False).returncode == 0:
+        return "older"
+    return "unknown"
+
+
+def _downgrade_warning(checkout: Path, fetched: Optional[str], source: str) -> Optional[str]:
+    """A warning text when the fetched state is not a successor of the installed one, else None
+    (also None for a plain-directory source without a commit, or a lock without a commit)."""
+    installed = str(actlib.read_lock().get("template", {}).get("commit", "") or "")
+    if not fetched or not installed:
+        return None
+    relation = _history_relation(checkout, fetched, installed)
+    if relation == "older":
+        return (
+            f"WARNING: downgrade. Installed template commit {installed[:12]}, but '{source}' only has the "
+            f"older {fetched[:12]}. Name the right source with --source <path-or-url> (e.g. your local template "
+            "checkout), or pass --allow-downgrade to go back on purpose."
+        )
+    if relation == "unknown":
+        return (
+            f"WARNING: the installed template commit {installed[:12]} is not part of the history of "
+            f"'{source}' (fetched {fetched[:12]}). Likely cause: the source recorded in .act-lock.json points at "
+            "a repo that does not contain the installed commit, e.g. a local template checkout with unpushed "
+            "commits; applying this could silently downgrade .act/. Use --source <local template checkout>, "
+            "or pass --allow-downgrade if this state is meant."
+        )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2088,8 +2162,12 @@ def main(argv: list[str]) -> int:
             pass
 
     parser = argparse.ArgumentParser(description="Pull a newer state of the template into this project.")
-    parser.add_argument("--source", help="local directory or git URL/repo to update from (default: 'template' remote, else .act-lock.json)")
+    parser.add_argument("--source", help="local directory or git URL/repo to update from (default: the source recorded in .act-lock.json; a 'template' remote only when the lock names none)")
     parser.add_argument("--ref", help="tag or commit to update to (default: the source's default branch tip)")
+    parser.add_argument("--allow-downgrade", action="store_true", help=(
+        "apply the fetched state even when it is older than the installed template commit, or when "
+        "the installed commit is not in the source's history (default: refuse, --plan only warns)"
+    ))
     parser.add_argument("--on-local-changes", choices=("rescue", "discard", "abort"), help="skip the step-2 prompt")
     parser.add_argument("--yes", action="store_true", help="skip the interactive consent prompt (step 4)")
     parser.add_argument("--plan", action="store_true", help="show steps 1-3, describe 5-10, change nothing")
@@ -2109,7 +2187,7 @@ def main(argv: list[str]) -> int:
 
     source = args.source or _default_source(root)
     if not source:
-        print("update.py: no --source given, no 'template' remote, and no source in .act-lock.json", file=sys.stderr)
+        print("update.py: no --source given, no source in .act-lock.json, and no 'template' remote", file=sys.stderr)
         return 1
 
     if args.catch_up:
@@ -2119,8 +2197,22 @@ def main(argv: list[str]) -> int:
     _rmtree_robust(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
     try:
-        new_act_dir, fetched_commit = step_fetch(source, args.ref, tmp_root / "checkout", notes)
+        try:
+            new_act_dir, fetched_commit = step_fetch(source, args.ref, tmp_root / "checkout", notes)
+        except RuntimeError as error:
+            print(_fetch_failure_message(root, source, args, error), file=sys.stderr)
+            return 1
         _print_step(1, f"fetched '{source}'" + (f" @ {args.ref}" if args.ref else "") + f" -> {new_act_dir}")
+
+        downgrade = _downgrade_warning(new_act_dir.parent, fetched_commit, source)
+        if downgrade:
+            if plan:
+                print(f"[act] {downgrade}  (--plan: a real run would refuse)", file=sys.stderr)
+            elif args.allow_downgrade:
+                print(f"[act] {downgrade}  (continuing: --allow-downgrade)", file=sys.stderr)
+            else:
+                print(f"update.py: refusing to continue.\n[act] {downgrade}", file=sys.stderr)
+                return 1
 
         check_summary, decision, differences = step_check_local_changes(root, args.on_local_changes, interactive, plan)
         _print_step(2, check_summary)

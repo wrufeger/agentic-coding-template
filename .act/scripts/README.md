@@ -782,16 +782,21 @@ options:
 Call: skill `act-update` (`--plan` alone is direct)
 
 ```text
-usage: update.py [-h] [--source SOURCE] [--ref REF] [--on-local-changes {rescue,discard,abort}]
-                 [--yes] [--plan] [--no-commit] [--non-interactive] [--catch-up]
+usage: update.py [-h] [--source SOURCE] [--ref REF] [--allow-downgrade]
+                 [--on-local-changes {rescue,discard,abort}] [--yes] [--plan] [--no-commit]
+                 [--non-interactive] [--catch-up]
 
 Pull a newer state of the template into this project.
 
 options:
   -h, --help            show this help message and exit
-  --source SOURCE       local directory or git URL/repo to update from (default: 'template'
-                        remote, else .act-lock.json)
+  --source SOURCE       local directory or git URL/repo to update from (default: the source
+                        recorded in .act-lock.json; a 'template' remote only when the lock names
+                        none)
   --ref REF             tag or commit to update to (default: the source's default branch tip)
+  --allow-downgrade     apply the fetched state even when it is older than the installed template
+                        commit, or when the installed commit is not in the source's history
+                        (default: refuse, --plan only warns)
   --on-local-changes {rescue,discard,abort}
                         skip the step-2 prompt
   --yes                 skip the interactive consent prompt (step 4)

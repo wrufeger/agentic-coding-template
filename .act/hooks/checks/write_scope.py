@@ -492,13 +492,16 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
         return str(resolved).replace("\\", "/")
 
 
-def _within_scratchpad(raw: str, scratchpad_dir: str) -> bool:
+def _within_scratchpad(raw: str, scratchpad_dir: str, base: Optional[str] = None) -> bool:
     """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload) —
     exempt from write-scope enforcement per shell_targets' module docstring step 4 (a worker's temp
-    files are never "the project" in the sense a Write scope line means)."""
-    if not _is_absolute_target(raw):
+    files are never "the project" in the sense a Write scope line means). A relative `raw` counts
+    only with a known `base` (the directory a shell command's `cd` led to) it resolves against:
+    `cd <scratchpad> && echo x > out.txt` writes into the scratchpad, not the project. Without a
+    `base` a relative path stays unplaceable and is never exempt."""
+    if not _is_absolute_target(raw) and base is None:
         return False
-    target = _resolve_path(raw)
+    target = _resolve_path(raw, base)
     scratchpad = _resolve_path(scratchpad_dir)
     if target is None or scratchpad is None:
         return False
@@ -518,12 +521,25 @@ def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
     so an absolute target the caller never meant to allow (`D:/dev/rufeger/elsewhere/evil.py`, a
     sibling checkout never listed in additionalDirectories) matched a plain `*.py`/`*.md` scope
     outright (found in review, 2026-09-25). A relative target is likewise only compared against
-    relative patterns, for the same reason in the other direction."""
+    relative patterns, for the same reason in the other direction.
+
+    A pattern `dir/**` (also written `dir/`) means "everything under dir", and the directory `dir`
+    itself belongs to that: a worker whose scope is `dir/**` must be able to create it
+    (`mkdir dir`, `mkdir -p dir/sub`), so the bare root also matches. Only the root itself, never
+    its parent or a sibling."""
     is_absolute_target = _is_absolute_target(rel_posix)
-    return any(
-        _is_absolute_target(pattern) == is_absolute_target and fnmatch.fnmatch(rel_posix, pattern)
-        for pattern in patterns
-    )
+    for pattern in patterns:
+        if _is_absolute_target(pattern) != is_absolute_target:
+            continue
+        if fnmatch.fnmatch(rel_posix, pattern):
+            return True
+        if pattern.endswith("/**") and len(pattern) > 3:
+            root = pattern[:-3]
+            # Literal root only: a glob in the prefix (`src/*/**`) would let the root match loosen
+            # to files directly under the parent.
+            if not any(ch in root for ch in "*?[") and fnmatch.fnmatch(rel_posix, root):
+                return True
+    return False
 
 
 def _write_scope_message(target: str, scope: dict) -> str:
@@ -640,7 +656,7 @@ def check_worker_write_scope(payload: dict) -> int:
             not dynamic
             and isinstance(scratchpad_dir, str)
             and scratchpad_dir
-            and _within_scratchpad(raw_target, scratchpad_dir)
+            and _within_scratchpad(raw_target, scratchpad_dir, base)
         ):
             continue
         if scope.get("mode") == "none":

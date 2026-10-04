@@ -1900,7 +1900,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
 
     none = L("none", "keine")
     settings_removed, settings_notes, unmarked, refs_file = extra
-    out = ["kind: report", "for: all", "status: open", f"created: {date.today().isoformat()}", "",
+    out = ["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}", "",
            L("# Adoption report (`adopt.py --finish`)", "# Übernahmebericht (`adopt.py --finish`)"), "",
            L(f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
              "adopt.py. Review the branch, then commit per path or drop it.",
@@ -2013,7 +2013,7 @@ def cmd_finish(root: Path, plan: bool) -> int:
     os.chdir(root)  # actlib (used by init's helpers) finds the project from the working directory
     init_mod = _load_init()
     import actlib
-    tools = [t.strip() for t in actlib.read_config().get("tools", "").split(",") if t.strip()]
+    tools = [t.strip() for t in actlib.read_config(root).get("tools", "").split(",") if t.strip()]
     bridges = bridge_plan(init_mod, tools)
     scan_rows = {r["path"]: r for r in scan.get("rows", [])}
     moved = state.get("moved", {})
@@ -2110,15 +2110,15 @@ def cmd_finish(root: Path, plan: bool) -> int:
         _write_json(state_path, state)
         raise Refused(f"stopped before any removal: {exc}")
     bridged = []
-    language_chat, language_docs = actlib.language_settings(actlib.read_config())
+    language_chat, language_docs = actlib.language_settings(actlib.read_config(root))
     cfg_tokens = init_mod._config_tokens({
-        "name": actlib.read_config().get("name", root.name), "owner": actlib.read_config().get("owner", ""),
+        "name": actlib.read_config(root).get("name", root.name), "owner": actlib.read_config(root).get("owner", ""),
         "language_chat": language_chat, "language_docs": language_docs,
-        "stack": actlib.read_config().get("stack", ""),
+        "stack": actlib.read_config(root).get("stack", ""),
         "lint_cmd": "", "typecheck_cmd": "", "test_cmd": "", "tools": tools,
-        "mode": actlib.read_config().get("mode", "solo"),
+        "mode": actlib.read_config(root).get("mode", "solo"),
         # init.py's ProjectConfig gained "feedback_mode"; only the <feedback-mode> token uses it.
-        "feedback_mode": actlib.read_config().get("feedback", "off"),
+        "feedback_mode": actlib.read_config(root).get("feedback", "off"),
     })
     cache = actlib.read_cache()
     removed = []
