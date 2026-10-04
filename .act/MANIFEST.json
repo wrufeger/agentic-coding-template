@@ -66,7 +66,7 @@
   "hooks/checks/write_guard.py": "ac86a12fafcd23eb394a4bd9ad58151f8b6e3939f430667195cca9f90f0dea84",
   "hooks/checks/write_scope.py": "d95f737e7fd22906b61170c4d9494c356107f5ce6fd883a8891c0fb281a685fa",
   "hooks/dispatch.py": "e428987b4a32d0de219660c5254f7afd7d80e1651dbbb97edb3a7d80084baba2",
-  "hooks/statusline.py": "39e1a58bc9d7212ad3550b7a2b2378387c0a62631c3d6ed9abfb841f6a4deccd",
+  "hooks/statusline.py": "d1f75f62f04a9c9b29fea1c537d445e10a3ef46cde1800a7b691a02760dbb0d0",
   "mcp-catalog.md": "ecefd1ea325d3164d92cc96d5cf067c910f3142210ef02c2d1c1e4a60722cbce",
   "migrations/001-one-inbox.py": "8c8348143bedf57f3d61838ff798ac67bb1cbb3c9cf9277af37c68a331f4032f",
   "rules/orchestrator/00-role.md": "ced05bb588cf97f46145e5e1df9cfac8efecc37ecc055d60eb298d06bfdc96eb",

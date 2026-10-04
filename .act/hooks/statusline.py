@@ -18,6 +18,7 @@
 #
 # Output format: exactly one line on stdout, e.g.
 #   "act · 3 waiting for you: Q103 Q104 Q105 · 5 tasks"      -- open inbox entries and open tasks
+#   "act · 5 waiting for you: Q105, 4 todos · 0 tasks"        -- entries without an id: a count per kind
 #   "act · 5 tasks"                                          -- nothing waiting, no list shown
 #   "act"                                                    -- neither an inbox nor a tasks dir
 # Never writes to stderr, never a non-zero exit: any failure (malformed stdin JSON, no project
@@ -50,7 +51,10 @@ except Exception:
     actlib = None  # type: ignore[assignment]
     board = None  # type: ignore[assignment]
 
-MAX_LABELS = 5  # how many question/todo ids the line names before folding the rest into "+N"
+MAX_LABELS = 5  # how many question ids the line names before folding the rest into "+N"
+# Entries without an id (every kind but a question) are counted per kind instead of named one by
+# one -- "todo todo todo todo" says less than "4 todos". Kinds in this order, anything else last.
+KIND_ORDER = ("todo", "report", "note")
 
 
 def _cwd_from_stdin_json(data: dict) -> Optional[str]:
@@ -71,12 +75,12 @@ def _cwd_from_stdin_json(data: dict) -> Optional[str]:
     return None
 
 
-def _waiting_summary(root: Path) -> tuple[int, list[str]]:
-    """(total_count, labels) for every open inbox entry addressed to this identity or to "all" --
+def _waiting_summary(root: Path) -> tuple[int, list[dict]]:
+    """(total_count, entries) for every open inbox entry addressed to this identity or to "all" --
     the same two groups board.py's own "Waiting for you" list shows (board._group_by_recipient()),
     excluding entries addressed to someone else (board's separate "For others" count) since those
     are not, from this identity's own point of view, something to show as "waiting for you" here.
-    `labels` is newest-first (board._sort_key()), the caller trims it to MAX_LABELS itself."""
+    `entries` is newest-first (board._sort_key()); _waiting_text() turns it into the line's text."""
     inbox_entries = board.read_inbox_entries(root)
     if inbox_entries is None:
         return 0, []
@@ -85,7 +89,27 @@ def _waiting_summary(root: Path) -> tuple[int, list[str]]:
     my_identity = identity_data.get("identity") if identity_data else None
     mine_open, all_open, _other_open = board._group_by_recipient(open_entries, my_identity)
     combined = mine_open + all_open
-    return len(combined), [entry["label"] for entry in combined]
+    return len(combined), combined
+
+
+def _waiting_text(entries: list[dict]) -> str:
+    """"Q105 Q104, 4 todos, 1 report": question ids by name (newest first, at most MAX_LABELS, the
+    rest as "+N"), every other kind as a count, in KIND_ORDER."""
+    ids = [entry["label"] for entry in entries if entry["kind"] == "question"]
+    counts: dict[str, int] = {}
+    for entry in entries:
+        if entry["kind"] != "question":
+            counts[entry["kind"]] = counts.get(entry["kind"], 0) + 1
+    parts: list[str] = []
+    if ids:
+        shown = ids[:MAX_LABELS]
+        more = len(ids) - len(shown)
+        parts.append(" ".join(shown) + (f" +{more}" if more > 0 else ""))
+    order = list(KIND_ORDER) + sorted(kind for kind in counts if kind not in KIND_ORDER)
+    for kind in order:
+        if counts.get(kind):
+            parts.append(f"{counts[kind]} {kind}{'' if counts[kind] == 1 else 's'}")
+    return ", ".join(parts)
 
 
 def _task_count(root: Path) -> Optional[int]:
@@ -100,15 +124,12 @@ def _task_count(root: Path) -> Optional[int]:
 
 def status_line(root: Path) -> str:
     """The one line this hook prints for a project at `root`."""
-    waiting_count, labels = _waiting_summary(root)
+    waiting_count, entries = _waiting_summary(root)
     task_count = _task_count(root)
 
     segments = ["act"]
     if waiting_count:
-        shown = labels[:MAX_LABELS]
-        more = waiting_count - len(shown)
-        suffix = f" +{more}" if more > 0 else ""
-        segments.append(f"{waiting_count} waiting for you: {' '.join(shown)}{suffix}")
+        segments.append(f"{waiting_count} waiting for you: {_waiting_text(entries)}")
     if task_count is not None:
         segments.append(f"{task_count} tasks")
     return " · ".join(segments)
