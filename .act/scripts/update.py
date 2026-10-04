@@ -1828,15 +1828,23 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path], list[Path]
 
 def step_lock(
     root: Path, plan: bool, source: str, new_copies: dict[str, dict], fetched_commit: Optional[str],
+    keep_commit: bool = False,
 ) -> str:
     """`fetched_commit` is what step_fetch actually cloned (None for a plain-directory source, or
     when this is a catch-up run with no fetch at all) — recorded as-is when known, so a later
     session's `git ls-remote` comparison (dispatch.py) has something real to compare against;
-    falls back to .act/VERSION's own "commit=" line otherwise. """
+    falls back to .act/VERSION's own "commit=" line otherwise. `keep_commit` (a plain --catch-up:
+    nothing was fetched, so nothing new is known) keeps the lock's recorded commit and source
+    when neither the fetch nor VERSION names one -- an empty commit would switch off the
+    downgrade guard and every reader of the installed commit."""
     if plan:
         return "would update .act-lock.json (template.version/commit/source, copies, migrations)"
     version, disk_commit = _read_version_file(root / ".act")
     commit = fetched_commit if fetched_commit is not None else disk_commit
+    if keep_commit and not commit:
+        old = actlib.read_lock().get("template", {})
+        commit = str(old.get("commit", "") or "")
+        source = source or str(old.get("source", "") or "")
     manifest_hash = manifest.manifest_fingerprint(root / ".act")
     actlib.write_lock({
         "template": {"version": version, "commit": commit, "source": source, "manifest_sha256": manifest_hash},
@@ -2026,7 +2034,7 @@ def _relaunch_after_replace(
 
 def _finish_update(
     root: Path, no_commit: bool, source: str, notes: list[str],
-    fetched_commit: Optional[str], rescue_active: bool,
+    fetched_commit: Optional[str], rescue_active: bool, keep_commit: bool = False,
 ) -> int:
     sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
@@ -2041,7 +2049,7 @@ def _finish_update(
     doctor_summary, doctor_inbox, doctor_touched = step_doctor(root, False)
     _print_step(9, doctor_summary)
 
-    _print_step(10, step_lock(root, False, source, new_copies, fetched_commit))
+    _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit))
 
     _maybe_print_branch_hint(root, notes)
 
@@ -2146,7 +2154,8 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
         print("[act] catch-up aborted: no consent")
         return 1
 
-    return _finish_update(root, args.no_commit, source, notes, inherited_fetched_commit, inherited_rescue)
+    return _finish_update(root, args.no_commit, source, notes, inherited_fetched_commit, inherited_rescue,
+                          keep_commit=not restarted)
 
 
 # ---------------------------------------------------------------------------

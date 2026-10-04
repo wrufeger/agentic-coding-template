@@ -111,7 +111,7 @@
   "scripts/settings_load.py": "88d782263c83f76a4b559f101c7708979631477c191cb174cd72be61080965bb",
   "scripts/skills.py": "68652b62da2886a0395fc61d5ffdca164f40dbc9cef9148d0961c625f1d64095",
   "scripts/tiers.py": "aed2e53f8e6e5b462e7c8a6dc66d111813a9327a262e8761a626b1f8abc23605",
-  "scripts/update.py": "30edd6eca572a0ccab7d453a3b2c79cd1c6ac33d531b67f50d004a7fe55c9860",
+  "scripts/update.py": "3b0011efe13a15879543bff6bf887a3db354b4cbc1c4684947fba9f71c44bdd8",
   "scripts/usage.py": "461f82538aa5becf25c4f8cd38fc6699aa23870d68ac1137183f3c9bf8eaf6e3",
   "skeleton/concept/README.md": "ca4bdae1c99df198b2ea215426bef4f148bd837c0f2bc4133fc0ad53e6fac022",
   "skeleton/config.md": "c803b986f5e96067bfb32b404bc8f7a1f540f92c77f4d3be0588a1aeadd29121",
