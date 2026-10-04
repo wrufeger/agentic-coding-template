@@ -460,7 +460,10 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # separately in step_new_role_bridges(): an existing one is only touched again when its role's row
 # in docs/ai/config.md § Roles changed (sync_dependent_files()), otherwise only a role new since
 # the last update gets a bridge created.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas")
+# "entries" and "board" are here because init.py imports entries (which imports board): left out, the
+# fresh init.py would bind the entries module this run loaded at start-up — the older one, without the
+# functions the new init.py calls — and, being cached, board's older copy under it.
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board")
 
 
 def _project_tools(root: Path) -> list[str]:
@@ -1862,13 +1865,14 @@ def _resume_needed(root: Path, fetched_commit: Optional[str]) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Self-relaunch — step 5 just replaced .act/scripts/{update,init,actlib}.py on disk, but this
+# Self-relaunch — step 5 just replaced .act/scripts/{update,init,actlib,entries,board}.py on disk, but this
 # process already has the *old* versions loaded in memory (Python does not hot-reload a running
 # module); steps 6-10 calling into their own top-level functions (not the ones already reached via
 # _import_fresh_init, e.g. step_hooks_and_gitfiles itself) would otherwise run with whatever
 # update.py looked like before this update, and only actually apply their own new behaviour on
-# some *later*, unrelated invocation (the original gap). If any of the three
-# changed, re-exec a fresh process against the now-current update.py --catch-up (.act/ already
+# some *later*, unrelated invocation (the original gap). entries.py and board.py are in the list
+# because update.py imports them at start-up (entries is used by _report_reset_edits). If any of
+# them changed, re-exec a fresh process against the now-current update.py --catch-up (.act/ already
 # matches; no fetch/diff/replace needed) so steps 6-10 run under their own current code, in the
 # same overall `update.py` call the user made. Never reached in --plan (that branch returns
 # before step 5's real call).
@@ -1889,7 +1893,7 @@ _SELF_RELAUNCH_GUARD_ENV = "ACT_UPDATE_RESTARTED"
 _SELF_RELAUNCH_FETCHED_COMMIT_ENV = "ACT_UPDATE_FETCHED_COMMIT"
 _SELF_RELAUNCH_RESCUE_ENV = "ACT_UPDATE_RESCUE"
 _SELF_RELAUNCH_NOTES_ENV = "ACT_UPDATE_NOTES"
-_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py")
+_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py")
 
 
 def _scripts_fingerprint(root: Path) -> dict[str, str]:

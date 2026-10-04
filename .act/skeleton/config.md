@@ -31,7 +31,8 @@ slot, and the matching check is skipped (`R-code-commit`).
 whoever files the entry on the default branch assigns it, so two people can never hand out the
 same number; until then the file name is what you cite. File name, location and format are the
 same either way, so you can switch back and forth at any time — IDs already assigned stay as they
-are, only later ones follow the new value.
+are, only later ones follow the new value. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
+(question) and `U<n>` (todo for you); a report or note has none.
 
 ## Status line
 

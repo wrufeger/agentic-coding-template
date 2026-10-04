@@ -80,6 +80,9 @@ OTHERS_LIMIT = 10     # per list in the "Others" section
 # task's title.
 STATE_DIR = Path(".act-local/state")
 FOR_RE = re.compile(r"(?im)^for:\s*(.+?)\s*$")
+# A task's "started:" header (entries.py state / start): with it the task counts as running,
+# without it as new — the board marks it, the status line counts both.
+STARTED_RE = re.compile(r"(?im)^started:\s*(\S+)\s*$")
 STATUS_RE = re.compile(r"(?im)^status:\s*(\S+)\s*$")
 ID_RE = re.compile(r"(?im)^id:\s*(\S+)\s*$")
 CREATED_RE = re.compile(r"(?im)^created:\s*(\S+)\s*$")
@@ -272,13 +275,15 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
 
 
 def _task_text(task: dict) -> str:
-    return f"{task['title']} — {task['state']}" if task["state"] else task["title"]
+    title = f"{task['title']} (running)" if task.get("started") else task["title"]
+    return f"{title} — {task['state']}" if task["state"] else title
 
 
 def read_tasks(root: Path) -> Optional[list[dict]]:
-    """Every task under docs/ai/work/tasks/ as {"title", "for", "state"}, oldest first (same order
-    as read_task_titles()), or None if the directory does not exist. "for" is the header's `for:`
-    value or None; "state" the last working-state line or None."""
+    """Every task under docs/ai/work/tasks/ as {"title", "for", "state", "started"}, oldest first
+    (same order as read_task_titles()), or None if the directory does not exist. "for" is the
+    header's `for:` value or None; "state" the last working-state line or None; "started" whether
+    the header carries `started:` (a running task, else a new one)."""
     tasks_dir = root / TASKS_DIR
     if not tasks_dir.is_dir():
         return None
@@ -297,6 +302,7 @@ def read_tasks(root: Path) -> Optional[list[dict]]:
             "title": _first_heading(path) or path.stem,
             "for": for_match.group(1).strip() if for_match else None,
             "state": _last_state_line(root, path.name),
+            "started": STARTED_RE.search(header) is not None,
         })
     return tasks
 
@@ -383,7 +389,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
     Each dict carries:
       - "path": the Path to the file
       - "kind": actlib.inbox_kind(text) — "question"/"todo"/"report"/"note"
-      - "label": the "id:" value for a question (e.g. "Q101"), else the kind word
+      - "label": the entry's "id:" value whenever it has one (e.g. "Q101", "U4"), else the kind word
       - "for": the "for:" header value, lowercased comparisons are the caller's job, or None
       - "status": "open" (default when the field is missing or unrecognized) or "answered"
       - "created": the "created:" header value, or None if missing (sort fallback: the caller

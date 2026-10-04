@@ -159,14 +159,15 @@ def write_lock(data: dict) -> dict:
 # .act-local/identity.json — per-checkout identity, gitignored
 # ---------------------------------------------------------------------------
 
-def _identity_path() -> Path:
-    return repo_root() / ".act-local" / "identity.json"
+def _identity_path(root: Optional[Path] = None) -> Path:
+    return (root or repo_root()) / ".act-local" / "identity.json"
 
 
-def read_identity() -> Optional[dict]:
-    """Read .act-local/identity.json. Returns None if it does not exist (or is unreadable) —
-    callers treat that as "not initialized yet", never as an error."""
-    return _read_json(_identity_path())
+def read_identity(root: Optional[Path] = None) -> Optional[dict]:
+    """Read .act-local/identity.json of `root` (default: repo_root(), cwd-based). Returns None if
+    it does not exist (or is unreadable) — callers treat that as "not initialized yet", never as
+    an error."""
+    return _read_json(_identity_path(root))
 
 
 def identity_slug(text: str) -> str:
@@ -406,18 +407,17 @@ def scaffold_default_files(root: Path) -> list[str]:
     return found
 
 
-def translate_note_text(language: str, files: list[str]) -> str:
-    """The inbox entry asking for the one-time scaffold translation (`R-work-language`) — its own
-    prose follows `language` too: the project reading it has already set `language-docs`
-    away from English, so an English-only note would be as stale as the scaffold it points at."""
+def translate_note_parts(language: str, files: list[str]) -> tuple[str, str]:
+    """(title, body) of the inbox todo asking for the one-time scaffold translation
+    (`R-work-language`) — its own prose follows `language` too: the project reading it has already
+    set `language-docs` away from English, so an English-only note would be as stale as the
+    scaffold it points at."""
+    title = localized(
+        language,
+        f"docs scaffold is still English (`act:default`) — translate it into {language}",
+        f"Doku-Gerüst ist noch Englisch (`act:default`) — ins {language} übersetzen",
+    )
     lines = [
-        "kind: todo", "for: all", "status: open", "",
-        localized(
-            language,
-            f"# docs scaffold is still English (`act:default`) — translate it into {language}",
-            f"# Doku-Gerüst ist noch Englisch (`act:default`) — ins {language} übersetzen",
-        ),
-        "",
         localized(
             language,
             f"`language-docs` in `docs/ai/config.md` is `{language}`, but these scaffold files are still "
@@ -447,24 +447,7 @@ def translate_note_text(language: str, files: list[str]) -> str:
             "aktuell.",
         ),
     ]
-    return "\n".join(lines) + "\n"
-
-
-def write_translate_note(root: Path, language: str, plan: bool = False) -> Optional[Path]:
-    """Write docs/ai/inbox/todo-<stamp>-translate-scaffold.md unless the docs language is English,
-    no file carries `act:default`, or such an entry already exists (any stamp). Returns the path
-    that was (plan: would be) written, else None."""
-    if is_english(language):
-        return None
-    files = scaffold_default_files(root)
-    inbox = root / INBOX_DIR
-    if not files or (inbox.is_dir() and any(inbox.glob(f"*{TRANSLATE_NOTE_SUFFIX}"))):
-        return None
-    dest = inbox / inbox_entry_filename("todo", "translate-scaffold")
-    if not plan:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        write_text_lf(dest, translate_note_text(language, files))
-    return dest
+    return title, "\n".join(lines) + "\n"
 
 
 # `dependency-check: once` (docs/ai/config.md § Dependencies, default) means "runs during
@@ -474,13 +457,12 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
 DEPENDENCY_CHECK_NOTE_SUFFIX = "-dependency-check.md"
 
 
-def dependency_check_note_text(language: str = "en") -> str:
-    """The one-time inbox entry `dependency-check: once` asks for right after setup, in `language`
-    (`language-docs`, R-work-language)."""
+def dependency_check_note_parts(language: str = "en") -> tuple[str, str]:
+    """(title, body) of the one-time inbox todo `dependency-check: once` asks for right after
+    setup, in `language` (`language-docs`, R-work-language)."""
     return (
-        "kind: todo\nfor: all\nstatus: open\n\n"
-        + localized(language, "# Check dependencies once", "# Abhängigkeiten einmal prüfen") + "\n\n"
-        + localized(
+        localized(language, "Check dependencies once", "Abhängigkeiten einmal prüfen"),
+        localized(
             language,
             "`dependency-check` in `docs/ai/config.md` is `once`: run `act-deps` now to inventory "
             "dependency age and known gaps (see `.act/skills/act-deps/SKILL.md`) — after this, it runs "
@@ -488,35 +470,18 @@ def dependency_check_note_text(language: str = "en") -> str:
             "`dependency-check` in `docs/ai/config.md` ist `once`: jetzt `act-deps` ausführen, um Alter "
             "und bekannte Lücken der Abhängigkeiten zu erfassen (siehe `.act/skills/act-deps/SKILL.md`) — "
             "danach läuft es nur noch auf Anfrage, nicht mehr bei jedem Setup.\n",
-        )
+        ),
     )
-
-
-def write_dependency_check_note(root: Path, dependency_check: str, plan: bool = False) -> Optional[Path]:
-    """Write docs/ai/inbox/todo-<stamp>-dependency-check.md when `dependency-check` (read from the
-    config.md this run just wrote/kept) is `once` and no such entry exists yet (any stamp — a
-    second `init` run must not add a second one). Returns the path that was (plan: would be)
-    written, else None."""
-    if dependency_check.strip().lower() != "once":
-        return None
-    inbox = root / INBOX_DIR
-    if inbox.is_dir() and any(inbox.glob(f"*{DEPENDENCY_CHECK_NOTE_SUFFIX}")):
-        return None
-    dest = inbox / inbox_entry_filename("todo", "dependency-check")
-    if not plan:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        write_text_lf(dest, dependency_check_note_text(docs_language(root)))
-    return dest
 
 
 # ---------------------------------------------------------------------------
 # docs/ai/inbox/ — the one place everything waiting on a person lives. Every entry
 # carries a `kind:` header field (question | todo | report | note, see INBOX_KINDS); a file without
 # one — an older entry, or a hand-written one — counts as DEFAULT_INBOX_KIND ("todo"), never as an
-# error. Only `question` also carries an id (`Q<n>`, handed out by entries.py the same way a task or
-# backlog item is); the other three kinds are named entirely from `kind`, a timestamp and a slug —
-# see inbox_entry_filename(). entries.py owns the id side (KIND_DIR, KIND_PREFIX, _slugify); this
-# module only owns the pieces write_translate_note() and other non-entries.py writers need too.
+# error. `question` (`Q<n>`) and `todo` (`U<n>`) also carry an id, handed out by entries.py the same
+# way a task or backlog item is (a team project: by `entries.py assign`); report and note are named
+# entirely from `kind`, a timestamp and a slug — see inbox_entry_filename(). entries.py owns the id side (KIND_DIR, KIND_PREFIX, _slugify); this
+# module only owns the pieces the other writers need too (the filename form below, the note texts above).
 # ---------------------------------------------------------------------------
 
 INBOX_DIR = Path("docs/ai/inbox")
@@ -536,7 +501,7 @@ def inbox_entry_filename(kind: str, slug: str, when: Optional[datetime] = None) 
     """"<kind>-<stamp>-<slug>.md" — the filename for an inbox entry that carries no id of its own
     (todo | report | note; a question keeps its id-based name, entries.py's own concern). `kind` is
     used as given, not validated against INBOX_KINDS here — the caller (entries.py's validate_entry,
-    or a fixed literal like write_translate_note's "todo") already knows it is one of the four."""
+    or a fixed literal) already knows it is one of the four."""
     return f"{kind}-{entry_stamp(when)}-{slug}.md"
 
 
@@ -995,7 +960,7 @@ def header_block(text: str) -> str:
     substring, never the whole file, so a value can never be spoofed by an example, a fenced code
     block, or another file's header merely quoted in a journal entry (`entries.py`, `board.py`)."""
     lines: list[str] = []
-    for line in text.splitlines():
+    for line in text.removeprefix("\ufeff").splitlines():  # a hand-saved UTF-8 BOM is not content
         if not line.strip() or not _HEADER_FIELD_RE.match(line):
             break
         lines.append(line)

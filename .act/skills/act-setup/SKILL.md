@@ -62,7 +62,7 @@ real; it takes its defaults and logs every open point (name, owner, stack, tools
 it could not decide) to the project's inbox instead of asking. Check
 `python .act/scripts/init.py --help` for the exact flags before running it — `--language-docs`,
 `--language-chat`, `--no-commit` — and pass what step 2 established. Afterward, go through the
-`todo-*-init-notes.md` inbox entry ("Open points from `init.py`" / German "Offene Punkte von
+`*-init-notes.md` inbox entry (`U<n>-init-notes.md`) ("Open points from `init.py`" / German "Offene Punkte von
 `init.py`") with the owner and enter the answers into `docs/ai/config.md`.
 
 **Way 2:** ask for the path if not given yet, then check it:

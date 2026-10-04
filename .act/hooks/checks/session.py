@@ -297,7 +297,7 @@ def _dependency_check_note(root: Path, config: dict[str, str]) -> Optional[str]:
     `_docs_audit_note`'s own overdue note) once the last `act-deps` run (a journal entry titled
     `act-deps: ...`) is older than 30 days, or once only when none is on record yet. `never` and
     `once` (the skeleton default) print nothing here: `once` is entirely init.py's one-time inbox
-    entry (`actlib.write_dependency_check_note`), not a recurring session-start note."""
+    entry (`entries.write_dependency_check_note`), not a recurring session-start note."""
     mode = config.get("dependency-check", "once").strip().lower()
     if mode != "regularly":
         return None

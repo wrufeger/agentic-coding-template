@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional, TypedDict, Union
 
 import actlib
+import entries
 import ideas
 import manifest
 import rules
@@ -2522,7 +2523,7 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
         return None, ""
     if plan and not (root / "docs").is_dir():
         return None, f"would note in the inbox: translate the docs scaffold into {docs_language}"
-    dest = actlib.write_translate_note(root, docs_language, plan)
+    dest = entries.write_translate_note(root, docs_language, plan)
     if dest is None:
         return None, f"docs scaffold: no `act:default` file left, or a translation entry exists ({docs_language})"
     verb = "would create" if plan else "created"
@@ -2544,7 +2545,7 @@ def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], 
         return None, ""
     if plan:
         return None, "would note in the inbox: check dependencies once (`act-deps`)"
-    dest = actlib.write_dependency_check_note(root, dependency_check, plan)
+    dest = entries.write_dependency_check_note(root, dependency_check, plan)
     if dest is None:
         return None, "dependency check: entry already exists"
     return dest, f"{_relative_label(dest, root)}: created (dependency-check: once — run `act-deps`)"
@@ -2558,13 +2559,14 @@ def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], 
 SECURITY_CHECK_OFFER_NOTE_SUFFIX = "-security-check-deps.md"
 
 
-def security_check_offer_note_text(root: Path, tools: dict[str, str]) -> str:
+def security_check_offer_note_parts(root: Path, tools: dict[str, str]) -> tuple[str, str]:
+    """(title, body) of the todo offering `security-check: deps`."""
     language = actlib.docs_language(root)
     tool_list = ", ".join(sorted(tools))
     heading = actlib.localized(
         language,
-        "# Turn on the dependency-vulnerability check?",
-        "# Die Abhängigkeits-Sicherheitsprüfung einschalten?",
+        "Turn on the dependency-vulnerability check?",
+        "Die Abhängigkeits-Sicherheitsprüfung einschalten?",
     )
     body = actlib.localized(
         language,
@@ -2582,7 +2584,7 @@ def security_check_offer_note_text(root: Path, tools: dict[str, str]) -> str:
         "und Grenzen). Bleibt auf `local`, bis entschieden ist — dieser Hinweis ändert den Wert "
         "nicht selbst.\n",
     )
-    return f"kind: todo\nfor: all\nstatus: open\n\n{heading}\n\n{body}"
+    return heading, body
 
 
 def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], str]:
@@ -2596,9 +2598,8 @@ def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], s
     default `local` — a project that already chose `off`/`deps`/`full` for itself is never
     second-guessed here. A plan run without a config.md yet, one with no lock file at all, or one
     whose scan turns up nothing installed for the lock files it does have, offers/notes nothing.
-    Writes directly with actlib's own public inbox helpers (`INBOX_DIR`/`inbox_entry_filename`/
-    `write_text_lf`) rather than a new actlib function of its own, the same way every other
-    `step_*` function here already uses them."""
+    Files the todo through `entries.create_todo`, the one way a tool writes a todo (it gets an id
+    in solo mode like any other)."""
     config_path = root / "docs" / "ai" / "config.md"
     security_check = "local"
     if not plan and config_path.is_file():
@@ -2635,9 +2636,8 @@ def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], s
     inbox = root / actlib.INBOX_DIR
     if inbox.is_dir() and any(inbox.glob(f"*{SECURITY_CHECK_OFFER_NOTE_SUFFIX}")):
         return None, "security-check offer: entry already exists"
-    dest = inbox / actlib.inbox_entry_filename("todo", "security-check-deps")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    actlib.write_text_lf(dest, security_check_offer_note_text(root, relevant))
+    title, body = security_check_offer_note_parts(root, relevant)
+    dest = entries.create_todo(root, title, body, slug="security-check-deps")[0]
     return dest, (f"{_relative_label(dest, root)}: created (security-check: deps offer — "
                   f"{', '.join(sorted(relevant))} installed)")
 
@@ -2684,7 +2684,9 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
     if not notes:
         return None
     inbox_dir = root / actlib.INBOX_DIR
-    existing = sorted(inbox_dir.glob("todo-*-init-notes.md")) if inbox_dir.is_dir() else []
+    # any name form: "U<n>-init-notes.md", an older "todo-<stamp>-init-notes.md", a team-mode name
+    # awaiting its id, or a collision-numbered one ("...-init-notes-2.md")
+    existing = sorted(inbox_dir.glob("*-init-notes*.md")) if inbox_dir.is_dir() else []
     blocking = None
     for candidate in existing:
         try:
@@ -2695,23 +2697,20 @@ def _write_inbox_note(root: Path, owner: str, notes: list[str], plan: bool) -> P
         status = match.group(1).strip() if match else "open"  # no status field: treat as open
         if status in ("open", "answered"):
             blocking = candidate
-    dest = blocking if blocking is not None else inbox_dir / actlib.inbox_entry_filename("todo", "init-notes")
-    n = 2
-    while blocking is None and dest.exists():  # a `done` one from the same minute: never overwrite it
-        dest = inbox_dir / f"todo-{actlib.entry_stamp()}-{n}-init-notes.md"  # still matches the glob above
-        n += 1
-    if blocking is not None or plan:
-        return None if plan else dest
+    if blocking is not None:
+        return None if plan else blocking
+    if plan:
+        return None
     title = actlib.localized(
         actlib.docs_language(root),
-        "# Open points from `init.py` (non-interactive run)",
-        "# Offene Punkte von `init.py` (nicht-interaktiver Lauf)",
+        "Open points from `init.py` (non-interactive run)",
+        "Offene Punkte von `init.py` (nicht-interaktiver Lauf)",
     )
-    lines = ["kind: todo", f"for: {actlib.identity_slug(owner)}", "status: open", f"created: {date.today().isoformat()}",
-              "", title, ""]
-    lines.extend(f"- {note}" for note in notes)
-    actlib.write_text_lf(dest, "\n".join(lines) + "\n")  # LF regardless of platform
-    return dest
+    body = "\n".join(f"- {note}" for note in notes) + "\n"
+    # a name collision (a `done` one with the same id/stamp) is numbered by create_entry, never overwritten
+    return entries.create_todo(
+        root, title, body, slug="init-notes", recipient=actlib.identity_slug(owner)
+    )[0]
 
 
 # ---------------------------------------------------------------------------

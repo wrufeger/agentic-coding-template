@@ -52,7 +52,7 @@ green checks, regardless of time pressure.
 ## Mechanism
 
 `init.py` reads `dependency-check` from the config.md it just wrote and, for `once`, leaves the
-one-time inbox entry above (`actlib.write_dependency_check_note`, deduplicated across a second
+one-time inbox entry above (`entries.write_dependency_check_note`, deduplicated across a second
 `init` run). For `regularly`, `.act/hooks/checks/session.py`'s `_dependency_check_note` looks at
 the ledger for the last `act-deps: ...` entry and notes at session start once it is more than 30
 days old, or once only when there is none yet — same shape as the docs-audit note

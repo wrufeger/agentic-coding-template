@@ -24,7 +24,7 @@
 #   kept: project value / not set: reason), "No counterpart" (old key, value, section, note), and
 #   "Free text" (each passage verbatim with its section and lines) — also written to
 #   <target>/.act-local/adopt/config-report.md; then one "[adopt-config] ..." summary line. A
-#   `language-docs` other than English also leaves a docs/ai/inbox/todo-<stamp>-translate-scaffold.md
+#   `language-docs` other than English also leaves a docs/ai/inbox/U<n>-translate-scaffold.md
 #   entry (the scaffold init wrote is still English, R-work-language) unless one exists already. An
 #   old AI-CONFIG.md without any language row sets `language-docs` to `de` — the old template was
 #   always German — and its "Mapped" row says that this is an assumption. A language given to
@@ -35,7 +35,7 @@
 #   were newly checked, already checked, or matched no rule set. A lint/typecheck/test command
 #   that names a path the adoption is removing (`.act-local/adopt/table.json` action
 #   delete/legacy, or simply nothing left on disk) is still set as given, but flagged in its
-#   result. If the most recent docs/ai/inbox/todo-<stamp>-init-notes.md (init.py's
+#   result. If the most recent docs/ai/inbox/U<n>-init-notes.md (init.py's
 #   non-interactive run) is still around, it is updated in place — `for: unknown` becomes the
 #   adopted owner, and a short "Filled in by adopt_config.py" section lists what else this run
 #   set; the human's own wording there, if any, is only ever appended to, never edited.
@@ -59,6 +59,7 @@ from typing import Optional
 
 import actlib
 import adopt
+import entries
 import init
 
 LEGACY_ROOT = Path("docs/ai/work/archive/legacy")
@@ -384,7 +385,7 @@ def _removed_command_paths(root: Path, command: str, table_rows: list[dict]) -> 
 
 
 def _init_notes_path(root: Path) -> Optional[Path]:
-    """The docs/ai/inbox/todo-<stamp>-init-notes.md that belongs to *this* adoption's own init.py run —
+    """The docs/ai/inbox/U<n>-init-notes.md that belongs to *this* adoption's own init.py run —
     read from .act-local/adopt/state.json's "created" list (adopt.py records every path init.py
     left behind there right after running it), rather than guessing by filename recency, which
     could just as well pick up a stale note left over from an unrelated, earlier init.py run in
@@ -402,8 +403,10 @@ def _init_notes_path(root: Path) -> Optional[Path]:
             candidate = root / match
             return candidate if candidate.is_file() else None
     inbox_dir = root / actlib.INBOX_DIR
-    candidates = sorted(inbox_dir.glob("todo-*-init-notes.md")) if inbox_dir.is_dir() else []
-    return candidates[-1] if candidates else None
+    # any name form (U<n>-… or the older todo-<stamp>-…); the newest by modification time, since
+    # ids do not sort as text (U9 after U10)
+    candidates = list(inbox_dir.glob("*-init-notes.md")) if inbox_dir.is_dir() else []
+    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
 
 
 _IDENTITY_PLACEHOLDERS = {None, "unknown", "user"}
@@ -502,7 +505,7 @@ def _note_is_empty(lines: list[str]) -> bool:
 
 
 def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str = "en") -> Optional[Path]:
-    """Bring the docs/ai/inbox/todo-<stamp>-init-notes.md belonging to this adoption's own init.py run
+    """Bring the docs/ai/inbox/U<n>-init-notes.md belonging to this adoption's own init.py run
     (see _write_inbox_note there, and _init_notes_path() above) up to date with what this
     adoption just filled in, instead of leaving it to say `for: unknown` or list config defaults
     that no longer apply: its `for:` line becomes the adopted owner once one was set, and
@@ -813,7 +816,7 @@ def main(argv: list[str]) -> int:
     would = sum(1 for r in data["mapped"] if r["result"].startswith("would set"))
     # A docs language other than English leaves the scaffold init wrote to translate (R-work-language):
     # one inbox entry, the same one init.py writes when it is asked for that language itself.
-    note = actlib.write_translate_note(root, docs_language, args.plan)
+    note = entries.write_translate_note(root, docs_language, args.plan)
     init_notes = _update_init_notes(root, data["mapped"], args.plan, docs_language)
     identity_slug = _update_workspace_identity(root, data["mapped"], args.plan)
     print(f"[adopt-config] {changed or would} value(s) {'would be ' if args.plan else ''}set, "

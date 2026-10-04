@@ -17,10 +17,11 @@
 #          echo '{"cwd": "."}' | python .act/hooks/statusline.py
 #
 # Output format: exactly one line on stdout, e.g.
-#   "act · 3 waiting for you: Q103 Q104 Q105 · 5 tasks"      -- open inbox entries and open tasks
-#   "act · 5 waiting for you: Q105, 4 todos · 0 tasks"        -- entries without an id: a count per kind
-#   "act · 5 tasks"                                          -- nothing waiting, no list shown
-#   "act"                                                    -- neither an inbox nor a tasks dir
+#   "act · Q103 Q104 Q105 · tasks: 1 running, 4 new"         -- open inbox entries and open tasks
+#   "act · Q105, U4 U3, 2 reports · tasks: 2 new"            -- ids by name (questions, then todos),
+#                                                              entries without an id as a count per kind
+#   "act · tasks: 5 new"                                     -- nothing waiting, no list shown
+#   "act"                                                    -- nothing waiting and no open task
 # Never writes to stderr, never a non-zero exit: any failure (malformed stdin JSON, no project
 # found from cwd, an unreadable inbox/tasks directory, ...) prints an empty line and exits 0 — a
 # broken status line must never show an error banner in Claude Code, per Claude Code's own
@@ -51,9 +52,12 @@ except Exception:
     actlib = None  # type: ignore[assignment]
     board = None  # type: ignore[assignment]
 
-MAX_LABELS = 5  # how many question ids the line names before folding the rest into "+N"
-# Entries without an id (every kind but a question) are counted per kind instead of named one by
-# one -- "todo todo todo todo" says less than "4 todos". Kinds in this order, anything else last.
+MAX_LABELS = 5  # how many ids the line names in all before folding the rest into "+N"
+# Entries with an id (a question, a todo) are named, in this order of kinds.
+ID_ORDER = ("question", "todo")
+# Entries without an id (a report, a note, a todo not numbered yet) are counted per kind instead of
+# named one by one -- "todo todo todo todo" says less than "4 todos". Kinds in this order, anything
+# else last.
 KIND_ORDER = ("todo", "report", "note")
 
 
@@ -85,7 +89,7 @@ def _waiting_summary(root: Path) -> tuple[int, list[dict]]:
     if inbox_entries is None:
         return 0, []
     open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=board._sort_key)
-    identity_data = actlib.read_identity()
+    identity_data = actlib.read_identity(root)
     my_identity = identity_data.get("identity") if identity_data else None
     mine_open, all_open, _other_open = board._group_by_recipient(open_entries, my_identity)
     combined = mine_open + all_open
@@ -93,45 +97,64 @@ def _waiting_summary(root: Path) -> tuple[int, list[dict]]:
 
 
 def _waiting_text(entries: list[dict]) -> str:
-    """"Q105 Q104, 4 todos, 1 report": question ids by name (newest first, at most MAX_LABELS, the
-    rest as "+N"), every other kind as a count, in KIND_ORDER."""
-    ids = [entry["label"] for entry in entries if entry["kind"] == "question"]
+    """"Q105 Q104, U4 U3 +2, 4 todos, 1 report": every entry with an id by name — questions first,
+    then todos, then any other kind that carries one, each group newest first, at most MAX_LABELS
+    ids in all (the rest as one "+N" after the last group) — then the entries without an id (a
+    report, a note, a todo not numbered yet in team mode) as a count per kind, in KIND_ORDER."""
+    named: dict[str, list[str]] = {}
     counts: dict[str, int] = {}
     for entry in entries:
-        if entry["kind"] != "question":
+        if entry["label"] != entry["kind"]:  # the board's label is the id whenever there is one
+            named.setdefault(entry["kind"], []).append(entry["label"])
+        else:
             counts[entry["kind"]] = counts.get(entry["kind"], 0) + 1
-    parts: list[str] = []
-    if ids:
-        shown = ids[:MAX_LABELS]
-        more = len(ids) - len(shown)
-        parts.append(" ".join(shown) + (f" +{more}" if more > 0 else ""))
-    order = list(KIND_ORDER) + sorted(kind for kind in counts if kind not in KIND_ORDER)
+    order = [kind for kind in ID_ORDER if kind in named] + sorted(kind for kind in named if kind not in ID_ORDER)
+    budget = MAX_LABELS
+    groups: list[str] = []
     for kind in order:
+        shown = named[kind][:budget]
+        budget -= len(shown)
+        if shown:
+            groups.append(" ".join(shown))
+    more = sum(len(labels) for labels in named.values()) - (MAX_LABELS - budget)
+    if more > 0 and groups:
+        groups[-1] += f" +{more}"
+    parts = list(groups)
+    count_order = list(KIND_ORDER) + sorted(kind for kind in counts if kind not in KIND_ORDER)
+    for kind in count_order:
         if counts.get(kind):
             parts.append(f"{counts[kind]} {kind}{'' if counts[kind] == 1 else 's'}")
     return ", ".join(parts)
 
 
-def _task_count(root: Path) -> Optional[int]:
-    """Number of open tasks under docs/ai/work/tasks/, or None if that directory does not exist —
-    same source and exclusion (README.md) as board.read_task_titles(), but every file counted
-    instead of just the first TASKS_LIMIT."""
-    tasks_dir = root / board.TASKS_DIR
-    if not tasks_dir.is_dir():
+def _task_counts(root: Path) -> Optional[tuple[int, int]]:
+    """(running, new) open tasks under docs/ai/work/tasks/ — running means the task's header
+    carries `started:` (entries.py state / start) — or None if that directory does not exist. Same
+    source as board.read_tasks(), every file counted instead of just the first TASKS_LIMIT."""
+    tasks = board.read_tasks(root)
+    if tasks is None:
         return None
-    return sum(1 for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md")
+    running = sum(1 for task in tasks if task["started"])
+    return running, len(tasks) - running
+
+
+def _tasks_text(running: int, new: int) -> str:
+    """"tasks: 1 running, 2 new" — a count of 0 is left out."""
+    parts = ([f"{running} running"] if running else []) + ([f"{new} new"] if new else [])
+    return "tasks: " + ", ".join(parts)
 
 
 def status_line(root: Path) -> str:
     """The one line this hook prints for a project at `root`."""
     waiting_count, entries = _waiting_summary(root)
-    task_count = _task_count(root)
+    task_counts = _task_counts(root)
 
     segments = ["act"]
     if waiting_count:
-        segments.append(f"{waiting_count} waiting for you: {_waiting_text(entries)}")
-    if task_count is not None:
-        segments.append(f"{task_count} tasks")
+        # No total in front: the ids and per-kind counts already say how much is waiting.
+        segments.append(_waiting_text(entries))
+    if task_counts is not None and sum(task_counts):
+        segments.append(_tasks_text(*task_counts))
     return " · ".join(segments)
 
 

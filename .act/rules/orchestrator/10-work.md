@@ -41,7 +41,8 @@ summary: status, open task, and decisions left for a fresh session to continue
 
 Even a sub-step (a stage, a partial task) is done only once a fresh session with no prior context
 could pick it up: status and next step recorded with `entries.py state <id> <text>`
-(`.act-local/state/`, surfaced on the board), the open task with goal and check criteria in the
+(`.act-local/state/`, surfaced on the board; the first one marks the task `started:` — a note on a
+task not begun yet goes into the task file instead), the open task with goal and check criteria in the
 versioned task file, evidence in the journal, and decisions made while building written down where
 someone would look for them — not just in the chat history. A work place outside the repo — a
 second checkout, a worktree — goes into the task with its full path. Before advising a restart

@@ -37,7 +37,7 @@
 #       would otherwise start overriding the template unit); a written own agent/skill then gets
 #       the tool bridge the target project needs (.claude/agents/<name>.md, skill copies), via the
 #       same mechanism init.py/update.py use for a template one — "## setup-required" lines
-#       and every unresolved finding into one docs/ai/inbox/todo-<stamp>-settings-<slug>.md. --judgments
+#       and every unresolved finding into one docs/ai/inbox/U<n>-settings-import.md. --judgments
 #       supplies verdicts for the candidate pairs `plan --candidates-out` produced (see "Judgments
 #       JSON" below); a candidate with no verdict stays unapplied and unreviewed in the inbox. A
 #       contradiction is resolved automatically, without --judgments, only when
@@ -123,6 +123,7 @@ from typing import Optional
 
 import actlib
 import doctor
+import entries
 import frontmatter
 import init
 import rules
@@ -1576,9 +1577,8 @@ def write_inbox(
         return None, False
 
     language = actlib.docs_language(root)
-    lines = ["kind: todo", "for: all", "status: open", f"created: {date.today().isoformat()}", "",
-             actlib.localized(language, "# settings import findings", "# Befunde beim Settings-Import"), "",
-             "Source file(s): " + ", ".join(s.label for s in sources), ""]
+    title = actlib.localized(language, "settings import findings", "Befunde beim Settings-Import")
+    lines = ["Source file(s): " + ", ".join(s.label for s in sources), ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
         if not group:
@@ -1594,10 +1594,11 @@ def write_inbox(
         lines.append("")
 
     body = "\n".join(lines).rstrip("\n") + "\n"
-    # The `created:` line changes every day by definition, so it is left out of the hash — a
-    # same-day re-run and a later-day re-run of the same, unchanged import must both count as
-    # "already filed", not just the same-day case (W2).
-    hash_body = "\n".join(line for line in lines if not line.startswith("created: "))
+    # The hash covers what it always covered (header fields, heading, body) and never the `created:`
+    # line, which changes every day by definition — a same-day re-run and a later-day re-run of the
+    # same, unchanged import must both count as "already filed", and so must an entry filed before
+    # todos carried ids.
+    hash_body = "\n".join(["kind: todo", "for: all", "status: open", "", f"# {title}", ""] + lines)
     marker = f"<!-- settings-import-sha256: {hashlib.sha256(hash_body.encode('utf-8')).hexdigest()} -->"
 
     base = root / actlib.INBOX_DIR
@@ -1609,16 +1610,7 @@ def write_inbox(
             except OSError:
                 continue
 
-    slug = "import"
-    when = datetime.now()  # fixed once, so a same-minute retry below keeps the same stamp
-    dest = base / actlib.inbox_entry_filename("todo", f"settings-{slug}", when)
-    n = 2
-    while dest.is_file():
-        dest = base / actlib.inbox_entry_filename("todo", f"settings-{slug}-{n}", when)
-        n += 1
-
-    base.mkdir(parents=True, exist_ok=True)
-    dest.write_text(body + marker + "\n", encoding="utf-8")
+    dest = entries.create_todo(root, title, body + marker + "\n", slug="settings-import")[0]
     return dest, True
 
 

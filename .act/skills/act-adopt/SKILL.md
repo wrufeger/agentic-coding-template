@@ -287,7 +287,7 @@ retry; fix the cause (a path too long: `core.longpaths`, step 2) and start again
 name, `owner` the Git `user.name` (else `unknown`), `language-chat`/`language-docs` what step 4
 passed (else `auto`/`en`), `stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode`
 `solo` or `team` from the number of distinct real author e-mails (placeholder and test identities
-left out). It says so in `docs/ai/inbox/todo-<timestamp>-init-notes.md` ("Project config uses
+left out). It says so in `docs/ai/inbox/U<n>-init-notes.md` ("Project config uses
 defaults for: ..."); `adopt_config.py` takes every key it sets out of that line afterwards, and
 removes the note when nothing is left in it.
 
@@ -319,7 +319,7 @@ template's `Sprache` row (`Deutsch` -> `de`); an old `AI-CONFIG.md` without any 
 too, marked as an assumption in the report (the old template was always German) — confirm it with
 the owner. A language passed in step 4 (`--language-docs`/`--language-chat`) is kept as given, no
 assumption and no overwrite. It never sets `language-chat` (stays as passed, else `auto`) or `mode`. A `language-docs` other than English leaves
-`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` (from `init.py` when step 4 passed the
+`docs/ai/inbox/U<n>-translate-scaffold.md` (from `init.py` when step 4 passed the
 language, else from `adopt_config.py`, or from you by hand if you set it yourself: `init.py` wrote
 the scaffold in English, marked `act:default`) — translate that
 scaffold once as `R-work-language` describes, never the adopted content, whose translation is a
@@ -606,7 +606,7 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
    the `removed_at_apply` paths; except anything under `.act-local/` (git-ignored) or
    `docs/ai/work/archive/legacy/`, group 1's paths, and table targets. That is `.act/`, bridges,
    skeleton, tool copies, `.act-lock.json`, the init notes in the inbox together with
-   `docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` from step 5 (both are about the scaffold, not
+   `docs/ai/inbox/U<n>-translate-scaffold.md` from step 5 (both are about the scaffold, not
    about old content; step 5 may have changed the init notes), `.gitignore`, the template copies
    now standing where an old unit of the same name was moved or removed (with the removal of that
    unit's other files), and `.claude/settings.json` as it is now — `init.py`'s merged hooks and
@@ -653,7 +653,7 @@ With `--force`, the changed files are copied to `.act-local/adopt/aborted/` befo
 removed.
 
 **What `--abort` does not catch:** files written after `--apply` by anything but `init.py` —
-`docs/ai/inbox/todo-<timestamp>-translate-scaffold.md` from step 5, and everything the content step added:
+`docs/ai/inbox/U<n>-translate-scaffold.md` from step 5, and everything the content step added:
 entries under `docs/ai/work/`, `docs/ai/inbox/`, proposals under
 `docs/ai/proposals/`, copies under `docs/ai/local/`. They neither block `--abort` nor are removed
 by it: it ends with exit 0 and lists them as "left in place (not created by adopt/init): ...",

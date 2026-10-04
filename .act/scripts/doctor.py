@@ -138,7 +138,7 @@ KIND_LABELS: dict[str, str] = {
     "override-stale": "Overridden rule whose template text has changed",
     "ref-missing": "Broken references",
     "duplicate-unit": "Duplicate scripts/agents/skills",
-    "duplicate-id": "Duplicate entry ids (task/backlog/question)",
+    "duplicate-id": "Duplicate entry ids (task/backlog/question/todo)",
     "entry-unreadable": "Entry files that cannot be read as UTF-8",
     "hook": "Missing hook entries",
     "settings-script": "Hook/permission entries pointing at a missing script",

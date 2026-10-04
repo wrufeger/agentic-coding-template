@@ -321,18 +321,20 @@ options:
 Call: direct
 
 ```text
-usage: entries.py [-h] {new,assign,state,list,check} ...
+usage: entries.py [-h] {new,assign,state,start,list,check} ...
 
 Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
 todo | report | note).
 
 positional arguments:
-  {new,assign,state,list,check}
+  {new,assign,state,start,list,check}
     new                 create a new entry file
     assign              hand out ids still missing ('team' mode: only on the default branch)
     state               append a working-state line for an open task to .act-local/state/ — needs
                         an id already assigned; in 'team' mode a task awaiting one (filename only)
                         has no `state` target yet
+    start               mark an open task as started (versioned `started:` header) without a state
+                        line; `state` does the same on its first call
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
 
@@ -355,7 +357,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --id ID               keep this id (T/B/Q<n>, optional sub-letter); refused if taken or wrong
+  --id ID               keep this id (T/B/Q/U<n>, optional sub-letter); refused if taken or wrong
                         prefix
   --formerly OLD_ID     header line "formerly: <old id>"
   --status {open,answered}
@@ -385,6 +387,21 @@ in 'team' mode a task awaiting one (filename only) has no `state` target yet
 positional arguments:
   T-ID        the task's id, e.g. T12
   text        the state line's text, e.g. "step 3 running, next: ..."
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `entries.py start`
+
+```text
+usage: entries.py start [-h] T-ID
+
+mark an open task as started (versioned `started:` header) without a state line; `state` does the
+same on its first call
+
+positional arguments:
+  T-ID        the task's id, e.g. T12
 
 options:
   -h, --help  show this help message and exit

@@ -6,8 +6,8 @@
 #          script only checks that list and writes one entry file per item — task/backlog/ledger/
 #          question/todo/report/note through entries.py's own validate_entry()/create_entry() (the
 #          same files `entries.py new` writes; "question"/"todo"/"report"/"note" all land under
-#          docs/ai/inbox/ now — "question" keeps its `Q<n>`
-#          id, the other three never carry one), "proposal" through its own write_proposal() below
+#          docs/ai/inbox/ now — "question" keeps its `Q<n>`, "todo" its `U<n>`
+#          id, report and note never carry one), "proposal" through its own write_proposal() below
 #          (proposals are not one of entries.py's kinds: no id, filed straight under
 #          docs/ai/proposals/ with the header its own README asks for). "inbox" is accepted as an
 #          old-batch alias for "todo" (normalized before anything else runs) so a batch written
@@ -31,7 +31,7 @@
 #              ("inbox" is accepted too, an alias for "todo" from before the one-inbox migration)
 #   title      one line, becomes the heading (reserved: a short reason, kept for traceability only)
 #   source     {"path": "<old file>", "line": <n>} or "<old file>:<n>"            (required)
-#   id         keep this id: T/B/Q<n>, optional sub-letter (task/backlog/question, or required
+#   id         keep this id: T/B/Q/U<n>, optional sub-letter (task/backlog/question/todo, or required
 #              for "reserved" — the old id that never gets a live entry but must stay unused)
 #   formerly   the old id of another scheme, written as "formerly: <old id>"
 #   body       text below the heading, verbatim   | body_file  a UTF-8 file holding it instead
@@ -268,7 +268,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
             else:
                 match = entries._ID_ARG_RE.match(id_value.strip())
                 if not match or match.group(1).upper() not in entries.KIND_PREFIX.values():
-                    problems.append(f"{where}: \"id\" {id_value!r}: must be T/B/Q<n> (optional sub-letter)")
+                    problems.append(f"{where}: \"id\" {id_value!r}: must be T/B/Q/U<n> (optional sub-letter)")
             forbidden = sorted(k for k in RESERVED_ONLY_FIELDS if raw.get(k) is not None)
             if forbidden:
                 problems.append(f"{where}: {', '.join(forbidden)}: a reserved item only takes id/title/source "
