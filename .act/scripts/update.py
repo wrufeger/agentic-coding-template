@@ -460,7 +460,7 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # separately in step_new_role_bridges(): an existing one is only touched again when its role's row
 # in docs/ai/config.md § Roles changed (sync_dependent_files()), otherwise only a role new since
 # the last update gets a bridge created.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter")
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas")
 
 
 def _project_tools(root: Path) -> list[str]:

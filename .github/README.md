@@ -27,7 +27,8 @@ What you get:
 - **Yours to configure and extend.** One file, `docs/ai/config.md`, steers workflow, checks, roles,
   and languages. Every rule can be switched off or replaced; your own rules, coding rules, skills,
   and agent roles sit next to the template's. Everything waiting for you — questions and tasks —
-  sits in one inbox, and a board under `docs/ai/` shows what is in progress.
+  sits in one inbox, a board under `docs/ai/` shows what is in progress, and everyone has their own
+  ideas file the next session picks up.
 
 **What it costs, and when it pays off.** The rules load at the start of every session — roughly
 8,000–9,000 tokens with one coding rule set (an estimate from file size; after the first turn most
@@ -138,8 +139,9 @@ A project set up from here has three places that matter:
   roles, hooks, and scripts. Never edited in the project (a project version goes to `docs/ai/local/`
   instead), replaced as a whole by `act-update`.
 - **`docs/ai/`** — the working state, versioned with the code: settings (`config.md`), the rules
-  in effect (`rules.md`), inbox, tasks, backlog, and journal — plus the generated board
-  (`board.md`, not versioned by default; refreshed at session start and after a merge).
+  in effect (`rules.md`), one ideas file per person (`concept/`), inbox, tasks, backlog, and
+  journal — plus the generated board (`board.md`, not versioned by default; refreshed at session
+  start and after a merge).
 - **`docs/project/`** — the project's own documentation, including which coding rule sets apply.
 
 Around them sit the small files each tool reads (`CLAUDE.md`, `AGENTS.md`, `.claude/`,

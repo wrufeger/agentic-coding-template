@@ -64,6 +64,7 @@ __all__ = [
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
     "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "_changed_bridge_note",
+    "_ideas_pending", "_ideas_note", "_ideas_ensure_notes",
     "refresh_session",
 ]
 
@@ -1248,6 +1249,47 @@ def _ide_mcp_connected(root: Path) -> bool:
     return False
 
 
+def _ideas_pending(root: Path) -> "tuple[str, list[str]]":
+    """(root-relative path of the session owner's ideas file, its new or changed entries) — see
+    ideas.py; ("", []) when there is no identity, no file, or ideas.py cannot be imported. Imported
+    lazily like `update`/`rules`: a session start never pays for it unless it is reached, and a
+    broken ideas.py must not end the session."""
+    try:
+        import ideas  # deferred: see the docstring
+        path, keys = ideas.pending(root)
+        if path is None or not keys:
+            return "", []
+        return path.relative_to(root).as_posix(), keys
+    except Exception:
+        return "", []
+
+
+def _ideas_note(rel: str, keys: list[str]) -> str:
+    """The `[act] ideas:` session note: how many entries are new or changed, the first few titles
+    (ideas.titles_text), and what to do about them."""
+    import ideas  # deferred, as in _ideas_pending
+    return (f"[act] ideas: {len(keys)} new or changed in {rel} — {ideas.titles_text(keys)} — "
+            "process them per the ideas topic, then `python .act/scripts/ideas.py --seen`")
+
+
+def _ideas_ensure_notes(root: Path, config: dict[str, str], write: bool) -> list[str]:
+    """One note per file ideas.ensure() created for the session owner (or, with write=False, would
+    create): the folder README.md of the ideas files and the owner's own file. Best effort."""
+    import ideas  # deferred, as in _ideas_pending
+    notes: list[str] = []
+    english = actlib.is_english(actlib.language_settings(config)[1])
+    for path, kind in ideas.ensure(root, plan=not write):
+        rel = path.relative_to(root).as_posix()
+        if not write:
+            notes.append(f"[act] note: {rel} would be created (warn mode, not applied)")
+        elif kind == "readme":
+            extra = "" if english else " — scaffold in English, translate it once (R-work-language)"
+            notes.append(f"[act] note: created {rel} — how the ideas files work{extra}")
+        else:
+            notes.append(f"[act] note: created {rel} — your own ideas file, one `## <title>` section per idea")
+    return notes
+
+
 def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
     """(topic name, path to show) for every topic in _TOPIC_SWITCHES whose switch is active, in
     the table's own order. The path follows actlib.resolve()'s own local-over-template
@@ -1275,6 +1317,15 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
         else:
             path, _origin = resolved
             active.append(("ide", path.relative_to(root).as_posix()))
+    # "ideas" is data-driven too: active while the owner's own ideas file has entries not yet
+    # processed (ideas.py).
+    if _ideas_pending(root)[1]:
+        resolved = actlib.resolve("rules/topics/ideas.md")
+        if resolved is None:
+            active.append(("ideas", "missing"))
+        else:
+            path, _origin = resolved
+            active.append(("ideas", path.relative_to(root).as_posix()))
     return active
 
 
@@ -1376,6 +1427,8 @@ def _human_line(state: dict) -> Optional[str]:
         parts.append(f"chat: {state['chat']}")
     if "inbox" in state:
         parts.append(f"inbox: {state['inbox']} to process")
+    if state.get("ideas"):
+        parts.append(f"ideas: {state['ideas']} new")
     if state.get("old_imports"):
         parts.append("docs/ai/rules.md uses the old import form, see note")
     return "act · " + " · ".join(parts) if parts else None
@@ -1472,6 +1525,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     if audit_note:
         print(audit_note)
 
+    ideas_rel, ideas_keys = _ideas_pending(root)
+    state["ideas"] = len(ideas_keys)
+    if ideas_keys:
+        try:
+            print(_ideas_note(ideas_rel, ideas_keys))
+        except Exception:
+            pass  # informational only, must never block the session
+
     try:
         dependency_note = _dependency_check_note(root, config)
     except Exception:
@@ -1491,6 +1552,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     except Exception:
         pass
     state["inbox"] = waiting
+
+    # The session owner's own ideas file (and the folder README) created on first use — in a
+    # project that predates the ideas files, or for a second person who just joined.
+    try:
+        for note in _ideas_ensure_notes(root, config, write=(mode == "block")):
+            print(note)
+    except Exception:
+        pass  # best effort, must never block the session
 
     # Whether a feedback reminder to the template author is due right now
     # (.act/scripts/feedback.py --due's own logic) — folded into the status line like the inbox
@@ -1633,7 +1702,8 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     rules_part = f" · rules: {rules_delivered}{rules_via}" if rules_delivered is not None else ""
     roles_part = f" · role-bridges refreshed: {len(role_frontmatter_changed)}" if mode == "block" and role_frontmatter_changed else ""
     feedback_part = " · feedback due" if feedback_due else ""
-    print(f"[act] branch={branch}{inbox_part}{feedback_part} · board updated{rules_part}{roles_part}")
+    ideas_part = f" · ideas: {len(ideas_keys)} new" if ideas_keys else ""
+    print(f"[act] branch={branch}{inbox_part}{ideas_part}{feedback_part} · board updated{rules_part}{roles_part}")
     # Printed after the status line, not before: an "update available" note here is always a
     # previous SessionStart's background finding (_consume_pending_update_note), never something
     # this run just checked, so it reads as a postscript rather than part of this run's status.
@@ -1646,7 +1716,8 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # sub-step here.
     try:
         from . import tips as _tips
-        tip_line = _tips.session_line(payload, root, config, waiting + (1 if feedback_due else 0))
+        tip_line = _tips.session_line(payload, root, config,
+                                       waiting + (1 if feedback_due else 0) + len(ideas_keys))
     except Exception:
         tip_line = None
     if tip_line:

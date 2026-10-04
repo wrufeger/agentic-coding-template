@@ -19,6 +19,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
 | `forge.py` | A small REST client for the project's git host (GitHub, GitHub Enterprise, GitLab.com and self-hosted GitLab) — the one script the skills… | skills `act-pr`, `act-issue`, `act-integrations` (reads are direct; every write shows a preview and needs `--apply` after the human's "yes" (`topics/live-systems.md`)) |
 | `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
+| `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
@@ -485,6 +486,22 @@ options:
   --root ROOT       project root (default: found from the current directory)
   --remote REMOTE   git remote to use (default: origin, else the only one)
   --json            print one JSON document instead of text
+```
+
+## `ideas.py`
+
+Call: direct (session start and init call it; run by hand to record entries as processed)
+
+```text
+usage: ideas.py [-h] [--check | --seen | --ensure]
+
+Entries of the per-person ideas file that are new or changed since they were last processed.
+
+options:
+  -h, --help  show this help message and exit
+  --check     list new or changed entries (default)
+  --seen      record every entry as processed
+  --ensure    create the README.md and own file if missing
 ```
 
 ## `init.py`

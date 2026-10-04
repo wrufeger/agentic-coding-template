@@ -67,6 +67,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "feedback_privacy.py": {"kind": "library"},
     "forge.py": {"kind": "skill", "skill": "act-pr, act-issue, act-integrations", "note": "reads are direct; every write shows a preview and needs `--apply` after the human's \"yes\" (`topics/live-systems.md`)"},
     "frontmatter.py": {"kind": "library"},
+    "ideas.py": {"kind": "direct", "note": "session start and init call it; run by hand to record entries as processed"},
     "init.py": {"kind": "direct"},
     "integrations.py": {"kind": "skill", "skill": "act-integrations", "note": "`status` alone is direct"},
     "log.py": {"kind": "direct"},

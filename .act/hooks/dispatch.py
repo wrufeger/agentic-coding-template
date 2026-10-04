@@ -119,8 +119,8 @@
 #                 lines (a changed/unrefreshable bridge, an unresolvable tier/reasoning value, a
 #                 project .act/ pulled in without update.py — each best-effort and independently
 #                 gated, see checks.session.refresh_session()), then the fixed-format status line
-#                 "[act] branch=<name> [· inbox: <n> waiting] · board updated [· rules: <n>]
-#                 [· role-bridges refreshed: <n>]", and finally, as a deliberate postscript after
+#                 "[act] branch=<name>[ · inbox: <n> waiting][ · ideas: <n> new][ · feedback due] ·
+#                 board updated[ · rules: <n>][ · role-bridges refreshed: <n>]", and finally, as a deliberate postscript after
 #                 that status line, an optional "a template update is available" note — always a
 #                 *previous* SessionStart's finding, consumed from .act-local/update-check-
 #                 result.json, never something looked up during this run (see

@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional, TypedDict, Union
 
 import actlib
+import ideas
 import manifest
 import rules
 import security_scan
@@ -1992,6 +1993,18 @@ def step_materialize(
         if created or (root / dest_rel).is_file():
             touched.append(root / dest_rel)
 
+    # The owner's own ideas file (docs/ai/concept/ideas-<identity>.md) and the folder README, if the
+    # skeleton did not bring it. The workspace identity file exists by now (step 4) except under
+    # --plan, where the identity it will get is formed the same way from the owner.
+    owner_identity = ideas.identity(root) or actlib.identity_slug(cfg["owner"])
+    # With --plan on a project without a config.md yet, the config gate is skipped so the plan
+    # still names the files; a real run never skips it (the skeleton brought config.md by now).
+    for ideas_path, _kind in ideas.ensure(root, owner_identity, plan=plan, skip_config_gate=plan):
+        verb = "would create" if plan else "created"
+        messages.append(f"{_relative_label(ideas_path, root)}: {verb}")
+        if not plan:
+            touched.append(ideas_path)
+
     for key, spec in selected_bridges.items():
         dest = root / spec["dest"]
         if spec["kind"] == "verbatim":
@@ -2504,7 +2517,7 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
     config_path = root / "docs" / "ai" / "config.md"
     docs_language = cfg["language_docs"]
     if not plan and config_path.is_file():
-        docs_language = actlib.language_settings(actlib.read_config())[1]
+        docs_language = actlib.language_settings(actlib.read_config(root))[1]
     if actlib.is_english(docs_language):
         return None, ""
     if plan and not (root / "docs").is_dir():
