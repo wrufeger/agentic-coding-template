@@ -48,6 +48,13 @@ obvious next step instead, and is often already the fix. Try it once, then repor
   token generation, and delete logic in the same block of work read differently together than
   apart. Where it's possible: one after another, in separate blocks, each with its own evidence.
 
+## Known limits of the secret and repo checks
+
+The secret scan and the repo detection read the command text and the staged diff, nothing more: a git
+alias (`git ci`), a file with a `-diff` attribute, a very short secret value, and a directory change
+inside the command (`pushd`, `Set-Location`) can make them look at the wrong repository or the wrong
+lines, so they miss a secret or flag a harmless one. Treat them as a safety net, not a guarantee.
+
 ## Every block gets logged
 
 Every block gets logged — even a harmless one: date, what was blocked, the message's wording, the

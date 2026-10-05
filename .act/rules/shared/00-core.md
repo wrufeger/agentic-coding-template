@@ -33,7 +33,7 @@ needed workaround) itself; details in `topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English
 
-summary: every docs/ai entry and new doc in language-docs whatever the chat language; .act/ English; human text untranslated; scaffold translated once
+summary: every docs/ai entry and new doc in language-docs whatever the chat language; .act/ English; human text untranslated; scaffold translated once, English technical terms kept
 
 Everything the assistant writes under `docs/` is in `language-docs` from `docs/ai/config.md`
 (default `en`) — journal, questions, tasks, backlog, inbox, proposals and new documentation alike,
@@ -46,8 +46,10 @@ template's English: if `language-docs` is not English, translate it once (the in
 `*-translate-scaffold.md` lists the files) — headings, table headers, status words in prose and
 hint texts only. Marks (`<!-- act:... -->`), header fields and their values (`status:
 open|answered|done` stays English, in examples too), config keys and values, code and paths stay
-as they are, since the mechanism reads those, never the words. Then drop the mark line; from then
-on the file is the project's.
+as they are, since the mechanism reads those, never the words; so do common English technical
+terms (Skill, Worker, Override, Inbox, Backlog, Board, Hook, Commit, Branch …), above all in
+headings, with a short explanation at most once in the text below. Then drop the mark line; from
+then on the file is the project's.
 
 ## `R-work-second-check` — A workaround needs a second, independent check
 

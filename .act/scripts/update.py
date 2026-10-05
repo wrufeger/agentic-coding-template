@@ -1780,6 +1780,11 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
     function rather than rebuilding the re-derivation logic a second time, so a later change to
     which bridges dispatch.py re-derives never has to be kept in sync in two places.
 
+    Under `session-start-refresh: warn` or `off` the project has asked for no automatic rewrite of
+    generated files, so this reports "would refresh" with the file list and writes nothing, exactly
+    like --plan; the recorded hashes stay as they are, so the files do not look edited locally
+    afterwards (they are refreshed by the next run under the default mode).
+
     Returns (summary, touched) — `touched` are the absolute paths actually rewritten (empty under
     plan, which must write nothing, same contract as every other step here)."""
     hooks_dir = root / ".act" / "hooks"
@@ -1797,24 +1802,34 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
         if added:
             sys.path.remove(hooks_path)
 
+    refresh_mode = actlib.read_config(root).get("session-start-refresh", "").strip().lower()
+    report_only = plan or refresh_mode in ("warn", "off")
     try:
-        changed, refreshed, bootstrapped = _refresh_bridges(root, write=not plan)
+        changed, refreshed, bootstrapped = _refresh_bridges(root, write=not report_only, only_changed=not plan)
     except Exception as exc:  # same as the session hook: a failed refresh is reported, never aborts the update
         return f"bridge refresh failed ({exc})", []
+    if not report_only:
+        try:
+            if actlib.read_cache().get("warn_notes_digest"):
+                actlib.write_cache({"warn_notes_digest": ""})  # a syncing run: an earlier warn record is obsolete
+        except OSError:
+            pass
     if not refreshed and not changed and not bootstrapped:
-        return "no generated bridges due for refresh", []
-    verb = "would refresh" if plan else "refreshed"
+        return ("bridges current" if report_only and not plan else "no generated bridges due for refresh"), []
+    verb = "would refresh" if report_only else "refreshed"
     parts = [f"{verb} {', '.join(refreshed)}"] if refreshed else []
+    if report_only and not plan and (refreshed or bootstrapped):
+        parts.append(f"not written: session-start-refresh is {refresh_mode}")
     if bootstrapped:
         # A raw `git pull` landed the template's own bootstrap CLAUDE.md/AGENTS.md on top
         # of the project's real bridge -- not a local edit, rewritten the same as `refreshed`
         # above, just called out separately so `--catch-up` explains why the "edited locally"
         # rule did not apply here.
-        bootstrap_verb = "would replace" if plan else "replaced"
+        bootstrap_verb = "would replace" if report_only else "replaced"
         parts.append(f"{bootstrap_verb} {', '.join(bootstrapped)} (template bootstrap file, not a local edit)")
     if changed:
         parts.append(f"left {', '.join(changed)} (edited locally)")
-    touched = [] if plan else [root / rel for rel in refreshed + bootstrapped]
+    touched = [] if report_only else [root / rel for rel in refreshed + bootstrapped]
     return "; ".join(parts), touched
 
 

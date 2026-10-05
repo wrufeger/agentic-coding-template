@@ -53,7 +53,7 @@ Call: direct (used by skill `act-adopt` (stage 6))
 
 ```text
 usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
-                [--language-docs CODE] [--language-chat CODE]
+                [--confirm-no-targets] [--language-docs CODE] [--language-chat CODE]
 
 Carry out an approved adoption table: move legacy sources, install the template, then bridge/remove adopted sources. Never commits.
 
@@ -67,6 +67,8 @@ options:
   --plan                validate and show what would happen, change nothing
   --force               with --abort: copy work done since --apply to .act-local/adopt/aborted/
                         first, then abort
+  --confirm-no-targets  with --apply: the owner confirmed that adopt rows without a target are
+                        applied although --finish's "content not adopted?" check cannot cover them
   --language-docs CODE  with --apply: language of docs/ (e.g. de), passed on to init.py; default
                         en
   --language-chat CODE  with --apply: chat language (a code, or auto), passed on to init.py
@@ -144,6 +146,10 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in .act-local/adopt/config-touched.json), is
   refused ("content not adopted?").
+--apply with an adopt row of class project-doc, ai-machinery, predecessor or unknown that has no
+  target: refused unless --confirm-no-targets is given (the owner's yes) — without a target recorded
+  at --apply, --finish cannot refuse a row whose content was never carried over. ai-config and work
+  rows never need one (their content becomes proposals and entries). --apply --plan prints the warning and goes on.
 --apply --language-docs <code> --language-chat <code|auto>: passed on to init.py, so the
   docs language and the init todos are right from the start. They are recorded in state.json
   ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md

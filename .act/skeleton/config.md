@@ -39,7 +39,9 @@ config.md without the row.
 whoever files the entry on the default branch assigns it, so two people can never hand out the
 same number; until then the file name is what you cite. File name, location and format are the
 same either way, so you can switch back and forth at any time — IDs already assigned stay as they
-are, only later ones follow the new value. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
+are, only later ones follow the new value. Known limit: in a pure pull-request workflow where the default
+branch is never checked out locally, nothing assigns IDs, so entries archived on feature branches stay
+without one. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
 (question) and `U<n>` (todo for you); a report or note has none.
 
 ## Status line
@@ -145,7 +147,7 @@ refuses") treats `block` as `warn`.
 | Check | Value | Guards |
 | :--- | :--- | :--- |
 | `template-write-guard` | block | writes under `.act/` — put a project version in `docs/ai/local/<same path>` instead |
-| `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` reports without writing, `off` skips it |
+| `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` only reports what it would refresh (once per change, not at every start) and writes nothing, here and in `update.py`'s bridge step; `off` skips it, and `update.py` then only reports too |
 | `orchestrator-rules` | block | fallback only: while `docs/ai/rules.md` does not import the orchestrator-only rules (an older, locally changed copy), the session start names them in short; `off` skips it |
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `worker-write-scope` | block | a worker writing outside its assignment's `Write scope:` line (`R-cost-delegate`) — `warn` reports without blocking, `off` skips it |
@@ -157,7 +159,7 @@ refuses") treats `block` as `warn`.
 | `worker-docs-ai` | block | a worker writing under `docs/ai/` — only the orchestrator writes there (`R-role-worker`) |
 | `worker-git-write` | block | a worker running a git command that changes the tree or history (`commit`, `add`, `stash`, `checkout`, `reset`, `restore`, `merge`, `rebase`, `clean`, `push`) (`R-role-worker`) |
 | `ide-mcp` | block | a connected IDE MCP server's own tools (`execute_terminal_command`, `apply_patch`, `execute_run_configuration`, ...), classified as shell/write/exec-without-target and checked the same way the matching standard tool would be — a target this cannot evaluate denies rather than passing through unchecked; `warn` reports without blocking, `off` skips it (`topics/ide.md`) |
-| `worker-cap` | block | a worker's tool calls beyond its `Cap: <n>` line (without one: `light` 10, `standard` 40, `elevated` 60, `high`/`expert` 80) — a note at the cap, refused from 1.5 × the cap (`R-cost-delegate`) |
+| `worker-cap` | block | a worker's tool calls beyond its `Cap: <n>` line (without one: `light` 10, `standard` 40, `elevated` 60, `high`/`expert` 80) — a note at the cap, refused from 1.5 × the cap (`R-cost-delegate`); known limit: a call these checks allow but Claude Code's own permission prompt then denies still counts, since the pre-call hook never sees that denial |
 | `status-poll` | block | repeated status queries on a running worker with no real work in between — refused from the second in a row (`R-cost-wait`) |
 | `encoding-hint` | block | writing to a file that is not UTF-8 — the first write per session and file is stopped once with a note, the repeat goes through; `warn` only notes after the write (`R-code-encoding`) |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |

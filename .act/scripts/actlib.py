@@ -506,16 +506,20 @@ def translate_note_parts(
             "Translate once, file by file (`R-work-language`): headings, table headers, status words "
             "in prose and hint texts only. Leave unchanged: marks (`<!-- act:... -->`), header fields "
             "and their values (`status: open|answered|done` stays English, in examples too), config "
-            "keys and values, code, paths, and anything a person wrote. Then remove the `act:default` "
-            "line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays English, "
-            "the template keeps it current.",
+            "keys and values, code, paths, and anything a person wrote. Common English technical terms "
+            "(Skill, Worker, Override, Inbox, Backlog, Board, Hook, Commit, Branch …) stay as they are, "
+            "above all in headings; a short explanation at most once in the text below. Then remove the "
+            "`act:default` line (line 1) from the file. `docs/ai/rules.md` is not part of this: it stays "
+            "English, the template keeps it current.",
             "Einmal übersetzen, Datei für Datei (`R-work-language`): nur Überschriften, Tabellenköpfe "
             "und Statuswörter im Fließtext sowie Hinweistexte. Unverändert lassen: Marken "
             "(`<!-- act:... -->`), Kopf-Felder und ihre Werte (`status: open|answered|done` bleibt "
             "Englisch, auch in Beispielen), Konfigurationsschlüssel und -werte, Code, Pfade, und alles, "
-            "was ein Mensch geschrieben hat. Danach die `act:default`-Zeile (Zeile 1) aus der Datei "
-            "entfernen. `docs/ai/rules.md` gehört nicht dazu: sie bleibt Englisch, die Vorlage hält sie "
-            "aktuell.",
+            "was ein Mensch geschrieben hat. Gängige englische Fachbegriffe (Skill, Worker, Override, "
+            "Inbox, Backlog, Board, Hook, Commit, Branch …) bleiben stehen, vor allem in Überschriften; "
+            "eine kurze Erklärung höchstens einmal im Text darunter. Danach die `act:default`-Zeile "
+            "(Zeile 1) aus der Datei entfernen. `docs/ai/rules.md` gehört nicht dazu: sie bleibt "
+            "Englisch, die Vorlage hält sie aktuell.",
         ),
     ]
     lines += [

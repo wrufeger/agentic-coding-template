@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
 import os
@@ -377,7 +378,7 @@ def _is_bootstrap_copy(dest_path: Path, lock_present: bool, marker: Optional[str
     return _first_line(dest_path) == marker
 
 
-def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], list[str]]:
+def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tuple[list[str], list[str], list[str]]:
     """
     Re-derive every generated bridge that is still exactly as it was last generated (current
     hash matches .act-local/cache.json) from its .act/bridges/ source — this stands in for a
@@ -392,7 +393,9 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
     separately (`bootstrapped`) rather than folded into `refreshed`.
 
     With `write=False` (check-mode-`warn`), nothing is written — the "refreshed"/"bootstrapped"
-    lists report what would have changed instead.
+    lists report what would have changed instead, and (`only_changed`) only a bridge whose content
+    really differs from its source. update.py's --plan passes `only_changed=False`: it runs before
+    the new template is installed, so the installed sources say nothing about what will change.
 
     Returns (changed, refreshed, bootstrapped): `changed` are destinations left alone because
     they were edited locally; `refreshed` are destinations re-derived from the template (or that
@@ -442,7 +445,16 @@ def _refresh_bridges(root: Path, write: bool) -> tuple[list[str], list[str], lis
         target_list = bootstrapped if is_bootstrap else refreshed
 
         if not write:
-            target_list.append(dest_rel)
+            # Only what would actually change: an unedited bridge that already equals its source
+            # (line endings aside) has nothing to refresh.
+            try:
+                same = (not is_bootstrap and
+                        source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+                        == dest_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+            except (OSError, UnicodeDecodeError):
+                same = False
+            if not (same and only_changed):
+                target_list.append(dest_rel)
             continue
 
         try:
@@ -1578,6 +1590,12 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     if mode == "off":
         return True
 
+    # Under `warn` nothing is applied, so the same drift would be named again at every session
+    # start. The "would ..." notes are collected here instead of printed on the spot, and printed
+    # once after the last of them -- only when their set differs from the one recorded last time
+    # (the first `warn` run has no record yet and records it).
+    warn_notes: list[str] = []
+
     branch = _current_branch(root)
 
     waiting = 0
@@ -1636,7 +1654,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             else:
                 pending = update.pending_dependent_changes(root)
                 if pending:
-                    print(f"[act] note: docs/ai/config.md changed ({pending}) -- dependent files would be synced (warn mode, not applied)")
+                    warn_notes.append(f"[act] note: docs/ai/config.md changed ({pending}) -- dependent files would be synced (warn mode, not applied)")
         except Exception as exc:
             # Never silent — a sync that stopped midway is finished by the next session start
             # (it keeps its snapshot unwritten) or by update.py --catch-up.
@@ -1687,7 +1705,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             print(note)
     if mode == "warn":
         for dest_rel in refreshed_bridges:
-            print(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
+            warn_notes.append(f"[act] note: {dest_rel} would be refreshed from .act/bridges/ (warn mode, not applied)")
     # A raw `git pull` can land the template's own bootstrap CLAUDE.md/AGENTS.md (marker
     # "<!-- act:bootstrap -->") on top of the project's real bridge in an already set-up project.
     # _refresh_bridges tells that apart from an actual local edit and rewrites it here — self-
@@ -1695,8 +1713,12 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # rewritten, the marker is gone and this cannot fire again for the same file.
     for dest_rel in bootstrap_bridges:
         verb = "replaced by" if mode == "block" else "would be replaced by (warn mode, not applied)"
-        print(f"[act] note: {dest_rel}: template bootstrap file {verb} the project bridge "
-              "(a raw git pull brought it in)")
+        bootstrap_note = (f"[act] note: {dest_rel}: template bootstrap file {verb} the project bridge "
+                          "(a raw git pull brought it in)")
+        if mode == "block":
+            print(bootstrap_note)
+        else:
+            warn_notes.append(bootstrap_note)
 
     # What Claude Code actually loads. A checked coding set becomes an "@" import (and an
     # unchecked one loses it) so the checkboxes in docs/project/coding_rules.md decide; a locally
@@ -1708,8 +1730,12 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         coding_fixed = rules.sync_coding_imports(root, write=(mode == "block"))
         if coding_fixed:
             verb = "set to" if mode == "block" else "would be set to (warn mode)"
-            print(f"[act] note: docs/project/coding_rules.md: {coding_fixed} set line(s) {verb} "
-                  "their checkbox (checked = @-import)")
+            coding_note = (f"[act] note: docs/project/coding_rules.md: {coding_fixed} set line(s) {verb} "
+                           "their checkbox (checked = @-import)")
+            if mode == "block":
+                print(coding_note)
+            else:
+                warn_notes.append(coding_note)
         old_note = _old_imports_note(root)
         if old_note:
             state["old_imports"] = True
@@ -1735,7 +1761,40 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         pass
     if mode == "warn":
         for dest_rel in role_frontmatter_changed:
-            print(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")
+            warn_notes.append(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")
+    if mode == "warn":
+        try:
+            # Several notes carry only a name or a count, and a bridge note reads the same for every
+            # template revision, so the key also holds the hash of everything the notes derive from:
+            # a further change of any of them is new drift even when the wording is identical.
+            key_parts = list(warn_notes)
+            for rel in ("docs/ai/config.md", "docs/project/coding_rules.md", ".act/tiers.json"):
+                try:
+                    key_parts.append(f"{rel}:{actlib.normalized_sha256(root / rel)}")
+                except OSError:
+                    key_parts.append(f"{rel}:-")
+            key_parts.append("applied:" + json.dumps(actlib.read_lock().get("applied"), sort_keys=True))
+            key_parts += [
+                f"{dest_rel}:{actlib.normalized_sha256(root / '.act' / 'bridges' / _BRIDGE_MAP[dest_rel])}"
+                for dest_rel in refreshed_bridges + bootstrap_bridges if dest_rel in _BRIDGE_MAP]
+            digest = hashlib.sha256("\n".join(key_parts).encode("utf-8")).hexdigest() if warn_notes else ""
+            recorded = actlib.read_cache().get("warn_notes_digest", "")
+            if digest != recorded:
+                if digest or recorded:
+                    actlib.write_cache({"warn_notes_digest": digest})
+                for note in warn_notes:
+                    print(note)
+        except Exception:
+            for note in warn_notes:
+                print(note)  # a broken record must never hide the drift itself
+    elif mode == "block":
+        # A run that syncs makes the earlier warn record obsolete: the same drift arriving again
+        # later is new, not already reported.
+        try:
+            if actlib.read_cache().get("warn_notes_digest"):
+                actlib.write_cache({"warn_notes_digest": ""})
+        except Exception:
+            pass
     # An unknown tier/reasoning value (config.md § Roles or tiers.json) is reported once here as a
     # single line, whatever the role count — previously this only ever surfaced in init.py/
     # update.py's own notes, never at session start.

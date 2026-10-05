@@ -798,7 +798,7 @@ def way_back(root: Path) -> str:
 
 
 def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
-              language_chat: Optional[str] = None) -> int:
+              language_chat: Optional[str] = None, confirm_no_targets: bool = False) -> int:
     state_path = root / ADOPT_DIR / "state.json"
     state = _read_json(state_path)
     if state and state.get("state") in ("applied", "finished"):
@@ -828,6 +828,28 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
         problems.append(f"working tree not clean (only .act-local/ may be untracked): {', '.join(dirty[:8])}")
     if problems:
         raise Refused(problems)
+
+    # --finish refuses an adopt row whose target still has the content recorded here ("content not
+    # adopted?"). A row without a target has no such record. For ai-config and work rows that is by
+    # design -- their content becomes proposals and entries, never a file at a target -- so only the
+    # other classes (project-doc, ai-machinery, predecessor, unknown) count: their content has a
+    # file destination that is not named yet. Going on needs the owner's yes.
+    untargeted = [row["path"] for row in rows if row["action"] == "adopt" and not _targets(row)
+                  and row.get("class") not in ("ai-config", "work")]
+    if untargeted:
+        shown = ", ".join(untargeted[:5]) + (f" (+{len(untargeted) - 5} more)" if len(untargeted) > 5 else "")
+        warning = (f"{len(untargeted)} adopt row(s) have no target yet ({shown}): --finish cannot check "
+                   "that their content was carried over (\"content not adopted?\" compares a target "
+                   "recorded at --apply), so a row whose content never arrives would pass. Name the "
+                   "destination file as the row's target if it is known now; if the content only "
+                   "becomes entries or proposals, or the destination is chosen later, ask the owner and "
+                   "run --apply again with --confirm-no-targets")
+        if confirm_no_targets:
+            print(f"[adopt] warning: {warning} (confirmed)")
+        elif plan:
+            print(f"[adopt] warning: {warning} (--apply without the flag is refused)")
+        else:
+            raise Refused(warning)
 
     moves, early_deletes, shadowed = [], [], []
     for row in rows:
@@ -2274,6 +2296,10 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   An adopt target that still has the content it had right after --apply, or that only
   adopt_config.py changed since (its hash as recorded in {ADOPT_DIR}/config-touched.json), is
   refused ("content not adopted?").
+--apply with an adopt row of class project-doc, ai-machinery, predecessor or unknown that has no
+  target: refused unless --confirm-no-targets is given (the owner's yes) — without a target recorded
+  at --apply, --finish cannot refuse a row whose content was never carried over. ai-config and work
+  rows never need one (their content becomes proposals and entries). --apply --plan prints the warning and goes on.
 --apply --language-docs <code> --language-chat <code|auto>: passed on to init.py, so the
   docs language and the init todos are right from the start. They are recorded in state.json
   ("languages") and adopt_config.py keeps them; it sets `language-docs` from an old AI-CONFIG.md
@@ -2306,6 +2332,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan", action="store_true", help="validate and show what would happen, change nothing")
     parser.add_argument("--force", action="store_true",
                         help=f"with --abort: copy work done since --apply to {ABORTED_ROOT}/ first, then abort")
+    parser.add_argument("--confirm-no-targets", action="store_true",
+                        help="with --apply: the owner confirmed that adopt rows without a target are applied "
+                             "although --finish's \"content not adopted?\" check cannot cover them")
     parser.add_argument("--language-docs", metavar="CODE",
                         help="with --apply: language of docs/ (e.g. de), passed on to init.py; default en")
     parser.add_argument("--language-chat", metavar="CODE",
@@ -2323,6 +2352,9 @@ def main(argv: list) -> int:
     root = Path(args.target).expanduser().resolve()
     if (args.language_docs or args.language_chat) and not args.apply:
         print("adopt.py: --language-docs/--language-chat only go with --apply", file=sys.stderr)
+        return 2
+    if args.confirm_no_targets and not args.apply:
+        print("adopt.py: --confirm-no-targets only goes with --apply", file=sys.stderr)
         return 2
     import actlib
     languages: dict[str, Optional[str]] = {}
@@ -2344,7 +2376,8 @@ def main(argv: list) -> int:
         if args.abort:
             return cmd_abort(root, args.plan, args.force)
         if args.apply:
-            return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"])
+            return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"],
+                             args.confirm_no_targets)
         return cmd_finish(root, args.plan)
     except Refused as exc:
         print("refused:", file=sys.stderr)

@@ -139,8 +139,9 @@ Why the proposals are what they are, and where to deviate:
     the file there byte-identical, and `--finish` removes the source (`git rm`).
 
   Never `adopt` a doc into itself anywhere else: `adopt.py` refuses a target equal to its own
-  source, and an `adopt` row with an empty target still passes `--apply --plan` — after `--apply`
-  the only ways on are moving it (the source is removed) or `--abort`.
+  source, and an `adopt` row with an empty target still passes `--apply --plan` (with a warning);
+  `--apply` itself refuses it without `--confirm-no-targets` — after `--apply` the only ways on are
+  moving it (the source is removed) or `--abort`.
 - `ai-config` -> `adopt` for `CLAUDE.md`, `AGENTS.md`, `AI-CONFIG.md` and other tool rule files
   (`GEMINI.md`, `.github/copilot-instructions.md`, `.cursorrules`, ...) that hold content of their
   own; `legacy` for one that holds none (`template only`, or only "see AGENTS.md") — an `adopt`
@@ -205,7 +206,12 @@ for the old `AI-CONFIG.md`, the `docs/ai/local/...` path of an own skill or agen
 records what each target that exists at that moment looks like, and `--finish` refuses when any
 recorded target is still unchanged ("content not adopted?"); a target added after `--apply` is
 never checked that way. Leave `target` empty only where the file name is chosen at write time
-(entry and proposal files, step 6).
+(entry and proposal files, step 6). An `adopt` row of class `project-doc`, `ai-machinery`, `predecessor` or `unknown` without a
+target makes `--apply` refuse (and `--apply --plan` warn): `--finish` has nothing to compare it
+against, so content that never arrived would pass. `ai-config` and `work` rows (content that becomes
+proposals and entries) are exempt. Fill the target where the destination is known; where it is not,
+put the question into the approval of step 3 and, only on the owner's yes, pass
+`--confirm-no-targets` to `--apply` (step 4).
 
 **Actions are fixed once `--apply` has run**: `--finish` refuses every row whose action differs
 from the one recorded then ("action changed since --apply"). Only `target` and `done` may change
@@ -240,7 +246,8 @@ git -C <dir> config core.longpaths true
 
 ## 3. Owner approves once
 
-The whole table, one pass — no partial start. The owner may change any number of rows; nothing
+The whole table, one pass — no partial start. If `--apply --plan` warned about `adopt` rows without
+a target, name those rows in the same approval and ask whether to go on without targets for them. The owner may change any number of rows; nothing
 runs until the table is accepted as it stands (or after those corrections, validated again).
 `core.longpaths` (step 2) is part of the same answer where it is needed.
 
@@ -259,7 +266,8 @@ python .act/scripts/adopt.py --target <dir> --apply --plan --language-docs <code
 python .act/scripts/adopt.py --target <dir> --apply --language-docs <code> --language-chat <code|auto>
 ```
 
-`--plan` first, changes nothing. Both options go straight to `init.py --target` and are recorded in
+`--plan` first, changes nothing. Pass `--confirm-no-targets` only
+if the owner agreed to it in step 3, never on your own. Both options go straight to `init.py --target` and are recorded in
 `state.json` as fixed by the owner: step 5 never overrides them, whatever the old `AI-CONFIG.md` says
 (its report row reads "kept: set at --apply"). Without them `init.py` writes English, and step 5 can
 still set `language-docs` from an old `AI-CONFIG.md`. The `mode`

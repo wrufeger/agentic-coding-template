@@ -199,7 +199,9 @@ def write_line(cfg: dict, level: str, agent: str, topic: str, text) -> None:
 # file lock (.act-local/log-state.lock) so two hook processes racing (SubagentStart/PreToolUse can
 # both fire close together, and PostToolUseFailure/Notification run async — see settings.hooks.json)
 # do not both grab the same number; a write is always atomic (temp file + os.replace) so a reader
-# never sees a half-written file even if the lock itself was not obtained.
+# never sees a half-written file even if the lock itself was not obtained. Safe across processes (every
+# hook is its own process), not across threads of one process: the file lock is no thread lock, so
+# concurrent threads can hand out the same number and lose entries.
 # ---------------------------------------------------------------------------
 
 _SESSION_MAX_AGE = 24 * 3600  # a session's numbering is forgotten a day after its last activity
