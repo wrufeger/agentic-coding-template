@@ -75,10 +75,14 @@
 #          in this order" (_simple_commands) and "is this one a `git <sub>` call, and under which
 #          `-C` directory" (_git_call) — much less than shell_targets' write-target machinery, so
 #          it is its own small walker, not a copy of _scan_tokens. If the command cannot be
-#          tokenized at all (an unclosed quote, `$'...'` ANSI-C quoting — shlex does not know it),
+#          tokenized at all (an unclosed quote, `$'...'` ANSI-C quoting — that tokenizer does not know it),
 #          a coarse raw-text fallback treats a bare "git ... commit" mention as a `-a`-style commit
 #          with no known add-paths — over-inclusive on purpose, the same stance shell_targets takes
-#          for its own tokenizing fallback.
+#          for its own tokenizing fallback. The chain is read twice — once with the previous
+#          tokenizer (shell_targets_legacy, no backtick spans) and once with the word lexer — and
+#          the commits of both readings are scanned (_git_commit_invocations): the lexer can add a
+#          commit to scan, never drop one the previous reading had, and a failure in its reading
+#          leaves the previous one standing.
 #
 #          A file's own diff section over 2MB is skipped (named in the "not fully checked" note),
 #          every other file in the same diff is still scanned — the 2MB line is per file, not per
@@ -156,6 +160,7 @@ import feedback_privacy
 
 from .common import _check_mode, _shell_command
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
+from . import shell_targets_legacy as _legacy_tokens
 from .shell_targets import (
     _ASSIGNMENT_RE,
     _GIT_GLOBAL_VALUE_FLAGS,
@@ -185,8 +190,8 @@ __all__ = [
     "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
     "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries",
     "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
-    "_git_call", "_nested_command", "_simple_commands", "_tokenize_chain",
-    "_git_commit_invocations", "_scan_commit", "_pending_file", "_queue_note",
+    "_git_call", "_nested_command", "_simple_commands", "_with_span_commands", "_tokenize_chain",
+    "_invocation_key", "_git_commit_invocations", "_git_commit_invocations_pass", "_scan_commit", "_pending_file", "_queue_note",
     "_ADD_UNTRACKED_FLAGS", "_WHOLE_TREE_PATHSPEC", "_HOOK_BUDGET", "_hook_deadline", "_check_deadline",
     "_ADD_SUBCOMMANDS", "_ADD_VALUE_FLAGS", "_ADD_ALL_LETTERS", "_ADD_UNTRACKED_LETTERS",
     "_ADD_FORCE_LETTERS", "_SHORT_CLUSTER_RE", "_WHOLE_TREE_OPERANDS", "_SHORT_MAGIC_RE",
@@ -866,19 +871,52 @@ def _simple_commands(tokens: list) -> list[list[str]]:
     return commands
 
 
-def _tokenize_chain(command: str) -> Optional[list]:
+def _with_span_commands(commands: list[list[str]], depth: int = 0) -> list[list[str]]:
+    """`commands` with the simple commands of every backtick span in them (each word's `subs`, quote
+    context already applied by shell_targets' tokenizer) put in front of the command whose word holds
+    the span — bash expands a span before it runs the command around it, so a `git add` there is
+    ahead of a later `git commit`. Spans inside spans are followed up to _MAX_NESTED_DEPTH (counted
+    from `depth`, the nesting the caller is already at). A span that does not tokenize but
+    mentions a commit contributes a `-a`-style `git commit`, the coarse stance of the raw-text
+    fallback in _git_commit_invocations."""
+    expanded: list[list[str]] = []
+    for words in commands:
+        if depth < _MAX_NESTED_DEPTH:
+            for word in words:
+                for span in getattr(word, "subs", ()):
+                    span_tokens = _tokenize_chain(span)
+                    if span_tokens is not None:
+                        expanded.extend(_with_span_commands(_simple_commands(span_tokens), depth + 1))
+                    elif _GIT_COMMIT_FALLBACK_RE.search(span):
+                        expanded.append(["git", "commit", "-a"])
+        expanded.append(words)
+    return expanded
+
+
+def _tokenize_chain(command: str, legacy: bool = False) -> Optional[list]:
     """shell_targets' own tokenizer (line mode first, whole-command fallback), None if neither
-    manages (an unclosed quote, or `$'...'` ANSI-C quoting, which shlex does not know)."""
+    manages (an unclosed quote, or `$'...'` ANSI-C quoting, which that tokenizer does not know).
+    `legacy` selects the previous tokenizer, shell_targets_legacy's, instead of the word lexer."""
     if "$'" in command:
         return None
+    line_tokens = _legacy_tokens._line_mode_tokens if legacy else _line_mode_tokens
+    whole_tokens = _legacy_tokens._shell_tokens if legacy else _shell_tokens
     try:
-        return _line_mode_tokens(command)
+        return line_tokens(command)
     except ValueError:
         pass
     try:
-        return _shell_tokens(command, newline_is_operator=True)
+        return whole_tokens(command, newline_is_operator=True)
     except ValueError:
         return None
+
+
+def _invocation_key(invocation: dict) -> tuple:
+    """A hashable identity for one _git_commit_invocations entry, for the union's duplicate check."""
+    return (
+        invocation["cwd"], invocation["all"],
+        tuple((entry["path"], entry["forced"]) for entry in invocation["add_paths"]),
+    )
 
 
 def _git_commit_invocations(
@@ -888,7 +926,41 @@ def _git_commit_invocations(
     alias_cache: Optional[dict] = None,
     depth: int = 0,
 ) -> list[dict]:
-    """Every `git commit`/continued-operation call in `command`, in order, as {"cwd", "all",
+    """Every `git commit`/continued-operation call in `command`, in order — the UNION of two
+    readings of it: the previous tokenizer's (shell_targets_legacy, no backtick-span handling; its
+    entries first, in its own order) and the word lexer's (backtick spans included), each entry
+    once. The union is what keeps the lexer from ever weakening this check: whatever the previous
+    reading found to scan is still scanned. An exception in the lexer's reading — ValueError,
+    RecursionError, a bug — is swallowed and the legacy reading returned alone; one in the legacy
+    reading propagates, exactly as it did before the lexer existed. The entry shape and the walk
+    itself are _git_commit_invocations_pass's."""
+    if alias_cache is None:
+        alias_cache = {}
+    legacy = _git_commit_invocations_pass(command, base_cwd, deadline, alias_cache, depth, legacy=True)
+    try:
+        current = _git_commit_invocations_pass(command, base_cwd, deadline, alias_cache, depth, legacy=False)
+    except Exception:  # noqa: BLE001 — the legacy reading stands alone, see the docstring
+        return legacy
+    merged = list(legacy)
+    seen = {_invocation_key(entry) for entry in legacy}
+    for entry in current:
+        key = _invocation_key(entry)
+        if key not in seen:
+            seen.add(key)
+            merged.append(entry)
+    return merged
+
+
+def _git_commit_invocations_pass(
+    command: str,
+    base_cwd: str,
+    deadline: Optional[float],
+    alias_cache: dict,
+    depth: int,
+    legacy: bool,
+) -> list[dict]:
+    """One reading of `command` for _git_commit_invocations — `legacy` picks the tokenizer (the
+    previous one, without backtick spans, or the word lexer with them). Every `git commit`/continued-operation call in `command`, in order, as {"cwd", "all",
     "add_paths"} — "cwd" is the commit's own directory (moved by a `cd <literal dir>` or
     `git -C dir` earlier in the same chain, a single best-effort current directory, not
     shell_targets' branch-aware set — see the module docstring), "all" is whether -a/--all (or a
@@ -903,9 +975,7 @@ def _git_commit_invocations(
     Falls back to a coarse raw-text search when the chain cannot be tokenized at all: a bare
     "git ... commit" mention is treated as a `-a`-style commit with no known add-paths —
     over-inclusive on purpose (shell_targets takes the same stance for its own fallback)."""
-    if alias_cache is None:
-        alias_cache = {}
-    tokens = _tokenize_chain(command)
+    tokens = _tokenize_chain(command, legacy)
     if tokens is None:
         if _GIT_COMMIT_FALLBACK_RE.search(command):
             return [{"cwd": base_cwd, "all": True, "add_paths": []}]
@@ -915,18 +985,23 @@ def _git_commit_invocations(
     pending_add_paths: list[dict] = []
     pending_all = False
     cwd = base_cwd
-    for words in _simple_commands(tokens):
+    commands = _simple_commands(tokens)
+    for words in commands if legacy else _with_span_commands(commands, depth):
         if depth < _MAX_NESTED_DEPTH:
             nested = _nested_command(words)
             if nested is not None:
                 invocations.extend(
-                    _git_commit_invocations(nested, cwd, deadline, alias_cache, depth + 1)
+                    _git_commit_invocations_pass(nested, cwd, deadline, alias_cache, depth + 1, legacy)
                 )
                 continue
 
         call = _git_call(words, cwd, deadline, alias_cache)
         if call is None:
-            if words and _command_name(words[0]) == "cd":
+            # A backtick span glued to the name (`` `echo x`cd ``) makes bash run a different command
+            # (`xcd`), not `cd`; _command_name reads the name with the span cut out and would see
+            # `cd`. Only follow a `cd` whose name word carries no span — otherwise leave cwd where it
+            # is (the over-inclusive side: a later commit is then scanned at the unchanged directory).
+            if words and _command_name(words[0]) == "cd" and not getattr(words[0], "subs", ()):
                 operands, _values = _operands(words[1:])
                 if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
                     new_bases = _cd_bases(frozenset({cwd}), operands[0])

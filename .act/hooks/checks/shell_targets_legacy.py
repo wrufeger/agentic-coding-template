@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
+# LEGACY COPY — do not edit and do not import from outside checks/. This module is the previous
+# shlex-based Bash write-target scanner, kept verbatim as the safety net for the word lexer in
+# shell_targets.py: every public result of shell_targets.py (write targets) and command_words.py
+# (command word lists) is the UNION of what this legacy scanner finds and what the new lexer finds,
+# so the new lexer can only ever add findings, never remove one the previous scanner had — a
+# blocking check is never weaker than before. If this scanner itself raises, the caller sees that
+# exception exactly as it did before the lexer was replaced. Remove this file only together with
+# command_words_legacy.py once the new lexer has proven itself on its own.
+#
 # Purpose: Bash write-target scanner — shared by checks/write_guard.py (check 1) and
 #          checks/write_scope.py (check 1c). Both need the same answer for a Bash command: which
 #          paths does it write to, and against which directory is a relative one resolved. Two
@@ -8,15 +17,9 @@
 #          times (2026-09-23): the first read a `>` inside quotes or a heredoc body as a
 #          redirection, the second masked quotes and heredocs by regex and thereby hid real
 #          redirections (`echo \" > f \"`, `echo don\'t > f`, a quoted "<<EOF", ...). This version
-#          tokenizes instead — a small POSIX-style word lexer (_shell_tokens: the quoting rules of
-#          shlex plus backticks) with the operator characters as their own tokens — so quoting and
-#          escaping are decided by one tokenizer, and operators are read from the token stream,
-#          never from raw text. That tokenizer also knows backtick command substitution: a backtick
-#          outside single quotes and not escaped opens a span that runs to the next unescaped
-#          backtick, whatever quotes the span itself contains (bash finds the end that way); the
-#          span stays part of its word (whitespace and operators inside it do not split the word) and
-#          its content is attached to that word (_Word.subs) to be scanned as a command of its own.
-#          A backtick inside single quotes or escaped is plain text. Steps (_scan_command):
+#          tokenizes instead — shlex in POSIX mode with the operator characters as their own
+#          tokens — so quoting and escaping are decided by one tokenizer, and operators are read
+#          from the token stream, never from raw text. Steps (_scan_command):
 #   1. backslash-newline continuations are joined (_LINE_CONTINUATION_RE);
 #   2. line mode: every line is tokenized on its own; a line whose token stream carries a real
 #      `<<`/`<<-` operator plus delimiter has the heredoc body skipped up to its terminator line —
@@ -24,25 +27,14 @@
 #      (_line_mode_tokens); the `$(...)`/backtick parts of an unquoted-delimiter body, which bash
 #      does run, are kept as commands of their own;
 #   3. conservative fallback when a line does not tokenize on its own (an unclosed quote, typically
-#      a string spanning lines) or the command uses ANSI-C quoting `$'...'`, which this lexer does not
+#      a string spanning lines) or the command uses ANSI-C quoting `$'...'`, which shlex does not
 #      know: the whole command is tokenized in one go (newline as an operator, a multi-line string
 #      becomes one token, no heredoc skipping); if that fails too, or for `$'...'` in any case,
 #      every word after a `>`-style operator in the raw text also counts as a target
-#      (_raw_redirect_targets) — over-blocking is the accepted price there — and the tokens each
-#      attempt had read before the word that broke it (an earlier line, a command before the
-#      unclosed quote) are scanned as well (_TokenizeError.partial);
+#      (_raw_redirect_targets) — over-blocking is the accepted price there;
 #   4. the token stream is walked command by command (_scan_tokens): redirections, the write
 #      commands of _simple_command_targets, `cd` for the base directory, and the contents of
-#      `sh -c "..."`, `eval`, `$(...)` and backtick spans (the words' own `subs`) scanned
-#      recursively.
-#
-# Safety net: the lexer is newer than the scanner it replaced, and a blocking check must never be
-# weaker than before. So the public result, _bash_write_targets, is the union of this scan and the
-# previous scanner kept verbatim in shell_targets_legacy.py (command_words.py does the same with
-# command_words_legacy.py for its word lists, secret_scan.py with its commit detection). Anything
-# this lexer reads differently or fails on (an exception of any kind, a recursion bound) therefore
-# costs nothing: the legacy half still reports what it always did. The known limits below describe
-# the lexer's half; the union only ever adds to them.
+#      `sh -c "..."`, `eval`, `$(...)` and backticks scanned recursively.
 #
 # Known limits (a target missed here is simply not checked — resolved toward over-blocking wherever
 # the command itself is ambiguous):
@@ -75,50 +67,37 @@
 #     are then scanned as ordinary commands instead of being skipped, which can raise a spurious
 #     target from body text that was never going to run as a command (over-scanning, not a missed
 #     write);
-#   - backtick spans are cut out by the tokenizer itself (_read_word), so their quote context is
-#     known. Inside double quotes a backtick normally opens a span, but a `$(...)`, `$((...))`,
-#     `${...}` or `$[...]` is consumed whole first (_collect_dq_expansion): bash reads the inside of
-#     those with their own quoting, where a single-quoted run is literal, so a backtick in such a
-#     run opens no span (and therefore cannot swallow a redirection after the string). An unquoted
-#     `$(...)` is still handled by the operator mechanism (`$` a word character, the parentheses
-#     operators) and a word that contains `$(` after dequoting is scanned again as text, so a `$(`
-#     inside single quotes outside double quotes is still recursed into as if bash ran it (a false
-#     block, never a miss). An `$((...))` is treated like a `$(...)` command substitution for
-#     scanning (over-scanning its arithmetic as if it were a command — the safe side). A line
-#     tokenized on its own that ends inside an unquoted span does not tokenize at all (bash ends the
-#     span in a later line, which only the whole-command fallback sees); in whole-command mode a span
-#     with no closing backtick runs to the end of the command and is scanned as a command. The word
-#     is kept verbatim, so a target made of a span is dynamic (_is_dynamic_target) and check 1c
-#     denies it; its command name is read from the word with the spans cut out (_Word.bare), since
-#     `` `;`rm `` runs `rm` — and for the same reason a span glued to a `cd`/`pushd`/`popd` name
-#     leaves the base directory unknown rather than following a move bash does not make. When a span
-#     is instead an *operand* of a last-operand writer (`cp`/`install`/`ln`/`rsync`), it can expand
-#     to empty and shift which word is the destination, so every operand of that command is then
-#     treated as a possible target (_simple_command_targets);
-#   - a command whose name is a *separate* word that is itself a backtick span (space-separated,
-#     `` `echo x` rm -rf d `` / `` `echo "` touch .act/x ``) is not recognized: bash runs whatever
-#     the span prints (or, when it prints nothing, the word after it), neither of which is knowable
-#     here, so the surrounding command is read with an empty name and matched against no writer. The
-#     span's own content is still scanned, but the command formed from its *output* is missed — the
-#     same gap HEAD has (both scanners return nothing for `` `echo "` touch .act/x ``). Resolved
-#     toward over-blocking only when some other, determinable part of the command names a target.
+#   - backticks are found by a regex over the already dequoted words (_scan_tokens,
+#     _BACKTICK_SPAN_RE), with no quote context left by then (open: a pre-tokenizing mask
+#     of every span was tried on 2026-09-25 and taken out again the same day after failing review
+#     twice — it lost `command_words.py`'s recursion, then mistook an apostrophe inside double
+#     quotes for a single quote, opening more bypasses than it closed). Three consequences: a span
+#     whose own text opens a quote leaks that quote into the rest of the command
+#     (`` echo `echo '` > other/f `echo '` `` — bash runs the `>`, this scanner reads it as quoted
+#     text: a known bypass); a backtick pair inside a single-quoted string (a commit message
+#     `git commit -m 'note `rm x`'`) is still recursed into as if bash ran it (a false block when
+#     that text names a protected path or a blocked command); and an unquoted span containing
+#     whitespace is split into several words, so a redirection target or operand that starts one is
+#     seen only as its first fragment (`echo x > \`echo .act/x\`` yields the target "`echo" — dynamic,
+#     so check 1c denies it, but a caller's text-only fallback such as check 1's finds no `.act/`
+#     in it; the span's own content is still scanned for writes of its own).
 
 from __future__ import annotations
 
 import bisect
+import io
 import os
 import re
+import shlex
 import socket
 import sys
 from pathlib import Path
 from typing import Optional
 
-from . import shell_targets_legacy as _legacy_targets
-
 __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
-    "_WRITE_REDIRECT_OPS", "_FD_DUP_WORD_RE", "_LINE_CONTINUATION_RE",
-    "_RAW_REDIRECT_RE", "_HEREDOC_OPEN_RE",
+    "_WRITE_REDIRECT_OPS", "_FD_DUP_WORD_RE", "_LINE_CONTINUATION_RE", "_MIDWORD_HASH_RE",
+    "_HASH_PLACEHOLDER", "_RAW_REDIRECT_RE", "_BACKTICK_SPAN_RE", "_HEREDOC_OPEN_RE",
     "_MAX_SCAN_DEPTH", "_GITBASH_DRIVE_RE", "_WIN32_PREFIXED_DRIVE_RE", "_WIN32_PREFIXED_UNC_RE",
     "_WIN32_ADMIN_SHARE_RE", "_LOCAL_HOST_NAMES", "_IGNORABLE_TARGETS", "_DYNAMIC_TARGET_RE",
     "_SIMPLE_DIR_RE", "_ASSIGNMENT_RE", "_RESERVED_PREFIXES", "_WRAPPER_COMMANDS",
@@ -127,12 +106,11 @@ __all__ = [
     "_GIT_WRITES_TEMPLATE_GUARD", "_GIT_WRITES_WORKER_SCOPE", "_Token", "_Target", "_Bases",
     "_NO_HEREDOC_MARKERS", "_local_host_names", "_to_native_path", "_is_remote_unc", "_resolve_path",
     "_is_ignorable_write_target", "_is_dynamic_target",
-    "_is_absolute_target", "_Word", "_TokenizeError", "_backtick_span", "_closed_backtick_spans",
-    "_EXPANSION_CLOSERS", "_skip_squote", "_collect_dq_nested", "_collect_dq_expansion", "_read_word",
-    "_split_operator_run", "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
+    "_is_absolute_target", "_NewlineKeepingStream", "_ShellLexer", "_split_operator_run",
+    "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
     "_line_mode_tokens", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
-    "_scan_command", "_bash_write_targets_new", "_bash_write_targets",
+    "_scan_command", "_bash_write_targets",
 ]
 
 _SHELL_OPERATOR_CHARS = "();<>|&"
@@ -152,7 +130,13 @@ _FD_DUP_WORD_RE = re.compile(r"^(?:\d+-?|-)$")
 
 # Backslash-newline (an odd number of backslashes before the newline) is a line continuation.
 _LINE_CONTINUATION_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+# shlex starts a comment at *any* unquoted `#`, bash only at the start of a word — `echo x#y > f`
+# would otherwise lose its redirection. A `#` glued to a preceding word character is swapped for a
+# placeholder before tokenizing and restored afterwards.
+_MIDWORD_HASH_RE = re.compile(r"(?<=[^\s();<>|&])#")
+_HASH_PLACEHOLDER = "\ue000"
 _RAW_REDIRECT_RE = re.compile(r"(?:&>>|&>|>>|>\||>&|<>|>)\s*([^\s;&|()<>]+)")
+_BACKTICK_SPAN_RE = re.compile(r"`([^`]*)`")
 # The word right after a heredoc operator in the raw line (not `<<<`), to see whether it was quoted.
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\S*)")
 _MAX_SCAN_DEPTH = 4
@@ -362,272 +346,41 @@ def _is_absolute_target(raw: str) -> bool:
     return Path(_to_native_path(raw)).is_absolute()
 
 
-class _Word(str):
-    """A dequoted word plus the contents of the backtick spans that stood in it unquoted or inside
-    double quotes (`subs`, already unescaped the way bash does before running them). The word's own
-    text keeps each span verbatim, backticks included, so `_is_dynamic_target` and every text
-    fallback still see it; `bare` is the same text with every span cut out (what the word is when
-    each span expands to nothing — `` `;`rm `` is the command `rm`). A plain `str` anywhere (a word
-    rebuilt by `join`, `replace`, a slice) has neither — read them with `getattr(word, "subs", ())`
-    and `getattr(word, "bare", word)`."""
+class _NewlineKeepingStream(io.StringIO):
+    """shlex skips a `#` comment with readline(), which also swallows the newline. In whole-command
+    mode that newline separates two commands, so it is left in the stream instead."""
 
-    subs: tuple[str, ...]
-    bare: str
-
-    def __new__(cls, text: str, subs: tuple[str, ...] = (), bare: Optional[str] = None) -> "_Word":
-        word = super().__new__(cls, text)
-        word.subs = subs
-        word.bare = text if bare is None else bare
-        return word
+    def readline(self, size: Optional[int] = -1, /) -> str:
+        line = super().readline(size)
+        if line.endswith("\n"):
+            self.seek(self.tell() - 1)
+            return line[:-1]
+        return line
 
 
-class _TokenizeError(ValueError):
-    """A ValueError from the tokenizers that also carries `partial`, the tokens read before the word
-    that failed (an unclosed quote or span, a trailing backslash). Whatever came before that word is
-    a real command prefix — a caller whose complete tokenization failed still scans it."""
+class _ShellLexer(shlex.shlex):
+    """shlex in POSIX mode that also reports whether the token just read contained any quoting or
+    escaping (`saw_quote`) — the one fact POSIX shlex drops along with the quotes. Without it a
+    quoted `'>'` or `";"` would look exactly like the operator. Tracked through the `state`
+    attribute, which shlex sets to the quote or escape character on entering one."""
 
-    def __init__(self, message: str, partial: Optional[list] = None) -> None:
-        super().__init__(message)
-        self.partial: list = partial or []
+    def __init__(self, text: str, newline_is_operator: bool) -> None:
+        self.saw_quote = False
+        operators = _SHELL_OPERATOR_CHARS + ("\n" if newline_is_operator else "")
+        super().__init__(_NewlineKeepingStream(text), posix=True, punctuation_chars=operators)
+        self.whitespace_split = True
+        if newline_is_operator:
+            self.whitespace = " \t\r"
 
+    @property
+    def state(self) -> Optional[str]:
+        return self._state
 
-def _backtick_span(text: str, pos: int, in_double: bool) -> tuple[str, int, bool]:
-    """The backtick span whose opening backtick sits just before `text[pos]`, as (content, index
-    after the closing backtick, closed). The span ends at the next backtick that is not escaped,
-    whatever quotes its own text contains — bash looks for the end that way, and a quote inside the
-    span belongs to the span, not to the surrounding command. Inside the span a backslash before
-    `` ` ``, `\\` or `$` (and, within double quotes, `"`) is removed, exactly the unescaping bash
-    does before it runs the content. Without a closing backtick the span runs to the end of
-    `text` (closed False): scanning more is the safe side."""
-    parts: list[str] = []
-    index = pos
-    while index < len(text):
-        char = text[index]
-        if char == "`":
-            return "".join(parts), index + 1, True
-        if char == "\\" and index + 1 < len(text):
-            following = text[index + 1]
-            parts.append(following if following in "`\\$" or (in_double and following == '"') else char + following)
-            index += 2
-            continue
-        parts.append(char)
-        index += 1
-    return "".join(parts), len(text), False
-
-
-def _closed_backtick_spans(text: str) -> list[str]:
-    """The contents of the closed backtick spans in `text` that has no quote context of its own (a
-    heredoc body: single quotes mean nothing there, only a backslash escapes a backtick)."""
-    spans: list[str] = []
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char == "\\":
-            index += 2
-        elif char == "`":
-            content, index, closed = _backtick_span(text, index + 1, in_double=False)
-            if closed:
-                spans.append(content)
-        else:
-            index += 1
-    return spans
-
-
-_EXPANSION_CLOSERS = {"(": ")", "{": "}", "[": "]"}
-# How deep `$(`/`${`/`$[` constructs may nest inside one word before the walk gives up with a
-# ValueError. An explicit bound, so the walk never depends on Python raising RecursionError (which
-# would not be a ValueError and would escape every caller that handles a tokenizing failure).
-_MAX_EXPANSION_DEPTH = 64
-
-
-def _skip_squote(text: str, index: int) -> int:
-    """The index just after the single-quoted run opening at `text[index]` (`'`). Inside a
-    `$(...)`/`${...}`/`$[...]` construct a single-quoted run is literal — a backtick in it opens no
-    command substitution — so the span logic must skip it whole. Runs to the end of `text` when the
-    quote is never closed (the construct is malformed then; _read_word's caller handles that through
-    its tokenize-error fallback)."""
-    end = text.find("'", index + 1)
-    return len(text) if end < 0 else end + 1
-
-
-def _collect_dq_nested(text: str, index: int, subs: list[str], depth: int = 0) -> int:
-    """Walk a nested double-quoted run (inside a `$(...)`/`${...}` that is itself inside double
-    quotes) from `text[index]` (the first character after its opening `"`) to its closing `"`,
-    appending the contents of every live backtick span to `subs` and following any nested
-    `$(...)`/`${...}`. A single quote is an ordinary character here (literal inside `"..."`).
-    Returns the index after the closing quote (end of `text` if it is unclosed)."""
-    while index < len(text):
-        char = text[index]
-        if char == '"':
-            return index + 1
-        if char == "\\" and index + 1 < len(text):
-            index += 2
-        elif char == "`":
-            content, index, _closed = _backtick_span(text, index + 1, in_double=True)
-            subs.append(content)
-        elif char == "$" and index + 1 < len(text) and text[index + 1] in _EXPANSION_CLOSERS:
-            index = _collect_dq_expansion(text, index + 1, subs, depth + 1)
-        else:
-            index += 1
-    return index
-
-
-def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0) -> int:
-    """Walk a `$(...)`, `$((...))`, `${...}` or `$[...]` expansion whose opener is at `text[index]`
-    (one of `([{`) to its matching closer, appending to `subs` the contents of every backtick span
-    that really runs inside it. The point of the walk: bash parses the inside of these constructs
-    with their own quoting, which differs from the surrounding `"..."` where every backtick opens a
-    span — so a backtick must not open a span that swallows a real redirection after the string.
-
-    Two quoting regimes inside:
-      - command substitution `$(...)` and parameter expansion `${...}`: a single-quoted run is
-        literal (a backtick in it runs nothing), so it is skipped whole (_skip_squote);
-      - arithmetic `$((...))` and `$[...]`: a single quote is an ordinary character, so a backtick
-        inside what looks like `'...'` IS a live command substitution and must be collected — not
-        skipped (a `$(( '` + backtick + `> .act/x` + backtick + `' ))` really writes `.act/x`).
-
-    Nested `"..."` runs are followed (_collect_dq_nested) and nested expansions of the same kind
-    (`$(( ))`) and of another kind (`${x:-$(...)}`) are followed too. A `$(...)` command is not
-    itself added here — the construct stays in the word verbatim, so the `"$("` re-scan in
-    _scan_tokens/command_words still reaches it. Returns the index after the matching closer (end of
-    `text` if the construct is unterminated — the safe side: the word then runs to the end and the
-    caller's unclosed-quote fallback takes over). Constructs nested deeper than
-    _MAX_EXPANSION_DEPTH raise ValueError (`depth` counts the nesting this walk is already at)."""
-    if depth > _MAX_EXPANSION_DEPTH:
-        raise ValueError(f"expansions nested deeper than {_MAX_EXPANSION_DEPTH} levels")
-    opener = text[index]
-    closer = _EXPANSION_CLOSERS[opener]
-    arithmetic = opener == "[" or (opener == "(" and index + 1 < len(text) and text[index + 1] == "(")
-    same_depth = 0
-    j = index + 1
-    while j < len(text):
-        char = text[j]
-        if char == opener:
-            same_depth += 1
-            j += 1
-        elif char == closer:
-            if same_depth == 0:
-                return j + 1
-            same_depth -= 1
-            j += 1
-        elif char == "'" and not arithmetic:
-            j = _skip_squote(text, j)
-        elif char == '"':
-            j = _collect_dq_nested(text, j + 1, subs, depth + 1)
-        elif char == "`":
-            content, j, _closed = _backtick_span(text, j + 1, in_double=False)
-            subs.append(content)
-        elif char == "$" and j + 1 < len(text) and text[j + 1] in _EXPANSION_CLOSERS:
-            j = _collect_dq_expansion(text, j + 1, subs, depth + 1)
-        elif char == "\\" and j + 1 < len(text):
-            j += 2
-        else:
-            j += 1
-    return j
-
-
-def _read_word(
-    text: str, start: int, operator_chars: str, blank: str, spans_must_close: bool = False
-) -> tuple[_Word, int]:
-    """One word from `text[start:]` (which begins with a character that is neither blank nor an
-    operator), as (word, index after it). Quoting as POSIX shlex had it: `'...'` literal, `"..."`
-    with a backslash only before `"`, a backslash or a backtick (any other backslash stays), an unquoted
-    backslash escapes the next character. Beyond that, an unquoted or double-quoted backtick opens a
-    span (_backtick_span) that stays in the word verbatim and is recorded in `subs`; a backtick
-    inside single quotes or escaped is an ordinary character. Raises ValueError on an unclosed
-    quote or a trailing backslash, and — with `spans_must_close`, the tokenizing of one line on its
-    own — on an unquoted span without its closing backtick: bash ends such a span in a later line,
-    so this line alone does not show where the quoting goes on (the whole-command tokenizing does).
-    Without it, an unclosed span runs to the end of `text`."""
-    parts: list[str] = []
-    bare: list[str] = []
-    subs: list[str] = []
-    index = start
-    while index < len(text):
-        char = text[index]
-        if char in blank or char in operator_chars:
-            break
-        if char == "'":
-            end = text.find("'", index + 1)
-            if end < 0:
-                raise ValueError("No closing quotation")
-            parts.append(text[index + 1:end])
-            bare.append(text[index + 1:end])
-            index = end + 1
-        elif char == '"':
-            index += 1
-            while True:
-                if index >= len(text):
-                    raise ValueError("No closing quotation")
-                inner = text[index]
-                if inner == '"':
-                    index += 1
-                    break
-                if inner == "\\":
-                    if index + 1 >= len(text):
-                        raise ValueError("No escaped character")
-                    following = text[index + 1]
-                    # `\`` inside double quotes is a plain backtick for this command, but the
-                    # word's text is what a nested `sh -c "..."`/`eval` re-parses, and there that
-                    # backtick opens a span — so the backslash must go, as in bash.
-                    piece = following if following in '"\\`' else inner + following
-                    parts.append(piece)
-                    bare.append(piece)
-                    index += 2
-                elif inner == "$" and index + 1 < len(text) and text[index + 1] in _EXPANSION_CLOSERS:
-                    # $(...), $((...)), ${...}, $[...]: bash reads the inside of these with their own
-                    # quoting, where a single-quoted run is literal and a backtick in it opens no
-                    # span — unlike this surrounding "...", where a bare backtick does. Consume the
-                    # whole construct so such a backtick cannot open a span that eats a real
-                    # redirection after the string; the construct stays in the word verbatim (so a
-                    # `$(` still drives the re-scan in _scan_tokens), and the backtick commands that
-                    # do run inside it go to `subs`.
-                    end = _collect_dq_expansion(text, index + 1, subs)
-                    parts.append(text[index:end])
-                    bare.append(text[index:end])
-                    index = end
-                elif inner == "`":
-                    content, end, _closed = _backtick_span(text, index + 1, in_double=True)
-                    subs.append(content)
-                    parts.append(text[index:end])
-                    index = end
-                else:
-                    parts.append(inner)
-                    bare.append(inner)
-                    index += 1
-        elif char == "\\":
-            if index + 1 >= len(text):
-                raise ValueError("No escaped character")
-            parts.append(text[index + 1])
-            bare.append(text[index + 1])
-            index += 2
-        elif char == "$" and index + 1 < len(text) and (
-            text[index + 1] == "["
-            or (text[index + 1] == "(" and index + 2 < len(text) and text[index + 2] == "(")
-        ):
-            # Unquoted arithmetic $((...)) / $[...]: the normal tokenizer would read `((` as two
-            # subshell operators and a single quote inside as a real quote — but in arithmetic a
-            # single quote is an ordinary character, so a backtick inside what looks like `'...'` is
-            # a live command substitution (`$(( '`...`> .act/x`...`' ))` really writes). Consume the
-            # construct here, as one word, collecting those spans (_collect_dq_expansion's arithmetic
-            # regime). An unquoted `$(...)` command substitution is deliberately *not* intercepted —
-            # the operator/subshell mechanism already scans it with single quotes honored correctly.
-            end = _collect_dq_expansion(text, index + 1, subs)
-            parts.append(text[index:end])
-            bare.append(text[index:end])
-            index = end
-        elif char == "`":
-            content, end, closed = _backtick_span(text, index + 1, in_double=False)
-            if not closed and spans_must_close:
-                raise ValueError("No closing backtick")
-            subs.append(content)
-            parts.append(text[index:end])
-            index = end
-        else:
-            parts.append(char)
-            bare.append(char)
-            index += 1
-    return _Word("".join(parts), tuple(subs), "".join(bare)), index
+    @state.setter
+    def state(self, value: Optional[str]) -> None:
+        if value and value in getattr(self, "quotes", "") + getattr(self, "escape", ""):
+            self.saw_quote = True
+        self._state = value
 
 
 def _split_operator_run(run: str) -> list[str]:
@@ -641,37 +394,20 @@ def _split_operator_run(run: str) -> list[str]:
 
 
 def _shell_tokens(text: str, newline_is_operator: bool) -> list[_Token]:
-    """Tokenize `text` into (text, is_operator) pairs; a word's text is a `_Word`. Whitespace
-    separates words, a run of operator characters (`_SHELL_OPERATOR_CHARS`, plus a newline when
-    `newline_is_operator`) is split into operators (_split_operator_run), an unquoted `#` at the
-    start of a word comments out the rest of the line (the newline itself stays), and `#` inside a
-    word is just a character. Raises ValueError (a _TokenizeError with the tokens before the failing
-    word) on an unclosed quote or a trailing backslash, and — one line on its own, i.e. without
-    `newline_is_operator` — on a backtick span left open at the end of the line."""
-    operator_chars = _SHELL_OPERATOR_CHARS + ("\n" if newline_is_operator else "")
-    blank = " \t\r" if newline_is_operator else " \t\r\n"
+    """Tokenize `text` into (text, is_operator) pairs. Raises ValueError (from shlex) on an
+    unclosed quote or a trailing escape."""
+    lexer = _ShellLexer(_MIDWORD_HASH_RE.sub(_HASH_PLACEHOLDER, text), newline_is_operator)
+    operator_chars = lexer.punctuation_chars
     tokens: list[_Token] = []
-    index = 0
-    while index < len(text):
-        char = text[index]
-        if char in blank:
-            index += 1
-        elif char in operator_chars:
-            end = index
-            while end < len(text) and text[end] in operator_chars:
-                end += 1
-            tokens.extend((op, True) for op in _split_operator_run(text[index:end]))
-            index = end
-        elif char == "#":
-            newline = text.find("\n", index)
-            index = len(text) if newline < 0 else newline
+    while True:
+        lexer.saw_quote = False
+        token = lexer.get_token()
+        if token is None:
+            return tokens
+        if token and not lexer.saw_quote and all(char in operator_chars for char in token):
+            tokens.extend((op, True) for op in _split_operator_run(token))
         else:
-            try:
-                word, index = _read_word(text, index, operator_chars, blank, not newline_is_operator)
-            except ValueError as error:
-                raise _TokenizeError(str(error), tokens) from error
-            tokens.append((word, False))
-    return tokens
+            tokens.append((token.replace(_HASH_PLACEHOLDER, "#"), False))
 
 
 # Constructs in which bash does not read `<<` as a heredoc (or reads it as one that ends early):
@@ -712,7 +448,7 @@ def _body_substitutions(body_lines: list[str]) -> list[str]:
     `( ... )`, and the rest of a line from its first `$(`."""
     snippets = []
     for body_line in body_lines:
-        snippets.extend(f"( {span} )" for span in _closed_backtick_spans(body_line))
+        snippets.extend(f"( {span} )" for span in _BACKTICK_SPAN_RE.findall(body_line))
         if "$(" in body_line:
             snippets.append(body_line[body_line.index("$("):])
     return snippets
@@ -742,8 +478,7 @@ def _line_mode_tokens(command: str) -> list[_Token]:
     skipped only up to a terminator line that exists (found via _heredoc_terminator);
     without one, nothing is skipped, so the rest is scanned as commands. The command substitutions
     of an expanded body are kept (as commands of their own after the heredoc line). Raises
-    ValueError if any line does not tokenize on its own — a _TokenizeError whose `partial` holds the
-    tokens before the failing word."""
+    ValueError if any line does not tokenize on its own."""
     lines = command.split("\n")
     line_positions: dict[str, list[int]] = {}
     for position, raw_line in enumerate(lines):
@@ -752,10 +487,7 @@ def _line_mode_tokens(command: str) -> list[_Token]:
     index = 0
     while index < len(lines):
         line = lines[index]
-        try:
-            line_tokens = _shell_tokens(line, newline_is_operator=False)
-        except _TokenizeError as error:
-            raise _TokenizeError(str(error), tokens + error.partial) from error
+        line_tokens = _shell_tokens(line, newline_is_operator=False)
         tokens.extend(line_tokens)
         tokens.append(("\n", True))
         index += 1
@@ -765,10 +497,7 @@ def _line_mode_tokens(command: str) -> list[_Token]:
                 break
             if expands:
                 for snippet in _body_substitutions(lines[index:end]):
-                    try:
-                        tokens.extend(_shell_tokens(snippet, newline_is_operator=False))
-                    except _TokenizeError as error:
-                        raise _TokenizeError(str(error), tokens + error.partial) from error
+                    tokens.extend(_shell_tokens(snippet, newline_is_operator=False))
                     tokens.append(("\n", True))
             index = end + 1
     return tokens
@@ -786,14 +515,7 @@ def _raw_redirect_targets(command: str) -> list[str]:
 
 
 def _command_name(word: str) -> str:
-    """The command a word names, lower-case, directory and `.exe` dropped. A backtick span in the
-    word is cut out first (`getattr(word, "bare", ...)`): `` `;`rm `` and `` `true`rm `` run `rm`,
-    the span itself expanding to nothing. Leading backticks of what is left are dropped as the
-    previous scanner did (a plain `str` word, as shell_targets_legacy and command_words_legacy hand
-    them back, has no `bare`), so a word either lexer produced is named at least as the previous
-    scanner named it."""
-    text = getattr(word, "bare", word).lstrip("`")
-    name = text.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    name = word.lstrip("`").replace("\\", "/").rsplit("/", 1)[-1].lower()
     return name[:-4] if name.endswith(".exe") else name
 
 
@@ -953,17 +675,9 @@ def _simple_command_targets(
     args = words[index + 1:]
 
     if name == "cd":
-        # A backtick span glued to the command name (`` `echo x`cd ``) makes bash run a *different*
-        # command (`xcd`), not `cd` — the span's output is concatenated onto `cd` before the word
-        # becomes a command name. _command_name reads the name with the spans cut out, so it would
-        # see `cd` and move the base directory for a `cd` bash never ran, letting a later write
-        # resolve outside the project. With a span in the name word the directory is left unknown
-        # instead (fail closed): the base then also holds None, so a protected-path write after it
-        # is still caught by its text (check 1) and denied as unplaceable (check 1c).
-        if not getattr(words[index], "subs", ()):
-            operands, _ = _operands(args)
-            if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
-                return [], (operands[0], prefixed)
+        operands, _ = _operands(args)
+        if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
+            return [], (operands[0], prefixed)
         return [], (None, prefixed)
     if name in ("pushd", "popd"):
         return [], (None, prefixed)
@@ -980,13 +694,6 @@ def _simple_command_targets(
         explicit = values.get("-t", []) + values.get("--target-directory", [])
         if explicit:
             raw_targets = explicit
-        elif any(getattr(op, "subs", ()) for op in operands):
-            # A backtick span among the operands can expand to empty (or to several words) and so
-            # shift which word ends up as the destination (`cp a .act/x `` `echo "` `` runs `cp a
-            # .act/x`, destination .act/x — the span drops out). The last-operand rule is then
-            # unreliable, so every operand counts as a possible target (over-inclusive, the safe
-            # side). The span operand itself is dynamic and judged by its own text as usual.
-            raw_targets = operands
         elif name == "install" and any(arg in ("-d", "--directory") for arg in args):
             raw_targets = operands
         elif len(operands) >= 2:
@@ -1060,7 +767,6 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     saved: list[tuple[_Bases, _Bases, _Bases]] = []
     words: list[str] = []
     redirect_targets: list[str] = []
-    other_redirect_words: list[str] = []
     prev_sep: Optional[str] = None
     index = 0
     while True:
@@ -1079,21 +785,19 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                 word = tokens[index + 1][0]
                 if text in _WRITE_REDIRECT_OPS or (text == ">&" and not _FD_DUP_WORD_RE.match(word)):
                     redirect_targets.append(word)
-                else:
-                    other_redirect_words.append(word)  # an input redirect has no target, a span in it still runs
             index += 2 if has_word else 1
             continue
 
         separator = None if at_end else text
-        if words or redirect_targets or other_redirect_words:
+        if words or redirect_targets:
             found.extend(_pairs(redirect_targets, bases))
             for word in words + redirect_targets:
                 if "$(" in word:
                     found.extend(_scan_command(word, bases, git_writes, depth + 1))
-            # Backtick spans the tokenizer found in these words (quote context already applied).
-            for word in words + redirect_targets + other_redirect_words:
-                for span in getattr(word, "subs", ()):
-                    found.extend(_scan_command(span, bases, git_writes, depth + 1))
+            # Backticks: an unquoted `...` is split into several words by the tokenizer, so the
+            # spans are looked for across the command's words joined back together.
+            for span in _BACKTICK_SPAN_RE.findall(" ".join(words + redirect_targets)):
+                found.extend(_scan_command(span, bases, git_writes, depth + 1))
             targets, cd_change = _simple_command_targets(words, bases, git_writes, depth)
             found.extend(targets)
             if cd_change is not None:
@@ -1113,7 +817,6 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     bases = new_bases
         words = []
         redirect_targets = []
-        other_redirect_words = []
         if separator is None:
             return found
         if separator == "||":
@@ -1131,54 +834,28 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
 
 def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """All write targets of `command` (steps 1-4 of the section comment). Recursion depth is capped
-    for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs. When neither
-    tokenizing manages the whole command, the tokens each read before it failed are scanned too,
-    next to the raw-text search."""
+    for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs."""
     command = _LINE_CONTINUATION_RE.sub(r"\1", command)
     if depth > _MAX_SCAN_DEPTH:
         return [(target, None) for target in _raw_redirect_targets(command)]
     found: list[_Target] = []
     tokens: Optional[list[_Token]] = None
-    prefixes: list[list[_Token]] = []  # what came before the word that broke a tokenizing attempt
     ansi_c_quoting = "$'" in command
     if not ansi_c_quoting:
         try:
             tokens = _line_mode_tokens(command)
-        except ValueError as error:
+        except ValueError:
             tokens = None
-            prefixes.append(getattr(error, "partial", []))
     if tokens is None:
         try:
             tokens = _shell_tokens(command, newline_is_operator=True)
-        except ValueError as error:
+        except ValueError:
             tokens = None
-            prefixes.append(getattr(error, "partial", []))
         if tokens is None or ansi_c_quoting:
             found.extend((target, None) for target in _raw_redirect_targets(command))
     if tokens is not None:
         found.extend(_scan_tokens(tokens, bases, git_writes, depth))
-    else:
-        # Neither tokenizing reached the end: the commands before the word that broke each attempt
-        # are still real (an earlier line of the command), so they are scanned like any other. For a
-        # single-line command the line-mode and whole-command attempts break at the same word and
-        # hand back identical prefixes — scan each distinct prefix once, not twice.
-        scanned: list[list[_Token]] = []
-        for prefix in prefixes:
-            if prefix and prefix not in scanned:
-                scanned.append(prefix)
-                found.extend(_scan_tokens(prefix, bases, git_writes, depth))
     return found
-
-
-def _bash_write_targets_new(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
-    """The write targets the word lexer's scan finds — one half of what _bash_write_targets returns.
-    Any exception propagates: the caller drops this half then and keeps the legacy half alone."""
-    pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
-    result: list[_Target] = []
-    for pair in pairs:
-        if not _is_ignorable_write_target(pair[0]) and pair not in result:
-            result.append(pair)
-    return result
 
 
 def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
@@ -1187,24 +864,15 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
     where that directory is unknown — see the module docstring for how and its known limits. A
     target reachable from several possible directories is listed once per directory. Null devices
     and standard streams are dropped. `git_writes` names the git subcommands that count as writes
-    for the calling check (_GIT_WRITES_TEMPLATE_GUARD / _GIT_WRITES_WORKER_SCOPE).
-
-    The result is the UNION of two scanners: shell_targets_legacy's (the previous, shlex-based one,
-    first and in its own order) and this module's word lexer (_bash_write_targets_new), each target
-    pair once. The union is what keeps the lexer from ever weakening a check: whatever the previous
-    scanner reported is still reported, however the lexer reads the same text. An exception in the
-    lexer's half — ValueError, RecursionError, a bug — is swallowed and the legacy half alone
-    returned; one in the legacy half propagates, exactly as it did before the lexer existed (the
-    legacy function itself falls back to the raw-text search on its own failures)."""
-    legacy = _legacy_targets._bash_write_targets(command, base_cwd, git_writes)
+    for the calling check (_GIT_WRITES_TEMPLATE_GUARD / _GIT_WRITES_WORKER_SCOPE)."""
     try:
-        current = _bash_write_targets_new(command, base_cwd, git_writes)
-    except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
-        return legacy
-    merged = list(legacy)
-    seen = set(legacy)
-    for pair in current:
-        if pair not in seen:
-            seen.add(pair)
-            merged.append(pair)
-    return merged
+        pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
+    except Exception:
+        # A bug in the scanner must never turn into a silent allow (dispatch.py's docstring,
+        # "when in doubt, deny"): fall back to the coarse raw-text search with the base unknown.
+        pairs = [(target, None) for target in _raw_redirect_targets(command)]
+    result: list[_Target] = []
+    for pair in pairs:
+        if not _is_ignorable_write_target(pair[0]) and pair not in result:
+            result.append(pair)
+    return result

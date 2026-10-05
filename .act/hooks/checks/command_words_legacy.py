@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
+# LEGACY COPY — do not edit and do not import from outside checks/. This module is the previous
+# command-word decomposition, kept verbatim except that it imports shell_targets_legacy (the
+# previous tokenizer) instead of the live one. It is the safety net for the word lexer in
+# shell_targets.py: every public result of command_words.py (command word lists) and of
+# shell_targets.py (write targets) is the UNION of what the legacy scanner finds and what the new
+# lexer finds, so the new lexer can only ever add findings, never remove one the previous scanner
+# had — a blocking check is never weaker than before. If this module itself raises, the caller sees
+# that exception exactly as it did before the lexer was replaced. Remove this file only together
+# with shell_targets_legacy.py.
+#
 # Purpose: Shared, quote-/heredoc-aware decomposition of a shell command into its individual
 #          simple commands (argv lists) — used by every shell-command check in this stage
 #          (checks/worker_git_write.py, checks/commit_pathspec.py, checks/recursive_delete.py)
@@ -28,17 +38,9 @@
 # mode, with _shell_tokens as the whole-command fallback for anything that does not tokenize line
 # by line — an unclosed quote spanning lines, `$'...'` ANSI-C quoting) rather than re-deriving
 # quoting/heredoc handling a second time; only the *grouping* into simple commands and the
-# *recursion* into a nested interpreter are this module's own. Backtick spans come from the same
-# tokenizer: each word it returns carries the contents of the spans that were live in it (`subs`,
-# quote context already applied — a backtick in single quotes or escaped is not one), and those
-# contents are recursed into like any other nested command (shell_targets.py's "Known limits" say
-# what is still approximated).
-#
-# Safety net: the public `_command_word_lists` is the union of this module's word-lexer reading
-# (`_command_word_lists_new`) and the previous reading kept verbatim in command_words_legacy.py —
-# the legacy entries first, in their own order, then whatever only the lexer found. The lexer can
-# therefore only add commands for the checks to look at, never drop one the previous reading had; if
-# it raises, the legacy list stands alone. Everything below describes the lexer's reading.
+# *recursion* into a nested interpreter are this module's own. Backtick spans are found the same
+# way shell_targets._scan_tokens finds them — a regex over each simple command's dequoted words
+# joined back together (shell_targets.py's "Known limits" name what that cannot tell apart).
 #
 # Contract: `_command_word_lists(command)` returns one (words, separator) pair per simple command
 # found at any recursion depth — words is that command's own argv (its own name included as
@@ -77,9 +79,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import command_words_legacy as _legacy_words
-
-from .shell_targets import (
+from .shell_targets_legacy import (
+    _BACKTICK_SPAN_RE,
     _LINE_CONTINUATION_RE,
     _MAX_SCAN_DEPTH,
     _SEPARATOR_OPS,
@@ -95,8 +96,7 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_PS_NAMES", "_SEGMENT_SPLIT_RE_FALLBACK", "_command_word_lists_new", "_command_word_lists",
-    "_strip_command_prefix",
+    "_PS_NAMES", "_SEGMENT_SPLIT_RE_FALLBACK", "_command_word_lists", "_strip_command_prefix",
     "_stripped_word_lists", "_git_invocations_with_prefix", "_git_invocations",
 ]
 
@@ -145,9 +145,9 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
     return words[index:]
 
 
-def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
-    """The word lexer's half of _command_word_lists: every simple command in `command`, as (argv,
-    preceding-separator) pairs — see this module's docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
+def _command_word_lists(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
+    """Every simple command in `command`, as (argv, preceding-separator) pairs — see this module's
+    docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
     `pwsh|powershell -Command ...`, `cmd /c ...`, `eval ...`, `$(...)`, `` `...` `` and
     `find ... -exec ... ;|+`."""
     command = _LINE_CONTINUATION_RE.sub("", command)
@@ -184,16 +184,15 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
             continue
         for word in words:
             if "$(" in word:
-                result.extend(_command_word_lists_new(word[word.index("$(") + 2:], depth + 1))
-        for word in words:
-            for span in getattr(word, "subs", ()):
-                result.extend(_command_word_lists_new(span, depth + 1))
+                result.extend(_command_word_lists(word[word.index("$(") + 2:], depth + 1))
+        for span in _BACKTICK_SPAN_RE.findall(" ".join(words)):
+            result.extend(_command_word_lists(span, depth + 1))
         stripped = _strip_command_prefix(words)
         if not stripped:
             continue
         name, args = _command_name(stripped[0]), stripped[1:]
         if name == "eval":
-            result.extend(_command_word_lists_new(" ".join(args), depth + 1))
+            result.extend(_command_word_lists(" ".join(args), depth + 1))
         elif name in _SHELL_NAMES or name in _PS_NAMES:
             for i, arg in enumerate(args[:-1]):
                 is_c_flag = arg.lower() in ("-c", "-command", "/c") or (
@@ -202,7 +201,7 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
                 )
                 if is_c_flag:
                     tail = " ".join(args[i + 1:]) if name in _PS_NAMES else args[i + 1]
-                    result.extend(_command_word_lists_new(tail, depth + 1))
+                    result.extend(_command_word_lists(tail, depth + 1))
                     break
         elif name == "find":
             for i, arg in enumerate(args):
@@ -216,43 +215,6 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
                         result.append((tail, None))
                     break
     return result
-
-
-def _word_key(words: list[str]) -> tuple:
-    """What makes two word lists the same for _command_word_lists' union: the words' text AND the
-    lexer facts a plain `str` lacks (`bare`, `subs`), so an entry the lexer annotated is never
-    dropped as a duplicate of the legacy entry with the same text."""
-    key = []
-    for word in words:
-        bare = getattr(word, "bare", None)
-        key.append((str(word), None if bare == word else bare, getattr(word, "subs", None) or None))
-    return tuple(key)
-
-
-def _command_word_lists(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
-    """Every simple command in `command`, as (argv, preceding-separator) pairs — the contract and
-    known limits are in this module's docstring.
-
-    The result is the UNION of command_words_legacy's (the previous scanner, kept verbatim: its
-    entries come first and in its own order, so anything that reads a position — the first command,
-    a pipeline neighbour — sees what it always saw) and the word lexer's (_command_word_lists_new),
-    whose entries not already present follow. The union is what keeps the lexer from ever weakening
-    a check: whatever the previous scanner found is still found. An exception in the lexer's half
-    — ValueError, RecursionError, a bug — is swallowed and the legacy half returned alone; one in
-    the legacy half propagates, exactly as it did before the lexer existed."""
-    legacy = _legacy_words._command_word_lists(command, depth)
-    try:
-        current = _command_word_lists_new(command, depth)
-    except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
-        return legacy
-    merged = list(legacy)
-    seen = {(_word_key(words), sep) for words, sep in legacy}
-    for words, sep in current:
-        key = (_word_key(words), sep)
-        if key not in seen:
-            seen.add(key)
-            merged.append((words, sep))
-    return merged
 
 
 def _stripped_word_lists(command: str) -> list[list[str]]:
