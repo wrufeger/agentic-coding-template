@@ -618,7 +618,43 @@ def _unexpected_empty_output(returncode: Optional[int]) -> bool:
     return returncode is not None and returncode != 0
 
 
+# osv-scanner is given every lock file as an argument. A few hundred absolute paths overrun the
+# Windows command-line limit (32,767 characters; a `.cmd` shim only 8,191), so the files go to it in
+# chunks whose arguments stay below this many characters.
+_OSV_ARGV_BUDGET = 6000
+
+
+def _osv_chunks(lock_paths: "list[Path]") -> "list[list[Path]]":
+    chunks: "list[list[Path]]" = []
+    current: "list[Path]" = []
+    size = 0
+    for path in lock_paths:
+        cost = len(str(path)) + 20  # the path, its `-L`/`--lockfile=` flag and the separators
+        if current and size + cost > _OSV_ARGV_BUDGET:
+            chunks.append(current)
+            current, size = [], 0
+        current.append(path)
+        size += cost
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _run_osv_scanner(
+    tool_path: str, root: Path, lock_paths: "list[Path]",
+) -> "tuple[list[Finding], Optional[str]]":
+    """One osv-scanner run over `lock_paths`, split into several calls when the list would not fit
+    on one command line; the findings are joined, the first error wins."""
+    findings: "list[Finding]" = []
+    error: Optional[str] = None
+    for chunk in _osv_chunks(lock_paths) or [[]]:
+        chunk_findings, chunk_error = _run_osv_scanner_chunk(tool_path, root, chunk)
+        findings.extend(chunk_findings)
+        error = error or chunk_error
+    return findings, error
+
+
+def _run_osv_scanner_chunk(
     tool_path: str, root: Path, lock_paths: "list[Path]",
 ) -> "tuple[list[Finding], Optional[str]]":
     args_v1 = [tool_path, "--format", "json"]

@@ -1643,6 +1643,42 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             print(f"[act] note: syncing files that depend on docs/ai/config.md failed ({exc.__class__.__name__}) -- "
                   "retried next session, or run `python .act/scripts/update.py --catch-up`")
 
+    # A skill or role written by hand under docs/ai/local/ gets its tool copies/bridge here, no
+    # import step needed (unit_copies.py). Best-effort: a first look at the two folders costs
+    # nothing for a project without own units. A "not checked" line is an error and is shown every
+    # session until it goes away; every other note (kept-as-is edited copy, template-named override)
+    # is printed again only when its text changes (cache), so it is not repeated daily.
+    if mode == "block":
+        own_note = ""
+        own_error = ""
+        try:
+            import unit_copies  # deferred like update above
+            try:
+                import update as _update
+                history_check = _update._paths_in_git_history
+            except Exception:
+                history_check = None
+            own_messages, _own_recorded, _own_touched = unit_copies.ensure_own_unit_copies(
+                root, history_check=(lambda rels: history_check(root, rels)) if history_check else None)
+            errors = [m for m in own_messages if "not checked" in m]
+            others = [m for m in own_messages if "not checked" not in m]
+            if errors:
+                own_error = "[act] note: " + "; ".join(errors)
+            if others:
+                own_note = "[act] note: own skills/roles: " + "; ".join(others)
+        except Exception as exc:
+            own_error = f"[act] note: own skill/role copies not checked ({exc.__class__.__name__})"
+        if own_error:
+            print(own_error)
+        try:
+            if actlib.read_cache().get("own_copies_note", "") != own_note:
+                actlib.write_cache({"own_copies_note": own_note})
+                if own_note:
+                    print(own_note)
+        except Exception:
+            if own_note:
+                print(own_note)
+
     for dest_rel in changed_bridges:
         if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
             continue  # the more specific import note below replaces this one

@@ -536,8 +536,9 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # the last update gets a bridge created.
 # "entries" and "board" are here because init.py imports entries (which imports board): left out, the
 # fresh init.py would bind the entries module this run loaded at start-up — the older one, without the
-# functions the new init.py calls — and, being cached, board's older copy under it.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board")
+# functions the new init.py calls — and, being cached, board's older copy under it. "unit_copies"
+# imports init the same way, so a cached copy of it would keep the older init bound.
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board", "unit_copies")
 
 
 def _project_tools(root: Path) -> list[str]:
@@ -2064,6 +2065,21 @@ def _finish_update(
     fetched_commit: Optional[str], rescue_active: bool, keep_commit: bool = False,
 ) -> int:
     sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
+    # Own skills/roles written by hand under docs/ai/local/ get their tool copies/bridge too; the
+    # entries are merged into new_copies because step_lock() below writes that value as a whole.
+    try:
+        import unit_copies
+        own_messages, own_recorded, own_touched = unit_copies.ensure_own_unit_copies(
+            root, history_check=lambda rels: _paths_in_git_history(root, rels))
+        new_copies = {**new_copies, **own_recorded}
+        sync_touched = [*sync_touched, *own_touched]
+        # a template-named local unit is that unit's override — a normal mechanism, no note per run
+        own_messages = [m for m in own_messages if "has the name of a template" not in m]
+        notes.extend(f"own skills/roles: {message}" for message in own_messages if not message.endswith(": created"))
+        if own_messages:
+            sync_summary = "; ".join(filter(None, [sync_summary, f"own skills/roles: {'; '.join(own_messages)}"]))
+    except Exception as exc:
+        notes.append(f"own skill/role copies not checked ({exc.__class__.__name__}: {exc})")
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
     _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}")
 

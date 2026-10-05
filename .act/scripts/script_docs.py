@@ -84,6 +84,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "skills.py": {"kind": "direct", "note": "used by skill `act` and by dispatch.py's `/act` fast path"},
     "tiers.py": {"kind": "library"},
     "update.py": {"kind": "skill", "skill": "act-update", "note": "`--plan` alone is direct"},
+    "unit_copies.py": {"kind": "direct", "note": "session start and update.py call it; run by hand to create the copies at once"},
     "usage.py": {"kind": "direct"},
 }
 

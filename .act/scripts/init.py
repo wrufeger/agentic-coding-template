@@ -1082,8 +1082,9 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     from being recorded in .act-lock.json's "copies", not from this function alone; two hand-placed
     files of the same name with no such record is exactly the mistake that check exists to catch
     `act-load-settings` writes both the docs/ai/local/ file and its .claude/.agents/ copies
-    itself (settings_load.py's write_unit_bridges()), recording the copy in the lock as it goes —
-    this function is not in that path."""
+    itself (settings_load.py's write_unit_bridges()), and a unit created by hand gets the same copies
+    at the next session start or update.py run (unit_copies.py's ensure_own_unit_copies()), both
+    recording each copy in the lock as they go — this function is in neither path."""
     skills_dir = root / ".act" / "skills"
     targets: dict[str, Path] = {}
     if not skills_dir.is_dir():

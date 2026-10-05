@@ -28,3 +28,8 @@ the project removed it, and creates it if the skill is new since the last update
 override at `docs/ai/local/skills/<name>/<file>` wins over the matching file here (`actlib.resolve()`,
 the same rule as everywhere else in this template) — the project copy is then generated from the
 override, not from this source.
+
+A project's own skill — `docs/ai/local/skills/<name>/` with no counterpart here — gets the same copies:
+`act-load-settings` writes them when it imports the skill, and one created by hand gets them at the next
+session start or `update.py` run (`.act/scripts/unit_copies.py`), recorded in `.act-lock.json` § `copies`
+like a template copy. An own role under `docs/ai/local/agents/` gets its bridge the same way.

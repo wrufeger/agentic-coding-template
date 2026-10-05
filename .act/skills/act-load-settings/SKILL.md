@@ -47,7 +47,10 @@ is reported, never silent.
    override whose template topic no longer exists is reported as dead and not written; one whose
    template topic changed since the export is reported as changed-since-export (review by hand).
 5. A written own agent/skill gets its tool bridge automatically (`.claude/agents/<name>.md`, the
-   matching skill copies) — nothing further to do for that.
+   matching skill copies) — nothing further to do for that. Importing is not the only way: an
+   own skill or role written by hand under `docs/ai/local/skills/<name>/` or
+   `docs/ai/local/agents/<name>.md` gets the same copies at the next session start or `update.py`
+   run (`unit_copies.py`).
 6. Whatever is left — dead/retired ids, cross-file disagreements, unreviewed candidates,
    `## setup-required` lines — lands in one `docs/ai/inbox/U<n>-settings-import.md`. Read it out to the
    human; a `setup-required` entry needs configuring before that rule/agent/skill actually works.

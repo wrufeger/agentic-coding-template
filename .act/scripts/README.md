@@ -35,6 +35,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
 | `skills.py` | List the project's skills like a man page (name + one-line description from each `SKILL.md`'s frontmatter), or print one skill's `SKILL.md`… | direct (used by skill `act` and by dispatch.py's `/act` fast path) |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
+| `unit_copies.py` | tool copies for a project's own skills and roles — a skill written by hand under docs/ai/local/skills/<name>/ gets its copies under… | direct (session start and update.py call it; run by hand to create the copies at once) |
 | `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
 | `usage.py` | Local usage counter — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is used… | direct |
 
@@ -811,6 +812,20 @@ List the project's skills (name + description), or print one in full.
 
 positional arguments:
   name        print exactly this skill's SKILL.md in full
+
+options:
+  -h, --help  show this help message and exit
+```
+
+## `unit_copies.py`
+
+Call: direct (session start and update.py call it; run by hand to create the copies at once)
+
+```text
+usage: unit_copies.py [-h]
+
+Create the missing tool copies of the project's own skills (docs/ai/local/skills/) and roles
+(docs/ai/local/agents/); idempotent, prints what happened.
 
 options:
   -h, --help  show this help message and exit

@@ -144,7 +144,13 @@
 #                 check: deps/full), with a state hash and the lock files one commit
 #                 touches for checks/deps_scan.py's commit check — its own background process so
 #                 `security_scan.run_scan()`'s tool call never delays a session start or a commit's
-#                 own PreToolUse hook, mirroring "_update-check-worker".
+#                 own PreToolUse hook, mirroring "_update-check-worker". deps_scan.py hands the
+#                 lock files over as one `@<list file>` argument (a JSON file under
+#                 .act-local/security-scan-lists/, removed by the worker afterwards): on Windows a
+#                 few hundred paths overrun the command-line limit (WinError 206). The same file
+#                 says whether the run also files its findings as an inbox report -- the scan after
+#                 a merge, pull or cherry-pick (deps_scan.note_deps_merge_scan, a PostToolUse note
+#                 that never blocks).
 #
 #   "UserPromptSubmit --act-check": the prompt is not "/act"/"/act <name>", or it is a
 #                 worker's own payload — exit 0, nothing on stdout (the common case, checked
@@ -339,6 +345,7 @@ _POST_TOOL_USE_NOTES = (
     ("encoding_hint", "note_encoding_hint"),  # `warn` mode's one-time non-UTF-8 note (R-code-encoding)
     ("secret_scan", "note_secret_scan"),      # `warn` mode / incomplete scan after a commit (R-safe-no-secret-diff)
     ("deps_scan", "note_deps_scan"),          # lower-severity/accepted findings after a commit (security-check)
+    ("deps_scan", "note_deps_merge_scan"),    # lock files a merge/pull/cherry-pick brought in -> inbox report (security-check)
 )
 
 # Observers see every hook event and never block: signature observe(event: str, payload: dict) ->
@@ -571,8 +578,13 @@ def main(argv: list[str]) -> int:
         return _run_update_check_worker(Path(argv[1]))
     if len(argv) >= 2 and argv[0] == "_security-scan-worker":
         # argv[1] the project root; optionally argv[2] a state hash and argv[3:] the lock files a
-        # commit touches, for checks/deps_scan.py (see checks.session._run_security_scan_worker)
+        # commit touches, for checks/deps_scan.py (see checks.session._run_security_scan_worker).
+        # checks/deps_scan.py passes the list as one `@<list file>` argument instead, because a
+        # long list overruns the Windows command-line limit.
         state_hash = argv[2] if len(argv) >= 3 else None
+        if state_hash is not None and len(argv) == 4 and argv[3].startswith("@"):
+            from checks import deps_scan as _deps_scan  # noqa: E402 -- only this worker needs it
+            return _deps_scan.run_list_worker(Path(argv[1]), state_hash, Path(argv[3][1:]))
         return _run_security_scan_worker(Path(argv[1]), state_hash, [Path(arg) for arg in argv[3:]])
 
     if len(argv) != 1:

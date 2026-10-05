@@ -570,6 +570,11 @@ def check_duplicate_units(root: Path) -> list[Finding]:
     lock = actlib.read_lock()
     copy_dests = set(init.copy_targets(root, tools).keys()) | set(lock.get("copies", {}).keys())
     bridge_dests = set(init.agent_bridge_targets(root, tools).keys())
+    # an own skill's file under docs/ai/local/ is explained once a copy recorded in the lock names it as source
+    copy_sources = {
+        entry["source"] for entry in lock.get("copies", {}).values()
+        if isinstance(entry, dict) and isinstance(entry.get("source"), str)
+    }
 
     units = [u for u in _scan_units(root) if u[2].name.lower() != "readme.md"]
     unit_base_dirs = dict(_UNIT_BASES)
@@ -599,6 +604,8 @@ def check_duplicate_units(root: Path) -> list[Finding]:
             rel = _rel(path, root)
             if label == "claude" and (rel in copy_dests or rel in bridge_dests):
                 continue  # generated skill copy or role bridge — expected
+            if label == "local" and rel in copy_sources:
+                continue  # source of a recorded tool copy (own skill) — expected
             if label == "local":
                 own_rel = path.relative_to(local_base / sub_).as_posix()
                 if (sub_, own_rel) in act_rels:
