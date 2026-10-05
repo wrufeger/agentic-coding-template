@@ -212,6 +212,22 @@ def write_proposal(root: Path, item: dict) -> Path:
     return entries._create_unique(entry_dir, f"{today}-{entries._slugify(item['title'])}.md", text)
 
 
+TITLE_MAX = 80
+
+
+def shorten_title(title: str) -> str:
+    """A title over TITLE_MAX characters becomes its first sentence, cut at a word boundary with an
+    ellipsis if that is still too long; a short title stays as it is."""
+    if len(title) <= TITLE_MAX:
+        return title
+    sentence = re.split(r"(?<=[.!?])\s", title, maxsplit=1)[0].strip()
+    if len(sentence) <= TITLE_MAX:
+        return sentence
+    cut = sentence[:TITLE_MAX + 1]
+    cut = cut[:cut.rfind(" ")] if " " in cut else cut[:TITLE_MAX]
+    return cut.rstrip(" ,;:-—") + "…"
+
+
 def load_batch(batch_path: Path, root: Path) -> list[dict]:
     """The batch as a list of normalized items, or Refused with every problem found."""
     data = _read_json(batch_path)
@@ -316,6 +332,14 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
                 body = body_path.read_bytes().decode("utf-8")
             except (OSError, UnicodeDecodeError) as exc:
                 problems.append(f"{where}: body_file {raw['body_file']}: cannot read as UTF-8 ({exc.__class__.__name__})")
+        original_title, original_body = title.strip(), body or ""  # as an earlier script version wrote it
+        if kind != RESERVED_KIND:
+            short = shorten_title(title.strip())
+            if short != title.strip():
+                # the full old text stays in the entry, as the first paragraph of the body
+                if title.strip() not in (body or ""):
+                    body = title.strip() + ("\n\n" + body if body else "")
+                title = short
         entry_id = entries._canonical_id(raw["id"].strip()) if raw.get("id") else None
         if entry_id:
             if entry_id in seen_ids:
@@ -330,6 +354,7 @@ def load_batch(batch_path: Path, root: Path) -> list[dict]:
         items.append({"kind": kind, "title": title.strip(), "source": src, "id": entry_id,
                       "formerly": raw.get("formerly"), "status": raw.get("status"),
                       "for": raw.get("for"), "body": body or "",
+                      "original_title": original_title, "original_body": original_body,
                       "target": (raw.get("target") or "").strip() if kind == PROPOSAL_KIND else None,
                       "author": (author.strip() if author else _default_author(src)) if kind == PROPOSAL_KIND else None})
     if problems:
@@ -459,6 +484,16 @@ def check_target(root: Path, items: list[dict], mapping: dict) -> tuple[list[str
         if row and _row_matches(root, row, item):
             skip[index] = row["file"]
             continue
+        # a batch stopped under a script version that did not shorten long titles wrote the full title
+        original = item.get("original_title")
+        if not row and original and original != item["title"]:
+            old_row = done.get((src[0], src[1], item["kind"], original))
+            if old_row:
+                old_item = {**item, "title": original, "body": item.get("original_body", item["body"])}
+                if _row_matches(root, old_row, old_item):
+                    skip[index] = old_row["file"]
+                    continue
+                row = old_row
         if item["id"] and item["id"] in used.get(item["kind"], set()):
             problems.append(f"{_label(src)}: id {item['id']} already taken (an entry or the archive)")
         if row:

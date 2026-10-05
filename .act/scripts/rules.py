@@ -241,6 +241,46 @@ def _is_new_item(raw: str, stripped: str) -> bool:
     return _is_bullet(stripped) or bool(RE_CHECKBOX_LOOSE.match(raw))
 
 
+def _one_line(text: str) -> str:
+    """`text` with its line breaks (a nested list) folded into single spaces."""
+    return " ".join(text.split())
+
+
+def _read_continuation(lines: list[str], index: int, first: str) -> tuple[str, int]:
+    """The full text of a rule or override whose first line (text only) is `first` and whose
+    following lines start at `lines[index]`: indented continuation lines are joined with single
+    spaces, an indented bullet below it (a nested list, also after a blank line) belongs to the
+    rule too and keeps its own line. Ends at the next blank line not followed by such a bullet, an
+    indented checkbox, an unindented line or a code fence. Returns the text and the next index."""
+    text = first
+    total = len(lines)
+    while index < total:
+        raw = lines[index]
+        stripped = raw.strip()
+        if not stripped:
+            ahead = index
+            while ahead < total and not lines[ahead].strip():
+                ahead += 1
+            nxt = lines[ahead] if ahead < total else ""
+            if nxt[:1] in (" ", "\t") and _is_bullet(nxt.strip()) and not RE_CHECKBOX_LOOSE.match(nxt) \
+                    and not _fence_open(nxt):
+                index = ahead
+                continue
+            break
+        if raw[:1] not in (" ", "\t") or _fence_open(raw):
+            break
+        if _is_bullet(stripped):
+            if RE_CHECKBOX_LOOSE.match(raw) or RE_REPLACES.match(stripped):
+                break  # a `replaces` line is an override of its own, never part of the rule above
+            text += "\n" + raw.rstrip()
+        elif _is_new_item(raw, stripped):
+            break
+        else:
+            text += " " + stripped
+        index += 1
+    return text, index
+
+
 def parse_project_file(path: Path, area: Area) -> ProjectFile:
     lines = path.read_text(encoding="utf-8").splitlines()
     sets: list[ProjectSet] = []
@@ -379,7 +419,8 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             if current_section in (None, "unknown", "overrides"):
                 replaces = RE_REPLACES.match(stripped)
                 if replaces:
-                    overrides.append(Override(id=replaces.group("id"), text=replaces.group("text"), line=line_no))
+                    override_text, i = _read_continuation(lines, i, replaces.group("text"))
+                    overrides.append(Override(id=replaces.group("id"), text=override_text, line=line_no))
                     continue
                 if RE_REPLACES_LOOSE.match(stripped):
                     findings.append((line_no, "expected '- replaces `ID`: <text>'"))
@@ -393,21 +434,12 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             if current_section in (None, "unknown", "own-rules") and _is_bullet(stripped):
                 flush_pending()
                 own = RE_OWN.match(stripped)
-                text_parts = [(own.group("text") if own else stripped[2:]).strip()]
-                # Indented continuation lines belong to this same rule's text, joined with
-                # single spaces, up to the next blank line, the next bullet/checkbox (indented or
-                # not — _is_new_item), or the next unindented line (heading or a new top-level
-                # entry) — whichever comes first.
-                while i < total:
-                    cont_raw = lines[i]
-                    cont_stripped = cont_raw.strip()
-                    if not cont_stripped or cont_raw[:1] not in (" ", "\t") \
-                            or _is_new_item(cont_raw, cont_stripped) or _fence_open(cont_raw):
-                        break
-                    text_parts.append(cont_stripped)
-                    i += 1
+                # Indented continuation lines and an indented list directly below belong to this
+                # same rule's text (see _read_continuation).
+                rule_text, i = _read_continuation(
+                    lines, i, (own.group("text") if own else stripped[2:]).strip())
                 own_rules.append(OwnRule(id=own.group("id") if own else None,
-                                          text=" ".join(text_parts), line=line_no))
+                                          text=rule_text, line=line_no))
                 continue
             if current_section == "excluded" and _is_bullet(stripped):
                 own = RE_OWN.match(stripped)
@@ -420,6 +452,13 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
             # "Own rules" it is reported as a hint, see ProjectFile.hints).
             note_unread(line_no, stripped)
         else:
+            replaces = RE_REPLACES.match(stripped) if current_section != "excluded" else None
+            if replaces:
+                # an indented `replaces` line (e.g. directly below an own rule) is still an override
+                flush_pending()
+                override_text, i = _read_continuation(lines, i, replaces.group("text"))
+                overrides.append(Override(id=replaces.group("id"), text=override_text, line=line_no))
+                continue
             # Indented text nothing above consumed (a nested bullet, an indented paragraph or
             # table): under "Own rules" it is not read either — a hint like any other unread text.
             note_unread(line_no, stripped)
@@ -563,10 +602,10 @@ def cmd_list(project: ProjectFile, area: Area) -> str:
                 reason = pset.groups.get(gid)
                 gsummary = f" — {reason.reason}" if reason and reason.reason else ""
             if symbol == "~":
-                gsummary = f" — {override_by_id[gid].text}"
+                gsummary = f" — {_one_line(override_by_id[gid].text)}"
             lines.append(f"    [{symbol}] {gid}{gsummary}")
     for own in project.own_rules:
-        label = own.id or (own.text[:40] + ("…" if len(own.text) > 40 else ""))
+        label = own.id or (_one_line(own.text)[:40] + ("…" if len(_one_line(own.text)) > 40 else ""))
         lines.append(f"[+] {label}")
     return "\n".join(lines) + ("\n" if lines else "")
 

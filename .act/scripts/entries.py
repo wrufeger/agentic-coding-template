@@ -761,7 +761,7 @@ def write_translate_note(root: Path, language: str, plan: bool = False) -> Optio
     files = actlib.scaffold_default_files(root)
     if not files or _inbox_has_entry_ending(root, actlib.TRANSLATE_NOTE_SUFFIX):
         return None
-    title, body = actlib.translate_note_parts(language, files)
+    title, body = actlib.translate_note_parts(language, files, root)
     if plan:
         return _planned_todo_path(root, "translate-scaffold")
     return create_todo(root, title, body, slug="translate-scaffold")[0]

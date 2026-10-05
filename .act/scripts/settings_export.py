@@ -11,7 +11,8 @@
 #
 #          This build stage covers the `rules` and `coding` areas (own rules, switched-off
 #          groups/sets, `replaces` overrides) plus, behind their own switches, `scripts`,
-#          `checklists`, `agents` and `skills` from docs/ai/local/.
+#          `checklists`, `agents`, `skills` and `topics` from docs/ai/local/ (topics: the own topic
+#          rules and the overrides of template topics under docs/ai/local/rules/topics/).
 #
 # Usage:
 #   python .act/scripts/settings_export.py
@@ -24,9 +25,13 @@
 #       Also includes docs/ai/local/scripts/, docs/ai/local/checklists/, docs/ai/local/agents/ (the
 #       project's own roles) and docs/ai/local/skills/ (its own skills) — each file shown
 #       individually before being written on import. Any of the four switches forces --with-files.
+#   python .act/scripts/settings_export.py --with-topics
+#       Also includes docs/ai/local/rules/topics/: a topic of the project's own as "[+] <name>.md",
+#       an override of a template topic as "[~] <name>.md (fp:<hash of the template topic>)" — each
+#       file carried in the zip under files/topics/<name>.md. Forces --with-files.
 #   python .act/scripts/settings_export.py --with-files
 #       Writes a .zip (settings.md at its root + files/<area>/<name>) instead of a plain .md, even
-#       without local scripts/checklists/agents/skills.
+#       without local scripts/checklists/agents/skills/topics.
 #   python .act/scripts/settings_export.py --strict
 #       Abort with exit 1 and the finding list instead of substituting placeholders — for "goes
 #       out to strangers". Without it, a finding becomes a visible "<setup:KIND>" placeholder plus
@@ -356,6 +361,46 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
 
 
 # ---------------------------------------------------------------------------
+# topics — own topic rules and overrides of template topics, docs/ai/local/rules/topics/*.md
+# ---------------------------------------------------------------------------
+
+def build_topics_area(root: Path) -> tuple[Optional[sf.SettingsArea], dict[str, str]]:
+    """Every docs/ai/local/rules/topics/<name>.md as one entry whose id is "<name>.md" (the zip
+    member's relpath under files/topics/, same "id == relpath" contract as the other file areas).
+    A topic whose name matches a template topic (.act/rules/topics/<name>.md) is an *override*:
+    "[~]" with the sha256 of the template topic's text as "(fp:...)", so the import can tell
+    "template topic unchanged since export" from "changed". Any other topic is the project's own
+    and goes out as "[+]". Returns (area_or_None, {id: file text})."""
+    base = root / "docs" / "ai" / "local" / "rules" / "topics"
+    if not base.is_dir():
+        return None, {}
+    template_dir = root / ".act" / "rules" / "topics"
+    entries: list[sf.SettingsEntry] = []
+    contents: dict[str, str] = {}
+    for path in sorted(base.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        if path.is_symlink():
+            print(f"settings_export.py: skipped symlink {path.name} under docs/ai/local/rules/topics/", file=sys.stderr)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        contents[path.name] = text
+        template_path = template_dir / path.name
+        if template_path.is_file():
+            fingerprint = hashlib.sha256(template_path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+            entries.append(sf.SettingsEntry(symbol="~", id=path.name, fingerprint=fingerprint,
+                                             inline=f"file: files/topics/{path.name}"))
+        else:
+            entries.append(sf.SettingsEntry(symbol="+", id=path.name, inline=f"file: files/topics/{path.name}"))
+    if not entries:
+        return None, {}
+    return sf.SettingsArea(name="topics", groups=[sf.SettingsGroup(label=None, entries=entries)]), contents
+
+
+# ---------------------------------------------------------------------------
 # Extra scan pass — ids, group labels, header fields, zip file names
 # ---------------------------------------------------------------------------
 
@@ -422,7 +467,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--with-checklists", action="store_true", help="include docs/ai/local/checklists/ (forces --with-files)")
     parser.add_argument("--with-agents", action="store_true", help="include docs/ai/local/agents/, the project's own roles (forces --with-files)")
     parser.add_argument("--with-skills", action="store_true", help="include docs/ai/local/skills/, the project's own skills (forces --with-files)")
-    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills")
+    parser.add_argument("--with-topics", action="store_true", help="include docs/ai/local/rules/topics/, own topic rules and overrides of template topics (forces --with-files)")
+    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills/--with-topics")
     parser.add_argument("--strict", action="store_true", help="abort on any finding instead of substituting a placeholder")
     parser.add_argument("--out", metavar="PATH", default=None,
                          help="output path (default: .act-local/export/act-settings-<date>.md|.zip)")
@@ -458,7 +504,7 @@ def main(argv: list[str]) -> int:
         print(f"settings_export.py: {exc}", file=sys.stderr)
         return 2
 
-    with_files = args.with_files or args.with_scripts or args.with_checklists or args.with_agents or args.with_skills
+    with_files = args.with_files or args.with_scripts or args.with_checklists or args.with_agents or args.with_skills or args.with_topics
 
     areas: list[sf.SettingsArea] = []
     for area in (build_rules_area(root, args.all), build_coding_area(root, args.all)):
@@ -486,6 +532,11 @@ def main(argv: list[str]) -> int:
         if area is not None:
             areas.append(area)
             file_payload["skills"] = contents
+    if args.with_topics:
+        area, contents = build_topics_area(root)
+        if area is not None:
+            areas.append(area)
+            file_payload["topics"] = contents
 
     settings = sf.SettingsFile(header=build_header(root), areas=areas)
     redacted, located = sf.redact(settings)

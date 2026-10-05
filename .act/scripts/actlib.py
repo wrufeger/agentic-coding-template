@@ -428,7 +428,57 @@ def scaffold_default_files(root: Path) -> list[str]:
     return found
 
 
-def translate_note_parts(language: str, files: list[str]) -> tuple[str, str]:
+_SECTION_REF_RE = re.compile(
+    r"§\s*(?:\"([^\"\n]+)\"|„([^“”\n]+)[“”]|`([^`\n]+)`|([A-Za-z][\w-]*))"
+)
+_DOC_PATH_RE = re.compile(r"`?(docs/[\w./-]+\.md)`?")
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+SECTION_REF_LIST_CAP = 30
+
+
+def scaffold_section_refs(root: Path, files: list[str]) -> list[str]:
+    """Lines `file:line -> target § heading` for every `§` reference in a scaffold file that
+    points at a heading of ANOTHER scaffold file: the path named within 120 characters before the
+    `§` (the line may wrap in between) is the target file, and the quoted/backticked/bare word
+    after it must equal one of that file's headings (case-insensitive). A reference whose target
+    file or heading cannot be determined this way is left out. Deterministic: files in the given
+    order, references in text order."""
+    headings: dict[str, dict[str, str]] = {}
+    texts: dict[str, str] = {}
+    for rel in files:
+        try:
+            texts[rel] = (root / rel).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found: dict[str, str] = {}
+        for line in texts[rel].splitlines():
+            match = _HEADING_RE.match(line)
+            if match:
+                found.setdefault(match.group(1).strip("` ").lower(), match.group(1).strip())
+        headings[rel] = found
+    out: list[str] = []
+    for rel in files:
+        text = texts.get(rel)
+        if text is None:
+            continue
+        for ref in _SECTION_REF_RE.finditer(text):
+            word = next(g for g in ref.groups() if g).strip().strip("`").lower()
+            before = text[max(0, ref.start() - 120):ref.start()]
+            paths = _DOC_PATH_RE.findall(before)
+            target = paths[-1] if paths else ""
+            if not target or target == rel or target not in headings:
+                continue
+            heading = headings[target].get(word)
+            if heading is None:
+                continue
+            line_no = text.count("\n", 0, ref.start()) + 1
+            out.append(f"{rel}:{line_no} -> {target} § {heading}")
+    return out
+
+
+def translate_note_parts(
+    language: str, files: list[str], root: Optional[Path] = None,
+) -> tuple[str, str]:
     """(title, body) of the inbox todo asking for the one-time scaffold translation
     (`R-work-language`) — its own prose follows `language` too: the project reading it has already
     set `language-docs` away from English, so an English-only note would be as stale as the
@@ -468,6 +518,24 @@ def translate_note_parts(language: str, files: list[str]) -> tuple[str, str]:
             "aktuell.",
         ),
     ]
+    lines += [
+        "",
+        localized(
+            language,
+            "Headings that other scaffold files refer to: translate the reference together with the "
+            "heading, so a `§ \"Heading\"` in one file keeps pointing at the heading in the other.",
+            "Überschriften, auf die andere Gerüstdateien verweisen: den Verweis zusammen mit der "
+            "Überschrift übersetzen, damit ein `§ \"Überschrift\"` in der einen Datei weiter auf die "
+            "Überschrift in der anderen zeigt.",
+        ),
+    ]
+    refs = scaffold_section_refs(root, files) if root is not None else []
+    if refs:
+        lines.append("")
+        lines.extend(f"- `{ref}`" for ref in refs[:SECTION_REF_LIST_CAP])
+        if len(refs) > SECTION_REF_LIST_CAP:
+            more = len(refs) - SECTION_REF_LIST_CAP
+            lines.append(localized(language, f"- +{more} more", f"- +{more} weitere"))
     return title, "\n".join(lines) + "\n"
 
 

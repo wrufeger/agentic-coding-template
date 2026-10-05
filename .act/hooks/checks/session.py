@@ -1108,6 +1108,27 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str], compact: boo
 # remember it once recognized. A fixed `language-chat` needs no line; config.md already says it.
 # ---------------------------------------------------------------------------
 
+# Environment variables the template reads as overrides (docs/ai/config.md carries the project
+# values; these win for one run). Names only are ever reported, never values.
+_ENV_OVERRIDES = (
+    "AGENTIC_FEEDBACK_URL",
+    "ACT_FORGE_API_URL",
+    "ACT_FORGE_KIND",
+    "ACT_SEMGREP_CMD",
+    "ACT_MCP_LIST_COMMAND",
+    "ACT_MCP_LIST_TIMEOUT",
+    "ACT_MCP_CATALOG",
+)
+
+
+def _env_override_note() -> Optional[str]:
+    """One note naming every active environment override, or None when none is set."""
+    active = [name for name in _ENV_OVERRIDES if os.environ.get(name, "").strip()]
+    if not active:
+        return None
+    return "[act] note: environment overrides active: " + ", ".join(active)
+
+
 def _chat_language_line(config: dict[str, str]) -> Optional[str]:
     chat, docs = actlib.language_settings(config)
     if chat != "auto":
@@ -1523,6 +1544,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         language_line = None
     if language_line:
         print(language_line)
+
+    try:
+        env_note = _env_override_note()
+    except Exception:
+        env_note = None  # informational only, must never block the session
+    if env_note:
+        print(env_note)
 
     try:
         audit_note = _docs_audit_note(root, config)

@@ -70,4 +70,6 @@ summary: every outside request answered, even a refusal, without jumping the que
 
 A request arriving from outside the conversation with the human (another session, a waiting worker,
 a system expecting a reply) is always answered, even if the answer is a refusal. It does not jump
-the queue ahead of current work, but it is never left hanging either.
+the queue ahead of current work, but it is never left hanging either. A reply promised, or a
+counter-check expected from another session, is filed as a todo (`entries.py new todo`) with `for:`
+naming whom or what it waits for (or `all`), so the promise outlives the session.

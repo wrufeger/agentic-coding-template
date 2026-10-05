@@ -32,7 +32,8 @@ is reported, never silent.
    in the output with the reason, for the next `apply --yes`/`--judgments` run to pick it up — or
    for `apply --resolve` (step 7) to file it away by hand. Writes what is now clear:
    rules/coding into `docs/ai/rules.md` / `docs/project/coding_rules.md`; bundled scripts,
-   checklists, agents and skills into `docs/ai/local/<area>/<name>` — **show every such file to the
+   checklists, agents and skills into `docs/ai/local/<area>/<name>`, own topic rules and topic
+   overrides into `docs/ai/local/rules/topics/<name>.md` — **show every such file to the
    human before writing it** (the script already asks unless `--yes`; never pass `--yes` without
    the human having seen the list first, and never in a non-interactive run without it).
 4. An agent or skill whose name — file/folder name *or* frontmatter `name`, checked
@@ -42,6 +43,9 @@ is reported, never silent.
    done by hand, not an import side effect. An agent with `permissionMode`/`hooks`/`mcpServers` in
    its frontmatter, or a skill with `allowed-tools`/`hooks`, is refused the same way — reported,
    never written, not even with `--yes`; the human adds it by hand if it is genuinely wanted.
+   A topic already there with different content is reported as changed and left alone; an
+   override whose template topic no longer exists is reported as dead and not written; one whose
+   template topic changed since the export is reported as changed-since-export (review by hand).
 5. A written own agent/skill gets its tool bridge automatically (`.claude/agents/<name>.md`, the
    matching skill copies) — nothing further to do for that.
 6. Whatever is left — dead/retired ids, cross-file disagreements, unreviewed candidates,

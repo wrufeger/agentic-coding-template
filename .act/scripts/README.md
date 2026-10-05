@@ -19,6 +19,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
 | `forge.py` | A small REST client for the project's git host (GitHub, GitHub Enterprise, GitLab.com and self-hosted GitLab) — the one script the skills… | skills `act-pr`, `act-issue`, `act-integrations` (reads are direct; every write shows a preview and needs `--apply` after the human's "yes" (`topics/live-systems.md`)) |
 | `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
+| `i18n_check.py` | Check a project's translation files for completeness and consistency — the mechanical half of skill `act-check-translations`. Code-only… | skill `act-check-translations` |
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
@@ -28,6 +29,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
 | `security_scan.py` | Security check Art B: a live library-vulnerability lookup against the lock files an ecosystem actually has, run either as a manual command… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
+| `seo_check.py` | Code-only SEO checks over a project's HTML, templates, Markdown pages and framework config — the mechanical half of skill `act-seo`. Reads… | skill `act-seo` |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
@@ -505,6 +507,24 @@ options:
   --json            print one JSON document instead of text
 ```
 
+## `i18n_check.py`
+
+Call: skill `act-check-translations`
+
+```text
+usage: i18n_check.py [-h] [--root ROOT] [--base BASE] [--json] [--no-code]
+
+Check translation files for missing, extra, empty and mismatching keys and for keys used in code
+but not defined.
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  project root (default: current directory)
+  --base BASE  base locale (default: en, else the largest)
+  --json       print the report as JSON
+  --no-code    skip the used/unused key check against source code
+```
+
 ## `ideas.py`
 
 Call: direct (session start and init call it; run by hand to record entries as processed)
@@ -677,13 +697,30 @@ options:
   --json      with --deps: print the result as JSON instead of text
 ```
 
+## `seo_check.py`
+
+Call: skill `act-seo`
+
+```text
+usage: seo_check.py [-h] [--root ROOT] [--json]
+
+Code-only SEO checks: title, description, headings, lang, canonical, Open Graph, image alt,
+internal links, robots.txt and sitemap.
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  project root (default: current directory)
+  --json       print the report as JSON
+```
+
 ## `settings_export.py`
 
 Call: skill `act-export-settings`
 
 ```text
 usage: settings_export.py [-h] [--all] [--with-scripts] [--with-checklists] [--with-agents]
-                          [--with-skills] [--with-files] [--strict] [--out PATH] [--profile]
+                          [--with-skills] [--with-topics] [--with-files] [--strict] [--out PATH]
+                          [--profile]
 
 Write the project's rule deviations (and, with a switch, local scripts/checklists) to a portable
 settings file.
@@ -695,8 +732,10 @@ options:
   --with-checklists  include docs/ai/local/checklists/ (forces --with-files)
   --with-agents      include docs/ai/local/agents/, the project's own roles (forces --with-files)
   --with-skills      include docs/ai/local/skills/, the project's own skills (forces --with-files)
+  --with-topics      include docs/ai/local/rules/topics/, own topic rules and overrides of
+                     template topics (forces --with-files)
   --with-files       write a .zip even without --with-scripts/--with-checklists/--with-
-                     agents/--with-skills
+                     agents/--with-skills/--with-topics
   --strict           abort on any finding instead of substituting a placeholder
   --out PATH         output path (default: .act-local/export/act-settings-<date>.md|.zip)
   --profile          write to the Owner's profile (platform config dir) instead of --out/the

@@ -722,6 +722,15 @@ def _write_bytes(dest_path: Path, data: bytes) -> bool:
         return False
 
 
+def _copy_data(new_init, root: Path, dest_rel: str, source_path: Path, tiers_data: dict, overrides: dict) -> bytes:
+    """The bytes a copy should hold: the source, with a SKILL.md's reasoning field derived by the
+    updated init.py (skill_copy_bytes()); plain bytes when that init.py predates it."""
+    render = getattr(new_init, "skill_copy_bytes", None)
+    if render is None:
+        return source_path.read_bytes()
+    return render(root, dest_rel, source_path, tiers_data, overrides)
+
+
 def step_refresh_copies(
     root: Path, plan: bool, *, restore_paths: frozenset[str] = frozenset(),
     restore_dirs: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None,
@@ -776,6 +785,12 @@ def step_refresh_copies(
     tools = _project_tools(root)
     new_specs: dict[str, Path] = dict(new_init.copy_targets(root, tools))
     copy_bases = {root / dest_root for dest_root, _ in getattr(new_init, "SKILL_TARGET_DIRS", ())}
+    try:
+        tiers_data = new_init.tiers.load_tiers(root)
+        role_rows = new_init.tiers.read_role_overrides(root)
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        print(f"note: tiers/role rows unreadable ({type(exc).__name__}: {exc}); skill copies written without reasoning")
+        tiers_data, role_rows = {}, {}
 
     # A project's own skill gets a copy in every active skill folder, like a template skill.
     local_skills = (root / "docs" / "ai" / "local" / "skills").resolve()
@@ -833,7 +848,7 @@ def step_refresh_copies(
                     no_longer_shipped_kept.append(dest_rel)
                 continue
         try:
-            data = source_path.read_bytes()
+            data = _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
         except OSError:
             new_copies[dest_rel] = old_entry
             failed.append(dest_rel)
@@ -890,7 +905,7 @@ def step_refresh_copies(
             continue  # the project deliberately removed this one before; do not resurrect it
         dest_path = root / dest_rel
         try:
-            data = source_path.read_bytes()
+            data = _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
             existing = dest_path.read_bytes() if dest_path.is_file() else None
         except OSError:
             failed.append(dest_rel)
@@ -1410,6 +1425,18 @@ def pending_dependent_changes(root: Path) -> Optional[str]:
     return "; ".join(moved) or None
 
 
+def _skill_rows_moved(root: Path, changed_roles: frozenset) -> bool:
+    """Whether a changed row in docs/ai/config.md § Roles names a skill (a template skill folder or a
+    project's own under docs/ai/local/skills/) -- its copy's reasoning field hangs on that row."""
+    if not changed_roles:
+        return False
+    names: set[str] = set()
+    for base in (root / ".act" / "skills", root / "docs" / "ai" / "local" / "skills"):
+        if base.is_dir():
+            names.update(p.name for p in base.iterdir() if p.is_dir())
+    return bool(names & set(changed_roles))
+
+
 def sync_dependent_files(
     root: Path, *, always_run: bool, notes: Optional[list[str]] = None,
 ) -> tuple[Optional[str], dict[str, dict], list[Path]]:
@@ -1468,7 +1495,7 @@ def sync_dependent_files(
     reset_edited: list[str] = []
 
     new_copies = lock_copies()
-    if always_run or tools_moved:
+    if always_run or tools_moved or _skill_rows_moved(root, changed_roles):
         restore: frozenset[str] = frozenset()
         restore_dirs: frozenset[str] = frozenset()
         if tools_moved and new_init is not None:

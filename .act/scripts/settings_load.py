@@ -31,7 +31,7 @@
 #   python .act/scripts/settings_load.py apply [<file...>] [--judgments PATH] [--yes] [--non-interactive]
 #                                               [--resolve FILE=ACTION ...]
 #       Same analysis, then writes: new/identical/judged-non-contradicting rules into
-#       docs/ai/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/agents/
+#       docs/ai/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/topics/agents/
 #       skills into docs/ai/local/<area>/<name> (shown before writing unless --yes) — an
 #       agent/skill whose name matches a template role/skill is never written, only reported (it
 #       would otherwise start overriding the template unit); a written own agent/skill then gets
@@ -145,7 +145,14 @@ import update
 _MAX_ZIP_ENTRIES = 200
 _MAX_ZIP_ENTRY_BYTES = 5 * 1024 * 1024
 _MAX_ZIP_TOTAL_BYTES = 20 * 1024 * 1024
-_ALLOWED_FILE_AREAS = ("scripts", "checklists", "agents", "skills")
+_ALLOWED_FILE_AREAS = ("scripts", "checklists", "agents", "skills", "topics")
+# Where a bundled file area lives below docs/ai/local/ and .act/ — "topics" are the topic rules,
+# docs/ai/local/rules/topics/ (an own topic, or the override of .act/rules/topics/<name>.md).
+_AREA_SUBDIR = {"topics": "rules/topics"}
+
+
+def _area_subdir(area_name: str) -> str:
+    return _AREA_SUBDIR.get(area_name, area_name)
 _UNSAFE_RELPATH_CHARS = re.compile(r"[:\\]")
 
 
@@ -193,7 +200,7 @@ def _safe_member_relpath(name: str, path: Path) -> tuple[str, str]:
 
 def _declared_file_ids(settings: sf.SettingsFile) -> dict[str, set[str]]:
     """The relpaths settings.md itself lists as a "[+] <relpath>" entry, per
-    scripts/checklists/agents/skills area — a zip member not named here is never written, even if
+    scripts/checklists/agents/skills/topics area — a zip member not named here is never written, even if
     it otherwise passed _safe_member_relpath() (spec: only write what the settings file itself
     declares)."""
     out: dict[str, set[str]] = {}
@@ -202,7 +209,9 @@ def _declared_file_ids(settings: sf.SettingsFile) -> dict[str, set[str]]:
         ids: set[str] = set()
         if area is not None and area.is_modeled():
             for group in area.groups:
-                ids.update(e.id for e in group.entries if e.symbol == "+")
+                # "~" counts for topics only: an override of a template topic travels as a file too.
+                ids.update(e.id for e in group.entries
+                           if e.symbol == "+" or (area_name == "topics" and e.symbol == "~"))
         out[area_name] = ids
     return out
 
@@ -560,6 +569,11 @@ class TargetArea:
     override_by_id: dict[str, str] = field(default_factory=dict)
 
 
+def _flatten_lines(text: str) -> str:
+    """`text` as one line: every non-blank line stripped, joined with " / " (see ImportEntry.flat_text())."""
+    return " / ".join(line.strip() for line in text.splitlines() if line.strip())
+
+
 def load_target(root: Path) -> dict[str, TargetArea]:
     """Keyed by the settings-file area name ("rules"/"coding"), not rules.py's own ("core"/"coding")
     — see SETTINGS_TO_RULES_AREA."""
@@ -570,12 +584,15 @@ def load_target(root: Path) -> dict[str, TargetArea]:
         project = rules.parse_project_file(path, area) if path.is_file() else None
         ta = TargetArea(area=area, project=project)
         if project is not None:
+            # Target texts are flattened the way ImportEntry.flat_text() flattens an import, so a
+            # rule that carries a nested list (`\n  - ` lines) compares equal to its re-import.
             for own in project.own_rules:
+                flat = _flatten_lines(own.text)
                 if own.id:
-                    ta.own_by_id[own.id] = own.text
-                ta.own_texts.append((own.id, own.text))
+                    ta.own_by_id[own.id] = flat
+                ta.own_texts.append((own.id, flat))
             for override in project.overrides:
-                ta.override_by_id[override.id] = override.text
+                ta.override_by_id[override.id] = _flatten_lines(override.text)
         out[area_name] = ta
     return out
 
@@ -735,7 +752,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
 
     # Areas this build does not write at all yet.
     for entry in all_entries:
-        if entry.area not in ("rules", "coding", "scripts", "checklists", "agents", "skills"):
+        if entry.area not in ("rules", "coding", "scripts", "checklists", "agents", "skills", "topics"):
             result.not_supported.add(entry.area)
 
     # --- cross-file collisions: same (area, id) from >1 file, different symbol or text ---------
@@ -783,7 +800,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
         if entry.symbol == "=":
             continue  # unchanged from the template — nothing to write, not a finding
 
-        if area_name in ("scripts", "checklists", "agents", "skills"):
+        if area_name in ("scripts", "checklists", "agents", "skills", "topics"):
             continue  # handled separately, in plan_files()/plan_units()
 
         if area_name not in ("rules", "coding"):
@@ -1127,8 +1144,20 @@ def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
 
 
 # ---------------------------------------------------------------------------
-# Bundled files (scripts / checklists)
+# Bundled files (scripts / checklists / topics)
 # ---------------------------------------------------------------------------
+
+def _topic_fingerprints(source: SourceFile) -> dict[str, Optional[str]]:
+    """{id: fingerprint} of every "[~]" topic entry the source's settings.md lists."""
+    area = source.settings.area("topics")
+    out: dict[str, Optional[str]] = {}
+    if area is not None and area.is_modeled():
+        for group in area.groups:
+            for entry in group.entries:
+                if entry.symbol == "~":
+                    out[entry.id] = entry.fingerprint
+    return out
+
 
 def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
     local_root = (root / "docs" / "ai" / "local").resolve()
@@ -1136,39 +1165,59 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
         for area_name, contents in source.payload.items():
             if area_name in ("agents", "skills"):
                 continue  # handled separately, in plan_units() below (different collision rules)
-            area_root = local_root / area_name
+            subdir = _area_subdir(area_name)
+            area_root = local_root / subdir
+            overrides = _topic_fingerprints(source) if area_name == "topics" else {}
             for relpath, text in contents.items():
-                dest = root / "docs" / "ai" / "local" / area_name / relpath
-                # Second, independent check that `dest` cannot land outside docs/ai/local/<area>/
+                dest = root / "docs" / "ai" / "local" / subdir / relpath
+                dest_label = f"docs/ai/local/{subdir}/{relpath}"
+                # Second, independent check that `dest` cannot land outside docs/ai/local/<subdir>/
                 # — load_source()'s _safe_member_relpath() already refused an unsafe zip member
                 # name; this re-checks the resolved filesystem path itself before anything is
                 # planned to be written there.
                 if dest.resolve() != area_root and area_root not in dest.resolve().parents:
-                    raise ValueError(f"{source.label}: {relpath}: resolves outside docs/ai/local/{area_name}/ — refused")
+                    raise ValueError(f"{source.label}: {relpath}: resolves outside docs/ai/local/{subdir}/ — refused")
+                template_file = root / ".act" / subdir / relpath
+                if relpath in overrides and not template_file.is_file():
+                    # A "[~]" topic overrides a template topic; this project's template has no
+                    # such topic (any more), so the override would be an orphan — reported, not written.
+                    result.findings.append(Finding(
+                        kind="dead-id", area=area_name,
+                        message=f"`{relpath}` no longer exists in the current template — not applied",
+                    ))
+                    continue
                 if dest.is_file():
                     existing = dest.read_text(encoding="utf-8")
                     if existing == text:
                         status = "same"
                     else:
                         status = "collision"
+                        what = "topic changed: " if area_name == "topics" else ""
                         result.findings.append(Finding(
                             kind="file-collision", area=area_name,
-                            message=f"docs/ai/local/{area_name}/{relpath} already exists with different content — not written",
+                            message=f"{what}{dest_label} already exists with different content — not written",
                         ))
-                        result.open_items.append(OpenItem(
-                            source.label, f"docs/ai/local/{area_name}/{relpath}", REASON_NAME_COLLISION,
-                        ))
+                        result.open_items.append(OpenItem(source.label, dest_label, REASON_NAME_COLLISION))
                 else:
                     status = "new"
-                if (root / ".act" / area_name / relpath).is_file():
+                if relpath in overrides:
+                    fingerprint = overrides[relpath]
+                    if fingerprint and hashlib.sha256(
+                            template_file.read_text(encoding="utf-8").encode("utf-8")).hexdigest() != fingerprint:
+                        result.findings.append(Finding(
+                            kind="changed-since-export", area=area_name,
+                            message=f"`{relpath}` — the template topic changed since the export; "
+                                    "review the override by hand",
+                        ))
+                elif template_file.is_file():
                     result.findings.append(Finding(
                         kind="template-shadowed", area=area_name,
-                        message=f"docs/ai/local/{area_name}/{relpath} — a template file of the same "
-                                f"name exists (.act/{area_name}/{relpath}); this import would shadow it",
+                        message=f"{dest_label} — a template file of the same "
+                                f"name exists (.act/{subdir}/{relpath}); this import would shadow it",
                     ))
                 result.file_plan.append({
                     "file": source.label, "area": area_name, "path": relpath,
-                    "dest": f"docs/ai/local/{area_name}/{relpath}", "status": status, "text": text,
+                    "dest": dest_label, "status": status, "text": text,
                 })
 
 
@@ -1445,21 +1494,26 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
     if skill_items:
         lock = actlib.read_lock()
         copies = dict(lock.get("copies", {}))
+        skill_tiers = tiers.load_tiers(root)
+        skill_overrides = tiers.read_role_overrides(root)
         for item in skill_items:
             src = root / item["dest"]
             for dest_root, tool_gate in init.SKILL_TARGET_DIRS:
                 if not init._skill_target_active(tool_gate, tools):
                     continue
                 copy_dest = root / dest_root / item["path"]
-                message, created = init._write_copy_file(src, copy_dest, False, root)
-                messages.append(f"skills: {message}")
                 copy_key = f"{dest_root}/{item['path']}"
+                # the same bytes init.py/update.py write for a skill copy (a `reasoning:` key becomes
+                # the tool's own field in the Claude copy)
+                copy_data = init.skill_copy_bytes(root, copy_key, src, skill_tiers, skill_overrides)
+                message, created = init._write_copy_file(src, copy_dest, False, root, data=copy_data)
+                messages.append(f"skills: {message}")
                 if created:
                     copies[copy_key] = {
                         "source": src.relative_to(root).as_posix(),
                         "sha256": actlib.sha256_file(copy_dest),
                     }
-                elif copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == src.read_bytes():
+                elif copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == copy_data:
                     # A hand-placed copy already sitting there, byte-identical to what this import
                     # just wrote as the own skill's source — not created just now, but legitimate:
                     # tracked in the lock the same as init.py/update.py would for one of theirs, so
@@ -1691,6 +1745,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         payload = {
             "findings": [{"kind": f.kind, "area": f.area, "message": f.message} for f in result.findings],
             "candidates": [c.as_dict() for c in result.candidates],
+            "file_plan": [{k: v for k, v in item.items() if k != "text"} for item in result.file_plan],
             "setup_required": result.setup_required,
             "counts": {
                 "findings": len(result.findings),

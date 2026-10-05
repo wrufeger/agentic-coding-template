@@ -379,6 +379,9 @@ text, so where the title line holds more than the title, the body starts with th
 | a backlog table row | the cell of the title column (`Titel`, `Title`) | the table's header and separator line, the row, then its detail section (`### B12 …` with the heading, up to the next heading of the same or a higher level) where the file has one |
 | rule prose without a heading of its own | its first sentence, up to `. `, `: ` or the line end | the passage |
 
+A title longer than 80 characters is shortened by `adopt_entries.py` itself: its first sentence, else a cut at a
+word boundary with "…"; the full old text then opens the entry's body.
+
 A title never carries the old id, bold markers, a status emoji (🔴, 🟡, ✅, ⏳, ⚠️, …) or a
 closing colon — the emoji and the space next to it go, a colon at the very end goes, every other
 character stays. No two items of a batch get the

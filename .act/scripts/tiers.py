@@ -463,3 +463,59 @@ def refresh_project_bridge_frontmatter(
         changed.append(rel)
 
     return changed
+
+
+# ---------------------------------------------------------------------------
+# A skill's own reasoning level -> the tool's reasoning field in the skill copy
+# ---------------------------------------------------------------------------
+
+_SKILL_REASONING_LINE_RE = re.compile(r"^reasoning:\s*(.*?)\s*$")
+
+
+def skill_copy_text(
+    text: str, skill: str, tool: str, tiers_data: dict, overrides: dict[str, dict[str, str]],
+) -> str:
+    """The text of one skill's SKILL.md as it is written for `tool`: the source's `reasoning: <level>`
+    frontmatter line (a value of the tool's `reasoning_scale`) is replaced by the tool's own field
+    (`reasoning_field` in .act/tiers.json, Claude Code: `effort`). A row naming the skill in
+    docs/ai/config.md § Roles (`overrides[skill]["reasoning"]`) wins over the source's own value. No
+    level at all, a level that is "none" or not on the scale, or a tool with an empty
+    `reasoning_field` (no researched mapping) leaves the text exactly as it is -- including the source
+    `reasoning` line in the last two cases -- so the skill simply inherits the session's setting.
+    Line terminators and every other line are kept byte for byte; an `effort:` line the source carries
+    itself is replaced only when a level resolves."""
+    tool_data = tiers_data.get(tool) or {}
+    field = tool_data.get("reasoning_field") or ""
+    scale = tool_data.get("reasoning_scale") or []
+    lines = text.splitlines(keepends=True)
+    if not field or not scale or not lines or lines[0].rstrip("\r\n") != "---":
+        return text
+    close_index = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"), None)
+    if close_index is None:
+        return text
+
+    source_level = ""
+    for line in lines[1:close_index]:
+        match = _SKILL_REASONING_LINE_RE.match(line.rstrip("\r\n"))
+        if match:
+            source_level = match.group(1).strip("'\"")
+    level = (overrides.get(skill) or {}).get("reasoning") or source_level
+    if not level or level == "none" or level not in scale:
+        return text
+
+    eol = lines[0][len(lines[0].rstrip("\r\n")):] or "\n"
+    field_re = re.compile(rf"^{re.escape(field)}:\s*")
+    block: list[str] = []
+    have_field = False
+    for line in lines[1:close_index]:
+        stripped = line.rstrip("\r\n")
+        if _SKILL_REASONING_LINE_RE.match(stripped):
+            continue
+        if field_re.match(stripped):
+            have_field = True
+            block.append(f"{field}: {level}{line[len(stripped):]}")
+        else:
+            block.append(line)
+    if not have_field:
+        block.append(f"{field}: {level}{eol}")
+    return "".join(lines[:1] + block + lines[close_index:])

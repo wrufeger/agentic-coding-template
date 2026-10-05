@@ -1108,6 +1108,32 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
 # Step 6 helper — role bridges (.act/agents/<name>.md + .act/bridges/agents/<name>.md -> project)
 # ---------------------------------------------------------------------------
 
+def skill_copy_bytes(
+    root: Path, dest_rel: str, src: Path, tiers_data: Optional[dict] = None,
+    overrides: Optional[dict[str, dict[str, str]]] = None,
+) -> bytes:
+    """The bytes written for one skill-copy destination: `src` verbatim, except a skill's SKILL.md
+    under a skills folder whose tool gate is a single tool id (".claude/skills"), which gets that
+    tool's reasoning field from the skill's own `reasoning` key or its row in docs/ai/config.md §
+    Roles (tiers.skill_copy_text()). The tool-neutral mirror (a tuple gate) and every other file are
+    copied unchanged. `tiers_data`/`overrides` are read from the project when not given."""
+    data = src.read_bytes()
+    parts = dest_rel.split("/")
+    if len(parts) != 4 or parts[-1] != "SKILL.md":  # <folder>/skills/<name>/SKILL.md
+        return data
+    gate = dict(SKILL_TARGET_DIRS).get("/".join(parts[:2]))
+    if not isinstance(gate, str):
+        return data
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    tiers_data = tiers.load_tiers(root) if tiers_data is None else tiers_data
+    overrides = tiers.read_role_overrides(root) if overrides is None else overrides
+    new_text = tiers.skill_copy_text(text, parts[2], actlib.normalize_tool(gate), tiers_data, overrides)
+    return data if new_text == text else new_text.encode("utf-8")
+
+
 def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     """Every role-bridge destination -> its .act/bridges/agents/ source, for the given tools.
     Enumerates .act/agents/<name>.md role files dynamically (README.md is documentation, not a
@@ -1279,17 +1305,20 @@ def _copy_source_label(root: Path, src: Path) -> str:
     return src.relative_to(root).as_posix()
 
 
-def _write_copy_file(src: Path, dest: Path, plan: bool, root: Optional[Path] = None) -> tuple[str, bool]:
+def _write_copy_file(
+    src: Path, dest: Path, plan: bool, root: Optional[Path] = None, data: Optional[bytes] = None,
+) -> tuple[str, bool]:
     """Like _write_text_file, but copies bytes verbatim (no token substitution — a skill or role
     bridge is authored complete under .act/ already) and never overwrites an existing project
-    file. Used for skill copies and role bridges alike. Returns (message, created)."""
+    file. Used for skill copies and role bridges alike; `data`, if given, is written instead of
+    `src`'s bytes (skill_copy_bytes()). Returns (message, created)."""
     label = _relative_label(dest, root)
     if dest.is_file():
         return f"{label}: already present, left unchanged", False
     if plan:
         return f"{label}: would create", False
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(src.read_bytes())
+    dest.write_bytes(src.read_bytes() if data is None else data)
     return f"{label}: created", True
 
 
@@ -2119,17 +2148,20 @@ def step_materialize(
                 if created:
                     touched.append(dest)
 
+    tiers_data = tiers.load_tiers(root)
+    overrides = tiers.read_role_overrides(root)
+
     for dest_rel, src in copy_targets(root, cfg["tools"]).items():
         dest = root / dest_rel
-        message, created = _write_copy_file(src, dest, plan, root)
+        message, created = _write_copy_file(
+            src, dest, plan, root,
+            data=None if plan else skill_copy_bytes(root, dest_rel, src, tiers_data, overrides),
+        )
         messages.append(message)
         if created or dest.is_file():
             touched.append(dest)
         if not plan and dest.is_file():
             copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.sha256_file(dest)}
-
-    tiers_data = tiers.load_tiers(root)
-    overrides = tiers.read_role_overrides(root)
 
     for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
         role = Path(dest_rel).stem

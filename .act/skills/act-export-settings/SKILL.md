@@ -1,6 +1,6 @@
 ---
 name: act-export-settings
-description: Write this project's own rule deviations, and optionally its own scripts/checklists/agents/skills, to a portable settings file for another project or for review before sharing. Use to hand this project's setup to a new project, or to check what a settings export would reveal before sending it anywhere.
+description: Write this project's own rule deviations, and optionally its own scripts/checklists/agents/skills/topics, to a portable settings file for another project or for review before sharing. Use to hand this project's setup to a new project, or to check what a settings export would reveal before sending it anywhere.
 ---
 
 # Export the project's settings
@@ -19,6 +19,9 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
   (`docs/ai/local/agents/`) and its own skills (`docs/ai/local/skills/`). Any of the four forces a
   `.zip` (`--with-files`) instead of a plain `.md`, since these carry whole files alongside the
   summary line settings.md shows for each one.
+- `--with-topics`: also include the topic rules under `docs/ai/local/rules/topics/` — a topic of
+  the project's own as `[+] <name>.md`, an override of a template topic as `[~] <name>.md` with a
+  fingerprint of the template topic it overrides. Whole files, so it forces a `.zip` as well.
 - `--strict`: abort instead of substituting a placeholder — use this when the file is headed to
   people outside the project, not just another one of the human's own.
 - `--out PATH`: write there instead of the default `.act-local/export/act-settings-<date>.md`/
@@ -35,7 +38,7 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
 
 ## Steps
 
-1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, an own
+1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, topics, an own
    role, or an own skill is a deliberate choice, not a default. Ask separately whether this run
    goes to a file/another project (`--out` or the default location) or to the Owner's own profile
    (`--profile`) — the two are mutually exclusive.
