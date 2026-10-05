@@ -6,6 +6,9 @@ already exists. You set the goals and decide; the assistant plans, hands the wor
 sub-agents, proves its results, and keeps the project's state in the repository, so every session
 picks up where the last one stopped. Setting it up takes one sentence in the chat.
 
+**Documentation:** https://wrufeger.github.io/agentic-coding-template-docs/ — guides and a reference
+generated from the template, in English and [German](https://wrufeger.github.io/agentic-coding-template-docs/de/).
+
 What you get:
 
 - **Ready-made skills and agents.** More than twenty skills for everyday development — from idea to
