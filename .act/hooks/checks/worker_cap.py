@@ -219,7 +219,7 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp_name, path)
+        actlib.replace_file(tmp_name, path)
     except OSError:
         try:
             os.unlink(tmp_name)

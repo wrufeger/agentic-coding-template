@@ -58,6 +58,7 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
+import actlib
 import adopt_scan
 
 TEMPLATE_ACT = Path(__file__).resolve().parent.parent  # the template checkout's .act/
@@ -316,7 +317,7 @@ def legacy_rename_nested(dest: Path) -> dict:
         if dst.exists():
             raise RuntimeError(f"legacy rename destination already exists: {dest}/{new_rel}")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(src, dst)
+        actlib.replace_file(src, dst)
         renamed[rel] = new_rel
     if renamed:
         _prune_empty_below(dest)
@@ -331,7 +332,7 @@ def legacy_rename_nested_undo(dest: Path, renamed: dict) -> None:
         if not src.exists():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(src, dst)
+        actlib.replace_file(src, dst)
     if renamed:
         _prune_empty_below(dest)
 
@@ -384,7 +385,7 @@ def rescue(root: Path, files: list, record: dict, save) -> None:
             raise RuntimeError(f"rescue destination already exists: {dest}")
         before = _sha256(root / rel)
         (root / dest).parent.mkdir(parents=True, exist_ok=True)
-        os.replace(root / rel, root / dest)
+        actlib.replace_file(root / rel, root / dest)
         record[rel] = dest
         save()
         if _sha256(root / dest) != before:
@@ -931,7 +932,7 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
         for path, dest, _action, _colliding in moves:
             before = _files_below(root / path)
             (root / dest).parent.mkdir(parents=True, exist_ok=True)
-            os.replace(root / path, root / dest)
+            actlib.replace_file(root / path, root / dest)
             renamed = legacy_rename_nested(root / dest)  # nested: rename what a plain move left as-is
             if renamed:
                 new_state.setdefault("moved_renames", {})[path] = renamed
@@ -1199,7 +1200,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
             shutil.rmtree(root / old)  # only empty folders left
         legacy_rename_nested_undo(root / dest, state.get("moved_renames", {}).get(old, {}))
         (root / old).parent.mkdir(parents=True, exist_ok=True)
-        os.replace(root / dest, root / old)
+        actlib.replace_file(root / dest, root / old)
         _prune_empty_dirs(root, [dest])
         progress["restored"].append(old)
         save()
@@ -1207,7 +1208,7 @@ def cmd_abort(root: Path, plan: bool, force: bool) -> int:
     for original, saved_at in state.get("rescued", {}).items():
         if os.path.lexists(root / saved_at) and not os.path.lexists(root / original):
             (root / original).parent.mkdir(parents=True, exist_ok=True)
-            os.replace(root / saved_at, root / original)
+            actlib.replace_file(root / saved_at, root / original)
             _prune_empty_dirs(root, [saved_at])
             save()
         elif os.path.lexists(root / saved_at) and original not in progress["unrestored_rescue"]:

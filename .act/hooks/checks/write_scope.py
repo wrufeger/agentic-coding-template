@@ -357,7 +357,7 @@ def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n")
-        os.replace(tmp_name, path)
+        actlib.replace_file(tmp_name, path)
     except OSError:
         try:
             os.unlink(tmp_name)

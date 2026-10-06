@@ -161,7 +161,7 @@ def _write_state(root: Path, state: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
-        os.replace(tmp_name, path)
+        actlib.replace_file(tmp_name, path)
     except OSError:
         try:
             os.unlink(tmp_name)

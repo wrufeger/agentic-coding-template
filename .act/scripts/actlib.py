@@ -23,11 +23,34 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+
+
+# Pauses between the replace attempts below, in seconds: about 0.35 s in all, so a hook stays fast.
+_REPLACE_RETRY_PAUSES = (0.05, 0.05, 0.1, 0.15)
+
+
+def replace_file(src: "str | os.PathLike[str]", dst: "str | os.PathLike[str]") -> None:
+    """os.replace(src, dst), with a few short retries on Windows only. There a virus scanner, an
+    indexer or an IDE can hold the just-written file open for a moment, and the rename then fails
+    with PermissionError although nothing is wrong. If the fifth attempt fails too, its PermissionError
+    is raised unchanged (not wrapped). On every other platform this is a plain os.replace."""
+    if sys.platform != "win32":
+        os.replace(src, dst)
+        return
+    for pause in _REPLACE_RETRY_PAUSES:
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            time.sleep(pause)
+    os.replace(src, dst)
 
 
 # ---------------------------------------------------------------------------

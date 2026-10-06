@@ -165,7 +165,7 @@ def _write_event(root: Path, category: str, key: str, **fields: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        os.replace(tmp_name, str(Path(tmp_name).with_suffix(".json")))
+        actlib.replace_file(tmp_name, str(Path(tmp_name).with_suffix(".json")))
     except OSError:
         try:
             os.unlink(tmp_name)
@@ -222,7 +222,7 @@ def _write_store(root: Path, store: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(store, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
-        os.replace(tmp_name, path)
+        actlib.replace_file(tmp_name, path)
     except OSError:
         try:
             os.unlink(tmp_name)

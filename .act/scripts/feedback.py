@@ -326,7 +326,7 @@ def _write_state(root: Path, state: dict) -> None:
             tmp_path = handle.name
             json.dump(state, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
-        os.replace(tmp_path, path)
+        actlib.replace_file(tmp_path, path)
     except BaseException:
         if tmp_path is not None:
             try:
