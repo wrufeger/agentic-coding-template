@@ -62,6 +62,12 @@
 #          (`.env*`, .ini, .cfg, .conf, .properties, .yaml/.yml, .toml, shell scripts, Dockerfile,
 #          docs, no or unknown extension) a bare value is a literal and stays measured, whatever
 #          its shape. A quoted value is always measured.
+#          Two more shapes read apart from that rule: a credential-named parameter in a URL's query
+#          string (`https://host/p?api_key=<value>`, `&token=<value>`; _URL_QUERY_RE) and the quoted
+#          literal after an environment lookup (`os.environ.get("API_TOKEN") or "<value>"`,
+#          `os.getenv('API_TOKEN') or '<value>'`; _ENV_FALLBACK_RE, keyed by the variable's name) --
+#          both under the same key-name, length, placeholder and entropy gates; a single-quoted key
+#          (`{'token': '<value>'}`) counts like a double-quoted one.
 #          All findings are named in the hold message, up to _MAX_FINDINGS one by one, then "+N more"
 #          with the total and the affected files, so one round of marking is enough;
 #          the scan itself stops collecting at _MAX_COLLECTED.
@@ -139,6 +145,10 @@
 #     an exclude in it is not applied to the other operands (a file it excludes is still scanned --
 #     over-inclusive, never a miss elsewhere); only a top-anchored one (`:/x`, `:(top)x`) is handed
 #     to git as written (2026-09-27 review 3);
+#   - `git add -u src` is read as also staging untracked files under `src` (it does not), and
+#     `git add -n`/`--dry-run` counts as staging although it stages nothing -- both over-inclusive;
+#   - `git commit -am x` reads `x` (the message, glued to the cluster) as a path operand: harmless,
+#     a name that exists nowhere matches nothing -- the safe direction;
 #   - a `git add -u|-A "$dir"` whose operand cannot be placed keeps the flag's widest reading (the
 #     whole tree), over-inclusive on purpose -- a plain `git add "$dir"` stays invisible, as above.
 
@@ -184,7 +194,7 @@ __all__ = [
     "_SOURCE_EXTENSIONS", "_MEMBER_ACCESS_RE", "_IDENTIFIER_RE", "_CALL_RE", "_is_source_file", "_incomplete_note",
     "_GIT_TIMEOUT", "_ALIAS_TIMEOUT", "_MAX_NESTED_DEPTH", "_NOTES_DIRNAME",
     "_SAFE_SESSION_ID_RE", "_KNOWN_PATTERNS", "_KEY_VALUE_RE", "_PLACEHOLDER_RE", "_HUNK_RE",
-    "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
+    "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
     "_COMMIT_VALUE_FLAGS", "_ADD_ALL_FLAGS", "_ADD_FORCE_FLAGS", "_GIT_COMMIT_FALLBACK_RE",
     "_entropy_threshold", "_shannon_entropy", "_looks_like_placeholder", "_normalized_key",
     "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
@@ -242,7 +252,7 @@ _KNOWN_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 # value against entropy/placeholder. The key itself is optionally quoted (JSON), the value either
 # quoted or bare. _match_secret tries every candidate on a line via finditer, not just the first.
 _KEY_VALUE_RE = re.compile(
-    r"""(?:"(?P<qkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})"|(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60}))
+    r"""(?:"(?P<qkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})"|'(?P<sqkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})'|(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60}))
         \s*[:=]\s*
         (?:
             "(?P<dq>[^"]{20,})"
@@ -251,6 +261,24 @@ _KEY_VALUE_RE = re.compile(
         )""",
     re.VERBOSE,
 )
+
+# A credential-named parameter inside a URL's query string (`https://host/p?api_key=<value>`,
+# `&access_token=<value>`): _KEY_VALUE_RE reads `https:` as the key and swallows the whole URL as its
+# bare value, so the parameter never gets a turn of its own -- this reads it separately.
+_URL_QUERY_RE = re.compile(
+    r"""[?&](?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60})=(?P<value>[^\s&'"#,;]{20,})"""
+)
+# A literal fallback after an environment lookup (`os.environ.get("API_TOKEN") or "<value>"`,
+# `os.getenv('API_TOKEN') or '<value>'`, `os.environ["API_TOKEN"] or "<value>"`): the key is the
+# environment variable's name, the value the quoted literal after `or`/`||`/`??`.
+_ENV_FALLBACK_RE = re.compile(
+    r"""(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}["'](?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+        [^)\]]{0,200}[)\]]\s{0,20}(?:\bor\b|\|\||\?\?)\s{0,20}
+        (?:"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})')""",
+    re.VERBOSE,
+)
+
+_PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 
 _PLACEHOLDER_RE = re.compile(
     r"""(?ix)^(?:
@@ -420,17 +448,52 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
         match = pattern.search(line)
         if match and not _looks_like_placeholder(match.group(0)):
             return kind, match.group(0)
-    for match in _KEY_VALUE_RE.finditer(line):
-        key = match.group("qkey") or match.group("key")
-        quoted = match.group("dq") or match.group("sq")
-        value = quoted or match.group("bare")
-        if (
+    def counts(key: str, value: Optional[str], quoted: bool, start: int) -> bool:
+        return bool(
             value
-            and not (not quoted and _is_expression_value(value, path, line, match.start()))
+            and not (not quoted and _is_expression_value(value, path, line, start))
             and not _looks_like_placeholder(value)
             and feedback_privacy.SECRET_WORDS.search(_normalized_key(key))
             and _shannon_entropy(value) >= _entropy_threshold(value)
-        ):
+        )
+
+    def url_hit(pos: int, endpos: int) -> Optional[str]:
+        for match in _URL_QUERY_RE.finditer(line, pos, endpos):
+            value = match.group("value")
+            # a template or interpolation (`%s`, `%(name)s`, `${x}`) is no literal; a percent-escape
+            # (`%2B`) is the start of a URL-encoded one
+            if value[0] in "{$<[(" or (value[0] == "%" and not _PERCENT_ESCAPE_RE.match(value)):
+                continue
+            if counts(match.group("key"), value, True, match.start()):
+                return value
+        return None
+
+    def pair_hit(pos: int, endpos: int, inner: bool) -> Optional[str]:
+        for match in _KEY_VALUE_RE.finditer(line, pos, endpos):
+            key = match.group("qkey") or match.group("sqkey") or match.group("key")
+            quoted = match.group("dq") or match.group("sq")
+            value = quoted or match.group("bare")
+            if counts(key, value, bool(quoted), match.start()):
+                return value
+            if quoted and not inner:
+                # a credential pair inside the quoted text (`'cmd': 'run --opt token=<v> now'`):
+                # one level only, over a range of its own, so the whole scan stays linear
+                group = "dq" if match.group("dq") else "sq"
+                found = pair_hit(match.start(group), match.end(group), True) or url_hit(
+                    match.start(group), match.end(group))
+                if found:
+                    return found
+        return None
+
+    found = pair_hit(0, len(line), False)
+    if found:
+        return "high-entropy assignment", found
+    found = url_hit(0, len(line))
+    if found:
+        return "high-entropy assignment", found
+    for match in _ENV_FALLBACK_RE.finditer(line):
+        value = match.group("dq") or match.group("sq")
+        if counts(match.group("key"), value, True, match.start()):
             return "high-entropy assignment", value
     return None
 
