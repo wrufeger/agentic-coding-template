@@ -55,7 +55,7 @@
   "hooks/checks/nesting_guard.py": "82e18a6aa6e6ffdca2cc030a3a640003c02e0e9dcdf6853af4422d2cf3673b23",
   "hooks/checks/powershell_targets.py": "2cc2e40eeb873d10126580a3b1e69fdeb8da217d1606013982a94d142b051778",
   "hooks/checks/recursive_delete.py": "9c70ae6f1c70850f8cd766ef5342b7dd387f3d1f0dd3c5da94a6fef5ae53c005",
-  "hooks/checks/secret_scan.py": "d1f2e40537926d6a3833af1d6f9f258683ff40c91ba03ed8a60c6d68f6edcd69",
+  "hooks/checks/secret_scan.py": "57b030a6e4767fed9067423cc7180758338359db6de5c282ffa4bb70c0797863",
   "hooks/checks/session.py": "b07484e38a119c09982fbea1370112a1d1c22670a920c351b92b968ba2727260",
   "hooks/checks/shell_targets.py": "0d135f596084b1f76444bea7d3292933e912c1e0868da47f632b39f82af14220",
   "hooks/checks/shell_targets_legacy.py": "6b28d8cdc3ad5039bd02b487e2e4c0b05548e6bff46904d4b1c8426769b95fa4",

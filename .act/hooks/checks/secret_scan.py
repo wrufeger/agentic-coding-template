@@ -65,9 +65,12 @@
 #          Two more shapes read apart from that rule: a credential-named parameter in a URL's query
 #          string (`https://host/p?api_key=<value>`, `&token=<value>`; _URL_QUERY_RE) and the quoted
 #          literal after an environment lookup (`os.environ.get("API_TOKEN") or "<value>"`,
-#          `os.getenv('API_TOKEN') or '<value>'`; _ENV_FALLBACK_RE, keyed by the variable's name) --
-#          both under the same key-name, length, placeholder and entropy gates; a single-quoted key
-#          (`{'token': '<value>'}`) counts like a double-quoted one.
+#          `os.getenv('API_TOKEN') or '<value>'`, `process.env.API_TOKEN || "<value>"`, `?? "<value>"`,
+#          PHP `getenv('API_TOKEN') ?: '<value>'`; _ENV_FALLBACK_RE, keyed by the variable's name, and
+#          in a chain of lookups by every name in it; the default as the second argument
+#          `os.environ.get("API_TOKEN", "<value>")`, _ENV_DEFAULT_RE) -- both under the same key-name,
+#          length, placeholder and entropy gates; a single-quoted key (`{'token': '<value>'}`) counts
+#          like a double-quoted one, and so does a PHP array entry (`'token' => '<value>'`, _ARROW_RE).
 #          All findings are named in the hold message, up to _MAX_FINDINGS one by one, then "+N more"
 #          with the total and the affected files, so one round of marking is enough;
 #          the scan itself stops collecting at _MAX_COLLECTED.
@@ -194,7 +197,7 @@ __all__ = [
     "_SOURCE_EXTENSIONS", "_MEMBER_ACCESS_RE", "_IDENTIFIER_RE", "_CALL_RE", "_is_source_file", "_incomplete_note",
     "_GIT_TIMEOUT", "_ALIAS_TIMEOUT", "_MAX_NESTED_DEPTH", "_NOTES_DIRNAME",
     "_SAFE_SESSION_ID_RE", "_KNOWN_PATTERNS", "_KEY_VALUE_RE", "_PLACEHOLDER_RE", "_HUNK_RE",
-    "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
+    "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_ENV_KEY_RE", "_ENV_DEFAULT_RE", "_ARROW_RE", "_RULE_LIST_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
     "_COMMIT_VALUE_FLAGS", "_ADD_ALL_FLAGS", "_ADD_FORCE_FLAGS", "_GIT_COMMIT_FALLBACK_RE",
     "_entropy_threshold", "_shannon_entropy", "_looks_like_placeholder", "_normalized_key",
     "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
@@ -271,12 +274,49 @@ _URL_QUERY_RE = re.compile(
 # A literal fallback after an environment lookup (`os.environ.get("API_TOKEN") or "<value>"`,
 # `os.getenv('API_TOKEN') or '<value>'`, `os.environ["API_TOKEN"] or "<value>"`): the key is the
 # environment variable's name, the value the quoted literal after `or`/`||`/`??`.
+#
+# The lookup is Python's `environ`/`getenv`, JavaScript's `process.env.NAME` / `process.env["NAME"]` or
+# PHP's `$_ENV["NAME"]`; the operator `or`, `||`, `??` or PHP's `?:`. A chain of lookups
+# (`environ.get("API_TOKEN") or environ.get("X") or "<value>"`) is one match: every name in it is a
+# candidate key, since any of them may carry the secret. The literal is double-quoted, single-quoted
+# or a backtick string without `${`. Every gap is bounded, so the scan stays linear on one long line.
+_ENV_NAME = r"""["'][A-Za-z][A-Za-z0-9_.\-]{0,60}["']"""
+_ENV_LOOKUP = (
+    r"(?:(?:\bos\s{0,20}\.\s{0,20})?(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}" + _ENV_NAME + r"[^)\]]{0,200}[)\]]"
+    r"|process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}[A-Za-z_][A-Za-z0-9_]{0,60}"
+    r"|\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\])"
+    r"|\$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\])"
+)
+_ENV_OPERATOR = r"(?:\bor\b|\|\||\?\?|\?:)"
+_QUOTED_LITERAL = r"""(?:"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})'|`(?P<bt>(?:[^`$]|\$(?!\{)){20,})`)"""
 _ENV_FALLBACK_RE = re.compile(
-    r"""(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}["'](?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
-        [^)\]]{0,200}[)\]]\s{0,20}(?:\bor\b|\|\||\?\?)\s{0,20}
-        (?:"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})')""",
+    r"(?P<chain>" + _ENV_LOOKUP + r"(?:\s{0,20}" + _ENV_OPERATOR + r"\s{0,20}" + _ENV_LOOKUP + r"){0,5})"
+    r"\s{0,20}" + _ENV_OPERATOR + r"\s{0,20}" + _QUOTED_LITERAL
+)
+# The variable names inside one matched chain (_ENV_FALLBACK_RE's "chain" group).
+_ENV_KEY_RE = re.compile(
+    r"""(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}["'](?P<k1>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+      | process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}(?P<k2>[A-Za-z_][A-Za-z0-9_]{0,60})
+          | \[\s{0,20}["'](?P<k3>[A-Za-z][A-Za-z0-9_.\-]{0,60})["'])
+      | \$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}["'](?P<k4>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']""",
     re.VERBOSE,
 )
+# The default as the lookup's own second argument (`os.environ.get("API_TOKEN", "<value>")`,
+# `os.getenv('API_TOKEN', '<value>')`, `os.environ.setdefault(...)`): the key is the first argument.
+_ENV_DEFAULT_RE = re.compile(
+    r"(?:environ\s{0,20}\.\s{0,20}(?:get|setdefault)|getenv)\s{0,20}\(\s{0,20}"
+    r"""["'](?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']\s{0,20},\s{0,20}""" + _QUOTED_LITERAL
+)
+# A PHP-style array entry (`'token' => '<value>'`), the key quoted or bare, the value quoted and
+# without a blank (a sentence is not a secret). The bare key only starts where no name character
+# precedes it -- otherwise a long run of letters is retried at every position.
+_ARROW_RE = re.compile(
+    r"""(?:"(?P<qkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})"|'(?P<sqkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})'"""
+    r"""|(?<![A-Za-z0-9_.\-])(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60}))\s{0,20}=>\s{0,20}"""
+    r"""(?:"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})')"""
+)
+# A validation rule list as an array value (Laravel: `'password' => 'required|string|min:8'`).
+_RULE_LIST_RE = re.compile(r"^[a-z_]+(?::[^|]*)?(?:\|[a-z_]+(?::[^|]*)?)+$")
 
 _PERCENT_ESCAPE_RE = re.compile(r"%[0-9A-Fa-f]{2}")
 
@@ -492,8 +532,21 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
     if found:
         return "high-entropy assignment", found
     for match in _ENV_FALLBACK_RE.finditer(line):
-        value = match.group("dq") or match.group("sq")
+        value = match.group("dq") or match.group("sq") or match.group("bt")
+        for key_match in _ENV_KEY_RE.finditer(match.group("chain")):
+            key = next(name for name in key_match.groups() if name)
+            if counts(key, value, True, match.start()):
+                return "high-entropy assignment", value
+    for match in _ENV_DEFAULT_RE.finditer(line):
+        value = match.group("dq") or match.group("sq") or match.group("bt")
         if counts(match.group("key"), value, True, match.start()):
+            return "high-entropy assignment", value
+    for match in _ARROW_RE.finditer(line):
+        key = match.group("qkey") or match.group("sqkey") or match.group("key")
+        value = match.group("dq") or match.group("sq")
+        # a value with a blank is prose (a translation table: `'PASSWORD_EXPLAIN' => 'Enter your ...'`),
+        # a `rule|rule:arg` list is a validation rule set, not a secret
+        if " " not in value and not _RULE_LIST_RE.match(value) and counts(key, value, True, match.start()):
             return "high-entropy assignment", value
     return None
 
