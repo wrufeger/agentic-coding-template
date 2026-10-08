@@ -975,6 +975,7 @@ _CONFIG_VALUES = {
     "board": ("docs", "shared", "local"),
     "board-others": ("on", "off"),
     "inbox-decisions": ("immediate", "at-start"),
+    "output-depth": ("verbose", "normal", "sparse"),
 }
 
 

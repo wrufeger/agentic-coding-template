@@ -44,7 +44,7 @@ from .common import _check_mode
 from .danger_scan import _security_check_level
 
 __all__ = [
-    "_current_branch", "_STATUS_RE", "_count_inbox_waiting",
+    "_current_branch", "_STATUS_RE", "_count_inbox_waiting", "_count_inbox_open",
     "_DOCS_AUDIT_TITLE_PREFIX", "_LEDGER_HEADING_RE", "_LEDGER_CREATED_RE",
     "_LEDGER_DATE_IN_NAME_RE", "_parse_docs_audit_due", "_ledger_entry_date",
     "_last_ledger_entry_with_prefix", "_last_docs_audit_entry", "_commits_since", "_docs_audit_note",
@@ -87,6 +87,22 @@ def _current_branch(root: Path) -> str:
 
 
 _STATUS_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE)
+
+
+def _count_inbox_open(root: Path) -> int:
+    """Open inbox entries addressed to this identity or to everyone -- the very number the status
+    line shows as "waiting for you" (statusline._waiting_summary()), loaded by path so the two can
+    never count differently. 0 when the status line module or the board cannot be used."""
+    import importlib.util
+    path = Path(__file__).resolve().parent.parent / "statusline.py"
+    spec = importlib.util.spec_from_file_location("_act_statusline", path)
+    if spec is None or spec.loader is None:
+        return 0
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if getattr(module, "board", None) is None or getattr(module, "actlib", None) is None:
+        return 0
+    return module._waiting_summary(root)[0]
 
 
 def _count_inbox_waiting(root: Path) -> int:
@@ -1192,6 +1208,21 @@ def _env_override_note() -> Optional[str]:
     return "[act] note: environment overrides active: " + ", ".join(active)
 
 
+_OUTPUT_DEPTHS = ("verbose", "normal", "sparse")
+
+
+def _output_depth_line(config: dict[str, str]) -> Optional[str]:
+    """Names `output-depth` once when it is not `normal` (levels: R-human-chat); an unknown value
+    falls back to `normal` and says so. Nothing for `normal` or an empty value."""
+    value = str(config.get("output-depth", "")).strip()
+    if not value or value.lower() == "normal":
+        return None
+    if value.lower() in _OUTPUT_DEPTHS:
+        return f"[act] output depth: {value.lower()} (docs/ai/config.md; levels in R-human-chat)"
+    return (f"[act] output depth: {value!r} is not one of {' | '.join(_OUTPUT_DEPTHS)} — "
+            f"treated as normal (docs/ai/config.md)")
+
+
 def _chat_language_line(config: dict[str, str]) -> Optional[str]:
     chat, docs = actlib.language_settings(config)
     if chat != "auto":
@@ -1504,8 +1535,8 @@ def _chat_language_short(config: dict[str, str]) -> str:
 
 
 def _human_line(state: dict) -> Optional[str]:
-    """The one `systemMessage` line: rule files loaded, chat language, and the inbox entries
-    answered but not yet processed (the status line's own count)."""
+    """The one `systemMessage` line: rule files loaded, chat language, and the inbox: entries
+    answered but not yet processed, and the open ones (the status line's "waiting for you" count)."""
     if not state:
         return None
     parts: list[str] = []
@@ -1515,8 +1546,10 @@ def _human_line(state: dict) -> Optional[str]:
                      + (f", {unresolved} import(s) not found" if unresolved else ""))
     if "chat" in state:
         parts.append(f"chat: {state['chat']}")
-    if "inbox" in state:
-        parts.append(f"inbox: {state['inbox']} to process")
+    answered = state.get("inbox", 0)
+    open_count = state.get("inbox_open", 0)
+    if answered or open_count:
+        parts.append(f"inbox: {answered} answered to process, {open_count} open")
     if state.get("ideas"):
         parts.append(f"ideas: {state['ideas']} new")
     if state.get("old_imports"):
@@ -1607,6 +1640,12 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         language_line = None
     if language_line:
         print(language_line)
+    try:
+        depth_line = _output_depth_line(config)
+    except Exception:
+        depth_line = None  # informational only, must never block the session
+    if depth_line:
+        print(depth_line)
 
     try:
         env_note = _env_override_note()
@@ -1663,6 +1702,10 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     except Exception:
         pass
     state["inbox"] = waiting
+    try:
+        state["inbox_open"] = _count_inbox_open(root)
+    except Exception:
+        state["inbox_open"] = 0
 
     # The session owner's own ideas file (and the folder README) created on first use — in a
     # project that predates the ideas files, or for a second person who just joined.

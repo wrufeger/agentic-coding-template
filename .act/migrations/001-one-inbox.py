@@ -19,7 +19,7 @@
 #               docs/ai/inbox/ is renamed to "<ID>-<slug>.md" the same way, unless already named
 #               that way. An inbox entry without an id (todo/report/note) keeps its name. An id
 #               that isn't a valid identifier for its own location (wrong prefix, leading zeros,
-#               anything not matching "^[TBQ]\d+[a-z]?$") is left unrenamed and reported instead.
+#               anything not matching "^[TBQU]\d+[a-z]?$") is left unrenamed and reported instead.
 #            4. docs/ai/inbox/README.md, docs/ai/work/tasks/README.md, .../backlog/README.md and
 #               .../archive/README.md are replaced with the fetched template's own
 #               .act/skeleton/<...>/README.md when they are still the unedited scaffold (same
@@ -63,14 +63,14 @@ RENAME_DIRS = (TASKS_DIR, BACKLOG_DIR, ARCHIVE_DIR, INBOX_DIR)
 ARCHIVE_EXCLUDE = (f"{ARCHIVE_DIR}/legacy", f"{ARCHIVE_DIR}/proposals")
 
 # Which id prefix is valid in which location:
-# questions/inbox only ever carry "Q", tasks only "T", backlog only "B", archive keeps all three
+# questions carry "Q", inbox "Q" or "U" (todos), tasks only "T", backlog only "B", archive keeps all four
 # since anything can end up there.
 _ALLOWED_ID_PREFIXES = {
     QUESTIONS_DIR: "Q",
-    INBOX_DIR: "Q",
+    INBOX_DIR: "QU",
     TASKS_DIR: "T",
     BACKLOG_DIR: "B",
-    ARCHIVE_DIR: "TBQ",
+    ARCHIVE_DIR: "TBQU",
 }
 
 README_REFRESH = (
@@ -83,7 +83,7 @@ README_REFRESH = (
 _BOM = b"\xef\xbb\xbf"
 _DEFAULT_MARK = b"<!-- act:default -->"
 _ID_RE = re.compile(rb"(?im)^id:\s*(\S+)\s*$")
-_ID_PARTS_RE = re.compile(r"^([TBQ])(\d+)([a-z]?)$")
+_ID_PARTS_RE = re.compile(r"^([TBQU])(\d+)([a-z]?)$")
 _KEY_RE = re.compile(rb"^([A-Za-z][A-Za-z-]*):")
 _DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
 _REPORT_NAME_RE = re.compile(r"^report-\d{8}-\d{4}(?:-\d+)?-migration-001-one-inbox\.md$")

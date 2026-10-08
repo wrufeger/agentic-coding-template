@@ -231,6 +231,15 @@ def ensure_own_unit_copies(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Messages can carry non-ASCII characters (em dash); a Windows console or a redirect otherwise
+    # uses a legacy code page instead of UTF-8, which would corrupt or crash on them. Same fix as
+    # .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     argparse.ArgumentParser(
         description="Create the missing tool copies of the project's own skills (docs/ai/local/skills/) "
                     "and roles (docs/ai/local/agents/); idempotent, prints what happened.",

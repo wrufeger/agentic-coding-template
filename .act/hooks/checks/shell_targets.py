@@ -24,9 +24,11 @@
 #      (_line_mode_tokens); the `$(...)`/backtick parts of an unquoted-delimiter body, which bash
 #      does run, are kept as commands of their own;
 #   3. conservative fallback when a line does not tokenize on its own (an unclosed quote, typically
-#      a string spanning lines) or the command uses ANSI-C quoting `$'...'`, which this lexer does not
-#      know: the whole command is tokenized in one go (newline as an operator, a multi-line string
-#      becomes one token, no heredoc skipping); if that fails too, or for `$'...'` in any case,
+#      a string spanning lines) or the command may use ANSI-C quoting `$'...'`, which this lexer does
+#      not know (a `$'` that is only text — in quotes, escaped, in a comment, in a quoted heredoc body —
+#      does not count, see the known limits): the whole command is tokenized in one go (newline as an
+#      operator, a multi-line string becomes one token, no heredoc skipping except that the bodies of
+#      quoted-delimiter heredocs are cut out first); if that fails too, or for `$'...'` in any case,
 #      every word after a `>`-style operator in the raw text also counts as a target
 #      (_raw_redirect_targets) — over-blocking is the accepted price there — and the tokens each
 #      attempt had read before the word that broke it (an earlier line, a command before the
@@ -95,13 +97,28 @@
 #     is instead an *operand* of a last-operand writer (`cp`/`install`/`ln`/`rsync`), it can expand
 #     to empty and shift which word is the destination, so every operand of that command is then
 #     treated as a possible target (_simple_command_targets);
-#   - a command whose name is a *separate* word that is itself a backtick span (space-separated,
-#     `` `echo x` rm -rf d `` / `` `echo "` touch .act/x ``) is not recognized: bash runs whatever
-#     the span prints (or, when it prints nothing, the word after it), neither of which is knowable
-#     here, so the surrounding command is read with an empty name and matched against no writer. The
-#     span's own content is still scanned, but the command formed from its *output* is missed — the
-#     same gap HEAD has (both scanners return nothing for `` `echo "` touch .act/x ``). Resolved
-#     toward over-blocking only when some other, determinable part of the command names a target.
+#   - a command name that is a *separate* word which is itself a backtick span (space-separated,
+#     `` `echo x` rm -rf d `` / `` `echo "` touch .act/x ``): bash runs whatever the span prints, or —
+#     when it prints nothing — the word after it. Such a word is skipped like an assignment
+#     (_is_span_word), so the word behind it is read as the command: the "prints nothing" case is
+#     caught, and a span that does print a command name is over-read (its first operand taken for the
+#     command), never under-read. What stays open is the command the span itself prints: `` `echo rm`
+#     -rf d `` runs `rm -rf d`, the name being whatever the span's output is — unknowable here, the
+#     span's own content is still scanned. Resolved toward over-blocking only when some other,
+#     determinable part of the command names a target;
+#   - ANSI-C quoting `$'...'` is told from a `$'` that is only text by a pass over the whole command
+#     (shell_targets_legacy._QuoteScan, shared by both halves) that follows bash's quoting. Wherever
+#     that pass does not model something it gives up and counts the `$'` as live, so the answer errs
+#     toward the raw-redirect search: arithmetic `((`/`$((`/`$[`, a `${...}` beyond a plain name, a
+#     `$(...)` in a command that also has a `case`, a comment holding any quote/expansion character,
+#     a backtick span holding `$'`, an unterminated quote or span, a heredoc line that cannot be
+#     placed, nesting beyond 32 levels. Bodies of heredocs with a quoted delimiter are cut out before
+#     the whole-command fallback (bash never runs them); a body terminated only by a line the
+#     tokenizer accepts but bash does not (` EOF` with a blank in front) stays in;
+#   - text nested deeper than _MAX_SCAN_DEPTH (`eval` inside `eval` ..., `$(...)` and backtick spans
+#     count too) is not read any further: it is reported as one target that names no knowable path
+#     (`$(` plus the remainder) next to its raw redirections, which check 1c denies and check 1 denies
+#     when the remainder names .act/.
 
 from __future__ import annotations
 
@@ -114,6 +131,11 @@ from pathlib import Path
 from typing import Optional
 
 from . import shell_targets_legacy as _legacy_targets
+# The `$'` / quoted-heredoc pass is shared with the legacy half: one definition of what bash reads as
+# ANSI-C quoting, so the two halves of the union never disagree on it.
+from .shell_targets_legacy import (
+    _may_use_ansi_c_quoting, _quote_model_applies, _without_quoted_heredoc_bodies,
+)
 
 __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
@@ -130,7 +152,9 @@ __all__ = [
     "_is_absolute_target", "_Word", "_TokenizeError", "_backtick_span", "_closed_backtick_spans",
     "_EXPANSION_CLOSERS", "_skip_squote", "_collect_dq_nested", "_collect_dq_expansion", "_read_word",
     "_split_operator_run", "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
-    "_line_mode_tokens", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
+    "_line_mode_tokens", "_may_use_ansi_c_quoting", "_quote_model_applies",
+    "_without_quoted_heredoc_bodies",
+    "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
     "_scan_command", "_bash_write_targets_new", "_bash_write_targets",
 ]
@@ -797,6 +821,15 @@ def _command_name(word: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
+def _is_span_word(word: str) -> bool:
+    """True for a word that is nothing but backtick spans (and quotes around nothing): `` `echo "` ``,
+    `` `true` ``. In front of a command it prints nothing or something this scanner cannot know, so
+    the command is read as the word behind it — over-reading when the span prints a real command name,
+    never under-reading. A plain `str` word (the legacy scanners hand those back) has no `bare` and is
+    never one."""
+    return "`" in word and getattr(word, "bare", None) == ""
+
+
 def _operands(args: list[str], value_flags: frozenset = frozenset()) -> tuple[list[str], dict[str, list[str]]]:
     """Split a command's arguments into operands and the values of `value_flags` (`-t DIR`,
     `--target-directory=DIR`, `-tDIR`). Other options are dropped; `--` ends option parsing."""
@@ -918,6 +951,9 @@ def _simple_command_targets(
         elif word in _RESERVED_PREFIXES:
             prefixed = True
             index += 1
+        elif _is_span_word(word):
+            prefixed = True  # whatever the span prints, the command behind it may not run at all
+            index += 1
         elif _command_name(word) in _WRAPPER_COMMANDS:
             wrapper_name = _command_name(word)
             wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper_name, frozenset())
@@ -939,7 +975,7 @@ def _simple_command_targets(
                     # word, matching neither _WRAPPER_ARG_RE nor an assignment, so it must be
                     # skipped explicitly too or it gets read as the wrapped command's own name.
                     index += 2 if index + 1 < len(words) else 1
-                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg):
+                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg):
                     index += 1
                 else:
                     break
@@ -1134,13 +1170,17 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
     for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs. When neither
     tokenizing manages the whole command, the tokens each read before it failed are scanned too,
     next to the raw-text search."""
+    quote_model = _quote_model_applies(command)
     command = _LINE_CONTINUATION_RE.sub(r"\1", command)
     if depth > _MAX_SCAN_DEPTH:
-        return [(target, None) for target in _raw_redirect_targets(command)]
+        # Nested deeper than anything real: not read any further, and not passed either — the whole
+        # remainder is one target that names no knowable path (a `$(` text), which check 1c denies and
+        # check 1 denies when the remainder names .act/.
+        return [(target, None) for target in _raw_redirect_targets(command)] + [(f"$({command})", None)]
     found: list[_Target] = []
     tokens: Optional[list[_Token]] = None
     prefixes: list[list[_Token]] = []  # what came before the word that broke a tokenizing attempt
-    ansi_c_quoting = "$'" in command
+    ansi_c_quoting = _may_use_ansi_c_quoting(command) if quote_model else "$'" in command
     if not ansi_c_quoting:
         try:
             tokens = _line_mode_tokens(command)
@@ -1148,13 +1188,16 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
             tokens = None
             prefixes.append(getattr(error, "partial", []))
     if tokens is None:
+        # The whole-command fallback skips no heredoc itself: the bodies of quoted-delimiter heredocs,
+        # which bash never runs, are cut out first (unless `$'` may be live, where nothing is trusted).
+        whole = command if ansi_c_quoting or not quote_model else _without_quoted_heredoc_bodies(command)
         try:
-            tokens = _shell_tokens(command, newline_is_operator=True)
+            tokens = _shell_tokens(whole, newline_is_operator=True)
         except ValueError as error:
             tokens = None
             prefixes.append(getattr(error, "partial", []))
         if tokens is None or ansi_c_quoting:
-            found.extend((target, None) for target in _raw_redirect_targets(command))
+            found.extend((target, None) for target in _raw_redirect_targets(whole))
     if tokens is not None:
         found.extend(_scan_tokens(tokens, bases, git_writes, depth))
     else:

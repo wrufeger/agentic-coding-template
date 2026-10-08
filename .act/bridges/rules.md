@@ -67,6 +67,7 @@ Applies to the main session only — workers skip this section.
 @../../.act/rules/orchestrator/30-cost.md
   - [x] `R-cost-delegate`
   - [x] `R-cost-wait`
+  - [x] `R-cost-amend`
   - [x] `R-cost-script`
   - [x] `R-code-commit`
 

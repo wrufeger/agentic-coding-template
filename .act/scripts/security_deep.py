@@ -284,6 +284,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Findings can carry non-ASCII characters; a Windows console or a redirect otherwise uses a legacy
+    # code page instead of UTF-8, which would corrupt or crash on them. Same fix as
+    # .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     args = build_parser().parse_args(argv)
 
     try:

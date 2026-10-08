@@ -92,7 +92,10 @@ them in the inbox (`R-human-ask`).
 | `output-depth` | normal |
 
 `verbose` \| `normal` \| `sparse`. Controls what the assistant *writes* in chat, not what the
-tool's own interface displays — see `docs/README.md` for the per-tool display settings.
+tool's own interface displays — see `docs/README.md` for the per-tool display settings. Defined in
+`R-human-chat`: `normal` is compact and to the point (bullets rather than paragraphs); `sparse` gives
+only what is needed — no interim status, one answer per question; `verbose` writes answers out —
+the question as understood, reasons, notes on code it wrote and what to watch out for.
 
 ## Dependencies
 

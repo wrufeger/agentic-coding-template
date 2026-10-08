@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import fnmatch
+import glob
 import json
 import os
 import re
@@ -59,7 +60,8 @@ __all__ = [
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
-    "_normalize_candidate_path", "_within_scratchpad", "_matches_scope", "_write_scope_message",
+    "_normalize_candidate_path", "_within_scratchpad", "_matches_scope", "_shell_expansion_escapes",
+    "_write_scope_message",
     "check_worker_write_scope",
 ]
 
@@ -531,14 +533,43 @@ def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
     for pattern in patterns:
         if _is_absolute_target(pattern) != is_absolute_target:
             continue
-        if fnmatch.fnmatch(rel_posix, pattern):
+        # A pattern with a "[" is read literally only: framework route folders are named `[id]` or
+        # `[...slug]`, and to fnmatch `[id]` is a character class ("i" or "d"). Escaping every "["
+        # makes `server/api/[id]/**` name exactly the folder `[id]`; "*" and "?" stay wildcards.
+        glob_pattern = pattern.replace("[", "[[]") if "[" in pattern else pattern
+        if fnmatch.fnmatch(rel_posix, glob_pattern):
             return True
         if pattern.endswith("/**") and len(pattern) > 3:
-            root = pattern[:-3]
-            # Literal root only: a glob in the prefix (`src/*/**`) would let the root match loosen
-            # to files directly under the parent.
-            if not any(ch in root for ch in "*?[") and fnmatch.fnmatch(rel_posix, root):
+            root = glob_pattern[:-3]
+            # Literal root only: a `*`/`?` in the prefix (`src/*/**`) would let the root match
+            # loosen to files directly under the parent. A bracket root is literal, so
+            # `server/api/[id]/**` lets `mkdir -p server/api/[id]` through, nothing else.
+            if not any(ch in root for ch in "*?") and fnmatch.fnmatch(rel_posix, root):
                 return True
+    return False
+
+
+def _shell_expansion_escapes(raw: str, base: Optional[str], root: Path, patterns: list[str]) -> bool:
+    """True if a shell (Bash, PowerShell) target holding "[", "*" or "?" expands, at run time, to an
+    existing path outside `patterns`. The shell reads `[id]` as a wildcard class even where the scope
+    reads it literally, so `echo x > server/api/[id]/f` writes `server/api/d/f` when that folder
+    exists. Python's glob understands the same classes as bash; PowerShell's `-Path` wildcards
+    are approximated the same way. No existing match leaves the literal reading standing (bash
+    without nullglob keeps the word as typed). Limit: only paths existing when the hook runs are
+    seen; a match created earlier in the same command is not."""
+    if not any(ch in raw for ch in "*?["):
+        return False
+    resolved = _resolve_path(raw, base) if (base is not None or _is_absolute_target(raw)) else None
+    if resolved is None:
+        return False
+    try:
+        matches = glob.glob(str(resolved))
+    except (OSError, ValueError):
+        return False
+    for match in matches:
+        rel = _normalize_candidate_path(match, root, str(root))
+        if rel is None or not _matches_scope(rel, patterns):
+            return True
     return False
 
 
@@ -668,7 +699,11 @@ def check_worker_write_scope(payload: dict) -> int:
             offending = raw_target
         else:
             rel = _normalize_candidate_path(raw_target, root, base if base is not None else str(root))
-            if rel is not None and _matches_scope(rel, scope.get("patterns") or []):
+            patterns = scope.get("patterns") or []
+            if rel is not None and _matches_scope(rel, patterns) and not (
+                tool_name in ("Bash", "PowerShell")
+                and _shell_expansion_escapes(raw_target, base, root, patterns)
+            ):
                 continue
             offending = raw_target
         message = _write_scope_message(offending, scope)

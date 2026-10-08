@@ -2486,8 +2486,12 @@ def step_lock_and_cache(
     root: Path, plan: bool, template_origin: str, template_commit: str,
     generated: dict[str, Path], copies: dict[str, dict],
     generated_hashes: Optional[dict[str, str]] = None,
+    lock_existed_before: bool = True,
 ) -> str:
-    """`generated_hashes`: the fingerprint of each generated bridge
+    """`lock_existed_before`: whether .act-lock.json was already there when this run started
+    (captured by main() before any step could write it); only a project without one is fresh and
+    gets the shipped migrations recorded as applied.
+    `generated_hashes`: the fingerprint of each generated bridge
     exactly as step 6 wrote it -- read by main() right after step_materialize, *before* the same
     run's carry-over (Weg C, owner profile) edits docs/ai/rules.md or coding_rules.md (a group
     switched off with its reason, an own rule). Hashing here, after those edits, used to record
@@ -2509,9 +2513,11 @@ def step_lock_and_cache(
         # file directly by path instead of via actlib.read_lock()/repo_root(): this function is
         # handed `root` explicitly and must not depend on the process's current working directory.
         try:
-            existing_lock = json.loads((root / ".act-lock.json").read_text(encoding="utf-8"))
-            commit = ((existing_lock.get("template") or {}).get("commit") or "") or commit
-        except (OSError, json.JSONDecodeError):
+            existing_lock = json.loads((root / ".act-lock.json").read_text(encoding="utf-8-sig"))
+            existing_template = existing_lock.get("template") if isinstance(existing_lock, dict) else None
+            if isinstance(existing_template, dict):
+                commit = (existing_template.get("commit") or "") or commit
+        except (OSError, ValueError):
             pass
     manifest_hash = ""
     if not plan:
@@ -2527,12 +2533,21 @@ def step_lock_and_cache(
         # compares against this hash to tell an unchanged copy from one the project edited. Role
         # bridges (agent_bridge_targets()) are not tracked here: they are never replaced once
         # written, so there is nothing to compare against later.
-        actlib.write_lock({
+        lock_update = {
             "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash},
             "copies": copies,
             # present from the start, so a later "nothing changed" never has to add it
             "removed_by_user": list(actlib.read_lock().get("removed_by_user", [])),
-        })
+        }
+        # Every migration shipped with this .act/ describes a change from an older layout; a project
+        # created now already has the new one, so the first update must not run them. Decided by
+        # whether a lock existed before this run, never by its content: a re-run on an existing
+        # project (possibly an older one that never ran its migrations, possibly with a lock that
+        # is unreadable to us) keeps its own list untouched.
+        if not lock_existed_before:
+            shipped = {p.stem for p in (root / ".act" / "migrations").glob("[0-9][0-9][0-9]-*.py")}
+            lock_update["migrations_applied"] = sorted(shipped)
+        actlib.write_lock(lock_update)
         # .act-lock.json § applied: the values the files just materialized hang on, so the
         # first session start has a snapshot to compare against instead of writing the lock itself.
         # Best-effort — without it, the next update.py run records one.
@@ -2982,6 +2997,8 @@ def main(argv: list[str]) -> int:
 
     interactive = actlib.is_interactive() and not plan
     notes: list[str] = []
+    # Before any step can write the lock: only a project without one is fresh (step 9).
+    lock_existed_before = (root / ".act-lock.json").exists()
 
     cfg = step_config(root, interactive, notes,
                       {"language-docs": args.language_docs, "language-chat": args.language_chat})
@@ -3091,7 +3108,8 @@ def main(argv: list[str]) -> int:
         _print_step(8, step_own_files(root, plan, interactive, cfg, verify_commit, notes))
         own_root_files = [p for p in (root / "README.md", root / "LICENSE") if p.is_file()]
 
-    _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes))
+    _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,
+                                        lock_existed_before=lock_existed_before))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [

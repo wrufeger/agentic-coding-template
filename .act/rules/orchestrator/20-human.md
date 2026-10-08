@@ -28,7 +28,7 @@ always in the inbox.
 
 ## `R-human-chat` — Answer once, briefly, when the answer is final
 
-summary: no interim reports, questions in the inbox, short closing summary
+summary: no interim reports, questions in the inbox, short closing summary, terse style, output-depth levels
 
 Reply only when the answer is final — not while it still depends on running workers or pending
 findings, and never with one worker's report while others are still running. On a long run a
@@ -43,6 +43,22 @@ the human has already answered is booked and archived in the same turn that noti
 never left open. Close with a short summary — done · next · problems · to discuss — short, but
 without dropping anything that matters, and name new questions and tasks together in one closing
 line ("New questions: Q12–Q14, new task T7"). Details only on request.
+
+Saving tokens is one of the goals, since every answer is read again in each later step. So chat
+text is compact and to the point: answer first, three bullets rather than three paragraphs, no
+announcing what follows, no repeating it at the end (the closing summary is the answer, not a
+repeat), no filler or hedging. Numbers, negations, paths, identifiers, code and error text stay
+verbatim, never shortened; a warning, an irreversible or outward-facing step, and a question or
+decision put to the human are written in full sentences.
+
+`output-depth` in `docs/ai/config.md` sets the level. `normal` (the default) is the paragraph above.
+`sparse` cuts further: only what is needed, no interim status line at all (instead of the one-line
+status above), and one question gets exactly one answer. `verbose` writes chat answers out in full
+and so overrides "briefly" and "details only on request" above: it restates the question as
+understood where that helps, explains the answer and its reasons, and for code it wrote says why it
+was done this way and what to watch out for. At every level, what stays verbatim stays verbatim,
+the full-sentence cases stay full sentences, and text under `docs/` keeps its full form whatever the
+chat level. An unknown value counts as `normal`.
 
 ## `R-human-language` — Talk in the owner's language
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# LEGACY COPY — do not edit and do not import from outside checks/. This module is the previous
+# LEGACY COPY — do not edit (the one exception: the `$'` / quoted-heredoc pass, _QuoteScan, and the
+# depth-limit target in _scan_command, both added on purpose and shared with shell_targets.py) and do not
+# import from outside checks/. This module is the previous
 # shlex-based Bash write-target scanner, kept verbatim as the safety net for the word lexer in
 # shell_targets.py: every public result of shell_targets.py (write targets) and command_words.py
 # (command word lists) is the UNION of what this legacy scanner finds and what the new lexer finds,
@@ -27,11 +29,17 @@
 #      (_line_mode_tokens); the `$(...)`/backtick parts of an unquoted-delimiter body, which bash
 #      does run, are kept as commands of their own;
 #   3. conservative fallback when a line does not tokenize on its own (an unclosed quote, typically
-#      a string spanning lines) or the command uses ANSI-C quoting `$'...'`, which shlex does not
+#      a string spanning lines) or the command may use ANSI-C quoting `$'...'`, which shlex does not
 #      know: the whole command is tokenized in one go (newline as an operator, a multi-line string
-#      becomes one token, no heredoc skipping); if that fails too, or for `$'...'` in any case,
+#      becomes one token, no heredoc skipping — except that the bodies of quoted-delimiter heredocs,
+#      which bash never runs, are cut out first); if that fails too, or for `$'...'` in any case,
 #      every word after a `>`-style operator in the raw text also counts as a target
-#      (_raw_redirect_targets) — over-blocking is the accepted price there;
+#      (_raw_redirect_targets) — over-blocking is the accepted price there. Whether a `$'` is
+#      ANSI-C quoting is decided by _QuoteScan (a pass that follows bash's own quoting; a `$'` in
+#      single or double quotes, escaped, in a comment or in a quoted heredoc body is only text, and
+#      anything the pass cannot tell counts as ANSI-C). That pass was added after the copy was made,
+#      on purpose: the plain substring test it replaces blocked `grep -v '$' f` and every quoted
+#      heredoc that merely mentioned `$'`. The new lexer in shell_targets.py uses the same pass;
 #   4. the token stream is walked command by command (_scan_tokens): redirections, the write
 #      commands of _simple_command_targets, `cd` for the base directory, and the contents of
 #      `sh -c "..."`, `eval`, `$(...)` and backticks scanned recursively.
@@ -108,7 +116,8 @@ __all__ = [
     "_is_ignorable_write_target", "_is_dynamic_target",
     "_is_absolute_target", "_NewlineKeepingStream", "_ShellLexer", "_split_operator_run",
     "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
-    "_line_mode_tokens", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
+    "_line_mode_tokens", "_QuoteScan", "_quote_scan", "_may_use_ansi_c_quoting",
+    "_without_quoted_heredoc_bodies", "_raw_redirect_targets", "_command_name", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
     "_scan_command", "_bash_write_targets",
 ]
@@ -503,6 +512,327 @@ def _line_mode_tokens(command: str) -> list[_Token]:
     return tokens
 
 
+class _AnsiCFound(Exception):
+    """Raised inside _QuoteScan the moment a `$'` may be live ANSI-C quoting, or the text is built in
+    a way the scan does not model — either way the caller must assume the worst."""
+
+
+_QUOTE_SCAN_MAX_DEPTH = 32
+_QS_CMD_SPECIAL_RE = re.compile(r"[\\'\"`$#<()\n]")
+_QS_DQ_SPECIAL_RE = re.compile(r"[\\\"`$]")
+_QS_BACKTICK_SPECIAL_RE = re.compile(r"[\\`]")
+# `case ... in pat) ...` has a `)` that closes no `$(`; a command substitution next to a `case` is
+# not followed any further (bash itself needs a special rule for it).
+_QS_CASE_RE = re.compile(r"(?<![\w$./-])case(?![\w./-])")
+_QS_PLAIN_BRACE_RE = re.compile(r"\{[#!]?[A-Za-z_]\w*(?:\[[\w@*]+\])?\}|\{[#!]?\d+\}|\{[@*#?$!-]\}")
+_QS_SPECIAL_PARAMS = "#?$!-@*0123456789"
+_QS_WORD_END = " \t\r\n;&|()<>"
+
+
+class _QuoteScan:
+    """One pass over a whole command that follows the quoting bash applies — single quotes, double
+    quotes with their nested `$(...)`, backslashes, comments, backtick spans, `<<` heredocs — to answer
+    two questions the tokenizers cannot answer line by line: is there a `$'` that bash reads as ANSI-C
+    quoting (`run` raises _AnsiCFound), and which heredoc bodies belong to a quoted delimiter (`bodies`,
+    character ranges that bash never runs). It is built to err toward "assume the worst": everything it
+    does not model on purpose raises _AnsiCFound instead of guessing — arithmetic `((`, `$((`, `$[`,
+    a `${...}` that is not a plain parameter name, a `$(...)` in a command that also has a `case`, a
+    comment that holds a quote, escape, expansion, `<` or `(`, a backtick span that holds `$'`, an
+    unterminated quote or span, an unterminated `$(`, a heredoc
+    delimiter built from an expansion, a heredoc opened while a quoted string runs across lines, nesting
+    deeper than _QUOTE_SCAN_MAX_DEPTH. A heredoc is only recognized where the line-mode tokenizer
+    recognizes one too (_heredoc_delimiters: no `((`, `[`, `${`, `$[` or backtick on its line) and only
+    skipped up to a terminator line that matches exactly (bash's own rule, stricter than the tokenizer's
+    stripped comparison, so the tokenizer never skips more than this scan). An unquoted heredoc body is
+    never inspected beyond a `$'` in it, which counts as live (the body's own `$(...)` may use it)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.has_case = _QS_CASE_RE.search(text) is not None
+        self.bodies: list[tuple[int, int]] = []
+        self._missing: set[tuple[str, bool]] = set()
+        self._line_starts: Optional[dict[str, list[int]]] = None
+        self._tab_line_starts: Optional[dict[str, list[int]]] = None
+
+    def run(self) -> None:
+        self._commands(0, None, 0)
+
+    def _commands(self, i: int, closer: Optional[str], depth: int) -> int:
+        """Scan command text from `text[i]`; with `closer` == ")" up to and including the `)` that closes
+        the `$(` this text belongs to. Returns the index after it."""
+        if depth > _QUOTE_SCAN_MAX_DEPTH:
+            raise _AnsiCFound("nested too deep")
+        text = self.text
+        size = len(text)
+        paren = 0
+        pending: list[tuple[str, bool, bool]] = []  # heredocs opened on the current line
+        while i < size:
+            match = _QS_CMD_SPECIAL_RE.search(text, i)
+            if match is None:
+                i = size
+                break
+            i = match.start()
+            char = text[i]
+            if char == "\\":
+                i += 2
+            elif char == "'":
+                end = text.find("'", i + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated single quote")
+                self._no_pending_across_lines(pending, i, end)
+                i = end + 1
+            elif char == '"':
+                end = self._double_quoted(i + 1, depth)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "`":
+                end = self._backtick(i + 1)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "$":
+                end = self._dollar(i, depth, in_double=False)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "#":
+                if i == 0 or text[i - 1] in _QS_WORD_END:
+                    end = text.find("\n", i)
+                    end = size if end < 0 else end
+                    # Only a comment of plain words is skipped: whatever structure a wrongly read
+                    # comment could hide (a quote, an escape, an expansion, a redirection, a
+                    # parenthesis) is a reason to give up instead — a `#` after an escaped blank
+                    # (`a\ #x`) is no comment in bash, and it must not hide a live `$'`.
+                    if any(mark in text[i:end] for mark in "'\"`\\$<("):
+                        raise _AnsiCFound("quoting or expansion characters in a comment")
+                    i = end
+                else:
+                    i += 1
+            elif char == "(":
+                if text.startswith("((", i):
+                    raise _AnsiCFound("arithmetic command")
+                paren += 1
+                i += 1
+            elif char == ")":
+                if paren > 0:
+                    paren -= 1
+                    i += 1
+                elif closer == ")":
+                    return i + 1
+                else:
+                    i += 1
+            elif char == "<":
+                i = self._redirect(i, pending)
+            else:  # a newline: the bodies of the heredocs opened on the line just ended start here
+                i = self._heredoc_bodies(i, pending) if pending else i + 1
+        if closer is not None:
+            raise _AnsiCFound("unterminated command substitution")
+        return size
+
+    def _no_pending_across_lines(self, pending: list, start: int, end: int) -> None:
+        if pending and self.text.find("\n", start, end) >= 0:
+            raise _AnsiCFound("heredoc line continues inside a quoted string")
+
+    def _double_quoted(self, i: int, depth: int) -> int:
+        text = self.text
+        while True:
+            match = _QS_DQ_SPECIAL_RE.search(text, i)
+            if match is None:
+                raise _AnsiCFound("unterminated double quote")
+            i = match.start()
+            char = text[i]
+            if char == '"':
+                return i + 1
+            if char == "\\":
+                i += 2
+            elif char == "`":
+                i = self._backtick(i + 1)
+            else:
+                i = self._dollar(i, depth, in_double=True)
+
+    def _backtick(self, i: int) -> int:
+        """Index after the backtick span whose opening backtick sits just before `text[i]`. A span holding
+        a `$'` is not followed (its own quoting is bash's, not this scan's)."""
+        text = self.text
+        start = i
+        while True:
+            match = _QS_BACKTICK_SPECIAL_RE.search(text, i)
+            if match is None:
+                raise _AnsiCFound("unterminated backtick span")
+            if text[match.start()] == "`":
+                if text.find("$'", start, match.start()) >= 0:
+                    raise _AnsiCFound("$' inside a backtick span")
+                return match.end()
+            i = match.start() + 2
+
+    def _dollar(self, i: int, depth: int, in_double: bool) -> int:
+        """Index after the construct that starts with the `$` at `text[i]`."""
+        text = self.text
+        following = text[i + 1:i + 2]
+        if following == "'":
+            if in_double:
+                return i + 2  # `"$'"`: inside double quotes it is two literal characters
+            raise _AnsiCFound("ANSI-C quoting")
+        if following == "(":
+            if text.startswith("$((", i) or self.has_case:
+                raise _AnsiCFound("arithmetic expansion or case next to a command substitution")
+            return self._commands(i + 2, ")", depth + 1)
+        if following == "{":
+            match = _QS_PLAIN_BRACE_RE.match(text, i + 1)
+            if match is None:
+                raise _AnsiCFound("parameter expansion with an operator")
+            return match.end()
+        if following == "[":
+            raise _AnsiCFound("arithmetic expansion")
+        if following and following in _QS_SPECIAL_PARAMS:
+            return i + 2
+        return i + 1
+
+    def _redirect(self, i: int, pending: list) -> int:
+        """At a `<`: skip a here-string, or read the delimiter of a heredoc and queue it. Returns the index
+        after what was read."""
+        text = self.text
+        size = len(text)
+        if text.startswith("<<<", i):
+            return i + 3
+        if not text.startswith("<<", i):
+            return i + 1
+        j = i + 2
+        dash = j < size and text[j] == "-"
+        if dash:
+            j += 1
+        while j < size and text[j] in " \t":
+            j += 1
+        parts: list[str] = []
+        quoted = False
+        while j < size and text[j] not in _QS_WORD_END:
+            char = text[j]
+            if char == "'":
+                end = text.find("'", j + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated single quote")
+                parts.append(text[j + 1:end])
+                quoted = True
+                j = end + 1
+            elif char == '"':
+                end = text.find('"', j + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated double quote")
+                if any(mark in text[j + 1:end] for mark in "\\$`"):
+                    raise _AnsiCFound("heredoc delimiter with an expansion")
+                parts.append(text[j + 1:end])
+                quoted = True
+                j = end + 1
+            elif char == "\\":
+                if j + 1 >= size:
+                    raise _AnsiCFound("trailing backslash")
+                parts.append(text[j + 1])
+                quoted = True
+                j += 2
+            elif char in "$`":
+                raise _AnsiCFound("heredoc delimiter with an expansion")
+            else:
+                parts.append(char)
+                j += 1
+        delimiter = "".join(parts)
+        if not delimiter:
+            return i + 2
+        line_start = text.rfind("\n", 0, i) + 1
+        line_end = text.find("\n", i)
+        line = text[line_start:size if line_end < 0 else line_end]
+        if "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS):
+            # The line-mode tokenizer opens no heredoc here, but bash does: reading the body as
+            # commands would let a quote in it shift every later line, so this is not modelled.
+            raise _AnsiCFound("heredoc on a line the scan does not place")
+        pending.append((delimiter, quoted, dash))
+        return j
+
+    def _line_index(self, dash: bool) -> dict[str, list[int]]:
+        """Every line's text (leading tabs dropped for `<<-`) mapped to the start offsets of the lines
+        that read so — built once, so many heredocs never rescan the text."""
+        cached = self._tab_line_starts if dash else self._line_starts
+        if cached is None:
+            cached = {}
+            offset = 0
+            for line in self.text.split("\n"):
+                cached.setdefault(line.lstrip("\t") if dash else line, []).append(offset)
+                offset += len(line) + 1
+            if dash:
+                self._tab_line_starts = cached
+            else:
+                self._line_starts = cached
+        return cached
+
+    def _heredoc_bodies(self, i: int, pending: list) -> int:
+        """The newline at `text[i]` ends a line that opened `pending` heredocs: read their bodies in turn.
+        Returns the index where ordinary scanning goes on. A heredoc without a terminator line is none
+        (the lines stay text, and so do the ones of the heredocs after it)."""
+        text = self.text
+        start = i + 1
+        entries = list(pending)
+        pending.clear()
+        for delimiter, quoted, dash in entries:
+            key = (delimiter, dash)
+            end: Optional[int] = None
+            if key not in self._missing:
+                positions = self._line_index(dash).get(delimiter, [])
+                at = bisect.bisect_left(positions, start)
+                if at < len(positions):
+                    end = positions[at]
+                else:
+                    self._missing.add(key)  # no such line from here on, so none from any later start either
+            if end is None:
+                return start
+            body = text[start:end]
+            if quoted:
+                self.bodies.append((start, end))
+            elif "$'" in body:
+                raise _AnsiCFound("$' in an unquoted heredoc body")
+            line_end = text.find("\n", end)
+            start = len(text) if line_end < 0 else line_end + 1
+        return start
+
+
+def _quote_scan(command: str) -> Optional[_QuoteScan]:
+    """The finished _QuoteScan of `command`, or None when it could not tell (_AnsiCFound, or any other
+    failure — never an exception)."""
+    scan = _QuoteScan(command)
+    try:
+        scan.run()
+    except Exception:  # noqa: BLE001 — "could not tell" is the answer, whatever the reason
+        return None
+    return scan
+
+
+def _may_use_ansi_c_quoting(command: str) -> bool:
+    """True if `command` may hold a `$'...'` that bash reads as ANSI-C quoting, which neither tokenizer
+    knows (`\\'` inside it does not end the string). A `$'` that is only text — inside single or
+    double quotes, backslash-escaped, in a comment, in a quoted heredoc body — is not: that is
+    what keeps `grep -v '$' f` and `python - <<'EOF'` with a `$'` in its text from being read as
+    ANSI-C. Whatever _QuoteScan cannot tell counts as ANSI-C (the previous test was the plain
+    substring `$'`)."""
+    if "$'" not in command:
+        return False
+    return _quote_scan(command) is None
+
+
+def _without_quoted_heredoc_bodies(command: str) -> str:
+    """`command` without the bodies of the heredocs that have a quoted delimiter (`<<'EOF'`, `<<"EOF"`,
+    `<<\\EOF`) — text bash never runs, kept apart from the commands even when an earlier line of the
+    command did not tokenize and the whole-command fallback, which skips no heredoc, has to be used. The
+    terminator lines stay. `command` itself when the scan could not tell or there is nothing to cut."""
+    scan = _quote_scan(command)
+    if scan is None or not scan.bodies:
+        return command
+    pieces: list[str] = []
+    position = 0
+    for start, end in sorted(scan.bodies):
+        if start < position:
+            return command
+        pieces.append(command[position:start])
+        position = end
+    pieces.append(command[position:])
+    return "".join(pieces)
+
+
 def _raw_redirect_targets(command: str) -> list[str]:
     """Coarse last resort: every word after a `>`-style operator anywhere in the raw text, quotes
     stripped off its ends, fd duplications (`>&2`) left out. Over-inclusive by design."""
@@ -832,27 +1162,43 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         index += 1
 
 
+def _quote_model_applies(command: str) -> bool:
+    """False when the quote model must not decide for `command`: it reads the text after
+    backslash-newlines are joined, but bash keeps them literally inside a quoted heredoc body, so
+    joining can hide that body's terminator line and move the cut. With a heredoc and a
+    backslash-newline in the same command, the previous plain rule stands — any `$'` counts as live
+    and no body is cut."""
+    return not ("<<" in command and _LINE_CONTINUATION_RE.search(command))
+
+
 def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """All write targets of `command` (steps 1-4 of the section comment). Recursion depth is capped
     for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs."""
+    quote_model = _quote_model_applies(command)
     command = _LINE_CONTINUATION_RE.sub(r"\1", command)
     if depth > _MAX_SCAN_DEPTH:
-        return [(target, None) for target in _raw_redirect_targets(command)]
+        # Nested deeper than anything real: not read any further, and not passed either — the whole
+        # remainder is one target that names no knowable path (a `$(` text), which check 1c denies and
+        # check 1 denies when the remainder names .act/.
+        return [(target, None) for target in _raw_redirect_targets(command)] + [(f"$({command})", None)]
     found: list[_Target] = []
     tokens: Optional[list[_Token]] = None
-    ansi_c_quoting = "$'" in command
+    ansi_c_quoting = _may_use_ansi_c_quoting(command) if quote_model else "$'" in command
     if not ansi_c_quoting:
         try:
             tokens = _line_mode_tokens(command)
         except ValueError:
             tokens = None
     if tokens is None:
+        # The whole-command fallback skips no heredoc itself: the bodies of quoted-delimiter heredocs,
+        # which bash never runs, are cut out first (unless `$'` may be live, where nothing is trusted).
+        whole = command if ansi_c_quoting or not quote_model else _without_quoted_heredoc_bodies(command)
         try:
-            tokens = _shell_tokens(command, newline_is_operator=True)
+            tokens = _shell_tokens(whole, newline_is_operator=True)
         except ValueError:
             tokens = None
         if tokens is None or ansi_c_quoting:
-            found.extend((target, None) for target in _raw_redirect_targets(command))
+            found.extend((target, None) for target in _raw_redirect_targets(whole))
     if tokens is not None:
         found.extend(_scan_tokens(tokens, bases, git_writes, depth))
     return found

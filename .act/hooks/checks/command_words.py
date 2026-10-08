@@ -65,7 +65,18 @@
 #     per this stage's own assignment; a command that relies on PowerShell-only quoting can
 #     mis-tokenize. `pwsh`/`powershell -Command`/`cmd /c` recursion is still recognized by name.
 #   - recursion depth is capped at shell_targets._MAX_SCAN_DEPTH, same cap and same reasoning as
-#     shell_targets.py's own write-target scanner: nothing here is unbounded.
+#     shell_targets.py's own write-target scanner: nothing here is unbounded. At the cap the nested
+#     text is not tokenized any further but read coarsely (command_words_legacy._coarse_word_lists:
+#     quote characters are blanks, every separator cuts, every word that opens a nested command starts
+#     a piece of its own): it used to be dropped, which let a command pass that only nested its
+#     `eval`/`sh -c` or a backtick span one level deeper than the cap. The cost is a false hit for
+#     quoted text that merely looks like a command at that depth, which nobody legitimately uses.
+#   - a word that is nothing but backtick spans, in front of the command (`` `echo "` env -u X rm
+#     -rf d ``), is skipped like an assignment: the span prints nothing or a word this reading cannot
+#     know, and the command behind it is read as the command (a span that prints a real command name
+#     makes this over-read, never under-read). A redirection in front of or inside the command
+#     (`> f rm -rf d`, `git 2>/dev/null commit`) is read twice: once with its operand among the words
+#     (how the lexer hands it back) and once with the operand left out, which is what bash runs.
 #   - a write made from inside a program (`python -c "...git..."`, a script file) is invisible,
 #     same limit shell_targets.py's own docstring states for its write-target scan.
 #   - `find -exec ... {} \;` / `+`: the escaped `\;` form is recognized as shlex would hand it
@@ -78,6 +89,9 @@ from __future__ import annotations
 from typing import Optional
 
 from . import command_words_legacy as _legacy_words
+# The coarse reading of text nested beyond the cap is shared with the legacy half: both halves must
+# fail the same way there.
+from .command_words_legacy import _coarse_word_lists
 
 from .shell_targets import (
     _LINE_CONTINUATION_RE,
@@ -90,13 +104,14 @@ from .shell_targets import (
     _WRAPPER_COMMANDS,
     _WRAPPER_VALUE_FLAGS,
     _command_name,
+    _is_span_word,
     _line_mode_tokens,
     _shell_tokens,
 )
 
 __all__ = [
     "_PS_NAMES", "_SEGMENT_SPLIT_RE_FALLBACK", "_command_word_lists_new", "_command_word_lists",
-    "_strip_command_prefix",
+    "_nested_word_lists", "_strip_command_prefix",
     "_stripped_word_lists", "_git_invocations_with_prefix", "_git_invocations",
 ]
 
@@ -129,6 +144,8 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
             index += 1
         elif word in _RESERVED_PREFIXES:
             index += 1
+        elif _is_span_word(word):
+            index += 1  # a word of backtick spans only: it prints nothing or something unknowable
         elif _command_name(word) in _WRAPPER_COMMANDS:
             wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(_command_name(word), frozenset())
             index += 1
@@ -136,13 +153,23 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
                 arg = words[index]
                 if arg in wrapper_value_flags:
                     index += 2 if index + 1 < len(words) else 1
-                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg):
+                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg):
                     index += 1
                 else:
                     break
         else:
             break
     return words[index:]
+
+
+def _nested_word_lists(text: str, depth: int) -> list[tuple[list[str], Optional[str]]]:
+    """The commands of a nested command text found at nesting `depth`: scanned one level further down
+    by the word lexer, or — at _MAX_SCAN_DEPTH, where the previous code stopped looking and let the
+    rest pass — read coarsely (command_words_legacy._coarse_word_lists), which fails toward seeing
+    too much."""
+    if depth >= _MAX_SCAN_DEPTH:
+        return _coarse_word_lists(text)
+    return _command_word_lists_new(text, depth + 1)
 
 
 def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
@@ -163,58 +190,87 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
             (seg.split(), None) for seg in _SEGMENT_SPLIT_RE_FALLBACK.split(command) if seg.strip()
         ]
 
-    pairs: list[tuple[list[str], Optional[str]]] = []
+    pairs: list[tuple[list[str], Optional[str], bool, list[str]]] = []
     words: list[str] = []
+    plain: list[str] = []  # the same words without the operands of redirections
+    redirected = False
+    operand_next = False
+    plain_word_last = False
     pending_sep: Optional[str] = None
     for text, is_op in tokens + [("\n", True)]:
         if not is_op:
             words.append(text)
+            if operand_next:
+                operand_next = False
+            else:
+                plain.append(text)
+                plain_word_last = True
             continue
+        operand_next = False
         if text not in _SEPARATOR_OPS:
-            continue  # a redirection or other non-separator operator -- not a command boundary
+            # A redirection or other non-separator operator -- not a command boundary. Its operand
+            # (the file, the heredoc delimiter, the here-string) is not an argument of the command: bash
+            # runs `> f rm -rf d` and `git 2>/dev/null commit` as `rm -rf d` and `git commit`. A bare
+            # number right before the operator is its file descriptor.
+            redirected = True
+            if plain_word_last and plain and str(plain[-1]).isdigit():
+                plain.pop()
+            operand_next = True
+            plain_word_last = False
+            continue
         if words:
-            pairs.append((words, pending_sep))
-            words = []
+            pairs.append((words, pending_sep, redirected, plain))
+        words, plain, redirected, plain_word_last = [], [], False, False
         pending_sep = None if text == "\n" else text
 
     result: list[tuple[list[str], Optional[str]]] = []
-    for words, sep in pairs:
-        result.append((words, sep))
-        if depth >= _MAX_SCAN_DEPTH:
-            continue
+    for words, sep, redirected, plain in pairs:
+        # With a redirection in the command the words are read both ways: as the lexer hands them back
+        # (the operand among them, the way every earlier version read them) and without the operands.
+        variants = [words]
+        if redirected and plain and plain != words:
+            variants.append(plain)
+        result.extend((variant, sep) for variant in variants)
+        nested: list[str] = []  # the texts of the commands this command runs, in the order found
         for word in words:
             if "$(" in word:
-                result.extend(_command_word_lists_new(word[word.index("$(") + 2:], depth + 1))
+                nested.append(word[word.index("$(") + 2:])
         for word in words:
-            for span in getattr(word, "subs", ()):
-                result.extend(_command_word_lists_new(span, depth + 1))
-        stripped = _strip_command_prefix(words)
-        if not stripped:
-            continue
-        name, args = _command_name(stripped[0]), stripped[1:]
-        if name == "eval":
-            result.extend(_command_word_lists_new(" ".join(args), depth + 1))
-        elif name in _SHELL_NAMES or name in _PS_NAMES:
-            for i, arg in enumerate(args[:-1]):
-                is_c_flag = arg.lower() in ("-c", "-command", "/c") or (
-                    arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]
-                    and name in _SHELL_NAMES
-                )
-                if is_c_flag:
-                    tail = " ".join(args[i + 1:]) if name in _PS_NAMES else args[i + 1]
-                    result.extend(_command_word_lists_new(tail, depth + 1))
-                    break
-        elif name == "find":
-            for i, arg in enumerate(args):
-                if arg in ("-exec", "-execdir", "-ok", "-okdir"):
-                    tail: list[str] = []
-                    for w in args[i + 1:]:
-                        if w in (";", "+", "\\;"):
-                            break
-                        tail.append(w)
-                    if tail:
-                        result.append((tail, None))
-                    break
+            nested.extend(getattr(word, "subs", ()))
+        found_exec: list[list[str]] = []
+        for variant in variants:
+            stripped = _strip_command_prefix(variant)
+            if not stripped:
+                continue
+            name, args = _command_name(stripped[0]), stripped[1:]
+            if name == "eval":
+                nested.append(" ".join(args))
+            elif name in _SHELL_NAMES or name in _PS_NAMES:
+                for i, arg in enumerate(args[:-1]):
+                    is_c_flag = arg.lower() in ("-c", "-command", "/c") or (
+                        arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]
+                        and name in _SHELL_NAMES
+                    )
+                    if is_c_flag:
+                        nested.append(" ".join(args[i + 1:]) if name in _PS_NAMES else args[i + 1])
+                        break
+            elif name == "find":
+                for i, arg in enumerate(args):
+                    if arg in ("-exec", "-execdir", "-ok", "-okdir"):
+                        tail: list[str] = []
+                        for w in args[i + 1:]:
+                            if w in (";", "+", "\\;"):
+                                break
+                            tail.append(w)
+                        if tail:
+                            found_exec.append(tail)
+                        break
+        seen_nested: list[str] = []
+        for text in nested:
+            if text not in seen_nested:
+                seen_nested.append(text)
+                result.extend(_nested_word_lists(text, depth))
+        result.extend((tail, None) for tail in found_exec)
     return result
 
 

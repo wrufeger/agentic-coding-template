@@ -27,8 +27,9 @@ files, this index only lists what is already there.
 
 ## Per-tool display settings
 
-`docs/ai/config.md` § "Output depth" controls what the assistant itself writes as chat text —
-not what the tool's own interface shows around that (its own verbosity/reasoning-display
-settings, notification style, and similar). That is a setting of the tool, not of this project;
+`docs/ai/config.md` § "Output depth" controls what the assistant itself writes as chat text
+(`verbose`, `normal`, `sparse`; levels defined in `R-human-chat`) — not what the tool's own
+interface shows around that (its own verbosity/reasoning-display settings, notification style,
+and similar). That is a setting of the tool, not of this project;
 configure it where the tool documents it (for Claude Code, see `/config` inside a session or its
 own settings file) — this file does not track it further.

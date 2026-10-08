@@ -1,6 +1,6 @@
 # Cost rules
 
-summary: delegation tiers and caps, waiting on workers, scripting recurring checks, commit gate
+summary: delegation tiers and caps, waiting on workers, amending a running assignment, scripting recurring checks, commit gate
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
@@ -28,9 +28,12 @@ orchestrator, which cuts and starts the new assignments itself.
 Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
 patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`
 already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
-shorthand, `dir/` (read the same way). A relative pattern (`src/**`) is the usual case; an absolute
-path inside the project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been
-written relative — one outside the project root is refused, unless it lies in a directory listed in
+shorthand, `dir/` (read the same way); brackets in a path are taken literally, so
+`server/api/[id]/**` names the folder called `[id]`, as framework route folders are — a shell
+command should quote such a path, and a shell target whose wildcard expansion reaches outside the
+scope is refused. A relative pattern (`src/**`) is the usual case; an absolute path inside the
+project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been written
+relative — one outside the project root is refused, unless it lies in a directory listed in
 `permissions.additionalDirectories` (a sibling checkout: `../other/.act/**` or its absolute path).
 `Write scope: none` means read-only, no writes at all. Leaving the line out means no restriction
 beyond the template's own `.act/` write-guard.
@@ -48,7 +51,24 @@ up — it costs tokens on every call and clutters the chat (trigger: over forty 
 status checks in one real case, none of them changing anything). Start the assignment, then either
 work on something independent or wait; check in only once runtime clearly exceeds the estimate
 given in the assignment — not on a hunch. Mechanically refused from the second status query in a
-row (`status-poll`, `docs/ai/config.md` § Checks) — any other tool use in between resets it.
+row (`status-poll`, `docs/ai/config.md` § Checks) — any other tool use in between resets it. An
+addition from the human that concerns the running assignment does not wait for its end
+(`R-cost-amend`).
+
+## `R-cost-amend` — Amend a running assignment instead of queuing a second
+
+summary: an addition that fits a running worker goes to it at once; stop and reassign when one new run is cheaper than two; only an unrelated addition waits
+
+Saving tokens is the aim here too: a second assignment after the first reads the same files and
+context again that the first one has just read. So an addition from the human that concerns a
+running worker's assignment — it changes, extends or replaces it — goes to that worker at once,
+where the tool can message a running worker. If it changes the assignment so far that one new run
+costs less than letting the current one finish and starting a second (the current one heads the
+wrong way, or most of what it still has to do would be redone), stop it and assign anew, passing on
+what it has found so far. Only an addition that does not touch the running assignment becomes its
+own assignment once the first one has ended. An addition that needs a wider `Write scope:` or a
+higher `Cap:` than the running assignment has always means stop and reassign: both are read once,
+from the assignment that started the worker, so a message to the running worker cannot widen them.
 
 ## `R-cost-script` — Script instead of worker for recurring checks
 

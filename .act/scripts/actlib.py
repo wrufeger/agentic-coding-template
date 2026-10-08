@@ -109,11 +109,13 @@ def _read_json(path: Path) -> Optional[dict]:
     of it) — a state file with a few corrupted bytes is treated the same as one that was never
     written yet, not as a reason to abort the caller (read_last_applied() previously left
     `UnicodeDecodeError` uncaught, which made update.py abort mid-run and left `.act/` already
-    replaced)."""
+    replaced). A leading BOM (a file saved by Windows PowerShell 5) is read as UTF-8 too, not
+    treated as unreadable — otherwise write_lock() would rewrite the lock from an empty object and
+    drop every key it held."""
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
