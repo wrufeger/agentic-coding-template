@@ -1,6 +1,6 @@
 ---
 name: act-perf
-description: Improve the performance of a named, concrete part of the system - measure first, form a hypothesis, change one thing, measure again, compare. Use when something is reported as slow, or asked to speed up a page, query, or endpoint.
+description: Use when something is reported as slow or asked to speed up a named page, query or endpoint. Ends with that one part measurably faster, shown by numbers from before and after a single change. Not for behavior-preserving restructuring - use act-refactor.
 ---
 
 # Improve performance

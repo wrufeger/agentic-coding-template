@@ -1,6 +1,6 @@
 ---
 name: act-design-assets
-description: Produce graphics that stay in the project - logo, icon set, illustration, favicons - as hand-written SVG or through an image model, checked and placed in the repo. Use when asked to design a logo, icons, a favicon set, or a product image.
+description: Use when asked to design a logo, icons, a favicon set, an illustration or a product image that should stay in the project. Delivers hand-written SVG or image-model output, checked and placed in the repo. Not for throwaway drafts - use act-design-ideas.
 ---
 
 # Produce graphics

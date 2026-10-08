@@ -46,4 +46,6 @@ task not begun yet goes into the task file instead), the open task with goal and
 versioned task file, evidence in the journal, and decisions made while building written down where
 someone would look for them — not just in the chat history. A work place outside the repo — a
 second checkout, a worktree — goes into the task with its full path. Before advising a restart
-ahead of a big rebuild, first confirm this handover actually holds; only then give the advice.
+ahead of a big rebuild, first confirm this handover actually holds; only then give the advice. Before a
+manual compaction (`/compact`), record the state with `entries.py state` first; after any compaction,
+re-read the open task's state before continuing — the summary may have lost detail.

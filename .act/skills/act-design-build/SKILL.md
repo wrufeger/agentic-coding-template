@@ -1,6 +1,6 @@
 ---
 name: act-design-build
-description: Implement a component or page against a template and check the result yourself in the browser - in rounds, until it fits. Use when asked to build a component from a screenshot, implement a chosen variant, or turn a page design into code.
+description: Use when asked to build a component from a screenshot, implement a variant chosen via act-design-ideas, or turn a page design into code. Implements it in the project code and checks it in the browser in up to three rounds. Not for exploring options - use act-design-ideas.
 ---
 
 # Implement an interface and check it yourself

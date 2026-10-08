@@ -60,6 +60,16 @@ via console output or a pipe — on Windows, terminal redirection mangles umlaut
 data stays correct UTF-8. More generally: a workaround is only committed to after a second,
 independent check confirms the diagnosis, not on the first plausible explanation.
 
+## `R-work-bounded-output` — Keep output of unknown length out of the context
+
+summary: head/tail/grep or a scratchpad file for unbounded output; read only the failures of a build or test run; large files in excerpts
+
+Output whose length is not known beforehand is cut with `head`/`tail`/`grep`, or written to a file in
+the scratchpad (where writes are allowed) and read from there, never taken whole into the context.
+Build and test output goes the same way: read only the failures. A large file is read in excerpts
+(`offset`/`limit`), not whole. Every line that enters the context is read again with each following
+step.
+
 ## `R-role-worker` — What a worker may and may not do
 
 summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git, no sub-workers

@@ -1,6 +1,6 @@
 ---
 name: act-export-settings
-description: Write this project's own rule deviations, and optionally its own scripts/checklists/agents/skills/topics, to a portable settings file for another project or for review before sharing. Use to hand this project's setup to a new project, or to check what a settings export would reveal before sending it anywhere.
+description: Use to hand this project's setup to a new project, or to check what a settings export would reveal before sending it anywhere. Writes the project's own rule deviations, optionally scripts, checklists, agents, skills and topics, to a portable settings file.
 ---
 
 # Export the project's settings

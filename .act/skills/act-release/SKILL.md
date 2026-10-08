@@ -1,6 +1,6 @@
 ---
 name: act-release
-description: Prepare a new release - check preconditions, pick a semantic version, generate a readable changelog from commits, tag it. Use when asked to prepare a release, publish a new version, or generate a changelog.
+description: Use when asked to prepare a release, publish a new version, tag a version or generate a changelog. Results in a tagged semantic version with a readable changelog from the commits. Not for ordinary commits - use act-commit.
 ---
 
 # Prepare a release

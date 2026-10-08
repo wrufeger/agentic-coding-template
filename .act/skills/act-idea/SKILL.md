@@ -1,6 +1,6 @@
 ---
 name: act-idea
-description: Take in an idea, feature, or change request - check what exists, lay out options with a recommendation, get a decision, then estimate effort and missing tooling and file it as a backlog item and task. Use when a feature or change is proposed, or asked "can we add X", "it would be good if", "change request".
+description: Use when a feature, idea or change request is proposed: "can we add X", "it would be good if", "change request". Checks what exists, offers options with a recommendation, and after the decision files an effort estimate as backlog item and task. Not for planning a decided block - use act-prepare.
 ---
 
 # Take in an idea or change request

@@ -1,6 +1,6 @@
 ---
 name: act-deps
-description: Update dependencies - inventory age and known gaps, bundle patch/minor, one commit per major after reading its changelog, checks green after every step. Use when dependencies are stale, a security advisory needs checking, or asked to update packages.
+description: Use when dependencies are stale, a security advisory needs checking, or asked to update packages or check dependency age. Updates in traceable steps - patch and minor bundled, one commit per major - with checks green after each.
 ---
 
 # Update dependencies

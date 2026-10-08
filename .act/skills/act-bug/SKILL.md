@@ -1,6 +1,6 @@
 ---
 name: act-bug
-description: Fix a reported bug - reproduce it, localize the cause, then prove the fix with a test that is red before the change and green after. Use when a bug is reported, something is broken, or asked to debug specific behavior.
+description: Use when a bug is reported, something is broken, or asked to debug or fix specific behavior. Ends with the fix proven by a test that fails before and passes after. Not for cleanup or refactoring found along the way.
 ---
 
 # Fix a bug

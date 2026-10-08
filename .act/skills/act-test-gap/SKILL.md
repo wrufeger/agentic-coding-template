@@ -1,6 +1,6 @@
 ---
 name: act-test-gap
-description: Find untested areas in a scope, prioritize by risk, and close the gaps after approval - measure what's covered, propose a prioritized list, write targeted tests instead of chasing coverage percentages. Use when asked to find test gaps, check test coverage for an area, or backfill tests for existing code.
+description: Use when asked to find test gaps, check test coverage for an area, or backfill tests for existing code. Ends with a risk-ranked list of the real gaps and, after approval, targeted tests rather than coverage percentages.
 ---
 
 # Find and close test gaps

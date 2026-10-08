@@ -35,6 +35,16 @@ summary: logs and error output carry identifiers, never credentials or personal 
 No credentials, tokens, or personal data ever go into a log line or error output, in any
 language — log an identifier (an id, a masked value) instead of the value itself.
 
+## `R-safe-no-personal-data` — No real personal or customer data in what the model sees
+
+summary: prompts, test data, fixtures, notes, examples and bug reports use placeholders; mask production data first; integrations read-only on test data
+
+No real personal or customer data goes into a prompt, test data, fixture, note, example, or bug
+report handed to the model — use placeholders or invented data. When debugging with production
+logs or exports, mask them first. This covers what the model is given; `R-safe-no-secret-log`
+covers what code writes to a log. An MCP server or other integration gets a read-only account and
+test or dev data by default; production data only with the human's dated approval (`R-safe-approval`).
+
 ## `R-safe-no-shell-delete` — No recursive delete via shell
 
 summary: recursive deletes via language means, not a shell command

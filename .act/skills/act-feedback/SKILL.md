@@ -1,6 +1,6 @@
 ---
 name: act-feedback
-description: Send feedback to the template author about the working method itself - a rule, workflow, script, or skill that helped or was missing - never project specifics. Use when asked to send feedback, report something back to the template, or note a bug in the template.
+description: Use when asked to send feedback, "report to the template", or "feedback: <text>", or when a rule, workflow, script or skill of the template itself helped, failed or was missing, including a template bug. Sends a pattern about the working method to the template author, never project specifics.
 ---
 
 # Send feedback to the template author

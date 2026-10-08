@@ -1,6 +1,6 @@
 ---
 name: act-refactor
-description: Restructure existing code without changing its behavior - state the goal and scope, check the test net, refactor in small steps, verify with tests after each one. Use when asked to refactor, clean up, or restructure code without changing what it does.
+description: Use when asked to refactor, clean up or restructure existing code without changing what it does. Works in small steps with tests after each one, after stating goal and scope and checking the test net. Not for making code faster - use act-perf.
 ---
 
 # Restructure without changing behavior

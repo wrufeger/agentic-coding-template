@@ -1,6 +1,6 @@
 ---
 name: act-update
-description: Pull a newer template state into the project - review the diff, give consent, then let update.py replace .act/, refresh copies, run migrations, and hand off to the doctor. Use to check for or apply a template update.
+description: Use to check for or apply a newer template version in this project ("update the template", "act-update"). Brings in the new version only after you have seen the diff and agreed. Not for checking local drift - use act-doctor.
 ---
 
 # Update the template

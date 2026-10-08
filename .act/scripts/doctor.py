@@ -56,6 +56,11 @@
 #               branch has no upstream: a plain `git push`/`git pull` then goes to the template, not
 #               to the project's own repository. Reported only — removing the remote stays with the
 #               owner (`git remote remove <name>`).
+#          18. a skill description or body that breaks the pattern in .act/skills/README.md § "Writing
+#               a skill description" (skills.py --check, lint_skill()): too long or short, no
+#               trigger sentence, a summary of steps, a "When to use" heading, a long SKILL.md with
+#               no references/ folder. In a project only its own skills (docs/ai/local/skills/) are
+#               checked — it cannot fix a template skill; the template's own checkout checks all.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -105,6 +110,7 @@ import manifest as manifest_mod
 import rules
 import script_docs
 import settings_load
+import skills
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +164,7 @@ KIND_LABELS: dict[str, str] = {
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
     "tier-proposal": "Tier proposals from worker outcomes (R-role-outcome)",
     "template-remote": "Git remote pointing at the template while the branch has no upstream",
+    "skill-lint": "Skill descriptions or bodies that break the writing pattern (skills.py --check)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -187,6 +194,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
     "tier-proposal": "Stufenvorschläge aus Worker-Ergebnissen (R-role-outcome)",
     "template-remote": "Git-Remote zeigt auf die Vorlage, obwohl der Branch keinen Upstream hat",
+    "skill-lint": "Skill-Beschreibungen oder -Rümpfe, die das Schreibmuster verletzen (skills.py --check)",
 }
 
 
@@ -1240,6 +1248,22 @@ def check_script_docs(root: Path) -> list[Finding]:
     ]
 
 
+def check_skill_lint(root: Path) -> list[Finding]:
+    # A project can only fix its own skills (marker "own"/"overridden"); the template's skills
+    # arrive with an update, so they are linted only in the template's own checkout (no
+    # .act-lock.json there, same test as check_script_docs()). Reported only, never fixed. A
+    # project's own skills get the language-neutral checks only: they may be written in the
+    # project's language and may be tiny, so the English trigger-first and step checks would be noise.
+    in_project = (root / ".act-lock.json").is_file()
+    findings: list[Finding] = []
+    for skill, found in skills.lint(root, language_neutral=in_project):
+        if in_project and not skill.marker:
+            continue
+        findings.append(Finding(path=_rel(skill.path, root), line=None, kind="skill-lint",
+                                message=f"{found.level.lower()}: {found.message}"))
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # Inbox
 # ---------------------------------------------------------------------------
@@ -1337,6 +1361,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_status_values(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
+    findings += check_skill_lint(root)
     findings += check_tier_proposal(root)
     findings += check_template_remote(root)
 

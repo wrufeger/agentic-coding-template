@@ -1,6 +1,6 @@
 ---
 name: act-audit-docs
-description: Check docs/project against the actual code and bring outdated entries back in line - architecture, coding rules, testing, features, decisions. Use after a feature wave, before a handover, or when docs/project might be stale.
+description: Use after a feature wave, before a handover, or when docs/project might be stale or contradict the code (architecture, coding rules, testing, features, decisions). Brings outdated entries in line with the actual code. Not for template drift - use act-doctor.
 ---
 
 # Audit docs/project against the code

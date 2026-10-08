@@ -1,6 +1,6 @@
 ---
 name: act
-description: List the project's skills with a one-line description from each one's frontmatter, like a man page; given a name, show that skill in full. Use when asked what skills or commands exist, or for one skill's exact instructions.
+description: Use when asked what skills or commands exist, for a skill list, or for one skill's exact instructions, or on a bare /act or /act <name> prompt. Prints the skill table with one-line descriptions, or the named skill in full. Does not run any skill.
 ---
 
 # List project skills

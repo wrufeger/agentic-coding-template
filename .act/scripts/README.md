@@ -812,7 +812,7 @@ options:
 Call: direct (used by skill `act` and by dispatch.py's `/act` fast path)
 
 ```text
-usage: skills.py [-h] [name]
+usage: skills.py [-h] [--check] [name]
 
 List the project's skills (name + description), or print one in full.
 
@@ -821,6 +821,7 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+  --check     lint every skill's description and body; exit 1 if there is an error
 ```
 
 ## `unit_copies.py`

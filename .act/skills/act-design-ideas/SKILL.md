@@ -1,6 +1,6 @@
 ---
 name: act-design-ideas
-description: Generate three to four design variants as preview images, from a description, screenshots, or web links - for discussion before code exists. Use when asked for design ideas, variants for a component or page, or what something could look like.
+description: Use when asked for design ideas, variants for a component or page, or what something could look like, before any code exists. Produces three to four preview images from a description, screenshots or links. Not for building the chosen one - use act-design-build.
 ---
 
 # Design variants to choose from

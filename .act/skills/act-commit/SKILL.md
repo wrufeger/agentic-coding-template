@@ -1,6 +1,6 @@
 ---
 name: act-commit
-description: Close out an accepted task - check the evidence, archive it, update the journal, commit by pathspec. Use right after a task is accepted and its evidence (a test run, an outside call, a commit) is in hand.
+description: Use right after a task is accepted and its evidence (a test run, an outside call, a commit hash) is in hand, or when asked to close out and commit. Leaves the task archived and journaled, committed by pathspec. Never run by a sub-agent.
 ---
 
 # Close out a task and commit

@@ -1,6 +1,6 @@
 ---
 name: act-doctor
-description: Reconcile project and template state - mechanical checks after every update (stale overrides, dead IDs, orphaned bridges), content checks only on request or for rules an update just changed. Use to check for drift against the template, after an update, or when asked whether local overrides still make sense.
+description: Use to check for drift against the template, after an update, or when asked whether local overrides still make sense. Runs the cheap mechanical checks (stale overrides, dead IDs, orphaned bridges); content checks only on request. Not for performing an update - use act-update.
 ---
 
 # Reconcile against the template

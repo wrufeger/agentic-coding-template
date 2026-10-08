@@ -1,6 +1,6 @@
 ---
 name: act-check-translations
-description: Check a project's translation files for completeness and consistency - missing, extra and empty keys, placeholder mismatches, keys used in code but not defined, defined but unused - and work through the findings. Use when asked to check translations or i18n, whether all languages are complete, or after adding a language or new UI text.
+description: Use when asked to check translations or i18n, whether all languages are complete, or after adding a language or new UI text. Gives a per-language report of missing, unused or mismatched keys and fixes the approved ones.
 ---
 
 # Check translations

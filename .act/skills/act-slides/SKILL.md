@@ -1,6 +1,6 @@
 ---
 name: act-slides
-description: Create or update a presentation about the project - slides as Markdown in the repo, content from the existing docs, exported to HTML/PDF. Use when asked for a presentation, slides for the project, or a training deck.
+description: Use when asked for a presentation, slides about the project, a talk, or a training deck. Produces the slides as versioned Markdown built from the existing docs and exports them to HTML or PDF.
 ---
 
 # Presentation about the project

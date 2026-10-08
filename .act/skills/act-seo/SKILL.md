@@ -1,6 +1,6 @@
 ---
 name: act-seo
-description: Check a project's pages for basic search-engine optimization in the code - title and description, headings, lang, canonical, Open Graph, image alt text, internal links, robots.txt and sitemap - and work through the findings. Use when asked to check SEO, why pages are poorly found, or before launching a site.
+description: Use when asked to check SEO, why pages are poorly found in search, or before launching a site. Gives a list of findings in the page code (metadata, headings, links, robots.txt, sitemap) and fixes the approved ones. Code only, no live fetching.
 ---
 
 # Check SEO

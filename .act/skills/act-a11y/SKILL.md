@@ -1,6 +1,6 @@
 ---
 name: act-a11y
-description: Check an interface for accessibility and work through the findings by severity - keyboard operation, focus, contrast, labels, structure. Use when asked to check accessibility, whether something is usable with a screen reader, or against WCAG.
+description: Use when asked to check accessibility, whether something is usable with keyboard or screen reader, or against WCAG, for one page or component. Gives a severity-ranked list of findings and fixes the ones you approve. Not for checking a build against its design - use act-design-build.
 ---
 
 # Check accessibility

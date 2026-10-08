@@ -33,3 +33,22 @@ A project's own skill — `docs/ai/local/skills/<name>/` with no counterpart her
 `act-load-settings` writes them when it imports the skill, and one created by hand gets them at the next
 session start or `update.py` run (`.act/scripts/unit_copies.py`), recorded in `.act-lock.json` § `copies`
 like a template copy. An own role under `docs/ai/local/agents/` gets its bridge the same way.
+
+## Writing a skill description
+
+The description is all an agent sees of a skill until it decides to load it, and an agent that reads a
+summary of the steps acts on the summary instead of loading the skill. So the description names the
+trigger, not the procedure:
+
+1. Start with the trigger: "Use when ..." (or "Use to / after / before / for ..."), naming concrete
+   situations and typical user phrasings.
+2. At most one short sentence on the outcome; never a list of steps.
+3. Optionally "Not for X — use act-Y." to separate neighbouring skills.
+4. English, 15–55 words (`skills.py --check` warns above 55, errors above 65 or below 15).
+
+`python .act/scripts/skills.py --check` lints every skill against this (and `doctor.py` reports the
+project's own skills); it also counts all descriptions together, since they are loaded into every session.
+
+Two habits keep skill and rule text short. Deletion test: cut a line; if the agent's behaviour would not
+change, it stays cut. Progressive disclosure: keep `SKILL.md` to the core flow (about 300 lines at most)
+and put detail in `references/<topic>.md`, with a pointer in `SKILL.md` saying when to read it.

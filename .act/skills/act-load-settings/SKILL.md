@@ -1,6 +1,6 @@
 ---
 name: act-load-settings
-description: Import a settings file (act-export-settings' output) into this project - mechanical checks decide new/identical/dead on their own, content overlaps go to a model for judgment, everything unresolved lands in the inbox instead of being applied silently. Use when handed a settings.md or settings.zip file to bring into this project.
+description: Use when handed a settings.md or settings.zip file (act-export-settings output) to bring into this project. Mechanical checks sort new, identical and dead items, content overlaps go to a model for judgment, unresolved items land in the inbox. Not for a template update conflict - use act-update.
 ---
 
 # Import a settings file
@@ -36,16 +36,10 @@ is reported, never silent.
    overrides into `docs/ai/local/rules/topics/<name>.md` — **show every such file to the
    human before writing it** (the script already asks unless `--yes`; never pass `--yes` without
    the human having seen the list first, and never in a non-interactive run without it).
-4. An agent or skill whose name — file/folder name *or* frontmatter `name`, checked
-   case-insensitively, `-high` variants included — matches one this template already ships is
-   never written, only reported. Importing it would otherwise start silently overriding that
-   template unit; if the human actually wants that, it is a deliberate `docs/ai/local/` override
-   done by hand, not an import side effect. An agent with `permissionMode`/`hooks`/`mcpServers` in
-   its frontmatter, or a skill with `allowed-tools`/`hooks`, is refused the same way — reported,
-   never written, not even with `--yes`; the human adds it by hand if it is genuinely wanted.
-   A topic already there with different content is reported as changed and left alone; an
-   override whose template topic no longer exists is reported as dead and not written; one whose
-   template topic changed since the export is reported as changed-since-export (review by hand).
+4. An agent or skill that clashes with a unit this template ships (by file/folder name or frontmatter
+   `name`), or carries risky frontmatter, is reported and never written, not even with `--yes`; a
+   topic or override that already exists differently, or is dead, is reported and left alone. Read
+   `references/refused-units.md` for the exact rules.
 5. A written own agent/skill gets its tool bridge automatically (`.claude/agents/<name>.md`, the
    matching skill copies) — nothing further to do for that. Importing is not the only way: an
    own skill or role written by hand under `docs/ai/local/skills/<name>/` or
@@ -54,31 +48,11 @@ is reported, never silent.
 6. Whatever is left — dead/retired ids, cross-file disagreements, unreviewed candidates,
    `## setup-required` lines — lands in one `docs/ai/inbox/U<n>-settings-import.md`. Read it out to the
    human; a `setup-required` entry needs configuring before that rule/agent/skill actually works.
-7. A file `apply` could not fully resolve stays in `.act-local/import/` and prints, per item, why:
-   declined by you, needs `--yes`, needs a judgment (content overlap), a name/id collision, or
-   rejected (risky frontmatter, shadowing, a bad path, ...) — plus how many items from that file
-   already applied. Put that in your own words for the human (why it is stuck, not just the raw
-   line) and ask for one of the four decisions:
-   - **keep** (offered again next run) — the safe default when nothing is actually wrong, just
-     `--yes`/a judgment is still missing and the human wants to supply it later. Suggest a plain
-     rerun with `--yes`/`--judgments` only when that could actually resolve it — a name/id
-     collision or a rejected bundled file needs `partial`/`ignore`/`delete` instead, a rerun
-     reproduces the exact same outcome.
-   - **partial** — close it now, keep what applied, discard the rest. Suggest this when the open
-     items are things that will not resolve themselves (a genuine content collision, an import the
-     human has decided against for part of the file).
-   - **ignore** — never offer this file again; for a file the human wants gone from view entirely.
-   - **delete** — remove the file outright. Only pass this after the human has explicitly said so
-     in this conversation — never infer it from "clean it up" or similar.
-   Call `python .act/scripts/settings_load.py apply --resolve <file>=<action>` with the decision
-   (repeatable for several files in one call). **`--resolve` is a pure filing run, not a second
-   `apply`:** as soon as it is given, every file in `.act-local/import/` other than the one(s)
-   named — including one dropped in since the last `apply` — is left completely alone, and even a
-   named file only gets the action asked for, nothing from it is written/applied. There is no TTY
-   prompt in this mode either. `partial` still needs to know what it is discarding, so for that one
-   action the file is read again — but only read, never applied — to list what stays open; a file
-   that fails to load cannot be given `partial` at all (nothing to list), only `keep`/`ignore`/
-   `delete`.
+7. A file `apply` could not fully resolve stays in `.act-local/import/` and prints, per item, why.
+   Put that in your own words for the human and ask for one of four decisions — keep, partial,
+   ignore, delete — then call `python .act/scripts/settings_load.py apply --resolve <file>=<action>`.
+   Read `references/unresolved-files.md` before asking: what each decision means, when to suggest
+   which, and what `--resolve` does and does not do.
 
 ## When not
 

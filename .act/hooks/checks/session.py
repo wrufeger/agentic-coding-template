@@ -66,7 +66,7 @@ __all__ = [
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
     "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "_changed_bridge_note",
     "_ideas_pending", "_ideas_note", "_ideas_ensure_notes",
-    "refresh_session",
+    "_compact_note", "refresh_session",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1133,6 +1133,57 @@ _ENV_OVERRIDES = (
 )
 
 
+_COMPACT_TASKS_LIMIT = 5
+_TASK_ID_RE = re.compile(r"^([A-Za-z]+\d+)-")
+_STATE_STAMP_RE = re.compile(r"^State (\d{4}-\d{2}-\d{2} \d{2}:\d{2})")
+
+
+def _board_file_hint(root: Path) -> str:
+    """The board file this project actually uses (`board` in config.md, decided the way board.py
+    does): docs/ai/board.md for `docs` and `shared`, .act-local/board-<branch>.md for `local`."""
+    import board
+    mode = actlib.read_config(root).get("board", "").strip().lower() or "docs"
+    if mode == "local":
+        branch = board.get_branch(root)
+        return f".act-local/board-{board.sanitize_branch(branch) if branch is not None else 'no-git'}.md"
+    return "docs/ai/board.md"
+
+
+def _compact_note(root: Path) -> str:
+    """After a compaction (SessionStart `source: compact`) the summary may have lost detail:
+    name the open tasks with their last working-state line (.act-local/state/, the data the board
+    shows) and point to the board, so the state is re-read before work continues. The task with
+    the most recent state line comes first (then started ones, then the rest); at most _COMPACT_TASKS_LIMIT are listed."""
+    import board  # deferred like update above: a session start never pays for it otherwise
+    lines = [
+        "[act] context was compacted -- the summary may have lost detail. Before continuing, re-read "
+        f"the state of the open task(s) (full list: {_board_file_hint(root)}):"
+    ]
+    tasks_dir = root / board.TASKS_DIR
+    files = sorted(p for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md") if tasks_dir.is_dir() else []
+    entries: list[tuple[bool, str, str]] = []
+    for path in files:
+        try:
+            started = "started:" in actlib.header_block(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            started = False
+        id_match = _TASK_ID_RE.match(path.name)
+        label = id_match.group(1) if id_match else path.stem
+        title = board._first_heading(path) or path.stem
+        last_state = board._last_state_line(root, path.name)
+        stamp_match = _STATE_STAMP_RE.match(last_state or "")
+        stamp = stamp_match.group(1) if stamp_match else ""
+        entries.append((started, stamp, f"- {label} {title}" + (f" -- state: {last_state}" if last_state else " -- no state recorded")))
+    entries.sort(key=lambda item: not item[0])  # stable: started tasks first ...
+    entries.sort(key=lambda item: item[1], reverse=True)  # ... then the most recent last state line first
+    if not entries:
+        lines.append("- no open task on file")
+    lines.extend(text if len(text) <= 300 else text[:299] + "…" for _started, _stamp, text in entries[:_COMPACT_TASKS_LIMIT])
+    if len(entries) > _COMPACT_TASKS_LIMIT:
+        lines.append(f"- (+{len(entries) - _COMPACT_TASKS_LIMIT} more on the board)")
+    return "\n".join(lines)
+
+
 def _env_override_note() -> Optional[str]:
     """One note naming every active environment override, or None when none is set."""
     active = [name for name in _ENV_OVERRIDES if os.environ.get(name, "").strip()]
@@ -1570,6 +1621,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         audit_note = None  # informational only, must never block the session
     if audit_note:
         print(audit_note)
+
+    if payload.get("source") == "compact":
+        try:
+            compact_note = _compact_note(root)
+        except Exception:
+            compact_note = None  # informational only, must never block the session
+        if compact_note:
+            print(compact_note)
 
     ideas_rel, ideas_keys = _ideas_pending(root)
     state["ideas"] = len(ideas_keys)

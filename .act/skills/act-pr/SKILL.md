@@ -1,6 +1,6 @@
 ---
 name: act-pr
-description: Prepare a pull request (GitHub) or merge request (GitLab) from the diff against the target branch and create it only after the human's explicit yes. Use when asked to open a pull request, create a merge request, write a PR description, or "send this branch for review".
+description: Use when asked to open a pull request, create a merge request, write a PR description, or "send this branch for review" on GitHub or GitLab. Drafts title and description from the branch diff, creates it only after a yes. Not for issues - use act-issue; not for local commits - use act-commit.
 ---
 
 # Prepare and create a pull/merge request

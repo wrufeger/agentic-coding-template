@@ -1,6 +1,6 @@
 ---
 name: act-setup
-description: Set up this checkout as a project, or dock it onto one that already exists - the first thing to run in a fresh template clone, and whenever the owner asks to set up, initialize or install a project. Triggers include "setup", "initialize", "install", "richte ... ein", "neues Projekt".
+description: Use when setting up a project in a fresh template clone, or when the owner asks to set up, initialize or install one (triggers "setup", "initialize", "install", "richte … ein", "neues Projekt"). Docks this checkout onto a project. Not for taking over existing docs - use act-adopt.
 ---
 
 # Set up a project
@@ -19,17 +19,8 @@ python3 -c "import sys; print(sys.version)"
 ```
 
 Accept the first candidate where this genuinely prints a version `>= 3.9`. If none does, Python is
-missing or too old — explain installing it, by platform, and stop until it works:
-
-- **Windows:** https://www.python.org/downloads/ , or `winget install Python.Python.3.12` in a
-  terminal; either way, tick "Add python.exe to PATH" in the installer. Details:
-  https://docs.python.org/3/using/windows.html
-- **macOS:** https://www.python.org/downloads/ , details:
-  https://docs.python.org/3/using/mac.html
-- **Linux/Unix:** the distribution's package manager, or https://www.python.org/downloads/ ,
-  details: https://docs.python.org/3/using/unix.html
-
-After the owner installs it, check again before continuing — don't take their word for it.
+missing or too old — read `references/python-install.md` (installing it by platform), and stop until it
+works. After the owner installs it, check again before continuing — don't take their word for it.
 
 ## 2. Ask which of the two ways
 
@@ -81,8 +72,6 @@ it could not decide) to the project's inbox instead of asking. Check
 In three sentences: where the project's board and open questions live now
 (`docs/ai/work/`, `docs/ai/questions/`, `docs/ai/inbox/`), that the assistant's rules and skills
 are live from here on, and what to look at first (an inbox note `init` left, or the adoption
-table for way 2's second path). One of those notes may offer `security-check: deps` (only when
-`init` found a tool installed that Art B — the dependency-vulnerability scan,
-`.act/scripts/security_scan.py` — could use, and only while `security-check` is still `local`, the
-default): ask the owner whether to turn it on, and only if they say yes, set it to `deps` in
-`docs/ai/config.md` yourself — `init` never switches it there on its own.
+table for way 2's second path).
+
+Read `references/after-setup.md` when one of those notes offers `security-check: deps`.

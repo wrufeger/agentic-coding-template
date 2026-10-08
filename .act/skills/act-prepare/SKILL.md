@@ -1,6 +1,6 @@
 ---
 name: act-prepare
-description: Prepare a larger block so it runs without interruptions - research what exists, cut it into tasks, check readiness, then ask everything open in one bundle. Use when planning a feature, asked to "plan this out", before a block that should run unattended, or when the human says they'll be away.
+description: Use when planning a larger feature or block, asked to "plan this out", before work that should run unattended, or when the human says they will be away. Ends with ready, sized tasks and every open question asked in one bundle. Not for a first idea still lacking a decision - use act-idea.
 ---
 
 # Prepare a block

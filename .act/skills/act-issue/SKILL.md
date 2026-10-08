@@ -1,6 +1,6 @@
 ---
 name: act-issue
-description: Read, create, comment on, close and start work on issues and stories of GitHub or GitLab. Use when asked to "show issues", "show my open stories", "show issue 42", to create or comment on or close an issue, or to "start work on issue 42".
+description: Use when asked to "show issues", "show my open stories", "show issue 42", to create, comment on or close a GitHub or GitLab issue, or to "start work on issue 42". Covers issues and stories on the repo host. Not for pull or merge requests - use act-pr.
 ---
 
 # Issues and stories
