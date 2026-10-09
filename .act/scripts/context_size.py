@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_THRESHOLD = 150_000
+DEFAULT_THRESHOLD = 180_000
 _TAIL_SIZES = (256_000, 1_000_000, 4_000_000)  # grow only when the smaller tail holds no main-session call
 _USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
@@ -121,7 +121,7 @@ def status_segment(payload: dict) -> Optional[str]:
 
 
 def hint_threshold(root: Path) -> Optional[int]:
-    """`context-hint` from docs/ai/config.md: a token count, default 150000; `off` -> None; malformed -> default."""
+    """`context-hint` from docs/ai/config.md: a token count, default 180000; `off` -> None; malformed -> default."""
     try:
         import actlib
         value = str(actlib.read_config(Path(root)).get("context-hint", "")).strip().strip("`").lower()

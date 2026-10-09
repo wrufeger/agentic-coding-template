@@ -101,7 +101,7 @@ the question as understood, reasons, notes on code it wrote and what to watch ou
 
 | Key | Value |
 | :--- | :--- |
-| `context-hint` | 150000 |
+| `context-hint` | 180000 |
 | `task-wait-hours` | 12 |
 
 `context-hint`: a token count, or `off`. Once the session's context (the input of its last model call,
