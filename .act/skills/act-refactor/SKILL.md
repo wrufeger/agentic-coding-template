@@ -20,7 +20,10 @@ without a test net: missing one, run `act-test-gap` for the area first, or decli
 5. **Test after every step**; the suite from step 3 stays green before the next step starts, a
    red intermediate state gets fixed immediately.
 6. **Compare behavior at the end** — spot-check inputs/outputs, plus the full required checks
-   (`docs/ai/config.md` § commands), then `act-commit`.
+   (`docs/ai/config.md` § commands).
+7. **Capture what the code doesn't carry** — as step 8 of `act-bug`: a note under
+   `docs/project/learnings/` only if the answer to its question is yes (dead ends, hidden
+   coupling); then `act-commit`.
 
 A behavior change found along the way is a separate, later commit, never folded into this one; a
 new library or pattern only when the goal from step 1 requires it (`docs/project/coding_rules.md`).

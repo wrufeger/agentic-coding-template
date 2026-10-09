@@ -12,7 +12,9 @@ cleanup found along the way, and not for a fix nobody could actually trigger.
    excerpt the human gives. No reproduction yet: skip straight to the report below.
 2. **Localize.** Affected layer, since when (`git log`, `git bisect` between known-good and current).
    Cause not obvious after a quick look: delegate the hypothesis search to the `debugger` role
-   instead of guessing.
+   instead of guessing. Also grep `docs/project/learnings/` (headers `area:`, `tags:`) for the
+   area and symptom keywords and read only the hits; a note whose `retire_when` is met gets
+   reported, not followed.
 3. **Name the cause**, not just where it surfaces. Several candidates: check the likeliest first.
 4. **Pick the seam.** Before writing the test, decide which interface it will exercise — one seam
    per cycle, not an implementation detail. That's what keeps the test from re-breaking on the next
@@ -20,8 +22,15 @@ cleanup found along the way, and not for a fix nobody could actually trigger.
 5. **Red test at that seam**, before touching the fix. Already green: reproduction was incomplete or
    the cause was named wrong — back to step 1 or 3.
 6. **Fix.** Smallest change at the named cause, no surrounding rebuild.
-7. **Green test plus the project's required checks** (`docs/ai/config.md` § commands), then
-   `act-commit`.
+7. **Green test plus the project's required checks** (`docs/ai/config.md` § commands).
+8. **Capture what the code doesn't carry.** Ask: would someone who reads only the finished code
+   repeat the mistake or redo the search? Only on yes, write a note
+   `docs/project/learnings/<topic>.md` (folder created on first use) — header `area:`, `tags:`,
+   `retire_when:` (the condition that makes it obsolete), then sections Problem, What didn't work,
+   Solution, Prevention; at most about 30 lines, in `language-docs`. A note on the same topic
+   exists: extend it, don't add a second. Keep it relevant, atomic, evidenced and time-stable; no
+   secrets, no personal data; then `act-commit`. `act-perf` and `act-refactor` end with this step
+   too.
 
 Can't reproduce it: document what was reported, what was tried, and where reproduction failed
 instead of fixing on suspicion; ask the human when something's missing (credentials, test data, a

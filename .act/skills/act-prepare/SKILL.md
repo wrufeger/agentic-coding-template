@@ -13,7 +13,9 @@ code already answers, so research comes before the question round, never after.
 1. **Bound the scope** — what's in, what's explicitly not, both written down.
 2. **Research what exists, in parallel** — several `explorer` roles in one message: what already
    exists, which files are affected, does anything in `docs/project/decisions.md` conflict, where
-   does the code differ from the docs.
+   does the code differ from the docs. Also grep `docs/project/learnings/` (headers `area:`,
+   `tags:`) for the topic and read only the hits; a note whose `retire_when` is met gets reported,
+   not followed.
 3. **Cut it into tasks or stories.** Each task: one-sentence goal, checkable acceptance criterion,
    steps as bullets. Something bigger with its own justification becomes a story
    (`docs/project/stories/`, where the project uses them); the rest is a task under

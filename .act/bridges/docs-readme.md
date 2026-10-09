@@ -19,6 +19,7 @@ this file directly for anything those two miss — it stays a plain table, not a
 | `docs/ai/work/tasks/`, `docs/ai/work/backlog/` | Open tasks (the assistant's own work) and backlog items | <today> | when picking a task or grooming the backlog |
 | `docs/ai/work/ledger/` | Journal — one entry per file, newest first | <today> | to see recent activity; `board.py` reads it too |
 | `docs/ai/work/archive/` | Finished tasks/backlog/proposals, kept for reference | <today> | rarely — history, not current state |
+| `docs/project/learnings/` | One short note per lesson the code doesn't carry (failed attempts, cause, prevention), created on first use | <today> | when planning or localizing a bug in the same area; grep the `area:`/`tags:` headers |
 | `docs/ai/local/` | This project's own overrides of template files | <today> | whenever the matching template file changes |
 
 A file created later under `docs/project/` (`architecture.md`, `features.md`, `testing.md`,

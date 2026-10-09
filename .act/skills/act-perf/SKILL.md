@@ -21,7 +21,10 @@ claim, not an improvement.
 6. **Compare against the goal.** Not enough: back to step 3 with the next cause, one change per
    round.
 7. **Prove and close** — required checks (`docs/ai/config.md` § commands), before/after numbers
-   into `docs/ai/work/ledger/`, then `act-commit`.
+   into `docs/ai/work/ledger/`.
+8. **Capture what the code doesn't carry** — as step 8 of `act-bug`: a note under
+   `docs/project/learnings/` only if the answer to its question is yes (failed attempts, the real
+   cause); then `act-commit`.
 
 No gain after the change: the change is reverted, not kept on principle; readability never trades
 for a micro-optimization nobody can read afterward.
