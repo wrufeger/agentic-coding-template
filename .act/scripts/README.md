@@ -13,12 +13,14 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
+| `context_size.py` | Context size of the running Claude Code session, for the status line ("ctx 127k") and for the one-time /clear hint… | direct (also imported by the status line and the context hint) |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
 | `feedback.py` | Voluntary feedback from a derived project to the template author — so real work in real projects turns into better default rules, scripts… | skill `act-feedback` (`--status`/`--due` alone are direct) |
 | `feedback_privacy.py` | The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns… | library |
 | `forge.py` | A small REST client for the project's git host (GitHub, GitHub Enterprise, GitLab.com and self-hosted GitLab) — the one script the skills… | skills `act-pr`, `act-issue`, `act-integrations` (reads are direct; every write shows a preview and needs `--apply` after the human's "yes" (`topics/live-systems.md`)) |
 | `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
+| `handover.py` | Answer "can this session be left now?" mechanically, read-only: uncommitted changes, started tasks without a working-state line, inbox… | skill `act-handover` |
 | `i18n_check.py` | Check a project's translation files for completeness and consistency — the mechanical half of skill `act-check-translations`. Code-only… | skill `act-check-translations` |
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
@@ -307,6 +309,21 @@ options:
                         (act-commit calls it; a plain run never touches that file)
 ```
 
+## `context_size.py`
+
+Call: direct (also imported by the status line and the context hint)
+
+```text
+usage: context_size.py [-h] [--transcript TRANSCRIPT]
+
+Context size of the running session, from its transcript.
+
+options:
+  -h, --help            show this help message and exit
+  --transcript TRANSCRIPT
+                        path of a transcript (.jsonl); default: the newest of this project
+```
+
 ## `doctor.py`
 
 Call: direct (judging the findings: skill `act-doctor`)
@@ -341,7 +358,9 @@ positional arguments:
     assign              hand out ids still missing ('team' mode: only on the default branch)
     state               append a working-state line for an open task to .act-local/state/ — needs
                         an id already assigned; in 'team' mode a task awaiting one (filename only)
-                        has no `state` target yet
+                        has no `state` target yet. With --wait the line marks the task as waiting
+                        (for the human, a review, an outside party) until the next plain state
+                        line
     start               mark an open task as started (versioned `started:` header) without a state
                         line; `state` does the same on its first call
     list                list entries, optionally filtered by kind
@@ -388,10 +407,12 @@ options:
 ### `entries.py state`
 
 ```text
-usage: entries.py state [-h] T-ID text [text ...]
+usage: entries.py state [-h] [--wait] T-ID text [text ...]
 
 append a working-state line for an open task to .act-local/state/ — needs an id already assigned;
-in 'team' mode a task awaiting one (filename only) has no `state` target yet
+in 'team' mode a task awaiting one (filename only) has no `state` target yet. With --wait the line
+marks the task as waiting (for the human, a review, an outside party) until the next plain state
+line
 
 positional arguments:
   T-ID        the task's id, e.g. T12
@@ -399,6 +420,7 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+  --wait      mark the task as waiting; a later plain `state` line ends the waiting
 ```
 
 ### `entries.py start`
@@ -512,6 +534,21 @@ options:
   --root ROOT       project root (default: found from the current directory)
   --remote REMOTE   git remote to use (default: origin, else the only one)
   --json            print one JSON document instead of text
+```
+
+## `handover.py`
+
+Call: skill `act-handover`
+
+```text
+usage: handover.py [-h] [--root ROOT] [--json]
+
+Check mechanically whether this session can be left (read-only).
+
+options:
+  -h, --help   show this help message and exit
+  --root ROOT  project root (default: found upward from the working directory)
+  --json       machine-readable output
 ```
 
 ## `i18n_check.py`

@@ -358,12 +358,14 @@ _OBSERVERS = (
     ("usage", "observe"),
     ("status_poll", "observe"),  # resets the poll streak on UserPromptSubmit (R-cost-wait)
     ("board_refresh", "observe"),  # regenerates the board after PostToolUse of git merge/pull/...
-    ("tips", "observe"),         # minute/hour reminders on UserPromptSubmit — the one observer
-                                 # that prints, and only for that event: UserPromptSubmit runs
+    ("tips", "observe"),         # minute/hour reminders on UserPromptSubmit — prints, like
+                                 # context_hint below, only for that event: UserPromptSubmit runs
                                  # async (.act/bridges/settings.hooks.json), so plain stdout is
                                  # lost — only a hookSpecificOutput.additionalContext JSON object
                                  # on stdout reaches the model (checks/tips.py's observe() prints
                                  # exactly that, never bare text)
+    ("context_hint", "observe"),  # one-time /clear hint per context-size step on UserPromptSubmit;
+                                  # prints the same kind of object as tips — main() merges both
 )
 
 
@@ -491,6 +493,56 @@ def _run_observers(event: str, payload: dict) -> None:
             pass
 
 
+def _run_observers_merged(event: str, payload: dict) -> None:
+    """UserPromptSubmit: more than one observer may print a hookSpecificOutput JSON object (tips,
+    context_hint); two objects back to back would not be valid output. Capture what the observers
+    print, merge every additionalContext text into one object, print that. Anything that is not such
+    an object (plain text, JSON of another shape) is printed after it unchanged. Whatever goes wrong
+    while merging, the captured output is printed as it was; this never raises."""
+    import io
+    real = sys.stdout
+    buffer = io.StringIO()
+    sys.stdout = buffer
+    try:
+        _run_observers(event, payload)
+    finally:
+        sys.stdout = real
+    captured = buffer.getvalue()
+    if not captured.strip():
+        return
+    try:
+        texts: list[str] = []
+        other: list[str] = []
+        decoder = json.JSONDecoder()
+        position = 0
+        while position < len(captured):
+            if captured[position].isspace():
+                position += 1
+                continue
+            try:
+                obj, end = decoder.raw_decode(captured, position)
+            except ValueError:
+                other.append(captured[position:])
+                break
+            specific = obj.get("hookSpecificOutput") if isinstance(obj, dict) else None
+            context = specific.get("additionalContext") if isinstance(specific, dict) else None
+            if isinstance(context, str) and context:
+                texts.append(context)
+            else:
+                other.append(captured[position:end])
+            position = end
+        merged = ""
+        if texts:
+            merged = json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": "\n".join(texts)}}) + "\n"
+        merged += "".join(chunk.rstrip("\n") + "\n" for chunk in other)
+    except Exception:  # noqa: BLE001 — a hook never ends in a traceback; pass the output through
+        merged = captured
+    try:
+        sys.stdout.write(merged)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _run_pre_tool_use_observers(payload: dict, denied: bool, denied_by: "str | None" = None) -> None:
     """PreToolUse's own observer run: a call one of _PRE_TOOL_USE_CHECKS
     denies must never be counted by usage.py's role/skill/script/checklist counters, nor logged as
@@ -601,7 +653,10 @@ def main(argv: list[str]) -> int:
         _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
         return result
 
-    _run_observers(event, payload)
+    if event == "UserPromptSubmit":
+        _run_observers_merged(event, payload)
+    else:
+        _run_observers(event, payload)
     if event in ("PostToolUse", "PostToolUseFailure"):
         _emit_post_tool_use_notes(event, payload)
         return 0  # notes never block

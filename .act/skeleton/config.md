@@ -97,6 +97,24 @@ tool's own interface displays — see `docs/README.md` for the per-tool display 
 only what is needed — no interim status, one answer per question; `verbose` writes answers out —
 the question as understood, reasons, notes on code it wrote and what to watch out for.
 
+## Session length
+
+| Key | Value |
+| :--- | :--- |
+| `context-hint` | 150000 |
+| `task-wait-hours` | 12 |
+
+`context-hint`: a token count, or `off`. Once the session's context (the input of its last model call,
+read from the transcript) reaches this value, and again at each further multiple of it, the assistant
+gets a one-time note to suggest `/clear` or a new session at the next task boundary
+(`R-work-handover`); the status line shows the size as `ctx <n>k` either way. Every step of a long
+session re-sends the whole context, so a fresh session after a finished task is the largest saving
+there is. `task-wait-hours`: a started task counts as *waiting* rather than *running* in the status
+line and on the board once its last state line is older than this many hours, while an open inbox
+todo or question names its id (reports and notes do not count), or when its last state line was
+written with `entries.py state <id> --wait`. Without a dated state line, the task's `started:` time
+counts instead. A missing or malformed value counts as the default.
+
 ## Dependencies
 
 | Key | Value |

@@ -61,7 +61,7 @@ import argparse
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -80,11 +80,22 @@ OTHERS_LIMIT = 10     # per list in the "Others" section
 # task's title.
 STATE_DIR = Path(".act-local/state")
 FOR_RE = re.compile(r"(?im)^for:\s*(.+?)\s*$")
-# A task's "started:" header (entries.py state / start): with it the task counts as running,
-# without it as new — the board marks it, the status line counts both.
+# A task's "started:" header (entries.py state / start): with it the task counts as running or
+# waiting (classify_task()), without it as new — the board marks it, the status line counts all three.
 STARTED_RE = re.compile(r"(?im)^started:\s*(\S+)\s*$")
 STATUS_RE = re.compile(r"(?im)^status:\s*(\S+)\s*$")
 ID_RE = re.compile(r"(?im)^id:\s*(\S+)\s*$")
+# A working-state line as entries.py state writes it: "State 2026-10-09 14:30: text", or with the
+# waiting marker "State 2026-10-09 14:30 (wait): text". A line in any other shape still parses as
+# a state line, it just carries no stamp and no marker.
+STATE_LINE_RE = re.compile(r"^State (\d{4}-\d{2}-\d{2} \d{2}:\d{2})( \(wait\))?:")
+STATE_STAMP_FORMAT = "%Y-%m-%d %H:%M"
+# A file name that starts with a task id ("T<n>-title.md", "T<n>a-title.md"), for a task whose header
+# has no id: line.
+FILENAME_ID_RE = re.compile(r"^([A-Za-z]\d+[a-z]?)-")
+# Hours after which a started task with no newer state line counts as waiting (config key
+# task-wait-hours); a missing, malformed or non-positive value counts as this default.
+DEFAULT_TASK_WAIT_HOURS = 12.0
 CREATED_RE = re.compile(r"(?im)^created:\s*(\S+)\s*$")
 _CREATED_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # A team-mode filename carries its timestamp as "-YYYYMMDD-HHMM-" (actlib.entry_stamp(), between
@@ -275,18 +286,95 @@ def read_task_titles(root: Path, limit: int = TASKS_LIMIT) -> Optional[list[str]
 
 
 def _task_text(task: dict) -> str:
-    title = f"{task['title']} (running)" if task.get("started") else task["title"]
+    suffix = {"run": " (running)", "wait": " (waiting)"}.get(task.get("status", ""), "")
+    if not suffix and task.get("started"):
+        suffix = " (running)"
+    title = f"{task['title']}{suffix}"
     return f"{title} — {task['state']}" if task["state"] else title
 
 
-def read_tasks(root: Path) -> Optional[list[dict]]:
-    """Every task under docs/ai/work/tasks/ as {"title", "for", "state", "started"}, oldest first
-    (same order as read_task_titles()), or None if the directory does not exist. "for" is the
-    header's `for:` value or None; "state" the last working-state line or None; "started" whether
-    the header carries `started:` (a running task, else a new one)."""
+def task_wait_hours(config: dict[str, str]) -> float:
+    """The `task-wait-hours` config value as a number of hours; a missing, malformed or non-positive
+    value (or one that is not a finite number) counts as DEFAULT_TASK_WAIT_HOURS."""
+    raw = config.get("task-wait-hours", "").strip().strip("`").strip()
+    try:
+        hours = float(raw)
+    except ValueError:
+        return DEFAULT_TASK_WAIT_HOURS
+    if not (0 < hours < float("inf")):  # also false for nan
+        return DEFAULT_TASK_WAIT_HOURS
+    return hours
+
+
+def parse_state_line(line: Optional[str]) -> tuple[Optional[datetime], bool]:
+    """(stamp, waiting) of one working-state line: the line's "YYYY-MM-DD HH:MM" stamp (local time)
+    or None, and whether it carries the "(wait)" marker. A line in an older or hand-written shape
+    gives (None, False)."""
+    match = STATE_LINE_RE.match(line or "")
+    if not match:
+        return None, False
+    try:
+        stamp: Optional[datetime] = datetime.strptime(match.group(1), STATE_STAMP_FORMAT)
+    except ValueError:
+        stamp = None
+    return stamp, match.group(2) is not None
+
+
+def _task_id(header: str, filename: str) -> Optional[str]:
+    """The task's id from its header `id:` line, else from the file name's prefix, else None (a
+    task in team mode that has not been given an id yet)."""
+    match = ID_RE.search(header)
+    if match:
+        return match.group(1).strip()
+    name_match = FILENAME_ID_RE.match(filename)
+    return name_match.group(1) if name_match else None
+
+
+def _inbox_waiting_texts(root: Path) -> list[str]:
+    """Title and body of every open inbox todo and question — the text a task id is looked for in
+    when deciding whether a task waits on the human."""
+    entries = read_inbox_entries(root) or []
+    return [e["title"] + " " + e["body"] for e in entries
+            if e["status"] == "open" and e["kind"] in ("todo", "question")]
+
+
+def classify_task(task: dict, now: datetime, wait_hours: float, inbox_texts: list[str]) -> str:
+    """"new" (no `started:` header), "wait" or "run". A started task waits when its last state line
+    carries the "(wait)" marker, when that line's stamp (else the `started:` time, when there is no
+    state line) is older than `wait_hours`, or when an open inbox todo or question names the task's
+    id as a whole word; every other started task runs. `now` is a parameter so a test can fix it."""
+    if not task["started"]:
+        return "new"
+    stamp, waiting = parse_state_line(task["state"])
+    if waiting:
+        return "wait"
+    if stamp is None:  # no dated state line: the `started:` time stands in for its age
+        stamp = task.get("started_at")
+    try:
+        if stamp is not None and now - stamp > timedelta(hours=wait_hours):
+            return "wait"
+    except TypeError:  # a time that cannot be compared with `now` counts as no time
+        pass
+    task_id = task.get("id")
+    if task_id:
+        pattern = re.compile(rf"\b{re.escape(task_id)}\b")
+        if any(pattern.search(text) for text in inbox_texts):
+            return "wait"
+    return "run"
+
+
+def read_tasks(root: Path, now: Optional[datetime] = None) -> Optional[list[dict]]:
+    """Every task under docs/ai/work/tasks/ as {"title", "for", "state", "started", "id", "status"},
+    oldest first (same order as read_task_titles()), or None if the directory does not exist. "for"
+    is the header's `for:` value or None; "state" the last working-state line or None; "started"
+    whether the header carries `started:`; "id" the task's id or None; "status" the classification
+    of classify_task() — "new", "run" or "wait". `now` defaults to the current local time."""
     tasks_dir = root / TASKS_DIR
     if not tasks_dir.is_dir():
         return None
+    now = now or datetime.now()
+    wait_hours = task_wait_hours(actlib.read_config(root))
+    inbox_texts = _inbox_waiting_texts(root)
     files = sorted(
         (p for p in tasks_dir.glob("*.md") if p.name.lower() != "readme.md"),
         key=lambda p: _timeline_key(_read_created(p), p.name, newest_first=False),
@@ -298,12 +386,25 @@ def read_tasks(root: Path) -> Optional[list[dict]]:
         except (OSError, UnicodeDecodeError):
             header = ""
         for_match = FOR_RE.search(header)
-        tasks.append({
+        started_match = STARTED_RE.search(header)
+        started_at: Optional[datetime] = None
+        if started_match:
+            try:
+                started_at = datetime.fromisoformat(started_match.group(1).replace("Z", "+00:00"))
+                if started_at.tzinfo is not None:  # an offset: convert to local naive time like `now`
+                    started_at = started_at.astimezone().replace(tzinfo=None)
+            except (ValueError, OverflowError, OSError):
+                started_at = None
+        task = {
             "title": _first_heading(path) or path.stem,
             "for": for_match.group(1).strip() if for_match else None,
             "state": _last_state_line(root, path.name),
-            "started": STARTED_RE.search(header) is not None,
-        })
+            "started": started_match is not None,
+            "started_at": started_at,
+            "id": _task_id(header, path.name),
+        }
+        task["status"] = classify_task(task, now, wait_hours, inbox_texts)
+        tasks.append(task)
     return tasks
 
 

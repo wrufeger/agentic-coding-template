@@ -66,7 +66,9 @@
 #     line next to the task's title. The first state for a task also writes "started: <timestamp>"
 #     into the task file's versioned header (the line then ends "— task marked started"), which is
 #     what board.py and the status line count as a running task; a note on a task not begun yet
-#     belongs in the task file itself, not in `state`.
+#     belongs in the task file itself, not in `state`. With `--wait` the line reads "State
+#     <YYYY-MM-DD HH:MM> (wait): <text>": the task is then shown as waiting (board, status line)
+#     until the next plain `state` line; lines without the marker keep reading as before.
 #   "start": writes "started: <timestamp>" into the task's header without a state line —
 #     "entries: <id> marked started" or "entries: <id> already started (<value>)", exit 0; the same
 #     refusals as "state" (exit 2).
@@ -902,7 +904,7 @@ def _task_path_for_id(root: Path, raw_id: str) -> tuple[Optional[Path], Optional
     return None, f"{canonical}: no open task with this id under {KIND_DIR['task'].as_posix()}"
 
 
-def cmd_state(root: Path, raw_id: str, text_words: list[str]) -> int:
+def cmd_state(root: Path, raw_id: str, text_words: list[str], wait: bool = False) -> int:
     text = " ".join(text_words).strip()
     if not text:
         print("entries: state text must not be empty — nothing written", file=sys.stderr)
@@ -917,7 +919,7 @@ def cmd_state(root: Path, raw_id: str, text_words: list[str]) -> int:
     state_path = state_dir / path.name
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     with open(state_path, "a", encoding="utf-8", newline="\n") as handle:
-        handle.write(f"State {stamp}: {text}\n")
+        handle.write(f"State {stamp}{' (wait)' if wait else ''}: {text}\n")
     started = _mark_started(path)
     entry_id = _entry_id(_safe_read(path) or "") or _canonical_id(raw_id.strip())
     suffix = " — task marked started" if started else ""
@@ -1014,8 +1016,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     state_help = ("append a working-state line for an open task to .act-local/state/ — needs an id "
                   "already assigned; in 'team' mode a task awaiting one (filename only) has no `state` "
-                  "target yet")
+                  "target yet. With --wait the line marks the task as waiting (for the human, a "
+                  "review, an outside party) until the next plain state line")
     p_state = sub.add_parser("state", help=state_help, description=state_help)
+    p_state.add_argument("--wait", action="store_true",
+                         help="mark the task as waiting; a later plain `state` line ends the waiting")
     p_state.add_argument("id", metavar="T-ID", help="the task's id, e.g. T12")
     p_state.add_argument("text", nargs="+", help='the state line\'s text, e.g. "step 3 running, next: ..."')
 
@@ -1051,7 +1056,7 @@ def main(argv: list[str]) -> int:
     if args.command == "assign":
         return cmd_assign(root)
     if args.command == "state":
-        return cmd_state(root, args.id, args.text)
+        return cmd_state(root, args.id, args.text, args.wait)
     if args.command == "start":
         return cmd_start(root, args.id)
     if args.command == "list":

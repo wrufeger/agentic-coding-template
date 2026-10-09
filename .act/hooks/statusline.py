@@ -5,8 +5,9 @@
 #          chat, so what is waiting for the human (open inbox entries) never scrolls out of view
 #          the way a chat message does.
 #          Reads the JSON Claude Code passes on stdin (see
-#          https://code.claude.com/docs/en/statusline), uses only its "cwd"/"workspace" fields to
-#          find the project, and prints exactly one line — the same "Waiting for you" count
+#          https://code.claude.com/docs/en/statusline), uses its "cwd"/"workspace" fields to
+#          find the project and its "context_window" (else "transcript_path") for the context size
+#          (context_size.py), and prints exactly one line — the same "Waiting for you" count
 #          board.py's board already computes, reused via import (board.py is another worker's file
 #          in this task's write scope, so it is only ever imported here, never edited or
 #          reimplemented, R-role-worker).
@@ -17,11 +18,13 @@
 #          echo '{"cwd": "."}' | python .act/hooks/statusline.py
 #
 # Output format: exactly one line on stdout, e.g.
-#   "act · Q103 Q104 Q105 · tasks: 1 running, 4 new"         -- open inbox entries and open tasks
+#   "act · Q103 Q104 Q105 · tasks: 1 run, 2 wait, 4 new"     -- open inbox entries and open tasks
 #   "act · Q105, U4 U3, 2 reports · tasks: 2 new"            -- ids by name (questions, then todos),
 #                                                              entries without an id as a count per kind
 #   "act · tasks: 5 new"                                     -- nothing waiting, no list shown
 #   "act"                                                    -- nothing waiting and no open task
+#   "act · tasks: 1 run · ctx 127k"                          -- context size last, when Claude Code
+#                                                              passes it (or the transcript has it)
 # Never writes to stderr, never a non-zero exit: any failure (malformed stdin JSON, no project
 # found from cwd, an unreadable inbox/tasks directory, ...) prints an empty line and exits 0 — a
 # broken status line must never show an error banner in Claude Code, per Claude Code's own
@@ -51,6 +54,11 @@ try:
 except Exception:
     actlib = None  # type: ignore[assignment]
     board = None  # type: ignore[assignment]
+try:
+    # Separate from the imports above: without it the line still shows the inbox and the tasks.
+    import context_size  # noqa: E402
+except Exception:
+    context_size = None  # type: ignore[assignment]
 
 MAX_LABELS = 5  # how many ids the line names in all before folding the rest into "+N"
 # Entries with an id (a question, a todo) are named, in this order of kinds.
@@ -127,25 +135,38 @@ def _waiting_text(entries: list[dict]) -> str:
     return ", ".join(parts)
 
 
-def _task_counts(root: Path) -> Optional[tuple[int, int]]:
-    """(running, new) open tasks under docs/ai/work/tasks/ — running means the task's header
-    carries `started:` (entries.py state / start) — or None if that directory does not exist. Same
-    source as board.read_tasks(), every file counted instead of just the first TASKS_LIMIT."""
+def _task_counts(root: Path) -> Optional[tuple[int, int, int]]:
+    """(running, waiting, new) open tasks under docs/ai/work/tasks/ — or None if that directory
+    does not exist. The classification is board.classify_task()'s: new without a `started:`
+    header, otherwise waiting or running. Same source as board.read_tasks(), every file counted
+    instead of just the first TASKS_LIMIT."""
     tasks = board.read_tasks(root)
     if tasks is None:
         return None
-    running = sum(1 for task in tasks if task["started"])
-    return running, len(tasks) - running
+    counts = {"run": 0, "wait": 0, "new": 0}
+    for task in tasks:
+        counts[task["status"]] += 1
+    return counts["run"], counts["wait"], counts["new"]
 
 
-def _tasks_text(running: int, new: int) -> str:
-    """"tasks: 1 running, 2 new" — a count of 0 is left out."""
-    parts = ([f"{running} running"] if running else []) + ([f"{new} new"] if new else [])
+def _tasks_text(running: int, waiting: int, new: int) -> str:
+    """"tasks: 1 run, 1 wait, 2 new" — a count of 0 is left out."""
+    parts = [f"{count} {word}" for count, word in ((running, "run"), (waiting, "wait"), (new, "new")) if count]
     return "tasks: " + ", ".join(parts)
 
 
-def status_line(root: Path) -> str:
-    """The one line this hook prints for a project at `root`."""
+def _context_text(data: Optional[dict]) -> Optional[str]:
+    """"ctx 127k" -- the session's context size from the stdin JSON (or its transcript), else None."""
+    if not data or context_size is None:
+        return None
+    try:
+        return context_size.status_segment(data)
+    except Exception:
+        return None
+
+
+def status_line(root: Path, data: Optional[dict] = None) -> str:
+    """The one line this hook prints for a project at `root`; `data` is the stdin JSON."""
     waiting_count, entries = _waiting_summary(root)
     task_counts = _task_counts(root)
 
@@ -155,6 +176,9 @@ def status_line(root: Path) -> str:
         segments.append(_waiting_text(entries))
     if task_counts is not None and sum(task_counts):
         segments.append(_tasks_text(*task_counts))
+    context = _context_text(data)
+    if context:
+        segments.append(context)
     return " · ".join(segments)
 
 
@@ -172,7 +196,7 @@ def main() -> int:
             data = {}
         cwd = _cwd_from_stdin_json(data) or "."
         root = actlib.repo_root(Path(cwd))
-        line = status_line(root)
+        line = status_line(root, data)
     except Exception:
         # Any failure (bad JSON, no project found, an unreadable file, ...) -> an empty line, never
         # an exception or a non-zero exit -- this hook must never surface as an error banner.

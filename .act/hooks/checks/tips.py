@@ -86,8 +86,8 @@
 #   observe()'s docstring), because that hook runs async: {"hookSpecificOutput": {"hookEventName":
 #   "UserPromptSubmit", "additionalContext": "[act] reminder: <text>"}} — the one field an async
 #   hook's JSON reply is documented to still deliver. Otherwise observe() prints nothing, matching
-#   every other observer's observe(event, payload) -> None contract (and staying silent leaves no
-#   output for dispatch.py's other UserPromptSubmit observers to collide with on the same stdout).
+#   every other observer's observe(event, payload) -> None contract. context_hint also prints for
+#   UserPromptSubmit; dispatch.py merges the objects of both into one (_run_observers_merged).
 
 from __future__ import annotations
 
@@ -589,9 +589,9 @@ def observe(event: str, payload: dict) -> None:
     them. UserPromptSubmit runs `async: true` (.act/bridges/settings.hooks.json), and an async
     hook's plain stdout never reaches the model — only hookSpecificOutput.additionalContext from
     a JSON object on stdout is documented to (review 2026-09-23; SessionStart, by contrast, is
-    synchronous, so session_line()'s plain-text return is fine as-is). Every other
-    UserPromptSubmit observer (event_log, usage, status_poll) prints nothing, so this stays the
-    only stdout output for that event — the JSON below is not competing with anything else."""
+    synchronous, so session_line()'s plain-text return is fine as-is). context_hint prints a JSON
+    object for the same event too; dispatch.py captures both and merges them into one object
+    (_run_observers_merged), so the two never collide on stdout."""
     if event != "UserPromptSubmit" or payload.get("agent_id"):
         return
     if _is_harness_message(payload.get("prompt")):

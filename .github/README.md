@@ -73,6 +73,7 @@ Once the project exists, everyday work runs the same way:
 | `Close out T12` | check the evidence, archive, journal, commit (`act-commit`) |
 | `Check for a template update` | diff, your consent, update (`act-update`) |
 | `Which skills are there?` | the list, one line each (`act`) |
+| `Can I clear the session?` | checks the handover, then the sentence for the new session (`act-handover`) |
 
 ### Python
 
@@ -116,6 +117,7 @@ follow them; Claude Code also calls them by name (`/act-bug`).
 | Building and fixing | `act-bug` (failing test first) · `act-refactor` · `act-perf` (measure first) · `act-test-gap` · `act-deps` |
 | Checking | `act-a11y` (accessibility) · `act-audit-docs` (docs against the code) |
 | Design | `act-design-ideas` (variants) · `act-design-build` (implement one) · `act-design-assets` (logo, icons) |
+| Handing over | `act-handover` (can the session be left now, and the sentence for the new one) |
 | Shipping | `act-commit` · `act-release` (version, changelog, tag) · `act-pr` · `act-issue` · `act-integrations` (GitHub/GitLab access) |
 | Presenting | `act-slides` (a deck from the project's docs) |
 | The template itself | `act-setup` · `act-adopt` · `act-update` · `act-doctor` (drift check) · `act-export-settings` / `act-load-settings` · `act-feedback` |

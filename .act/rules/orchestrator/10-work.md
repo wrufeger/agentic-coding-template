@@ -37,7 +37,7 @@ instead of assuming it is unchanged.
 
 ## `R-work-handover` — Every step ends ready to hand over
 
-summary: status, open task, and decisions left for a fresh session to continue
+summary: status, open task, and decisions left for a fresh session to continue; /clear suggested at a task boundary once the context is large
 
 Even a sub-step (a stage, a partial task) is done only once a fresh session with no prior context
 could pick it up: status and next step recorded with `entries.py state <id> <text>`
@@ -48,4 +48,11 @@ someone would look for them — not just in the chat history. A work place outsi
 second checkout, a worktree — goes into the task with its full path. Before advising a restart
 ahead of a big rebuild, first confirm this handover actually holds; only then give the advice. Before a
 manual compaction (`/compact`), record the state with `entries.py state` first; after any compaction,
-re-read the open task's state before continuing — the summary may have lost detail.
+re-read the open task's state before continuing — the summary may have lost detail. A task waiting
+on someone or something gets its state with `entries.py state <id> --wait <text>`.
+
+Every step of a session re-sends the whole context, so a fresh session after a finished task is the
+largest saving there is. At a task boundary — the task done and committed, no worker running, nothing
+left only in chat — the closing line suggests `/clear` or a new session once the context has reached
+`context-hint` (`docs/ai/config.md`; a one-time note says so, the status line shows the size as
+`ctx`). `act-handover` checks that the handover holds and gives the sentence for the new session.
