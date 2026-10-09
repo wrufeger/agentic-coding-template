@@ -61,6 +61,14 @@
 #               trigger sentence, a summary of steps, a "When to use" heading, a long SKILL.md with
 #               no references/ folder. In a project only its own skills (docs/ai/local/skills/) are
 #               checked — it cannot fix a template skill; the template's own checkout checks all.
+#          19. the frontmatter of skills (.act/skills/, docs/ai/local/skills/) and roles
+#               (.act/bridges/agents/, docs/ai/local/agents/, generated .claude/agents/): a value a strict
+#               YAML parser rejects or reads differently (unquoted ': ' or ' #', a reserved first
+#               character), a missing `name`/`description`, a `name` that differs from its folder or
+#               file, an invalid `tier`/`reasoning`/`tools`/`model`/`effort`, and a field or tool name
+#               no known tool reads (reported like every finding: it counts and sets exit 1, and
+#               may be a newer tool's field). In a project only its own skills/roles are checked; the
+#               template's checkout checks all.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -105,12 +113,14 @@ from typing import Optional
 
 import actlib
 import entries
+import frontmatter
 import init
 import manifest as manifest_mod
 import rules
 import script_docs
 import settings_load
 import skills
+import tiers
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +175,9 @@ KIND_LABELS: dict[str, str] = {
     "tier-proposal": "Tier proposals from worker outcomes (R-role-outcome)",
     "template-remote": "Git remote pointing at the template while the branch has no upstream",
     "skill-lint": "Skill descriptions or bodies that break the writing pattern (skills.py --check)",
+    "frontmatter-yaml": "Skill/role frontmatter that is not valid YAML",
+    "frontmatter-field": "Skill/role frontmatter with missing, mismatched or invalid fields",
+    "frontmatter-unknown": "Skill/role frontmatter fields or tool names no known tool reads (maybe newer than this check)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -195,6 +208,9 @@ KIND_LABELS_DE: dict[str, str] = {
     "tier-proposal": "Stufenvorschläge aus Worker-Ergebnissen (R-role-outcome)",
     "template-remote": "Git-Remote zeigt auf die Vorlage, obwohl der Branch keinen Upstream hat",
     "skill-lint": "Skill-Beschreibungen oder -Rümpfe, die das Schreibmuster verletzen (skills.py --check)",
+    "frontmatter-yaml": "Skill-/Rollen-Frontmatter, das kein gültiges YAML ist",
+    "frontmatter-field": "Skill-/Rollen-Frontmatter mit fehlenden, abweichenden oder ungültigen Feldern",
+    "frontmatter-unknown": "Skill-/Rollen-Frontmatter-Felder oder Werkzeugnamen, die kein bekanntes Werkzeug liest (evtl. neuer als diese Prüfung)",
 }
 
 
@@ -1266,6 +1282,261 @@ def check_skill_lint(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Frontmatter of skills and roles
+# ---------------------------------------------------------------------------
+
+# Fields a skill's frontmatter may carry: what Claude Code reads plus what the other tools the
+# bridges feed (Agent Skills standard: license, compatibility, metadata) read. Anything else is
+# reported as `frontmatter-unknown` — a newer tool may know a field this list does not.
+_SKILL_FIELDS = frozenset({
+    "name", "description", "disable-model-invocation", "user-invocable", "allowed-tools", "model",
+    "effort", "context", "agent", "hooks", "argument-hint", "when_to_use", "paths", "shell",
+    "metadata", "license", "compatibility", "version",
+})
+# The template's role fields (name, description, tier, reasoning, tools), the ones tiers.py
+# generates (model, effort, variant-of) and the ones Claude Code adds on top.
+_ROLE_FIELDS = frozenset({
+    "name", "description", "tier", "reasoning", "tools", "model", "effort", "variant-of",
+    "permissionMode", "hooks", "mcpServers", "color", "disallowedTools", "skills", "memory",
+    "maxTurns", "background", "isolation", "initialPrompt",
+})
+_KNOWN_TOOL_NAMES = frozenset({
+    "Read", "Write", "Edit", "MultiEdit", "Bash", "Grep", "Glob", "WebFetch", "WebSearch",
+    "NotebookEdit", "NotebookRead", "TodoWrite", "Task", "Agent", "BashOutput", "KillShell",
+    "SlashCommand", "Skill", "ExitPlanMode", "EnterPlanMode", "LS", "AskUserQuestion", "Monitor",
+    "TaskOutput", "TaskStop", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "SendMessage",
+    "LSP", "ToolSearch", "PowerShell", "ListMcpResourcesTool", "ReadMcpResourceTool",
+    "CronCreate", "CronDelete", "CronList", "EnterWorktree", "ExitWorktree", "SendUserFile",
+})
+_KNOWN_TOOL_BY_LOWER = {name.lower(): name for name in _KNOWN_TOOL_NAMES}
+# A block scalar header: `|` or `>` with an optional indentation digit and chomping sign, either order.
+_BLOCK_HEADER_RE = re.compile(r"^[|>](?:[1-9][+-]?|[+-][1-9]?)?(?:\s+#.*)?$")
+_PLAIN_START_BAD = "&*!%@`"  # a plain scalar cannot start with these (quotes are handled apart)
+_MODEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._:\[\]=-]+$")
+_FIELD_LINE_RE = re.compile(r"^(?P<key>[^\s#][^:]*?)\s*:(?:\s+(?P<value>.*?))?\s*$")
+
+
+def _frontmatter_span(lines: list[str]) -> Optional[tuple[int, int]]:
+    """(index of the opening '---', index of the closing '---') or None without a block."""
+    start = 0
+    while start < len(lines) and lines[start].strip() == "":
+        start += 1
+    if start >= len(lines) or lines[start].strip() != "---":
+        return None
+    for i in range(start + 1, len(lines)):
+        if lines[i].strip() == "---":
+            return start, i
+    return None
+
+
+def _plain_value_problem(value: str) -> Optional[str]:
+    """Why `value` — the right-hand side of a top-level frontmatter line — is not valid YAML or
+    does not mean what it reads like; None when it is fine. Mirrors frontmatter.quote_value()."""
+    if value == "":
+        return None
+    if value[0] in "|>":
+        if _BLOCK_HEADER_RE.match(value):
+            return None
+        return f"block scalar indicator {value[0]!r} followed by text on the same line — start the text on the next line"
+    if value[0] == '"':
+        body = re.sub(r"\\.", "", value[1:])
+        if not body.endswith('"') or '"' in body[:-1]:
+            return 'double-quoted value with an unescaped " inside or no closing quote'
+        return None
+    if value[0] == "'":
+        body = value[1:].replace("''", "")
+        if not body.endswith("'") or "'" in body[:-1]:
+            return "single-quoted value with an unescaped ' inside or no closing quote"
+        return None
+    if value[0] in "[{":
+        return None  # a flow list/map (`tools: [Read, Grep]`), valid YAML
+    if ": " in value or value.endswith(":"):
+        return "unquoted value contains ': ' (YAML reads a nested mapping) — put the value in quotes"
+    if " #" in value:
+        return "unquoted value contains ' #' (YAML treats the rest as a comment) — put the value in quotes"
+    if value[0] in _PLAIN_START_BAD:
+        return f"unquoted value starts with {value[0]!r}, which YAML reserves — put the value in quotes"
+    if value.startswith(("- ", "? ")):
+        return f"unquoted value starts with {value[:2]!r}, a YAML list/key marker — put the value in quotes"
+    return None
+
+
+def _frontmatter_yaml_problems(lines: list[str], start: int, close: int) -> list[tuple[int, str]]:
+    """(line number, problem) for each top-level line between the fences that a strict YAML parser
+    would reject or read differently. Hand-rolled on purpose (stdlib only): the lenient reader in
+    frontmatter.py takes 'key: a: b' as the value 'a: b', which is how such a head went unnoticed."""
+    problems: list[tuple[int, str]] = []
+    plain_open = False  # the last top-level key holds a plain (unquoted) scalar that may continue
+    skip_until = -1  # lines up to here belong to a multi-line quoted value already checked
+    for i in range(start + 1, close):
+        raw = lines[i]
+        if i <= skip_until or raw.strip() == "":
+            continue
+        if raw[:1] in (" ", "\t"):
+            text = raw.strip()
+            if plain_open and not text.startswith("#") and (": " in text or text.endswith(":")):
+                problems.append((i + 1, "continuation line of a plain value contains ': '"))
+            continue
+        if raw.lstrip().startswith("#"):
+            continue
+        plain_open = False
+        match = _FIELD_LINE_RE.match(raw)
+        if not match:
+            problems.append((i + 1, f"line is not 'key: value' ({raw.strip()[:40]!r})"))
+            continue
+        value = (match.group("value") or "").strip()
+        plain_open = bool(value) and value[0] not in "\"'[{|>"
+        problem = _plain_value_problem(value)
+        if problem and value[0] in "\"'":
+            # a quoted scalar may span several lines: try again with the following lines joined on
+            joined, last = value, i
+            while problem and last + 1 < close:
+                last += 1
+                joined += " " + lines[last].strip()
+                problem = _plain_value_problem(joined)
+            if not problem:
+                skip_until = last
+                continue
+            problem = _plain_value_problem(value)
+        if problem:
+            problems.append((i + 1, f"{match.group('key')}: {problem}"))
+    return problems
+
+
+def _valid_role_values(root: Path) -> tuple[set[str], set[str], set[str]]:
+    """(tiers, reasoning levels, claude-code model aliases) read from .act/tiers.json — never a
+    list of its own. Empty sets when the file is missing or unreadable (then nothing is checked)."""
+    data = tiers.load_tiers(root)
+    tier_set: set[str] = set()
+    reasoning_set: set[str] = set()
+    models: set[str] = set()
+    for tool, entry in data.items():
+        if not isinstance(entry, dict):
+            continue
+        table = entry.get("tiers") or {}
+        tier_set.update(table)
+        reasoning_set.update(entry.get("reasoning_scale") or [])
+        if tool == "claude-code":
+            models.update(v.get("model", "") for v in table.values() if isinstance(v, dict))
+    models.discard("")
+    return tier_set, reasoning_set, models
+
+
+def _tool_name_list(value: str) -> list[str]:
+    """The bare tool names of a `tools` value: a comma list, a flow list, or a "- Name" list the
+    lenient reader joins with " - ". Split only outside parentheses, so `Bash(git log:*, git diff:*)`
+    and `Bash(npm run test - x)` stay one entry; the argument part is dropped."""
+    text = value.strip().strip("[]")
+    parts: list[str] = []
+    depth, current = 0, ""
+    for i, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        if depth == 0 and (char == "," or (
+                char == "-" and (i == 0 or text[i - 1].isspace()) and text[i + 1:i + 2].isspace())):
+            parts.append(current)
+            current = ""
+            continue
+        current += char
+    parts.append(current)
+    return [p.split("(", 1)[0].strip("\"' \t") for p in parts if p.strip()]
+
+
+def check_frontmatter(root: Path) -> list[Finding]:
+    """19. The frontmatter of every skill (.act/skills/*, docs/ai/local/skills/*) and role
+    (.act/bridges/agents/*, docs/ai/local/agents/*, generated .claude/agents/*): strict-YAML
+    validity of each line, required `name`/`description`, `name` equal to its folder or file name,
+    the values of `tier`/`reasoning`/`tools` and `model`/`effort`, and a hint for each field no
+    known tool reads. In a project only its own skills and roles (docs/ai/local/) and the generated
+    .claude/agents/ are checked, as in check_skill_lint(). Only stdlib: strict YAML is approximated line by line, see
+    _plain_value_problem()."""
+    tier_set, reasoning_set, models = _valid_role_values(root)
+    findings: list[Finding] = []
+
+    in_project = (root / ".act-lock.json").is_file()  # the template's own files are checked only in its checkout
+    units: list[tuple[Path, str, str]] = []  # (file, "skill" or "role", expected name)
+    skill_bases = [root / "docs" / "ai" / "local" / "skills"]
+    role_bases = [root / "docs" / "ai" / "local" / "agents", root / ".claude" / "agents"]
+    if not in_project:
+        skill_bases.insert(0, root / ".act" / "skills")
+        role_bases.insert(0, root / ".act" / "bridges" / "agents")
+    for base in skill_bases:
+        if base.is_dir():
+            for folder in sorted(p for p in base.iterdir() if p.is_dir()):
+                if (folder / "SKILL.md").is_file():
+                    units.append((folder / "SKILL.md", "skill", folder.name))
+    for base in role_bases:
+        if base.is_dir():
+            for path in sorted(base.glob("*.md")):
+                if path.name.lower() != "readme.md":
+                    units.append((path, "role", path.stem))
+
+    for path, unit_kind, expected_name in units:
+        rel = _rel(path, root)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.lstrip("﻿").splitlines()
+        span = _frontmatter_span(lines)
+
+        def add(kind: str, message: str, line: Optional[int] = None) -> None:
+            findings.append(Finding(path=rel, line=line, kind=kind, message=message))
+
+        if span is None:
+            add("frontmatter-field", f"no frontmatter block; a {unit_kind} needs `name` and `description`")
+            continue
+        for number, problem in _frontmatter_yaml_problems(lines, *span):
+            add("frontmatter-yaml", problem, number)
+        parsed = frontmatter.parse_frontmatter(text)
+        if not parsed.ok:
+            add("frontmatter-yaml", f"frontmatter cannot be read: {parsed.error}")
+            continue
+        fields = parsed.fields
+        for required in ("name", "description"):
+            if not fields.get(required, "").strip():
+                add("frontmatter-field", f"required field `{required}` is missing or empty")
+        name = fields.get("name", "").strip()
+        if name and name != expected_name:
+            where = "folder" if unit_kind == "skill" else "file"
+            add("frontmatter-field", f"`name: {name}` differs from its {where} name `{expected_name}`")
+
+        unknown_tools: list[str] = []
+        if unit_kind == "role":
+            tier = fields.get("tier", "").strip()
+            if tier and tier_set and tier not in tier_set:
+                add("frontmatter-field", f"`tier: {tier}` is none of {', '.join(sorted(tier_set))} (.act/tiers.json)")
+            level = fields.get("reasoning", "").strip()
+            if level and reasoning_set and level not in reasoning_set:
+                add("frontmatter-field", f"`reasoning: {level}` is none of {', '.join(sorted(reasoning_set))} (.act/tiers.json)")
+            for bare in _tool_name_list(fields.get("tools", "")):
+                if bare == "*" or bare in _KNOWN_TOOL_NAMES or bare.startswith("mcp__"):
+                    continue
+                if bare.lower() in _KNOWN_TOOL_BY_LOWER:
+                    add("frontmatter-field", f"`tools` spells `{bare}`; the tool is called `{_KNOWN_TOOL_BY_LOWER[bare.lower()]}`")
+                else:
+                    unknown_tools.append(bare)
+            model = fields.get("model", "").strip()
+            if model and model not in models and not _MODEL_VALUE_RE.match(model):
+                add("frontmatter-field", f"`model: {model}` is not a model alias or id")
+            effort = fields.get("effort", "").strip()
+            if effort and reasoning_set and effort not in reasoning_set:
+                add("frontmatter-field", f"`effort: {effort}` is none of {', '.join(sorted(reasoning_set))} (.act/tiers.json)")
+
+        allowed = _SKILL_FIELDS if unit_kind == "skill" else _ROLE_FIELDS
+        unknown = [k for k in dict.fromkeys(parsed.order) if k not in allowed]
+        if unknown:
+            add("frontmatter-unknown",
+                f"field(s) no known tool reads: {', '.join(unknown)} — a typo, or newer than this check")
+        if unknown_tools:
+            add("frontmatter-unknown",
+                f"`tools` names no tool this check knows: {', '.join(unknown_tools)} — a typo, or newer than this check")
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Inbox
 # ---------------------------------------------------------------------------
 
@@ -1363,6 +1634,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_skill_lint(root)
+    findings += check_frontmatter(root)
     findings += check_tier_proposal(root)
     findings += check_template_remote(root)
 

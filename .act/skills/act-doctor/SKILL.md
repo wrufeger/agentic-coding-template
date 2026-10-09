@@ -19,9 +19,21 @@ override/off whose template text changed since it was last accepted, duplicate s
 scripts from earlier updates, a short id (`T`/`B`/`Q`) assigned to more than one entry file under
 `docs/ai/work/` or `docs/ai/inbox/` (or one that isn't valid UTF-8 and so can't be scanned at
 all), broken `act:ref` references and bridge targets, and a script/agent/skill under
-`docs/ai/local/` or `.claude/` that no generated copy or bridge explains. `update.py`
+`docs/ai/local/` or `.claude/` that no generated copy or bridge explains, and the frontmatter of
+every skill and role: a value strict YAML rejects (an unquoted `: `), a missing `name` or
+`description`, a `name` that differs from its folder or file, an invalid `tier`, `reasoning`,
+`tools`, `model` or `effort`, and — as a hint only — a field no known tool reads. `update.py`
 calls this itself as its step 8 — running it again by hand afterward is redundant unless something
 was fixed in between.
+
+Optional: `agnix`, an external linter for agent files (skills, roles, rule files), can be run
+locally as a second opinion — for example the release binary on `.act/`, `.claude/` and `docs/ai/`.
+It is not part of the template and is never installed unasked (`R-code-tools`). Its stock rules
+raise known false alarms here: `XML-001` on placeholders such as `<n>`, `REF-001` and
+`CDX-AG-005` on the sources under `.act/bridges/`, and `CC-AG-019` on the role fields `tier`,
+`reasoning` and `variant-of`, which the template reads itself. Switch those four off in agnix's
+configuration file (see agnix's docs for its format) and read the rest as hints; `doctor.py` stays
+the check that decides.
 
 ## Content (on request, or for rules an update just changed)
 

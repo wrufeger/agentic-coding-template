@@ -89,3 +89,9 @@ and data flow saves re-discovering it from the code every time.
 when: exists:.act-local/usage.json
 `python .act/scripts/usage.py --show` reports which roles, skills, scripts and checklists actually
 get used — the same counter these tips read to know what you have already discovered yourself.
+
+### TIP-agnix
+when: always
+The optional `agnix` linter (a local run, never installed for you) gives a second opinion on
+skills, roles and rule files; `.act/skills/act-doctor/SKILL.md` names the four rules to switch
+off for this template.
