@@ -95,7 +95,8 @@
 #       repo URL — a direct message stays minimal on purpose), so several messages from the same
 #       project can be told apart; it is created when the message is built if it does not exist yet.
 #       --contact <email> (only with --direct) adds a reply address as the field `contact`, for
-#       this one message: never stored, never filled in by itself, shape-checked narrowly. A mail
+#       this one message: kept only in its local protocol copy, never reused, never filled in
+#       by itself, shape-checked narrowly. A mail
 #       address inside the text is still rejected. The privacy check still runs. Refuses outright with no
 #       .act-lock.json on disk (the template checkout's own state, not a derived project's).
 #   python .act/scripts/feedback.py --due
@@ -1308,7 +1309,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--discard-harvest", action="store_true",
                         help="remove --target's .act-local/adopt/harvest.md, add nothing to the outbox")
     parser.add_argument("--contact", metavar="EMAIL", default=None,
-                         help="with --direct: a reply address for this one message (never stored)")
+                         help="with --direct: a reply address for this one message (never reused)")
     parser.add_argument("--target", metavar="DIR", default=None,
                          help="act on the project at DIR instead of the current checkout (act-adopt)")
     parser.add_argument("--kind", choices=KINDS, default=None, help="with --add")

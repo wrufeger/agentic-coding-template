@@ -39,8 +39,8 @@ either — they only say how the template was configured:
    URL — a direct message stays minimal on purpose, unlike the assembled payload below), so
    several messages from the same project can be told apart; it is created when the message is built if
    needed. A reply address goes along only if the human names one in this very request
-   (`--contact <email>`, only with `--direct`): it is not stored and never filled in from
-   anywhere else, and a mail address inside the text itself is still rejected.
+   (`--contact <email>`, only with `--direct`): it stays in the local copy of that one payload
+   only, is never reused for a later message and never filled in from anywhere else, and a mail address inside the text itself is still rejected.
 2. **The trigger alone, nothing after it** means: assemble the collected feedback — go through
    `.act/`, the generated bridges and `docs/ai/`, write one entry per finding (`feedback.py --add`,
    two to six sentences), then `--plan` to preview and `--send` to go out under the switches above.

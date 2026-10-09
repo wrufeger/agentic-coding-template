@@ -488,7 +488,7 @@ options:
   --postpone DAYS       pause the due reminder for this many days and count it as a postponement
   --clear               discard every waiting entry, send nothing
   --discard-harvest     remove --target's .act-local/adopt/harvest.md, add nothing to the outbox
-  --contact EMAIL       with --direct: a reply address for this one message (never stored)
+  --contact EMAIL       with --direct: a reply address for this one message (never reused)
   --target DIR          act on the project at DIR instead of the current checkout (act-adopt)
   --kind {rule,script,skill,workflow,docs,bug,mcp,link}
                         with --add
