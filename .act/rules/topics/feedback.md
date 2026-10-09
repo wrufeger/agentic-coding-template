@@ -33,11 +33,14 @@ either — they only say how the template was configured:
 
 1. **A sentence right after the trigger** (`feedback: <text>`, "send feedback: <text>") **is the
    message itself** — sent via `feedback.py --direct`, unchanged, regardless of the `feedback`
-   switch. With `feedback: off`, only this text plus the template's own commit hash
-   (`.act-lock.json` § `template.commit`) leaves the project — no project id, no further context.
-   With any other setting, the project id goes with it too (never the repo URL — a direct message
-   stays minimal on purpose, unlike the assembled payload below), so several messages from the
-   same project can be told apart.
+   switch. With `feedback: off`, only this text, the template's own commit hash
+   (`.act-lock.json` § `template.commit`) and the project id leave the project — no further
+   context. The project id goes with every direct message, whatever the setting (never the repo
+   URL — a direct message stays minimal on purpose, unlike the assembled payload below), so
+   several messages from the same project can be told apart; it is created when the message is built if
+   needed. A reply address goes along only if the human names one in this very request
+   (`--contact <email>`, only with `--direct`): it is not stored and never filled in from
+   anywhere else, and a mail address inside the text itself is still rejected.
 2. **The trigger alone, nothing after it** means: assemble the collected feedback — go through
    `.act/`, the generated bridges and `docs/ai/`, write one entry per finding (`feedback.py --add`,
    two to six sentences), then `--plan` to preview and `--send` to go out under the switches above.

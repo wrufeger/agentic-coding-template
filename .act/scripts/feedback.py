@@ -32,9 +32,9 @@
 #              versioned copy of a send's full payload at all; a one-line journal entry via
 #              entries.py is the in-repo proof instead, see _write_journal_entry()).
 #              A team therefore gets one project id per checkout, not one per project. The id is
-#              created lazily wherever a batch payload is actually built (_build_payload, so both
-#              --plan and --send cover it) and persisted right away — not only on --enable, since
-#              `feedback` is normally switched on directly in docs/ai/config.md, never via
+#              created lazily wherever a payload is actually built (_build_payload for --plan and
+#              --send, cmd_direct for --direct) and persisted right away — not only on --enable,
+#              since `feedback` is normally switched on directly in docs/ai/config.md, never via
 #              --enable at all.
 #            - "mcp_server" is not collected: this template stage does not know which servers of
 #              the MCP catalog (.act/mcp-catalog.md) a project uses. With scope "c" a send carries
@@ -71,7 +71,7 @@
 #       Consent, target URL, how many entries are waiting, when last sent. Writes nothing.
 #   python .act/scripts/feedback.py --enable [--mode confirm|automatic|manual] [--repo-url <url>]
 #       Sets `feedback` in docs/ai/config.md (default: automatic). --repo-url is only sent if it
-#       is public (https://); without it, a message carries no project identity.
+#       is public (https://); without it, a message carries no repo URL (the project id is separate).
 #   python .act/scripts/feedback.py --disable
 #       Sets `feedback` to `off`. Collecting stops; a hand-written --direct message still goes out.
 #   python .act/scripts/feedback.py --add --kind <rule|script|skill|workflow|docs|bug|mcp|link>
@@ -87,13 +87,16 @@
 #       Sends if consent, the privacy check and the cadence gate all allow it. --force lifts the
 #       cadence gate (not the consent gate — `feedback: off` still refuses). --yes confirms an
 #       actual send when `feedback` is `confirm` (without it, that mode only shows the payload).
-#   python .act/scripts/feedback.py --direct "<text>"
+#   python .act/scripts/feedback.py --direct "<text>" [--contact <email>]
 #       Sends a hand-written message AT ONCE — independent of consent and cadence. Whoever writes
 #       the text and triggers the send has already done everything consent is otherwise for. With
-#       `feedback: off`, only the text and the full template commit hash leave the project — no
-#       project id, no further context; otherwise the project id goes with it too (never the repo
-#       URL — a direct message stays minimal on purpose), so several messages from the same
-#       project can be told apart. The privacy check still runs. Refuses outright with no
+#       `feedback: off`, only the text, the full template commit hash and the project id leave the
+#       project — no further context. The project id goes with every direct message (never the
+#       repo URL — a direct message stays minimal on purpose), so several messages from the same
+#       project can be told apart; it is created when the message is built if it does not exist yet.
+#       --contact <email> (only with --direct) adds a reply address as the field `contact`, for
+#       this one message: never stored, never filled in by itself, shape-checked narrowly. A mail
+#       address inside the text is still rejected. The privacy check still runs. Refuses outright with no
 #       .act-lock.json on disk (the template checkout's own state, not a derived project's).
 #   python .act/scripts/feedback.py --due
 #       Reports whether a reminder is due under the current cadence (fixed interval, or the
@@ -190,6 +193,22 @@ BODY_BYTES_MAX = 32768
 # validieren_gesammelt() (`^[0-9a-f]{32}$`), checked again here before anything is sent so a
 # tampered state.json is caught before it leaves the project, not after a 400 from the server.
 PROJECT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+# Reply address of --direct --contact: plain ASCII local@host.tld. Deliberately a subset of what
+# PHP's FILTER_VALIDATE_EMAIL accepts on the server: anything the server would reject makes it
+# drop the field silently, while this client has already reported "sent". ASCII only, so no
+# bidi/zero-width/control characters, URLs, paths or markup can pass as an "address".
+CONTACT_RE = re.compile(
+    r"[A-Za-z0-9_%+-]+(?:\.[A-Za-z0-9_%+-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z]{2,63}", re.ASCII)
+CONTACT_MAX = 254
+CONTACT_LOCAL_MAX = 64
+
+
+def _valid_contact(value: object) -> bool:
+    """True for a plain ASCII e-mail address within the length limits."""
+    return (isinstance(value, str) and len(value) <= CONTACT_MAX
+            and CONTACT_RE.fullmatch(value) is not None
+            and len(value.split("@", 1)[0]) <= CONTACT_LOCAL_MAX)
 
 # Scope "a": closed vocabulary of docs/ai/config.md keys whose VALUE says only how the template
 # was configured, never a project fact — same idea as the earlier feedback.py's SCHALTER
@@ -600,11 +619,13 @@ def _rule_sets(root: Path) -> list:
 # ---------------------------------------------------------------------------
 
 def _ensure_project_id(root: Path, config: dict[str, str], state: dict) -> dict:
-    """Creates and persists a project id the first time a batch payload is built with consent on
-    — not only via --enable, which `feedback` is normally never switched through (it is edited
-    directly in docs/ai/config.md). Mutates and returns `state`; a no-op once an id exists or
-    while `feedback` is off."""
-    if _mode(config) != "off" and not state.get("project_id"):
+    """Creates and persists a project id the first time a payload is built — not only via
+    --enable, which `feedback` is normally never switched through (it is edited directly in
+    docs/ai/config.md). The id exists whatever `feedback` says: it only tells messages from the
+    same checkout apart and carries no content. Mutates and returns `state`; a no-op once an id
+    exists. `config` is kept for the callers' signature."""
+    del config
+    if not state.get("project_id"):
         state["project_id"] = uuid.uuid4().hex
         _write_state(root, state)
     return state
@@ -676,6 +697,14 @@ def _check_payload(payload: dict, endpoint: str, *, template_repo: Optional[str]
             if isinstance(value, str):
                 for reason in feedback_privacy.check_link(value):
                     findings.append(f"{key}: {reason}")
+            continue
+        if key == "contact":
+            # A reply address the human gave on purpose with --direct --contact: simple mail
+            # shape only (the text check would flag any mail address): plain ASCII, local part
+            # at most 64 and the whole address at most 254 characters.
+            if not _valid_contact(value):
+                findings.append(f"{key}: not a plain ASCII e-mail address (name@host.tld, local part at most "
+                                f"{CONTACT_LOCAL_MAX}, at most {CONTACT_MAX} characters)")
             continue
         if key == "template_base":
             # Full commit hash (up to 40 hex chars) — LONG_HEX would otherwise flag it as a
@@ -773,7 +802,7 @@ def cmd_status(root: Path) -> int:
     state = _read_state(root)
     print(f"feedback:   {mode}   (cadence: {cadence}, from docs/ai/config.md)")
     print(f"target:     {_endpoint()}")
-    print(f"project id: {state.get('project_id') or '- (created on --enable)'}")
+    print(f"project id: {state.get('project_id') or '- (created with the first payload built)'}")
     print(f"waiting:    {len(_read_entries(root))} entries ({ENTRIES_DIR_REL}/)")
     protocol_dir = _protocol_dir(root)
     sent = list(protocol_dir.glob("*.json")) if protocol_dir.is_dir() else []
@@ -1029,7 +1058,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
     return 0
 
 
-def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
+def cmd_direct(root: Path, text: Optional[str], yes: bool, contact: Optional[str] = None) -> int:
     """Sends a hand-written message at once. See the header comment for why this is deliberately
     not gated by consent or cadence."""
     del yes  # accepted for CLI symmetry with --send; a hand-written message never needs 'confirm'
@@ -1060,10 +1089,13 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
     template_commit = (lock.get("template") or {}).get("commit")
     if template_commit:
         payload["template_base"] = template_commit
-    if mode != "off":
-        state = _read_state(root)
-        if state.get("project_id"):
-            payload["project_id"] = state["project_id"]
+    # The project id goes with every direct message, whatever `feedback` says.
+    state = _ensure_project_id(root, config, _read_state(root))
+    if state.get("project_id"):
+        payload["project_id"] = state["project_id"]
+    if contact is not None:
+        # Only on the human's explicit wish; never stored in state.json, never added by itself.
+        payload["contact"] = contact.strip()
 
     problems = _check_payload(payload, endpoint, template_repo=template_repo)
     if problems:
@@ -1076,8 +1108,8 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool) -> int:
     _show(payload, endpoint)
     print("")
     if mode == "off":
-        print("feedback is set to 'off' - only this text and the template commit hash leave the "
-              "project, with no project id and no further context.")
+        print("feedback is set to 'off' - only this text, the template commit hash and the project id "
+              "leave the project" + (", plus the reply address you gave." if contact else "."))
 
     code, error = _post(endpoint, payload)
     if error:
@@ -1275,6 +1307,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--clear", action="store_true", help="discard every waiting entry, send nothing")
     group.add_argument("--discard-harvest", action="store_true",
                         help="remove --target's .act-local/adopt/harvest.md, add nothing to the outbox")
+    parser.add_argument("--contact", metavar="EMAIL", default=None,
+                         help="with --direct: a reply address for this one message (never stored)")
     parser.add_argument("--target", metavar="DIR", default=None,
                          help="act on the project at DIR instead of the current checkout (act-adopt)")
     parser.add_argument("--kind", choices=KINDS, default=None, help="with --add")
@@ -1301,6 +1335,13 @@ def main(argv: list[str]) -> int:
     else:
         root = actlib.repo_root()
 
+    if args.contact is not None and args.direct is None:
+        print("feedback.py: --contact only works together with --direct.", file=sys.stderr)
+        return 2
+    if args.contact is not None and not args.contact.strip():
+        print("feedback.py: --contact needs an e-mail address; leave the option out for no reply address.",
+              file=sys.stderr)
+        return 2
     if args.discard_harvest:
         return cmd_discard_harvest(root)
     if args.status:
@@ -1314,7 +1355,7 @@ def main(argv: list[str]) -> int:
     if args.send:
         return cmd_send(root, args.force, args.yes)
     if args.direct is not None:
-        return cmd_direct(root, args.direct, args.yes)
+        return cmd_direct(root, args.direct, args.yes, args.contact)
     if args.due:
         return cmd_due(root)
     if args.postpone is not None:

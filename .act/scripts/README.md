@@ -468,8 +468,9 @@ Call: skill `act-feedback` (`--status`/`--due` alone are direct)
 ```text
 usage: feedback.py [-h] [--status | --enable | --disable | --add | --plan | --send |
                    --direct TEXT | --due | --postpone DAYS | --clear | --discard-harvest]
-                   [--target DIR] [--kind {rule,script,skill,workflow,docs,bug,mcp,link}]
-                   [--title TITLE] [--text TEXT] [--url URL] [--repo-url REPO_URL]
+                   [--contact EMAIL] [--target DIR]
+                   [--kind {rule,script,skill,workflow,docs,bug,mcp,link}] [--title TITLE]
+                   [--text TEXT] [--url URL] [--repo-url REPO_URL]
                    [--mode {off,confirm,automatic,manual}] [--force] [--yes]
 
 Voluntary feedback to the template author - never without consent, never unseen.
@@ -487,6 +488,7 @@ options:
   --postpone DAYS       pause the due reminder for this many days and count it as a postponement
   --clear               discard every waiting entry, send nothing
   --discard-harvest     remove --target's .act-local/adopt/harvest.md, add nothing to the outbox
+  --contact EMAIL       with --direct: a reply address for this one message (never stored)
   --target DIR          act on the project at DIR instead of the current checkout (act-adopt)
   --kind {rule,script,skill,workflow,docs,bug,mcp,link}
                         with --add

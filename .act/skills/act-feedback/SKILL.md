@@ -19,8 +19,11 @@ bug: `.act/rules/topics/feedback.md`.
 1. **A sentence right after the trigger** (`feedback: <text>`, "send feedback: <text>", "report to
    the template: <text>") **is the message itself.** Run `feedback.py --direct "<text>"` — it goes
    out exactly as written, no rewording, no addition — regardless of the feedback switch in
-   `docs/ai/config.md`. With feedback off, only this text plus the template's own commit hash
-   (`.act-lock.json` § `template.commit`) leaves the project, with no project identity attached.
+   `docs/ai/config.md`. With feedback off, only this text, the template's own commit hash
+   (`.act-lock.json` § `template.commit`) and the project id leave the project; the id goes with
+   every direct message. Add `--contact <email>` only if the human explicitly names a reply address
+   in this request — never take one from `git config` or anywhere else, and do not ask whether they
+   want to give one unless they ask for an answer.
 2. **The trigger alone, nothing after it, means: assemble the collected feedback.** Go through
    `.act/`, the generated bridges, and `docs/ai/` and ask what would help someone who will never
    see this project: a rule added here because the template lacked it, a workflow that worked well
