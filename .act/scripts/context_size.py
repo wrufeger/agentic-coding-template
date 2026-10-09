@@ -14,9 +14,12 @@
 # Usage:
 #   python .act/scripts/context_size.py                  # newest transcript of the project at the cwd
 #   python .act/scripts/context_size.py --transcript P   # a specific transcript
+#   python .act/scripts/context_size.py --report [--json] # whole session: base load, cache hit rate, cache breaks
 #   As a module: tokens_from_status(), last_context_tokens(), status_segment(), hint_threshold().
 #
-# Read-only; only the tail of a transcript is read, and a bad line never raises. Stdlib only.
+# Read-only; the status line reads only the tail of a transcript, --report streams the whole file line by
+# line; a bad line never raises. Stdlib only. The report's method (hit rate, cache breaks, base load from
+# the transcript's usage fields) is modelled on claude-context-optimizer (MIT).
 
 from __future__ import annotations
 
@@ -24,8 +27,9 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 DEFAULT_THRESHOLD = 180_000
 _TAIL_SIZES = (256_000, 1_000_000, 4_000_000)  # grow only when the smaller tail holds no main-session call
@@ -139,6 +143,98 @@ def project_transcripts(cwd: Path) -> Path:
     return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
 
 
+def _usage_fields(usage: dict) -> dict:
+    out = {}
+    for key in _USAGE_KEYS + ("output_tokens",):
+        value = usage.get(key, 0)
+        out[key] = 0 if isinstance(value, bool) or not isinstance(value, (int, float)) else int(value)
+    return out
+
+
+def iter_calls(transcript: Path) -> Iterator[dict]:
+    """Model calls of the main session, in order, one per `message.id`. The transcript writes one line per
+    content block of a response, all with the same id; their `usage` is identical in practice, so the last
+    line of an id wins (a streamed partial `output_tokens` could only be smaller in an earlier line).
+    Sub-agent lines (`isSidechain`), non-assistant lines, lines without a usable `usage` and bad lines are
+    skipped. The file is streamed; only the calls themselves are kept. Yields dicts with `id`, `time` (the
+    first line's timestamp or None), the usage fields and `context` (input + cache creation + cache read)."""
+    calls: dict = {}
+    with Path(transcript).open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if '"usage"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("type") != "assistant" or entry.get("isSidechain"):
+                continue
+            message = entry.get("message")
+            if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
+                continue
+            if message.get("model") == "<synthetic>":
+                continue  # a client-side API error line, not a model call
+            call_id = message.get("id")
+            if not isinstance(call_id, str) or not call_id:
+                call_id = f"line-{len(calls)}"  # no id: the line counts as its own call
+            fields = _usage_fields(message["usage"])
+            fields["context"] = sum(fields[key] for key in _USAGE_KEYS)
+            fields["id"] = call_id
+            timestamp = entry.get("timestamp")
+            fields["time"] = calls[call_id]["time"] if call_id in calls else (timestamp if isinstance(timestamp, str) else None)
+            calls[call_id] = fields  # a dict keeps the first insertion position of an id
+    yield from calls.values()
+
+
+def _seconds_between(earlier: Optional[str], later: Optional[str]) -> Optional[int]:
+    try:
+        first = datetime.fromisoformat(str(earlier).replace("Z", "+00:00"))
+        second = datetime.fromisoformat(str(later).replace("Z", "+00:00"))
+        return int((second - first).total_seconds())
+    except (ValueError, TypeError):  # TypeError: one timestamp with a zone, one without
+        return None
+
+
+def build_report(transcript: Path) -> dict:
+    """Whole-session numbers. A cache break is a call whose `cache_read` fell below half of its
+    predecessor's although the context did not shrink (pause past the cache lifetime, changed prefix)."""
+    steps = base = total_in = cache_read = cache_creation = output = 0
+    breaks: list = []
+    prev: Optional[dict] = None
+    for call in iter_calls(transcript):
+        steps += 1
+        if prev is None:
+            base = call["context"]
+        elif call["cache_read_input_tokens"] < prev["cache_read_input_tokens"] / 2 and call["context"] >= prev["context"]:
+            breaks.append({"step": steps, "cache_read_before": prev["cache_read_input_tokens"],
+                           "cache_read_after": call["cache_read_input_tokens"],
+                           "seconds_since_previous": _seconds_between(prev["time"], call["time"])})
+        total_in += call["context"]
+        cache_read += call["cache_read_input_tokens"]
+        cache_creation += call["cache_creation_input_tokens"]
+        output += call["output_tokens"]
+        prev = call
+    return {"transcript": Path(transcript).name, "steps": steps, "base_load": base, "input_total": total_in,
+            "cache_read": cache_read, "cache_hit_rate": round(cache_read / total_in, 4) if total_in else None,
+            "cache_creation": cache_creation, "cache_breaks": len(breaks), "breaks": breaks, "output_total": output}
+
+
+def format_report(report: dict) -> str:
+    rate = report["cache_hit_rate"]
+    rate_text = "n/a" if rate is None else f"{rate * 100:.1f}%"
+    lines = [f"transcript: {report['transcript']}", f"steps: {report['steps']}",
+             f"base load (first call): {report['base_load']} tokens",
+             f"input total: {report['input_total']} tokens",
+             f"cache hit rate: {rate_text} (cache_read {report['cache_read']})",
+             f"cache creation: {report['cache_creation']} tokens", f"cache breaks: {report['cache_breaks']}"]
+    for item in report["breaks"]:
+        gap = item["seconds_since_previous"]
+        gap_text = "gap unknown" if gap is None else f"{gap} s after the previous call"
+        lines.append(f"  step {item['step']}: cache_read {item['cache_read_before']} -> {item['cache_read_after']}, {gap_text}")
+    lines.append(f"output total: {report['output_total']} tokens")
+    return "\n".join(lines)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -147,7 +243,11 @@ def main(argv: Optional[list[str]] = None) -> int:
             pass
     parser = argparse.ArgumentParser(description="Context size of the running session, from its transcript.")
     parser.add_argument("--transcript", type=Path, help="path of a transcript (.jsonl); default: the newest of this project")
+    parser.add_argument("--report", action="store_true", help="whole-session report: base load, cache hit rate, cache breaks")
+    parser.add_argument("--json", action="store_true", help="print the whole-session report as JSON (implies --report)")
     args = parser.parse_args(argv)
+    if args.json:
+        args.report = True
 
     transcript = args.transcript
     if transcript is None:
@@ -157,6 +257,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"no transcript under {folder}", file=sys.stderr)
             return 1
         transcript = candidates[-1]
+    if args.report:
+        try:
+            report = build_report(transcript)
+        except OSError as error:
+            print(f"cannot read {transcript}: {error}", file=sys.stderr)
+            return 1
+        if report["steps"] == 0:
+            print(f"no main-session model call with usage in {transcript}", file=sys.stderr)
+            return 1
+        print(json.dumps(report, indent=2) if args.json else format_report(report))
+        return 0
     tokens = last_context_tokens(transcript)
     if tokens is None:
         print(f"no main-session model call with usage in {transcript}", file=sys.stderr)

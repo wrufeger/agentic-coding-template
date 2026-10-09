@@ -314,7 +314,7 @@ options:
 Call: direct (also imported by the status line and the context hint)
 
 ```text
-usage: context_size.py [-h] [--transcript TRANSCRIPT]
+usage: context_size.py [-h] [--transcript TRANSCRIPT] [--report] [--json]
 
 Context size of the running session, from its transcript.
 
@@ -322,6 +322,8 @@ options:
   -h, --help            show this help message and exit
   --transcript TRANSCRIPT
                         path of a transcript (.jsonl); default: the newest of this project
+  --report              whole-session report: base load, cache hit rate, cache breaks
+  --json                print the whole-session report as JSON (implies --report)
 ```
 
 ## `doctor.py`
