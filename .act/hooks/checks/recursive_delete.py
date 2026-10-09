@@ -16,6 +16,9 @@
 #          -Recurse` and its aliases `rm`/`ri`/`del`/`rd`/`rmdir`/`erase` with `-Recurse` or an
 #          unambiguous prefix of it (`-r`, `-rec`, ... — PowerShell's own parameter-name prefix
 #          matching, not attempted for a flag glued to a value); `find ... -exec ... -delete`.
+#          Also recognized: any unambiguous prefix of `--recursive` (`rm --rec`), cmd switches glued
+#          to the name or to each other (`rd/s/q x`, `rmdir /s/q x`). The list of evasion forms this
+#          check covers is modelled on cc-safety-net (MIT, github.com/kenryu42/cc-safety-net).
 #          Recognized as a *pair*: a pipeline shaped like `Get-ChildItem ... -Recurse | <delete
 #          command>` (also via its aliases `gci`/`dir`/`ls`) — neither half looks recursive on its
 #          own (a plain `Remove-Item` without `-Recurse` only removes what the pipe hands it, but
@@ -54,6 +57,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 
 import actlib
@@ -86,7 +90,9 @@ def _rm_is_recursive(args: list[str]) -> bool:
     """True for POSIX `rm`'s own recursion markers: `--recursive`, or `-r`/`-R` anywhere in a
     short-flag cluster (`-rf`, `-fr`, ...)."""
     for arg in args:
-        if arg == "--recursive":
+        # GNU option parsing takes any unambiguous prefix of a long option; `--r` already is one
+        # (no other `rm` long option starts with `r`).
+        if arg.startswith("--") and len(arg) > 2 and "--recursive".startswith(arg):
             return True
         if arg.startswith("--"):
             continue
@@ -95,8 +101,19 @@ def _rm_is_recursive(args: list[str]) -> bool:
     return False
 
 
+# cmd.exe switches may be glued to each other and to the command name (`rd/s/q x`, `rmdir /s/q x`):
+# one-letter switches only, so a path such as `/usr/bin` is never read as switches.
+_CMD_SWITCHES_RE = re.compile(r"^(?:/[A-Za-z?])+$")
+_CMD_GLUED_NAME_RE = re.compile(r"^(rd|rmdir|del|erase)((?:/[A-Za-z?])+)$", re.IGNORECASE)
+
+
 def _has_cmd_slash_s(args: list[str]) -> bool:
-    return any(arg.lower() == "/s" for arg in args)
+    for arg in args:
+        if arg.lower() == "/s":
+            return True
+        if _CMD_SWITCHES_RE.match(arg) and "s" in arg.lower().split("/")[1:]:
+            return True
+    return False
 
 
 def _has_recurse_flag(args: list[str]) -> bool:
@@ -115,6 +132,13 @@ def _has_recurse_flag(args: list[str]) -> bool:
 def _segment_is_recursive_delete(words: list[str]) -> bool:
     if not words:
         return False
+    glued = _CMD_GLUED_NAME_RE.match(str(words[0]))
+    if glued:  # `rd/s/q x`: command name and switches in one word
+        return (
+            "s" in glued.group(2).lower().split("/")[1:]
+            or _has_cmd_slash_s(words[1:])
+            or _has_recurse_flag(words[1:])
+        )
     name = _command_name(words[0])
     args = words[1:]
     if name == "rm":

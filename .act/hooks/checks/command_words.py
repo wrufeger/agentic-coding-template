@@ -86,6 +86,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import Optional
 
 from . import command_words_legacy as _legacy_words
@@ -118,6 +119,8 @@ __all__ = [
 # Interpreter names this module recognizes for a `-c`/`-Command`/`/c` recursion, beyond the POSIX
 # shells shell_targets._SHELL_NAMES already lists (sh, bash, zsh, dash, ksh).
 _PS_NAMES = frozenset({"pwsh", "powershell", "cmd"})
+# PowerShell's eval: the argument is read as a command line, like `eval`'s (not blocked wholesale).
+_IEX_NAMES = frozenset({"iex", "invoke-expression"})
 
 # Only used when nothing tokenizes at all (should be rare — _line_mode_tokens/_shell_tokens
 # together cover everything except a truly malformed command) — the same coarse operator-
@@ -224,7 +227,8 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
         pending_sep = None if text == "\n" else text
 
     result: list[tuple[list[str], Optional[str]]] = []
-    for words, sep, redirected, plain in pairs:
+    for pair_index, (words, sep, redirected, plain) in enumerate(pairs):
+        next_pair = pairs[pair_index + 1] if pair_index + 1 < len(pairs) else None
         # With a redirection in the command the words are read both ways: as the lexer hands them back
         # (the operand among them, the way every earlier version read them) and without the operands.
         variants = [words]
@@ -243,7 +247,29 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
             if not stripped:
                 continue
             name, args = _command_name(stripped[0]), stripped[1:]
+            if len(stripped) < len(variant) and any(
+                _command_name(w) == "parallel" for w in variant[:len(variant) - len(stripped)]
+            ):
+                # parallel runs its command text once per argument: the words up to `:::`/`::::` are a
+                # command line (`parallel 'rm -rf {}' ::: x`), read like eval's text.
+                command_words: list[str] = []
+                for w in stripped:
+                    if w.startswith(":::"):
+                        break
+                    command_words.append(w)
+                if command_words:
+                    nested.append(" ".join(command_words))
             if name == "eval":
+                nested.append(" ".join(args))
+            elif name in _IEX_NAMES:
+                # PowerShell's eval: the argument text is a command line; an optional leading
+                # -Command (or a prefix of it) names the parameter and is not part of it.
+                if args and args[0].lower().startswith("-command:"):
+                    args = [args[0][len("-command:"):]] + args[1:]  # `-Command:"..."`, value glued on
+                elif args and len(args[0]) > 1 and args[0].startswith("-") and "-command".startswith(args[0].lower()):
+                    args = args[1:]
+                if not args and next_pair is not None and next_pair[1] == "(":
+                    args = list(next_pair[0])  # `iex("...")`: the parenthesis is a separator, the text follows it
                 nested.append(" ".join(args))
             elif name in _SHELL_NAMES or name in _PS_NAMES:
                 for i, arg in enumerate(args[:-1]):
@@ -255,22 +281,27 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
                         nested.append(" ".join(args[i + 1:]) if name in _PS_NAMES else args[i + 1])
                         break
             elif name == "find":
-                for i, arg in enumerate(args):
-                    if arg in ("-exec", "-execdir", "-ok", "-okdir"):
+                i = 0
+                while i < len(args):  # every -exec/-execdir/-ok/-okdir block, not only the first
+                    if args[i] in ("-exec", "-execdir", "-ok", "-okdir"):
                         tail: list[str] = []
-                        for w in args[i + 1:]:
-                            if w in (";", "+", "\\;"):
-                                break
-                            tail.append(w)
+                        i += 1
+                        while i < len(args) and args[i] not in (";", "+", "\\;"):
+                            tail.append(args[i])
+                            i += 1
                         if tail:
                             found_exec.append(tail)
-                        break
+                    i += 1
         seen_nested: list[str] = []
         for text in nested:
             if text not in seen_nested:
                 seen_nested.append(text)
                 result.extend(_nested_word_lists(text, depth))
         result.extend((tail, None) for tail in found_exec)
+        # The command behind -exec may itself run a command line (`-exec sh -c 'rm -rf {}' \;`): read
+        # it again as text, so the same nesting rules (sh -c, eval, find -exec, ...) apply to it.
+        for tail in found_exec:
+            result.extend(_nested_word_lists(shlex.join(tail), depth))
     return result
 
 

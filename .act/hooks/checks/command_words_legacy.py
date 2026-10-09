@@ -176,7 +176,7 @@ def _coarse_word_lists(text: str) -> list[tuple[list[str], Optional[str]]]:
         for index, word in enumerate(words[:-1]):
             lowered = word.lower()
             if (
-                _command_name(word) == "eval"
+                _command_name(word) in ("eval", "iex", "invoke-expression")
                 or lowered in _NESTED_FLAG_WORDS
                 or (lowered.startswith("-") and not lowered.startswith("--") and "c" in lowered[1:])
             ):

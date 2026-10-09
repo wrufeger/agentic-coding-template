@@ -224,7 +224,8 @@ _RESERVED_PREFIXES = frozenset(
     {"!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "time"}
 )
 _WRAPPER_COMMANDS = frozenset(
-    {"sudo", "env", "command", "builtin", "exec", "nohup", "nice", "timeout", "xargs", "stdbuf"}
+    {"sudo", "env", "command", "builtin", "exec", "nohup", "nice", "timeout", "xargs", "stdbuf",
+     "busybox", "setsid", "caffeinate", "parallel"}  # last four: list modelled on cc-safety-net (MIT, github.com/kenryu42/cc-safety-net)
 )
 # A wrapper's own option or number/duration (`nice -n 5`, `timeout 10s`), skipped before its command.
 _WRAPPER_ARG_RE = re.compile(r"^(?:-.*|\d+(?:\.\d+)?[smhd]?)$")
@@ -242,6 +243,10 @@ _WRAPPER_VALUE_FLAGS = {
                         "-r", "--role", "-t", "--type"}),
     "nice": frozenset({"-n", "--adjustment"}),
     "stdbuf": frozenset({"-i", "--input", "-o", "--output", "-e", "--error"}),
+    # GNU parallel: job count / argument file / replace string given as a separate word (`-j 50%`).
+    "parallel": frozenset({"-a", "--arg-file", "-j", "--jobs", "-n", "--max-args", "-N", "-L",
+                            "-S", "--sshlogin", "-I", "--joblog", "--colsep", "-C", "--results", "--tmpdir",
+                            "--workdir", "--wd", "--timeout", "-d", "--delimiter", "-E"}),
     # GNU xargs's lowercase `-i`/`-l` take their argument only glued on (`-ifoo`, `-l5`), never as a
     # separate following word — unlike `-I`/`-L`, which do (`-I {}`, `-L 5`); listing `-i`/`-l` here
     # too used to make the loop below eat the next *real* argument as if it were their value
@@ -252,7 +257,10 @@ _WRAPPER_VALUE_FLAGS = {
                          "-L", "--max-lines", "-n", "--max-args", "-P", "--max-procs",
                          "-s", "--max-chars"}),
 }
-_SHELL_NAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+# Besides the shells by name, the shell named by a variable (`$SHELL -c '...'`, `${SHELL} -c`, `$0 -c`):
+# its value is unknown here, and a shell is what such a line is written to run. `_command_name`
+# lower-cases, so the entries are lower-case.
+_SHELL_NAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh", "$shell", "${shell}", "$0", "${0}"})
 # Every non-option operand is a target (mv: the sources vanish, so they count too).
 _ALL_OPERAND_WRITERS = frozenset({"tee", "touch", "mkdir", "rm", "rmdir", "unlink", "mv", "truncate", "shred"})
 # The last operand (or an explicit -t/--target-directory) is the target.
