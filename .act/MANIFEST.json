@@ -1,5 +1,5 @@
 {
-  "VERSION": "065ef900ce52d5933824cb1fdb545c977b6d1444142b4f91ad33fea6b05f2e37",
+  "VERSION": "738bd48f080367b4f9b29eea9e29f672d1986e9de5554961fdb2fe77ad20ce39",
   "agents/README.md": "ee685c61143a8462dc1eac6e791269b71c1fdf57a55140d592a82a2034fa9651",
   "agents/builder.md": "3968b1510d8fbd037298da2cd32c7aa52757dc4b74ae02469cf751b63c45d69c",
   "agents/debugger.md": "b730a5cd4e5848f0b1adb5920c56a8839f012426bf2c48cb820c452c59f8f8c3",
@@ -122,7 +122,7 @@
   "scripts/update.py": "3c61bc15bd16b4f26c0cb6e307ecb63e10d6552b1ee39c0d8a0bd2c879aacf57",
   "scripts/usage.py": "d5fb0a76353ff420b6656f2ef484a20804dd55c9fc9b952df04c92d6a84d383e",
   "skeleton/concept/README.md": "ca4bdae1c99df198b2ea215426bef4f148bd837c0f2bc4133fc0ad53e6fac022",
-  "skeleton/config.md": "4da771c8eca3552332e80171cb9f190fdd242b0fed72f03e7763a8196addf561",
+  "skeleton/config.md": "0a637f18e8bc65987e3e96ddca6b32111c978c997b401f3fa46912841d071f5a",
   "skeleton/inbox/README.md": "38e6aac75974ae01add8aa0454b0d0b1444a360c87d2d8dc693d8ea0458e6fb6",
   "skeleton/local/README.md": "e89d08f6e7f93e8bf4f13b562389f26644375a33470463c387a32a3d5d9ef6e8",
   "skeleton/proposals/README.md": "740f91196a0c4145cefd87c124f381413309505b2420d072faa8d7f1bee2bd68",
