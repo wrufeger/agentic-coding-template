@@ -18,10 +18,13 @@
 # generic plumbing: `_read_json_object` (meta.json/state-file parsing), `_entry_is_fresh` (the
 # same 24h freshness window `_SCOPE_ENTRY_TTL` already uses, reused here rather than redefining a
 # second TTL constant), and `_SAFE_ID_RE` (the same "is this string a safe filename" check). The
-# path-construction lines themselves (`<transcript>/subagents/agent-<id>.meta.json` /
-# `.jsonl`) are the one piece genuinely duplicated from write_scope.py's _scope_via_meta /
-# _scope_via_transcript — about ten lines of straightforward, unlikely-to-drift path arithmetic,
-# not the check logic itself. See _meta_tool_use_id / _transcript_first_prompt.
+# meta.json path (`<transcript>/subagents/agent-<id>.meta.json`) is duplicated from
+# write_scope.py's _scope_via_meta — a few lines of path arithmetic. The transcript lookup itself
+# is imported (`_agent_assignment_text`), so it covers agents started by a workflow script too:
+# those have no Agent/Task start (nothing recorded, no meta.json "toolUseId"), their transcript
+# lives under `subagents/workflows/<run>/`, and the assignment is read from the "computed task"
+# record only (see write_scope.py's header). Without that record the standard default applies.
+# See _meta_tool_use_id / _transcript_first_prompt.
 #
 # Storage lives in its own directory, `.act-local/worker-caps/` (not write_scope's
 # `worker-scopes/`, per this check's own assignment): one file per Agent/Task start, keyed by
@@ -103,7 +106,7 @@ from typing import Optional
 import actlib
 
 from .common import _WORKER_TOOL_NAMES, _check_mode, _is_worker
-from .write_scope import _SAFE_ID_RE, _entry_is_fresh, _read_json_object
+from .write_scope import _SAFE_ID_RE, _agent_assignment_text, _entry_is_fresh, _read_json_object
 
 __all__ = [
     "_WORKER_CAPS_DIRNAME", "_TIER_DEFAULT_CAPS", "_DEFAULT_TIER", "_DEFAULT_CAP",
@@ -299,25 +302,9 @@ def _meta_tool_use_id(transcript_path: object, agent_id: str) -> Optional[str]:
 
 def _transcript_first_prompt(transcript_path: object, agent_id: str) -> Optional[str]:
     """Fallback for _meta_tool_use_id: the assignment prompt straight out of the worker's own
-    first transcript line (<session>/subagents/agent-<id>.jsonl), the same file
-    write_scope._scope_via_transcript reads for the same reason."""
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return None
-    agent_transcript = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
-    if not agent_transcript.is_file():
-        return None
-    try:
-        with open(agent_transcript, "r", encoding="utf-8") as handle:
-            first_line = handle.readline()
-    except OSError:
-        return None
-    try:
-        record = json.loads(first_line)
-    except json.JSONDecodeError:
-        return None
-    message = record.get("message") if isinstance(record, dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    return content if isinstance(content, str) else None
+    transcript -- the same lookup write_scope._scope_via_transcript uses (_agent_assignment_text),
+    including agents started by a workflow script (the "computed task" record only)."""
+    return _agent_assignment_text(transcript_path, agent_id)
 
 
 def _resolve_worker_cap(root: Path, payload: dict) -> int:

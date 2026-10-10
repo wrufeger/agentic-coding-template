@@ -26,6 +26,14 @@
 # unresolved for *this* call — see _resolve_worker_scope and check_worker_write_scope's docstring
 # for what happens then (it is fail-closed only when scoping is demonstrably in use nearby, not
 # unconditionally).
+#
+# Agents started by a workflow script (Claude Code `Workflow`, `agent()`) have no Agent/Task start,
+# so nothing is recorded and there is no meta.json "toolUseId" (live-probe 2026-10-10). Their
+# transcript lives one level deeper, <session>/subagents/workflows/<run>/agent-<agent_id>.jsonl; the
+# assignment is the record headed "[Workflow harness - computed task]" (its body indented by two
+# spaces), while the record before it only forwards the human's request and is never read.
+# _agent_assignment_text finds it (exactly one run must hold the agent_id, the id is checked
+# against _SAFE_ID_RE first) and is shared with worker_cap.py. No such record: unbound.
 
 from __future__ import annotations
 
@@ -60,6 +68,8 @@ __all__ = [
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
+    "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
+    "_agent_assignment_text",
     "_normalize_candidate_path", "_within_scratchpad", "_matches_scope", "_shell_expansion_escapes",
     "_write_scope_message",
     "check_worker_write_scope",
@@ -71,7 +81,12 @@ _SCOPE_ENTRY_TTL = timedelta(hours=24)
 # A tool_use_id becomes an entry's filename (see _worker_scope_file), so it is validated first —
 # the harness's own ids look like "toolu_01Ab...", but nothing here may assume that without
 # checking, since the string ultimately lands in a Path().
-_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_SAFE_ID_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")  # \Z, not $: "$" would accept a trailing newline
+
+# The first line of a workflow agent's assignment record; the separator character after "harness"
+# is not fixed, hence \W+. Matched at the very start of the content, nowhere else.
+_WORKFLOW_TASK_RE = re.compile(r"^\[Workflow harness\W+computed task\]")
+_WORKFLOW_SCAN_LINES = 5  # records at the top of a workflow transcript searched for that header
 
 # "Write scope: <patterns>" — one line, read top to bottom (first match wins, same as a human
 # skimming the assignment). An optional leading "- "/"* " bullet is tolerated (assignments are
@@ -423,28 +438,79 @@ def _scope_via_meta(root: Path, transcript_path: object, agent_id: str) -> Optio
     return _read_worker_scope_entry(root, tool_use_id)
 
 
-def _scope_via_transcript(transcript_path: object, agent_id: str, root: Path) -> Optional[dict]:
-    """Fallback for _scope_via_meta: read the assignment prompt straight out of the worker's own
-    first transcript line (<session>/subagents/agent-<id>.jsonl, message.content of the first
-    record) and parse a `Write scope:` line out of it directly — no tool_use_id round-trip needed.
-    None if the file is missing/unreadable or its first line has no usable message content."""
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return None
-    agent_transcript = Path(transcript_path).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
-    if not agent_transcript.is_file():
-        return None
+def _record_content(line: str, user_only: bool = False) -> Optional[str]:
+    """message.content (a string) of one transcript line, else None; with `user_only` only if the
+    record is a user record."""
     try:
-        with open(agent_transcript, "r", encoding="utf-8") as handle:
-            first_line = handle.readline()
-    except OSError:
-        return None
-    try:
-        record = json.loads(first_line)
+        record = json.loads(line)
     except json.JSONDecodeError:
         return None
-    message = record.get("message") if isinstance(record, dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, str):
+    if not isinstance(record, dict):
+        return None
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return None
+    if user_only and record.get("type") != "user" and message.get("role") != "user":
+        return None
+    content = message.get("content")
+    return content if isinstance(content, str) else None
+
+
+def _workflow_task_text(agent_transcript: Path) -> Optional[str]:
+    """The assignment of a workflow agent: the body of the "computed task" record near the top of
+    its transcript, without the header line. The record before it (the harness's "user request")
+    only forwards the human's own request and is never read for assignment lines. None if no such
+    record is found (the agent stays unbound); an empty string if the record has no body."""
+    try:
+        with open(agent_transcript, "r", encoding="utf-8") as handle:
+            for _ in range(_WORKFLOW_SCAN_LINES):
+                line = handle.readline()
+                if not line:
+                    break
+                content = _record_content(line, user_only=True)
+                if content is not None and _WORKFLOW_TASK_RE.match(content):
+                    return content.partition("\n")[2]
+    except OSError:
+        return None
+    return None
+
+
+def _agent_assignment_text(transcript_path: object, agent_id: str) -> Optional[str]:
+    """The assignment text of one worker, read from its own transcript. A worker started by an
+    Agent/Task call: message.content of the first record of <session>/subagents/agent-<id>.jsonl.
+    An agent started by a workflow script (no Agent/Task call, so nothing recorded at start):
+    <session>/subagents/workflows/<run>/agent-<id>.jsonl, the "computed task" record only
+    (_workflow_task_text) -- found only when exactly one run holds that agent_id and the id is a
+    safe filename (_SAFE_ID_RE), since it goes into a glob. None if there is no usable
+    transcript or text."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    subagents = Path(transcript_path).with_suffix("") / "subagents"
+    agent_transcript = subagents / f"agent-{agent_id}.jsonl"
+    if agent_transcript.is_file():
+        try:
+            with open(agent_transcript, "r", encoding="utf-8") as handle:
+                first_line = handle.readline()
+        except OSError:
+            return None
+        return _record_content(first_line)
+    if not isinstance(agent_id, str) or not _SAFE_ID_RE.match(agent_id):
+        return None
+    try:
+        found = [p for p in (subagents / "workflows").glob(f"*/agent-{agent_id}.jsonl") if p.is_file()]
+    except OSError:
+        return None
+    if len(found) != 1:
+        return None
+    return _workflow_task_text(found[0])
+
+
+def _scope_via_transcript(transcript_path: object, agent_id: str, root: Path) -> Optional[dict]:
+    """Fallback for _scope_via_meta: read the assignment prompt straight out of the worker's own
+    transcript (_agent_assignment_text) and parse a `Write scope:` line out of it directly -- no
+    tool_use_id round-trip needed. None if there is no usable transcript or text."""
+    content = _agent_assignment_text(transcript_path, agent_id)
+    if content is None:
         return None
     return _parse_write_scope(content, root) or {"mode": "unrestricted"}
 
