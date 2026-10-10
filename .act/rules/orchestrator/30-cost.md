@@ -42,6 +42,27 @@ checked mechanically rather than from memory — for a Bash command this is best
 redirection and the common write commands, not a full shell parse), not a complete guarantee:
 writes made from inside a program (`python -c "open(...)"`, a script file) stay invisible to it.
 
+Workers running at the same time get separate write scopes; assignments whose scopes overlap run one
+after the other. `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope
+overlaps that of a worker still running: `none` overlaps nothing, a missing `Write scope:` line counts
+as everything, and the overlap is estimated cautiously from the fixed leading directory of the
+patterns. A finished worker or a failed start frees its scope; a crashed worker does so after three
+hours, or when its file under `.act-local/worker-scopes/` is deleted. Limit: a worker continued with
+a message (`SendMessage`) is invisible to the check once it has ended, so the orchestrator keeps the
+scopes apart itself. Whoever stops a worker and assigns it anew (`R-cost-amend`) first deletes its
+file there, if it still stands.
+
+An assignment that reads another worker's result names it as its own line, `Depends on: <whose
+result>`. The orchestrator starts it only after that worker has ended — only a rule, since a hook
+can refuse a start but not wait.
+
+When several workers are to read the same material, the orchestrator reads it once and writes what
+it found to `.act-local/notes/brief-<slug>.md` (source, state, `<path>:<line>` references), then names
+that file in each assignment. The workers read the note instead of the sources and look up only what
+is missing from it. The note is the orchestrator's own text, not foreign content
+(`R-safe-foreign-text`): the one-day rule applies to the sources it rests on, the note itself only
+to the workers of this one start.
+
 ## `R-cost-wait` — Let a started worker finish
 
 summary: letting a started worker finish; checking in only past the estimate
@@ -79,12 +100,18 @@ comes up, then is only run, not re-delegated to a worker.
 
 ## `R-code-commit` — Committing is the orchestrator's job alone
 
-summary: pathspec-only commits after lint/typecheck/tests where configured
+summary: pathspec-only commits after lint/typecheck/tests where configured; reviewer verdict CONDITIONAL filed in the inbox
 
 Only accepted work gets committed, staged by pathspec — never `git add -A`, `git add .`, or
 `git commit -a`. Lint, typecheck, and tests run first, but only where the project has them set up
 (an IDE's own check counts as evidence, not as a configured lint) and no rule suspends the check for
 this case. A missing tool is not a reason to install one or add tests on the spot — at most a
 one-time note that it is missing. The `reviewer` runs once per task before acceptance, not after
-every step; for a trivial change (typo, docs only) the orchestrator skips it and says so. After a
-BLOCK the orchestrator checks the fixes itself — a second review only for a critical finding.
+every step, and ends with a verdict: `ALLOW`, `CONDITIONAL` or `BLOCK`; for a trivial change (typo,
+docs only) the orchestrator skips it and says so. `CONDITIONAL` means acceptable once one named
+condition is met that cannot be checked in the same step (a run only possible after the commit, a
+measurement, an approval); a known bug or a missed part of the assignment is always `BLOCK`, and so
+is a `CONDITIONAL` with no recognisable condition or with more than one. On `CONDITIONAL` the
+orchestrator commits, files the condition in the same step as a `todo` or `question` in the inbox
+(`entries.py new …`), and names its id in the commit message (`act-commit`). After a BLOCK the
+orchestrator checks the fixes itself — a second review only for a critical finding.

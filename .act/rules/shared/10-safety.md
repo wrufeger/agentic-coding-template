@@ -1,6 +1,6 @@
 # Safety rules
 
-summary: approval before irreversible actions, secrets, deletion, safeguard blocks, foreign content
+summary: approval before irreversible actions, secrets in diffs and reads, deletion, discarded git work, git hooks and config, safeguard blocks, foreign content
 
 Shared safety rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and never
 reassigned.
@@ -27,6 +27,20 @@ summary: diff scan for key/token patterns and .env files before every commit
 Before a commit, check the diff against known secret patterns: key/token formats, private keys,
 `.env` files in the diff, high-entropy assignments. A match stops the commit and gets reported —
 never silently stripped.
+
+## `R-safe-no-secret-read` — Never read a secret file into the context
+
+summary: no .env, private key or cloud/registry credential file in a read, grep or command; the .env.example family is free; mechanically checked
+
+Do not read a secret file — `.env` and its variants, private keys (`id_rsa`, `*.pem`, `*.key`,
+keystores), cloud and registry credentials (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `.npmrc`,
+`.netrc` …) — with Read, Grep, or a Bash/PowerShell command such as `cat`, `grep` or `Get-Content`:
+whatever enters the context is sent on with every later step. Ask the owner for the non-secret
+values you need, or read `.env.example`, `.env.sample` or `.env.template`; public keys (`*.pub`)
+stay free. Applies to orchestrator and workers alike. Checked mechanically by `secret-read`
+(`docs/ai/config.md` § Checks); the owner may set it to `warn` or `off` there, or for one run with
+`ACT_SECRET_READ` in the environment. Limit: a program that opens the file itself (`python
+script.py`, `docker run --env-file`) is invisible to the check.
 
 ## `R-safe-no-secret-log` — Never credentials or personal data in a log
 
@@ -61,6 +75,38 @@ files, which `git reset --hard` overwrites silently too — never run it: use `g
 `git reset --soft` instead. Check what would be discarded first, with `git log -1` or `git
 reflog`. Never run Git experiments in a tree with open changes. Checked mechanically by
 `git-reset-hard` (`docs/ai/config.md` § Checks).
+
+## `R-safe-git-discard` — Don't discard work with other git commands either
+
+summary: no clean -f, folder checkout/restore on changes, stash drop/clear, force push to the default branch, or branch -D of an unmerged branch
+
+Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f` (or
+`git clean` with `clean.requireForce` switched off) when `git clean -n` with the same switches lists
+something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`, `git checkout -f`,
+`git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
+forced push (`-f`, `--force-with-lease`, `+refspec`, `--mirror`) to the default branch, or deleting
+it on the remote (`git push origin :main`, `--delete`); `git branch -D` of a branch `git branch
+--no-merged` lists, and `git branch -M`/`-C` over one. Single files stay free. A call too long to
+check in time, or a check that fails, is refused — run smaller calls. Commit, `git stash`, or have
+the owner do it instead. Checked mechanically by `git-discard` (`docs/ai/config.md` § Checks).
+
+## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
+
+summary: no write to .git/hooks or .git/config, no git config key that runs code; workers also not to .claude settings, roles, skills
+
+Nobody writes `.git/hooks/**` or `.git/config` (also `config.worktree`, submodule and
+linked-worktree git directories), and copies nothing into them — neither with a file tool nor a
+shell command, nor with `git config`, `git -c` or `GIT_CONFIG_KEY_<n>` for a key that starts a
+program (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, a `!` alias, `include.path`, a
+filter, textconv or credential helper, an `ext::` remote URL, `protocol.allow=always` …), and
+`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` or `GIT_CONFIG` pointing at `.git/config` counts like
+`--file`; `git init --template` is refused the same way. A hook or such a key runs at the next git
+command, past every other check and beyond the session. A worker also never writes
+`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**` or `.claude/commands/**`, in the
+project or in `~/.claude`; the orchestrator changes them on the human's request. Reading, `git
+config --get`/`--list`, `--global`/`--system` and unsetting stay free. Limit: what a program or
+script writes itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
+Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
 
 ## `R-safe-block` — Don't rephrase-and-retry a safeguard block
 

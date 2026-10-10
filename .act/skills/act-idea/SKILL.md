@@ -24,7 +24,9 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    as `decision: open` under `inbox-decisions: at-start` (`R-human-ask`).
 5. **Estimate for the chosen path only**: scope, missing tooling (library, MCP server, rule set,
    a skill that doesn't exist yet — its own step, not "along the way"), a rough task breakdown
-   with goal and acceptance check, and an ADR in `docs/project/decisions.md`.
+   with goal and acceptance check, and an ADR in `docs/project/decisions.md`. Optional: a line
+   `revisit: YYYY-MM-DD` under the ADR when it rests on an assumption that should be checked
+   again; `act-doctor` reports the date once it has passed.
 6. **Priority and timing**, both from the human — plus the orchestrator's **own** estimate next
    to it, from a different angle (pressure, dependencies, risk already in the codebase), not the
    same number out of politeness. More than one step apart: say where the gap comes from.

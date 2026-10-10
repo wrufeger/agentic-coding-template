@@ -20,10 +20,13 @@ template text of its rule, checked or not.
   - [x] `R-safe-approval`
   - [x] `R-safe-no-secret-cli`
   - [x] `R-safe-no-secret-diff`
+  - [x] `R-safe-no-secret-read`
   - [x] `R-safe-no-secret-log`
   - [x] `R-safe-no-personal-data`
   - [x] `R-safe-no-shell-delete`
   - [x] `R-safe-git-reset`
+  - [x] `R-safe-git-discard`
+  - [x] `R-safe-git-metadata`
   - [x] `R-safe-block`
   - [x] `R-safe-foreign-text`
 

@@ -30,7 +30,8 @@ code already answers, so research comes before the question round, never after.
    entry's `decision: open` points get asked; under `immediate` they are already in the inbox —
    still check the backlog entries in scope for any left over.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked
-   ready. A question left open keeps its task on hold — never started "on best guess".
+   ready. A question left open keeps its task on hold — never started "on best guess". A decision
+   that should be looked at again may carry an optional line `revisit: YYYY-MM-DD` under its ADR.
 7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration — the plan
    the block runs on while the human is away.
 

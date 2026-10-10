@@ -306,9 +306,11 @@ def _entry_is_fresh(entry: dict) -> bool:
     ts = entry.get("ts")
     try:
         when = datetime.fromisoformat(ts) if isinstance(ts, str) else None
-    except ValueError:
-        when = None
-    return when is not None and when >= datetime.now(timezone.utc) - _SCOPE_ENTRY_TTL
+        if when is not None and when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)  # a naive time is read as UTC
+        return when is not None and when >= datetime.now(timezone.utc) - _SCOPE_ENTRY_TTL
+    except (ValueError, TypeError):
+        return False
 
 
 def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:

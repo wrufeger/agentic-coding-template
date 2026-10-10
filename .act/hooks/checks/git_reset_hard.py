@@ -300,13 +300,16 @@ def _git_status_is_clean(directory: Path) -> Optional[bool]:
     not be run or failed (not a git repository, git missing, timed out) -- the caller treats None
     the same as "dirty" (deny by default)."""
     try:
+        # utf-8 with replacement, not the locale default: with core.quotePath=false git prints
+        # file names raw, and a byte the locale codec cannot decode (cp1252 on Windows) would
+        # leave stdout as None — the check would then fail open on exactly such a dirty tree.
         result = subprocess.run(
             ["git", "status", "--porcelain"], cwd=str(directory),
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if result.returncode != 0:
+    if result.returncode != 0 or result.stdout is None:
         return None
     return not result.stdout.strip()
 

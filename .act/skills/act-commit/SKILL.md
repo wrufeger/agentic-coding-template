@@ -16,6 +16,12 @@ secures the result.
 
 1. **Check the evidence.** A test run, an outside call, or a commit hash — nothing gets accepted
    without one. The project's required checks (`docs/ai/config.md` § commands) must be green.
+   If the `reviewer` returned `CONDITIONAL` (acceptable once a named condition is met that this
+   step cannot check), file the condition now: `entries.py new todo <title>`, or `new question`
+   if the human must decide — the condition and how its fulfilment shows in the body. Its id goes
+   into the commit message in step 7. `BLOCK` still stops the commit; so does a `CONDITIONAL`
+   with no recognisable condition or with more than one — treat it as `BLOCK` and send it back to
+   the `reviewer`.
 2. **Assign ids.** `docs/ai/config.md` § `mode` decides when a task/backlog/question got its short
    id: in `solo` it already has one. In `team`, run `python .act/scripts/entries.py assign` — it
    hands out `T`/`B`/`Q` numbers, but only once this commit lands on the project's default branch;
@@ -39,7 +45,8 @@ secures the result.
    `python .act/scripts/board.py --shared` and add `docs/ai/board-<identity>.md` to the pathspec of
    this same commit (only `--shared` writes that versioned file; a plain run never does).
    `git add <path …>` — never a catch-all. What gets committed is accepted work, not a time slice; several commits per session are normal. Short message in the repo's own
-   style, attribution as given for the running session. Don't silently sweep up another session's
+   style, attribution as given for the running session; after a `CONDITIONAL`, the message names
+   the id of the inbox entry from step 1. Don't silently sweep up another session's
    uncommitted changes — look at them, then decide.
 8. **Anyone waiting?** Is anyone waiting for a reply from this session? Then file or close the todo
    (`entries.py new todo`, `for:` naming whom, `R-human-external`).
@@ -52,3 +59,5 @@ secures the result.
   (`R-role-main`).
 - A task that isn't accepted (red checks, missing evidence, an open question) doesn't get
   committed — its status under `docs/ai/work/tasks/` is updated to say what's still open instead.
+  The one exception: the question or todo filed in step 1 for a `CONDITIONAL` does not hold the
+  commit back.

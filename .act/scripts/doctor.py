@@ -69,6 +69,9 @@
 #               no known tool reads (reported like every finding: it counts and sets exit 1, and
 #               may be a newer tool's field). In a project only its own skills/roles are checked; the
 #               template's checkout checks all.
+#          20. a `revisit: YYYY-MM-DD` line under a decision in docs/project/decisions.md or
+#               docs/project/decisions/*.md whose date has passed (today is not yet due), or that is not
+#               a valid date. Nothing for a decision without the line or with a future date.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -178,6 +181,8 @@ KIND_LABELS: dict[str, str] = {
     "frontmatter-yaml": "Skill/role frontmatter that is not valid YAML",
     "frontmatter-field": "Skill/role frontmatter with missing, mismatched or invalid fields",
     "frontmatter-unknown": "Skill/role frontmatter fields or tool names no known tool reads (maybe newer than this check)",
+    "revisit-due": "Decisions whose `revisit:` date has passed",
+    "revisit-invalid": "Decisions with a `revisit:` line that is not a YYYY-MM-DD date",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -211,6 +216,8 @@ KIND_LABELS_DE: dict[str, str] = {
     "frontmatter-yaml": "Skill-/Rollen-Frontmatter, das kein gültiges YAML ist",
     "frontmatter-field": "Skill-/Rollen-Frontmatter mit fehlenden, abweichenden oder ungültigen Feldern",
     "frontmatter-unknown": "Skill-/Rollen-Frontmatter-Felder oder Werkzeugnamen, die kein bekanntes Werkzeug liest (evtl. neuer als diese Prüfung)",
+    "revisit-due": "Entscheidungen, deren `revisit:`-Datum verstrichen ist",
+    "revisit-invalid": "Entscheidungen mit einer `revisit:`-Zeile, die kein Datum JJJJ-MM-TT ist",
 }
 
 
@@ -1105,6 +1112,106 @@ def check_status_values(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 20. `revisit:` dates on decisions — a decision may carry a line `revisit: YYYY-MM-DD` under its
+#     heading: the day to look at it again.
+#     Read: docs/project/decisions.md and docs/project/decisions/*.md (that folder only, not
+#     subfolders such as an archive); never docs/ai/, so archived inbox entries cannot match.
+#     Accepted line forms: `revisit: ...`, optionally after a list marker (`- `, `* `, `+ `, `1. `)
+#     and with the word bold (`**revisit:** ...`); not in a quote (`> revisit:`). Only a date counts:
+#     prose such as `Revisit: when the API is stable` is revisit-invalid. A line belongs to the
+#     nearest heading above it; one in a fenced code block is an example and ignored. A line before
+#     the first heading (header fields above `# Title`) is ignored in decisions.md and belongs to the
+#     first heading of a decisions/ file (its file name if it has none). A file that is not UTF-8 is
+#     skipped without a finding.
+# ---------------------------------------------------------------------------
+
+DECISION_FILES = ("docs/project/decisions.md",)
+DECISION_DIRS = ("docs/project/decisions",)
+_REVISIT_RE = re.compile(
+    r"^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:\*\*|__)?revisit:(?:\*\*|__)?[ \t]*(.*?)\s*$", re.IGNORECASE)
+_REVISIT_DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?=\s|$)")
+_HEADING_RE = re.compile(r"^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+
+
+def _decision_files(root: Path) -> list[tuple[Path, bool]]:
+    """(path, is_single_decision_file): decisions.md holds many decisions, a decisions/ file one."""
+    found = [(root / rel, False) for rel in DECISION_FILES if (root / rel).is_file()]
+    for rel in DECISION_DIRS:
+        base = root / rel
+        if base.is_dir():
+            found += [(p, True) for p in sorted(base.glob("*.md")) if p.is_file()]
+    return found
+
+
+def _revisit_lines(lines: list[str]) -> tuple[list[tuple[int, str, Optional[str]]], Optional[str]]:
+    """((line number, value, heading or None) for each `revisit:` line outside fenced code, the
+    first heading of the file outside fenced code)."""
+    hits: list[tuple[int, str, Optional[str]]] = []
+    heading: Optional[str] = None
+    first: Optional[str] = None
+    fence = ""  # the opening run, e.g. "```" or "~~~~"; empty outside a fence
+    for number, line in enumerate(lines, start=1):
+        fence_match = _FENCE_RE.match(line)
+        if fence:
+            # CommonMark: a closing fence uses the same character, is at least as long, has no text.
+            if (fence_match and fence_match.group(1)[0] == fence[0]
+                    and len(fence_match.group(1)) >= len(fence) and not fence_match.group(2).strip()):
+                fence = ""
+            continue
+        if fence_match:
+            fence = fence_match.group(1)
+            continue
+        head = _HEADING_RE.match(line)
+        if head:
+            heading = head.group(1)
+            first = first or heading
+            continue
+        match = _REVISIT_RE.match(line)
+        if match:
+            hits.append((number, match.group(1), heading))
+    return hits, first
+
+
+def check_revisit_dates(root: Path, today: Optional[date] = None) -> list[Finding]:
+    """A `revisit:` date in a decision record that has passed (kind revisit-due) or is not a real
+    YYYY-MM-DD date (kind revisit-invalid — it would otherwise never fire). Today counts as not yet
+    due; a decision without the line is fine. See the section comment above for the accepted forms."""
+    today = today or date.today()
+    findings = []
+    for path, single in _decision_files(root):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue  # not UTF-8: skipped, no finding (check_unreadable_entries() covers docs/ai/ only)
+        hits, first_heading = _revisit_lines(lines)
+        for number, value, heading in hits:
+            if heading is None and single:
+                heading = first_heading or path.stem
+            if heading is None:
+                continue
+            date_match = _REVISIT_DATE_RE.match(value)
+            parsed: Optional[date] = None
+            if date_match:
+                try:
+                    parsed = date(*(int(g) for g in date_match.groups()))
+                except ValueError:
+                    parsed = None
+            if parsed is None:
+                findings.append(Finding(
+                    path=_rel(path, root), line=number, kind="revisit-invalid",
+                    message=(f"decision \"{heading}\": `revisit: {value}` is not a date — "
+                             f"only YYYY-MM-DD counts, put any reason on its own line"),
+                ))
+            elif parsed < today:
+                findings.append(Finding(
+                    path=_rel(path, root), line=number, kind="revisit-due",
+                    message=f"decision \"{heading}\" was due for a second look on {parsed.isoformat()}",
+                ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
 #    committing (the template ships its own MANIFEST.json now, so this same comparison
@@ -1631,6 +1738,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_config_values(root)
     findings += check_imports(root)
     findings += check_status_values(root)
+    findings += check_revisit_dates(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_skill_lint(root)

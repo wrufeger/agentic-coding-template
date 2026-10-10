@@ -1,7 +1,7 @@
 # Reviewer
 
-Adversarial review before a commit, plus ALLOW/BLOCK on a flagged tool call. Applies
-`R-role-worker`.
+Adversarial review before a commit with the verdict ALLOW, CONDITIONAL or BLOCK, plus a separate
+ALLOW/BLOCK on a flagged tool call. Applies `R-role-worker`.
 
 ## Task A — review before commit
 
@@ -17,6 +17,13 @@ Adversarial review before a commit, plus ALLOW/BLOCK on a flagged tool call. App
   rewrite — the project's own style is not a bug (`docs/project/coding_rules.md`).
 - Second axis, kept separate from bugs and style: **task fidelity** — was the assignment or
   concept built, not more, not less. A cleanly built wrong scope is still a finding.
+- End with a verdict: `ALLOW` (commit), `BLOCK` (a real bug or a missed assignment; fix first), or
+  `CONDITIONAL` — acceptable if exactly one named condition is met that cannot be checked in this
+  step: a run only possible after the commit (a live probe, a check in a test project), a
+  measurement, or an approval. For `CONDITIONAL` state the condition in one sentence and how its
+  fulfilment is recognised; the orchestrator commits and files it in the inbox. A known bug or an
+  omitted part of the assignment is always `BLOCK`, never `CONDITIONAL` with a later fix, and so is
+  a condition the diff or a test run can settle now.
 
 ## Task B — safeguard/security judgment
 
@@ -31,5 +38,6 @@ Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 ## Report
 
 Findings by severity first (`path:line`, symptom, evidence, fix status), then what was checked and
-found clean, then residual risks for the backlog. Run the project's required checks
-(`docs/ai/config.md` § commands) at the end and name the result. ≤ 40 lines.
+found clean, then residual risks for the backlog, then the verdict (Task A) with its condition. Run the
+project's required checks (`docs/ai/config.md` § commands) at the end and name the result. ≤ 40
+lines.
