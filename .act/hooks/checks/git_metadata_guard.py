@@ -14,6 +14,20 @@
 #             `.claude/agents/**`, `.claude/skills/**` in the project or in the user's home. They
 #             switch hooks, permissions and roles; the orchestrator changes them on the human's
 #             request and stays free to do so.
+#          3. Files that start code when the folder is opened in an editor (`_launch_reason`,
+#             `_folder_open_reason`). Workers: any write to `.vscode/tasks.json`, `.devcontainer/**`,
+#             `.devcontainer.json`, `.envrc`, `.mcp.json` (file tools and shell). Orchestrator: a Write/Edit/
+#             MultiEdit (file tools only) of `.vscode/tasks.json` or a `*.code-workspace` whose resulting
+#             text -- the file on disk with the edits applied one after the other -- holds `runOn` and
+#             more `folderOpen` than the file held before, and any shell write to `.vscode/tasks.json`.
+#             Everything else there stays free for the orchestrator. Words are searched case-insensitively
+#             anywhere in the text, so comments, whitespace and key order do not hide them; `\uXXXX`
+#             escapes are decoded first. Conservative cases are described at `_folder_open_reason`.
+#             A shell copy/move into a directory is judged on the file it creates there
+#             (`_copy_effective_targets`: `cp payload/.envrc .` writes `./.envrc`), for these files and
+#             for `.claude/`. When a target cannot be placed (dynamic, unknown base, scanner failure) the
+#             raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
+#             Limit: a shell write of a `*.code-workspace` with a folderOpen task is not seen.
 #
 # Decisions:
 #   - Read stays free: `git config --get`, `--list`, a Read of `.git/config`, `git config --global`
@@ -71,6 +85,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Optional
@@ -89,7 +104,8 @@ from .write_guard import _guard_root
 
 __all__ = [
     "_RAW_GIT_RE", "_RAW_CLAUDE_RE", "_dangerous_reason", "_path_reason", "_config_issue",
-    "_invocation_reason", "check_git_metadata_guard",
+    "_invocation_reason", "check_git_metadata_guard", "_RAW_LAUNCH_RE", "_RAW_TASKS_RE", "_launch_reason",
+    "_folder_open_reason", "_copy_effective_targets",
 ]
 
 _RULE = "R-safe-git-metadata"
@@ -100,6 +116,18 @@ _CONFIG_NAMES = frozenset({"config", "config.worktree"})
 # Raw-text fallback for a target that cannot be placed (dynamic, unknown base, scanner failure).
 _RAW_GIT_RE = re.compile(r"\.git(?::[^\\/]*)?[\\/](?:hooks|config|modules|worktrees)", re.IGNORECASE)
 _RAW_CLAUDE_RE = re.compile(r"\.claude[\\/](?:settings[^\\/]*\.json|agents|skills|commands)", re.IGNORECASE)
+_RAW_LAUNCH_RE = re.compile(r"\.vscode[\\/]tasks\.json|\.devcontainer|\.envrc|\.mcp\.json", re.IGNORECASE)
+_RAW_TASKS_RE = re.compile(r"\.vscode[\\/]tasks\.json", re.IGNORECASE)
+
+_LAUNCH_REASON = "a file that starts code when the folder is opened (workers may not change it)"
+_TASKS_REASON = "the VS Code tasks file with a shell write (it can start code when the folder is opened)"
+_FOLDER_OPEN_REASON = "a VS Code task that runs on folderOpen (starts code when the folder is opened)"
+_LAUNCH_HINT = (
+    " Files that start code when the folder is opened bypass every other check; the human writes the "
+    "file themselves, or sets `git-metadata-guard` to `warn` in docs/ai/config.md for one run."
+)
+_MAX_READ = 2_000_000
+_UNICODE_ESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 # Sections that appear in the key list: a section renamed INTO one of these may carry such keys.
 _RISKY_SECTIONS = frozenset({
@@ -234,9 +262,27 @@ def _extra_gitdirs(start: Optional[Path]) -> list[Path]:
     return found
 
 
-def _path_reason(resolved: Path, gitdirs: list[Path], claude_dirs: list[Path]) -> Optional[str]:
+def _launch_reason(parts: tuple[str, ...], worker: bool, shell: bool) -> Optional[str]:
+    """Why a write to the path with these normalized segments is refused as a file that starts code
+    when the folder is opened, or None. A worker may not write any of them; a SHELL write (not a
+    file tool) to `.vscode/tasks.json` is refused for the orchestrator too."""
+    if not parts or not (worker or shell):
+        return None
+    for index, part in enumerate(parts):
+        if part == ".vscode" and index + 1 < len(parts) and parts[index + 1] == "tasks.json":
+            return _LAUNCH_REASON if worker else _TASKS_REASON
+    if not worker:
+        return None
+    if parts[-1] == ".vscode" or ".devcontainer" in parts or parts[-1] in (".envrc", ".mcp.json", ".devcontainer.json"):
+        return _LAUNCH_REASON
+    return None
+
+
+def _path_reason(
+    resolved: Path, gitdirs: list[Path], claude_dirs: list[Path], worker: bool = False, shell: bool = False,
+) -> Optional[str]:
     """Why a write to the absolute, resolved `resolved` is refused, or None. `claude_dirs` is empty
-    for the orchestrator (the worker-only part)."""
+    for the orchestrator (the worker-only part); `worker`/`shell` select the launch-file rules."""
     parts = tuple(_norm_part(part) for part in resolved.parts)
     for index, part in enumerate(parts):
         if part in _GIT_NAMES:
@@ -257,7 +303,7 @@ def _path_reason(resolved: Path, gitdirs: list[Path], claude_dirs: list[Path]) -
             or rest[0] in ("agents", "skills", "commands")
         ):
             return "the Claude settings, roles or skills (workers may not change them)"
-    return None
+    return _launch_reason(parts, worker, shell)
 
 
 def _dangerous_reason(key: str, value: Optional[str]) -> Optional[str]:
@@ -524,7 +570,7 @@ def _claude_dirs(root: Optional[Path]) -> list[Path]:
 
 def _target_reason(
     raw: str, base: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
-    literal: bool = False,
+    literal: bool = False, shell: bool = False,
 ) -> Optional[str]:
     """Why a write to the (possibly relative or dynamic) target `raw` is refused, or None. A file
     tool's path is `literal`: `$` and `~` in it are ordinary characters, not shell syntax."""
@@ -533,13 +579,175 @@ def _target_reason(
             return "a git hook or the repository config"
         if worker and _RAW_CLAUDE_RE.search(raw):
             return "the Claude settings, roles or skills (workers may not change them)"
+        if worker and _RAW_LAUNCH_RE.search(raw):
+            return _LAUNCH_REASON
+        if shell and _RAW_TASKS_RE.search(raw):
+            return _TASKS_REASON
         return None
     resolved = _resolve_path(raw, base)
     if resolved is None:
         return "a target that cannot be placed" if (
-            _RAW_GIT_RE.search(raw) or (worker and _RAW_CLAUDE_RE.search(raw))
+            _RAW_GIT_RE.search(raw) or (worker and (_RAW_CLAUDE_RE.search(raw) or _RAW_LAUNCH_RE.search(raw)))
+            or (shell and _RAW_TASKS_RE.search(raw))
         ) else None
-    return _path_reason(resolved, gitdirs, claude_dirs if worker else [])
+    return _path_reason(resolved, gitdirs, claude_dirs if worker else [], worker, shell)
+
+
+def _is_folder_open_file(path_text: str) -> bool:
+    """True for a file whose content can define a task that runs when the folder is opened."""
+    parts = [_norm_part(part) for part in re.split(r"[\\/]+", path_text) if part]
+    if not parts:
+        return False
+    return parts[-1].endswith(".code-workspace") or (
+        len(parts) >= 2 and parts[-2] == ".vscode" and parts[-1] == "tasks.json"
+    )
+
+
+def _decoded_lower(text: str) -> str:
+    return _UNICODE_ESC_RE.sub(lambda match: chr(int(match.group(1), 16)), text).lower()
+
+
+def _read_before(resolved: Optional[Path]) -> Optional[str]:
+    """The text of the file on disk: "" if it does not exist, None if it exists but cannot be read
+    (or is too large) and so cannot be rebuilt."""
+    if resolved is None:
+        return None
+    try:
+        if not resolved.exists():
+            return ""
+        if resolved.is_file() and resolved.stat().st_size <= _MAX_READ:
+            return resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    return None
+
+
+def _folder_open_reason(tool_name: str, tool_input: dict, base_cwd: str) -> Optional[str]:
+    """Why a Write/Edit/MultiEdit of a VS Code tasks file or workspace file is refused for the
+    orchestrator: the text the call produces (the file on disk with the edits applied one after the
+    other, `replace_all` honoured; for a Write the new content) holds `runOn` and more `folderOpen`
+    than the file held before -- so a call that spreads the word over several edits is seen, and an
+    unrelated edit of a file that already has such a task stays free. Conservative where the result
+    cannot be rebuilt: an `old_string` that is not found has its `new_string` appended (the tool would
+    refuse the edit anyway); a file that exists but cannot be read counts as holding `runOn`, so any
+    new text with `folderOpen` is refused."""
+    if tool_name not in ("Write", "Edit", "MultiEdit"):
+        return None
+    raw = tool_input.get("file_path")
+    if not isinstance(raw, str) or not _is_folder_open_file(raw):
+        return None
+    before = _read_before(_resolve_path(raw, base_cwd))
+    if tool_name == "Write":
+        content = tool_input.get("content")
+        if not isinstance(content, str):
+            return None
+        text, edits = content, []
+    else:
+        if tool_name == "Edit":
+            items = [tool_input]
+        else:
+            raw_edits = tool_input.get("edits")
+            items = [item for item in raw_edits if isinstance(item, dict)] if isinstance(raw_edits, list) else []
+        edits = [
+            (item.get("old_string"), item.get("new_string"), item.get("replace_all") is True)
+            for item in items if isinstance(item.get("new_string"), str)
+        ]
+        text = before or ""
+        for old, new, replace_all in edits:
+            if isinstance(old, str) and old and old in text:
+                text = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+            else:
+                text = text + "\n" + new
+    if before is None:  # unreadable: assume `runOn` is there, judge the new text alone
+        pieces = [new for _, new, _ in edits] or [text]
+        return _FOLDER_OPEN_REASON if any("folderopen" in _decoded_lower(piece) for piece in pieces) else None
+    after, was = _decoded_lower(text), _decoded_lower(before)
+    if "runon" in after and after.count("folderopen") > was.count("folderopen"):
+        return _FOLDER_OPEN_REASON
+    return None
+
+
+_COPY_WORDS = frozenset({"cp", "mv", "copy-item", "move-item", "cpi", "mi", "copy", "move"})
+_POWERSHELL_VALUE_PARAMS = frozenset({
+    "-path", "-literalpath", "-destination", "-filter", "-include", "-exclude", "-credential",
+})
+_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;|\n]")
+
+
+def _copy_operands(segment: str, powershell: bool) -> Optional[tuple[list[str], list[str]]]:
+    """(sources, destinations) of a `cp`/`mv`/`Copy-Item`/`Move-Item` command segment, or None if the
+    segment is none of these. Best effort on the words: options are skipped, `-t DIR` /
+    `--target-directory DIR` and PowerShell `-Path` / `-Destination` are read."""
+    try:
+        words = shlex.split(segment, posix=not powershell)
+    except ValueError:
+        words = segment.split()
+    words = [word.strip("'\"") if powershell else word for word in words]
+    index = 0
+    while index < len(words) and (
+        "=" in words[index].split("/")[0] or words[index].lower() in ("sudo", "command", "env", "builtin")
+    ):
+        index += 1
+    if index >= len(words):
+        return None
+    name = re.split(r"[\\/]", words[index])[-1].lower()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    if name not in _COPY_WORDS:
+        return None
+    positional: list[str] = []
+    sources: list[str] = []
+    destinations: list[str] = []
+    args = words[index + 1:]
+    position = 0
+    while position < len(args):
+        arg = args[position]
+        position += 1
+        lowered = arg.lower()
+        if powershell and lowered in _POWERSHELL_VALUE_PARAMS and position < len(args):
+            value = args[position]
+            position += 1
+            (destinations if lowered == "-destination" else sources if lowered in ("-path", "-literalpath")
+             else []).append(value)
+        elif arg in ("-t", "--target-directory") and position < len(args):
+            destinations.append(args[position])
+            position += 1
+        elif arg.startswith("--target-directory="):
+            destinations.append(arg.split("=", 1)[1])
+        elif arg.startswith("-") and len(arg) > 1:
+            continue
+        else:
+            positional.append(arg)
+    if destinations:
+        sources += positional
+    elif len(positional) >= 2 and not sources:
+        sources, destinations = positional[:-1], positional[-1:]
+    elif len(positional) >= 1 and sources:
+        destinations = positional[:1]
+    if not sources or not destinations:
+        return None
+    flat = [part for source in sources for part in (source.split(",") if powershell else [source])]
+    return flat, destinations
+
+
+def _copy_effective_targets(command: str, powershell: bool) -> list[str]:
+    """The files a shell copy/move writes when its destination is a directory: for each source the
+    destination followed by the source's own name (`cp payload/.envrc .` writes `./.envrc`,
+    `cp -r payload/.claude .` writes `./.claude`). Whether the destination really is a directory is
+    not asked -- the extra path only matters when it names a protected file. A glob or variable in the
+    source name (`cp payload/* .`) gives no usable name and is not followed."""
+    found: list[str] = []
+    for segment in _SEGMENT_SPLIT_RE.split(command):
+        operands = _copy_operands(segment, powershell)
+        if operands is None:
+            continue
+        sources, destinations = operands
+        for destination in destinations:
+            for source in sources:
+                name = re.split(r"[\\/]+", source.rstrip("\\/"))[-1]
+                if name and name not in (".", "..") and not re.search(r"[*?\[$`]", name):
+                    found.append(destination.rstrip("\\/") + "/" + name if destination.rstrip("\\/") else "/" + name)
+    return found
 
 
 def _violation(payload: dict) -> Optional[str]:
@@ -561,6 +769,10 @@ def _violation(payload: dict) -> Optional[str]:
                 reason = _target_reason(value, base_cwd, gitdirs, claude_dirs, worker, literal=True)
                 if reason:
                     return f"writes {reason}"
+        if not worker:
+            reason = _folder_open_reason(tool_name, tool_input, base_cwd)
+            if reason:
+                return f"writes {reason}"
         return None
 
     if tool_name not in ("Bash", "PowerShell"):
@@ -578,8 +790,13 @@ def _violation(payload: dict) -> Optional[str]:
             if found is None:
                 raise ValueError("PowerShell command not evaluable")
             targets = [(raw, base_cwd) for raw in found]
+        copy_base, copy_known = _resolve_cwd_after_leading_cd(command, base_cwd)
+        targets += [
+            (raw, copy_base if copy_known else None)
+            for raw in _copy_effective_targets(command, tool_name == "PowerShell")
+        ]
         for raw, base in targets:
-            reason = _target_reason(raw, base, gitdirs, claude_dirs, worker)
+            reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)
             if reason:
                 return f"writes {reason}"
     except Exception:  # noqa: BLE001 — never a silent allow: fall back to the raw text
@@ -587,6 +804,10 @@ def _violation(payload: dict) -> Optional[str]:
             return "mentions a git hook or the repository config in a command that cannot be analysed"
         if worker and _RAW_CLAUDE_RE.search(command):
             return "mentions the Claude settings in a command that cannot be analysed"
+        if worker and _RAW_LAUNCH_RE.search(command):
+            return "mentions a file that starts code when the folder is opened in a command that cannot be analysed"
+        if _RAW_TASKS_RE.search(command):
+            return "mentions the VS Code tasks file (it can start code when the folder is opened) in a command that cannot be analysed"
 
     try:
         return _invocation_reason(command, base_cwd)
@@ -613,6 +834,7 @@ def check_git_metadata_guard(payload: dict) -> int:
         f"[act] refused ({_RULE}) -- this call {reason}. Hooks, the repository config and, for "
         "workers, the Claude settings run code or switch the safeguards off; ask the human to make "
         "the change."
+        + (_LAUNCH_HINT if "folder is opened" in reason or "folderOpen" in reason else "")
     )
     if mode == "warn":
         print(message)

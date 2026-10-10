@@ -92,7 +92,7 @@ the owner do it instead. Checked mechanically by `git-discard` (`docs/ai/config.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
-summary: no write to .git/hooks or .git/config, no git config key that runs code; workers also not to .claude settings, roles, skills
+summary: no write to .git/hooks or .git/config, no git config key that runs code, no folderOpen task; workers also not to .claude settings, roles, skills, .vscode/tasks.json, .devcontainer, .envrc, .mcp.json
 
 Nobody writes `.git/hooks/**` or `.git/config` (also `config.worktree`, submodule and
 linked-worktree git directories), and copies nothing into them — neither with a file tool nor a
@@ -104,7 +104,12 @@ filter, textconv or credential helper, an `ext::` remote URL, `protocol.allow=al
 command, past every other check and beyond the session. A worker also never writes
 `.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**` or `.claude/commands/**`, in the
 project or in `~/.claude`; the orchestrator changes them on the human's request. Reading, `git
-config --get`/`--list`, `--global`/`--system` and unsetting stay free. Limit: what a program or
+config --get`/`--list`, `--global`/`--system` and unsetting stay free. Files that start code when the
+folder is opened are covered too: a worker never writes `.vscode/tasks.json`, `.devcontainer/**`,
+`.devcontainer.json`, `.envrc` or `.mcp.json` (file tool or shell, also by copying into their
+directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds a task that runs
+on `folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool (judged on the
+text the edit produces); the human writes such a file themselves. Limit: what a program or
 script writes itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
 Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
 
