@@ -23,6 +23,9 @@ by `act-doctor`.
    check as before any test run (`.act/agents/builder.md`).
 4. `doc-writer` updates `docs/README.md` (index, data-as-of dates).
 
+In Claude Code, steps 2–4 can also run as the workflow script `workflow.js` beside this file — only
+when the human asks for that variant explicitly. Read `references/workflow.md` before starting it.
+
 A full pass across all doc areas logs a journal entry whose title starts with `act-audit-docs`
 (`entries.py new ledger "act-audit-docs: ..."`); a spot check of one area skips the entry — this is
 how session start tells how long ago the last full pass ran.
