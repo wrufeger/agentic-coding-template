@@ -993,13 +993,14 @@ def check_legacy_config_keys(root: Path) -> list[Finding]:
     )]
 
 
-# Allowed values of config keys board.py and the inbox rules read; an empty value means the default.
+# Allowed values of config keys the mechanism and skills read; an empty value means the default.
 _CONFIG_VALUES = {
     "board": ("docs", "shared", "local"),
     "board-others": ("on", "off"),
     "inbox-decisions": ("immediate", "at-start"),
     "output-depth": ("verbose", "normal", "sparse"),
     "board-at-start": ("on", "off"),
+    "teach-lessons": ("local", "docs"),
 }
 
 

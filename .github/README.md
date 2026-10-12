@@ -120,6 +120,7 @@ follow them; Claude Code also calls them by name (`/act-bug`).
 | Handing over | `act-handover` (can the session be left now, and the sentence for the new one) |
 | Shipping | `act-commit` · `act-release` (version, changelog, tag) · `act-pr` · `act-issue` · `act-integrations` (GitHub/GitLab access) |
 | Presenting | `act-slides` (a deck from the project's docs) |
+| Learning | `act-teach` (lessons on a topic, with exercises and a learning record) |
 | The template itself | `act-setup` · `act-adopt` · `act-update` · `act-doctor` (drift check) · `act-export-settings` / `act-load-settings` · `act-feedback` |
 
 ## Stays current

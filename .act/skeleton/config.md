@@ -123,6 +123,18 @@ line and on the board when any one of these holds: its last state line was writt
 the task's `started:` time counts instead); or an open inbox todo or question names its id (reports
 and notes do not count). A missing or malformed value counts as the default.
 
+## Teaching
+
+| Key | Value |
+| :--- | :--- |
+| `teach-lessons` | local |
+
+`teach-lessons`: `local` \| `docs`. Where `act-teach` keeps its lessons. `local` (default; a missing
+key counts as `local`, an unknown value as `local` with a note) writes lessons, exercises and the
+learning record under `.act-local/learn/<topic>/`, in `language-chat`; nothing is versioned. `docs`
+writes lessons and exercises under `docs/learn/<topic>/` in `language-docs`, versioned and checked by
+`act-audit-docs`; the learning record stays under `.act-local/learn/<topic>/`.
+
 ## Dependencies
 
 | Key | Value |

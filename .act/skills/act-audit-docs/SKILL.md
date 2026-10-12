@@ -30,6 +30,12 @@ A full pass across all doc areas logs a journal entry whose title starts with `a
 (`entries.py new ledger "act-audit-docs: ..."`); a spot check of one area skips the entry — this is
 how session start tells how long ago the last full pass ran.
 
+With `teach-lessons: docs` (`docs/ai/config.md` § Teaching), the lessons under `docs/learn/` are
+one more area: the explorer reports code examples (`<path>:<line>`) and version statements that no
+longer match the code, and the `doc-writer` assignment names `docs/learn/` in its write scope, since
+its role covers `docs/project/` only. The workflow variant takes `docs/project/` only; after it,
+check `docs/learn/` the manual way.
+
 ## Limits
 
 Nothing here touches code. A finding that needs a code change becomes a task, not a doc edit
