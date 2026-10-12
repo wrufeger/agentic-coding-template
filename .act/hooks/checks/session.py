@@ -64,7 +64,7 @@ __all__ = [
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
-    "CONTEXT_LIMIT", "_fit_context", "_human_line", "_old_imports_note", "_changed_bridge_note",
+    "CONTEXT_LIMIT", "_fit_context", "_board_excerpt_block", "_fit_excerpt", "_human_line", "_old_imports_note", "_changed_bridge_note",
     "_ideas_pending", "_ideas_note", "_ideas_ensure_notes",
     "_compact_note", "refresh_session",
 ]
@@ -1224,6 +1224,50 @@ def _output_depth_line(config: dict[str, str]) -> Optional[str]:
             f"treated as normal (docs/ai/config.md)")
 
 
+_BOARD_AT_START_VALUES = ("on", "off")
+_EXCERPT_MARK = "\x00act-board-excerpt\x00"
+
+
+def _board_excerpt_block(root: Path, config: dict[str, str]) -> str:
+    """The `board-at-start` excerpt for the session start: a header line plus the board's
+    "Open tasks", "Waiting for you" and "Answered" sections (board.render_excerpt), "" when the switch
+    is `off` or nothing is waiting, answered or open (or the inbox and tasks directories do not exist). A missing or empty key counts as `on`;
+    an unknown value counts as `on` too and says so in one extra line."""
+    value = str(config.get("board-at-start", "")).strip().strip("`").lower()
+    note = ""
+    if value == "off":
+        return ""
+    if value and value not in _BOARD_AT_START_VALUES:
+        note = (f"[act] board-at-start: {config.get('board-at-start', '').strip()!r} is not one of "
+                f"{' | '.join(_BOARD_AT_START_VALUES)} — treated as on (docs/ai/config.md)\n")
+    import board  # deferred like _compact_note
+    board_file = _board_file_hint(root)
+    body = board.render_excerpt(root, board_file=board_file)
+    if not body.strip():
+        return note.rstrip("\n")
+    return (f"{note}[act] board excerpt (what a bare \"continue\" works from; `board-at-start` in "
+            f"docs/ai/config.md; full board: {board_file}):\n{body}")
+
+
+def _fit_excerpt(text: str, excerpt: str, rules_text: str) -> str:
+    """`text` with _EXCERPT_MARK replaced by `excerpt` (cut at a line boundary to the room left under
+    CONTEXT_LIMIT, dropped when under ~300 characters would fit); the excerpt gives way first."""
+    mark = _EXCERPT_MARK + "\n"
+    base = text.replace(mark, "").replace(_RULES_MARK + "\n", rules_text)
+    if not excerpt or mark not in text:
+        return text.replace(mark, "")
+    room = CONTEXT_LIMIT - len(base) - 1
+    if len(excerpt) + 1 > room:
+        if room < 300:
+            return text.replace(mark, "")
+        cut = "(cut to fit the session notes)"
+        head, _, rest = excerpt.partition("\n")  # the header line always stays
+        head = head[:max(room - len(cut) - 2, 0)]
+        rest = rest[:max(room - len(head) - len(cut) - 3, 0)].rsplit("\n", 1)[0] if rest else ""
+        excerpt = head + "\n" + (rest + "\n" if rest else "") + cut
+    return text.replace(mark, excerpt + "\n")
+
+
 def _chat_language_line(config: dict[str, str]) -> Optional[str]:
     chat, docs = actlib.language_settings(config)
     if chat != "auto":
@@ -1558,18 +1602,20 @@ def _human_line(state: dict) -> Optional[str]:
     return "act · " + " · ".join(parts) if parts else None
 
 
-def _fit_context(text: str, rules_full: str, rules_compact: str) -> str:
-    """Put the fallback orchestrator-rules block (usually empty) in place of its mark, and keep
-    the whole under CONTEXT_LIMIT: first the tip/reminder line gives way, then the rules shrink
-    to their ids; should even that not fit, the text is cut at a line boundary with a pointer to
+def _fit_context(text: str, rules_full: str, rules_compact: str, excerpt: str = "") -> str:
+    """Put the fallback orchestrator-rules block (usually empty) in place of its mark and the board
+    excerpt in place of its mark, and keep the whole under CONTEXT_LIMIT: first the excerpt gives
+    way (cut, then dropped), then the tip/reminder line, then the rules shrink to their ids; should
+    even that not fit, the text is cut at a line boundary with a pointer to
     .act-local/session-start.txt, where the whole output is kept."""
     def without_tip(value: str) -> str:
         return "".join(line for line in value.splitlines(keepends=True)
                        if not line.startswith(("[act] tip", "[act] reminder")))
 
-    full = text.replace(_RULES_MARK + "\n", rules_full)
+    full = _fit_excerpt(text, excerpt, rules_full).replace(_RULES_MARK + "\n", rules_full)
+    compact = _fit_excerpt(text, excerpt, rules_compact).replace(_RULES_MARK + "\n", rules_compact)
     fitted = full
-    for candidate in (full, without_tip(full), without_tip(text.replace(_RULES_MARK + "\n", rules_compact))):
+    for candidate in (full, without_tip(full), without_tip(compact)):
         fitted = candidate
         if len(fitted) <= CONTEXT_LIMIT:
             return fitted.rstrip("\n")
@@ -1589,7 +1635,7 @@ def refresh_session(payload: dict) -> int:
     object: the notes and the status line as `hookSpecificOutput.additionalContext`, one
     human-readable line as `systemMessage`; nothing at all outside a template-managed project."""
     state: dict = {}
-    rules_text = {"full": "", "compact": ""}
+    rules_text = {"full": "", "compact": "", "excerpt": ""}
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         try:
@@ -1599,7 +1645,7 @@ def refresh_session(payload: dict) -> int:
             in_project = True
     if not in_project:
         return 0
-    context = _fit_context(buffer.getvalue(), rules_text["full"], rules_text["compact"])
+    context = _fit_context(buffer.getvalue(), rules_text["full"], rules_text["compact"], rules_text["excerpt"])
     output: dict = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
     message = _human_line(state)
     if message:
@@ -1936,6 +1982,18 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     feedback_part = " · feedback due" if feedback_due else ""
     ideas_part = f" · ideas: {len(ideas_keys)} new" if ideas_keys else ""
     print(f"[act] branch={branch}{inbox_part}{ideas_part}{feedback_part} · board updated{rules_part}{roles_part}")
+    # The board excerpt (`board-at-start`) follows the status line, ahead of the postscript notes
+    # and the tip, which stay last. Not after a compaction: _compact_note already names the tasks
+    # and their state. Its text is kept apart and put in place by _fit_context, which shortens or
+    # drops it first when the output gets tight.
+    if payload.get("source") != "compact":
+        try:
+            excerpt = _board_excerpt_block(root, config)
+        except Exception:
+            excerpt = ""  # informational only, must never block the session
+        if excerpt:
+            rules_text["excerpt"] = excerpt
+            print(_EXCERPT_MARK)
     # Printed after the status line, not before: an "update available" note here is always a
     # previous SessionStart's background finding (_consume_pending_update_note), never something
     # this run just checked, so it reads as a postscript rather than part of this run's status.

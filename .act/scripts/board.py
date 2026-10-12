@@ -639,8 +639,10 @@ def render_board(
     heading: Optional[str] = None,
     decisions: Optional[list[str]] = None,
     others: Optional[list[str]] = None,
+    footer: bool = True,
 ) -> str:
-    """`generated_at` None (mode `shared`) leaves the timestamp out; with `commit` and `dirty` None
+    """`footer` False leaves the closing "Generated" lines out (the session-start excerpt).
+    `generated_at` None (mode `shared`) leaves the timestamp out; with `commit` and `dirty` None
     as well the output holds nothing volatile. `heading` replaces the branch in the title;
     `decisions` (open decisions in the backlog) and `others` (section "Others", None = off) are
     left out when empty/None respectively."""
@@ -711,11 +713,97 @@ def render_board(
             lines.append("- (none)")
         lines.append("")
 
-    lines.append("---")
-    stamp = f"Generated {generated_at}." if generated_at else "Generated."
-    lines.append(f"{stamp} This file is generated — edits here are lost on the next run.")
-    lines.append("")
+    if footer:
+        lines.append("---")
+        stamp = f"Generated {generated_at}." if generated_at else "Generated."
+        lines.append(f"{stamp} This file is generated — edits here are lost on the next run.")
+        lines.append("")
     return "\n".join(lines)
+
+
+EXCERPT_LIMIT = 2000      # characters of the session-start board excerpt
+EXCERPT_LINE_LIMIT = 300  # characters per excerpt line
+
+
+def _excerpt_section(header: list[str], items: list[str], room: int, more_line: str) -> list[str]:
+    """`header` plus as many of `items` as fit in `room` characters; the rest becomes one
+    `+N more` line (itself counted). With no items: `- (none)`. Never less than the header."""
+    lines = list(header)
+    used = sum(len(ln) + 1 for ln in lines)
+    if not items:
+        return lines + ["- (none)"]
+    kept: list[str] = []
+    for index, item in enumerate(items):
+        line = f"- {item}"
+        left = len(items) - index - 1
+        reserve = 0 if left == 0 else len(more_line.format(n=left)) + 1
+        if used + len(line) + 1 + reserve > room:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    if len(kept) < len(items):
+        kept.append(more_line.format(n=len(items) - len(kept)))
+    return lines + kept
+
+
+def render_excerpt(root: Path, limit: int = EXCERPT_LIMIT, board_file: str = "docs/ai/board.md") -> str:
+    """The board's "Open tasks", "Waiting for you" and "Answered" sections for the session start,
+    built from the same readers as the board file itself. Open tasks carry their id and come most
+    recently worked first (the latest state line, started ones before the rest), so the task a bare
+    "continue" resumes is at the top. Within `limit` characters the budget goes to open tasks first,
+    then answered entries, and "Waiting for you" fills the rest (lines cut at EXCERPT_LINE_LIMIT);
+    whatever does not fit becomes a `+N more (full board: <board_file>)` line, and no section is left out. "" when neither inbox nor tasks directory exists or nothing is waiting,
+    answered or open."""
+    identity_data = actlib.read_identity()
+    my_identity = identity_data.get("identity") if identity_data else None
+    inbox_entries = read_inbox_entries(root)
+    all_tasks = read_tasks(root)
+    if inbox_entries is None and all_tasks is None:
+        return ""
+
+    def cut(value: str) -> str:
+        return value if len(value) <= EXCERPT_LINE_LIMIT - 2 else value[:EXCERPT_LINE_LIMIT - 3] + "…"
+
+    waiting: list[str] = []
+    answered: list[str] = []
+    tasks: list[str] = []
+    if inbox_entries is not None:
+        open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=_sort_key)
+        answered_all = sorted((e for e in inbox_entries if e["status"] == "answered"), key=_sort_key)
+        mine_open, all_open, other_open = _group_by_recipient(open_entries, my_identity)
+        waiting = [_format_entry(e) for e in mine_open[:OPEN_LIMIT] + all_open[:OPEN_LIMIT]]
+        if other_open:
+            waiting.append(f"For others: {len(other_open)} waiting")
+        answered = [_format_entry(e) for e in answered_all[:ANSWERED_LIMIT]]
+    if all_tasks is not None:
+        own = [t for t in all_tasks if _is_own_task(t, my_identity)]
+        own.sort(key=lambda t: not t["started"])  # stable: started tasks first ...
+        own.sort(key=lambda t: parse_state_line(t["state"])[0] or datetime.min, reverse=True)  # ... latest state first
+        tasks = [f"{t['id']} {_task_text(t)}" if t["id"] else _task_text(t) for t in own]
+    if not (waiting or answered or tasks):
+        return ""
+    more = f"… +{{n}} more (full board: {board_file})"
+    # Fixed costs of the later sections (heading + one line) are held back while an earlier one fills.
+    hold = 90
+    parts = [
+        ("tasks", ["## Open tasks"], [cut(x) for x in tasks]),
+        ("answered", ["### Answered — the assistant processes these"], [cut(x) for x in answered]),
+        ("waiting", ["## Waiting for you"], [cut(x) for x in waiting]),
+    ]
+    built: dict[str, list[str]] = {}
+    used = 0
+    for position, (name, header, items) in enumerate(parts):
+        later = hold * (len(parts) - position - 1)
+        if name == "waiting":
+            later = 0
+        built[name] = _excerpt_section(header, items, max(limit - used - later, 0), "- " + more)
+        used += sum(len(ln) + 1 for ln in built[name]) + 1
+    out: list[str] = []
+    for name in ("tasks", "waiting", "answered"):  # shown in this order; budgeted tasks, answered, waiting
+        if out:
+            out.append("")
+        out.extend(built[name])
+    return "\n".join(out)
 
 
 # ---------------------------------------------------------------------------

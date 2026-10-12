@@ -103,6 +103,14 @@ the question as understood, reasons, notes on code it wrote and what to watch ou
 | :--- | :--- |
 | `context-hint` | 180000 |
 | `task-wait-hours` | 12 |
+| `board-at-start` | on |
+
+`board-at-start`: `on` \| `off`. `on` (default; a missing key counts as `on`) adds an excerpt of the
+board to the session start — the "Open tasks" (with each task's last state line), "Answered" and
+"Waiting for you" sections, about 2,000 characters at most; open tasks and answered entries stay whole,
+the waiting entries fill the rest and end in a `+N more` line — so a bare "continue" can work from it
+without first reading the board. It is shortened or dropped first when the session-start output
+nears its size cap, and left out after a compaction (the compaction note already names the tasks).
 
 `context-hint`: a token count, or `off`. Once the session's context (the input of its last model call,
 read from the transcript) reaches this value, and again at each further multiple of it, the assistant

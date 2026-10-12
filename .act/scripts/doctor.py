@@ -999,6 +999,7 @@ _CONFIG_VALUES = {
     "board-others": ("on", "off"),
     "inbox-decisions": ("immediate", "at-start"),
     "output-depth": ("verbose", "normal", "sparse"),
+    "board-at-start": ("on", "off"),
 }
 
 

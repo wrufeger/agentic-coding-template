@@ -17,7 +17,9 @@ summary: verifying a forced restart; a bare continue means keep working
 
 After a forced restart (needed for a hook, a tool setting, or a new rule file to take effect), check
 unprompted whether it worked and report the result. A bare "continue" or "go on" means: read the
-current status and keep working from there — not a question back to the human.
+current status and keep working from there — not a question back to the human. With `board-at-start`
+on (`docs/ai/config.md`), the session start carries a board excerpt (waiting entries, open tasks with
+their state): a bare "continue" works from it and reads only the named task and its state further.
 
 ## `R-work-idea-first` — Concept before code
 
