@@ -8,6 +8,7 @@ picks up where the last one stopped. Setting it up takes one sentence in the cha
 
 **Documentation:** https://wrufeger.github.io/agentic-coding-template-docs/ — guides and a reference
 generated from the template, in English and [German](https://wrufeger.github.io/agentic-coding-template-docs/de/).
+What changed between versions, and since the last one: [CHANGELOG.md](https://github.com/wrufeger/agentic-coding-template/blob/main/CHANGELOG.md).
 
 What you get:
 
