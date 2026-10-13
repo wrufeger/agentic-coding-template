@@ -2644,16 +2644,17 @@ def step_translate_note(root: Path, plan: bool, cfg: ProjectConfig) -> tuple[Opt
 
 
 def step_dependency_check_note(root: Path, plan: bool) -> tuple[Optional[Path], str]:
-    """`dependency-check: once` (the skeleton's default, docs/ai/config.md § Dependencies)
-    means the check "runs during setup and then only on demand" — this leaves the one-time inbox
-    entry that turns that into an actual prompt to run `act-deps`, so `once` is not merely a
-    stated intent. Reads the value from the config.md this run just wrote (docking onto a project
-    keeps its own value); a plan run without a config.md yet assumes the skeleton default `once`,
-    same fallback shape as step_translate_note."""
+    """`dependency-check: once` (docs/ai/config.md § Dependencies) means the check "runs during
+    setup and then only on demand" — this leaves the one-time inbox entry that turns that into an
+    actual prompt to run `act-deps`, so `once` is not merely a stated intent. The skeleton default
+    is `regularly`, which files nothing here (the session-start note covers it). Reads the value
+    from the config.md this run just wrote (docking onto a project keeps its own value); a plan
+    run without a config.md yet assumes the skeleton default, same fallback shape as
+    step_translate_note."""
     config_path = root / "docs" / "ai" / "config.md"
-    dependency_check = "once"
+    dependency_check = "regularly"
     if not plan and config_path.is_file():
-        dependency_check = actlib.read_config().get("dependency-check", "once")
+        dependency_check = actlib.read_config().get("dependency-check", "regularly")
     if dependency_check.strip().lower() != "once":
         return None, ""
     if plan:

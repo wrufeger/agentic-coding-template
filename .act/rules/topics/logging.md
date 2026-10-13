@@ -12,9 +12,9 @@ belief anyone should rely on later. Its only job is to be readable *while* work 
 terminal during a talk, a human following along mid-task, a quick "what was builder#2 doing just
 before it failed" a minute after the fact.
 
-**Never a substitute for a belief anyone acts on.** "Done" still needs its own proof — a test run,
-a commit hash, a call from outside that shows the result (`R-work-evidence`). A line in `ai.log`
-is a recording, not a claim.
+**Never a substitute for a belief anyone acts on.** "Done" still needs its own proof — one of the
+kinds `R-work-evidence` lists, where a log excerpt means the running application's log. A line
+in `ai.log` is a recording, not a claim.
 
 ## Switches
 

@@ -313,9 +313,9 @@ def _dependency_check_note(root: Path, config: dict[str, str]) -> Optional[str]:
     """With `dependency-check: regularly`, a note (at most once a day, per state, same pattern as
     `_docs_audit_note`'s own overdue note) once the last `act-deps` run (a journal entry titled
     `act-deps: ...`) is older than 30 days, or once only when none is on record yet. `never` and
-    `once` (the skeleton default) print nothing here: `once` is entirely init.py's one-time inbox
+    `once` print nothing here: `once` is entirely init.py's one-time inbox
     entry (`entries.write_dependency_check_note`), not a recurring session-start note."""
-    mode = config.get("dependency-check", "once").strip().lower()
+    mode = config.get("dependency-check", "regularly").strip().lower()
     if mode != "regularly":
         return None
     when, _ledger_exists = _last_ledger_entry_with_prefix(root, _DEPENDENCY_CHECK_TITLE_PREFIX)

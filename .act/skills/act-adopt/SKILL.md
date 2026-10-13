@@ -94,7 +94,7 @@ runs until the table is accepted as it stands (or after those corrections, valid
 ## 4. Apply
 
 **Settle the language first.** `init.py` writes `docs/ai/config.md` in the docs language and
-gives its own todos (`dependency-check`, `security-check-deps`, `init-notes`) titles in it (their
+gives its own todos (`dependency-check` under `once`, `security-check-deps`, `init-notes`) titles in it (their
 bullet points stay English), and a `translate-scaffold` note is only written for a language other than English — so the language has
 to be known before `--apply`, not after step 5. Take it from the sighting's `language hint: …` line
 (an old `AI-CONFIG.md`); with no such line, propose the owner's language after `R-human-language`

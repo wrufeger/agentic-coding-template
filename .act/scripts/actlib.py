@@ -568,7 +568,7 @@ def translate_note_parts(
     return title, "\n".join(lines) + "\n"
 
 
-# `dependency-check: once` (docs/ai/config.md § Dependencies, default) means "runs during
+# `dependency-check: once` (docs/ai/config.md § Dependencies; the default is `regularly`) means "runs during
 # setup, then only on demand" — this is the setup side of that; the `regularly` side is
 # checks.session's own staleness note, see _last_ledger_entry_with_prefix()/_dependency_check_note()
 # there.

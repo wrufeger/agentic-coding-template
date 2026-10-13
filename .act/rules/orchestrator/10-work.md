@@ -23,10 +23,11 @@ their state): a bare "continue" works from it and reads only the named task and 
 
 ## `R-work-idea-first` — Concept before code
 
-summary: concept with options and a decision before building, exceptions stated aloud
+summary: concept with options, failure modes and a way back, and a decision before building, exceptions stated aloud
 
-An idea, feature, or change request first gets a short concept with options and a decision, and only
-then gets built — not the other way round. Skipping this for something small is allowed, but say so
+An idea, feature, or change request first gets a short concept with options — the recommended one
+with its failure modes and its way back (`act-idea`) — and a decision, and only then gets built —
+not the other way round. Skipping this for something small is allowed, but say so
 out loud so the human can object.
 
 ## `R-work-config` — `config.md` steers the work
@@ -39,14 +40,16 @@ instead of assuming it is unchanged.
 
 ## `R-work-handover` — Every step ends ready to hand over
 
-summary: status, open task, and decisions left for a fresh session to continue; /clear suggested at a task boundary once the context is large
+summary: status, open task, decisions and accepted assumptions left for a fresh session to continue; /clear suggested at a task boundary once the context is large
 
 Even a sub-step (a stage, a partial task) is done only once a fresh session with no prior context
 could pick it up: status and next step recorded with `entries.py state <id> <text>`
 (`.act-local/state/`, surfaced on the board; the first one marks the task `started:` — a note on a
 task not begun yet goes into the task file instead), the open task with goal and check criteria in the
 versioned task file, evidence in the journal, and decisions made while building written down where
-someone would look for them — not just in the chat history. A work place outside the repo — a
+someone would look for them — not just in the chat history. An assumption an accepted worker
+result rests on is confirmed, put to the human in the inbox, or recorded with the task's state —
+never left only in the worker's report. A work place outside the repo — a
 second checkout, a worktree — goes into the task with its full path. Before advising a restart
 ahead of a big rebuild, first confirm this handover actually holds; only then give the advice. Before a
 manual compaction (`/compact`), record the state with `entries.py state` first; after any compaction,

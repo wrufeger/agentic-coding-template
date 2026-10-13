@@ -14,9 +14,15 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
 2. **Check what exists first** (`explorer` role): does this partly exist already, which files
    would be affected, and — above all — does it conflict with a decision in
    `docs/project/decisions.md`? A conflict makes this an ADR revision, not a feature.
-3. **Write a concept** at `docs/project/concepts/<topic>.md`: starting point with findings,
-   **options** (description, pros, cons, effort each), **recommendation**. "Do nothing" is a real
-   option, with its consequences.
+3. **Write a concept** at `docs/project/concepts/<topic>.md`: starting point with findings — who
+   will use the result, and how it would show that nobody does — then **options** (description,
+   pros, cons, effort each), **recommendation** with its **failure modes** (how it could break, what it
+   could leak or expose, which assumption carries it) and its **way back** (revert, migration
+   down, switch off). "Do nothing" is a real option, with its consequences. Where the requirement
+   is still unclear, a throwaway prototype is an option of its own: time-boxed, in a scratch
+   folder, discarded afterwards, its findings go into the concept. An option that brings a new
+   dependency or a paid service is set against building it in the project, and the other way
+   round — weighed on maintenance, security, lock-in and running cost, not on build effort alone.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
    question <title>` — writes `kind: question` and `for: all` into the header), options
    labeled, recommendation marked. Nothing built, no task filed, before it's answered. Any other
@@ -26,7 +32,8 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    a skill that doesn't exist yet — its own step, not "along the way"), a rough task breakdown
    with goal and acceptance check, and an ADR in `docs/project/decisions.md`. Optional: a line
    `revisit: YYYY-MM-DD` under the ADR when it rests on an assumption that should be checked
-   again; `act-doctor` reports the date once it has passed.
+   again — always when the result's use is uncertain, so that keeping or removing it is decided
+   then; `act-doctor` reports the date once it has passed.
 6. **Priority and timing**, both from the human — plus the orchestrator's **own** estimate next
    to it, from a different angle (pressure, dependencies, risk already in the codebase), not the
    same number out of politeness. More than one step apart: say where the gap comes from.

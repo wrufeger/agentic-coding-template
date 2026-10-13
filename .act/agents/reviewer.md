@@ -17,6 +17,10 @@ ALLOW/BLOCK on a flagged tool call. Applies `R-role-worker`.
   rewrite — the project's own style is not a bug (`docs/project/coding_rules.md`).
 - Second axis, kept separate from bugs and style: **task fidelity** — was the assignment or
   concept built, not more, not less. A cleanly built wrong scope is still a finding.
+- Checks left intact (`R-code-checks-intact`): a test deleted or skipped, an assertion, expected
+  value, tolerance or timeout loosened, a suppression added, or a file, rule or threshold taken out
+  of or lowered in a check's configuration — each one the author's report or commit message
+  doesn't name with its reason is a `BLOCK`.
 - End with a verdict: `ALLOW` (commit), `BLOCK` (a real bug or a missed assignment; fix first), or
   `CONDITIONAL` — acceptable if exactly one named condition is met that cannot be checked in this
   step: a run only possible after the commit (a live probe, a check in a test project), a

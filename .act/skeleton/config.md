@@ -139,12 +139,12 @@ writes lessons and exercises under `docs/learn/<topic>/` in `language-docs`, ver
 
 | Key | Value |
 | :--- | :--- |
-| `dependency-check` | once |
+| `dependency-check` | regularly |
 
-`never` \| `once` \| `regularly`. `once` (default) leaves a one-time inbox entry right after `init`
-asking to run `act-deps`, then only on request; `regularly` instead notes at session
-start when the last `act-deps` run (a journal entry titled `act-deps: ...`) is older than 30 days;
-`never` does neither — the skill itself still runs on explicit request either way.
+`never` \| `once` \| `regularly`. `regularly` (default) notes at session start when there is no
+`act-deps` run on record yet ("no `act-deps` run on record yet", once), and afterwards when the last
+run (a journal entry titled `act-deps: ...`) is older than 30 days; `once` instead leaves a one-time
+inbox entry right after `init` asking to run `act-deps`, then only on request; `never` does neither — the skill itself still runs on explicit request either way.
 
 ## Docs audit
 

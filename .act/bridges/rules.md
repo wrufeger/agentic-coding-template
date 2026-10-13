@@ -35,6 +35,7 @@ template text of its rule, checked or not.
   - [x] `R-code-encoding`
   - [x] `R-code-tools`
   - [x] `R-code-version`
+  - [x] `R-code-checks-intact`
 
 Imports resolve relative to this file (`docs/ai/`), hence the `../../`. Check what Claude Code
 actually loads with `python .act/scripts/rules.py --imports`.

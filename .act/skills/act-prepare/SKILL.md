@@ -33,7 +33,9 @@ code already answers, so research comes before the question round, never after.
    ready. A question left open keeps its task on hold — never started "on best guess". A decision
    that should be looked at again may carry an optional line `revisit: YYYY-MM-DD` under its ADR.
 7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration — the plan
-   the block runs on while the human is away.
+   the block runs on while the human is away. The first checkpoint follows the first runnable
+   slice: the orchestrator holds it against its acceptance check before handing out the rest, so
+   a wrong direction costs one slice, not the block.
 
 ## When the human is away
 

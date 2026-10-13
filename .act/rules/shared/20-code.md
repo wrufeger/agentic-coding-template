@@ -1,6 +1,6 @@
 # Code rules
 
-summary: English identifiers, encoding preservation, installed tools, installed versions
+summary: English identifiers, encoding preservation, installed tools, installed versions, checks left intact
 
 Shared code rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and never reassigned.
 
@@ -36,3 +36,15 @@ Rules apply to the **actually installed** version of a language, framework, or l
 applying a version-dependent rule, check the version from the project files (lockfile,
 `package.json`, `composer.json`, `pyproject.toml`, `pom.xml`, `go.mod`, project file) and match
 the rule to it; a rule for a version the project doesn't have is not applied.
+
+## `R-code-checks-intact` — Fix the code, not the check
+
+summary: a failing test, lint or type check is fixed in the code, never by deleting, skipping, loosening or silencing it; a wrong check is named and changed as its own step
+
+A failing test, lint or type check is made to pass in the code under test, never by weakening the
+check: no deleted or skipped test (`skip`, `xfail`, `.only`, `@Disabled`, `t.Skip` …), no loosened
+assertion, expected value, tolerance or timeout, no suppression (`# noqa`, `# type: ignore`,
+`@ts-ignore`, `eslint-disable` …), no file, rule or threshold taken out of or lowered in a check's
+configuration — unless the assignment asks for exactly that. A check that is itself wrong is
+named in the report with the reason and changed as its own step, never inside the fix that needed
+it green.
