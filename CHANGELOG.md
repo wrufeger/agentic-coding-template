@@ -40,8 +40,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - This `CHANGELOG.md`, filled back to `0.1.0-beta` from the release notes. `init` removes it from a new project in
   step 8 like the template's own README; an edited copy is kept with an inbox note.
 - Community files for the template's GitHub repository under `.github/`: code of conduct, contributing guide,
-  security policy, issue forms and a pull request template. They recommend `/act-feedback` as the first way to
-  report a problem.
+  security policy, an accessibility statement (every environment "not tested", known barriers listed), issue forms
+  and a pull request template. They recommend `/act-feedback` as the first way to report a problem.
 
 ### Changed
 
