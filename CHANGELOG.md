@@ -55,6 +55,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   uncertain. `act-prepare` sets a first checkpoint after the first runnable slice.
 - New projects get `dependency-check: regularly`; existing values stay.
 - `context-hint` defaults to 180000 tokens, just below where Claude Code compacts on its own after an idle hour.
+- `worker-write-scope` refuses fewer harmless commands: every worker may write into the system temp directory, even
+  with `Write scope: none`, when the path is written out (`/tmp/...` in Bash, or the directory's absolute path in
+  any tool) and the project itself does not lie inside it; the resolved path counts, so `..` or a link back into the
+  project is judged as a project target. A target with a variable such as `$TEMP` stays refused, and so does a
+  temp or scratchpad path with a glob character (`.*` can match `..`); `R-cost-delegate` says what
+  `Write scope: none` now allows. An unquoted brace
+  list in Bash (`app/{css,js}`) is checked as every path it expands to and as its literal name. A refusal names the
+  way out for a target with a variable or command substitution and for a relative target after a `cd` on an earlier
+  line.
+- `secret-read` no longer reads the search pattern of `grep`, `egrep`, `fgrep`, `rg` or `git grep` as a file name,
+  so a secret scan such as `git diff --cached | grep -E '\.env|id_rsa'` runs; files named as operands, `-f` pattern
+  files and anything after `-e` stay checked.
 
 ### Security
 

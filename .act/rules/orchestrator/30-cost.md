@@ -35,7 +35,9 @@ scope is refused. A relative pattern (`src/**`) is the usual case; an absolute p
 project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been written
 relative — one outside the project root is refused, unless it lies in a directory listed in
 `permissions.additionalDirectories` (a sibling checkout: `../other/.act/**` or its absolute path).
-`Write scope: none` means read-only, no writes at all. Leaving the line out means no restriction
+`Write scope: none` means read-only: no writes in the project, only into the system temp directory as a path
+written out (`/tmp/...` in Bash, or its absolute path) — every worker may write there, whatever its scope, unless
+the project itself lies inside it. Leaving the line out means no restriction
 beyond the template's own `.act/` write-guard.
 `worker-write-scope` (`docs/ai/config.md` § Checks) checks it mechanically, the same way the cap is
 checked mechanically rather than from memory — for a Bash command this is best-effort (it catches

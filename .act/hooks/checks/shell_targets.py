@@ -401,15 +401,28 @@ class _Word(str):
     fallback still see it; `bare` is the same text with every span cut out (what the word is when
     each span expands to nothing — `` `;`rm `` is the command `rm`). A plain `str` anywhere (a word
     rebuilt by `join`, `replace`, a slice) has neither — read them with `getattr(word, "subs", ())`
-    and `getattr(word, "bare", word)`."""
+    and `getattr(word, "bare", word)`.
+
+    `live` is a string as long as the word, one character per character of its text: "L" where the
+    character is syntax the shell still acts on (written unquoted and unescaped; a `$` and the name
+    after it inside double quotes), "." where quoting or an escape made it a plain character (and
+    for the text of a backtick span or of a `$(...)`/`${...}` construct, which are judged by their
+    own rules). A plain `str` has no `live` (`getattr(word, "live", None)`), and neither has a word
+    that came out of a nested scan (`sh -c`, `eval`, `$(...)`, a backtick span — _scan_command drops
+    it there): then nothing is known about its quoting and a caller treats a `$`, `{` or `,` in it
+    as not provably live."""
 
     subs: tuple[str, ...]
     bare: str
+    live: Optional[str]
 
-    def __new__(cls, text: str, subs: tuple[str, ...] = (), bare: Optional[str] = None) -> "_Word":
+    def __new__(
+        cls, text: str, subs: tuple[str, ...] = (), bare: Optional[str] = None, live: Optional[str] = None
+    ) -> "_Word":
         word = super().__new__(cls, text)
         word.subs = subs
         word.bare = text if bare is None else bare
+        word.live = live if live is not None and len(live) == len(text) else None
         return word
 
 
@@ -558,13 +571,19 @@ def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0
     return j
 
 
+# `${NAME}` as one construct inside double quotes: nothing but a plain variable name in braces.
+_PLAIN_BRACED_NAME_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+
+
 def _read_word(
     text: str, start: int, operator_chars: str, blank: str, spans_must_close: bool = False
 ) -> tuple[_Word, int]:
     """One word from `text[start:]` (which begins with a character that is neither blank nor an
     operator), as (word, index after it). Quoting as POSIX shlex had it: `'...'` literal, `"..."`
     with a backslash only before `"`, a backslash or a backtick (any other backslash stays), an unquoted
-    backslash escapes the next character. Beyond that, an unquoted or double-quoted backtick opens a
+    backslash escapes the next character; an unquoted or double-quoted backslash before a newline is a
+    line continuation and leaves nothing in the word (_scan_command joins those before tokenizing
+    already — this keeps a word read on its own true to bash). Beyond that, an unquoted or double-quoted backtick opens a
     span (_backtick_span) that stays in the word verbatim and is recorded in `subs`; a backtick
     inside single quotes or escaped is an ordinary character. Raises ValueError on an unclosed
     quote or a trailing backslash, and — with `spans_must_close`, the tokenizing of one line on its
@@ -573,6 +592,7 @@ def _read_word(
     Without it, an unclosed span runs to the end of `text`."""
     parts: list[str] = []
     bare: list[str] = []
+    live: list[str] = []  # one character per character of `parts`, see _Word
     subs: list[str] = []
     index = start
     while index < len(text):
@@ -585,9 +605,11 @@ def _read_word(
                 raise ValueError("No closing quotation")
             parts.append(text[index + 1:end])
             bare.append(text[index + 1:end])
+            live.append("." * (end - index - 1))
             index = end + 1
         elif char == '"':
             index += 1
+            in_name = False  # inside the name of a `$NAME` that is live
             while True:
                 if index >= len(text):
                     raise ValueError("No closing quotation")
@@ -599,12 +621,17 @@ def _read_word(
                     if index + 1 >= len(text):
                         raise ValueError("No escaped character")
                     following = text[index + 1]
+                    if following == "\n":
+                        index += 2  # a line continuation: bash drops both characters, in double quotes too
+                        continue
                     # `\`` inside double quotes is a plain backtick for this command, but the
                     # word's text is what a nested `sh -c "..."`/`eval` re-parses, and there that
                     # backtick opens a span — so the backslash must go, as in bash.
                     piece = following if following in '"\\`' else inner + following
                     parts.append(piece)
                     bare.append(piece)
+                    live.append("." * len(piece))
+                    in_name = False
                     index += 2
                 elif inner == "$" and index + 1 < len(text) and text[index + 1] in _EXPANSION_CLOSERS:
                     # $(...), $((...)), ${...}, $[...]: bash reads the inside of these with their own
@@ -617,21 +644,43 @@ def _read_word(
                     end = _collect_dq_expansion(text, index + 1, subs)
                     parts.append(text[index:end])
                     bare.append(text[index:end])
+                    construct = text[index:end]
+                    live.append("L" * len(construct) if _PLAIN_BRACED_NAME_RE.match(construct) else "." * len(construct))
+                    in_name = False
                     index = end
                 elif inner == "`":
                     content, end, _closed = _backtick_span(text, index + 1, in_double=True)
                     subs.append(content)
                     parts.append(text[index:end])
+                    live.append("." * (end - index))
+                    in_name = False
                     index = end
                 else:
                     parts.append(inner)
                     bare.append(inner)
+                    # A `$` followed by a name character expands inside double quotes, as do the
+                    # name characters after it; every other character here is quoted.
+                    name_char = inner.isascii() and (inner.isalnum() or inner == "_")
+                    if inner == "$" and index + 1 < len(text) and text[index + 1].isascii() and (
+                        text[index + 1].isalpha() or text[index + 1] == "_"
+                    ):
+                        in_name = True
+                        live.append("L")
+                    elif in_name and name_char:
+                        live.append("L")
+                    else:
+                        in_name = False
+                        live.append(".")
                     index += 1
         elif char == "\\":
             if index + 1 >= len(text):
                 raise ValueError("No escaped character")
+            if text[index + 1] == "\n":
+                index += 2  # a line continuation: bash drops both characters, nothing enters the word
+                continue
             parts.append(text[index + 1])
             bare.append(text[index + 1])
+            live.append(".")
             index += 2
         elif char == "$" and index + 1 < len(text) and (
             text[index + 1] == "["
@@ -647,6 +696,7 @@ def _read_word(
             end = _collect_dq_expansion(text, index + 1, subs)
             parts.append(text[index:end])
             bare.append(text[index:end])
+            live.append("." * (end - index))
             index = end
         elif char == "`":
             content, end, closed = _backtick_span(text, index + 1, in_double=False)
@@ -654,12 +704,14 @@ def _read_word(
                 raise ValueError("No closing backtick")
             subs.append(content)
             parts.append(text[index:end])
+            live.append("." * (end - index))
             index = end
         else:
             parts.append(char)
             bare.append(char)
+            live.append("L")
             index += 1
-    return _Word("".join(parts), tuple(subs), "".join(bare)), index
+    return _Word("".join(parts), tuple(subs), "".join(bare), "".join(live)), index
 
 
 def _split_operator_run(run: str) -> list[str]:
@@ -1218,7 +1270,21 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
             if prefix and prefix not in scanned:
                 scanned.append(prefix)
                 found.extend(_scan_tokens(prefix, bases, git_writes, depth))
+    if depth > 0:
+        # The text of a nested shell (`sh -c`, which may be dash with no brace expansion at all, or a
+        # bash started with `+B`), of an `eval` or of a `$(...)`/backtick span is read again by a parser
+        # of its own: what this lexer saw of its quoting does not say what expands there, so its words
+        # carry no `live` and a brace list in them stays dynamic for the write-scope check.
+        found = [(_without_live(target), base) for target, base in found]
     return found
+
+
+def _without_live(target: str) -> str:
+    """`target` with what the lexer knew about its quoting dropped (`_Word.live` None); text, `subs`
+    and `bare` stay as they were. A plain `str` comes back as it is."""
+    if getattr(target, "live", None) is None:
+        return target
+    return _Word(str(target), getattr(target, "subs", ()), getattr(target, "bare", None))
 
 
 def _bash_write_targets_new(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
@@ -1226,10 +1292,20 @@ def _bash_write_targets_new(command: str, base_cwd: str, git_writes: frozenset) 
     Any exception propagates: the caller drops this half then and keeps the legacy half alone."""
     pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
     result: list[_Target] = []
+    seen: set[tuple] = set()
     for pair in pairs:
-        if not _is_ignorable_write_target(pair[0]) and pair not in result:
+        key = _pair_key(pair)
+        if not _is_ignorable_write_target(pair[0]) and key not in seen:
+            seen.add(key)
             result.append(pair)
     return result
+
+
+def _pair_key(pair: _Target) -> tuple:
+    """What makes two targets the same one: text and base, and for a word of the lexer also which of
+    its characters were live (`_Word.live`) — `'{a,b}'` and `{a,b}` read alike but are not the same
+    word to the shell."""
+    return (str(pair[0]), pair[1], getattr(pair[0], "live", None))
 
 
 def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
@@ -1252,10 +1328,23 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
         current = _bash_write_targets_new(command, base_cwd, git_writes)
     except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
         return legacy
-    merged = list(legacy)
-    seen = set(legacy)
+    # A target both scanners report appears once, as the lexer's word: only that one knows which of its
+    # characters were quoted (`_Word.live`). The legacy half still adds everything the lexer missed,
+    # as plain text with no such knowledge.
+    by_text: dict[tuple, list[_Target]] = {}
     for pair in current:
-        if pair not in seen:
-            seen.add(pair)
+        by_text.setdefault((str(pair[0]), pair[1]), []).append(pair)
+    merged: list[_Target] = []
+    seen: set[tuple] = set()
+    for pair in legacy:
+        for candidate in by_text.get((str(pair[0]), pair[1]), [pair]):
+            key = _pair_key(candidate)
+            if key not in seen:
+                seen.add(key)
+                merged.append(candidate)
+    for pair in current:
+        key = _pair_key(pair)
+        if key not in seen:
+            seen.add(key)
             merged.append(pair)
     return merged

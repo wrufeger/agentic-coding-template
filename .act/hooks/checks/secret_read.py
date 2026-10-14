@@ -90,6 +90,7 @@ from typing import Optional
 
 import actlib
 
+from .brace_expand import expand_braces as _expand_braces
 from .command_words import _stripped_word_lists
 from .common import _check_mode, _shell_command
 from .powershell_targets import _extract_ps_command_flag, _ps_tokens
@@ -190,7 +191,6 @@ _GIT_READ_SUBCOMMANDS = frozenset({"show", "cat-file", "diff", "blame", "annotat
 # Interpreters whose plain file operands are read too (`perl -pe1 .env`).
 _INTERPRETER_FILE_ARGS = frozenset({"perl", "ruby"})
 _PS_ASSIGN_RE = re.compile(r"^\$\w+$")
-_BRACE_RE = re.compile(r"\{([^{}]*)\}")
 
 
 def _home_roots() -> list[str]:
@@ -296,27 +296,6 @@ def secret_label(raw: str, cwd: Optional[str]) -> Optional[str]:
         return None
 
 
-def _expand_braces(pattern: str) -> list[str]:
-    """`pattern` with its non-nested `{a,b}` groups expanded (`.env{,.local}` -> `.env`,
-    `.env.local`); at most 64 results, the rest is dropped."""
-    results = [pattern]
-    for _ in range(8):
-        next_results: list[str] = []
-        changed = False
-        for item in results:
-            match = _BRACE_RE.search(item)
-            if not match:
-                next_results.append(item)
-                continue
-            changed = True
-            for option in match.group(1).split(","):
-                next_results.append(item[:match.start()] + option + item[match.end():])
-        results = next_results[:64]
-        if not changed:
-            break
-    return results
-
-
 def _glob_label(pattern: str, cwd: Optional[str]) -> Optional[str]:
     """Judge a Grep `glob` after brace expansion, see `_glob_variant_label`."""
     for variant in _expand_braces(pattern):
@@ -383,6 +362,75 @@ def _ps_word_lists(command: str, depth: int = 0) -> list[list[str]]:
     return lists
 
 
+# Options of the search tools that take a value, for finding the search pattern (the first operand
+# that is not an option or an option's value). Short options by command family, then long ones. An
+# option not listed counts as a switch: a misjudged value then ends up read as the pattern, and the
+# real pattern is checked as a file name, which can only refuse more, never less.
+_GREP_FAMILY = {"grep": "grep", "egrep": "grep", "fgrep": "grep", "rg": "rg"}
+# (`-C` is no value option of grep for the same reason as `--context` below: in BSD grep its value is
+# optional and glued on, so `grep -C foo .env` searches for `foo`.)
+_GREP_VALUE_SHORT = {
+    "grep": frozenset("ABmefdD"),
+    "rg": frozenset("ABCmefgtTjMErd"),
+    "git-grep": frozenset("ABCmef"),
+}
+# (`--context` is left out on purpose: BSD grep takes an optional value there, so a following word
+# may be the pattern; read as a switch it can only refuse more.)
+_GREP_VALUE_LONG = frozenset({
+    "--after-context", "--before-context", "--max-count", "--regexp", "--file",
+    "--directories", "--devices", "--include", "--exclude", "--exclude-dir", "--exclude-from",
+    "--label", "--binary-files", "--glob", "--iglob", "--type", "--type-not", "--type-add",
+    "--max-depth", "--max-columns", "--threads", "--replace", "--encoding", "--sort", "--sortr",
+    "--colors", "--pre", "--pre-glob", "--ignore-file", "--path-separator", "--engine",
+    "--max-filesize",
+})
+# `-e PATTERN` / `-f FILE` (and the long forms): the pattern then comes from the option, so every
+# operand is a file. Long names are matched by prefix, since GNU tools accept an abbreviation.
+_GREP_PATTERN_SHORT = frozenset("ef")
+_GREP_PATTERN_LONG = ("--regexp", "--file")
+
+
+def _grep_pattern_index(args: list[str], family: str) -> Optional[int]:
+    """Index in `args` (the words after a grep-like command or after `git grep`) of the search
+    pattern given as a plain operand, or None when there is none to skip: the pattern is supplied
+    by `-e`/`--regexp`/`-f`/`--file` (every operand is a file then), or no operand exists."""
+    short_value = _GREP_VALUE_SHORT[family]
+    index = 0
+    pattern: Optional[int] = None
+    options_done = False
+    while index < len(args):
+        arg = args[index]
+        if options_done or not arg.startswith("-") or arg == "-":
+            if pattern is None:
+                pattern = index
+            index += 1
+            continue
+        if arg == "--":
+            options_done = True
+            index += 1
+            continue
+        if arg.startswith("--"):
+            name, has_value, _ = arg.partition("=")
+            if any(len(name) >= 3 and long_name.startswith(name) for long_name in _GREP_PATTERN_LONG):
+                return None
+            if not has_value and name in _GREP_VALUE_LONG:
+                index += 1  # the option's value is the next word
+            index += 1
+            continue
+        position = 1
+        while position < len(arg):
+            char = arg[position]
+            if char in short_value:
+                if char in _GREP_PATTERN_SHORT:
+                    return None
+                if position == len(arg) - 1:
+                    index += 1  # the option's value is the next word
+                break
+            position += 1
+        index += 1
+    return pattern
+
+
 def _git_literals(args: list[str]) -> list[str]:
     """The operands of a `git show|cat-file|diff|blame|grep|log ...` call that may name a file:
     every plain word and the `<path>` of every `<rev>:<path>`; empty for any other subcommand."""
@@ -400,8 +448,10 @@ def _git_literals(args: list[str]) -> list[str]:
     if subcommand not in _GIT_READ_SUBCOMMANDS:
         return []
     literals: list[str] = []
-    for arg in args[index + 1:]:
-        if arg.startswith("-"):
+    rest = args[index + 1:]
+    pattern_at = _grep_pattern_index(rest, "git-grep") if subcommand == "grep" else None
+    for position, arg in enumerate(rest):
+        if arg.startswith("-") or position == pattern_at:
             continue
         literals.append(arg)
         if ":" in arg:
@@ -440,6 +490,11 @@ def _command_label(command: str, cwd: Optional[str], powershell: bool = False) -
             literals = _git_literals([str(word) for word in words[1:]])
         elif name in _READ_COMMANDS:
             literals = [str(word) for word in words[1:]]
+            if name in _GREP_FAMILY:
+                # The first operand is the search pattern, not a file to read.
+                pattern_at = _grep_pattern_index(literals, _GREP_FAMILY[name])
+                if pattern_at is not None:
+                    del literals[pattern_at]
             if name in _COPY_COMMANDS:
                 positional = [i for i, lit in enumerate(literals) if not lit.startswith("-")]
                 if len(positional) > 1:
