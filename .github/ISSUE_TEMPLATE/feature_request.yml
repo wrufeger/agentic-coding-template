@@ -1,0 +1,45 @@
+# act:template-community
+name: Feature request
+description: Suggest an idea or an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Running a project on the template? `/act-feedback <text>` is the recommended and fastest way to suggest
+        a feature.** Type it in your AI assistant (or write `feedback: <text>`); the text goes straight to the
+        maintainer. See the [feedback guide](https://wrufeger.github.io/agentic-coding-template-docs/guides/feedback/).
+        Use this form if you have no project on the template or want a public discussion.
+
+        Describe the problem first, then the idea. Please do not include secrets or real personal data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard, missing or annoying today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like the template to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - rules
+        - skills
+        - scripts/hooks
+        - setup/update
+        - docs
+        - other
+    validations:
+      required: true

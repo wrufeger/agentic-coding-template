@@ -47,7 +47,7 @@ import tempfile
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import NamedTuple, Optional, TypedDict, Union
+from typing import Callable, NamedTuple, Optional, TypedDict, Union
 
 import actlib
 import entries
@@ -2257,6 +2257,12 @@ TEMPLATE_README_MARKER = "<!-- act:template-readme -->"
 # page). A project keeps its own changelog, so step 8 removes the template's under the same
 # verified-match condition as its READMEs; a CHANGELOG.md without this marker is the project's own.
 TEMPLATE_CHANGELOG_MARKER = "<!-- act:template-changelog -->"
+# First line of the community files the template ships for its own GitHub repository under .github/
+# (code of conduct, contributing guide, security policy, pull request template: Markdown; issue forms
+# and their config: YAML). A project has its own policies, so step 8 removes them under the same
+# verified-match condition as the READMEs; a file in .github/ without a marker is the project's own.
+TEMPLATE_COMMUNITY_MARKERS = ("<!-- act:template-community -->", "# act:template-community")
+_COMMUNITY_PATTERNS = (".github/*.md", ".github/ISSUE_TEMPLATE/*.yml", ".github/ISSUE_TEMPLATE/*.yaml")
 
 
 def _has_marker(path: Path, marker: str) -> bool:
@@ -2413,14 +2419,28 @@ def _bootstrap_entry_files(
     return messages, force
 
 
+def _community_files(root: Path) -> list[str]:
+    """Paths (relative, `/`-separated) of the files under .github/ whose first line carries one of
+    TEMPLATE_COMMUNITY_MARKERS -- the template's own community files; unmarked files are not listed."""
+    found: list[str] = []
+    for pattern in _COMMUNITY_PATTERNS:
+        for path in sorted(root.glob(pattern)):
+            if path.is_file() and any(_has_marker(path, marker) for marker in TEMPLATE_COMMUNITY_MARKERS):
+                found.append(path.relative_to(root).as_posix())
+    return found
+
+
 def _step_own_docs(
     root: Path, plan: bool, cfg: ProjectConfig, template_commit: str, notes: list[str]
 ) -> list[str]:
+    community_removed: set[Path] = set()  # removed here, or (under plan) about to be
+
     def remove_github_readme(plan: bool) -> str:
         github_readme = root / ".github" / "README.md"
         github_dir = github_readme.parent
         if plan:
-            others = [p for p in github_dir.iterdir() if p != github_readme]
+            others = [p for p in github_dir.rglob("*") if p.is_file() and p != github_readme
+                      and p not in community_removed]
             if not others:
                 return ".github/README.md would be removed (template's own), .github/ would be removed (now empty)"
             return ".github/README.md would be removed (template's own)"
@@ -2452,7 +2472,40 @@ def _step_own_docs(
         (root / "CHANGELOG.md").unlink()
         return "CHANGELOG.md removed (template's own)"
 
-    return [
+    def remove_community_file(rel_path: str) -> Callable[[bool], str]:
+        def _do(inner_plan: bool) -> str:
+            community_removed.add(root / rel_path)
+            if inner_plan:
+                return f"{rel_path} would be removed (template's own)"
+            (root / rel_path).unlink()
+            return f"{rel_path} removed (template's own)"
+        return _do
+
+    # The community files go before the README, so that .github/ is empty -- and removed with the
+    # README -- when they were the last other content; if the README is kept, the now empty
+    # .github/ISSUE_TEMPLATE/ and .github/ are cleaned up below.
+    community_messages: list[str] = []
+    for rel_path in _community_files(root):
+        marker = next(m for m in TEMPLATE_COMMUNITY_MARKERS if _has_marker(root / rel_path, m))
+        community_messages.append(_retire_template_readme(
+            root, plan, rel_path, template_commit,
+            "github-community-" + rel_path.removeprefix(".github/").replace("/", "-") + ".template",
+            notes, remove_community_file(rel_path), marker=marker,
+        ))
+    for leftover in (root / ".github" / "ISSUE_TEMPLATE", root / ".github"):
+        if not leftover.is_dir() or not community_removed:
+            continue
+        if plan:
+            now_empty = all(p in community_removed for p in leftover.rglob("*") if p.is_file())
+        else:
+            now_empty = not any(leftover.iterdir())
+        if now_empty:
+            if not plan:
+                leftover.rmdir()
+            verb = "would be removed" if plan else "removed"
+            community_messages.append(f"{leftover.relative_to(root).as_posix()}/ {verb} (now empty)")
+
+    return community_messages + [
         _retire_template_readme(
             root, plan, ".github/README.md", template_commit,
             "github-README.template.md", notes, remove_github_readme,
@@ -3130,8 +3183,9 @@ def main(argv: list[str]) -> int:
             part.split(" ", 1)[0] for part in own_files_message.split("; ") if " would be removed" in part
         }
         own_root_files = [
-            p for p in (root / "README.md", root / "CHANGELOG.md", root / "LICENSE")
-            if p.is_file() and p.name not in planned_removals
+            p for p in (root / "README.md", root / "CHANGELOG.md", root / "LICENSE",
+                        *(root / rel for rel in _community_files(root)))
+            if p.is_file() and p.relative_to(root).as_posix() not in planned_removals
         ]
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,

@@ -1,0 +1,80 @@
+# act:template-community
+name: Bug report
+description: Something in the template does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Running a project on the template? `/act-feedback <text>` is the recommended and fastest way to report
+        a bug.** Type it in your AI assistant (or write `feedback: <text>`); the text goes straight to the
+        maintainer, together with the template commit it runs on. See the [feedback guide](https://wrufeger.github.io/agentic-coding-template-docs/guides/feedback/).
+        Use this form if you have no project on the template or want a public discussion.
+
+        Thanks for the report. Please do not include secrets or real personal data, and mask logs first.
+        Security vulnerabilities go through the private route in SECURITY.md, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Template version
+      description: Contents of `.act/VERSION`
+      placeholder: "2.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: tool
+    attributes:
+      label: AI tool
+      options:
+        - claude-code
+        - codex
+        - copilot
+        - gemini
+        - cursor
+        - aider
+        - cline
+        - ollama
+        - other
+    validations:
+      required: true
+  - type: input
+    id: tool_version
+    attributes:
+      label: AI tool version
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `python .act/scripts/doctor.py`
+      description: Optional, useful for setup, update and config problems. Remove anything private.
+      render: text

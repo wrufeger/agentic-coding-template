@@ -39,9 +39,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `--direct --contact <email>` adds an optional reply address.
 - This `CHANGELOG.md`, filled back to `0.1.0-beta` from the release notes. `init` removes it from a new project in
   step 8 like the template's own README; an edited copy is kept with an inbox note.
+- Community files for the template's GitHub repository under `.github/`: code of conduct, contributing guide,
+  security policy, issue forms and a pull request template. They recommend `/act-feedback` as the first way to
+  report a problem.
 
 ### Changed
 
+- `init` removes these community files from a new project in step 8, like the template's own README; an edited
+  copy is kept with an inbox note, and `.github/` goes once nothing else is left in it.
 - `R-work-evidence` counts a CI run, a log excerpt or a screenshot of the running application as evidence, and every
   reachable feedback loop runs before the human's.
 - Workers mark every assumption; an accepted one is confirmed, asked in the inbox or recorded with the task's state.

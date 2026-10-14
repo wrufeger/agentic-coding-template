@@ -1,0 +1,12 @@
+# act:template-community
+blank_issues_enabled: false
+contact_links:
+  - name: Send feedback from your project (recommended)
+    url: https://wrufeger.github.io/agentic-coding-template-docs/guides/feedback/
+    about: The fastest way to report a bug or suggest a feature - type /act-feedback <text> in your AI assistant.
+  - name: Documentation
+    url: https://wrufeger.github.io/agentic-coding-template-docs/
+    about: Guides and the generated reference. Please check here before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/wrufeger/agentic-coding-template/security/advisories/new
+    about: Report vulnerabilities privately, never as a public issue.
