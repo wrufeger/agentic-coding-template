@@ -52,8 +52,13 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
     data. Use `useState` for state that must survive the request.
   - Forms with `@submit.prevent` also need `method="post"` (see `CR-vue-basics`).
   - **Windows:** an aborted dev server can keep its port bound; the next start moves to the next free
-    port and HMR/WebSocket errors follow. Kill the running process (`netstat -ano | findstr :3000`,
-    `taskkill /PID <pid> /F`; `lsof -i :3000`, `kill <pid>`) instead of configuring a custom HMR port.
+    port and HMR/WebSocket errors follow. If it is a server the assistant started itself, end exactly
+    that process instead of configuring a custom HMR port. Find the listening PID with
+    `(Get-NetTCPConnection -LocalPort <port> -State Listen).OwningProcess`, or with
+    `netstat -ano | findstr /C:":<port> " | findstr LISTENING` — plain `findstr ":<port> "` also
+    matches longer port numbers, and lines without `LISTENING` belong to clients — then
+    `taskkill /PID <pid> /F`; elsewhere `lsof -iTCP:<port> -sTCP:LISTEN`, `kill <pid>`. A server on
+    the owner's port is theirs: ask first (`R-safe-dev-server`).
 
 ## `CR-nuxt-root-folders` — Fixed root folders with their own aliases
 

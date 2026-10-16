@@ -11,6 +11,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- **New rule `R-safe-dev-server`** — a server the assistant starts for tests, a browser check or a screenshot runs on
+  a port of its own, never on one of the project's default ports; the owner's running server may be reused, but is
+  stopped, restarted or moved only after asking, and processes are never ended by name.
+
 - **`act-teach`** — short Markdown lessons on a topic, ideally on the project's own code, with exercises and a
   learning record. New config key `teach-lessons: local | docs` (`.act-local/learn/` or versioned under `docs/learn/`,
   which `act-audit-docs` then covers).
@@ -45,6 +49,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- **Nuxt coding rules, stuck dev server on Windows:** no longer advise ending the process on port 3000; they end only a
+  server the assistant started itself, found by its listening PID (`Get-NetTCPConnection … -State Listen`, or
+  `findstr /C:` with `LISTENING`, since plain `findstr ":<port> "` also matches longer ports and client connections).
 - `init` removes these community files from a new project in step 8, like the template's own README; an edited
   copy is kept with an inbox note, and `.github/` goes once nothing else is left in it.
 - `R-work-evidence` counts a CI run, a log excerpt or a screenshot of the running application as evidence, and every

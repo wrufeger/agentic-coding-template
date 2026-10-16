@@ -1,6 +1,6 @@
 # Safety rules
 
-summary: approval before irreversible actions, secrets in diffs and reads, deletion, discarded git work, git hooks and config, safeguard blocks, foreign content
+summary: approval before irreversible actions, secrets in diffs and reads, deletion, discarded git work, git hooks and config, the owner's dev server, safeguard blocks, foreign content
 
 Shared safety rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and never
 reassigned.
@@ -112,6 +112,25 @@ on `folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool
 text the edit produces); the human writes such a file themselves. Limit: what a program or
 script writes itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
 Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
+
+## `R-safe-dev-server` — The owner's dev server is theirs
+
+summary: servers started for tests run on ports of their own; the owner's running server may be reused, never stopped, restarted or moved without asking; no ending processes by name
+
+A server the assistant starts for tests, a browser check or a screenshot (a Playwright
+`webServer`, `npm run dev`, `vite`, `php -S` …) never runs on one of the project's default ports —
+those belong to the owner. Each server's default port is the one `run` in `docs/ai/config.md` or
+the framework config sets, else the framework's own default; a project with a frontend and an API
+has one for each. The test server uses the port `docs/project/testing.md` names, else its default
+plus 100, and is stopped again when the work is done. A test setup that starts its own server on a
+default port whenever nothing answers there (a Playwright `webServer` pointed at the default URL)
+breaks this rule too — point it at the test port. A server the owner already runs may be used as
+it is, but is never stopped, restarted or moved to another port. If an action needs exactly that —
+the port is held, a config change needs a restart, the process hangs — ask the owner first and
+wait; a worker hands the question back with its result. Before ending a process by port or PID,
+confirm by its listening port and command line that it is a test server the assistant started, in
+this session or an earlier one; when in doubt, ask. Never end processes by name (`taskkill /IM
+node.exe`, `Stop-Process -Name node`, `pkill node`).
 
 ## `R-safe-block` — Don't rephrase-and-retry a safeguard block
 

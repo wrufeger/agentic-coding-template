@@ -27,6 +27,7 @@ template text of its rule, checked or not.
   - [x] `R-safe-git-reset`
   - [x] `R-safe-git-discard`
   - [x] `R-safe-git-metadata`
+  - [x] `R-safe-dev-server`
   - [x] `R-safe-block`
   - [x] `R-safe-foreign-text`
 
