@@ -48,9 +48,9 @@
 #               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
 #               someone still writes to at the old location with an older checkout falls here.
 #           16. a role/tier whose recorded usage.py outcomes cross a threshold
-#               raise proposed at 8+ outcomes with 40%+ reworked/escalated,
-#               lower proposed at 20+ outcomes with none reworked/escalated — a finding only, never
-#               a live change to docs/ai/config.md.
+#               raise proposed at 8+ outcomes with 40%+ reworked/escalated — a finding only, never
+#               a live change to docs/ai/config.md. A lower tier is never proposed: a run of
+#               accepted outcomes says nothing about whether a cheaper tier would have done as well.
 #           17. a git remote whose address points at the template repository (its repository name is
 #               exactly `agentic-coding-template`, or equals the source in .act-lock.json) while the current
 #               branch has no upstream: a plain `git push`/`git pull` then goes to the template, not
@@ -1265,19 +1265,19 @@ def check_manifest_drift(root: Path) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 # Thresholds are this check's own proposal, not a fixed standard: at
-# least 8 outcomes for a role/tier with 40%+ reworked/escalated suggests raising the tier; at
-# least 20 outcomes with none reworked/escalated suggests a lower tier may suffice. Either way this
+# least 8 outcomes for a role/tier with 40%+ reworked/escalated suggests raising the tier. It
 # only ever writes a finding (surfaced via --inbox) -- never docs/ai/config.md itself
-# (a tier is never silently switched).
+# (a tier is never silently switched). There is no proposal in the other direction: accepted
+# outcomes cannot show that a cheaper tier would have found the same, least of all for a
+# reviewing role, so lowering a tier stays the owner's own idea.
 _TIER_PROPOSAL_MIN_RAISE = 8
 _TIER_PROPOSAL_RAISE_RATIO = 0.4
-_TIER_PROPOSAL_MIN_LOWER = 20
 
 
 def check_tier_proposal(root: Path) -> list[Finding]:
     """Reads .act-local/usage.json's per-role/tier outcome counts (usage.py --outcome, recorded by
     the orchestrator per R-role-outcome after every worker acceptance/rework/escalation) and
-    proposes raising or lowering a role's tier once its outcomes cross one of the thresholds above.
+    proposes raising a role's tier once its outcomes cross the threshold above.
     A proposal only, surfaced as a finding -- deciding and editing docs/ai/config.md stays with the
     human/orchestrator. Silent if usage.py cannot be imported or the store is empty."""
     try:
@@ -1301,13 +1301,6 @@ def check_tier_proposal(root: Path) -> list[Finding]:
                     path=".act-local/usage.json", line=None, kind="tier-proposal",
                     message=(f"role `{role}` at tier `{tier_label}`: {trouble}/{total} outcomes "
                              "reworked or escalated -- consider a higher tier "
-                             "(R-role-outcome)"),
-                ))
-            elif total >= _TIER_PROPOSAL_MIN_LOWER and trouble == 0:
-                findings.append(Finding(
-                    path=".act-local/usage.json", line=None, kind="tier-proposal",
-                    message=(f"role `{role}` at tier `{tier_label}`: {total} outcomes accepted, "
-                             "none reworked or escalated -- a lower tier may be possible "
                              "(R-role-outcome)"),
                 ))
     return findings

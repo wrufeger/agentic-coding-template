@@ -31,8 +31,9 @@ Right after accepting, reworking, or escalating a worker's result, run `python
 .act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated` (`<tier>` as assigned
 per `R-cost-delegate`, or `""` if none was given). No hook can do this instead: `SubagentStop`
 fires before that decision. `doctor.py --inbox` turns the pattern into a proposal, never a live
-change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a higher tier, 20+ with
-none suggest a lower one — the human decides.
+change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a higher tier — the human
+decides. A lower tier is never proposed: accepted outcomes do not show that a cheaper tier would
+have done as well.
 
 ## Role assignment — which role for what
 

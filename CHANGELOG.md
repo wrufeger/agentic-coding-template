@@ -49,6 +49,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- **`doctor.py` no longer proposes a lower tier** for a role whose workers' results were all accepted; it
+  proposes only a higher one, once 8+ outcomes show 40%+ reworked or escalated (`R-role-outcome`). An
+  accepted result does not show that a cheaper tier would have done as well.
 - **Nuxt coding rules, stuck dev server on Windows:** no longer advise ending the process on port 3000; they end only a
   server the assistant started itself, found by its listening PID (`Get-NetTCPConnection … -State Listen`, or
   `findstr /C:` with `LISTENING`, since plain `findstr ":<port> "` also matches longer ports and client connections).
