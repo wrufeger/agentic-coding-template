@@ -1001,6 +1001,7 @@ _CONFIG_VALUES = {
     "output-depth": ("verbose", "normal", "sparse"),
     "board-at-start": ("on", "off"),
     "teach-lessons": ("local", "docs"),
+    "artifacts": ("on", "off"),
 }
 
 

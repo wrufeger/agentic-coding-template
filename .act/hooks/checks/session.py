@@ -394,6 +394,39 @@ def _is_bootstrap_copy(dest_path: Path, lock_present: bool, marker: Optional[str
     return _first_line(dest_path) == marker
 
 
+def _apply_artifact_setting(root: Path, config: dict[str, str], write: bool) -> tuple[list[str], list[str]]:
+    """Applies the `artifacts` value of docs/ai/config.md to an existing .claude/settings.json
+    (actlib.merge_settings_artifact); a project without that file gets none. With `write=False`
+    (session-start-refresh `warn`) nothing is written: the second list holds the "would ..." notes.
+    Returns (notes to print, notes for the warn digest)."""
+    path = root / ".claude" / "settings.json"
+    if not path.is_file() or not (root / ".act-lock.json").is_file():
+        return [], []
+    try:
+        current = json.loads(path.read_text(encoding="utf-8"))  # a BOM file stays alone, as in init/update
+    except (OSError, ValueError):
+        return [], []
+    new_current, changed, notes, booking = actlib.merge_settings_artifact(
+        root, current, actlib.artifacts_mode(config), once=True)
+    if write:
+        try:
+            if changed:
+                path.write_text(json.dumps(new_current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            # the booking goes into the lock only after settings.json is written
+            actlib.write_settings_booking(root, booking)
+        except OSError:
+            return [], []
+    if write:
+        return notes, []
+    # warn: the conflict note already went out once via the cache; a pending change is only named
+    pending = [n for n in notes if n.startswith("Artifact")]
+    would = ["[act] note: Artifact tool would be switched off (`artifacts: off`; warn mode, not applied)"
+             if n.startswith("Artifact tool switched off") else
+             "[act] note: Artifact tool would no longer be switched off (`artifacts: on`; warn mode, not applied)"
+             for n in pending]
+    return [n for n in notes if n not in pending], would
+
+
 def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tuple[list[str], list[str], list[str]]:
     """
     Re-derive every generated bridge that is still exactly as it was last generated (current
@@ -1782,6 +1815,16 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         changed_bridges, refreshed_bridges, bootstrap_bridges = _refresh_bridges(root, write=(mode == "block"))
     except Exception:
         pass
+
+    # `artifacts` (config.md): the Artifact tool is switched off through .claude/settings.json,
+    # applied like the bridges above -- written under `block`, only named once under `warn`.
+    try:
+        artifact_notes, artifact_warn = _apply_artifact_setting(root, config, write=(mode == "block"))
+        for note in artifact_notes:
+            print(note if note.startswith("[act]") else f"[act] note: {note}")
+        warn_notes.extend(artifact_warn)
+    except Exception:
+        pass  # best effort, must never block the session
 
     try:
         _refresh_board(root)

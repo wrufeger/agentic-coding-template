@@ -49,6 +49,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- **Claude Code's `Artifact` tool is switched off by default** to save about 13,700 tokens at every session start.
+  New config key `artifacts: on | off` (default `off`): `off` sets `"enableArtifact": false` in
+  `.claude/settings.json` at session start, `init` and `update`; the tool is gone from the next session on. Existing
+  projects lose it after their next update — `artifacts: on` in `docs/ai/config.md` keeps it. `on` only removes an
+  entry the template set itself; a value the project set itself is never overwritten, a contradicting one is reported
+  once.
 - **`doctor.py` no longer proposes a lower tier** for a role whose workers' results were all accepted; it
   proposes only a higher one, once 8+ outcomes show 40%+ reworked or escalated (`R-role-outcome`). An
   accepted result does not show that a cheaper tier would have done as well.

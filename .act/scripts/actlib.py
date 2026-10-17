@@ -944,6 +944,106 @@ def merge_settings_env(current: dict, bridge_data: dict) -> tuple[dict, bool]:
     return new_current, True
 
 
+# The Claude Code setting that drops the Artifact tool from the session's tool list, and the
+# .act-lock.json key under which the entries this mechanism set itself are booked.
+ARTIFACT_SETTING = "enableArtifact"
+SETTINGS_BOOKED_KEY = "settings_applied"
+
+
+def artifacts_mode(config: dict[str, str]) -> str:
+    """The `artifacts` row of docs/ai/config.md: "on" (leave the setting alone) or "off". A missing
+    row or any other value counts as "off", the default."""
+    return "on" if config.get("artifacts", "").strip().lower() == "on" else "off"
+
+
+def merge_settings_artifact(
+    root: Path, current: dict, mode: str, *, once: bool = False, plan: bool = False,
+) -> tuple[dict, bool, list[str], Optional[dict]]:
+    """Applies the `artifacts` config value to a project's .claude/settings.json content `current`.
+    "off": sets `enableArtifact: false` when the key is missing and returns that entry as booked, so
+    the mechanism can tell its own entry from the project's. "on" means "leave alone", not "switch
+    on": it removes only a booked entry, and with nothing booked changes nothing. A value the
+    project set itself is never overwritten; one that contradicts "off" (anything but false) is
+    reported instead, with `once` only the first time that state is seen (remembered in
+    .act-local/cache.json -- the only thing this function writes, and only with `once`). `plan`
+    words the notes as "would ...".
+    Returns (new_current, changed, notes, booking). `booking` is None when the lock needs no change,
+    else the new content of .act-lock.json § settings_applied (possibly empty). It is never written
+    here: the caller writes settings.json first and only then calls write_settings_booking, so a
+    failed write leaves no booking behind. `new_current` is `current` itself when the settings file
+    needs no write. Nothing is done when the lock exists but is unreadable (booking would overwrite
+    it) or `current` is not a dict. Never raises for those."""
+    if not isinstance(current, dict):
+        return current, False, [], None
+    lock_path = root / ".act-lock.json"
+    lock = _read_json(lock_path)
+    if lock is None and lock_path.is_file():
+        return current, False, [], None
+    booked = lock.get(SETTINGS_BOOKED_KEY) if isinstance(lock, dict) else None
+    booked = dict(booked) if isinstance(booked, dict) else {}
+    is_booked = ARTIFACT_SETTING in booked
+    present = ARTIFACT_SETTING in current
+    notes: list[str] = []
+    new_current, changed = current, False
+    booking: Optional[dict] = None
+    conflict = ""
+    if mode == "off":
+        if not present:
+            new_current = dict(current)
+            new_current[ARTIFACT_SETTING] = False
+            changed = True
+            booked[ARTIFACT_SETTING] = False
+            booking = booked
+            notes.append(f"Artifact tool {'would be ' if plan else ''}switched off (template default) — set "
+                         "`artifacts: on` in docs/ai/config.md to keep it; takes effect from the next session")
+        elif current[ARTIFACT_SETTING] is not False:
+            conflict = repr(current[ARTIFACT_SETTING])
+    elif is_booked:
+        booked.pop(ARTIFACT_SETTING, None)
+        booking = booked
+        if present and current[ARTIFACT_SETTING] is False:
+            new_current = {k: v for k, v in current.items() if k != ARTIFACT_SETTING}
+            changed = True
+            notes.append("Artifact tool no longer switched off by the template (`artifacts: on`) — "
+                         "takes effect from the next session")
+    cache_path = root / ".act-local" / "cache.json"
+    if conflict:
+        text = (f"[act] note: .claude/settings.json has {ARTIFACT_SETTING}: {conflict}, which contradicts "
+                "`artifacts: off` in docs/ai/config.md — the project's value is kept; set "
+                "`artifacts: on` there to match, or remove the line")
+        if once:
+            cache = _read_json(cache_path) or {}
+            if cache.get("artifact_conflict_hint") != conflict:
+                _write_json_merged(cache_path, {"artifact_conflict_hint": conflict})
+                notes.append(text)
+        else:
+            notes.append(text)
+    elif once and (_read_json(cache_path) or {}).get("artifact_conflict_hint"):
+        _write_json_merged(cache_path, {"artifact_conflict_hint": ""})
+    return new_current, changed, notes, booking
+
+
+def write_settings_booking(root: Path, booking: Optional[dict]) -> None:
+    """Writes the `booking` merge_settings_artifact returned into .act-lock.json § settings_applied;
+    an empty one removes the key. None, an unreadable lock, or an empty booking with no lock file
+    do nothing."""
+    if booking is None:
+        return
+    lock_path = root / ".act-lock.json"
+    lock = _read_json(lock_path)
+    if lock is None:
+        if lock_path.is_file() or not booking:
+            return
+        lock = {}
+    new_lock = dict(lock)
+    if booking:
+        new_lock[SETTINGS_BOOKED_KEY] = booking
+    else:
+        new_lock.pop(SETTINGS_BOOKED_KEY, None)
+    if new_lock != lock or not lock_path.is_file():
+        lock_path.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _classify_block_lines(
     existing_text: str, block_text: str, applied_lines: Optional[list[str]],
 ) -> tuple[list[str], list[str]]:

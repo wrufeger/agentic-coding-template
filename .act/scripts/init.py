@@ -1378,7 +1378,9 @@ def _write_text_file(
     return f"{label}: created", True
 
 
-def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None = None) -> tuple[str, bool]:
+def _merge_settings_hooks(
+    src: Path, dest: Path, plan: bool, root: Path | None = None, pending_booking: dict | None = None,
+) -> tuple[str, bool]:
     """Merges src's hook entries and top-level "env" keys into dest (see
     actlib.merge_settings_hooks / actlib.merge_settings_env): a hook entry the bridge already
     defines is replaced in place (a changed timeout/matcher/command never ends up as a second,
@@ -1386,7 +1388,8 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
     itself — hooks or env keys alike — is left untouched; an env key (e.g.
     CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR) is only ever added when missing, never
     overwritten. Idempotent — a second run against its own output reports no change and leaves the
-    file byte-for-byte identical."""
+    file byte-for-byte identical. The `artifacts` entry's lock booking is written right after
+    settings.json, or -- with a `pending_booking` dict -- left in it under "booking" for the caller."""
     if plan and not src.is_file():
         # --target --plan against a not-yet-created directory: .act/ was never copied, so there
         # is nothing to read from yet — report the intent without touching the filesystem.
@@ -1406,18 +1409,40 @@ def _merge_settings_hooks(src: Path, dest: Path, plan: bool, root: Path | None =
         return f"{_relative_label(dest, root)}: not a valid hooks structure, left unchanged", False
     new_current, changed_events = actlib.merge_settings_hooks(current, bridge_data)
     new_current, env_changed = actlib.merge_settings_env(new_current, bridge_data)
-    if not changed_events and not env_changed:
-        return f"{_relative_label(dest, root)}: hook entries already up to date, left unchanged", False
+    # `artifacts` (config.md): only against a real project root -- update.py's reference rendering
+    # passes none, and a plan books nothing.
+    artifact_changed, artifact_notes, booking = False, [], None
+    if root is not None:
+        new_current, artifact_changed, artifact_notes, booking = actlib.merge_settings_artifact(
+            root, new_current, actlib.artifacts_mode(actlib.read_config(root)), plan=plan)
+    note_text = "".join(f"; {note.removeprefix('[act] note: ')}" for note in artifact_notes)
+
+    def book() -> None:
+        # after settings.json is written (or needs no write); `pending_booking` (init's step 6) holds
+        # it back for the lock write step 9 makes anyway, so an aborted run leaves no partial lock
+        if plan or booking is None:
+            return
+        if pending_booking is not None:
+            pending_booking["booking"] = booking
+        elif root is not None:
+            actlib.write_settings_booking(root, booking)
+
+    if not changed_events and not env_changed and not artifact_changed:
+        book()
+        return f"{_relative_label(dest, root)}: hook entries already up to date, left unchanged{note_text}", False
     parts = []
     if changed_events:
         parts.append(f"hook entries for {', '.join(changed_events)}")
     if env_changed:
         parts.append("env")
+    if artifact_changed:
+        parts.append(actlib.ARTIFACT_SETTING)
     if plan:
-        return f"{_relative_label(dest, root)}: would add/update {', '.join(parts)}", False
+        return f"{_relative_label(dest, root)}: would add/update {', '.join(parts)}{note_text}", False
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(new_current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    return f"{_relative_label(dest, root)}: added/updated {', '.join(parts)}", True
+    book()
+    return f"{_relative_label(dest, root)}: added/updated {', '.join(parts)}{note_text}", True
 
 
 # ---------------------------------------------------------------------------
@@ -2063,6 +2088,7 @@ def step_source_and_profile(
 def step_materialize(
     root: Path, plan: bool, cfg: ProjectConfig, selected_bridges: dict[str, BridgeSpec],
     notes: Optional[list[str]] = None, is_target: bool = False, template_commit: str = "",
+    pending_booking: Optional[dict] = None,
 ) -> tuple[list[str], dict[str, Path], list[Path], dict[str, dict]]:
     tokens = _config_tokens(cfg)
     bridges_dir = root / ".act" / "bridges"
@@ -2114,7 +2140,7 @@ def step_materialize(
             if created or dest.is_file():
                 touched.append(dest)
         elif spec["kind"] == "json-merge":
-            message, changed = _merge_settings_hooks(bridges_dir / key, dest, plan, root)
+            message, changed = _merge_settings_hooks(bridges_dir / key, dest, plan, root, pending_booking)
             messages.append(message)
             if changed or dest.is_file():
                 touched.append(dest)
@@ -2555,6 +2581,7 @@ def step_lock_and_cache(
     generated: dict[str, Path], copies: dict[str, dict],
     generated_hashes: Optional[dict[str, str]] = None,
     lock_existed_before: bool = True,
+    settings_booking: Optional[dict] = None,
 ) -> str:
     """`lock_existed_before`: whether .act-lock.json was already there when this run started
     (captured by main() before any step could write it); only a project without one is fresh and
@@ -2616,6 +2643,8 @@ def step_lock_and_cache(
             shipped = {p.stem for p in (root / ".act" / "migrations").glob("[0-9][0-9][0-9]-*.py")}
             lock_update["migrations_applied"] = sorted(shipped)
         actlib.write_lock(lock_update)
+        # .claude/settings.json is written by now (step 6); the `artifacts` booking follows it here.
+        actlib.write_settings_booking(root, settings_booking)
         # .act-lock.json § applied: the values the files just materialized hang on, so the
         # first session start has a snapshot to compare against instead of writing the lock itself.
         # Best-effort — without it, the next update.py run records one.
@@ -3126,8 +3155,10 @@ def main(argv: list[str]) -> int:
         for area in (rules.AREAS["core"], rules.AREAS["coding"])
     } if is_target else {}
 
+    pending_booking: dict = {}  # the settings.json booking, written with step 9's lock (not earlier)
     materialize_messages, generated, touched_bridges, copies = step_materialize(
         root, plan, cfg, selected_bridges, notes, is_target=is_target, template_commit=verify_commit,
+        pending_booking=pending_booking,
     )
     # Fingerprint of every generated bridge exactly as written -- taken now, before this step's
     # carry-over below (Weg C / owner profile) may edit docs/ai/rules.md or coding_rules.md; step 9
@@ -3189,7 +3220,8 @@ def main(argv: list[str]) -> int:
         ]
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,
-                                        lock_existed_before=lock_existed_before))
+                                        lock_existed_before=lock_existed_before,
+                                        settings_booking=pending_booking.get("booking")))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [

@@ -1281,11 +1281,26 @@ def _sync_tool_bridges(
             elif tool in old_tools and tool not in new_tools and dest.is_file():
                 current = dest.read_text(encoding="utf-8")
                 reference = _render_tool_bridge(new_init, root, key, spec)
+                booked_settings = (actlib._read_json(root / ".act-lock.json") or {}).get(actlib.SETTINGS_BOOKED_KEY)
+                if spec["kind"] == "json-merge" and isinstance(booked_settings, dict) \
+                        and booked_settings.get(actlib.ARTIFACT_SETTING) is False:
+                    # an enableArtifact: false the mechanism booked itself, still as it set it, is not
+                    # an edit by the project (a value the project changed counts as an edit)
+                    try:
+                        parsed = json.loads(current)
+                        if isinstance(parsed, dict) and parsed.get(actlib.ARTIFACT_SETTING) is False:
+                            parsed.pop(actlib.ARTIFACT_SETTING)
+                            current = json.dumps(parsed, indent=2, ensure_ascii=False) + "\n"
+                    except ValueError:
+                        pass
                 same = (reference is not None and current.replace("\r\n", "\n") == reference.replace("\r\n", "\n")) \
                     or actlib.generated_unchanged(dest, generated.get(dest_rel, ""))
                 if same:
                     dest.unlink()
                     generated.pop(dest_rel, None)
+                    if spec["kind"] == "json-merge" and isinstance(booked_settings, dict):
+                        actlib.write_settings_booking(
+                            root, {k: v for k, v in booked_settings.items() if k != actlib.ARTIFACT_SETTING})
                     parts.append(f"{dest_rel}: removed ({tool} left tools)")
                     touched.append(dest)
                 else:
