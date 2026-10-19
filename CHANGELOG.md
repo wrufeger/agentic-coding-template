@@ -139,6 +139,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- **A template update that touches many files no longer fails on Windows** with "WinError 206" (command line too
+  long) at its commit step, as a migration rewriting several hundred entries would. The paths now reach git on
+  standard input instead of the command line, the commit still covers exactly those paths, and the read-only path
+  queries run in chunks; `init`'s first commit does the same. This needs Git 2.25 or newer.
 - **Session start no longer rewrites unchanged bridges.** `CLAUDE.md`, `AGENTS.md` and `docs/ai/rules.md` are written
   only when their content differs from the source apart from line endings. On a Windows checkout with
   `core.autocrlf=true`, the LF rewrite used to leave the files listed as modified with an empty `git diff`, which

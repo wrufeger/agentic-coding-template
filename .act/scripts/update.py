@@ -92,6 +92,43 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
     return result
 
 
+_PATH_CHUNK_CHARS = 8000  # one git call's path arguments stay well below the Windows command-line limit
+
+
+def _path_chunks(rels: list[str]) -> list[list[str]]:
+    """Split `rels` into groups whose joined length stays within _PATH_CHUNK_CHARS (a single path
+    longer than that gets a group of its own). A very long path list passed as arguments fails on
+    Windows (WinError 206, about 32,000 characters), so read-only queries run once per group."""
+    groups: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for rel in rels:
+        if current and size + len(rel) + 1 > _PATH_CHUNK_CHARS:
+            groups.append(current)
+            current, size = [], 0
+        current.append(rel)
+        size += len(rel) + 1
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _git_pathspec_stdin(args: list[str], rels: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+    """Run `git <args> --pathspec-from-file=- --pathspec-file-nul` with `rels` on stdin, so the
+    path list never meets the command-line length limit. Needs Git 2.25 or newer (`add`, `commit`).
+    An empty list is refused: git would read it as "no pathspec" and act on the whole index."""
+    if not rels:
+        raise ValueError(f"git {' '.join(args)}: empty path list, refusing to act on the whole index")
+    full = [*args, "--pathspec-from-file=-", "--pathspec-file-nul"]
+    result = subprocess.run(
+        ["git", *full], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+        input="".join(f"{rel}\0" for rel in rels),
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(full)} failed: {result.stderr.strip()}")
+    return result
+
+
 def _print_step(n: int, text: str) -> None:
     print(f"[{n}/10] {text}")
 
@@ -1014,14 +1051,17 @@ def _paths_in_git_history(root: Path, rels: list[str]) -> set[str]:
     committed" for each one, without needing to know *which* commit did it."""
     if not rels:
         return set()
-    try:
-        result = _git(["log", "--format=", "--name-only", "--", *rels], cwd=root, check=False)
-    except (OSError, ValueError):
-        return set()
-    if result.returncode != 0:
-        return set()
     rel_set = set(rels)
-    return {line for line in result.stdout.splitlines() if line in rel_set}
+    found: set[str] = set()
+    for group in _path_chunks(rels):
+        try:
+            result = _git(["log", "--format=", "--name-only", "--", *group], cwd=root, check=False)
+        except (OSError, ValueError):
+            return set()
+        if result.returncode != 0:
+            return set()
+        found |= {line for line in result.stdout.splitlines() if line in rel_set}
+    return found
 
 
 def _role_bridge_targets(new_init, root: Path, tools: list[str]) -> tuple[dict[str, Path], dict[str, Path]]:
@@ -1920,21 +1960,30 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
     if missing:
         # A file this run deleted goes into the commit too — but only one git still tracks,
         # named by path (never a tree-wide add); an untracked one has nothing to commit.
-        tracked = _git(["ls-files", "--", *missing], cwd=root, check=False)
-        rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing})
+        missing_set = set(missing)
+        for group in _path_chunks(missing):
+            tracked = _git(["ls-files", "--", *group], cwd=root, check=False)
+            rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing_set})
     if not rels:
         return "nothing to commit"
     if plan:
         return f"would commit {len(rels)} path(s): {', '.join(rels)}"
-    _git(["add", "--", *rels], cwd=root)
-    diff = _git(["diff", "--cached", "--quiet", "--", *rels], cwd=root, check=False)
-    if diff.returncode == 0:
+    # The paths go to git on stdin (`--pathspec-from-file`), not as arguments: a big update can name
+    # more paths than a Windows command line holds.
+    _git_pathspec_stdin(["add"], rels, cwd=root)
+    staged = False
+    for group in _path_chunks(rels):
+        diff = _git(["diff", "--cached", "--quiet", "--", *group], cwd=root, check=False)
+        if diff.returncode == 1:
+            staged = True
+            break
+        if diff.returncode != 0:
+            raise RuntimeError(f"git diff --cached --quiet failed: {diff.stderr.strip()}")
+    if not staged:
         return "nothing staged, no commit made"
-    if diff.returncode != 1:
-        raise RuntimeError(f"git diff --cached --quiet failed: {diff.stderr.strip()}")
-    # `-- rels` restricts the commit to these paths, same as the add above — never the whole
+    # The pathspec restricts the commit to these paths, same as the add above — never the whole
     # index, so changes staged elsewhere by something else running concurrently stay untouched.
-    _git(["commit", "-m", "chore: update template", "--", *rels], cwd=root)
+    _git_pathspec_stdin(["commit", "-m", "chore: update template"], rels, cwd=root)
     sha = _git(["rev-parse", "--short", "HEAD"], cwd=root).stdout.strip()
     return f"committed {len(rels)} path(s) as {sha}"
 

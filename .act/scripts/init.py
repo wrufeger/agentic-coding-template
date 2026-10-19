@@ -170,6 +170,21 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
     return result
 
 
+def _git_add_paths(rels: list[str], cwd: Path) -> None:
+    """`git add` for `rels` with the paths on stdin (`--pathspec-from-file`, Git 2.25 or newer): a
+    long list passed as arguments fails on Windows (WinError 206, about 32,000 characters). An empty
+    list is refused: git would read it as "no pathspec" and stage the whole tree."""
+    if not rels:
+        raise ValueError("git add: empty path list, refusing to stage the whole tree")
+    args = ["add", "--pathspec-from-file=-", "--pathspec-file-nul"]
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+        input="".join(f"{rel}\0" for rel in rels),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
+
+
 def _print_step(n: int, text: str) -> None:
     print(f"[{n}/10] {text}")
 
@@ -2725,7 +2740,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
         return "nothing to commit"
     if plan:
         return f"would commit {len(rels)} path(s): {', '.join(rels)}"
-    _git(["add", "--", *rels], cwd=root)
+    _git_add_paths(rels, cwd=root)
     diff = _git(["diff", "--cached", "--name-only"], cwd=root)
     if not diff.stdout.strip():
         return "nothing staged, no commit made"
