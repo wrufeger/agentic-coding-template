@@ -281,7 +281,11 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
             sys.stdout.reconfigure(encoding="utf-8")
         except (AttributeError, ValueError):
             pass
-        print(json.dumps({"decision": "block", "reason": _reason3}, ensure_ascii=False))
+        # suppressOriginalPrompt: the block notice leaves out its "Original prompt: ..." tail; the
+        # reason already names where the text went.
+        print(json.dumps({"decision": "block", "reason": _reason3,
+                          "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                 "suppressOriginalPrompt": True}}, ensure_ascii=False))
         sys.exit(0)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     try:

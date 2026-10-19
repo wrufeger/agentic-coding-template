@@ -75,7 +75,7 @@
   "hooks/checks/worker_scope_overlap.py": "70c0e7c076fa38626b26069dca374a0e7430bc27bce0412fcbe148903ddc07b1",
   "hooks/checks/write_guard.py": "ac86a12fafcd23eb394a4bd9ad58151f8b6e3939f430667195cca9f90f0dea84",
   "hooks/checks/write_scope.py": "cd980e8aafe9d54397d8addca5e92f6f47b01641056514537b791330dc69d141",
-  "hooks/dispatch.py": "873f056ff69b5033a6bc51ea8cdd48214542e58f38adc6cafbd027dc2b447c48",
+  "hooks/dispatch.py": "c9c101f866a9b85ebd00d56797abee6f7a74f996c0f6d5614d7bce51ed203a7a",
   "hooks/statusline.py": "51c54e2e306f397390d92724bddc3b82b2079f9af5a334718b6dd9379b129c42",
   "mcp-catalog.md": "ecefd1ea325d3164d92cc96d5cf067c910f3142210ef02c2d1c1e4a60722cbce",
   "migrations/001-one-inbox.py": "5bc2ae63f82dc2c471c509d18de80aba30f1ef91a35b354cbb4edad1ace1ee78",
