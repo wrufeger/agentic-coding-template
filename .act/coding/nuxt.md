@@ -6,6 +6,12 @@ requires: vue, typescript
 Rules for Nuxt projects. Group IDs (`CR-nuxt-<name>`) are stable and never reassigned; a group
 whose purpose no longer holds gets a new ID and is listed as `retired:` in this header.
 
+On Nuxt 5 the set `nuxt5` (`.act/coding/nuxt5.md`) adds to this one. `init` checks it when
+`package.json` names `nuxt` at major 5. If the set's line is missing from
+`docs/project/coding_rules.md` on a Nuxt 5 project (one set up before the set existed), read
+`.act/coding/nuxt5.md` before touching Nuxt code and suggest adding
+`- [x] use: .act/coding/nuxt5.md` with its groups; an unchecked line is the owner's choice.
+
 ## `CR-nuxt-basics` — Established Nuxt defaults
 
 summary: directory layout, data fetching, typed handlers, runtime config, pitfalls

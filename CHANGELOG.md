@@ -11,6 +11,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- **Coding rule set `nuxt5`** — rules for Nuxt 5 and its nightly channel on top of `nuxt`: versions and channel,
+  modules, Nitro 3/h3 v2 server code, typed `$fetch` and route targets, Unhead 3, and the checks after every Nuxt
+  update. `init` checks it when `package.json` names `nuxt` at major 5 (`^5.0.0`, `npm:nuxt-nightly@5x`) or the
+  `stack` value says "Nuxt 5"; `nuxt.md` points an existing project to it.
+
 - **New rule `R-safe-dev-server`** — a server the assistant starts for tests, a browser check or a screenshot runs on
   a port of its own, never on one of the project's default ports; the owner's running server may be reused, but is
   stopped, restarted or moved only after asking, and processes are never ended by name.

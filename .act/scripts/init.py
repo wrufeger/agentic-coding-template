@@ -809,8 +809,15 @@ def step_thin_bridges(tools: list[str]) -> tuple[dict[str, BridgeSpec], str]:
 # Only used to order *enabled* sets in the generated file; every set the template actually
 # ships under .act/coding/ is included either way, checked or not, even one missing here.
 CODING_SET_DETECTION_ORDER = [
-    "nuxt", "vue", "typescript", "tailwind", "php", "python", "go", "java", "csharp", "bash", "sql",
+    "nuxt", "nuxt5", "vue", "typescript", "tailwind", "php", "python", "go", "java", "csharp", "bash", "sql",
 ]
+
+# A `nuxt` version spec at major 5 also checks the `nuxt5` set: a range ("^5.0.0", "~5.1", ">=5", "=5.0.0",
+# "5.0.0-rc.1", "workspace:^5.0.0") or the nightly alias ("npm:nuxt-nightly@5x"). "latest", a tag, a git spec or
+# a "||" list says nothing certain about the major and leaves `nuxt` alone; so does the free-text stack hint
+# unless it says "Nuxt 5" ("nuxt5", "Nuxt v5", "nuxt@5x").
+_NUXT5_SPEC = re.compile(r"^(?:npm:nuxt(?:-nightly)?@|workspace:)?(?:[\^~=]|>=?)?\s*v?5(?:[.x-]|$)", re.IGNORECASE)
+_NUXT5_STACK_HINT = re.compile(r"\bnuxt[\s@-]*v?5(?:x|\b)")
 
 
 # Database access libraries per ecosystem: a project depending on one of these writes SQL (directly or
@@ -878,6 +885,8 @@ def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str
                     deps.update(section)
     if "nuxt" in deps:
         detected.add("nuxt")
+        if isinstance(deps["nuxt"], str) and _NUXT5_SPEC.match(deps["nuxt"].strip()):
+            detected.add("nuxt5")
     if "vue" in deps:
         detected.add("vue")
     if "typescript" in deps or (root / "tsconfig.json").is_file():
@@ -905,6 +914,8 @@ def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str
     for name in known:
         if name in stack_lower:
             detected.add(name)
+    if _NUXT5_STACK_HINT.search(stack_lower):
+        detected.add("nuxt5")
 
     return {name for name in detected if name in known}
 
