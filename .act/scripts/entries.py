@@ -173,7 +173,6 @@ RESERVED_IDS_OLD_PATH = Path(".act-local/adopt/reserved-ids.json")
 STATE_DIR = Path(".act-local/state")
 
 STATUS_VALUES = ("open", "answered")
-_HEADER_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")
 # A task's versioned "started:" header field (entries.py state / start) — board.py and the status
 # line count a task carrying it as running, one without it as new.
 STARTED_RE = re.compile(r"(?im)^started:\s*(\S+)\s*$")
@@ -478,19 +477,24 @@ def _next_id(root: Path, kind: str, also_used: tuple = ()) -> str:
     return f"{prefix}{highest + 1}"
 
 
-def _insert_id(path: Path, entry_id: str) -> bool:
-    """Write `id: <entry_id>` as the file's first line — directly above an existing header field
-    (e.g. a question's "status: open"), or with a blank line separating it from the heading when
-    there was no header yet. Returns False without writing anything if the file cannot be read as
-    UTF-8 (the caller reports that separately, see cmd_assign)."""
+def _insert_id(path: Path, entry_id: str, frontmatter: bool = False) -> bool:
+    """Write `id: <entry_id>` as the header's first field: directly above an existing header field
+    (e.g. a question's "status: open"), inside the frontmatter when the header is one, or, when
+    there was no header yet, as a new header above the heading, separated from it by a blank
+    line, as frontmatter if `frontmatter` says the entry's kind is written that way
+    (actlib.writes_frontmatter()). Returns False without writing anything if the file cannot be
+    read as UTF-8 (the caller reports that separately, see cmd_assign)."""
     text = _safe_read(path)
     if text is None:
         return False
-    first_line = text.splitlines()[0] if text else ""
-    if _HEADER_FIELD_RE.match(first_line):
+    head = actlib.split_header(text)[0]
+    if actlib.is_frontmatter(head):
+        first_line, _, rest = text.partition("\n")
+        new_text = f"{first_line}\nid: {entry_id}\n{rest}"
+    elif head:
         new_text = f"id: {entry_id}\n{text}"
     else:
-        new_text = f"id: {entry_id}\n\n{text}"
+        new_text = actlib.format_header([f"id: {entry_id}"], frontmatter) + f"\n{text}"
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(new_text)
     return True
@@ -511,14 +515,16 @@ def _mark_started(path: Path) -> Optional[str]:
         return None
     value = datetime.now().isoformat(timespec="seconds")
     lines = text.split("\n")
-    header_end = 0
-    while header_end < len(lines) and _HEADER_FIELD_RE.match(lines[header_end]):
-        header_end += 1
-    if header_end == 0:
+    head = actlib.split_header(text)[0]
+    head_count = head.count("\n") + (1 if head and not head.endswith("\n") else 0)
+    # the field lines are lines[first:last]: all header lines, or those between the `---` delimiters
+    framed = actlib.is_frontmatter(head)
+    first, last = (1, head_count - 1) if framed else (0, head_count)
+    if head_count == 0:
         lines[0:0] = [f"started: {value}", ""]
     else:
-        created = [i for i in range(header_end) if lines[i].lower().startswith("created:")]
-        lines.insert((created[-1] if created else header_end - 1) + 1, f"started: {value}")
+        created = [i for i in range(first, last) if lines[i].lower().startswith("created:")]
+        lines.insert((created[-1] + 1) if created else last, f"started: {value}")
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write("\n".join(lines))
     return value
@@ -716,7 +722,8 @@ def create_entry(
                 header_lines.append(f"{extra_key}: {extra_value}")
         header_lines.append(f"created: {created_at}")
 
-        text = "\n".join(header_lines) + "\n\n" + f"# {title.strip()}\n\n" + body
+        text = (actlib.format_header(header_lines, actlib.writes_frontmatter(kind))
+                + "\n" + f"# {title.strip()}\n\n" + body)
         slug = _slugify(slug if slug else title)
         if kind == "ledger":
             filename = f"{date.today().isoformat()}-{slug}.md"
@@ -875,7 +882,7 @@ def cmd_assign(root: Path) -> int:
         # several entries awaiting a number get it in the order they were created, then by name
         for _created, _name, path in sorted(candidates):
             entry_id = _next_id(root, kind)
-            if not _insert_id(path, entry_id):
+            if not _insert_id(path, entry_id, actlib.writes_frontmatter(kind)):
                 continue
             new_path = _rename_with_id(path, entry_id)
             assigned.append((entry_id, path, new_path))

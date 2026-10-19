@@ -545,7 +545,7 @@ def _prune_feedback_note(lines: list[str]) -> bool:
 
 
 def _note_is_empty(lines: list[str]) -> bool:
-    """True if `lines` (a note file) hold only the header block, the title and blank lines — nothing
+    """True if `lines` (a note file) hold only the header (plain or frontmatter), the title and blank lines — nothing
     a person would still read or has written."""
     body = lines
     if "" in lines:

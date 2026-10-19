@@ -64,6 +64,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- **Inbox entries open with YAML frontmatter** — the header fields of every file under `docs/ai/inbox/` (`id`, `kind`,
+  `for`, `status`, `created` …) now stand between two `---` lines, so GitHub, GitLab and Markdown editors show them as
+  metadata instead of running them together into one paragraph. `entries.py`, quick capture and the reports of
+  `doctor --inbox` and `act-adopt` write the new form; every reader accepts both forms, so archived and hand-written
+  entries keep working. `act-update` rewrites every entry still in an existing project's inbox once (migration
+  `003-inbox-frontmatter`); the archive is left as it is. Tasks, backlog and journal entries keep their plain header.
+
 - **Claude Code's `Artifact` tool is switched off by default** to save about 13,700 tokens at every session start.
   New config key `artifacts: on | off` (default `off`): `off` sets `"enableArtifact": false` in
   `.claude/settings.json` at session start, `init` and `update`; the tool is gone from the next session on. Existing

@@ -499,8 +499,8 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
       - "created": the "created:" header value, or None if missing (sort fallback: the caller
         uses the filename instead — entries are named so that sorts chronologically too)
       - "title": the file's first Markdown heading, or its filename stem
-      - "body": the file's text with the leading header block (and the blank line separating it
-        from the rest) stripped, kept verbatim otherwise — used only by the generated inbox view
+      - "body": the file's text with the leading header (plain or frontmatter, and the blank line
+        separating it from the rest) stripped, kept verbatim otherwise — used only by the generated inbox view
     """
     inbox_dir = root / actlib.INBOX_DIR
     if not inbox_dir.is_dir():
@@ -530,8 +530,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
         created = created_match.group(1).strip() if created_match else None
         title = _first_heading(path) or path.stem
 
-        header_line_count = len(header.splitlines()) if header else 0
-        rest_lines = text.splitlines()[header_line_count:]
+        rest_lines = actlib.split_header(text)[1].splitlines()
         while rest_lines and not rest_lines[0].strip():
             rest_lines.pop(0)
         body = "\n".join(rest_lines).rstrip("\n")

@@ -20,9 +20,11 @@ waits for the human.
 Which kind a tool writes follows what it asks of the reader, not who wrote it: nothing but reading
 is asked -> `report`; some action is needed (configure, decide, pick up a hint) -> `todo`.
 
-Each file opens with header fields, in this order (a field a given entry does not use is left out):
+Each file opens with header fields as YAML frontmatter — between two `---` lines, then a blank line and
+the `# Title` — in this order (a field a given entry does not use is left out):
 
 ```text
+---
 id: Q<n>            # questions (Q<n>) and todos (U<n>) only
 formerly: T<n>        # an id the entry had in an older numbering (adoption, --formerly)
 kind: todo          # question | todo | report | note; omitted = todo
@@ -30,7 +32,11 @@ for: all            # or a workspace identity - who it is addressed to
 status: open        # open -> answered -> done
 triage: open        # only on an entry captured from a chat prefix (todo:/note:); the assistant removes it once it has dealt with the entry
 created: 2026-09-25T18:30
+---
 ```
+
+An older entry without the two `---` lines (header fields straight at the top) is read the same way;
+`act-update` converts every entry still in the inbox once.
 
 File names: an entry with an id is `<ID>-<slug>.md` (e.g. `Q<n>-...md`, `U<n>-...md`); one without
 (report, note) is `<kind>-<YYYYMMDD-HHMM>-<slug>.md` (e.g. `report-20260925-1830-adoption.md`). A

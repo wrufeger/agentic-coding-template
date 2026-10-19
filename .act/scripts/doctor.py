@@ -1678,8 +1678,9 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
             n += 1
     language = actlib.docs_language(root)
     title = actlib.localized(language, "# doctor findings", "# Doctor-Befunde")
-    lines = ["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}",
-              "", title, ""]
+    header = actlib.format_header(["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}"],
+                                  actlib.writes_frontmatter("report"))
+    lines = [header.rstrip("\n"), "", title, ""]
     for kind in KIND_ORDER:
         group = [f for f in findings if f.kind == kind]
         if not group:

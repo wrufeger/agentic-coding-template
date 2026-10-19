@@ -1923,7 +1923,9 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
 
     none = L("none", "keine")
     settings_removed, settings_notes, unmarked, refs_file = extra
-    out = ["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}", "",
+    header = actlib.format_header(["kind: report", "for: all", "status: open", f"created: {actlib.created_stamp()}"],
+                                  actlib.writes_frontmatter("report"))
+    out = [header.rstrip("\n"), "",
            L("# Adoption report (`adopt.py --finish`)", "# Übernahmebericht (`adopt.py --finish`)"), "",
            L(f"Branch `{state.get('branch', BRANCH)}` (from `{state.get('base_branch', '?')}`), nothing committed by "
              "adopt.py. Review the branch, then commit per path or drop it.",

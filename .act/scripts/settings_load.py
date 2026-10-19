@@ -1651,7 +1651,9 @@ def write_inbox(
     # The hash covers what it always covered (header fields, heading, body) and never the `created:`
     # line, which changes every day by definition — a same-day re-run and a later-day re-run of the
     # same, unchanged import must both count as "already filed", and so must an entry filed before
-    # todos carried ids.
+    # todos carried ids. The header text below stays in the plain form on purpose, whatever form
+    # the entry is written in now: the hash is only a name for the content, and an entry filed
+    # under an earlier form must still match it.
     hash_body = "\n".join(["kind: todo", "for: all", "status: open", "", f"# {title}", ""] + lines)
     marker = f"<!-- settings-import-sha256: {hashlib.sha256(hash_body.encode('utf-8')).hexdigest()} -->"
 

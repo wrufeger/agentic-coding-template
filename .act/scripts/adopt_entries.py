@@ -373,13 +373,16 @@ def read_map(root: Path) -> dict:
 def _strip_volatile(text: str) -> str:
     """Drop the one header line that always differs between two writes of the very same content —
     a `created:` timestamp (entries.py's create_entry()) or a `date:` line (write_proposal(), which
-    stamps today's date) — so two otherwise-identical texts compare equal below."""
-    # Header only (up to the first blank line): the same line inside a body is content. Line
-    # endings are unified first -- read_text() already folds CRLF, the expected text may not.
+    stamps today's date) — so two otherwise-identical texts compare equal below. The `---` lines of
+    a frontmatter header are dropped too, so a file written in the plain form by an earlier run
+    still equals the text this run would write."""
+    # Header only (actlib.split_header()): the same line inside a body is content. Line endings
+    # are unified first -- read_text() already folds CRLF, the expected text may not.
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    head, sep, body = text.partition("\n\n")
-    head = "\n".join(line for line in head.split("\n") if not line.startswith(("created: ", "date: ")))
-    return head + sep + body
+    head, body = actlib.split_header(text)
+    head = "\n".join(line for line in head.split("\n")
+                     if line != actlib.FRONTMATTER_DELIMITER and not line.startswith(("created: ", "date: ")))
+    return head + body
 
 
 def _expected_text(row: dict, item: dict, root: Optional[Path] = None) -> str:
@@ -412,7 +415,8 @@ def _expected_text(row: dict, item: dict, root: Optional[Path] = None) -> str:
                             else f"for: {entries._recipient_value(item['for'])}")
         header_lines.append(f"status: {item['status'] or 'open'}")
     header_lines.append("created: PLACEHOLDER")
-    return "\n".join(header_lines) + "\n\n" + f"# {item['title'].strip()}\n\n" + (item["body"] or "")
+    return (actlib.format_header(header_lines, actlib.writes_frontmatter(item["kind"]))
+            + "\n" + f"# {item['title'].strip()}\n\n" + (item["body"] or ""))
 
 
 def _row_file(root: Path, row: dict) -> Optional[Path]:

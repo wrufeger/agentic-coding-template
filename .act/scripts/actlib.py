@@ -1178,18 +1178,67 @@ def normalize_tool(name: str) -> str:
 _HEADER_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")
 
 
+FRONTMATTER_DELIMITER = "---"
+
+
+def split_header(text: str) -> tuple[str, str]:
+    """Split `text` into (head, body) with head + body == text exactly. The head is the file's
+    header with its line endings (and a leading UTF-8 BOM), the body everything after it, blank
+    separator line included. Two forms are read alike: the plain form (a leading run of "key:
+    value" lines, ended by a blank line or the first line that is not a field, typically the
+    Markdown heading) and frontmatter (a `---` line as the very first line, field lines, the first
+    following `---` line closing it, which is part of the head too). Frontmatter counts only when
+    every line between the two delimiters is a field line or blank; otherwise the file has no
+    header at all. A `---` further down, such as a reply block in an inbox entry's body followed
+    by `status: done`, is never a header, so a value can't be spoofed from there."""
+    start = 1 if text.startswith("\ufeff") else 0  # a hand-saved UTF-8 BOM is not content
+    lines = text[start:].split("\n")
+    count = 0
+    if lines[0].rstrip() == FRONTMATTER_DELIMITER:
+        for index in range(1, len(lines)):
+            line = lines[index]
+            if line.rstrip() == FRONTMATTER_DELIMITER:
+                count = index + 1
+                break
+            if line.strip() and not _HEADER_FIELD_RE.match(line.rstrip("\r")):
+                break
+    else:
+        while count < len(lines) and lines[count].strip() and _HEADER_FIELD_RE.match(lines[count].rstrip("\r")):
+            count += 1
+    head_length = start + sum(len(line) + 1 for line in lines[:count])
+    return text[:head_length], text[head_length:]
+
+
+def is_frontmatter(head: str) -> bool:
+    """True if `head`, as split_header() returned it, is a frontmatter block (opens with `---`)."""
+    return head.removeprefix("\ufeff").startswith(FRONTMATTER_DELIMITER)
+
+
 def header_block(text: str) -> str:
-    """The file's leading run of "key: value" header lines (e.g. "id:", "status:", "for:",
-    "created:") — stops at the first blank line or any line that is not itself a header field,
-    typically the first Markdown heading. Every place that reads such a field searches this
-    substring, never the whole file, so a value can never be spoofed by an example, a fenced code
-    block, or another file's header merely quoted in a journal entry (`entries.py`, `board.py`)."""
-    lines: list[str] = []
-    for line in text.removeprefix("\ufeff").splitlines():  # a hand-saved UTF-8 BOM is not content
-        if not line.strip() or not _HEADER_FIELD_RE.match(line):
-            break
-        lines.append(line)
-    return "\n".join(lines)
+    """The file's header fields as "key: value" lines (e.g. "id:", "status:", "for:", "created:"),
+    joined by "\\n", without any frontmatter delimiters; split_header() says which two forms are
+    read and what ends a header. Every place that reads such a field searches this substring,
+    never the whole file, so a value can never be spoofed by an example, a fenced code block, or
+    another file's header merely quoted in a journal entry (`entries.py`, `board.py`)."""
+    head = split_header(text)[0]
+    lines = [line.rstrip("\r") for line in head.removeprefix("\ufeff").split("\n")]
+    return "\n".join(line for line in lines if _HEADER_FIELD_RE.match(line))
+
+
+def writes_frontmatter(kind: str) -> bool:
+    """True if an entry of this kind is written with its header as frontmatter: the inbox kinds
+    (INBOX_KINDS, and the `inbox` alias) are; task, backlog and ledger entries keep the plain
+    header. The one place that decides it. Every writer asks here, every reader accepts both
+    forms regardless."""
+    return kind in INBOX_KINDS or kind == "inbox"
+
+
+def format_header(fields: list[str], frontmatter: bool) -> str:
+    """Render header `fields` (each a "key: value" line) as text ending in a newline: between
+    `---` lines when `frontmatter`, else as the plain run of lines. The caller adds the blank
+    separator line and the heading."""
+    lines = [FRONTMATTER_DELIMITER, *fields, FRONTMATTER_DELIMITER] if frontmatter else list(fields)
+    return "\n".join(lines) + "\n"
 
 
 def sha256_file(path: Path) -> str:
