@@ -67,6 +67,17 @@ it could not decide) to the project's inbox instead of asking. Check
   the existing material, proposes what happens to each piece, and only moves anything once the
   owner has approved the table once.
 
+**Then translate the scaffold, in this same run.** With a `language-docs` other than `en`, `init.py`
+writes the scaffold in the template's English and files `docs/ai/inbox/U<n>-translate-scaffold.md`
+listing those files — it has no model to translate with, so the todo is only the fallback for a run
+without this skill, never something to hand to the owner. Translate every listed file (under
+`<path>` for way 2) that still has `<!-- act:default -->` on line 1, following the todo's own
+instructions (`R-work-language`), and drop that line. Set the todo to `status: done` and move it
+to `docs/ai/work/archive/` with `git mv` (`init.py` has committed it), then commit the translated
+files and both paths of the todo, old and new, by pathspec in one commit (`docs: translate
+scaffold into <code>`); with `--no-commit`, move it as a plain file and leave everything
+uncommitted together with `init.py`'s own changes. `act-adopt` does the same in its own step 7.
+
 ## 4. Say what is there now
 
 In three sentences: where the project's board and open questions live now

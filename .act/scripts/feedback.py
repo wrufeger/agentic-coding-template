@@ -104,6 +104,8 @@
 #       learned threshold for `feedback-cadence: adaptive`) — for a dispatcher to call at session
 #       start instead of embedding this logic in a hook. Never fails: always exit 0. When due
 #       under `adaptive`, advances the same-day-only learning marker in .act-local/feedback/state.json.
+#       A project that has never sent counts the cadence from its first check with sending on
+#       (`cadence_since` in state.json), so a new project is not reminded at its first session.
 #   python .act/scripts/feedback.py --postpone <days>
 #       Pauses the due reminder for <days> days (writes `reminder_paused_until`) AND counts as a
 #       postponement for the adaptive-cadence learning (`postponements`, resets `consecutive_sends`
@@ -1233,12 +1235,25 @@ def due_status(root: Path) -> "tuple[bool, str]":
     """(due, detail) -- the same due/no-due decision and detail text cmd_due() prints below,
     factored out (review 2026-09-23) so a caller that only wants the boolean (checks/tips.py's
     is_feedback_due(), folded into the SessionStart status line) does not have to capture and
-    parse cmd_due()'s stdout. Never raises; side effect unchanged from before the split: an
-    adaptive cadence's learning marker still advances exactly when due comes back True."""
+    parse cmd_due()'s stdout. Never raises. Side effects: an adaptive cadence's learning marker
+    still advances exactly when due comes back True, and a project that has never sent stores
+    `cadence_since` at its first check with sending on."""
     config = _read_config_at(root)
     mode, cadence = _mode(config), _cadence(config)
     state = _read_state(root)
     last_sent = state.get("last_sent") or ""
+    since_label = "last send"
+    if not last_sent and mode not in ("off", "manual"):
+        # Never sent: the cadence runs from the first check with sending on, not from "ever" --
+        # otherwise a new project would be reminded from its very first session on.
+        since_label = "first check"
+        last_sent = str(state.get("cadence_since") or "")
+        if not last_sent:
+            last_sent = state["cadence_since"] = time.strftime("%Y-%m-%d %H:%M")
+            try:
+                _write_state(root, state)
+            except OSError:
+                pass  # without the stored start, the next check starts the clock again
     today = time.strftime("%Y-%m-%d")
     paused_until = str(state.get("reminder_paused_until") or "").strip()
     paused = paused_until if paused_until and paused_until > today else ""
@@ -1255,14 +1270,14 @@ def due_status(root: Path) -> "tuple[bool, str]":
         work_days = _work_days_since(root, last_sent)
         threshold, why = _adaptive_threshold(state)
         due = work_days >= threshold and hours_since >= MIN_REMINDER_INTERVAL_H
-        reason = f"{work_days} work day(s) since last send, threshold {threshold} ({why})"
+        reason = f"{work_days} work day(s) since {since_label}, threshold {threshold} ({why})"
     else:
         hours_min = CADENCE_HOURS.get(cadence)
         if hours_min is None:
             reason = f"cadence '{cadence}' has no fixed interval"
         else:
             due = hours_since >= max(hours_min, MIN_REMINDER_INTERVAL_H)
-            reason = f"cadence '{cadence}', {hours_since / 24:.1f} day(s) since last send"
+            reason = f"cadence '{cadence}', {hours_since / 24:.1f} day(s) since {since_label}"
 
     if due and cadence == "adaptive":
         try:

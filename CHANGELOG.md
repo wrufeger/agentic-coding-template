@@ -60,6 +60,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   projects lose it after their next update — `artifacts: on` in `docs/ai/config.md` keeps it. `on` only removes an
   entry the template set itself; a value the project set itself is never overwritten, a contradicting one is reported
   once.
+- **Feedback to the template author defaults to `confirm` in new projects** instead of `off`: `init` writes
+  `feedback: confirm` whenever nobody chooses — a run without a terminal (as `act-setup` and `act-adopt` run it), an
+  empty answer, or three invalid ones. `confirm` shows every payload and asks before each send, so nothing leaves
+  without a yes; `off` stays one edit away in `docs/ai/config.md` § Feedback. Existing projects keep their value, and
+  a `config.md` without the key still counts as `off`. A project that has never sent counts the feedback cadence from
+  its first session with sending on, so it is no longer shown "feedback due" from the very start.
+- **`act-setup` and `act-adopt` translate the docs scaffold in the same run** when `language-docs` is not English,
+  and close the `translate-scaffold` todo themselves; it is left for later only by an `init` run without either skill.
 - **`doctor.py` no longer proposes a lower tier** for a role whose workers' results were all accepted; it
   proposes only a higher one, once 8+ outcomes show 40%+ reworked or escalated (`R-role-outcome`). An
   accepted result does not show that a cheaper tier would have done as well.

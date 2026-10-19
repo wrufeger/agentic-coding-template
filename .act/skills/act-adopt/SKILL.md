@@ -168,6 +168,15 @@ scripts, the `act:default` mark, dead references) and for the check of the resul
 `doctor.py --target <dir>`. When `--finish` names `<dir>/.act-local/adopt/harvest.md`, read
 `references/harvest.md` — the owner's consent comes now, not before.
 
+**Then translate the scaffold, in this same run.** With a `language-docs` other than `en`,
+`docs/ai/inbox/U<n>-translate-scaffold.md` lists the scaffold files `init.py` wrote in English. It
+is only the fallback for a run without this skill, never something to hand to the owner. Translate
+every listed file that still has `<!-- act:default -->` on line 1 — `--finish` took the mark off
+every target holding adopted content, so what still carries it is pure scaffold — following the
+todo's own instructions (`R-work-language`), and drop that line. Then set the todo to
+`status: done` and move it to `docs/ai/work/archive/`. Adopted content is never translated here
+(`references/config-adoption.md`).
+
 ## 8. Commit — the orchestrator, by pathspec, on `act-adopt`
 
 `adopt.py` never commits. Each group below is one `git add -- <paths>` (only paths that exist)
@@ -182,9 +191,11 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
 2. **The template layer** — every path in `state.json`'s `created` and `dirty_after_apply`, plus
    the `removed_at_apply` paths; except anything under `.act-local/` (git-ignored) or
    `docs/ai/work/archive/legacy/`, group 1's paths, and table targets. That is `.act/`, bridges,
-   skeleton, tool copies, `.act-lock.json`, the init notes in the inbox together with
-   `docs/ai/inbox/U<n>-translate-scaffold.md` from step 5 (both are about the scaffold, not
-   about old content; step 5 may have changed the init notes), `.gitignore`, the template copies
+   skeleton, tool copies, `.act-lock.json`, the init notes in the inbox together with the
+   scaffold files translated in step 7 and the translate-scaffold todo at its archive path, never
+   its old inbox path (it was never committed there, so git finds no such pathspec) (all
+   about the scaffold, not about old content; step 5 may have changed the init notes; a
+   translated file that is a table target goes to group 3), `.gitignore`, the template copies
    now standing where an old unit of the same name was moved or removed (with the removal of that
    unit's other files), and `.claude/settings.json` as it is now — `init.py`'s merged hooks and
    the entries `--finish` or the orchestrator removed in step 7 in one commit, since a pathspec

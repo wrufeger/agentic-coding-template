@@ -27,9 +27,9 @@ the owner. A language passed in step 4 (`--language-docs`/`--language-chat`) is 
 assumption and no overwrite. It never sets `language-chat` (stays as passed, else `auto`) or `mode`. A `language-docs` other than English leaves
 `docs/ai/inbox/U<n>-translate-scaffold.md` (from `init.py` when step 4 passed the
 language, else from `adopt_config.py`, or from you by hand if you set it yourself: `init.py` wrote
-the scaffold in English, marked `act:default`) — translate that
-scaffold once as `R-work-language` describes, never the adopted content, whose translation is a
-separate assignment offered in the report, done only on request. This has to be right before
+the scaffold in English, marked `act:default`) — step 7 translates that scaffold right after
+`--finish`, never the adopted content, whose translation is a separate assignment offered in the
+report, done only on request. This has to be right before
 step 6 and 7: `--finish` chooses the bridges by `tools` (without `claude-code` there, an adopted
 `CLAUDE.md` is removed instead of becoming the bridge), and `mode` decides whether an entry
 without a kept id gets a new id now (`solo`) or none yet (`team`).

@@ -109,9 +109,10 @@ TOOL_MAP = {"claude code": "claude-code", "claude-code": "claude-code", "copilot
 
 # What init writes when nobody told it otherwise (init.py step_config, .act/skeleton/config.md) —
 # a config.md value in this set may be replaced; anything else is the project's own and stays.
+# `feedback` lists both `confirm` (init's default now) and `off` (what older inits wrote).
 DEFAULTS: dict[str, set] = {
     "name": {"", "<name>"}, "owner": {"", "<owner>", "unknown"}, "stack": {"", "<stack>", "unspecified"},
-    "tools": {"", "<tool-list>", "(none)", "claude-code"}, "feedback": {"", "<feedback-mode>", "off"},
+    "tools": {"", "<tool-list>", "(none)", "claude-code"}, "feedback": {"", "<feedback-mode>", "confirm", "off"},
     "feedback-cadence": {"", "weekly"}, "feedback-scope": {"", "a,b,c"}, "logging": {"", "off"},
     "log-level": {"", "INFO"}, "language-chat": {"", "<language-chat>", "auto"},
     "language-docs": {"", "<language-docs>", "en"},
@@ -524,14 +525,19 @@ def _prune_defaults_note(lines: list[str], set_keys: set[str], language_set: set
     return False
 
 
-_FEEDBACK_OFF_NOTE_PREFIX = "- Feedback to the template author is off (default)"
+# The current wording (init.py FEEDBACK_NOTE_PREFIX) and the one older inits wrote.
+_FEEDBACK_DEFAULT_NOTE_PREFIXES = (
+    "- Feedback to the template author is `confirm` (default)",
+    "- Feedback to the template author is off (default)",
+)
 
 
 def _prune_feedback_note(lines: list[str]) -> bool:
-    """Drop init.py's "Feedback to the template author is off (default) ..." line once adoption set
-    `feedback` in config.md — the line would otherwise keep claiming the opposite. Returns True if
-    a line was removed."""
-    kept = [line for line in lines if not line.startswith(_FEEDBACK_OFF_NOTE_PREFIX)]
+    """Drop init.py's "Feedback to the template author is `confirm` (default) ..." line (or the
+    older "... is off (default) ..." one) once adoption set `feedback` in config.md — the line
+    would otherwise keep describing a default that no longer applies. Returns True if a line was
+    removed."""
+    kept = [line for line in lines if not line.startswith(_FEEDBACK_DEFAULT_NOTE_PREFIXES)]
     if len(kept) == len(lines):
         return False
     lines[:] = kept

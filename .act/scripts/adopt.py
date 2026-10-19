@@ -2141,6 +2141,8 @@ def cmd_finish(root: Path, plan: bool) -> int:
         "lint_cmd": "", "typecheck_cmd": "", "test_cmd": "", "tools": tools,
         "mode": actlib.read_config(root).get("mode", "solo"),
         # init.py's ProjectConfig gained "feedback_mode"; only the <feedback-mode> token uses it.
+        # The fallback stays "off": a config.md without the row is read as off everywhere
+        # (feedback.py), so the token must not claim more than that.
         "feedback_mode": actlib.read_config(root).get("feedback", "off"),
     })
     cache = actlib.read_cache()

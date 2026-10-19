@@ -19,8 +19,10 @@ this project (its name, its stack choice, a number from its data, a quote from i
 Three keys in `docs/ai/config.md` § Feedback control this, and none of them is a project fact
 either — they only say how the template was configured:
 
-- `feedback`: `off` (default) · `confirm` (show the payload, ask) · `automatic` (send without
+- `feedback`: `off` · `confirm` (show the payload, ask) · `automatic` (send without
   asking) · `manual` (collect, never send on its own — only `--send --force`, i.e. the skill).
+  `init` writes `confirm` unless the owner chose otherwise; a config.md with no `feedback` row
+  (a project set up earlier) counts as `off`.
 - `feedback-cadence`: an upper limit, never an obligation — `manual` · `immediate` · `hourly` ·
   `daily` · `weekly` (default) · `adaptive` (learns from how often reminders get acted on or
   postponed, see `feedback.py`'s own header comment for the exact math). Nothing to report means
