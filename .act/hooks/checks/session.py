@@ -492,17 +492,29 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
 
         target_list = bootstrapped if is_bootstrap else refreshed
 
+        # An unedited bridge that already equals its source (line endings aside) has nothing to
+        # refresh. Rewriting it with LF would only change the bytes of a CRLF checkout
+        # (core.autocrlf=true): git then lists the file as modified although `git diff` is empty.
+        try:
+            same = (not is_bootstrap and
+                    source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+                    == dest_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+        except (OSError, UnicodeDecodeError):
+            same = False
+
         if not write:
-            # Only what would actually change: an unedited bridge that already equals its source
-            # (line endings aside) has nothing to refresh.
-            try:
-                same = (not is_bootstrap and
-                        source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
-                        == dest_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
-            except (OSError, UnicodeDecodeError):
-                same = False
+            # Only what would actually change.
             if not (same and only_changed):
                 target_list.append(dest_rel)
+            continue
+
+        if same and only_changed:
+            # Nothing to write. An older-format recorded hash still moves to the current form, as
+            # a rewrite would have done, so a later renormalization can't make it look edited.
+            current = actlib.generated_hash(dest_path)
+            if generated.get(dest_rel) != current:
+                generated[dest_rel] = current
+                actlib.write_cache({"generated": generated})
             continue
 
         try:

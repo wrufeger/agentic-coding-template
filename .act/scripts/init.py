@@ -1458,7 +1458,7 @@ def _merge_settings_hooks(
     if plan:
         return f"{_relative_label(dest, root)}: would add/update {', '.join(parts)}{note_text}", False
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(new_current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    actlib.overwrite_text(dest, json.dumps(new_current, indent=2, ensure_ascii=False) + "\n")
     book()
     return f"{_relative_label(dest, root)}: added/updated {', '.join(parts)}{note_text}", True
 

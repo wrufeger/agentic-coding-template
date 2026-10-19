@@ -259,7 +259,7 @@ def _read_json(path: Path) -> Optional[dict]:
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    actlib.overwrite_text(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def _sha256(path: Path) -> str:
@@ -1557,7 +1557,7 @@ def rewrite_references(root: Path, succ: dict, plan: bool, exclude: frozenset = 
             left += [f"{rel_file}:{number}: {src} (mentioned in the text)" for src, rx in mentions.items()
                      if src not in handled and rx.search(new_line)]
         if edited and not plan:
-            file.write_bytes("".join(lines).encode("utf-8"))
+            actlib.overwrite_text(file, "".join(lines), newline="")
     return changes, left
 
 
@@ -1577,8 +1577,7 @@ def write_references(root: Path, refs: tuple, plan: bool) -> str:
     head = "# would be rewritten (old -> new)" if plan else "# rewritten (old -> new)"
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join([head, *changes, "", "# left unchanged (reason in brackets)", *left]) + "\n",
-                    encoding="utf-8")
+    actlib.overwrite_text(path, "\n".join([head, *changes, "", "# left unchanged (reason in brackets)", *left]) + "\n")
     return rel
 
 
@@ -1804,7 +1803,7 @@ def prune_settings(root: Path, dead: list, pending: list, plan: bool, gone: list
             continue
         removed += [f"{rel}: {hit}" for hit in hits]
         if not plan:
-            path.write_bytes(_json_dump(data, layout).encode("utf-8"))
+            actlib.overwrite_text(path, _json_dump(data, layout), newline="")
     return removed, notes
 
 
@@ -1830,7 +1829,7 @@ def strip_default_marks(root: Path, targets: list, plan: bool, created: Optional
         text = path.read_bytes().decode("utf-8")
         first, rest = (text.split("\n", 1) + [""])[:2]
         if not plan:
-            path.write_bytes((("﻿" if first.startswith("﻿") else "") + rest).encode("utf-8"))
+            actlib.overwrite_text(path, ("﻿" if first.startswith("﻿") else "") + rest, newline="")
         done.append(rel)
     return done
 
@@ -1872,7 +1871,7 @@ def write_legacy_readme(root: Path, moved: dict, plan: bool) -> Optional[str]:
     ]
     path = root / LEGACY_README
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines), encoding="utf-8")
+    actlib.overwrite_text(path, "\n".join(lines))
     return LEGACY_README
 
 
@@ -1981,7 +1980,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
         out += [f"- {none}"]
     out += ["", L("## Accounting", "## Bilanz"), "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text("\n".join(out), encoding="utf-8")
+    actlib.overwrite_text(dest, "\n".join(out))
     return dest
 
 

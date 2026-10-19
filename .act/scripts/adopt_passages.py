@@ -47,6 +47,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import actlib
+
 RE_HEADING = re.compile(r"^(?P<hashes>#{1,6})(?P<rest>\s+.*)?$")
 RE_OWN_RULES_MARK = re.compile(r"^<!--\s*act:own-rules\s*-->\s*$")
 RE_TOP_HEADING = re.compile(r"^##\s+.*$")
@@ -261,8 +263,7 @@ def run(root: Path, into: str, passages_path: Path, plan: bool) -> int:
     if plan:
         return 0
 
-    with open(target_path, "w", encoding="utf-8", newline=newline) as handle:
-        handle.write(new_text)
+    actlib.overwrite_text(target_path, new_text, newline=newline)
     return 0
 
 

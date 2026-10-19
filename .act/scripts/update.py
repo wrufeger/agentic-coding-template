@@ -2306,6 +2306,10 @@ def main(argv: list[str]) -> int:
         _print_step(3, diff_summary)
 
         if plan:
+            # Same condition as the real run below: no diff and no resume needed means nothing would happen.
+            if not has_changes and not _resume_needed(root, fetched_commit):
+                print("[act] done - nothing to update")
+                return 0
             print("[act]   [5/10] " + step_replace(root, new_act_dir, True))
             print(
                 "[act]   [6/10] " + step_refresh_copies(root, True)[0]

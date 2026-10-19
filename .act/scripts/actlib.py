@@ -131,7 +131,7 @@ def _write_json_merged(path: Path, data: dict) -> dict:
     merged.update(data)
     if existing is not None and merged == existing:
         return merged  # nothing changed: leave the file (and a versioned one's git status) alone
-    path.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    overwrite_text(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
     return merged
 
 
@@ -1041,7 +1041,7 @@ def write_settings_booking(root: Path, booking: Optional[dict]) -> None:
     else:
         new_lock.pop(SETTINGS_BOOKED_KEY, None)
     if new_lock != lock or not lock_path.is_file():
-        lock_path.write_text(json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        overwrite_text(lock_path, json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n")
 
 
 def _classify_block_lines(
@@ -1250,6 +1250,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def overwrite_text(path: Path, text: str, newline: Optional[str] = None) -> None:
+    """Write `text` to `path` as UTF-8, creating the parent folder and replacing any existing content.
+    On Windows `open(path, "w")` truncates through CREATE_ALWAYS, which the system refuses for a file
+    carrying the Hidden attribute (PermissionError 13) — editors and older tools often set it on
+    dotfiles such as `.gitignore`. An existing file is therefore opened with "r+" and cut with
+    `truncate()`, which also keeps its attributes. `newline` is passed to `open()` as is."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "r+" if sys.platform == "win32" and path.is_file() else "w"
+    try:
+        with open(path, mode, encoding="utf-8", newline=newline) as handle:
+            handle.write(text)
+            if mode == "r+":
+                handle.truncate()
+    except PermissionError as exc:
+        if sys.platform == "win32":
+            raise PermissionError(
+                exc.errno, f"{exc.strerror}: {path} — if the file is read-only or hidden, clear the "
+                f"attribute first with: attrib -R -H \"{path}\"") from exc
+        raise
+
+
 def write_text_lf(path: Path, text: str) -> None:
     """Write `text` to `path` as UTF-8 with `\\n` line endings regardless of platform default.
     Every generated bridge and scaffold/docs file must come out the same way `.gitattributes`
@@ -1257,9 +1278,7 @@ def write_text_lf(path: Path, text: str) -> None:
     generated" hash comparison in .act-local/cache.json flips on nothing but the checkout's own
     line endings. `open()`'s own `newline` parameter has always accepted this value, unlike
     `Path.write_text(..., newline=...)` (Python 3.10+), which this project's floor (3.9) lacks."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
+    overwrite_text(path, text, newline="\n")
 
 
 def normalized_sha256(path: Path) -> str:

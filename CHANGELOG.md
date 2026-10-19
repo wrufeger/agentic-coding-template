@@ -129,6 +129,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- **Session start no longer rewrites unchanged bridges.** `CLAUDE.md`, `AGENTS.md` and `docs/ai/rules.md` are written
+  only when their content differs from the source apart from line endings. On a Windows checkout with
+  `core.autocrlf=true`, the LF rewrite used to leave the files listed as modified with an empty `git diff`, which
+  blocked `act-update` and `act-commit` until they were added again. `act-update` skips identical bridges the same way.
+- **`update.py --plan` says "nothing to update" when there is nothing to update.** When the project is already at the
+  source's commit and no migration is due, the plan used to describe steps 5 to 10 anyway, so `act-update` asked for
+  consent to an update that did not exist. Plan and real run now end the same way.
+- **Hidden files on Windows can be overwritten.** Writing an existing file with the Hidden attribute (a `.gitignore`
+  set hidden by an editor, for example) used to abort `init` and `act-adopt` with `PermissionError` 13 and leave the
+  adoption in `init-failed`. `init` and `act-adopt` now overwrite such a file in place and keep its attributes; where
+  that is impossible, the error names the file and the way out (`attrib -R -H`).
 - The worker write scope reads a timestamp without a time zone as UTC.
 - Feedback documentation: the reply address stays in the local copy of its one payload and is never reused for a
   later message (it said "never stored" before).
