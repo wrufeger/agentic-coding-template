@@ -11,6 +11,16 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- **Quick capture from chat** — a message that begins with `todo:`, `note:` or `idea:` (any letter case) is filed by
+  the `UserPromptSubmit` hook without a model turn and never reaches the model, so it costs no tokens and does not
+  interrupt a running task. `todo:` and `note:` become inbox entries marked `triage: open`; `idea:` becomes a new
+  section at the end of your `docs/ai/concept/ideas-<identity>.md`, text unchanged. The assistant then processes
+  each `triage: open` entry right after the answered inbox entries: it decides whom a todo is for (or turns it into
+  a backlog entry), or replies below a note. The board and the session-start excerpt list such entries under
+  "Answered — the assistant processes these", and an answered note waits under "Waiting for you". Switch with
+  `quick-capture: on|off` in `docs/ai/config.md` (a missing key counts as `on`); new rule `R-human-capture` covers
+  tools without the hook, where the assistant files the entry itself.
+
 - **Coding rule set `nuxt5`** — rules for Nuxt 5 and its nightly channel on top of `nuxt`: versions and channel,
   modules, Nitro 3/h3 v2 server code, typed `$fetch` and route targets, Unhead 3, and the checks after every Nuxt
   update. `init` checks it when `package.json` names `nuxt` at major 5 (`^5.0.0`, `npm:nuxt-nightly@5x`) or the

@@ -6,11 +6,16 @@ and archived.
 | `kind` | id | who creates it | lifecycle |
 | :--- | :--- | :--- | :--- |
 | `question` | `Q<n>` | assistant (`entries.py new question`) | `open` -> `answered` (reply below the question) -> `done` -> archive |
-| `todo` | `U<n>` | assistant or human; a task for a human, filed only once it is actionable (code pushed, questions answered) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset) | `open` -> `done` -> archive |
+| `todo` | `U<n>` | assistant or human; a task for a human, filed only once it is actionable (code pushed, questions answered) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset); also a chat message starting `todo:` (filed by the `UserPromptSubmit` hook, `quick-capture` in `config.md`) | `open` -> `done` -> archive |
 | `report` | none | a tool's own read-only report of what it found or did: `doctor --inbox`, `act-adopt` (adoption report) | `open` -> `done` (read) -> archive |
-| `note` | none | human; the assistant replies below it | `open` -> `answered` -> `done` -> archive |
+| `note` | none | human; the assistant replies below it; also a chat message starting `note:` (filed by the hook, `quick-capture` in `config.md`) | `open` -> `answered` -> `done` -> archive |
 
 An entry without `kind:` counts as `todo`.
+
+An entry with `triage: open` was captured from a chat message beginning `todo:` or `note:` and is the
+assistant's to process, whatever its status: a `todo` gets its `for:` decided (or becomes a backlog entry), a
+`note` gets a reply below it and `status: answered`; then the `triage:` line is removed. An answered `note`
+waits for the human.
 
 Which kind a tool writes follows what it asks of the reader, not who wrote it: nothing but reading
 is asked -> `report`; some action is needed (configure, decide, pick up a hint) -> `todo`.
@@ -23,6 +28,7 @@ formerly: T<n>        # an id the entry had in an older numbering (adoption, --f
 kind: todo          # question | todo | report | note; omitted = todo
 for: all            # or a workspace identity - who it is addressed to
 status: open        # open -> answered -> done
+triage: open        # only on an entry captured from a chat prefix (todo:/note:); the assistant removes it once it has dealt with the entry
 created: 2026-09-25T18:30
 ```
 

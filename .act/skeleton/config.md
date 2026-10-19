@@ -78,12 +78,20 @@ committed boards. Empty means `on` with `mode: team`, `off` otherwise.
 | Key | Value |
 | :--- | :--- |
 | `inbox-decisions` | immediate |
+| `quick-capture` | on |
 
 `immediate` (default) \| `at-start`. `immediate`: every open decision, and every step only a person
 can take and can take now, goes into `docs/ai/inbox/` as soon as it is booked, so the inbox always
 shows everything waiting. `at-start`: a backlog entry may keep its open decisions — header
 `decision: open`, listed on the board — until work on it starts (`act-prepare`); a task always has
 them in the inbox (`R-human-ask`).
+
+`quick-capture`: `on` \| `off`. `on` (default; a missing key counts as `on`): a chat message that begins
+with `todo:`, `note:` or `idea:` is filed by the `UserPromptSubmit` hook without a model turn and never
+reaches the model — `todo:` and `note:` as inbox entries marked `triage: open` (the assistant decides
+whom a todo is for, or answers the note), `idea:` as a new section in your `ideas-<identity>.md`
+(`R-human-capture`). `off`: the prefixes mean nothing special. If a message that starts with one of
+the words was meant as an assignment, delete the file the hook names and send it again without the prefix.
 
 ## Output depth
 

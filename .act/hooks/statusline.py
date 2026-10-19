@@ -96,7 +96,9 @@ def _waiting_summary(root: Path) -> tuple[int, list[dict]]:
     inbox_entries = board.read_inbox_entries(root)
     if inbox_entries is None:
         return 0, []
-    open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=board._sort_key)
+    # Same split as the board: an entry for the assistant (triage pending, or answered and not a
+    # note) is not waiting on a person; an answered note is.
+    open_entries, _for_assistant = board.split_entries(inbox_entries)
     identity_data = actlib.read_identity(root)
     my_identity = identity_data.get("identity") if identity_data else None
     mine_open, all_open, _other_open = board._group_by_recipient(open_entries, my_identity)

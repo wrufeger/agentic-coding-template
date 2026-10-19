@@ -556,13 +556,14 @@ class _EntriesLock:
     timeout it proceeds without the lock rather than hanging or failing outright — a collision at
     that point is still caught by check()/doctor.py, just not prevented."""
 
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, timeout: Optional[float] = None):
         self.path = root / _LOCK_PATH
         self._held = False
+        self._timeout = _LOCK_TIMEOUT if timeout is None else timeout
 
     def __enter__(self) -> "_EntriesLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + _LOCK_TIMEOUT
+        deadline = time.monotonic() + self._timeout
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -662,9 +663,13 @@ def validate_entry(
 def create_entry(
     root: Path, kind: str, title: str, entry_id: Optional[str] = None, formerly: Optional[str] = None,
     status: Optional[str] = None, recipient: Optional[str] = None, body: str = "",
-    slug: Optional[str] = None,
+    slug: Optional[str] = None, extra_header: Optional[list[tuple[str, str]]] = None,
+    lock_timeout: Optional[float] = None,
 ) -> tuple[Path, Optional[str]]:
-    """Write one entry file, return (path, id written or None). The caller has validated
+    """Write one entry file, return (path, id written or None). `extra_header` adds (key, value)
+    header lines of an inbox entry directly after `status:` (the quick capture writes `triage: open`).
+    `lock_timeout` shortens the wait for entries.lock (seconds; default _LOCK_TIMEOUT) for a caller
+    with a hard time limit. The caller has validated
     (validate_entry()). An explicit `entry_id` is written in either mode — it is an id the entry
     already had (adoption); without one, "solo" hands out the next free id and "team" leaves
     it to `assign`. `body` goes below the heading exactly as given (no newline translation).
@@ -681,7 +686,7 @@ def create_entry(
     created_at = actlib.created_stamp(now)
     team = _mode(root) == "team"
 
-    with _EntriesLock(root):
+    with _EntriesLock(root, lock_timeout):
         assigned_id: Optional[str] = None
         if entry_id is not None:
             assigned_id = _canonical_id(entry_id.strip())
@@ -707,6 +712,8 @@ def create_entry(
             header_lines.append(f"kind: {kind}")
             header_lines.append("for: all" if kind == "question" else f"for: {_recipient_value(recipient)}")
             header_lines.append(f"status: {status or 'open'}")
+            for extra_key, extra_value in extra_header or []:
+                header_lines.append(f"{extra_key}: {extra_value}")
         header_lines.append(f"created: {created_at}")
 
         text = "\n".join(header_lines) + "\n\n" + f"# {title.strip()}\n\n" + body

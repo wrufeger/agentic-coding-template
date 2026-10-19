@@ -85,6 +85,9 @@ FOR_RE = re.compile(r"(?im)^for:\s*(.+?)\s*$")
 STARTED_RE = re.compile(r"(?im)^started:\s*(\S+)\s*$")
 STATUS_RE = re.compile(r"(?im)^status:\s*(\S+)\s*$")
 ID_RE = re.compile(r"(?im)^id:\s*(\S+)\s*$")
+# A header line "triage: open" marks an entry captured from a chat prefix (todo:/note:) that the
+# assistant has not yet looked at; it removes the line once it has dealt with the entry.
+TRIAGE_RE = re.compile(r"(?im)^triage:\s*open\s*$")
 # A working-state line as entries.py state writes it: "State 2026-10-09 14:30: text", or with the
 # waiting marker "State 2026-10-09 14:30 (wait): text". A line in any other shape still parses as
 # a state line, it just carries no stamp and no marker.
@@ -536,8 +539,24 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
         entries.append({
             "path": path, "kind": kind, "label": label, "for": recipient,
             "status": status, "created": created, "title": title, "body": body,
+            "triage": bool(TRIAGE_RE.search(header)),
         })
     return entries
+
+
+def for_assistant(entry: dict) -> bool:
+    """True when the entry is the assistant's to process: it carries `triage: open` (any kind, any
+    status), or it is answered and not a note. An answered note waits for the human instead."""
+    if entry.get("triage"):
+        return True
+    return entry["status"] == "answered" and entry["kind"] != "note"
+
+
+def split_entries(inbox_entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(waiting for the human, for the assistant), each newest first. Everything not for the
+    assistant is waiting for the human: an open entry, or an answered note."""
+    ordered = sorted(inbox_entries, key=_sort_key)
+    return [e for e in ordered if not for_assistant(e)], [e for e in ordered if for_assistant(e)]
 
 
 def _parse_created(value: Optional[str]) -> Optional[datetime]:
@@ -768,8 +787,7 @@ def render_excerpt(root: Path, limit: int = EXCERPT_LIMIT, board_file: str = "do
     answered: list[str] = []
     tasks: list[str] = []
     if inbox_entries is not None:
-        open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=_sort_key)
-        answered_all = sorted((e for e in inbox_entries if e["status"] == "answered"), key=_sort_key)
+        open_entries, answered_all = split_entries(inbox_entries)
         mine_open, all_open, other_open = _group_by_recipient(open_entries, my_identity)
         waiting = [_format_entry(e) for e in mine_open[:OPEN_LIMIT] + all_open[:OPEN_LIMIT]]
         if other_open:
@@ -941,8 +959,7 @@ def main(argv: list[str]) -> int:
         others = None
 
     if inbox_entries is not None:
-        open_entries = sorted((e for e in inbox_entries if e["status"] == "open"), key=_sort_key)
-        answered_all = sorted((e for e in inbox_entries if e["status"] == "answered"), key=_sort_key)
+        open_entries, answered_all = split_entries(inbox_entries)
 
         mine_open, all_open, other_open = _group_by_recipient(open_entries, my_identity)
         mine_answered, all_answered, _other_answered = _group_by_recipient(answered_all, my_identity)

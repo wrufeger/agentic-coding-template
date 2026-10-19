@@ -344,6 +344,30 @@ def ensure(root: Path, identity_name: Optional[str] = None, plan: bool = False,
     return created
 
 
+def append_section(root: Path, title: str, text: str) -> Path:
+    """Append `## <title>` plus `text` (verbatim) as a new section at the end of the session
+    owner's ideas file and return that file. The file is read again right before writing, and
+    created first (ensure()) when missing. The section stays unseen, so the next session start
+    reports it like any entry the owner typed. Raises ValueError without an identity; OSError
+    from the file system passes through."""
+    name = identity(root)
+    if not name:
+        raise ValueError("no identity in .act-local/identity.json")
+    path = own_file(root, name)
+    if path is None:
+        raise ValueError("no ideas file path")
+    if not path.exists():
+        ensure(root)
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+    else:  # no docs/ai/config.md yet (ensure() only works in a project): start the file by hand
+        current = _FALLBACK_TEXT.replace("{identity}", name)
+    current = current.rstrip("\n")
+    body = text.strip("\n")
+    actlib.write_text_lf(path, f"{current}\n\n## {title.strip()}\n" + (f"\n{body}\n" if body else ""))
+    return path
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------

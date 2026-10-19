@@ -165,6 +165,12 @@
 #                 model" (same mechanism the predecessor template used before the current `.act/`
 #                 layout). Always exit 0 either way; a bug in .act/scripts/skills.py falls
 #                 back to "say nothing, let the prompt through" rather than eating it.
+#                 Quick capture rides on the same entry: when the first non-blank line starts with
+#                 todo:/note:/idea: (case-insensitive; one regex on the raw prompt, still before any
+#                 import), checks/quick_capture.py files the entries (inbox todo/note with `triage:
+#                 open`, or a section in the own ideas file) and the same {"decision": "block"} line
+#                 reports where; off with `quick-capture: off` in docs/ai/config.md, no identity or
+#                 any error means the prompt goes through untouched.
 #
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
 # write is NOT swallowed the way a SessionStart error is. Every other check in this template
@@ -251,13 +257,36 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
         _payload2 = {}
     _prompt2 = _payload2.get("prompt")
     _match2 = _re.fullmatch(r"\s*/act(?:\s+(\S+))?\s*", _prompt2) if isinstance(_prompt2, str) else None
-    if _match2 is None or _payload2.get("agent_id"):
-        sys.exit(0)  # not "/act"/"/act <name>", or a worker's own payload — nothing to do here
+    if _payload2.get("agent_id"):
+        sys.exit(0)  # a worker's own payload — nothing to do here
+    if _match2 is None:
+        # Quick capture: the first non-blank line starts with todo:/note:/idea: (case-insensitive).
+        # One regex on the raw prompt decides, before checks.quick_capture is imported; every other
+        # prompt ends here. capture() files the entries and returns the text to show, or None
+        # (quick-capture off, no identity, a worker, any error) — then the prompt goes through.
+        if not isinstance(_prompt2, str) or _re.match(r"\s*(?:todo|note|idea):", _prompt2, _re.IGNORECASE) is None:
+            sys.exit(0)
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        try:
+            from checks import quick_capture as _quick_capture  # noqa: E402
+            # The project is this file's own, never the process cwd (a `cd` may have moved it).
+            _reason3 = _quick_capture.capture(Path(__file__).resolve().parents[2], _payload2)
+        except Exception as _exc3:  # noqa: BLE001 — a bug in the capture must never eat the user's prompt
+            print(f"[act] quick-capture: failed, message passed through ({_exc3!r})", file=sys.stderr)
+            sys.exit(0)
+        if not _reason3:
+            sys.exit(0)
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+        print(json.dumps({"decision": "block", "reason": _reason3}, ensure_ascii=False))
+        sys.exit(0)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     try:
-        import actlib as _actlib2  # noqa: E402
         import skills as _skills2  # noqa: E402
-        _reason2 = _skills2.render(_actlib2.repo_root(), _match2.group(1) or "")
+        _reason2 = _skills2.render(Path(__file__).resolve().parents[2], _match2.group(1) or "")
     except Exception:  # noqa: BLE001 — a bug in the listing must never eat the user's prompt
         sys.exit(0)
     try:

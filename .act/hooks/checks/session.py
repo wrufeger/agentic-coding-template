@@ -89,20 +89,27 @@ def _current_branch(root: Path) -> str:
 _STATUS_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE)
 
 
-def _count_inbox_open(root: Path) -> int:
-    """Open inbox entries addressed to this identity or to everyone -- the very number the status
-    line shows as "waiting for you" (statusline._waiting_summary()), loaded by path so the two can
-    never count differently. 0 when the status line module or the board cannot be used."""
+def _load_statusline():
+    """The status line module, loaded by path (it carries the board module); None when either is
+    unusable."""
     import importlib.util
     path = Path(__file__).resolve().parent.parent / "statusline.py"
     spec = importlib.util.spec_from_file_location("_act_statusline", path)
     if spec is None or spec.loader is None:
-        return 0
+        return None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     if getattr(module, "board", None) is None or getattr(module, "actlib", None) is None:
-        return 0
-    return module._waiting_summary(root)[0]
+        return None
+    return module
+
+
+def _count_inbox_open(root: Path) -> int:
+    """Open inbox entries addressed to this identity or to everyone -- the very number the status
+    line shows as "waiting for you" (statusline._waiting_summary()), loaded by path so the two can
+    never count differently. 0 when the status line module or the board cannot be used."""
+    module = _load_statusline()
+    return 0 if module is None else module._waiting_summary(root)[0]
 
 
 def _count_inbox_waiting(root: Path) -> int:
@@ -120,24 +127,16 @@ def _count_inbox_waiting(root: Path) -> int:
     person, `done` is finished and never appears here. This one count now covers what used
     to be two separate counts (inbox entries and questions) before the two lived in one place.
     """
-    inbox_dir = root / actlib.INBOX_DIR
-    if not inbox_dir.is_dir():
+    # Counted with the board's own classification (board.for_assistant()): an open or answered
+    # entry with `triage: open` in its header block, or an answered entry that is not a note; a
+    # done entry never counts, an answered note waits for the human.
+    module = _load_statusline()
+    if module is None:
         return 0
-    count = 0
-    for entry in inbox_dir.glob("*.md"):
-        if entry.name.lower() == "readme.md":
-            continue
-        try:
-            lines = entry.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-        for line in lines[:20]:  # header fields live at the top of the file
-            match = _STATUS_RE.match(line.strip())
-            if match:
-                if match.group(1).strip().lower() == "answered":
-                    count += 1
-                break
-    return count
+    inbox_entries = module.board.read_inbox_entries(root)
+    if inbox_entries is None:
+        return 0
+    return sum(1 for entry in inbox_entries if module.board.for_assistant(entry))
 
 
 # ---------------------------------------------------------------------------

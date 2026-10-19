@@ -33,6 +33,9 @@ changed since the assistant last went through your file and has it processed:
   its full wording, into the backlog item or concept it became, and leaves this file. Nothing you
   wrote is shortened or reworded on the way.
 
+A chat message you send that begins with `idea:` is your own text too: the hook only copies it, unchanged, as a
+new `## <title>` section at the end of your file.
+
 Someone else's file is theirs: read it, write your own ideas into your own file.
 
 ## Starting text of a new file

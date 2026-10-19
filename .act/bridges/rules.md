@@ -64,6 +64,7 @@ Applies to the main session only — workers skip this section.
 @../../.act/rules/orchestrator/20-human.md
   - [x] `R-human-inbox-first`
   - [x] `R-human-ask`
+  - [x] `R-human-capture`
   - [x] `R-human-chat`
   - [x] `R-human-language`
   - [x] `R-human-text`
