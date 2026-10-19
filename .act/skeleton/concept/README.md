@@ -31,7 +31,9 @@ changed since the assistant last went through your file and has it processed:
   `docs/ai/inbox/`; the answer block names its id.
 - **Processed means moved.** An entry that needs nothing more from you and is no draft moves, with
   its full wording, into the backlog item or concept it became, and leaves this file. Nothing you
-  wrote is shortened or reworded on the way.
+  wrote is shortened or reworded on the way. Images linked from the entry go along, with the topic in
+  front of a generic name like `img.png` and the link adjusted; `doctor` reports a file here that no
+  Markdown file under `docs/` links.
 
 A chat message you send that begins with `idea:` is your own text too: the hook only copies it, unchanged, as a
 new `## <title>` section at the end of your file.

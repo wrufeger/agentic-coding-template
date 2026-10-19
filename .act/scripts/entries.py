@@ -42,6 +42,7 @@
 #   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line
 #   python .act/scripts/entries.py list [<kind>]            # id/filename + title, per kind
 #   python .act/scripts/entries.py check                    # report a duplicate or unreadable entry
+#   python .act/scripts/entries.py archive <id|file>        # move a finished entry (and its pasted images) to the archive
 #
 # Output format:
 #   "new": one line, "entries: created <path> [<id or explanation>]", exit 0 (2 on a bad kind, an
@@ -81,6 +82,21 @@
 #     cannot read <path> (not valid UTF-8)" line per unreadable file (stderr, exit 1 either way).
 #     find_duplicate_ids()/find_unreadable_entries() below are the reusable halves doctor.py's own
 #     checks call instead of repeating the scan.
+#   "archive": for a task, a backlog item or an inbox entry (found by id or path; directly in its
+#     folder). Moves the file to docs/ai/work/archive/; an inbox entry gets `status: done` in its
+#     header (either header form), a task or backlog item keeps its header as it is. Non-Markdown
+#     files the entry links by a relative path from its own folder (Markdown image or link, `<img
+#     src>`, also `<...>` and %20 forms) move along; an IDE's generic name (img.png, image_1.png,
+#     "Pasted image ...", screenshot ...) or a name already taken in the archive gets the entry's id in
+#     front ("Q<n>-img.png"), and the links in the moved file are rewritten. A file another remaining
+#     Markdown file under docs/ (the archive included) still links is copied instead of moved; a link
+#     that leads out of the entry's folder through a symlink is left in place and reported. Relative
+#     links to files that stay are rewritten so they still resolve from the archive; links inside
+#     fenced blocks or inline code are not touched. Prints one "entries: archived|moved|copied|
+#     relinked|left ..." line per change, so a commit by pathspec can stage every path; exit 2 with
+#     the reason on stderr, nothing changed, for an unknown id, a name already in the archive, an
+#     unreadable file, or an entry that cannot be deleted (what was written is removed again); exit 1
+#     when an original could not be removed after the copy.
 
 from __future__ import annotations
 
@@ -88,13 +104,16 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import unicodedata
+import urllib.parse
 from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import actlib
 import board
@@ -998,6 +1017,346 @@ def cmd_check(root: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# archive — move a finished entry and the local files it links
+# ---------------------------------------------------------------------------
+
+ARCHIVE_DIR = Path("docs/ai/work/archive")
+CONCEPT_DIR = Path("docs/ai/concept")
+
+# A Markdown inline link or image: `[text](target "title")` / `![alt](<target with spaces>)`. Groups:
+# opener `[` or `![`, the text (which may hold one nested `[...]`, as in `[![a](x.png)](x.png)`), `](`,
+# the target, and the optional title with the closing bracket. The target is `<...>` or the shortest run
+# up to an optional title (`"..."`, `'...'` or `(...)`) and the closing bracket, so a raw target with
+# spaces (an IDE pasting "Pasted image 1.png") is one target, and balanced brackets in it
+# ("image (1).png") stay part of it.
+_MD_LINK_RE = re.compile(
+    r"(!?\[)((?:[^\[\]\n]|\[[^\]\n]*\])*)(\]\(\s*)"
+    r"(<[^>\n]*>|(?:[^()\n]|\([^()\n]*\))+?)"
+    r"""((?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\))""")
+_CODE_SPAN_RE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")
+_HTML_SRC_RE = re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*)(["'])(.*?)\2""", re.IGNORECASE)
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:|^[A-Za-z]:[\\/]")  # a URL or a drive path
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# Names an IDE or screenshot tool hands out again and again; two entries would both own an "img.png".
+_GENERIC_STEM_RE = re.compile(r"^(?:(?:img|image|bild|foto|photo|clipboard|untitled|unbenannt)[ _-]?\d*"
+                              r"|(?:pasted image|screenshot|screen shot|bildschirmfoto).*)$", re.IGNORECASE)
+
+
+class ArchiveError(Exception):
+    """A refusal of `archive` that is raised before anything is written."""
+
+
+def _split_target(raw: str) -> Optional[tuple[str, str]]:
+    """(decoded path, suffix with fragment/query) for a link target that names a local relative
+    file, else None (empty, anchor-only, URL, absolute path)."""
+    text = raw.strip()
+    if text.startswith("<") and text.endswith(">"):
+        text = text[1:-1].strip()
+    if not text or text.startswith(("#", "/", "\\")) or _URL_SCHEME_RE.match(text):
+        return None
+    cut = min((i for i in (text.find("#"), text.find("?")) if i >= 0), default=len(text))
+    path, suffix = text[:cut], text[cut:]
+    return (urllib.parse.unquote(path), suffix) if path else None
+
+
+def _format_target(raw: str, path: str, suffix: str, html: bool) -> str:
+    """The new link target for `path`, written in the style `raw` used (angle brackets, percent
+    encoding, or plain); a space always gets escaped or bracketed so the link keeps working."""
+    if html:
+        return urllib.parse.quote(path, safe="/.-_~()") + suffix
+    if raw.strip().startswith("<"):
+        return f"<{path}{suffix}>"
+    if "%" in raw:
+        return urllib.parse.quote(path, safe="/.-_~()") + suffix
+    return f"<{path}{suffix}>" if " " in path else path + suffix
+
+
+LinkMapper = Callable[[str, Path], Optional[str]]
+
+
+def _rewrite_segment(segment: str, base: Path, mapper: LinkMapper) -> str:
+    """`segment` (a piece of one line outside inline code) with every local link target mapped."""
+
+    def new_target(raw: str) -> Optional[tuple[str, str]]:
+        parts = _split_target(raw)
+        if parts is None:
+            return None
+        path, suffix = parts
+        new = mapper(path, Path(os.path.normpath(base / path)))
+        return None if new is None else (new, suffix)
+
+    def fix_markdown(match: "re.Match[str]") -> str:
+        opener, text, middle, raw, tail = match.groups()
+        text = _MD_LINK_RE.sub(fix_markdown, text)  # `[![alt](a.png)](a.png)`: the inner image too
+        mapped = new_target(raw)
+        target = raw if mapped is None else _format_target(raw, mapped[0], mapped[1], False)
+        return f"{opener}{text}{middle}{target}{tail}"
+
+    def fix_html(match: "re.Match[str]") -> str:
+        mapped = new_target(match.group(3))
+        if mapped is None:
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}{_format_target(match.group(3), mapped[0], mapped[1], True)}{match.group(2)}"
+
+    return _HTML_SRC_RE.sub(fix_html, _MD_LINK_RE.sub(fix_markdown, segment))
+
+
+def _rewrite_links(text: str, base: Path, mapper: LinkMapper) -> str:
+    """Apply `mapper(target path, resolved path)` to every local link outside a fenced code block
+    and inline code; it returns the new link path (relative, "/" separators) or None to keep the
+    link. The resolved path is `base` + the link target, normalised (symlinks untouched)."""
+    out: list[str] = []
+    fenced = False
+    for line in text.split("\n"):
+        if _FENCE_RE.match(line):
+            fenced = not fenced
+            out.append(line)
+            continue
+        if fenced:
+            out.append(line)
+            continue
+        pieces: list[str] = []
+        position = 0
+        for code in _CODE_SPAN_RE.finditer(line):
+            pieces.append(_rewrite_segment(line[position:code.start()], base, mapper))
+            pieces.append(code.group(0))
+            position = code.end()
+        pieces.append(_rewrite_segment(line[position:], base, mapper))
+        out.append("".join(pieces))
+    return "\n".join(out)
+
+
+def linked_local_files(text: str, base: Path) -> set[Path]:
+    """Every existing file `text` links by a relative path (Markdown link or image, `<img src>`),
+    resolved against `base`. doctor.py uses it to find files nothing links to."""
+    found: set[Path] = set()
+
+    def collect(_path: str, resolved: Path) -> None:
+        if resolved.is_file():
+            found.add(resolved)
+
+    _rewrite_links(text, base, lambda p, r: collect(p, r))
+    return found
+
+
+def _set_status_done(text: str) -> str:
+    """`text` with `status: done` in its header — an existing status replaced, else the field added
+    at the end of the header (a new frontmatter if the file has no header at all)."""
+    head, body = actlib.split_header(text)
+    if not head.strip():
+        return actlib.format_header(["status: done"], True) + f"\n{text}"
+    lines = head.split("\n")
+    framed = actlib.is_frontmatter(head)
+    end = len(lines)
+    if framed:
+        end = max(i for i, line in enumerate(lines) if line.rstrip() == actlib.FRONTMATTER_DELIMITER)
+    for index, line in enumerate(lines[:end]):
+        if re.match(r"(?i)status:", line):
+            lines[index] = "status: done"
+            return "\n".join(lines) + body
+    while end > 0 and not lines[end - 1].strip() and not framed:
+        end -= 1
+    lines.insert(end, "status: done")
+    return "\n".join(lines) + body
+
+
+def _find_archivable(root: Path, ref: str) -> Path:
+    """The entry file for an id ("Q<n>") or a path, which must sit directly in the tasks, backlog or
+    inbox folder."""
+    folders = [root / KIND_DIR["task"], root / KIND_DIR["backlog"], root / actlib.INBOX_DIR]
+    candidate = Path(ref)
+    if candidate.suffix.lower() == ".md" or candidate.exists():
+        for option in ([candidate] if candidate.is_absolute() else [Path.cwd() / candidate, root / candidate]):
+            if option.is_file():
+                resolved = Path(os.path.normpath(option.resolve()))
+                if any(resolved.parent == folder.resolve() for folder in folders):
+                    return resolved
+                raise ArchiveError(f"{ref}: not directly in docs/ai/work/tasks, docs/ai/work/backlog or "
+                                   f"{actlib.INBOX_DIR.as_posix()} — only those entries are archived")
+        raise ArchiveError(f"{ref}: no such file")
+    if not _ID_ARG_RE.match(ref.strip()):
+        raise ArchiveError(f"{ref!r}: neither an existing file nor an id (T<n>, B<n>, Q<n>, U<n>)")
+    wanted = _canonical_id(ref.strip())
+    hits: list[Path] = []
+    for folder in folders:
+        if folder.is_dir():
+            for path in sorted(folder.glob("*.md")):
+                text = _safe_read(path)
+                if path.name.lower() != "readme.md" and text is not None and _entry_id(text) == wanted:
+                    hits.append(path)
+    if not hits:
+        raise ArchiveError(f"{wanted}: no entry with this id under tasks, backlog or inbox")
+    if len(hits) > 1:
+        raise ArchiveError(f"{wanted}: more than one entry carries this id: "
+                           + ", ".join(_rel(p, root) for p in hits))
+    return hits[0]
+
+
+def _attachment_label(entry: Path, entry_id: Optional[str]) -> str:
+    """The prefix for a renamed attachment: the entry's id, else the "<kind>-<stamp>" start of its
+    file name, else its file stem."""
+    if entry_id:
+        return entry_id
+    match = re.match(r"^([A-Za-z]+-\d{8}-\d{4})", entry.stem)
+    return match.group(1) if match else entry.stem
+
+
+@dataclass
+class ArchivePlan:
+    """What `archive` is going to do for one entry."""
+
+    text: str  # the entry's new text
+    dest: Path  # where the entry goes
+    entry_id: Optional[str]
+    inbox: bool  # an inbox entry also gets `status: done`
+    names: dict[Path, str] = field(default_factory=dict)  # attachment -> its file name in the archive
+    shared: set[Path] = field(default_factory=set)  # attachments a staying file still links: copied
+    relinked: list[tuple[str, str]] = field(default_factory=list)  # (old, new) link targets
+    outside: list[tuple[Path, Path]] = field(default_factory=list)  # (link, real file) left in place
+
+
+def _is_inside(path: Path, folder: Path) -> bool:
+    return folder == path or folder in path.parents
+
+
+def plan_archive(root: Path, entry: Path) -> ArchivePlan:
+    """Everything `archive` is going to do for `entry`, computed without touching a file: the new
+    text, the destination, and the attachments to move or copy. Raises ArchiveError on a refusal."""
+    text = _safe_read(entry)
+    if text is None:
+        raise ArchiveError(f"{_rel(entry, root)}: cannot be read as UTF-8")
+    archive = root / ARCHIVE_DIR
+    dest = archive / entry.name
+    if dest.exists():
+        raise ArchiveError(f"{_rel(dest, root)} already exists")
+    entry_id = _entry_id(text)
+    is_inbox = entry.parent == (root / actlib.INBOX_DIR).resolve()
+    entry_dir = entry.parent
+    plan = ArchivePlan(text=text, dest=dest, entry_id=entry_id, inbox=is_inbox)
+
+    # which linked files travel: non-Markdown files inside the entry's own folder. A link that leads
+    # out of the folder through a symlink is left alone and reported.
+    movable: list[Path] = []
+
+    def scan(_path: str, resolved: Path) -> None:
+        if not (resolved.is_file() and resolved.suffix.lower() != ".md" and entry_dir in resolved.parents):
+            return
+        real = Path(os.path.normpath(resolved.resolve()))
+        if not _is_inside(real, entry_dir):
+            if (resolved, real) not in plan.outside:
+                plan.outside.append((resolved, real))
+        elif resolved not in movable:
+            movable.append(resolved)
+
+    _rewrite_links(text, entry_dir, scan)
+
+    # a file any other Markdown file under docs/ still links is copied, not moved (the archive itself
+    # included: an archived entry may share the picture)
+    if movable:
+        docs = root / "docs"
+        seen: set[Path] = set()
+        for other in docs.rglob("*.md") if docs.is_dir() else []:
+            other = Path(os.path.normpath(other))
+            if other == entry or other in seen:
+                continue
+            seen.add(other)
+            other_text = _safe_read(other)
+            if other_text is not None:
+                plan.shared |= linked_local_files(other_text, other.parent) & set(movable)
+
+    label = _attachment_label(entry, entry_id)
+    # names are compared case-insensitively: the archive may sit on a case-insensitive file system
+    taken = {p.name.casefold() for p in archive.iterdir()} if archive.is_dir() else set()
+    for source in movable:
+        name = source.name
+        if _GENERIC_STEM_RE.match(source.stem) or name.casefold() in taken:
+            name = name if name.startswith(f"{label}-") else f"{label}-{name}"
+        base_name = name
+        counter = 2
+        while name.casefold() in taken:
+            name = f"{Path(base_name).stem}-{counter}{Path(base_name).suffix}"
+            counter += 1
+        taken.add(name.casefold())
+        plan.names[source] = name
+
+    def remap(path: str, resolved: Path) -> Optional[str]:
+        if resolved in plan.names:
+            new = plan.names[resolved]
+        elif resolved.exists():
+            try:
+                new = Path(os.path.relpath(resolved, archive)).as_posix()
+            except ValueError:  # another drive: no relative path exists, keep the link as written
+                return None
+        else:
+            return None
+        if new != path:
+            plan.relinked.append((path, new))
+            return new
+        return None
+
+    plan.text = _rewrite_links(text, entry_dir, remap)
+    if is_inbox:
+        plan.text = _set_status_done(plan.text)
+    return plan
+
+
+def cmd_archive(root: Path, ref: str) -> int:
+    try:
+        entry = _find_archivable(root, ref)
+        plan = plan_archive(root, entry)
+    except ArchiveError as exc:
+        print(f"entries: {exc} — nothing changed", file=sys.stderr)
+        return 2
+    archive = root / ARCHIVE_DIR
+    dest = plan.dest
+    created: list[Path] = []
+    try:
+        archive.mkdir(parents=True, exist_ok=True)
+        with open(dest, "x", encoding="utf-8", newline="\n") as handle:
+            handle.write(plan.text)
+        created.append(dest)
+        for source, name in plan.names.items():
+            target = archive / name
+            shutil.copy2(source, target)
+            created.append(target)
+        entry.unlink()  # last step that can fail the whole run; the rollback below covers it
+    except OSError as exc:
+        stuck: list[str] = []
+        for path in created:
+            try:
+                path.unlink()
+            except OSError as undo_exc:
+                stuck.append(f"{_rel(path, root)} ({undo_exc!r})")
+        print(f"entries: archiving {_rel(entry, root)} failed ({exc!r}) — the entry stays where it is",
+              file=sys.stderr)
+        if stuck:
+            print("entries: could not remove what was already written, delete it by hand: "
+                  + ", ".join(stuck), file=sys.stderr)
+        return 2
+    label = plan.entry_id or entry.stem
+    print(f"entries: archived {label}: {_rel(entry, root)} -> {_rel(dest, root)}"
+          + (" (status: done)" if plan.inbox else ""))
+    status = 0
+    for source, name in plan.names.items():
+        if source in plan.shared:
+            print(f"entries: copied {_rel(source, root)} -> {_rel(archive / name, root)} (still linked elsewhere)")
+            continue
+        try:
+            source.unlink()
+        except OSError as exc:
+            print(f"entries: copied {_rel(source, root)} -> {_rel(archive / name, root)}, but could not remove "
+                  f"the original ({exc!r}) — delete it by hand", file=sys.stderr)
+            status = 1
+            continue
+        print(f"entries: moved {_rel(source, root)} -> {_rel(archive / name, root)}")
+    for link, real in plan.outside:
+        print(f"entries: left {_rel(link, root)} in place — it leads to {real}, outside the entry's folder")
+    for old, new in plan.relinked:
+        print(f"entries: relinked {old} -> {new} in {_rel(dest, root)}")
+    return status
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1049,6 +1408,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="report a duplicate id or an entry file that isn't valid UTF-8")
 
+    archive_help = ("archive a finished task, backlog item or inbox entry to docs/ai/work/archive/ — an inbox "
+                    "entry gets `status: done`; files it links beside itself (pasted images) move along, "
+                    "generic or colliding names get the entry's id in front, links are rewritten")
+    p_archive = sub.add_parser("archive", help=archive_help, description=archive_help)
+    p_archive.add_argument("entry", metavar="ID-OR-FILE", help="an id such as Q<n> or T<n>, or the entry file's path")
+
     return parser
 
 
@@ -1077,6 +1442,8 @@ def main(argv: list[str]) -> int:
         return cmd_list(root, args.kind)
     if args.command == "check":
         return cmd_check(root)
+    if args.command == "archive":
+        return cmd_archive(root.resolve(), args.entry)
     return 2  # argparse's `required=True` already keeps this unreachable
 
 

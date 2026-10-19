@@ -349,13 +349,13 @@ options:
 Call: direct
 
 ```text
-usage: entries.py [-h] {new,assign,state,start,list,check} ...
+usage: entries.py [-h] {new,assign,state,start,list,check,archive} ...
 
 Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
 todo | report | note).
 
 positional arguments:
-  {new,assign,state,start,list,check}
+  {new,assign,state,start,list,check,archive}
     new                 create a new entry file
     assign              hand out ids still missing ('team' mode: only on the default branch)
     state               append a working-state line for an open task to .act-local/state/ — needs
@@ -367,6 +367,10 @@ positional arguments:
                         line; `state` does the same on its first call
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
+    archive             archive a finished task, backlog item or inbox entry to
+                        docs/ai/work/archive/ — an inbox entry gets `status: done`; files it links
+                        beside itself (pasted images) move along, generic or colliding names get
+                        the entry's id in front, links are rewritten
 
 options:
   -h, --help            show this help message and exit
@@ -458,6 +462,22 @@ options:
 
 ```text
 usage: entries.py check [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `entries.py archive`
+
+```text
+usage: entries.py archive [-h] ID-OR-FILE
+
+archive a finished task, backlog item or inbox entry to docs/ai/work/archive/ — an inbox entry
+gets `status: done`; files it links beside itself (pasted images) move along, generic or colliding
+names get the entry's id in front, links are rewritten
+
+positional arguments:
+  ID-OR-FILE  an id such as Q<n> or T<n>, or the entry file's path
 
 options:
   -h, --help  show this help message and exit

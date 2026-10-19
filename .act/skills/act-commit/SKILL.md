@@ -32,8 +32,10 @@ secures the result.
 3. **Archive.** Move every finished file — a task, a backlog item, and **every** inbox entry
    marked `status: done`, whatever its `kind` (questions included) and whether or not it belongs
    to this task — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` to
-   `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`). Short IDs already assigned stay
-   valid; the file keeps its name.
+   `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`) with `python .act/scripts/entries.py
+   archive <id|file>` — it also takes along the images and files the entry links beside itself
+   (renamed with the id in front where the name is generic) and prints every path it moved, copied
+   or changed: stage all of them. Short IDs already assigned stay valid; the file keeps its name.
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step
    isn't recorded yet, older entries left as they are otherwise.
 5. **Docs index.** New files go into `docs/README.md`; check the data-as-of note on files that

@@ -61,15 +61,25 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - Community files for the template's GitHub repository under `.github/`: code of conduct, contributing guide,
   security policy, an accessibility statement (every environment "not tested", known barriers listed), issue forms
   and a pull request template. They recommend `/act-feedback` as the first way to report a problem.
+- **`entries.py archive <id|file>`** archives a finished task, backlog item or inbox entry to
+  `docs/ai/work/archive/` in one step; an inbox entry gets `status: done`. Images and other files it links beside
+  itself (a pasted `img.png`, `image (1).png` …) move along: generic or already taken names get the entry id in front
+  (`Q<n>-img.png`), links are rewritten, and a file another Markdown file under `docs/` still links is copied instead
+  of moved. Everything is planned before the first write, so a failure leaves nothing half-done. `act-commit`,
+  `act-idea`, the chat rule and the inbox and concept READMEs point to it.
+- `doctor` reports files under `docs/ai/inbox/` and `docs/ai/concept/` that no Markdown file under `docs/` links
+  (kind `orphan-file`), such as a pasted picture left behind when its entry was archived by hand.
 
 ### Changed
 
-- **Inbox entries open with YAML frontmatter** — the header fields of every file under `docs/ai/inbox/` (`id`, `kind`,
-  `for`, `status`, `created` …) now stand between two `---` lines, so GitHub, GitLab and Markdown editors show them as
-  metadata instead of running them together into one paragraph. `entries.py`, quick capture and the reports of
-  `doctor --inbox` and `act-adopt` write the new form; every reader accepts both forms, so archived and hand-written
-  entries keep working. `act-update` rewrites every entry still in an existing project's inbox once (migration
-  `003-inbox-frontmatter`); the archive is left as it is. Tasks, backlog and journal entries keep their plain header.
+- **Entries open with YAML frontmatter** — the header fields of every inbox entry, task, backlog item and journal
+  entry (`id`, `kind`, `for`, `status`, `created` …) now stand between two `---` lines, so GitHub, GitLab and Markdown
+  editors show them as metadata instead of running them together into one paragraph. `entries.py`, quick capture and
+  the reports of `doctor --inbox` and `act-adopt` write the new form; every reader accepts both forms, so hand-written
+  entries in the old form keep working. `act-update` rewrites the existing entries once: migration
+  `003-inbox-frontmatter` the inbox, migration `004-work-frontmatter` the tasks, backlog, journal and the archive under
+  `docs/ai/work/` (archived inbox entries included). `docs/ai/work/archive/legacy/` and every `README.md` stay as they
+  are.
 
 - **Claude Code's `Artifact` tool is switched off by default** to save about 13,700 tokens at every session start.
   New config key `artifacts: on | off` (default `off`): `off` sets `"enableArtifact": false` in

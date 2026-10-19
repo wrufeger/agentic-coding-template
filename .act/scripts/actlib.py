@@ -1226,11 +1226,10 @@ def header_block(text: str) -> str:
 
 
 def writes_frontmatter(kind: str) -> bool:
-    """True if an entry of this kind is written with its header as frontmatter: the inbox kinds
-    (INBOX_KINDS, and the `inbox` alias) are; task, backlog and ledger entries keep the plain
-    header. The one place that decides it. Every writer asks here, every reader accepts both
-    forms regardless."""
-    return kind in INBOX_KINDS or kind == "inbox"
+    """True if an entry of this kind is written with its header as frontmatter: every kind
+    entries.py writes (INBOX_KINDS and the `inbox` alias, task, backlog, ledger). The one place
+    that decides it. Every writer asks here, every reader accepts both forms regardless."""
+    return kind in INBOX_KINDS or kind in ("inbox", "task", "backlog", "ledger")
 
 
 def format_header(fields: list[str], frontmatter: bool) -> str:

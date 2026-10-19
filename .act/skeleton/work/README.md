@@ -3,7 +3,11 @@ The assistant's shared working memory — tasks, backlog items, journal entries 
 notes. Only the assistant writes here, one file per entry; overviews are generated from these
 files, never hand-maintained. Every file `entries.py new` creates carries `created: <timestamp>`
 in its header — without it, two branches filing the same title on the same day could produce two
-byte-identical files that Git then merges into one silently instead of flagging a conflict.
+byte-identical files that Git then merges into one silently instead of flagging a conflict. The header
+fields stand as YAML frontmatter, between two `---` lines at the very top, followed by a blank line and
+the `# Title`, so GitHub, GitLab and Markdown editors show them as metadata. An older file whose fields
+stand straight at the top is read the same way; `act-update` rewrites the existing ones once (the
+legacy archive, `archive/legacy/`, and every `README.md` stay as they are).
 
 - `tasks/` — one open task per file, only the assistant's own work; goal and check criteria; read
   by `board.py` for the board. The header carries `for: <identity>` (whose task it is;

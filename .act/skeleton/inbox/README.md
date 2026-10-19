@@ -36,7 +36,8 @@ created: 2026-09-25T18:30
 ```
 
 An older entry without the two `---` lines (header fields straight at the top) is read the same way;
-`act-update` converts every entry still in the inbox once.
+`act-update` converts every entry still in the inbox once, and tasks, backlog, journal and archive entries under
+`docs/ai/work/` the same way.
 
 File names: an entry with an id is `<ID>-<slug>.md` (e.g. `Q<n>-...md`, `U<n>-...md`); one without
 (report, note) is `<kind>-<YYYYMMDD-HHMM>-<slug>.md` (e.g. `report-20260925-1830-adoption.md`). A
@@ -46,7 +47,11 @@ on the default branch. A todo from before ids existed (`todo-<YYYYMMDD-HHMM>-<sl
 by the same `assign`.
 
 `done` is finished and gets archived to `docs/ai/work/archive/`, whatever its `kind` —
-questions included.
+questions included. Archive with `python .act/scripts/entries.py archive <id|file>`: it sets
+`status: done`, moves the entry, and takes along the files it links beside itself (an image pasted
+into the entry lands next to it as `img.png`). A generic or already taken name gets the id in front
+(`Q<n>-img.png`) and the links are rewritten. `doctor` reports a file here that no Markdown file
+under `docs/` links.
 
 ## `note` entries
 

@@ -165,6 +165,7 @@ KIND_LABELS: dict[str, str] = {
     "duplicate-unit": "Duplicate scripts/agents/skills",
     "duplicate-id": "Duplicate entry ids (task/backlog/question/todo)",
     "entry-unreadable": "Entry files that cannot be read as UTF-8",
+    "orphan-file": "Files in the inbox or concept folder that no Markdown file under docs/ links",
     "hook": "Missing hook entries",
     "settings-script": "Hook/permission entries pointing at a missing script",
     "manifest": ".act/MANIFEST.json drift",
@@ -200,6 +201,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "duplicate-unit": "Doppelte Scripte/Agenten/Skills",
     "duplicate-id": "Doppelte Eintragskennungen (Aufgabe/Backlog/Frage)",
     "entry-unreadable": "Eintragsdateien, die sich nicht als UTF-8 lesen lassen",
+    "orphan-file": "Dateien in Inbox oder Konzeptordner, auf die keine Markdown-Datei unter docs/ verweist",
     "hook": "Fehlende Hook-Einträge",
     "settings-script": "Hook-/Berechtigungseinträge, die auf ein fehlendes Script zeigen",
     "manifest": ".act/MANIFEST.json weicht ab",
@@ -736,6 +738,41 @@ def check_unreadable_entries(root: Path) -> list[Finding]:
                 message="not valid UTF-8 — cannot be scanned for its id")
         for path in entries.find_unreadable_entries(root)
     ]
+
+
+ORPHAN_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/concept")
+
+
+def check_orphan_files(root: Path) -> list[Finding]:
+    """A pasted image or attachment left beside the entries: a non-Markdown file under the inbox or
+    concept folder that no Markdown file under docs/ links. Dot-files (.gitkeep) are left out. Any
+    Markdown file under docs/ counts as a link, the archive too: a picture an archived entry still
+    shows is not left over. `entries.py archive` moves such files along with their entry; this finds
+    what a hand-made move or an unfinished idea take-over left behind."""
+    docs = root / "docs"
+    if not docs.is_dir():
+        return []
+    linked: set[Path] = set()
+    for markdown in docs.rglob("*.md"):
+        try:
+            text = markdown.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            continue  # reported by check_unreadable_entries()
+        linked |= entries.linked_local_files(text, markdown.parent)
+    findings: list[Finding] = []
+    for rel in ORPHAN_SCAN_DIRS:
+        base = root / rel
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if (path.is_file() and path.suffix.lower() != ".md" and not path.name.startswith(".")
+                    and Path(os.path.normpath(path)) not in linked):
+                findings.append(Finding(
+                    path=_rel(path, root), line=None, kind="orphan-file",
+                    message="no Markdown file under docs/ links it — archive it with its entry "
+                            "(entries.py archive) or delete it",
+                ))
+    return findings
 
 
 # ---------------------------------------------------------------------------
@@ -1728,6 +1765,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_legacy_questions_dir(root)
     findings += check_local_role_frontmatter(root)
     findings += check_unreadable_entries(root)
+    findings += check_orphan_files(root)
     findings += check_hooks(root)
     findings += check_settings_scripts(root)
     findings += check_unknown_tools(root)

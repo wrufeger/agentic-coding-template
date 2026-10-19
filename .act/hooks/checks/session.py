@@ -168,7 +168,7 @@ def _ledger_entry_date(lines: list[str], filename: str) -> Optional[date]:
     (entries.py writes an ISO timestamp there) if present and parseable, else the
     `YYYY-MM-DD-` date prefix every ledger filename carries (entries.py new ledger <title>).
     None if neither yields a usable date."""
-    for line in lines[:5]:  # created: is always the first line
+    for line in lines[:5]:  # created: is the first header line (second in frontmatter, after ---)
         created_match = _LEDGER_CREATED_RE.match(line.strip())
         if created_match:
             try:
