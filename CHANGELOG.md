@@ -9,6 +9,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-20
+
+Quick capture from the chat, entries with YAML frontmatter, a one-step archive that takes pasted images along, four
+new safety checks and a shell scanner that reads bash the way bash does. Projects on v2.1.0 update with `act-update`.
+
+### Upgrading from v2.1.0
+
+- Run `act-update` (or `python .act/scripts/update.py`). Migration `003` moves the header of every inbox entry into
+  YAML frontmatter, migration `004` does the same for tasks, backlog, journal and the archive under `docs/ai/work/`
+  (`archive/legacy/` and every `README.md` stay as they are). Both rewrite each file once and leave it alone after.
+- Updating now needs Git 2.25 or newer.
+- Claude Code's `Artifact` tool is off after the update; `artifacts: on` in `docs/ai/config.md` keeps it.
+
 ### Added
 
 - **Quick capture from chat** — a message that begins with `todo:`, `note:` or `idea:` (any letter case) is filed by
@@ -299,7 +312,8 @@ First public pre-release of the previous generation (today the branch `v1`), doc
   coding rule modules for 10 languages and stacks; `AI-CONFIG.md` steers the collaboration.
 - Optional live log `ai.log` through hooks.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/wrufeger/agentic-coding-template/releases/tag/v2.0.0
 [0.1.0-beta]: https://github.com/wrufeger/agentic-coding-template/releases/tag/v0.1.0-beta
