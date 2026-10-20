@@ -126,6 +126,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- **The Bash write checks read a backslash-newline the way bash does.** They no longer join it in a comment, in
+  single quotes or in the body of a heredoc with a quoted delimiter (including a mixed one such as `<<'E'$x`, where
+  bash expands nothing in the delimiter), and they follow comments, quotes and heredocs inside `$(...)` within double
+  quotes; an escaped backslash before the pair is kept. Before, a write or delete after such a comment or heredoc
+  could slip past the `.act/` guard, the worker write scope and the delete/reset checks.
+- **A heredoc fed to a shell is scanned as a script** — `bash <<EOF`, `sh -s <<EOF`, `cat <<EOF | bash`,
+  `{ bash; } <<EOF`, `(bash) <<EOF` — and the `$(...)` in any unquoted heredoc body counts on its own, since bash
+  expands it before the shell reads the body. A `-c` after `--`, `-` or a script name is no longer taken as the
+  shell's own option, and a `<<` bit shift in arithmetic no longer counts as a heredoc.
+- **A crafted command with very many heredocs or pipe stages is scanned in linear time**, so it can no longer stall
+  the `PreToolUse` hook past its timeout, which would have let the call through.
 - `git-metadata-guard` also covers files that start code when the folder is opened: workers may not write
   `.vscode/tasks.json`, `.devcontainer/`, `.envrc` or `.mcp.json`, and nobody adds a `folderOpen` task. A copy or
   move into a directory (`cp`, `mv`, `Copy-Item`, `Move-Item`) is checked as `<dir>/<source name>`, which also closes

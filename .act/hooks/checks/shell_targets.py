@@ -17,12 +17,17 @@
 #          span stays part of its word (whitespace and operators inside it do not split the word) and
 #          its content is attached to that word (_Word.subs) to be scanned as a command of its own.
 #          A backtick inside single quotes or escaped is plain text. Steps (_scan_command):
-#   1. backslash-newline continuations are joined (_LINE_CONTINUATION_RE);
+#   1. backslash-newline continuations are joined where bash joins them (_join_line_continuations):
+#      not in a comment, not in single quotes, not in the body of a heredoc with a quoted delimiter;
+#      a `$(...)` inside double quotes is read as a text of its own there;
 #   2. line mode: every line is tokenized on its own; a line whose token stream carries a real
 #      `<<`/`<<-` operator plus delimiter has the heredoc body skipped up to its terminator line —
 #      several heredocs on one line in turn, and nothing at all if a terminator line is missing
 #      (_line_mode_tokens); the `$(...)`/backtick parts of an unquoted-delimiter body, which bash
-#      does run, are kept as commands of their own;
+#      does run, are kept as commands of their own; the body of a heredoc fed to a shell
+#      (`bash <<EOF`, `sh -s <<EOF`, `sh - <<EOF`, `cat <<EOF | bash`, `{ bash; } <<EOF`, not
+#      `bash -c ... <<EOF`) is a script and is scanned whole as a command text of its own
+#      (_heredoc_shell_flags), quoted delimiter or not;
 #   3. conservative fallback when a line does not tokenize on its own (an unclosed quote, typically
 #      a string spanning lines) or the command may use ANSI-C quoting `$'...'`, which this lexer does
 #      not know (a `$'` that is only text — in quotes, escaped, in a comment, in a quoted heredoc body —
@@ -140,7 +145,7 @@ from .shell_targets_legacy import (
 __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
     "_WRITE_REDIRECT_OPS", "_FD_DUP_WORD_RE", "_LINE_CONTINUATION_RE",
-    "_RAW_REDIRECT_RE", "_HEREDOC_OPEN_RE",
+    "_join_line_continuations", "_RAW_REDIRECT_RE", "_HEREDOC_OPEN_RE",
     "_MAX_SCAN_DEPTH", "_GITBASH_DRIVE_RE", "_WIN32_PREFIXED_DRIVE_RE", "_WIN32_PREFIXED_UNC_RE",
     "_WIN32_ADMIN_SHARE_RE", "_LOCAL_HOST_NAMES", "_IGNORABLE_TARGETS", "_DYNAMIC_TARGET_RE",
     "_SIMPLE_DIR_RE", "_ASSIGNMENT_RE", "_RESERVED_PREFIXES", "_WRAPPER_COMMANDS",
@@ -151,7 +156,8 @@ __all__ = [
     "_is_ignorable_write_target", "_is_dynamic_target",
     "_is_absolute_target", "_Word", "_TokenizeError", "_backtick_span", "_closed_backtick_spans",
     "_EXPANSION_CLOSERS", "_skip_squote", "_collect_dq_nested", "_collect_dq_expansion", "_read_word",
-    "_split_operator_run", "_shell_tokens", "_heredoc_delimiters", "_heredoc_terminator", "_body_substitutions",
+    "_split_operator_run", "_shell_tokens", "_heredoc_delimiters", "_heredoc_shell_flags",
+    "_heredoc_may_feed_shell", "_command_prefix_end", "_heredoc_terminator", "_body_substitutions",
     "_line_mode_tokens", "_may_use_ansi_c_quoting", "_quote_model_applies",
     "_without_quoted_heredoc_bodies",
     "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
@@ -176,6 +182,266 @@ _FD_DUP_WORD_RE = re.compile(r"^(?:\d+-?|-)$")
 
 # Backslash-newline (an odd number of backslashes before the newline) is a line continuation.
 _LINE_CONTINUATION_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
+# What _join_line_continuations stops at: a backslash, a quote, a possible comment, a possible heredoc
+# operator, a newline. Everything between is copied as it is.
+_JOIN_SPECIAL_RE = re.compile(r"[\\'\"#<\n]")
+# Inside a `$(...)` the parentheses count too: the substitution ends at the `)` that closes it.
+_JOIN_NESTED_SPECIAL_RE = re.compile(r"[\\'\"#<\n()]")
+# `$(...)` inside double quotes inside `$(...)` ...: deeper than this the rest is copied unjoined.
+_JOIN_MAX_NESTING = 8
+# A `#` starts a comment after one of these (or at the very start), as the tokenizer reads it.
+_JOIN_WORD_END = " \t\r\n;&|()<>"
+
+
+def _join_heredoc_bodies(
+    text: str, start: int, pending: list[tuple[str, bool, bool]], out: list[str]
+) -> int:
+    """Copy the bodies of the heredocs a finished line opened (`pending`: delimiter, quoted, dash) to
+    `out`, starting at `text[start]`, and return the index where ordinary reading goes on. The body of
+    a heredoc with a quoted delimiter is copied as it stands: bash keeps a backslash-newline there. An
+    unquoted body is joined, and its terminator is compared after joining, as bash does. A heredoc with
+    no terminator line is none: the text from `start` on stays ordinary text."""
+    index = start
+    for delimiter, quoted, dash in pending:
+        copied: list[str] = []
+        position = index
+        line_end = -1
+        found = False
+        while True:
+            newline = text.find("\n", position)
+            line_end = len(text) if newline < 0 else newline
+            line = text[position:line_end]
+            if not quoted:
+                while (len(line) - len(line.rstrip("\\"))) % 2 == 1 and line_end < len(text):
+                    next_newline = text.find("\n", line_end + 1)
+                    next_end = len(text) if next_newline < 0 else next_newline
+                    line = line[:-1] + text[line_end + 1:next_end]
+                    line_end = next_end
+            copied.append(line)
+            if (line.lstrip("\t") if dash else line) == delimiter:
+                found = True
+                break
+            if line_end >= len(text):
+                break
+            position = line_end + 1
+        if not found:
+            return index
+        out.append("\n".join(copied) + ("\n" if line_end < len(text) else ""))
+        index = min(line_end + 1, len(text))
+    return index
+
+
+def _heredoc_delimiter_at(text: str, start: int) -> tuple[Optional[tuple[str, bool, bool]], int]:
+    """Read the delimiter of the heredoc whose `<<` sits at `text[start]`: ((delimiter, quoted, dash),
+    index after it), or (None, start + 2) when there is none this pass can place (an empty word, an
+    unterminated quote, a trailing backslash, or a word holding a backtick — a line with a backtick
+    opens no heredoc anyway, _opens_no_heredoc, so its pending list is dropped). Bash performs no
+    expansion on the delimiter word, so an unquoted `$` is a literal part of it: `<<'E'$x` is a quoted
+    heredoc with the delimiter `E$x`, and its body keeps a backslash-newline. `quoted` is set when any
+    part of the word was single-, double- or backslash-quoted — which is what both bash's body
+    expansion and this join pass's continuation handling turn on, so the two agree on the body."""
+    size = len(text)
+    index = start + 2
+    dash = index < size and text[index] == "-"
+    if dash:
+        index += 1
+    while index < size and text[index] in " \t":
+        index += 1
+    parts: list[str] = []
+    quoted = False
+    while index < size and text[index] not in _JOIN_WORD_END:
+        char = text[index]
+        if char == "'":
+            end = text.find(char, index + 1)
+            if end < 0:
+                return None, start + 2
+            parts.append(text[index + 1:end])
+            quoted = True
+            index = end + 1
+        elif char == '"':
+            # Inside double quotes `$` and a backtick are literal in a delimiter, a backslash escapes
+            # only `$`, a backtick, `"` and itself (and removes a newline); the delimiter is what is left.
+            inner_parts: list[str] = []
+            cursor = index + 1
+            while cursor < size and text[cursor] != '"':
+                if text[cursor] == "\\" and cursor + 1 < size and text[cursor + 1] in '$`"\\\n':
+                    if text[cursor + 1] != "\n":
+                        inner_parts.append(text[cursor + 1])
+                    cursor += 2
+                else:
+                    inner_parts.append(text[cursor])
+                    cursor += 1
+            if cursor >= size:
+                return None, start + 2
+            parts.append("".join(inner_parts))
+            quoted = True
+            index = cursor + 1
+        elif char == "\\":
+            if index + 1 >= size:
+                return None, start + 2
+            parts.append(text[index + 1])
+            quoted = True
+            index += 2
+        elif char == "$":
+            # No expansion happens on the delimiter word, so an unquoted `$` is a literal part of it.
+            parts.append(char)
+            index += 1
+        elif char == "`":
+            # A backtick could open a span running over spaces and newlines; a line holding one opens
+            # no heredoc at all (_opens_no_heredoc) and drops its pending list, so give up on it here.
+            return None, start + 2
+        else:
+            parts.append(char)
+            index += 1
+    delimiter = "".join(parts)
+    if not delimiter:
+        return None, start + 2
+    return (delimiter, quoted, dash), index
+
+
+def _join_line_continuations(command: str) -> str:
+    """`command` with every backslash-newline removed that bash removes, and only those. Bash keeps
+    the pair in a comment (the comment ends at the newline), in single quotes, and in the body of a
+    heredoc with a quoted delimiter; everywhere else — unquoted, in double quotes, in an unquoted
+    heredoc body — it is a line continuation and leaves nothing. An escaped backslash before the
+    newline (`\\\\` + newline) is no continuation and stays. One pass over the text with just enough
+    of bash's quoting to tell those places apart; a `$(...)` inside double quotes is read again as a
+    text of its own (its comments, quotes and heredocs count there), as bash does. A line that opens no
+    heredoc for the line-wise tokenizer (`$((1<<2))`, see _opens_no_heredoc) opens none here either, and
+    the delimiter that decides whether a body is kept is read by _heredoc_delimiter_at the same way the
+    tokenizer reads it — an unquoted `$` is literal, `quoted` turns only on real quoting — so a mixed
+    delimiter like `<<'E'$x` counts as a quoted heredoc in both passes and its body is left alone.
+    Not modelled: a `)` that is part of a `case` pattern inside such a `$(...)` ends it early, and a
+    backtick span or a `$(...)` nested deeper than _JOIN_MAX_NESTING is copied with its pairs left in
+    — there the tokenizers read the pair for themselves, and the scan of that nested text joins again."""
+    if "\\\n" not in command:
+        return command
+    return _join_scan(command, 0, 0)[0]
+
+
+def _join_scan(command: str, index: int, level: int) -> tuple[str, int, bool]:
+    """The joining pass of _join_line_continuations from `command[index]`. `level` 0 reads to the end of
+    the text; a higher level is the inside of a `$(...)` and stops after the `)` that closes it. Returns
+    (joined text without that `)`, index where the caller goes on, whether the closing `)` was found)."""
+    out: list[str] = []
+    last = ""
+    pending: list[tuple[str, bool, bool]] = []
+    depth = 0
+    line_first = 0  # index in `out` of the first piece of the line being read
+    size = len(command)
+    special = _JOIN_NESTED_SPECIAL_RE if level else _JOIN_SPECIAL_RE
+    while index < size:
+        match = special.search(command, index)
+        if match is None:
+            out.append(command[index:])
+            index = size
+            break
+        position = match.start()
+        if position > index:
+            out.append(command[index:position])
+            last = command[position - 1]
+        char = command[position]
+        if char == "\\":
+            if position + 1 >= size:
+                out.append(char)
+                index = size
+            elif command[position + 1] == "\n":
+                index = position + 2  # a line continuation: nothing is emitted
+            else:
+                out.append(command[position:position + 2])
+                last = command[position + 1]
+                index = position + 2
+        elif char == "'":
+            end = command.find("'", position + 1)
+            end = size if end < 0 else end + 1
+            out.append(command[position:end])
+            last = command[end - 1]
+            index = end
+        elif char == '"':
+            piece = ['"']
+            cursor = position + 1
+            while cursor < size:
+                inner = command[cursor]
+                if inner == "\\" and cursor + 1 < size:
+                    if command[cursor + 1] != "\n":
+                        piece.append(command[cursor:cursor + 2])
+                    cursor += 2
+                elif inner == '"':
+                    piece.append(inner)
+                    cursor += 1
+                    break
+                elif inner == "$" and command.startswith("$(", cursor):
+                    if level >= _JOIN_MAX_NESTING:
+                        piece.append(command[cursor:])
+                        cursor = size
+                        break
+                    text, cursor, closed = _join_scan(command, cursor + 2, level + 1)
+                    piece.append("$(" + text + (")" if closed else ""))
+                elif inner == "`":
+                    end = cursor + 1
+                    while end < size and command[end] != "`":
+                        end += 2 if command[end] == "\\" else 1
+                    end = min(end + 1, size)
+                    piece.append(command[cursor:end])
+                    cursor = end
+                else:
+                    piece.append(inner)
+                    cursor += 1
+            out.append("".join(piece))
+            last = out[-1][-1]
+            index = cursor
+        elif char == "#":
+            if last == "" or last in _JOIN_WORD_END:
+                end = command.find("\n", position)
+                end = size if end < 0 else end
+                out.append(command[position:end])
+                last = command[end - 1]
+                index = end
+            else:
+                out.append("#")
+                last = "#"
+                index = position + 1
+        elif char == "<":
+            if command.startswith("<<<", position):
+                out.append("<<<")
+                last = "<"
+                index = position + 3
+            elif command.startswith("<<", position):
+                spec, end = _heredoc_delimiter_at(command, position)
+                if spec is not None:
+                    pending.append(spec)
+                out.append(command[position:end])
+                last = command[end - 1]
+                index = end
+            else:
+                out.append("<")
+                last = "<"
+                index = position + 1
+        elif char == "(":
+            depth += 1
+            out.append("(")
+            last = "("
+            index = position + 1
+        elif char == ")":
+            if depth == 0:
+                return "".join(out), position + 1, True
+            depth -= 1
+            out.append(")")
+            last = ")"
+            index = position + 1
+        else:  # a newline outside every quote: heredocs opened on the line just ended start here
+            if pending and _opens_no_heredoc("".join(out[line_first:])):
+                pending = []
+            out.append("\n")
+            last = "\n"
+            index = position + 1
+            if pending:
+                index = _join_heredoc_bodies(command, index, pending, out)
+                pending = []
+            line_first = len(out)
+    return "".join(out), index, False
+
+
 _RAW_REDIRECT_RE = re.compile(r"(?:&>>|&>|>>|>\||>&|<>|>)\s*([^\s;&|()<>]+)")
 # The word right after a heredoc operator in the raw line (not `<<<`), to see whether it was quoted.
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\S*)")
@@ -583,7 +849,7 @@ def _read_word(
     with a backslash only before `"`, a backslash or a backtick (any other backslash stays), an unquoted
     backslash escapes the next character; an unquoted or double-quoted backslash before a newline is a
     line continuation and leaves nothing in the word (_scan_command joins those before tokenizing
-    already — this keeps a word read on its own true to bash). Beyond that, an unquoted or double-quoted backtick opens a
+    already, except where bash keeps the pair — this keeps a word read on its own true to bash). Beyond that, an unquoted or double-quoted backtick opens a
     span (_backtick_span) that stays in the word verbatim and is recorded in `subs`; a backtick
     inside single quotes or escaped is an ordinary character. Raises ValueError on an unclosed
     quote or a trailing backslash, and — with `spans_must_close`, the tokenizing of one line on its
@@ -740,6 +1006,8 @@ def _shell_tokens(text: str, newline_is_operator: bool) -> list[_Token]:
         char = text[index]
         if char in blank:
             index += 1
+        elif char == "\\" and text.startswith("\\\n", index):
+            index += 2  # a line continuation between words: bash drops it, it is no word of its own
         elif char in operator_chars:
             end = index
             while end < len(text) and text[end] in operator_chars:
@@ -765,6 +1033,13 @@ def _shell_tokens(text: str, newline_is_operator: bool) -> list[_Token]:
 _NO_HEREDOC_MARKERS = ("$[", "${", "[", "`")
 
 
+def _opens_no_heredoc(line: str) -> bool:
+    """True for a line that opens no heredoc as far as the line-wise reading goes: `((` in it (arithmetic
+    like `$((1<<2))`, where `<<` is a shift) or one of _NO_HEREDOC_MARKERS. _heredoc_delimiters and
+    _join_scan use this one test, so they never disagree about which lines have a body."""
+    return "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS)
+
+
 def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str], bool]]:
     """Every heredoc a line opens, in order, as (terminator candidates, whether its body is
     expanded). A line with `((` in it (arithmetic like `$((1<<2))`, where `<<` is a shift) or with
@@ -773,7 +1048,7 @@ def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str],
     ever scans more. A body is expanded (so `$(...)` and backticks in it run) unless the delimiter
     was quoted; the tokens no longer show quoting, so that is read from the raw line, and if the two
     do not line up the body is treated as expanded."""
-    if "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS):
+    if _opens_no_heredoc(line):
         return []
     delimiters = []
     for index, (text, is_op) in enumerate(tokens[:-1]):
@@ -789,6 +1064,185 @@ def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str],
         (candidates, not aligned or not any(char in raw_words[position] for char in "'\"\\"))
         for position, candidates in enumerate(delimiters)
     ]
+
+
+def _command_prefix_end(words: list[str]) -> int:
+    """Index of the command name in a simple command's words: assignments, `if`/`{`-style prefixes,
+    backtick-span words and wrappers (`env`, `sudo`, `time` ... with their options) skipped, as
+    _simple_command_targets skips them."""
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if _ASSIGNMENT_RE.match(word) or word in _RESERVED_PREFIXES or _is_span_word(word):
+            index += 1
+        elif _command_name(word) in _WRAPPER_COMMANDS:
+            value_flags = _WRAPPER_VALUE_FLAGS.get(_command_name(word), frozenset())
+            index += 1
+            while index < len(words):
+                arg = words[index]
+                if arg in value_flags:
+                    index += 2 if index + 1 < len(words) else 1
+                elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg):
+                    index += 1
+                else:
+                    break
+        else:
+            break
+    return index
+
+
+# Shell options that take the next word as their value (`bash -o pipefail`, `bash -O extglob`).
+_SHELL_VALUE_OPTIONS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+
+
+def _segment_words(tokens: list[_Token], start: int, end: int) -> list[str]:
+    """The words of `tokens[start:end]` that are arguments of a command: every redirection operator and
+    its operand is left out."""
+    words: list[str] = []
+    skip_next = False
+    for position in range(start, end):
+        token_text, token_is_op = tokens[position]
+        if token_is_op:
+            skip_next = True  # the operand of a redirection is no argument of the command
+        elif skip_next:
+            skip_next = False
+        else:
+            words.append(token_text)
+    return words
+
+
+def _reads_script_from_stdin(words: list[str]) -> bool:
+    """True if the simple command with these words is a shell that reads its script from standard
+    input: no `-c` among its options (with `-c` the script is the option's value and a heredoc is plain
+    input). Options end at `--`, at `-` and at the first word that is no option — from there on every
+    word is the script file or a positional parameter, so a later `-c` means nothing. A shell given a
+    file name is taken as running that file, which is not told apart here (the body is read as a script
+    then — over-reading, never a miss)."""
+    name_at = _command_prefix_end(words)
+    if name_at >= len(words) or _command_name(words[name_at]) not in _SHELL_NAMES:
+        return False
+    args = words[name_at + 1:]
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in ("--", "-") or not arg.startswith(("-", "+")):
+            break
+        if arg in _SHELL_VALUE_OPTIONS:
+            index += 2
+            continue
+        if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+            return False
+        index += 1
+    return True
+
+
+def _group_reads_script_from_stdin(tokens: list[_Token], first: int, stop: int) -> bool:
+    """True if some simple command in `tokens[first:stop]` (the inside of a `{ ...; }` or `( ... )` group
+    whose standard input a heredoc replaces) is a shell reading its script from standard input."""
+    position = first
+    while position < stop:
+        end = position
+        while end < stop and not (tokens[end][1] and tokens[end][0] in _SEPARATOR_OPS):
+            end += 1
+        if _reads_script_from_stdin(_segment_words(tokens, position, end)):
+            return True
+        position = end + 1
+    return False
+
+
+# A line opening more heredocs than this — far more than any real command, which has one or two —
+# skips the per-heredoc analysis below and counts every body as a shell's script (the blocking side).
+# That caps the work the group lookback can do per line, so an adversarial line of thousands of `<<`
+# cannot make this quadratic.
+_MAX_HEREDOCS_PER_LINE = 64
+
+
+def _heredoc_shell_flags(tokens: list[_Token]) -> list[bool]:
+    """For each heredoc a line opens (a `<<` operator followed by a word, in order, as
+    _heredoc_delimiters finds them): whether its body is a script for a shell — the command it feeds is
+    a shell reading its script from standard input (`bash <<EOF`, `sh -s <<EOF`, `sh - <<EOF`, behind a
+    wrapper or after a pipe too; _reads_script_from_stdin), the group it feeds holds one (`{ bash; }
+    <<EOF`, `(bash) <<EOF`), or a later stage of its pipeline is one (`cat <<EOF | bash`: the body
+    is what the first stage prints). Not covered: a pipe that ends the line with the shell on a later
+    line, and a group as a later stage.
+
+    The line is split into segments (maximal runs between separator operators) once, so each segment's
+    "reads a script from stdin" value and the pipeline-suffix flag are computed a single time and the
+    per-heredoc loop only looks them up (plus a local group lookback). Scanning the whole segment and
+    pipeline afresh for every `<<` used to be quadratic in the number of heredocs on the line."""
+    heredocs = [index for index in range(len(tokens) - 1)
+                if tokens[index][1] and tokens[index][0] == "<<" and not tokens[index + 1][1]]
+    if not heredocs:
+        return []
+    if len(heredocs) > _MAX_HEREDOCS_PER_LINE:
+        return [True] * len(heredocs)
+    size = len(tokens)
+
+    def is_separator(position: int) -> bool:
+        return tokens[position][1] and tokens[position][0] in _SEPARATOR_OPS
+
+    # One pass splits the line into segments: each a maximal run of non-separator tokens, paired with
+    # the operator that follows it (for the pipeline chain). seg_start maps a token to its segment's
+    # start, and a start is unique, so it also names the segment.
+    seg_start = [-1] * size
+    segments: list[tuple[int, int, str]] = []  # (start, end, the following separator operator or "")
+    position = 0
+    while position < size:
+        start = position
+        while position < size and not is_separator(position):
+            seg_start[position] = start
+            position += 1
+        following = tokens[position][0] if position < size else ""
+        segments.append((start, position, following))
+        if position < size:
+            position += 1
+    order_of_start = {start: order for order, (start, _end, _sep) in enumerate(segments)}
+    words_of = [_segment_words(tokens, start, end) for start, end, _sep in segments]
+    base = [_reads_script_from_stdin(words) for words in words_of]
+    # Pipeline suffix: within a run of segments joined by pipe operators, whether a later stage reads a
+    # script (`cat <<EOF | bash`). pipe_later[k] = base[k+1] or pipe_later[k+1] when k feeds k+1 through
+    # a pipe, else False.
+    pipe_later = [False] * len(segments)
+    for order in range(len(segments) - 2, -1, -1):
+        if segments[order][2] in _PIPE_OPS:
+            pipe_later[order] = base[order + 1] or pipe_later[order + 1]
+
+    flags: list[bool] = []
+    for index in heredocs:
+        order = order_of_start[seg_start[index]]
+        start = segments[order][0]
+        words = words_of[order]
+        feeds = base[order]
+        if not feeds and not words and start > 0 and tokens[start - 1] == (")", True):
+            depth = 1
+            open_at = start - 2
+            while open_at >= 0 and depth:
+                if tokens[open_at][1] and tokens[open_at][0] in ("(", ")"):
+                    depth += 1 if tokens[open_at][0] == ")" else -1
+                open_at -= 1
+            feeds = depth == 0 and _group_reads_script_from_stdin(tokens, open_at + 2, start - 1)
+        elif not feeds and words == ["}"]:
+            depth = 1
+            open_at = start - 1
+            while open_at >= 0 and depth:
+                if not tokens[open_at][1] and tokens[open_at][0] in ("{", "}"):
+                    depth += 1 if tokens[open_at][0] == "}" else -1
+                open_at -= 1
+            feeds = depth == 0 and _group_reads_script_from_stdin(tokens, open_at + 2, start)
+        if not feeds:
+            feeds = pipe_later[order]
+        flags.append(feeds)
+    return flags
+
+
+_SHELL_WORD_IN_LINE_RE = re.compile(r"(?<![\w.-])(?:ba|z|da|k)?sh(?![\w.-])|\$\{?(?:shell|0)\}?", re.IGNORECASE)
+
+
+def _heredoc_may_feed_shell(command: str) -> bool:
+    """True if some line of `command` opens a heredoc and names a shell — a coarse test (a path, a
+    longer command line, a word that only looks like one all count) for the whole-command fallback,
+    which must not cut out a quoted heredoc body that a shell may run."""
+    return any("<<" in line and _SHELL_WORD_IN_LINE_RE.search(line) for line in command.split("\n"))
 
 
 def _body_substitutions(body_lines: list[str]) -> list[str]:
@@ -843,10 +1297,22 @@ def _line_mode_tokens(command: str) -> list[_Token]:
         tokens.extend(line_tokens)
         tokens.append(("\n", True))
         index += 1
-        for candidates, expands in _heredoc_delimiters(line_tokens, line):
+        delimiters = _heredoc_delimiters(line_tokens, line)
+        feeds_shell = _heredoc_shell_flags(line_tokens) if delimiters else []
+        for position, (candidates, expands) in enumerate(delimiters):
             end = _heredoc_terminator(line_positions, candidates, index)
             if end is None:
                 break
+            if position < len(feeds_shell) and feeds_shell[position]:
+                # The body is a script for a shell: scanned as a command text of its own (the same
+                # route a `sh -c` text takes), so the commands in it count, an expansion in an
+                # unquoted body (`$(...)`, `$VAR`) shows up as the dynamic target it is there.
+                body = "\n".join(lines[index:end])
+                tokens.append((_Word("`heredoc`", (body,), "", "." * len("`heredoc`")), False))
+                tokens.append(("\n", True))
+            # An unquoted body is expanded before any reader sees it - by bash, even inside what the
+            # shell reading it later takes as a comment or a quoted string - so its substitutions
+            # count on their own as well, whether or not the body then goes to a shell.
             if expands:
                 for snippet in _body_substitutions(lines[index:end]):
                     try:
@@ -1231,7 +1697,7 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
     tokenizing manages the whole command, the tokens each read before it failed are scanned too,
     next to the raw-text search."""
     quote_model = _quote_model_applies(command)
-    command = _LINE_CONTINUATION_RE.sub(r"\1", command)
+    command = _join_line_continuations(command)
     if depth > _MAX_SCAN_DEPTH:
         # Nested deeper than anything real: not read any further, and not passed either — the whole
         # remainder is one target that names no knowable path (a `$(` text), which check 1c denies and
@@ -1250,7 +1716,9 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
     if tokens is None:
         # The whole-command fallback skips no heredoc itself: the bodies of quoted-delimiter heredocs,
         # which bash never runs, are cut out first (unless `$'` may be live, where nothing is trusted).
-        whole = command if ansi_c_quoting or not quote_model else _without_quoted_heredoc_bodies(command)
+        # A body that may be a shell's script (`bash <<'EOF'`) is not cut out either: it is scanned.
+        keep_bodies = ansi_c_quoting or not quote_model or _heredoc_may_feed_shell(command)
+        whole = command if keep_bodies else _without_quoted_heredoc_bodies(command)
         try:
             tokens = _shell_tokens(whole, newline_is_operator=True)
         except ValueError as error:

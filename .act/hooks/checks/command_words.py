@@ -95,7 +95,7 @@ from . import command_words_legacy as _legacy_words
 from .command_words_legacy import _coarse_word_lists
 
 from .shell_targets import (
-    _LINE_CONTINUATION_RE,
+    _join_line_continuations,
     _MAX_SCAN_DEPTH,
     _SEPARATOR_OPS,
     _SHELL_NAMES,
@@ -180,7 +180,7 @@ def _command_word_lists_new(command: str, depth: int = 0) -> list[tuple[list[str
     preceding-separator) pairs — see this module's docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
     `pwsh|powershell -Command ...`, `cmd /c ...`, `eval ...`, `$(...)`, `` `...` `` and
     `find ... -exec ... ;|+`."""
-    command = _LINE_CONTINUATION_RE.sub("", command)
+    command = _join_line_continuations(command)
     tokens = None
     for attempt in (lambda: _line_mode_tokens(command), lambda: _shell_tokens(command, True)):
         try:
