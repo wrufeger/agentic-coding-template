@@ -14,4 +14,7 @@ which the board then shows next to the task title. The first `state` also writes
 the board marks the task "(running)", the status line counts running and new tasks apart — so a
 note on a task not begun yet belongs in this file, not in `state`. The header also carries `for: <identity>` (whose
 task it is; `entries.py new task` writes the current identity, `--for` changes it, `all` or no
-field = shared); the board lists tasks for others apart (`board-others` in `docs/ai/config.md`).
+field = shared); the board lists tasks for others apart (`board-others` in `docs/ai/config.md`). A size in
+the body is written as duration and tokens, never person-days: `~45 min · ~600k tkn fresh · ~15M tkn cache` plus
+the assumption behind it, worked out from `python .act/scripts/usage.py --estimates` (runs × median, up to the
+80th percentile) or, without measured runs, from experience in the same form.

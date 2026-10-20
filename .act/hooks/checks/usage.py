@@ -11,6 +11,12 @@
 #          own — writing one small file is O(1), no read-modify-write of shared state happens
 #          here at all, see the concurrency note below).
 #
+# Measured runs: on SubagentStop the worker's own transcript is read once (usage.measure_agent) and
+# its duration, steps and tokens are recorded as a "run" event under the worker's role and tier
+# (agentType from the neighbouring meta.json; the tier from the assignment's first record) - the
+# data behind `usage.py --estimates`. A missing/unreadable transcript, a missing agent_id or a
+# helper agent without agentType records nothing.
+#
 # What is counted here, and from which event (dispatch.py's own docstring lists the wired events):
 #   - a worker start, by role/tier/model: PreToolUse, tool_name "Agent"/"Task"
 #     (checks.common._WORKER_TOOL_NAMES), *no* agent_id in the payload (the orchestrator's own
@@ -71,6 +77,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import actlib
 import usage
@@ -86,6 +93,8 @@ __all__ = [
 # "Tier: light." and "Tier: standard · Estimate: ..." both yield a bare value ("light",
 # "standard"). Lower-cased on capture (see _tier_from_prompt) so "Tier: Standard" and
 # "Tier: standard" land in the same usage.json bucket instead of splitting the count.
+_SAFE_AGENT_ID_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")  # becomes part of a file name
+
 _TIER_RE = re.compile(r"Tier:\s*([^\s.,;·]+)", re.IGNORECASE)
 
 # ".act/scripts/<name>.py" run *through an interpreter* — either a literal "python"/"python3"/"py"
@@ -175,6 +184,8 @@ def observe(event: str, payload: dict) -> None:
         _observe_user_prompt(root, payload)
     elif event == "SessionStart":
         usage.consolidate_at_session_start(root)
+    elif event == "SubagentStop":
+        _observe_subagent_stop(root, payload)
 
 
 def _observe_pre_tool_use(root, payload: dict) -> None:
@@ -221,6 +232,45 @@ def _observe_pre_tool_use(root, payload: dict) -> None:
             match = _CHECKLIST_PATH_RE.search(file_path)
             if match:
                 usage.record_event(root, "checklists", match.group(1))
+
+
+def _agent_transcript(payload: dict, agent_id: str) -> "Path | None":
+    """The finished worker's own transcript: payload.agent_transcript_path when the harness gives
+    it, else <session>/subagents/agent-<id>.jsonl next to the session transcript (the lookup
+    worker_cap/write_scope use). The given path counts only below the session transcript's folder,
+    so a payload cannot point the reader at an arbitrary file. None if neither is a file."""
+    session = payload.get("transcript_path")
+    if not (isinstance(session, str) and session):
+        return None
+    project_dir = Path(session).resolve().parent
+    given = payload.get("agent_transcript_path")
+    if isinstance(given, str) and given:
+        given_path = Path(given).resolve()
+        if project_dir in given_path.parents and given_path.is_file():
+            return given_path
+    candidate = Path(session).with_suffix("") / "subagents" / f"agent-{agent_id}.jsonl"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _observe_subagent_stop(root, payload: dict) -> None:
+    """Measure the worker that just ended (duration, steps, tokens) and record it as a run event
+    for usage.py --estimates. Anything unexpected - no agent_id, no or unreadable transcript, a
+    helper agent without agentType - records nothing; this never raises or blocks."""
+    try:
+        agent_id = payload.get("agent_id")
+        if not isinstance(agent_id, str) or not _SAFE_AGENT_ID_RE.match(agent_id):
+            return
+        transcript = _agent_transcript(payload, agent_id)
+        if transcript is None:
+            return
+        agent_type = payload.get("agent_type")
+        run = usage.measure_agent(transcript, agent_id, agent_type if isinstance(agent_type, str) else "")
+        if run is not None:
+            usage.record_run(root, run)
+    except Exception:  # noqa: BLE001 - bookkeeping must never fail the hook
+        return
 
 
 def _observe_user_prompt(root, payload: dict) -> None:

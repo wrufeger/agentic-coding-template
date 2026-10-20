@@ -9,6 +9,20 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Added
+
+- **Worker runs are measured.** When a worker ends, the usage counter reads its transcript and records duration,
+  steps and tokens — `fresh` (input, cache writes, output) and `cache` (cache reads) — per role and tier in
+  `.act-local/usage.json`, the newest 50 runs each. Numbers only; they are never sent with feedback.
+  `usage.py --estimates` shows median and 80th percentile per role and tier with the date of the last measurement;
+  `usage.py --backfill` reads a project's existing transcripts once, without counting anything twice. Claude Code only.
+
+### Changed
+
+- **Estimates in minutes and `tkn`, never person-days.** `act-idea`, `act-prepare`, the task and backlog READMEs and
+  `R-cost-delegate` ask for `~<n> min · ~<n> tkn fresh · ~<n> tkn cache` plus the assumption behind it, based on
+  `usage.py --estimates` (runs per role times the median, up to the 80th percentile) where measurements exist.
+
 ## [2.2.0] - 2026-10-20
 
 Quick capture from the chat, entries with YAML frontmatter, a one-step archive that takes pasted images along, four

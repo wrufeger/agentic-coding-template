@@ -935,7 +935,8 @@ options:
 Call: direct
 
 ```text
-usage: usage.py [-h] [--show | --outcome ROLE TIER OUTCOME | --unused KEY | --reset]
+usage: usage.py [-h] [--show | --outcome ROLE TIER OUTCOME | --unused KEY | --reset |
+                --estimates | --backfill] [--transcripts-dir DIR]
 
 Local usage counter: worker starts by role/tier/model, skill/command/script/checklist calls,
 worker outcomes.
@@ -947,4 +948,11 @@ options:
                         record accepted|reworked|escalated for one role/tier
   --unused KEY          exit 0 if KEY was never recorded, 1 if it was (see is_unused())
   --reset               delete every recorded count
+  --estimates           measured runs per role/tier: median and 80th percentile of minutes and
+                        tokens (fresh/cache), run count, last measurement
+  --backfill            read this project's existing worker transcripts once (a second run adds
+                        nothing twice)
+  --transcripts-dir DIR
+                        with --backfill: the transcript folder to read instead of Claude Code's
+                        folder for this project
 ```

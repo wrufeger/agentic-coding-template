@@ -17,7 +17,8 @@ code already answers, so research comes before the question round, never after.
    `tags:`) for the topic and read only the hits; a note whose `retire_when` is met gets reported,
    not followed.
 3. **Cut it into tasks or stories.** Each task: one-sentence goal, checkable acceptance criterion,
-   steps as bullets. Something bigger with its own justification becomes a story
+   steps as bullets, and a size as duration and tokens (`~45 min · ~600k tkn fresh · ~15M tkn cache`
+   plus its assumption, from `python .act/scripts/usage.py --estimates`). Something bigger with its own justification becomes a story
    (`docs/project/stories/`, where the project uses them); the rest is a task under
    `docs/ai/work/tasks/` (`python .act/scripts/entries.py new task <title>`).
 4. **Check readiness** — goal unambiguous, acceptance checkable, decisions made, preconditions
@@ -32,7 +33,7 @@ code already answers, so research comes before the question round, never after.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked
    ready. A question left open keeps its task on hold — never started "on best guess". A decision
    that should be looked at again may carry an optional line `revisit: YYYY-MM-DD` under its ADR.
-7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration — the plan
+7. **Lay out the order**: what runs when and in parallel, checkpoints, rough duration in minutes (the tasks' sizes added up, parallel runs not added twice) — the plan
    the block runs on while the human is away. The first checkpoint follows the first runnable
    slice: the orchestrator holds it against its acceptance check before handing out the rest, so
    a wrong direction costs one slice, not the block.
