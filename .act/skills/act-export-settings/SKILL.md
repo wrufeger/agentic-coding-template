@@ -27,7 +27,8 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
 - `--out PATH`: write there instead of the default `.act-local/export/act-settings-<date>.md`/
   `.zip` (machine-local, gitignored, created on demand). The natural handover is dropping that file
   straight into another checkout's `.act-local/import/` — that's exactly what `act-load-settings`
-  picks up when run with no path.
+  picks up when run with no path. With the `outside-root` guard, a `--out` path outside the project is refused:
+  use the default folder under `.act-local/`, add the path to `outside-root-allow`, or set `ACT_OUTSIDE_ROOT=warn` for one run.
 - `--profile`: write to the Owner's profile instead — the grounds a future `init` will hand to a
   fresh clone as its starting point (`init` does not read the profile yet, only this writes it).
   Same format, same switches; goes to the platform config dir (Windows `%APPDATA%\act\settings.md`,

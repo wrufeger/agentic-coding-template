@@ -65,7 +65,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -1606,6 +1606,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# The outside-root check reads this marker: it opens the scanned target (read and write) for 24 hours
+# or until adopt.py --abort removes it. Written from inside Python, so the hook never sees it. Only a
+# checkout that is a project itself (docs/ai/config.md) runs the check; a plain template clone gets no marker.
+OUTSIDE_MARKER_REL = ".act-local/outside-allow/adopt.json"
+
+
+def outside_marker_path() -> Path:
+    """The marker lives in the checkout these scripts run from, not in the target."""
+    return Path(__file__).resolve().parents[2] / OUTSIDE_MARKER_REL
+
+
+def write_outside_marker(target: Path) -> None:
+    """Write (or refresh) the marker for `target`; a failure only prints one line to stderr."""
+    marker = outside_marker_path()
+    if not (marker.parents[2] / "docs" / "ai" / "config.md").is_file():
+        return
+    try:
+        payload = {
+            "target": target.resolve().as_posix(),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        tmp = marker.with_name(marker.name + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, marker)
+    except OSError as exc:
+        print(f"adopt: could not write outside-root marker {marker}: {exc}", file=sys.stderr)
+
+
+def remove_outside_marker() -> None:
+    """Remove the marker; a missing file is fine, any other failure prints one line to stderr."""
+    marker = outside_marker_path()
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"adopt: could not remove outside-root marker {marker}: {exc}", file=sys.stderr)
+
+
 def main(argv: list[str]) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -1625,6 +1665,7 @@ def main(argv: list[str]) -> int:
         print(f"adopt_scan.py: target is not a directory: {root}", file=sys.stderr)
         return 2
 
+    write_outside_marker(root)
     rows, hint, info = run(root)
     payload = write_scan_json(root, rows, hint, info)
 

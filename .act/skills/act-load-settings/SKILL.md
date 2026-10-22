@@ -16,7 +16,9 @@ is reported, never silent.
    happen. Several files in one run are checked against each other too (a cross-file disagreement
    on the same id applies from neither). **No `<file...>` given:** every `.md`/`.zip` directly in
    `.act-local/import/` is used instead (sorted by name, that folder's own `README.md` skipped) —
-   the default when the human just dropped a file there rather than naming a path. A file that
+   the default when the human just dropped a file there rather than naming a path. With the `outside-root`
+   guard, a `<file>` outside the project is refused: use `.act-local/import/`, add its folder to
+   `outside-root-allow`, or set `ACT_OUTSIDE_ROOT=warn` for one run. A file that
    fails to load is reported and left alone; an empty or missing folder is a clean no-op.
 2. Content overlaps (an imported rule against one of this project's own) come back as candidate
    pairs, not a verdict — judge each one (`same` / `extends` / `contradicts` / `unrelated`) and pass

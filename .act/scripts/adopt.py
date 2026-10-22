@@ -54,7 +54,7 @@ import shutil
 import stat
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -2346,6 +2346,42 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _marker_state(root: Path) -> Optional[dict]:
+    """The outside-root marker as a dict when it names `root` as its target, else None.
+    Targets are compared the way adopt_scan writes them (resolved, forward slashes)."""
+    try:
+        data = json.loads(adopt_scan.outside_marker_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("target"), str):
+        return None
+    if data["target"] != root.resolve().as_posix():
+        return None
+    return data
+
+
+def _marker_is_valid(root: Path) -> bool:
+    """True when a marker for `root` exists and is younger than 24 hours."""
+    data = _marker_state(root)
+    if data is None:
+        return False
+    try:
+        created = datetime.strptime(str(data.get("created")), "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    age = datetime.utcnow() - created
+    return timedelta(0) <= age < timedelta(hours=24)
+
+
+def _end_outside_marker(code: int, plan: bool, root: Path) -> None:
+    """Drop the outside-root marker once abort ended cleanly (every early `return 0` path
+    included), and only when it belongs to this run's target. A refusal or error keeps it: the
+    same command is run again and still needs the target open. --plan changes nothing, so it
+    keeps the marker too. --finish never calls this: its steps 7-8 still need the target."""
+    if code == 0 and not plan and _marker_state(root) is not None:
+        adopt_scan.remove_outside_marker()
+
+
 def main(argv: list) -> int:
     for stream in (sys.stdout, sys.stderr):
         try:
@@ -2378,8 +2414,12 @@ def main(argv: list) -> int:
         return 2
     try:
         if args.abort:
-            return cmd_abort(root, args.plan, args.force)
+            code = cmd_abort(root, args.plan, args.force)
+            _end_outside_marker(code, args.plan, root)
+            return code
         if args.apply:
+            if not args.plan and _marker_is_valid(root):
+                adopt_scan.write_outside_marker(root)  # refresh the 24 h window; never create or revive one
             return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"],
                              args.confirm_no_targets)
         return cmd_finish(root, args.plan)

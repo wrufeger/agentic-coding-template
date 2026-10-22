@@ -1191,6 +1191,7 @@ _ENV_OVERRIDES = (
     "ACT_MCP_LIST_TIMEOUT",
     "ACT_MCP_CATALOG",
     "ACT_SECRET_READ",
+    "ACT_OUTSIDE_ROOT",
 )
 
 
@@ -1254,6 +1255,24 @@ def _env_override_note() -> Optional[str]:
 
 
 _OUTPUT_DEPTHS = ("verbose", "normal", "sparse")
+
+
+def _outside_root_note(root: Path, config: dict[str, str]) -> Optional[str]:
+    """One-time note (per project and machine) for a project whose config.md has no `outside-root`
+    row: the check runs there as `warn`. Marker file: .act-local/outside-root-note.json."""
+    if "outside-root" in config or os.environ.get("ACT_OUTSIDE_ROOT", "").strip().lower() in ("block", "warn", "off"):
+        return None
+    marker = root / ".act-local" / "outside-root-note.json"
+    if marker.exists():
+        return None
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"noted": date.today().isoformat()}) + "\n", encoding="utf-8")
+    except OSError:
+        return None  # cannot record it: say nothing rather than repeat at every start
+    return ("[act] note: the check `outside-root` runs here as `warn` (no row in docs/ai/config.md § Checks). "
+            "To block, set `outside-root | block`; list neighbour repos in `outside-root-allow` "
+            "(`../other (read)` for read-only).")
 
 
 def _output_depth_line(config: dict[str, str]) -> Optional[str]:
@@ -1744,6 +1763,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         env_note = None  # informational only, must never block the session
     if env_note:
         print(env_note)
+
+    try:
+        outside_note = _outside_root_note(root, config)
+    except Exception:
+        outside_note = None  # informational only, must never block the session
+    if outside_note:
+        print(outside_note)
 
     try:
         audit_note = _docs_audit_note(root, config)

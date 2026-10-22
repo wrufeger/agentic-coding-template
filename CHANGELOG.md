@@ -11,6 +11,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- **Reads and writes outside the project root are checked.** The new check `outside-root` (rule
+  `R-safe-outside-root`, `docs/ai/config.md` § Checks) refuses Read, Write, Edit, Grep, Glob and shell commands that
+  name a path outside the project root, for the orchestrator and workers alike. Allowed without an entry: the folders
+  in `permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for the project
+  (including `~/.claude/plans/`) and, read-only, `~/.claude/plugins/` and `~/.claude/skills/`.
+  Further places go into the new row `outside-root-allow` (comma-separated paths, ` (read)` after a path for
+  read-only). New projects start with `block`; an existing project without the row runs the check as `warn` and gets
+  a one-time note at session start saying how to switch it to `block`. `ACT_OUTSIDE_ROOT=block|warn|off` overrides
+  it for one run. `act-adopt` stays possible: the owner starts the first scan with the `!` prefix, which opens the
+  target folder for 24 hours or until `--abort`, also past `--finish`; `--apply` only refreshes a valid marker. Limits: the shell check is best effort, and programs that open files themselves and MCP tools with a
+  path are not checked.
 - **Worker runs are measured.** When a worker ends, the usage counter reads its transcript and records duration,
   steps and tokens — `fresh` (input, cache writes, output) and `cache` (cache reads) — per role and tier in
   `.act-local/usage.json`, the newest 50 runs each. Numbers only; they are never sent with feedback.

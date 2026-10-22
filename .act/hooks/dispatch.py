@@ -367,6 +367,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("git_discard", "check_git_discard"),                 # clean -f, checkout/restore of a folder, stash drop, force push to the default branch, branch -D (R-safe-git-discard)
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
     ("secret_read", "check_secret_read"),                 # reading a secret file (.env, keys, cloud credentials) into the context
+    ("outside_root", "check_outside_root"),               # reading or writing outside the project and its allowed places (R-safe-outside-root)
     ("secret_scan", "check_secret_scan"),                 # secrets in the diff before commit (R-safe-no-secret-diff)
     ("danger_scan", "check_danger_scan"),                 # dangerous patterns in the diff before commit (security-check)
     ("deps_scan", "check_deps_scan"),                     # dependency vulnerabilities in a touched lock file (security-check)

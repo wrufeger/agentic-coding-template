@@ -21,6 +21,7 @@ template text of its rule, checked or not.
   - [x] `R-safe-no-secret-cli`
   - [x] `R-safe-no-secret-diff`
   - [x] `R-safe-no-secret-read`
+  - [x] `R-safe-outside-root`
   - [x] `R-safe-no-secret-log`
   - [x] `R-safe-no-personal-data`
   - [x] `R-safe-no-shell-delete`

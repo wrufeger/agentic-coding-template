@@ -44,6 +44,16 @@ payload instead — the file is written either way). Changes nothing. An existin
 structure found here (a previous run of this template) is a source to sight like any other, not a
 shortcut around the rest of the steps.
 
+The `outside-root` guard (`docs/ai/config.md` § Checks) only runs where the template's hooks are installed,
+that is in a project; a plain checkout of the template has no `.claude/` and no hooks, so it does not apply
+there. Where it does, a target outside the project root is protected: the owner starts the first scan
+themselves with the `!` prefix (`! python .act/scripts/adopt_scan.py --target <dir>`). Claude Code runs
+PreToolUse only when Claude calls a tool, and a `!` command is not such a call. The scan leaves a marker,
+`.act-local/outside-allow/adopt.json`, which opens the target for 24 hours or until `--abort`, also past
+`--finish`, so steps 7-8 (`doctor.py --target <dir>`, `harvest.md`, `git -C <dir> commit`) still reach it.
+`--apply` only refreshes a valid marker for the same target and never creates one. The model's own call of
+the scan is reported beforehand as an access outside the project.
+
 Rows carry `proposed` (the action the table starts from) and, for a project made from the previous
 template, an `origin`. **Before step 2**, when the sighting printed `-- … --` info lines, a row with an
 `origin` or a `.claude/template.json` first line, read `references/sighting.md` (origins, the predecessor

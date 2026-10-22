@@ -1,6 +1,6 @@
 # Safety rules
 
-summary: approval before irreversible actions, secrets in diffs and reads, deletion, discarded git work, git hooks and config, the owner's dev server, safeguard blocks, foreign content
+summary: approval before irreversible actions, secrets in diffs and reads, staying inside the project root, deletion, discarded git work, git hooks and config, the owner's dev server, safeguard blocks, foreign content
 
 Shared safety rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and never
 reassigned.
@@ -41,6 +41,25 @@ stay free. Applies to orchestrator and workers alike. Checked mechanically by `s
 (`docs/ai/config.md` § Checks); the owner may set it to `warn` or `off` there, or for one run with
 `ACT_SECRET_READ` in the environment. Limit: a program that opens the file itself (`python
 script.py`, `docker run --env-file`) is invisible to the check.
+
+## `R-safe-outside-root` — Stay inside the project
+
+summary: read and write only in the project root and its allowed places; any other place only on the owner's word, as an entry; mechanically checked
+
+Read and write only inside the project root and the places allowed for it: the folders in
+`permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for this
+project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders (`~/.claude/plugins/`, `~/.claude/skills/`), and the
+entries of `outside-root-allow` (`docs/ai/config.md` § Checks; `(read)` after a path allows reading
+only). Any other place — a neighbouring repository, another project, the home
+directory — only on the owner's word for this case, and then as an entry in `outside-root-allow` or
+`additionalDirectories`, never as a one-off workaround. `act-adopt` is the one exception: the owner
+starts the first scan with the `!` prefix, which opens the target folder for 24 hours or until
+`--abort` (also past `--finish`) through a marker under `.act-local/outside-allow/` that nobody but the
+adopt scripts writes; `--apply` only refreshes a valid marker for the same target. Applies to every role and
+tool. Checked mechanically by `outside-root` (`docs/ai/config.md` § Checks); the owner may set it to
+`warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in the environment. Limits: the shell
+check is best effort, a program that opens files itself (`python script.py`, `docker run -v`) is
+invisible to it, and MCP tools that take a path are not checked.
 
 ## `R-safe-no-secret-log` — Never credentials or personal data in a log
 
