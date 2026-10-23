@@ -25,7 +25,9 @@
 #             escapes are decoded first. Conservative cases are described at `_folder_open_reason`.
 #             A shell copy/move into a directory is judged on the file it creates there
 #             (`_copy_effective_targets`: `cp payload/.envrc .` writes `./.envrc`), for these files and
-#             for `.claude/`. When a target cannot be placed (dynamic, unknown base, scanner failure) the
+#             for `.claude/`. A directory source that exists is expanded to the files below it, each mapped
+#             to `<dest>/<dir name>/<rel>` and `<dest>/<rel>`, and a glob source to its matches (at most
+#             2000 files; a larger tree is checked only up to that many). When a target cannot be placed (dynamic, unknown base, scanner failure) the
 #             raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
 #             Limit: a shell write of a `*.code-workspace` with a folderOpen task is not seen.
 #
@@ -83,6 +85,7 @@
 
 from __future__ import annotations
 
+import glob as globlib
 import os
 import re
 import shlex
@@ -730,12 +733,57 @@ def _copy_operands(segment: str, powershell: bool) -> Optional[tuple[list[str], 
     return flat, destinations
 
 
-def _copy_effective_targets(command: str, powershell: bool) -> list[str]:
+_MAX_COPY_FILES = 2000
+_GLOB_CHARS_RE = re.compile(r"[*?\[]")
+
+
+def _copy_source_files(source: str, base: Optional[str]) -> Optional[list[tuple[str, str]]]:
+    """The files a copy source stands for on disk, as (directory name, path relative to that
+    directory) pairs: a directory gives its files (at most `_MAX_COPY_FILES` in all, symlinks not
+    followed), a glob its matches. None if nothing can be read (no known working directory, a
+    variable in the source): the caller then has only the source's own name."""
+    if base is None or re.search(r"[$`]", source):
+        return None
+    expanded = os.path.expanduser(source) if source.startswith("~") else source
+    pattern = expanded if os.path.isabs(expanded) else str(Path(base) / expanded)
+    candidates: list[Path]
+    if _GLOB_CHARS_RE.search(expanded):
+        try:
+            candidates = [Path(hit) for hit in globlib.glob(pattern)][:_MAX_COPY_FILES]
+        except (OSError, ValueError, re.error):
+            return None
+    else:
+        candidates = [Path(pattern)]
+    found: list[tuple[str, str]] = []
+    for candidate in candidates:
+        try:
+            if candidate.is_dir():
+                top = "" if candidate.name in ("", ".", "..") else candidate.name
+                for current, dirs, files in os.walk(candidate):
+                    dirs.sort()
+                    for name in sorted(files):
+                        if len(found) >= _MAX_COPY_FILES:
+                            return found
+                        found.append((top, (Path(current) / name).relative_to(candidate).as_posix()))
+            elif candidate.name and _GLOB_CHARS_RE.search(expanded):
+                found.append(("", candidate.name))
+        except (OSError, ValueError):
+            continue
+        if len(found) >= _MAX_COPY_FILES:
+            break
+    return found
+
+
+def _copy_effective_targets(command: str, powershell: bool, base: Optional[str] = None) -> list[str]:
     """The files a shell copy/move writes when its destination is a directory: for each source the
     destination followed by the source's own name (`cp payload/.envrc .` writes `./.envrc`,
     `cp -r payload/.claude .` writes `./.claude`). Whether the destination really is a directory is
-    not asked -- the extra path only matters when it names a protected file. A glob or variable in the
-    source name (`cp payload/* .`) gives no usable name and is not followed."""
+    not asked -- the extra path only matters when it names a protected file. When the source is a
+    directory on disk (or a glob that matches some) and `base` is the known working directory, the
+    files below it are mapped to both places they can land, `<dest>/<dir name>/<rel>` and
+    `<dest>/<rel>` (`cp -r payload/. .`, `cp hooks/* .git/hooks/`), for at most `_MAX_COPY_FILES`
+    files: a larger tree is only checked up to that many. A source with a variable (`$D/x`) gives
+    no usable name and is not followed."""
     found: list[str] = []
     for segment in _SEGMENT_SPLIT_RE.split(command):
         operands = _copy_operands(segment, powershell)
@@ -743,10 +791,15 @@ def _copy_effective_targets(command: str, powershell: bool) -> list[str]:
             continue
         sources, destinations = operands
         for destination in destinations:
+            head = destination.rstrip("\\/") + "/" if destination.rstrip("\\/") else "/"
             for source in sources:
                 name = re.split(r"[\\/]+", source.rstrip("\\/"))[-1]
                 if name and name not in (".", "..") and not re.search(r"[*?\[$`]", name):
-                    found.append(destination.rstrip("\\/") + "/" + name if destination.rstrip("\\/") else "/" + name)
+                    found.append(head + name)
+                for top, rel in _copy_source_files(source, base) or []:
+                    found.append(head + rel)
+                    if top:
+                        found.append(f"{head}{top}/{rel}")
     return found
 
 
@@ -793,7 +846,9 @@ def _violation(payload: dict) -> Optional[str]:
         copy_base, copy_known = _resolve_cwd_after_leading_cd(command, base_cwd)
         targets += [
             (raw, copy_base if copy_known else None)
-            for raw in _copy_effective_targets(command, tool_name == "PowerShell")
+            for raw in _copy_effective_targets(
+                command, tool_name == "PowerShell", copy_base if copy_known else None,
+            )
         ]
         for raw, base in targets:
             reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)

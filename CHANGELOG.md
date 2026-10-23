@@ -149,6 +149,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `ENV[...]` and `ENV.fetch`, Python string prefixes and triple quotes, nested defaults, and lookup chains of more
   than six names. An f-string that interpolates a value is not read as a literal.
 - **`sql-fstring` also catches a template literal whose interpolation follows the SQL text.**
+- **`git-metadata-guard` sees what a recursive copy brings along.** A copy whose source directory or glob holds
+  a protected file (`cp -r payload/. .` with a `.vscode/tasks.json`, `.git/config` or `.claude/settings.json`
+  below it, `cp payload/* .vscode/`, `Copy-Item -Recurse`) is refused; the files below the source (at most
+  2,000) are mapped onto where they land and checked one by one.
 
 ## [2.2.0] - 2026-10-20
 

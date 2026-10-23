@@ -69,7 +69,7 @@
   "hooks/checks/mcp_ide.py": "dfe0ed3ebe66ea301e87fea2df27892443ae292e8817634aef714992b8da2a95",
   "hooks/checks/mcp_ide_tables.py": "06e32a035f61c4ca8e6bd885a4bf85aafa65663929ccbf48dfa01b91558bf832",
   "hooks/checks/nesting_guard.py": "82e18a6aa6e6ffdca2cc030a3a640003c02e0e9dcdf6853af4422d2cf3673b23",
-  "hooks/checks/outside_root.py": "86db757ddc38cadd749d71fdad005092ee8e78437d872ff60cce2e9c0fb323ca",
+  "hooks/checks/outside_root.py": "bf14c56e028997b5e9369c442668c15ac551d06521fb73266b18479acdc18f1b",
   "hooks/checks/powershell_targets.py": "65ab85cba9383981a1e11d808bfa6da06fd6f3c60cad8f9cc0d2cde7f43528fc",
   "hooks/checks/quick_capture.py": "e284105759673995fb9879f88370a77340739da2aa2fafb8b7d100679ad4a10a",
   "hooks/checks/recursive_delete.py": "80eb9b1cdeed07348048cdbe898e949ec85c0348af459fe965885adeccf6824d",
