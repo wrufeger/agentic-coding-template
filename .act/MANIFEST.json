@@ -124,7 +124,7 @@
   "scripts/handover.py": "8de75653ba64926a7daad51b31c0e6a16dd7683375935fdfa55b4f3897ff0779",
   "scripts/i18n_check.py": "8ce97a63f05225a80834ee36163d3ac790cabcef57423477ecb286e8836645c9",
   "scripts/ideas.py": "d853744e99db371462c1d5da2c30a320648a5153852ea7f929b0aab5ba6a2be6",
-  "scripts/init.py": "ee6c9304935e8a2c589f488b238c25f268e22feb8b709fe6380c69d1eed2a7ac",
+  "scripts/init.py": "cd222fcba2bd7840c7bd09f973e33ce0d6c6057f61d6b57fdd0c41f298162c32",
   "scripts/integrations.py": "17d747b2796b0597bd82334740d403b9b535a4c003389d2d9586c1502a8f6689",
   "scripts/log.py": "b932f39e1910a4a8f981fd836ceec7a36ae386dc4cfec71ffcaa028476dea728",
   "scripts/manifest.py": "aef093cd886ec70438165fe6c38c94d0525c5cd89bdf69d10fcadecc329b3e12",

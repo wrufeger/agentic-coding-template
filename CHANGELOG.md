@@ -98,6 +98,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   and proven with one deliberate type error per context.
 - **The Tailwind coding set is version-bound for source detection:** `content` paths on v3, automatic detection
   with `@source` for additions from v4 on.
+- **A pnpm project is scanned without osv-scanner.** The dependency scan falls back to `pnpm audit --json` for
+  `pnpm-lock.yaml` (pnpm 9 or newer); an older or missing pnpm is reported as a missing tool as before, and
+  output in an unexpected shape counts as a failed scan, never as a clean one. `act-deps` notes that
+  accepted-finding ids differ between `npm audit` and osv-scanner or `pnpm audit`.
 
 ### Security
 

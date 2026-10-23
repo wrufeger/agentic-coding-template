@@ -43,6 +43,10 @@ entry differently if it should not count as covering the whole check.
 A major with real breaking changes: offer to help explicitly before starting — read the changelog
 together, prepare the migration, and let the check run in step 6 stand as the proof.
 
+Accepted findings (`docs/ai/local/security-accepted.md`) are keyed by the id the scanning tool reports:
+`npm audit` uses numbers, osv-scanner and `pnpm audit` use GHSA ids — after a change of package manager,
+re-key the entries, or they no longer match.
+
 ## Limits
 
 No bundled update across several majors. No dependency added that the actual task doesn't need. A
