@@ -543,6 +543,20 @@ def _is_here_string_word(word: str) -> bool:
     return word.startswith(_HERE_STRING_PREFIXES)
 
 
+def _strip_literal_call(words: list[str]) -> list[str]:
+    """`& <literal program> args...` read as the direct call `<program> args...`: the call operator at
+    the start of a statement followed by a plain word (a program name or a path, quotes already
+    removed by the tokenizer). A dynamic program (`& $var`, `& (expr)`, `& { ... }`, `& @splat`, any
+    word containing `$`) is left alone, so the caller still treats it
+    as an opaque call; the statement's arguments are then checked like those of a direct call."""
+    if len(words) < 2 or words[0] != "&":
+        return words
+    program = words[1]
+    if not program or program[0] in "({@$&-" or "$" in program or "(" in program or program in ("{", "}"):
+        return words
+    return words[1:]
+
+
 def _broad_guard_candidates(words: list[str]) -> list[str]:
     """Extra, deliberately over-inclusive raw-text candidates for check 1 (write_guard) only — see
     the module docstring's `broad` paragraph and the _GUARD_OPAQUE_CMDLETS/_BROAD_EXCLUDE_VALUE_
@@ -552,10 +566,12 @@ def _broad_guard_candidates(words: list[str]) -> list[str]:
     if not words:
         return []
     candidates: list[str] = []
+    words = _strip_literal_call(words)
     effective = words
     if len(words) >= 2 and words[0].startswith("$") and words[1] == "=":
-        candidates.extend(words[2:])
-        effective = words[2:]
+        effective = _strip_literal_call(words[2:])
+        words = words[:2] + effective
+        candidates.extend(effective)
     if any(w in ("&", "{", "}") for w in words):
         candidates.extend(words)
     if effective:
@@ -616,6 +632,7 @@ def _flush_ps_statement(
         resolved = _resolve_ps_target(raw, cwd)
         if resolved:
             result.add(resolved)
+    words = _strip_literal_call(words)
     if words:
         name = _ps_command_name(words[0])
         args = words[1:]

@@ -55,6 +55,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The daily dependency scan skips lock files git ignores** and nested checkouts with their own `.git`. The
   session-start note groups findings per lock file, states the age of the scan, and drops a result once a scanned
   lock file has changed or disappeared.
+- **The PowerShell write guard accepts the call operator with a literal program.** `& 'python3' .act/scripts/x.py …`
+  or `& "C:\…\python.exe" … > <temp file>` is checked like a direct call. Variables, script blocks and `iex` after
+  `&` stay refused, and `& 'pwsh' -Command …` is now scanned.
 
 ## [2.2.0] - 2026-10-20
 
