@@ -1185,6 +1185,26 @@ def _ci_still_placeholder(root: Path, rel: str) -> bool:
     return 'echo "TODO' in text and any(hint in text for hint in CI_PLACEHOLDER_HINTS)
 
 
+# A tool's instruction file that only points at the shared one (a Junie guidelines file reading
+# "see AGENTS.md"): small, and every line that is not a heading names one of these files.
+POINTER_TARGETS = ("AGENTS.md", "CLAUDE.md")
+POINTER_FILES = {".junie/guidelines.md"}
+POINTER_MAX_BYTES = 600
+
+
+def _is_pointer_file(root: Path, rel: str) -> bool:
+    """True when `rel` holds nothing but a reference to AGENTS.md/CLAUDE.md: at most POINTER_MAX_BYTES,
+    at least one non-heading line, and every non-heading line names one of POINTER_TARGETS."""
+    try:
+        if (root / rel).stat().st_size > POINTER_MAX_BYTES:
+            return False
+    except OSError:
+        return False
+    lines = [ln.strip() for ln in _read_head(root / rel, POINTER_MAX_BYTES).splitlines() if ln.strip()]
+    body = [ln for ln in lines if not ln.startswith("#")]
+    return bool(body) and all(any(t in ln for t in POINTER_TARGETS) for ln in body)
+
+
 def propose(row: Row, pred: Optional[Predecessor], root: Optional[Path] = None) -> str:
     note, origin, path = row.note or "", row.origin or "", row.path
     if row.cls == "predecessor" and path in PREDECESSOR_MARKER_FILES:
@@ -1203,6 +1223,8 @@ def propose(row: Row, pred: Optional[Predecessor], root: Optional[Path] = None) 
             return "keep"  # init.py merges its hook entries into settings.json
         if path in PREDECESSOR_EXAMPLES:
             return ("delete" if template_only else "legacy") if pred else "keep"
+        if path in POINTER_FILES and root is not None and _is_pointer_file(root, path):
+            return "keep"  # only points at the shared file and the tool gets no bridge: nothing to adopt
         return "legacy" if template_only else "adopt"
     if row.cls == "ai-machinery":
         if template_only:

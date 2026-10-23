@@ -39,6 +39,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **`act-adopt` says the tool copy stays the template's** until the next `act-update`.
 - **The `git-metadata-guard` row in `docs/ai/config.md` § Checks names every file the check covers**
   (`.vscode/tasks.json`, `.devcontainer/**`, `.devcontainer.json`, `.envrc`, `.mcp.json`, `folderOpen` tasks).
+- **`act-adopt` keeps a `.junie/guidelines.md` that only points to `AGENTS.md` or `CLAUDE.md`** instead of
+  proposing to adopt it; Junie still gets no bridge.
 
 ### Fixed
 
