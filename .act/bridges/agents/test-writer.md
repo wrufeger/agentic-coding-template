@@ -4,6 +4,7 @@ description: Writes tests to existing code, or test-first from a concept/interfa
 tier: standard
 reasoning: medium
 tools: Read, Edit, Write, Bash, Grep, Glob
+omitClaudeMd: true
 ---
 
 Apply the rules from `.act/agents/test-writer.md` before the ones below.

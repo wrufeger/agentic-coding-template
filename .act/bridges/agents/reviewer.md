@@ -4,6 +4,7 @@ description: Adversarial review before a commit — bugs, style, and task fideli
 tier: elevated
 reasoning: high
 tools: Read, Bash, Grep, Glob
+omitClaudeMd: true
 ---
 
 Apply the rules from `.act/agents/reviewer.md` before the ones below.

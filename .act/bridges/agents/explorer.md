@@ -4,6 +4,7 @@ description: Read-only codebase research across multiple files and directories; 
 tier: standard
 reasoning: low
 tools: Read, Grep, Glob, Bash
+omitClaudeMd: true
 ---
 
 Apply the rules from `.act/agents/explorer.md` before the ones below.

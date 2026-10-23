@@ -19,6 +19,7 @@
 #   python .act/scripts/rules.py CR-nuxt-basics           # one group in full, with its origin
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
 #   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
+#   python .act/scripts/rules.py --worker                 # the parts a worker is handed instead of CLAUDE.md
 #
 # Output format:
 #   Default and <id>: Markdown, meant to be pasted into a model's context.
@@ -35,6 +36,10 @@
 #     load order, then "unresolved <n>:" and one "<file>:<line>: @<target> — <reason>" per import
 #     it cannot follow (exit 1 if there is any). Same rule as Claude Code: relative to the
 #     importing file, at most four hops below the start file, never inside a code span or block.
+#   --worker: what the SubagentStart hook hands a worker whose role has `omitClaudeMd: true`: the
+#     files CLAUDE.md loads (user level, project, CLAUDE.local.md) without any import below
+#     .act/rules/orchestrator/, cut into parts of at most WORKER_PART_LIMIT characters. Prints
+#     one line per part with its size and sources, then the total against the full CLAUDE.md load.
 #   Errors (unknown area, missing project file, unknown id, bad arguments): one line on stderr,
 #     exit 1 (2 for a bad command line), never a traceback.
 
@@ -46,7 +51,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import actlib
 
@@ -866,10 +871,13 @@ def _show(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
-def resolve_imports(root: Path, start: str = "CLAUDE.md") -> tuple[list[str], list[str]]:
+def resolve_imports(
+    root: Path, start: str = "CLAUDE.md", skip: Optional[Callable[[Path], bool]] = None,
+) -> tuple[list[str], list[str]]:
     """(reached, unresolved) from `start` (root-relative): every file Claude Code loads, in load
     order, root-relative; one "<file>:<line>: @<target> — <reason>" per import it cannot follow.
-    A missing start file is itself unresolved."""
+    A missing start file is itself unresolved. An import whose resolved target `skip` accepts is
+    neither followed nor reported."""
     start_path = (root / start).resolve()
     reached: list[str] = []
     unresolved: list[str] = []
@@ -891,7 +899,7 @@ def resolve_imports(root: Path, start: str = "CLAUDE.md") -> tuple[list[str], li
                 if _looks_like_path(target):
                     unresolved.append(f"{where} — not found (looked for {_show(candidate, root)})")
                 continue
-            if candidate in seen:
+            if candidate in seen or (skip is not None and skip(candidate)):
                 continue
             if hops >= MAX_IMPORT_HOPS:
                 unresolved.append(f"{where} — deeper than {MAX_IMPORT_HOPS} hops, not loaded")
@@ -1094,6 +1102,241 @@ def cmd_imports(root: Path, start: str) -> tuple[str, bool]:
 
 
 # ---------------------------------------------------------------------------
+# Worker view — what a worker whose role file says `omitClaudeMd: true` gets instead of CLAUDE.md.
+# The SubagentStart hook (checks/worker_rules.py) delivers it in a fixed number of parts, because
+# Claude Code moves a hook's additionalContext string longer than 10,000 characters into a file and
+# shows only a short preview. Everything CLAUDE.md loads is delivered except the imports whose
+# target lies below .act/rules/orchestrator/ (found by the path, never by words in the text).
+# ---------------------------------------------------------------------------
+
+WORKER_PART_LIMIT = 9500   # characters per part, header included, safely below the 10,000 limit
+WORKER_PARTS = actlib.WORKER_RULES_PARTS   # fixed number of SubagentStart entries in settings.hooks.json
+ORCHESTRATOR_DIRS = (".act/rules/orchestrator/", "docs/ai/local/rules/orchestrator/")
+_PART_RESERVE = 700        # room kept free for a part's header line
+WORKER_RULES_FALLBACK = (
+    "Worker rules could not be assembled: read CLAUDE.md, docs/ai/rules.md and the files it imports "
+    "from .act/rules/shared/ before your first step; skip .act/rules/orchestrator/."
+)
+
+
+@dataclass
+class WorkerFile:
+    label: str      # root-relative path, or "~/..." for the user level
+    text: str       # cleaned text, orchestrator imports removed
+
+
+@dataclass
+class WorkerPart:
+    text: str
+    sources: list[str] = field(default_factory=list)
+
+
+def _is_orchestrator_file(path: Path, root: Path) -> bool:
+    try:
+        rel = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False
+    return rel.startswith(ORCHESTRATOR_DIRS)
+
+
+def _drop_orchestrator_imports(text: str, path: Path, root: Path) -> str:
+    """Remove each line that consists only of an import of an orchestrator file, together with the
+    indented lines right below it (the rule checkboxes belonging to that import)."""
+    drop: set[int] = set()
+    lines = text.splitlines(keepends=True)
+    for number, target in _import_targets(text):
+        expanded = Path(target).expanduser()
+        candidate = expanded if expanded.is_absolute() else path.parent / expanded
+        if _is_orchestrator_file(candidate, root) and lines[number - 1].strip() == f"@{target}":
+            drop.add(number)
+            following = number
+            while following < len(lines) and lines[following].strip() and lines[following][0] in " \t":
+                following += 1
+                drop.add(following)
+    return "".join(line for index, line in enumerate(lines, start=1) if index not in drop)
+
+
+def _clean_worker_text(text: str) -> str:
+    # Claude Code drops block-level comments (a comment on lines of its own) before the text reaches the
+    # model; a comment inside a line or a code span stays, as it would there.
+    text = re.sub(r"^[ \t]*<!--(?:(?!-->).)*-->[ \t]*\r?\n", "", text, flags=re.MULTILINE | re.DOTALL)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _worker_start_files(root: Path, home: Path) -> list[Path]:
+    """The start files Claude Code reads at the user and project level, in its load order."""
+    project = root / "CLAUDE.md"
+    return [home / ".claude" / "CLAUDE.md",
+            project if project.is_file() else root / ".claude" / "CLAUDE.md",
+            root / "CLAUDE.local.md"]
+
+
+def _label_for(path: Path, root: Path, home: Path) -> str:
+    for base, prefix in ((root.resolve(), ""), (home.resolve(), "~/")):
+        try:
+            return prefix + path.resolve().relative_to(base).as_posix()
+        except ValueError:
+            continue
+    return path.as_posix()
+
+
+def claude_md_files(root: Path, home: Path, skip_orchestrator: bool) -> list[tuple[str, Path]]:
+    """(label, path) of every file CLAUDE.md loads at the user and project level, in load order,
+    each file once; with `skip_orchestrator`, without the files below .act/rules/orchestrator/."""
+    skip = (lambda candidate: _is_orchestrator_file(candidate, root)) if skip_orchestrator else None
+    found: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    for start in _worker_start_files(root, home):
+        if not start.is_file():
+            continue
+        reached, _unresolved = resolve_imports(root, str(start), skip=skip)
+        for shown in reached:
+            path = Path(shown) if Path(shown).is_absolute() else root / shown
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                found.append((_label_for(resolved, root, home), resolved))
+    return found
+
+
+def worker_files(root: Path, home: Path) -> list[WorkerFile]:
+    out: list[WorkerFile] = []
+    for label, path in claude_md_files(root, home, skip_orchestrator=True):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue  # an unreadable file is not loaded by Claude Code either
+        text = _clean_worker_text(_drop_orchestrator_imports(raw, path, root))
+        if text:
+            out.append(WorkerFile(label, text))
+    return out
+
+
+_SPLIT_LEVELS = (re.compile(r"^## "), re.compile(r"^### "))
+
+
+def _split_text(text: str, limit: int, level: int = 0) -> list[str]:
+    """Cut `text` into pieces of at most `limit` characters: at `## ` headings first, then at
+    `### ` headings, then at blank lines, last by hard cut."""
+    if len(text) <= limit:
+        return [text]
+    if level > len(_SPLIT_LEVELS):
+        return [text[i:i + limit] for i in range(0, len(text), limit)]
+    pieces: list[str] = []
+    current: list[str] = []
+    previous_blank = False
+    in_fence = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        if in_fence:
+            starts_piece = False   # never cut inside a code block, closing fence included
+        elif level < len(_SPLIT_LEVELS):
+            starts_piece = bool(_SPLIT_LEVELS[level].match(stripped))
+        else:
+            starts_piece = previous_blank and bool(stripped)
+        if stripped.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if starts_piece and current:
+            pieces.append("".join(current))
+            current = []
+        current.append(line)
+        previous_blank = not stripped
+    pieces.append("".join(current))
+    if len(pieces) == 1:
+        return _split_text(text, limit, level + 1)
+    out: list[str] = []
+    for piece in pieces:
+        out.extend(_split_text(piece, limit, level + 1) if len(piece) > limit else [piece])
+    return out
+
+
+def _top_sections(text: str) -> list[str]:
+    """`text` cut before every `## ` heading outside a code block; the pieces join back to `text`."""
+    sections: list[str] = []
+    current: list[str] = []
+    in_fence = False
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        if not in_fence and _SPLIT_LEVELS[0].match(stripped) and current:
+            sections.append("".join(current))
+            current = []
+        if stripped.lstrip().startswith("```"):
+            in_fence = not in_fence
+        current.append(line)
+    if current:
+        sections.append("".join(current))
+    return sections
+
+
+def worker_rule_parts(root: Path, home: Optional[Path] = None) -> list[WorkerPart]:
+    """The worker view cut into parts of at most WORKER_PART_LIMIT characters, at file boundaries
+    where possible and at `## ` headings inside a file too large for one part."""
+    home = home if home is not None else Path.home()
+    budget = WORKER_PART_LIMIT - _PART_RESERVE
+    blocks: list[tuple[str, str]] = []   # (label, text) ready to pack
+    for item in worker_files(root, home):
+        # Every `## ` section is its own block, so packing fills a part across file boundaries
+        # instead of starting a new part whenever the next whole file does not fit.
+        pieces = [piece for section in _top_sections(item.text)
+                  for piece in _split_text(section, budget - 100)]
+        for index, piece in enumerate(pieces):
+            blocks.append((item.label, piece if piece.endswith("\n") else piece + "\n", index > 0))
+    # A file's label line opens its first piece in a part; following pieces of the same file in
+    # that part carry none, a piece that opens a part again says "(continued)".
+    groups: list[list[tuple[str, str]]] = []
+    size = 0
+    previous_label: Optional[str] = None
+    for label, piece, continued in blocks:
+        heading = f"\n=== {label} ===\n"
+        if groups and label == previous_label and size + len(piece) <= budget:
+            block = piece
+        elif groups and size + len(heading) + len(piece) <= budget:
+            block = heading + piece
+        else:
+            groups.append([])
+            size = 0
+            block = f"=== {label}{' (continued)' if continued else ''} ===\n" + piece
+        groups[-1].append((label, block))
+        size += len(block)
+        previous_label = label
+    total = len(groups)
+    parts: list[WorkerPart] = []
+    for number, group in enumerate(groups, start=1):
+        sources: list[str] = []
+        for label, _block in group:
+            if label not in sources:
+                sources.append(label)
+        shown = ", ".join(sources)
+        if len(shown) > 400:
+            shown = shown[:400].rsplit(",", 1)[0] + ", ..."
+        header = (f"Worker rules, part {number} of {total} (sources: {shown}). Your role does not load "
+                  "CLAUDE.md; this is what applies to you from it.\n\n")
+        parts.append(WorkerPart(header + "".join(block for _label, block in group).rstrip() + "\n", sources))
+    return parts
+
+
+def cmd_worker(root: Path, home: Optional[Path] = None) -> str:
+    home = home if home is not None else Path.home()
+    parts = worker_rule_parts(root, home)
+    full = claude_md_files(root, home, skip_orchestrator=False)
+    full_size = 0
+    for _label, path in full:
+        try:
+            full_size += len(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+    lines = [f"worker parts {len(parts)} (limit {WORKER_PART_LIMIT} characters, {WORKER_PARTS} hook entries):"]
+    for number, part in enumerate(parts, start=1):
+        lines.append(f"  part {number}: {len(part.text)} characters — {', '.join(part.sources)}")
+    lines.append(f"worker total: {sum(len(part.text) for part in parts)} characters")
+    lines.append(f"CLAUDE.md load today (all {len(full)} files, raw): {full_size} characters")
+    if len(parts) > WORKER_PARTS:
+        lines.append(f"note: {len(parts)} parts, more than the {WORKER_PARTS} hook entries; "
+                     "the last entry carries the rest and Claude Code moves it into a file")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1110,6 +1353,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--validate", action="store_true", help="schema + cross-checks, exit 1 on findings")
     mode.add_argument("--imports", action="store_true",
                       help="files Claude Code loads through @-imports, exit 1 on any it cannot follow")
+    mode.add_argument("--worker", action="store_true",
+                      help="the parts a worker is handed instead of CLAUDE.md: size and sources per part, total")
     parser.add_argument("--from", dest="start", metavar="FILE", default="CLAUDE.md",
                         help="start file for --imports, root-relative (default: CLAUDE.md)")
     parser.add_argument("id", nargs="?", default=None, help="print exactly this group/rule in full")
@@ -1132,8 +1377,9 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    if args.id is not None and (args.list or args.validate or args.imports):
-        print("rules.py: an id argument cannot be combined with --list, --validate or --imports", file=sys.stderr)
+    if args.id is not None and (args.list or args.validate or args.imports or args.worker):
+        print("rules.py: an id argument cannot be combined with --list, --validate, --imports or --worker",
+              file=sys.stderr)
         return 2
 
     area = AREAS[args.area]
@@ -1143,6 +1389,10 @@ def main(argv: list[str]) -> int:
     except RuntimeError as exc:
         print(f"rules.py: {exc}", file=sys.stderr)
         return 1
+
+    if args.worker:
+        sys.stdout.write(cmd_worker(root))
+        return 0
 
     if args.imports:
         report, clean = cmd_imports(root, args.start)

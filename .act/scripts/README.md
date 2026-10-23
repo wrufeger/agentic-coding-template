@@ -750,7 +750,9 @@ usage: manifest.py --write | --check
 Call: direct
 
 ```text
-usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --imports] [--from FILE] [id]
+usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --imports | --worker]
+                [--from FILE]
+                [id]
 
 Read the effective coding/core rules after the project's checkboxes and replacements are applied.
 
@@ -763,6 +765,8 @@ options:
   --list                human overview, one line per set/group
   --validate            schema + cross-checks, exit 1 on findings
   --imports             files Claude Code loads through @-imports, exit 1 on any it cannot follow
+  --worker              the parts a worker is handed instead of CLAUDE.md: size and sources per
+                        part, total
   --from FILE           start file for --imports, root-relative (default: CLAUDE.md)
 ```
 

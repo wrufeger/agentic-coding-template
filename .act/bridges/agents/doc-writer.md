@@ -4,6 +4,7 @@ description: Maintains docs/project/ (never docs/ai/) - works findings into the 
 tier: standard
 reasoning: medium
 tools: Read, Write, Edit, Grep, Glob, Bash
+omitClaudeMd: true
 ---
 
 Apply the rules from `.act/agents/doc-writer.md` before the ones below.

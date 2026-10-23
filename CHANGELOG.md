@@ -105,6 +105,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **Proposals under `docs/ai/proposals/` carry a frontmatter header** (`---` around `author`, `date`, `target`) like
   every other entry, including those written by the adoption content step, so they keep that form when archived.
   Older proposals with the plain header lines are still read.
+- **Workers no longer load the orchestrator rules.** The template's roles carry `omitClaudeMd: true`, and a
+  `SubagentStart` hook hands them the rest of what `CLAUDE.md` loads (shared rules, coding rules, your own rules,
+  `CLAUDE.local.md`, the user-level `~/.claude/CLAUDE.md`) in up to six parts below Claude Code's 10,000-character
+  limit — about 24k characters less in every worker start. `update` adds the field to existing template roles and
+  their `-high` variants (your own roles and an explicit `omitClaudeMd: false` stay as they are) and the hook entries
+  to `.claude/settings.json`. `rules.py --worker` shows the parts. Claude Code before 2.1.271 ignores the field, so
+  workers there get the rules twice; details in `.act/rules/topics/worker-rules.md`.
 
 ### Fixed
 

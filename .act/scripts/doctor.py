@@ -1511,7 +1511,7 @@ _SKILL_FIELDS = frozenset({
 _ROLE_FIELDS = frozenset({
     "name", "description", "tier", "reasoning", "tools", "model", "effort", "variant-of",
     "permissionMode", "hooks", "mcpServers", "color", "disallowedTools", "skills", "memory",
-    "maxTurns", "background", "isolation", "initialPrompt",
+    "maxTurns", "background", "isolation", "initialPrompt", "omitClaudeMd",
 })
 _KNOWN_TOOL_NAMES = frozenset({
     "Read", "Write", "Edit", "MultiEdit", "Bash", "Grep", "Glob", "WebFetch", "WebSearch",

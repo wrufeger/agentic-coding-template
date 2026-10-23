@@ -83,6 +83,7 @@
 # Usage:
 #   python .act/hooks/dispatch.py <event>
 #   python .act/hooks/dispatch.py UserPromptSubmit --act-check
+#   python .act/hooks/dispatch.py SubagentStart --worker-rules <part>   # worker rules, see checks/worker_rules.py
 #   ... with the hook's JSON payload piped in on stdin (may be empty or malformed; handled).
 #
 #   <event> is the hook event name. "PreToolUse" runs the checks, "PostToolUse" and
@@ -667,6 +668,27 @@ def _emit_post_tool_use_notes(event: str, payload: dict) -> None:
         }))
 
 
+def _run_worker_rules(part_arg: str) -> int:
+    """`dispatch.py SubagentStart --worker-rules <i>`: one of the fixed SubagentStart hook entries
+    (.act/bridges/settings.hooks.json) that hand a worker whose role says `omitClaudeMd: true`
+    part <i> of the rules CLAUDE.md would have loaded (checks/worker_rules.py). Always returns 0 —
+    SubagentStart blocks nothing, and a failure prints a fixed sentence instead (first entry only)."""
+    try:
+        part = int(part_arg)
+    except ValueError:
+        return 0
+    try:
+        payload = _read_payload()
+        from checks import worker_rules
+        worker_rules.emit(part, payload if isinstance(payload, dict) else {})
+    except Exception:  # noqa: BLE001 — a missing or broken module must not break the worker start
+        if part == 1:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": (
+                "Worker rules could not be assembled: read CLAUDE.md, docs/ai/rules.md and the files it "
+                "imports from .act/rules/shared/ before your first step; skip .act/rules/orchestrator/.")}}))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     # "_update-check-worker" is the one exception to the "exactly one arg" harness contract
     # below: it is never a harness hook event, only what checks.session._spawn_update_check_
@@ -684,6 +706,9 @@ def main(argv: list[str]) -> int:
             from checks import deps_scan as _deps_scan  # noqa: E402 -- only this worker needs it
             return _deps_scan.run_list_worker(Path(argv[1]), state_hash, Path(argv[3][1:]))
         return _run_security_scan_worker(Path(argv[1]), state_hash, [Path(arg) for arg in argv[3:]])
+
+    if len(argv) == 3 and argv[0] == "SubagentStart" and argv[1] == "--worker-rules":
+        return _run_worker_rules(argv[2])
 
     if len(argv) != 1:
         return 0  # no event named — nothing to dispatch, never an error for the caller

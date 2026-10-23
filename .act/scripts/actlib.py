@@ -677,8 +677,14 @@ def _hook_command_suffix_old_form(event: str) -> str:
 # next to the plain async one, reaching dispatch.py's own early-exit branch (see its header). Not
 # a general "any extra args count" rule on purpose (see is_ours_hook's docstring) — each variant
 # is listed here explicitly, same precision as the plain suffix itself.
+# SubagentStart carries one more per worker-rules part (.act/hooks/checks/worker_rules.py): the
+# commands differ so Claude Code does not merge them as duplicates, and a count change here must
+# follow .act/bridges/settings.hooks.json.
+WORKER_RULES_PARTS = 6
+
 _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
     "UserPromptSubmit": ("--act-check",),
+    "SubagentStart": tuple(f"--worker-rules {number}" for number in range(1, WORKER_RULES_PARTS + 1)),
 }
 
 

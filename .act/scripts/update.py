@@ -1925,6 +1925,56 @@ def sync_dependent_files(
     return ("; ".join(parts) or "nothing to change"), new_copies, touched
 
 
+def _add_omit_claude_md(root: Path, new_init, notes: Optional[list[str]] = None) -> list[str]:
+    """Adds `omitClaudeMd: true` to every already-materialized template role bridge (base and
+    "-high" variant) whose frontmatter has no `omitClaudeMd` line yet — a project created before the
+    template's roles carried it. The SubagentStart hook (checks/worker_rules.py) then hands such a
+    worker the rules CLAUDE.md would have loaded, minus the orchestrator rules. A line already there
+    (true or false) is left as the project set it; a project's own role is never touched. The line goes
+    in right before the closing `---`; nothing else in the file changes. Returns the changed
+    destinations, repo-root-relative."""
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return []
+    try:
+        template_roles = set(new_init.tiers.role_bridge_names(root))
+    except (OSError, AttributeError):
+        return []
+    changed: list[str] = []
+    for dest in sorted(agents_dir.glob("*.md")):
+        rel = dest.relative_to(root).as_posix()
+        try:
+            raw = dest.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            if notes is not None:
+                notes.append(f"{rel}: omitClaudeMd not added, could not read ({exc.__class__.__name__})")
+            continue
+        newline = "\r\n" if "\r\n" in raw else "\n"
+        lines = raw.split(newline)
+        if not lines or lines[0].strip() != "---":
+            continue
+        try:
+            end = next(index for index in range(1, len(lines)) if lines[index].strip() == "---")
+        except StopIteration:
+            continue
+        front = lines[1:end]
+        if any(re.match(r"omitClaudeMd\s*:", line, re.I) for line in front):
+            continue
+        variant_of = next((line.split(":", 1)[1].strip() for line in front
+                           if re.match(r"variant-of\s*:", line)), "")
+        if dest.stem not in template_roles and not (variant_of and variant_of in template_roles):
+            continue
+        lines.insert(end, "omitClaudeMd: true")
+        try:
+            dest.write_bytes(newline.join(lines).encode("utf-8"))
+        except OSError as exc:
+            if notes is not None:
+                notes.append(f"{rel}: omitClaudeMd not added, could not write ({exc.__class__.__name__})")
+            continue
+        changed.append(rel)
+    return changed
+
+
 def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
     """Re-derives the `model`/`effort` frontmatter of every already-materialized role bridge (base
     and "-high" variant alike, template role or a project's own named in docs/ai/config.md §
@@ -1954,8 +2004,12 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
         if notes is not None:
             notes.append(f"role bridge frontmatter refresh failed ({exc.__class__.__name__}); left as it was")
         return "role bridge frontmatter refresh failed, left untouched", []
-    touched = [root / rel for rel in changed]
-    return (f"refreshed {len(changed)} role bridge(s)" if changed else "no role bridge frontmatter changes"), touched
+    omit_added = _add_omit_claude_md(root, new_init, notes)
+    touched = [root / rel for rel in dict.fromkeys([*changed, *omit_added])]
+    summary = f"refreshed {len(changed)} role bridge(s)" if changed else "no role bridge frontmatter changes"
+    if omit_added:
+        summary += f"; omitClaudeMd added to {len(omit_added)} role bridge(s)"
+    return summary, touched
 
 
 # ---------------------------------------------------------------------------
