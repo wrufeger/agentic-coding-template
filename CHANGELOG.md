@@ -74,6 +74,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **A translated scaffold README is no longer reported as a hand change** by the one-inbox migration unless the
   scaffold itself changed since the project's last commit; this also holds for a project in a subfolder of a
   larger repository.
+- **The SQL checks of `security-check` no longer hold commits for "update" or "select" in prose, URL paths or
+  hyphenated words.** `sql-fstring` and `sql-concat` require a statement structure (`SELECT … FROM`, `INSERT
+  INTO`/`VALUES`, `UPDATE … SET`, `DELETE … FROM`); aliases, placeholders, optimizer hints and statements split
+  across concatenated literals are still caught.
 
 ### Security
 
@@ -81,6 +85,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `env('X', 'v')`, keyword defaults (`default=`), `os.environ.pop`, `import.meta.env`, `Deno.env.get`, Ruby
   `ENV[...]` and `ENV.fetch`, Python string prefixes and triple quotes, nested defaults, and lookup chains of more
   than six names. An f-string that interpolates a value is not read as a literal.
+- **`sql-fstring` also catches a template literal whose interpolation follows the SQL text.**
 
 ## [2.2.0] - 2026-10-20
 

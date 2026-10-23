@@ -125,6 +125,29 @@ class DangerPattern(NamedTuple):
     safe_regex: Optional["re.Pattern[str]"] = None  # a match on the same line exempts the hit
 
 
+# SQL needs its structure, not just a keyword: "Update-Snapshot", a URL path ".../update-now" or the log
+# text "Update {x} done" are not statements. A keyword counts only at a word start that is not glued to
+# `-`, `/` or `.` (a leading optimizer hint comment is fine), and only together with its counterpart word:
+# SELECT ... FROM, INSERT INTO / INSERT ... VALUES, UPDATE ... SET, DELETE [t] FROM. The text between the
+# two words may hold an alias, a `{placeholder}` or, for concatenation, a closing quote, `+` and a variable
+# (verbose mode: no literal spaces below).
+_SQL_START = r"(?:(?<![\w/.\-])|(?<=\*/))"
+
+
+def _sql_struct(mid: str) -> str:
+    return (
+        r"(?:select\b" + mid + r"\bfrom\b"
+        r" | insert\s+into\b | insert\b" + mid + r"\bvalues\b"
+        r" | update\b" + mid + r"\bset\b"
+        r" | delete\s+(?:[\w.`{}]+\s+)?from\b)"
+    )
+
+
+_SQL_STRUCT = _sql_struct(r"[^\n;]{0,200}?")
+# keyword and counterpart word in different literals of one concatenation
+_SQL_SPAN = _sql_struct(r"""[^\n;]{0,200}?["']\s*\+[^\n;]{0,200}?""")
+
+
 # Grouped by the coding rule set (docs/project/coding_rules.md path) they belong to - see the
 # module docstring. Only the sets the concept names an example for (Python, PHP, JS/Vue, SQL) get
 # patterns; a set with none listed here (bash, csharp, go, java, tailwind) is simply never
@@ -171,15 +194,17 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
         DangerPattern(
             "sql-concat", "SQL statement built by string concatenation",
             re.compile(
-                r"""(?ix) \b(?:select|insert|update|delete)\b [^\n;]{0,200} ["']\s*\+
-                  | \+\s*["'] [^\n;]{0,200} \b(?:select|insert|update|delete)\b""",
+                r"(?ix)" + _SQL_START + _SQL_STRUCT + r"""[^\n;]{0,200} ["']\s*\+
+                  | """ + _SQL_START + _SQL_SPAN + r"""
+                  | \+\s*["'] [^\n;]{0,200}""" + _SQL_START + _SQL_STRUCT,
             ),
         ),
         DangerPattern(
             "sql-fstring", "SQL statement built from an f-string/template literal",
             re.compile(
-                r"""(?ix) f["'] [^\n"']{0,200} \b(?:select|insert|update|delete)\b
-                  | `[^`\n]{0,200} \$\{[^}]*\} [^`\n]{0,200} \b(?:select|insert|update|delete)\b""",
+                r"""(?ix) (?<!\w)[rb]?f[rb]?["'] [^\n"']{0,200}""" + _SQL_START + _SQL_STRUCT
+                + r"""| `[^`\n]{0,200} \$\{[^}]*\} [^`\n]{0,200}""" + _SQL_START + _SQL_STRUCT
+                + r"""| `[^`\n]{0,200}""" + _SQL_START + _SQL_STRUCT + r"""[^`\n]{0,200} \$\{""",
             ),
         ),
     ),
