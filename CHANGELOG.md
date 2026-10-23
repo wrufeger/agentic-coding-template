@@ -27,6 +27,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `.act-local/usage.json`, the newest 50 runs each. Numbers only; they are never sent with feedback.
   `usage.py --estimates` shows median and 80th percentile per role and tier with the date of the last measurement;
   `usage.py --backfill` reads a project's existing transcripts once, without counting anything twice. Claude Code only.
+- **`docs/project/integrations.md` has a hand-written section** between `act:integrations-own` marks, for
+  example for an MCP server of a service other than the repo host. `integrations.py check --write` keeps it and
+  rewrites the rest; a begin mark without an end mark stops the command without writing.
 
 ### Changed
 

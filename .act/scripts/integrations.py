@@ -73,6 +73,11 @@ for _stream in (sys.stdout, sys.stderr):
 
 DOC_RELATIVE = Path("docs") / "project" / "integrations.md"
 MACHINE_KEY = "act:integrations-checked"
+# A hand-written section the generated file keeps across `check --write`: an MCP server for a service
+# other than `origin` has no row in the generated tables, so it is described here by a person.
+OWN_BEGIN = "<!-- act:integrations-own:begin -->"
+OWN_END = "<!-- act:integrations-own:end -->"
+OWN_RE = re.compile(re.escape(OWN_BEGIN) + r".*?" + re.escape(OWN_END), re.DOTALL)
 MACHINE_RE = re.compile(r"<!--\s*act:integrations-checked:\s*(\d{4}-\d{2}-\d{2})\s*-->")
 DEFAULT_MAX_AGE_DAYS = 30
 MCP_LIST_TIMEOUT_DEFAULT = 20
@@ -507,7 +512,31 @@ def render_table(result: Result, language: str, with_date: bool) -> list[str]:
     return lines
 
 
-def render_doc(result: Result, language: str) -> str:
+def own_section_default(language: str) -> str:
+    """The empty hand-written block of a new file: heading plus a comment on what belongs in it."""
+    t = lambda en, de: actlib.localized(language, en, de)  # noqa: E731
+    return "\n".join([
+        OWN_BEGIN,
+        t("## Other services (hand-written)", "## Weitere Dienste (von Hand)"), "",
+        t("<!-- An MCP server for a service other than the repo host (reports to a dependency, to the template "
+          "...) has no row above. Describe it here: server, host, what it is used for. `check --write` keeps "
+          "everything between the two marks and rewrites the rest. -->",
+          "<!-- Ein MCP-Server für einen anderen Dienst als den Repo-Host (Meldungen an eine Abhängigkeit, an "
+          "die Vorlage ...) hat oben keine Zeile. Hier beschreiben: Server, Host, wofür. `check --write` "
+          "behält alles zwischen den beiden Marken und schreibt den Rest neu. -->"),
+        OWN_END])
+
+
+def read_own_section(path: Path) -> Optional[str]:
+    """The marked hand-written block of an existing file (markers included), None if there is none."""
+    try:
+        match = OWN_RE.search(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    return match.group(0) if match else None
+
+
+def render_doc(result: Result, language: str, own_section: Optional[str] = None) -> str:
     t = lambda en, de: actlib.localized(language, en, de)  # noqa: E731
     rest, mcp = result.rest, result.mcp
     lines = [f"<!-- {MACHINE_KEY}: {result.date} -->",
@@ -547,6 +576,7 @@ def render_doc(result: Result, language: str) -> str:
         shown = ", ".join(f"{s['name']} ({s['status']})" for s in mcp.listed) or t("none", "keine")
         lines.append(f"- `claude mcp list`: {shown}")
     lines += ["", t("The CLI tools `gh` and `glab` are not used.", "Die Werkzeuge `gh` und `glab` werden nicht verwendet.")]
+    lines += ["", own_section if own_section is not None else own_section_default(language)]
     return "\n".join(lines) + "\n"
 
 
@@ -600,7 +630,16 @@ def cmd_check(root: Path, args: argparse.Namespace) -> int:
         language = actlib.docs_language(root)
         path = root / DOC_RELATIVE
         try:
-            actlib.write_text_lf(path, render_doc(result, language))
+            existing = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            existing = ""
+        if OWN_BEGIN in existing and OWN_RE.search(existing) is None:
+            print(f"integrations: {path} has the mark {OWN_BEGIN} but not {OWN_END}; the hand-written "
+                  "block would be lost. Nothing written - restore the end mark and run again.",
+                  file=sys.stderr)
+            return 2
+        try:
+            actlib.write_text_lf(path, render_doc(result, language, read_own_section(path)))
         except OSError as exc:
             print(f"integrations: cannot write {path}: {exc}", file=sys.stderr)
             return 2
