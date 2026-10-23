@@ -141,6 +141,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The summary of the `.gitattributes`/`.gitignore` block names replaced lines** separately from added ones.
 - **Copies recorded by `act-load-settings` and for own skills are hashed over their LF form,** like all other
   copies.
+- **A read-only or narrowly scoped worker can use the system temp directory as documented.** A glob in the last
+  path segment under the temp directory (`rm -f /tmp/x/*_ran`) and an extraction with `tar -C`, `--directory` or
+  `unzip -d` into a literal temp folder pass the write-scope check, as long as every entry of that folder, hidden
+  ones and links included, lies inside the temp directory; globs earlier in the path, `..`, leading-dot globs and
+  variables stay refused.
 
 ### Security
 

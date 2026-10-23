@@ -650,14 +650,37 @@ def _within_system_temp(raw: str, base: Optional[str], root: Path, literal_brace
     `literal_brace` says `raw` is the literal name of a resolved brace list (`_target_forms`), whose
     `{` is a character of the name. A relative `raw` counts only with a known `base`. A project that
     itself lies inside the temp directory gets no such exemption: it would open the project's
-    neighbours. Nor does a path with a glob character (see `_GLOB_CHAR_RE`)."""
+    neighbours. A glob character is allowed in the last segment only (see the comment in the body)."""
     roots = _system_temp_roots()
     if not roots:
         return False
     if _is_dynamic_target(raw) and not literal_brace:
         return False
+    glob_matches: list[str] = []
     if _GLOB_CHAR_RE.search(raw):
-        return False
+        # A glob in the last path segment only (`/tmp/x/*`, also what `tar -C <dir>` is read as):
+        # exempt when the literal directory in front of it lies in temp and every name it matches
+        # today does too. A glob earlier in the path, a `..` anywhere, or a last segment starting
+        # with "." (`.*` matches `..` with globskipdots off) is never exempt.
+        head, _sep, last = raw.rpartition("/")
+        if _GLOB_CHAR_RE.search(head) or ".." in raw.replace("\\", "/").split("/") or last.startswith("."):
+            return False
+        if not head or (not _is_absolute_target(head) and base is None):
+            return False
+        head_path = _resolve_path(head, base)
+        if head_path is None:
+            return False
+        # Every entry of the directory counts, hidden ones included and without comparing names:
+        # bash with `dotglob` or `nocaseglob` matches names a plain glob skips, and a junction or
+        # symlink among them may lead out of temp.
+        try:
+            with os.scandir(head_path) as entries:
+                glob_matches = [entry.path for entry in entries]
+        except (FileNotFoundError, NotADirectoryError):
+            glob_matches = []
+        except (OSError, ValueError):
+            return False
+        raw = head
     if not _is_absolute_target(raw) and base is None:
         return False
     target = _resolve_path(raw, base)
@@ -678,9 +701,17 @@ def _within_system_temp(raw: str, base: Optional[str], root: Path, literal_brace
     for temp_root in roots:
         try:
             target.relative_to(temp_root)
-            return True
         except ValueError:
             continue
+        for match in glob_matches:
+            resolved = _resolve_path(match)
+            try:
+                if resolved is None:
+                    return False
+                resolved.relative_to(temp_root)  # a match leading out of temp is not exempt
+            except ValueError:
+                return False
+        return True
     return False
 
 
