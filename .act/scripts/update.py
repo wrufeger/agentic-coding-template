@@ -113,22 +113,6 @@ def _path_chunks(rels: list[str]) -> list[list[str]]:
     return groups
 
 
-def _git_pathspec_stdin(args: list[str], rels: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
-    """Run `git <args> --pathspec-from-file=- --pathspec-file-nul` with `rels` on stdin, so the
-    path list never meets the command-line length limit. Needs Git 2.25 or newer (`add`, `commit`).
-    An empty list is refused: git would read it as "no pathspec" and act on the whole index."""
-    if not rels:
-        raise ValueError(f"git {' '.join(args)}: empty path list, refusing to act on the whole index")
-    full = [*args, "--pathspec-from-file=-", "--pathspec-file-nul"]
-    result = subprocess.run(
-        ["git", *full], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        input="".join(f"{rel}\0" for rel in rels),
-    )
-    if check and result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(full)} failed: {result.stderr.strip()}")
-    return result
-
-
 def _print_step(n: int, text: str) -> None:
     print(f"[{n}/10] {text}")
 
@@ -742,11 +726,11 @@ def _dest_skill_dir(new_init, dest_rel: str) -> Optional[str]:
 def _fold(data: bytes) -> bytes:
     """CRLF folded to LF, unless binary — the same rule as manifest.content_hash() (a checkout
     with core.autocrlf=true writes every copy with CRLF; that is not an edit)."""
-    return data if b"\x00" in data else data.replace(b"\r\n", b"\n")
+    return actlib.fold_crlf(data)
 
 
 def _unedited(current: bytes, recorded_sha: Optional[str]) -> bool:
-    return recorded_sha in (hashlib.sha256(current).hexdigest(), hashlib.sha256(_fold(current)).hexdigest())
+    return actlib.matches_lock_hash(current, recorded_sha)
 
 
 def _write_bytes(dest_path: Path, data: bytes) -> bool:
@@ -854,7 +838,7 @@ def step_refresh_copies(
     removed_paths: list[Path] = []
 
     def _record(dest_rel: str, source_path: Path, data: bytes) -> None:
-        new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": hashlib.sha256(data).hexdigest()}
+        new_copies[dest_rel] = {"source": _copy_source_label(root, source_path), "sha256": actlib.lock_hash(data)}
 
     for dest_rel, old_entry in old_copies.items():
         source_path = new_specs.pop(dest_rel, None)
@@ -1055,7 +1039,7 @@ def _paths_in_git_history(root: Path, rels: list[str]) -> set[str]:
     found: set[str] = set()
     for group in _path_chunks(rels):
         try:
-            result = _git(["log", "--format=", "--name-only", "--", *group], cwd=root, check=False)
+            result = _git(["-c", "core.quotepath=false", "log", "--format=", "--name-only", "--", *group], cwd=root, check=False)
         except (OSError, ValueError):
             return set()
         if result.returncode != 0:
@@ -1962,7 +1946,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
         # named by path (never a tree-wide add); an untracked one has nothing to commit.
         missing_set = set(missing)
         for group in _path_chunks(missing):
-            tracked = _git(["ls-files", "--", *group], cwd=root, check=False)
+            tracked = _git(["-c", "core.quotepath=false", "ls-files", "--", *group], cwd=root, check=False)
             rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing_set})
     if not rels:
         return "nothing to commit"
@@ -1970,7 +1954,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
         return f"would commit {len(rels)} path(s): {', '.join(rels)}"
     # The paths go to git on stdin (`--pathspec-from-file`), not as arguments: a big update can name
     # more paths than a Windows command line holds.
-    _git_pathspec_stdin(["add"], rels, cwd=root)
+    actlib.git_pathspec_stdin(["add"], rels, cwd=root)
     staged = False
     for group in _path_chunks(rels):
         diff = _git(["diff", "--cached", "--quiet", "--", *group], cwd=root, check=False)
@@ -1983,7 +1967,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> s
         return "nothing staged, no commit made"
     # The pathspec restricts the commit to these paths, same as the add above — never the whole
     # index, so changes staged elsewhere by something else running concurrently stay untouched.
-    _git_pathspec_stdin(["commit", "-m", "chore: update template"], rels, cwd=root)
+    actlib.git_pathspec_stdin(["commit", "-m", "chore: update template"], rels, cwd=root)
     sha = _git(["rev-parse", "--short", "HEAD"], cwd=root).stdout.strip()
     return f"committed {len(rels)} path(s) as {sha}"
 
@@ -2310,6 +2294,13 @@ def main(argv: list[str]) -> int:
         "still matches its own MANIFEST.json"
     ))
     args = parser.parse_args(argv)
+
+    if not (args.no_commit or args.plan):
+        git_problem = actlib.git_version_problem()
+        if git_problem:
+            print(f"update.py: {git_problem} (the update commit passes its paths with --pathspec-from-file); "
+                  "upgrade git, or run with --no-commit", file=sys.stderr)
+            return 1
 
     plan = args.plan
     root = actlib.repo_root()

@@ -47,6 +47,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The doctor's tier proposal is remembered.** `doctor.py --inbox` notes count and day in
   `.act-local/tier-proposals.json` and files the same proposal again only after at least 8 more outcomes for that
   role and tier; a second run on the same day keeps it in the open daily report.
+- **`update` checks at the start that Git is 2.25 or newer** and stops with a message naming the version found,
+  instead of failing at the commit after all files are written; `--plan` and `--no-commit` are not affected.
 
 ### Fixed
 
@@ -102,6 +104,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `pnpm-lock.yaml` (pnpm 9 or newer); an older or missing pnpm is reported as a missing tool as before, and
   output in an unexpected shape counts as a failed scan, never as a clean one. `act-deps` notes that
   accepted-finding ids differ between `npm audit` and osv-scanner or `pnpm audit`.
+- **Bridges are no longer reported as modified with `core.autocrlf=true`.** The `.gitattributes` block marks
+  `CLAUDE.md`, `AGENTS.md` and `docs/ai/rules.md` with `text eol=lf`. An update replaces the template's earlier
+  `merge=ours` lines in place; a line of the project's own for the same file is kept and reported as a conflict.
+  A project that had deleted one of the earlier lines gets it back in the new wording, as with any reworded line.
+- **A skill copy is no longer stuck as "kept (edited locally)" because of line endings.** A lock hash taken over
+  CRLF or LF matches the copy in either form, the lock records the hash over LF, and a really edited copy is
+  still kept.
+- **`update` reads file lists from git without path quoting,** so files with non-ASCII names are recognised and a
+  deleted one reaches the update commit.
 
 ### Security
 

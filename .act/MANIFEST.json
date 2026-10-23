@@ -139,7 +139,7 @@
   "scripts/skills.py": "5cba37e3d1425b810f86a87b261c60cdb152014601886924e09887855c7cc5ae",
   "scripts/tiers.py": "3dc58954b41aab48ae61df4951af1d9433fbb6bda882e54e71220ac2a8936109",
   "scripts/unit_copies.py": "184ef414e9e26de6d9cd22501f3adc63a7c9b6a13990394bb521ed63f09d4d4f",
-  "scripts/update.py": "30c0f449ea551a59ac6adf3d4e26139a8eb17ae08eb805691619ab890d852deb",
+  "scripts/update.py": "6fc5ba37899e006ea63db8c5a4412b26b4879a6b76491d51d553e9be47c600a6",
   "scripts/usage.py": "d96e6695df8cc5e3adb45cd317122a184cbb0ac7e42b0e8545429441eaa745c3",
   "skeleton/concept/README.md": "dad103b7b447a52070de7c7008eb71724efa412fe6736a7520826872c0b472a4",
   "skeleton/config.md": "e68a3d391d4d2cc1bf0aafc80f1026f669834dbd204390af131ff71de12f2b58",
