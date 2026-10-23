@@ -143,7 +143,7 @@ def _default_lock() -> dict:
     return {
         # "source": the template's own address (its git remote URL at the time this project last
         # fetched from it, or a local path if it had none) -- never a git remote in the project
-        # itself; see init.py's _checkout_source()/step_git_in_place().
+        # itself; see init.py's _checkout_template_ref()/step_git_in_place().
         # "manifest_sha256": sha256 of the .act/MANIFEST.json this project last applied -- lets
         # dispatch.py tell a project .act/ that was pulled in by some other means (e.g. a plain
         # `git pull` of the shared history) from one update.py actually applied, even though both

@@ -253,13 +253,28 @@ def _commits_ahead_of(root: Path, ref: str) -> Optional[int]:
         return None
 
 
-def _checkout_source(checkout_root: Path) -> str:
-    """The address of the template checkout `init.py` is running from: its own "origin" remote
-    URL if it has one, else its absolute local path. Used for `--target` mode (step 2), where
-    there is no project "origin" to inspect -- the checkout running init.py *is* the template, so
-    its own address is what .act-lock.json's `template.source` needs (an incident with a renamed remote showed this)."""
+def _checkout_template_ref(checkout_root: Path) -> tuple[str, str]:
+    """(source address, commit) of the template that the checkout `init.py` is running from stands for.
+    Normally the checkout *is* the template: its own "origin" remote URL if it has one, else its absolute
+    local path, and its HEAD (an incident with a renamed remote showed why the address is taken here).
+    The exception is a checkout that is itself a set-up project (it has an .act-lock.json with a template
+    source): its "origin" is the project's own repository and its HEAD a commit of that repository, neither
+    of which belongs to the template. Source and commit then both come from the lock, as a pair, so the new
+    project's first update neither fetches the source project nor sees a commit foreign to the template."""
+    lock_path = checkout_root / ".act-lock.json"
+    if lock_path.is_file():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+            template = lock.get("template") if isinstance(lock, dict) else None
+            recorded = template.get("source") if isinstance(template, dict) else None
+            if isinstance(recorded, str) and recorded.strip():
+                commit = template.get("commit")
+                return recorded.strip(), commit.strip() if isinstance(commit, str) else ""
+        except (OSError, ValueError):
+            pass  # unreadable lock: fall back to the checkout itself below
     origin = _get_remote_url(checkout_root, "origin")
-    return origin if origin else str(checkout_root.resolve())
+    head = _git(["rev-parse", "HEAD"], cwd=checkout_root, check=False).stdout.strip()
+    return (origin if origin else str(checkout_root.resolve())), head
 
 
 def _read_version_file(root: Path) -> tuple[str, str]:
@@ -713,8 +728,7 @@ def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str,
     refs/heads/main' works on Git versions before 2.28 too (no '-b main' needed), unlike 'git init
     -b main'/'git branch -m main', and is safe before the first commit: it only moves the unborn
     HEAD, nothing is renamed or rewritten."""
-    template_source = _checkout_source(source_act.parent)
-    template_commit = _git(["rev-parse", "HEAD"], cwd=source_act.parent, check=False).stdout.strip()
+    template_source, template_commit = _checkout_template_ref(source_act.parent)
     if (root / ".git").exists():
         return "target already has a repository, left unchanged", template_source, template_commit
     if plan:
@@ -2729,13 +2743,26 @@ INIT_COMMIT_MESSAGE = "chore: initialize project from template"
 PROFILE_COMMIT_MESSAGE = "chore: apply owner profile (init.py --profile)"
 
 
+def _tracked_but_missing(root: Path) -> set[str]:
+    """Tracked paths (relative, `/`-separated) that are gone from the working tree right now."""
+    result = _git(["ls-files", "--deleted", "-z"], cwd=root, check=False)
+    if result.returncode != 0:
+        return set()
+    return {entry for entry in result.stdout.split("\0") if entry}
+
+
 def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
-                message: str = INIT_COMMIT_MESSAGE) -> str:
+                message: str = INIT_COMMIT_MESSAGE, removed: Optional[set[str]] = None) -> str:
+    """`removed`: tracked files this run deleted itself (a clone that keeps its history, e.g. a
+    detached HEAD, still tracks the template's own files that steps 6 and 8 remove) -- staged with
+    the rest so the deletion lands in the commit instead of staying behind as an unstaged change."""
     if no_commit:
         # Returns before any `git add`, so nothing is staged either -- say so plainly instead of
         # the previous, inaccurate "staged/unstaged".
         return "would leave uncommitted (--no-commit, nothing staged)" if plan else "left uncommitted (--no-commit, nothing staged)"
-    rels = sorted({str(p.relative_to(root)).replace(os.sep, "/") for p in paths if p.exists()})
+    rels = sorted(
+        {str(p.relative_to(root)).replace(os.sep, "/") for p in paths if p.exists()} | (removed or set())
+    )
     if not rels:
         return "nothing to commit"
     if plan:
@@ -3188,6 +3215,10 @@ def main(argv: list[str]) -> int:
         for area in (rules.AREAS["core"], rules.AREAS["coding"])
     } if is_target else {}
 
+    # Tracked files already missing before steps 6 and 8 run: whatever is missing afterwards and was not
+    # before is a deletion of this run's own, and goes into step 10's commit.
+    missing_before = _tracked_but_missing(root) if not is_target and not plan else set()
+
     pending_booking: dict = {}  # the settings.json booking, written with step 9's lock (not earlier)
     materialize_messages, generated, touched_bridges, copies = step_materialize(
         root, plan, cfg, selected_bridges, notes, is_target=is_target, template_commit=verify_commit,
@@ -3247,10 +3278,27 @@ def main(argv: list[str]) -> int:
             part.split(" ", 1)[0] for part in own_files_message.split("; ") if " would be removed" in part
         }
         own_root_files = [
-            p for p in (root / "README.md", root / "CHANGELOG.md", root / "LICENSE",
+            p for p in (root / "README.md", root / "CHANGELOG.md", root / "LICENSE", root / ".github" / "README.md",
                         *(root / rel for rel in _community_files(root)))
             if p.is_file() and p.relative_to(root).as_posix() not in planned_removals
         ]
+        # An untracked file under .github/ with no template marker is the project's own: init never owned
+        # it, so it is not committed here -- but it would otherwise sit there untracked without a word.
+        # A file the clone already tracks (detached-HEAD route) is in history anyway, so it is not named.
+        own_set = {p.relative_to(root).as_posix() for p in own_root_files}
+        tracked_now = set(_git(["ls-files", "-z", "--", ".github"], cwd=root, check=False).stdout.split("\0"))
+        unmarked = sorted(
+            p.relative_to(root).as_posix() for p in (root / ".github").rglob("*")
+            if p.is_file() and p.relative_to(root).as_posix() not in own_set
+            and p.relative_to(root).as_posix() not in planned_removals
+            and p.relative_to(root).as_posix() not in tracked_now
+        ) if (root / ".github").is_dir() else []
+        if unmarked:
+            verb = "would be left out of" if plan else "were left out of"
+            notes.append(
+                f"Files under .github/ that are not the template's own {verb} the first commit: "
+                + ", ".join(unmarked) + ". Add them yourself (`git add`) if they belong to the project."
+            )
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,
                                         lock_existed_before=lock_existed_before,
@@ -3273,7 +3321,8 @@ def main(argv: list[str]) -> int:
         commit_paths.append(dependency_check_path)
     if security_check_offer_path is not None and not plan:
         commit_paths.append(security_check_offer_path)
-    commit_message = step_commit(root, plan, args.no_commit, commit_paths)
+    removed_by_run = (_tracked_but_missing(root) - missing_before) if not is_target and not plan else set()
+    commit_message = step_commit(root, plan, args.no_commit, commit_paths, removed=removed_by_run)
     # The old 'template' branch is only ever removed once a real commit landed on the new 'main'
     # (never under --plan, --no-commit, or a run that had nothing to commit) *and*
     # can_delete_old_branch held (a review finding) -- see _remove_old_template_branch

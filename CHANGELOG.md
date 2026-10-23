@@ -63,6 +63,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The frontmatter migrations read headers exactly like the readers** (line breaks at LF only, a non-breaking
   space counts as whitespace), write each file through a temporary file and an atomic replace, skip symbolic
   links, and leave out `archive/legacy` whatever its letter case.
+- **`init` in a clone with a detached HEAD commits the removal of the template's own files** (such as
+  `CHANGELOG.md` and the `.github` community files) instead of leaving them as unstaged deletions; a file the
+  user deleted before `init` stays out of the commit.
+- **`init --target` run from a set-up project records the template, not the project.** Address and commit come
+  as a pair from that project's `.act-lock.json`, so the new project's update source is the template and its
+  first update no longer stops with a downgrade warning.
+- **`init` commits a kept `.github/README.md` in the first commit** and names the other unmarked files under
+  `.github/` that it left out; files the clone already tracks are not named.
 
 ### Security
 
