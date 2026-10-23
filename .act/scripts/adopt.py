@@ -799,7 +799,8 @@ def way_back(root: Path) -> str:
 
 
 def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
-              language_chat: Optional[str] = None, confirm_no_targets: bool = False) -> int:
+              language_chat: Optional[str] = None, confirm_no_targets: bool = False,
+              update_channel: Optional[str] = None) -> int:
     state_path = root / ADOPT_DIR / "state.json"
     state = _read_json(state_path)
     if state and state.get("state") in ("applied", "finished"):
@@ -886,6 +887,8 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
         init_cmd += ["--language-docs", language_docs]
     if language_chat:
         init_cmd += ["--language-chat", language_chat]
+    if update_channel:
+        init_cmd += ["--update-channel", update_channel]
     if no_commit:
         init_cmd.append("--no-commit")
     prefix = "would " if plan else ""
@@ -2145,6 +2148,7 @@ def cmd_finish(root: Path, plan: bool) -> int:
         # The fallback stays "off": a config.md without the row is read as off everywhere
         # (feedback.py), so the token must not claim more than that.
         "feedback_mode": actlib.read_config(root).get("feedback", "off"),
+        "update_channel": actlib.read_config(root).get("update-channel", "").strip().strip("`").lower() or "release",
     })
     cache = actlib.read_cache()
     removed = []
@@ -2343,6 +2347,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="with --apply: language of docs/ (e.g. de), passed on to init.py; default en")
     parser.add_argument("--language-chat", metavar="CODE",
                         help="with --apply: chat language (a code, or auto), passed on to init.py")
+    parser.add_argument("--update-channel", choices=("release", "latest"),
+                        help="with --apply: update channel (release or latest), passed on to init.py; "
+                             "default release")
     return parser
 
 
@@ -2393,6 +2400,9 @@ def main(argv: list) -> int:
     if (args.language_docs or args.language_chat) and not args.apply:
         print("adopt.py: --language-docs/--language-chat only go with --apply", file=sys.stderr)
         return 2
+    if args.update_channel and not args.apply:
+        print("adopt.py: --update-channel only goes with --apply", file=sys.stderr)
+        return 2
     if args.confirm_no_targets and not args.apply:
         print("adopt.py: --confirm-no-targets only goes with --apply", file=sys.stderr)
         return 2
@@ -2421,7 +2431,7 @@ def main(argv: list) -> int:
             if not args.plan and _marker_is_valid(root):
                 adopt_scan.write_outside_marker(root)  # refresh the 24 h window; never create or revive one
             return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"],
-                             args.confirm_no_targets)
+                             args.confirm_no_targets, args.update_channel)
         return cmd_finish(root, args.plan)
     except Refused as exc:
         print("refused:", file=sys.stderr)

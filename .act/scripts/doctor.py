@@ -1039,6 +1039,7 @@ _CONFIG_VALUES = {
     "board-at-start": ("on", "off"),
     "teach-lessons": ("local", "docs"),
     "artifacts": ("on", "off"),
+    "update-channel": ("release", "latest"),
 }
 
 

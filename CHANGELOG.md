@@ -64,6 +64,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   at its tip with a note while the channel is only the built-in default; an explicit or invalid value stops.
 - **`/act-version` and `update.py --versions`** list the installed version, the channel, the source's releases
   and the tip of its default branch, and what `act-update` would take, without a clone.
+- **`init` asks which update channel to follow** (`release` by default, or `latest`), accepts
+  `--update-channel` (also through `act-adopt --apply`), writes it to `docs/ai/config.md` § Update, and notes when
+  the template clone is already past the newest release. `act-doctor` reports a value other than `release` or
+  `latest`. Existing projects keep their `config.md`; without the key they get the one-time note of `act-update`.
 
 ### Changed
 

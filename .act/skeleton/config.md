@@ -258,6 +258,17 @@ local (`.act-local/feedback/sent/`, gitignored) — each send also gets one line
 (`feedback: <text>`) always goes out, even with `off`, together with the template commit and the
 random project id (a reply address only if you name one). Details: `.act/rules/topics/feedback.md`.
 
+## Update
+
+| Key | Value |
+| :--- | :--- |
+| `update-channel` | <update-channel> |
+
+`update-channel`: `release` \| `latest`. With `release` (the default) `act-update` offers only the newest
+stable release tag of the template source and the session start announces only that; with `latest` it follows
+the tip of the source's default branch. `--channel` on `update.py` overrides it for one run. Details:
+`.act/skills/act-update/SKILL.md`.
+
 ## Tips
 
 | Key | Value |

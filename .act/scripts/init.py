@@ -75,6 +75,7 @@ class ProjectConfig(TypedDict):
     tools: list[str]
     mode: str
     feedback_mode: str
+    update_channel: str
 
 
 class BridgeSpec(TypedDict):
@@ -337,6 +338,61 @@ def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
     return _FEEDBACK_DEFAULT
 
 
+UPDATE_CHANNELS = ("release", "latest")
+_UPDATE_CHANNEL_DEFAULT = "release"
+
+
+def _ask_update_channel(root: Path, interactive: bool, notes: list[str], given: Optional[str]) -> str:
+    """Which stand `act-update` follows: `release` (newest stable tag, the default) or `latest`
+    (tip of the source's default branch). An option value wins; a project that already has
+    `docs/ai/config.md` keeps its own row (the writer never overwrites it); otherwise the owner is
+    asked once at a terminal, and `--non-interactive`/`--plan` take the default. After three
+    answers that are neither value the default is used and noted."""
+    if given is not None:
+        return given
+    if (root / "docs" / "ai" / "config.md").is_file():
+        current = actlib.read_config(root).get("update-channel", "").strip().strip("`").lower()
+        return current if current in UPDATE_CHANNELS else _UPDATE_CHANNEL_DEFAULT
+    if not interactive:
+        return _UPDATE_CHANNEL_DEFAULT
+    print()
+    print("Which template version should `act-update` follow?")
+    print("- release (default): only the newest stable release of the template, announced and installed when a newer one exists.")
+    print("- latest: always the newest commit of the template's default branch, released or not.")
+    print("- Change it any time: docs/ai/config.md § Update.")
+    for _attempt in range(_FEEDBACK_MAX_ATTEMPTS):
+        raw = _ask("Update channel - release / latest", _UPDATE_CHANNEL_DEFAULT, True).strip().lower()
+        if raw in UPDATE_CHANNELS:
+            return raw
+        print("Please answer 'release' or 'latest' - nothing else is accepted.")
+    notes.append(
+        f"Update channel question left unanswered after {_FEEDBACK_MAX_ATTEMPTS} tries - the channel stays "
+        f"`{_UPDATE_CHANNEL_DEFAULT}`. Change it any time in docs/ai/config.md § Update."
+    )
+    return _UPDATE_CHANNEL_DEFAULT
+
+
+def _clone_release_note(clone: Path) -> Optional[str]:
+    """Inbox note when the template clone this run starts from is ahead of its newest release tag
+    (`vX.Y.Z`, no prerelease): with the `release` channel act-update offers nothing until a newer release.
+    None when the clone is no git checkout, has no such tag, or sits exactly on it."""
+    tag_run = _git(["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*.[0-9]*.[0-9]*",
+                    "--exclude", "*-*"], cwd=clone, check=False)
+    tag = tag_run.stdout.strip()
+    if tag_run.returncode != 0 or not tag:
+        return None
+    count_run = _git(["rev-list", "--count", f"{tag}..HEAD"], cwd=clone, check=False)
+    try:
+        ahead = int(count_run.stdout.strip())
+    except ValueError:
+        return None
+    if count_run.returncode != 0 or ahead <= 0:
+        return None
+    return (f"The template clone this project was set up from is {ahead} commit{'s' if ahead != 1 else ''} past "
+            f"{tag}; with the `release` update channel act-update offers nothing until a release newer than "
+            f"{tag} (`latest` in docs/ai/config.md § Update follows the tip).")
+
+
 def _language(key: str, given: Optional[str], prompt_text: str, default: str, interactive: bool,
               notes: list[str]) -> tuple[str, bool]:
     """(value, from_option). An option value wins over the prompt; either way a language name is
@@ -351,7 +407,8 @@ def _language(key: str, given: Optional[str], prompt_text: str, default: str, in
 
 
 def step_config(root: Path, interactive: bool, notes: list[str],
-                languages: Optional[dict[str, Optional[str]]] = None) -> ProjectConfig:
+                languages: Optional[dict[str, Optional[str]]] = None,
+                update_channel: Optional[str] = None) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
     if git_name and not _is_placeholder_name(git_name):
@@ -395,6 +452,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
 
     mode = _suggest_mode(root, notes)
     feedback_mode = _ask_feedback_mode(root, interactive, notes)
+    channel = _ask_update_channel(root, interactive, notes, update_channel)
 
     return {
         "name": name,
@@ -408,6 +466,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
         "tools": tools,
         "mode": mode,
         "feedback_mode": feedback_mode,
+        "update_channel": channel,
     }
 
 
@@ -1565,6 +1624,9 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
         # .act/skeleton/config.md § Feedback's `feedback` row — defaults to "confirm" via
         # ProjectConfig["feedback_mode"] itself (_ask_feedback_mode's every return path).
         "<feedback-mode>": cfg["feedback_mode"],
+        # .act/skeleton/config.md § Update's `update-channel` row. .get: a caller that builds the
+        # dict itself (adopt) may predate the key.
+        "<update-channel>": cfg.get("update_channel", _UPDATE_CHANNEL_DEFAULT),
     }
 
 
@@ -3238,6 +3300,9 @@ def main(argv: list[str]) -> int:
                         help="language of docs/ (e.g. de) instead of asking; default en (R-work-language)")
     parser.add_argument("--language-chat", metavar="CODE",
                         help="chat language (a code, or auto = follow the owner's messages) instead of asking")
+    parser.add_argument("--update-channel", choices=UPDATE_CHANNELS, metavar="{release,latest}",
+                        help="what act-update follows: release = newest stable release tag (default), "
+                             "latest = tip of the template's default branch; instead of asking")
     args = parser.parse_args(argv)
     if args.profile and args.no_profile:
         parser.error("--profile and --no-profile contradict each other")
@@ -3341,7 +3406,12 @@ def main(argv: list[str]) -> int:
     lock_existed_before = (root / ".act-lock.json").exists()
 
     cfg = step_config(root, interactive, notes,
-                      {"language-docs": args.language_docs, "language-chat": args.language_chat})
+                      {"language-docs": args.language_docs, "language-chat": args.language_chat},
+                      args.update_channel)
+    if not (root / "docs" / "ai" / "config.md").is_file() and cfg["update_channel"] == "release":
+        release_note = _clone_release_note(source_act.parent)
+        if release_note:
+            notes.append(release_note)
     # `--plan` never prompts (`interactive` above is already False for it), so `feedback_mode` is
     # always the default "confirm" here even when a real (non-plan) run at a real terminal would
     # ask -- say that honestly instead of implying "confirm" is the actual answer. Docking
@@ -3355,7 +3425,8 @@ def main(argv: list[str]) -> int:
         f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language-chat={cfg['language_chat']!r}, "
         f"language-docs={cfg['language_docs']!r}, "
         f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r}, "
-        f"feedback={feedback_display} (suggested, change it in docs/ai/config.md)",
+        f"feedback={feedback_display}, update-channel={cfg.get('update_channel', 'release')!r} "
+        "(suggested, change it in docs/ai/config.md)",
     )
 
     orphan_rebuilt = False
