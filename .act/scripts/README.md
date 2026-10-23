@@ -13,6 +13,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
+| `compact_check.py` | Check the shortened sections of the archive collection files (`entries.py compact`) against their full text, and the monthly topic overview… | skill `act-compact` |
 | `context_size.py` | Context size of the running Claude Code session, for the status line ("ctx 127k") and for the one-time /clear hint… | direct (also imported by the status line and the context hint) |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
@@ -38,7 +39,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `skills.py` | List the project's skills like a man page (name + one-line description from each `SKILL.md`'s frontmatter), or print one skill's `SKILL.md`… | direct (used by skill `act` and by dispatch.py's `/act` fast path) |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
 | `unit_copies.py` | tool copies for a project's own skills and roles — a skill written by hand under docs/ai/local/skills/<name>/ gets its copies under… | direct (session start and update.py call it; run by hand to create the copies at once) |
-| `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` alone is direct) |
+| `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`)) |
 | `usage.py` | Local usage counter — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is used… | direct |
 
 ## Libraries (no CLI, imported only)
@@ -56,6 +57,7 @@ Call: direct (used by skill `act-adopt` (stage 6))
 ```text
 usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
                 [--confirm-no-targets] [--language-docs CODE] [--language-chat CODE]
+                [--update-channel {release,latest}]
 
 Carry out an approved adoption table: move legacy sources, install the template, then bridge/remove adopted sources. Never commits.
 
@@ -74,6 +76,9 @@ options:
   --language-docs CODE  with --apply: language of docs/ (e.g. de), passed on to init.py; default
                         en
   --language-chat CODE  with --apply: chat language (a code, or auto), passed on to init.py
+  --update-channel {release,latest}
+                        with --apply: update channel (release or latest), passed on to init.py;
+                        default release
 
 TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
   path       as in scan.json          class   as in scan.json (must match)
@@ -309,6 +314,23 @@ options:
                         (act-commit calls it; a plain run never touches that file)
 ```
 
+## `compact_check.py`
+
+Call: skill `act-compact`
+
+```text
+usage: compact_check.py [-h] [--root ROOT] [--month YYYY-MM] [--restore] [--no-overview]
+
+Check shortened archive sections and the monthly overview against the full text in Git.
+
+options:
+  -h, --help       show this help message and exit
+  --root ROOT      project root (default: the current folder)
+  --month YYYY-MM  check only the collections of this month
+  --restore        write the full body back into every section that lost something
+  --no-overview    skip the check of the monthly overview
+```
+
 ## `context_size.py`
 
 Call: direct (also imported by the status line and the context hint)
@@ -349,13 +371,13 @@ options:
 Call: direct
 
 ```text
-usage: entries.py [-h] {new,assign,state,start,list,check,archive} ...
+usage: entries.py [-h] {new,assign,state,start,list,check,archive,compact} ...
 
 Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
 todo | report | note).
 
 positional arguments:
-  {new,assign,state,start,list,check,archive}
+  {new,assign,state,start,list,check,archive,compact}
     new                 create a new entry file
     assign              hand out ids still missing ('team' mode: only on the default branch)
     state               append a working-state line for an open task to .act-local/state/ — needs
@@ -371,6 +393,12 @@ positional arguments:
                         docs/ai/work/archive/ — an inbox entry gets `status: done`; files it links
                         beside itself (pasted images) move along, generic or colliding names get
                         the entry's id in front, links are rewritten
+    compact             merge archived entries older than 7 days (and journal entries) into one
+                        collection file per kind and month in docs/ai/work/archive/ (Q-2026-09.md,
+                        T-, B-, U-, other-, ledger-), one section per entry with an anchor such as
+                        #<id>; links in the project are rewritten, the head of each collection
+                        names the commit that holds the full text; needs the entries committed;
+                        running it twice changes nothing
 
 options:
   -h, --help            show this help message and exit
@@ -481,6 +509,23 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+```
+
+### `entries.py compact`
+
+```text
+usage: entries.py compact [-h] [--plan] [--today YYYY-MM-DD]
+
+merge archived entries older than 7 days (and journal entries) into one collection file per kind
+and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one section per
+entry with an anchor such as #<id>; links in the project are rewritten, the head of each
+collection names the commit that holds the full text; needs the entries committed; running it
+twice changes nothing
+
+options:
+  -h, --help          show this help message and exit
+  --plan              show what would be merged, write nothing
+  --today YYYY-MM-DD  count the keep window from this day (tests)
 ```
 
 ## `feedback.py`
@@ -616,6 +661,7 @@ Call: direct
 ```text
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
                [--no-profile] [--profile] [--language-docs CODE] [--language-chat CODE]
+               [--update-channel {release,latest}]
 
 Turn a template checkout into a project, or dock onto an existing directory (--target). Inside a
 project that is already set up, only --profile runs (see there); bringing .act/ up to date is
@@ -640,6 +686,9 @@ options:
                         language)
   --language-chat CODE  chat language (a code, or auto = follow the owner's messages) instead of
                         asking
+  --update-channel {release,latest}
+                        what act-update follows: release = newest stable release tag (default),
+                        latest = tip of the template's default branch; instead of asking
 ```
 
 ## `integrations.py`
@@ -756,8 +805,8 @@ Call: direct (also run before a commit that touches a lock file and daily at ses
 usage: security_scan.py [-h] [--deps] [--json]
 
 Security check Art B -- dependency-vulnerability scan via osv-scanner or an ecosystem's own audit
-tool (npm audit / composer audit / pip-audit). Read-only except for the chosen tool's own network
-lookup; never installs or builds anything.
+tool (npm audit / pnpm audit / composer audit / pip-audit). Read-only except for the chosen tool's
+own network lookup; never installs or builds anything.
 
 options:
   -h, --help  show this help message and exit
@@ -901,12 +950,12 @@ options:
 
 ## `update.py`
 
-Call: skill `act-update` (`--plan` alone is direct)
+Call: skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`))
 
 ```text
-usage: update.py [-h] [--source SOURCE] [--ref REF] [--allow-downgrade]
-                 [--on-local-changes {rescue,discard,abort}] [--yes] [--plan] [--no-commit]
-                 [--non-interactive] [--catch-up]
+usage: update.py [-h] [--source SOURCE] [--ref REF] [--channel {release,latest}] [--versions]
+                 [--all] [--allow-downgrade] [--on-local-changes {rescue,discard,abort}] [--yes]
+                 [--plan] [--no-commit] [--non-interactive] [--catch-up]
 
 Pull a newer state of the template into this project.
 
@@ -915,7 +964,16 @@ options:
   --source SOURCE       local directory or git URL/repo to update from (default: the source
                         recorded in .act-lock.json; a 'template' remote only when the lock names
                         none)
-  --ref REF             tag or commit to update to (default: the source's default branch tip)
+  --ref REF             tag or commit to update to (goes before the channel; default: what the
+                        channel picks)
+  --channel {release,latest}
+                        update channel for this run, overriding `update-channel` in
+                        docs/ai/config.md (default: release): 'release' = the newest stable tag
+                        vX.Y.Z, 'latest' = the tip of the source's default branch
+  --versions            list the installed version, the channel, the source's releases and default
+                        branch tip, and what an update would take (git ls-remote only, no clone,
+                        writes nothing)
+  --all                 with --versions: list every release, not the five newest
   --allow-downgrade     apply the fetched state even when it is older than the installed template
                         commit, or when the installed commit is not in the source's history
                         (default: refuse, --plan only warns)
