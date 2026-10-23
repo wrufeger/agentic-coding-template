@@ -18,6 +18,9 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 - Only the assignment, nothing "improved along the way." A deviation from the existing style
   needs a real reason — state it in the report instead of doing it quietly.
+- Path-bound rules under `.claude/rules/` (frontmatter `paths:`) load only when Claude Code reads or writes a
+  matching file; editing through a shell command does not trigger them. Before changing files in such an area, read
+  the matching rule file first.
 - Respect the layer separation and shared types from `docs/project/coding_rules.md`; no untyped
   "whatever" (`any` or its equivalent).
 - New migrations are versioned and idempotent (naming convention: `docs/project/coding_rules.md`

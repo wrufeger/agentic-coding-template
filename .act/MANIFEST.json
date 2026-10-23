@@ -1,7 +1,7 @@
 {
   "VERSION": "47826f362602fee4d51d07ec38c582edb53a862d9c24c343e68d4eb511378d2e",
   "agents/README.md": "ee685c61143a8462dc1eac6e791269b71c1fdf57a55140d592a82a2034fa9651",
-  "agents/builder.md": "3968b1510d8fbd037298da2cd32c7aa52757dc4b74ae02469cf751b63c45d69c",
+  "agents/builder.md": "650a901eb4d9cf0ebbe873cb72fdb2a9ff4d3024233f6aaac77174f75d5a4f51",
   "agents/debugger.md": "b730a5cd4e5848f0b1adb5920c56a8839f012426bf2c48cb820c452c59f8f8c3",
   "agents/doc-writer.md": "1fa76b1c6c27ee7ae6e5194f6958aff4aeaf57f69a62777ffd5a958c1112c8de",
   "agents/expert-solver.md": "96001af73994f9639aa4eb7db2ec5446fbfe1d0a8f90c94ff96ddb650b379d42",
@@ -128,7 +128,7 @@
   "scripts/integrations.py": "17d747b2796b0597bd82334740d403b9b535a4c003389d2d9586c1502a8f6689",
   "scripts/log.py": "b932f39e1910a4a8f981fd836ceec7a36ae386dc4cfec71ffcaa028476dea728",
   "scripts/manifest.py": "aef093cd886ec70438165fe6c38c94d0525c5cd89bdf69d10fcadecc329b3e12",
-  "scripts/rules.py": "9f1f8f3a5b690a8185fb395d8e0cf50eecd8af0fbcc603d0f9a2fc75bfecb690",
+  "scripts/rules.py": "295dec411c7c51155daaf4f287790e61882f5e2fa7862eb717ccf56f211d557f",
   "scripts/script_docs.py": "9f8dc5c122cbe0220284b016d2408de241e81d16f411007ecc96f0ad17ac8a6d",
   "scripts/security_deep.py": "b99106be050c59c6c55546d4de0ce67e59ff713e9d55ff05bced069a120a863f",
   "scripts/security_scan.py": "0bf4b04a274c7cf0e4864851068114893942273a0c9747b51a7ba20b751deb41",

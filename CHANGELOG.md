@@ -30,6 +30,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **`docs/project/integrations.md` has a hand-written section** between `act:integrations-own` marks, for
   example for an MCP server of a service other than the repo host. `integrations.py check --write` keeps it and
   rewrites the rest; a begin mark without an end mark stops the command without writing.
+- **Path-bound rules under `.claude/rules/` are visible and kept.** `rules.py --list` and `--validate` show
+  Claude Code's `.claude/rules/*.md` files with their `paths:` patterns (block list, inline list with braces,
+  scalar, trailing comments), warn about a pattern that matches no project file, and note a file without `paths:`
+  that loads at every start. `act-adopt` proposes to keep such files instead of merging them, which would lose
+  their binding. The `explorer` and `builder` roles note that a path-bound rule loads only once a matching file is
+  read or written through a file tool.
 
 ### Changed
 

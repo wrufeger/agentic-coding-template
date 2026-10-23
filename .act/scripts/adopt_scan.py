@@ -1223,6 +1223,8 @@ def propose(row: Row, pred: Optional[Predecessor], root: Optional[Path] = None) 
             return "keep"  # init.py merges its hook entries into settings.json
         if path in PREDECESSOR_EXAMPLES:
             return ("delete" if template_only else "legacy") if pred else "keep"
+        if path.startswith(".claude/rules/") and path.endswith(".md") and not template_only:
+            return "keep"  # Claude Code loads it itself; a paths: binding would be lost by merging it elsewhere
         if path in POINTER_FILES and root is not None and _is_pointer_file(root, path):
             return "keep"  # only points at the shared file and the tool gets no bridge: nothing to adopt
         return "legacy" if template_only else "adopt"
