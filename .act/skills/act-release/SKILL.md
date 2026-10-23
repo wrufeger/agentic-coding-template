@@ -41,7 +41,9 @@ triggered, not rebuilt — this skill then covers only its preconditions.
 6. **Set the version in one place** and file the changelog — no other functional change in this
    commit.
 7. **Commit and tag** — one commit for the version bump (`R-code-commit`), then the tag
-   (`vX.Y.Z`).
+   (`vX.Y.Z`). With a message file use `git tag -a --cleanup=verbatim -F <file>`: the default
+   cleanup drops every line starting with `#`, i.e. all Markdown headings. Before any push compare
+   `git for-each-ref refs/tags/<tag> --format="%(contents)"` with the file.
 8. **Record it** in `docs/ai/work/ledger/` (version, date, summary), then `act-commit` unless the
    tag commit already covers it.
 

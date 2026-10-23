@@ -169,7 +169,7 @@ target is still unchanged since `--apply`, or an action differs from `--apply`'s
 `ai-config` files `init.py` has a bridge for become that bridge (`AGENTS.md` always, `CLAUDE.md`
 with `claude-code` in `tools`); other adopted sources and every `delete` row are removed
 (`git rm`); an own skill or agent under `docs/ai/local/` gets its tool copies/role bridge as
-`act-load-settings` writes them. A failing Git call stops it with the state left at `applied`;
+`act-load-settings` writes them; until the next `update.py` run the tool copy stays the template's version. A failing Git call stops it with the state left at `applied`;
 fix the cause and run the same `--finish` again. A second `--finish` after success says "already
 finished".
 

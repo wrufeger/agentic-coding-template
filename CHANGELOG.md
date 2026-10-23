@@ -33,6 +33,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **Estimates in minutes and `tkn`, never person-days.** `act-idea`, `act-prepare`, the task and backlog READMEs and
   `R-cost-delegate` ask for `~<n> min · ~<n> tkn fresh · ~<n> tkn cache` plus the assumption behind it, based on
   `usage.py --estimates` (runs per role times the median, up to the 80th percentile) where measurements exist.
+- **A rule that keeps being violated is named as a candidate for a check.** `R-work-override` and `act-feedback`
+  say so; the rule's text then shrinks to what the check does not cover. The known limits of the shell checks
+  (`topics/safeguards.md`) now list writes from inside a program and the authorship of `feedback.py --direct`.
+- **`act-adopt` says the tool copy stays the template's** until the next `act-update`.
+- **The `git-metadata-guard` row in `docs/ai/config.md` § Checks names every file the check covers**
+  (`.vscode/tasks.json`, `.devcontainer/**`, `.devcontainer.json`, `.envrc`, `.mcp.json`, `folderOpen` tasks).
+
+### Fixed
+
+- **`act-release` keeps Markdown headings in the tag message.** The tag is created with `--cleanup=verbatim`,
+  and the stored message is compared with the release notes before anything is pushed.
 
 ## [2.2.0] - 2026-10-20
 

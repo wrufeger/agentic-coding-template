@@ -56,6 +56,8 @@ feedback switch, never by a cadence.
 
 ## Limits
 
+A rule that keeps being violated is worth an entry too: report it as a candidate for a mechanical check.
+
 Nothing that only holds for this project — no project name, no paths, no numbers, no code, no
 people. No praise ("works well" helps nobody) — only what concretely helped or was missing.
 

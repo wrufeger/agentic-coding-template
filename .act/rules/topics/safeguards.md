@@ -55,6 +55,10 @@ alias (`git ci`), a file with a `-diff` attribute, a very short secret value, an
 inside the command (`pushd`, `Set-Location`) can make them look at the wrong repository or the wrong
 lines, so they miss a secret or flag a harmless one. Treat them as a safety net, not a guarantee.
 
+Two more limits hold for every shell check: writing or deleting from inside a program (`python -c`,
+`Start-Process`, a script block or script file) is invisible to them, and `feedback.py --direct`
+cannot tell whether its text really came from the human — only the rule protects that.
+
 ## Every block gets logged
 
 Every block gets logged — even a harmless one: date, what was blocked, the message's wording, the

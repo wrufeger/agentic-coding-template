@@ -31,7 +31,7 @@ bug IN the template itself — a script, skill or rule under
 `.act/` that fails, contradicts another, or provably never fires — is reported at once via
 `feedback.py --add --kind bug`, and with `feedback: automatic` the assistant also files the
 recurring events that pattern covers (a rule/format proving impractical, a missing workflow, a
-needed workaround) itself; details in `topics/feedback.md`.
+needed workaround) itself; a rule violated repeatedly is a candidate for a check under `.act/hooks/checks/`, after which its text shrinks to what the check does not do; details in `topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English
 
