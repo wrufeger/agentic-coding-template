@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple, Optional
@@ -277,6 +278,20 @@ def _plan_renames(root: Path) -> tuple[list[tuple[Path, Path]], list[str], list[
     return renames, conflicts, invalid
 
 
+def _committed_bytes(root: Path, rel: str) -> Optional[bytes]:
+    """The content of `rel` in the project's last commit (HEAD), or None when git, the commit or
+    the file is not there. `./` resolves the path from the project folder, not from the root of a larger
+    repository the project may sit in. For a skeleton file this is the template state the project had before
+    this update replaced .act/ on disk."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD:./{rel}"], capture_output=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
 def _plan_readmes(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
     """Unedited-scaffold README copies whose skeleton content changed, plus a note for every
     README this migration leaves untouched because it no longer looks like the scaffold."""
@@ -288,12 +303,18 @@ def _plan_readmes(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
         if not dest.is_file():
             continue
         current = dest.read_bytes()
-        if not current.lstrip(b"\xef\xbb\xbf").startswith(_DEFAULT_MARK):
-            reported.append(f"{rel_dest} (compare with {rel_src})")
-            continue
         if not src.is_file():
+            if not current.lstrip(b"\xef\xbb\xbf").startswith(_DEFAULT_MARK):
+                reported.append(f"{rel_dest} (compare with {rel_src})")
             continue
         new_content = src.read_bytes()
+        if not current.lstrip(b"\xef\xbb\xbf").startswith(_DEFAULT_MARK):
+            # A copy without the mark was translated or edited by the project. It only needs a
+            # look when the scaffold itself changed since the template state the project had
+            # (its last commit); an unchanged scaffold has nothing new to compare against.
+            if _committed_bytes(root, rel_src) != new_content:
+                reported.append(f"{rel_dest} (compare with {rel_src})")
+            continue
         if new_content != current:
             refresh.append((dest, new_content))
     return refresh, reported

@@ -71,6 +71,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   first update no longer stops with a downgrade warning.
 - **`init` commits a kept `.github/README.md` in the first commit** and names the other unmarked files under
   `.github/` that it left out; files the clone already tracks are not named.
+- **A translated scaffold README is no longer reported as a hand change** by the one-inbox migration unless the
+  scaffold itself changed since the project's last commit; this also holds for a project in a subfolder of a
+  larger repository.
 
 ### Security
 
