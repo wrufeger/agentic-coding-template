@@ -1274,6 +1274,91 @@ def format_header(fields: list[str], frontmatter: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Entry ids in single files and in archive collections
+# ---------------------------------------------------------------------------
+# An archived entry is one file with an `id:` header field; after `entries.py compact` many archived
+# entries share one collection file per kind and month. Every reader that needs "which ids exist
+# here" (entries.py, doctor.py, a language server) calls entry_ids() instead of reading the header
+# itself, so a collection can never hide an id from the scan.
+
+COLLECTION_MARK = "<!-- act:archive-collection -->"  # first line of a collection file
+_ID_PARTS_RE = re.compile(r"^([A-Za-z]+)0*(\d+)([A-Za-z]?)$")
+_HEADER_ID_RE = re.compile(r"(?im)^id:\s*([A-Za-z]+\d+[a-z]?)\s*$")
+_SECTION_ANCHOR_RE = re.compile(r'^<a id="([^"\n]+)"></a>\s*$')
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})\s*$")
+FenceState = Optional[tuple[str, int]]  # (fence character, fence length) while inside a fenced code block
+
+
+def fence_step(state: FenceState, line: str) -> FenceState:
+    """The fence state after `line`, as CommonMark has it: a run of 3+ backticks or tildes opens a block
+    (a backtick fence may not carry a backtick in its info string), and only a run of the same character
+    at least as long, with nothing after it, closes it. A shorter or other run inside is plain text."""
+    line = line.rstrip("\r")
+    if state is None:
+        opened = _FENCE_OPEN_RE.match(line)
+        if opened and not (opened.group(1)[0] == "`" and "`" in opened.group(2)):
+            return (opened.group(1)[0], len(opened.group(1)))
+        return None
+    closed = _FENCE_CLOSE_RE.match(line)
+    if closed and closed.group(1)[0] == state[0] and len(closed.group(1)) >= state[1]:
+        return None
+    return state
+
+
+def fence_closer(state: FenceState) -> str:
+    """The line that closes the open fence `state` (an empty string if none is open)."""
+    return state[0] * state[1] if state else ""
+
+
+def canonical_id(raw: str) -> str:
+    """An id with its number normalised, so "T012" and "T12" compare equal and a sub-letter is
+    lower case ("Q55A" -> "Q55a"). Anything that is not letters + digits comes back upper-cased."""
+    match = _ID_PARTS_RE.match(raw.strip())
+    if not match:
+        return raw.strip().upper()
+    letters, digits, sub = match.groups()
+    return f"{letters.upper()}{int(digits)}{sub.lower()}"
+
+
+def is_collection(text: str) -> bool:
+    """True if `text` is an archive collection file (it opens with COLLECTION_MARK)."""
+    return text.removeprefix("﻿").startswith(COLLECTION_MARK)
+
+
+def collection_sections(text: str) -> list[tuple[str, int]]:
+    """(canonical id, 1-based line of the anchor) for every entry section of a collection: a line
+    `<a id="Q200"></a>` directly followed by a heading `## Q200 — <title>` naming the same id. A pair
+    inside a fenced code block is an example and does not count, except that a section boundary always
+    resets the fence state, so a fence an earlier section left unclosed cannot hide the sections after
+    it; a section without an id (its anchor is not an id) is not listed."""
+    lines = text.removeprefix("﻿").split("\n")
+    found: list[tuple[str, int]] = []
+    fence: FenceState = None
+    for index, line in enumerate(lines):
+        line = line.rstrip("\r")
+        anchor = _SECTION_ANCHOR_RE.match(line)
+        if anchor and _ID_PARTS_RE.match(anchor.group(1)) and index + 1 < len(lines):
+            heading = lines[index + 1].rstrip("\r")
+            if heading == f"## {anchor.group(1)}" or heading.startswith(f"## {anchor.group(1)} — "):
+                found.append((canonical_id(anchor.group(1)), index + 1))
+                fence = None
+                continue
+        fence = fence_step(fence, line)
+    return found
+
+
+def entry_ids(text: str) -> list[str]:
+    """The canonical ids an entry file carries: its `id:` header field for a single entry (zero or
+    one), every section id for an archive collection. Only the header block is read for a single
+    entry, never the body, so a quoted header cannot spoof an id."""
+    if is_collection(text):
+        return [entry_id for entry_id, _line in collection_sections(text)]
+    match = _HEADER_ID_RE.search(header_block(text))
+    return [canonical_id(match.group(1))] if match else []
+
+
 def sha256_file(path: Path) -> str:
     """Return the hex SHA-256 digest of the file at `path`, read in chunks."""
     digest = hashlib.sha256()

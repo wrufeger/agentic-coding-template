@@ -43,6 +43,7 @@
 #   python .act/scripts/entries.py list [<kind>]            # id/filename + title, per kind
 #   python .act/scripts/entries.py check                    # report a duplicate or unreadable entry
 #   python .act/scripts/entries.py archive <id|file>        # move a finished entry (and its pasted images) to the archive
+#   python .act/scripts/entries.py compact [--plan]          # merge old archived entries into one file per kind and month
 #
 # Output format:
 #   "new": one line, "entries: created <path> [<id or explanation>]", exit 0 (2 on a bad kind, an
@@ -96,7 +97,25 @@
 #     relinked|left ..." line per change, so a commit by pathspec can stage every path; exit 2 with
 #     the reason on stderr, nothing changed, for an unknown id, a name already in the archive, an
 #     unreadable file, or an entry that cannot be deleted (what was written is removed again); exit 1
-#     when an original could not be removed after the copy.
+#     when an original could not be removed after the copy. The moved file gets the header field
+#     `archived: <date>` (an existing one is replaced).
+#   "compact": folds the single files in docs/ai/work/archive/ (and the journal files in
+#     docs/ai/work/ledger/) that were archived more than 7 days ago into collection files in the archive
+#     folder, one per kind and calendar month of the archive date: Q-2026-09.md, T-, B-, U- by id prefix,
+#     other- for entries without an id, ledger- for journal entries (the date is the file name's). A
+#     collection opens with actlib.COLLECTION_MARK, names the commit that still holds the single files
+#     ("full text: git show <hash>:<folder>/<file>") and has one section per entry: an anchor line
+#     `<a id="Q200"></a>`, the heading `## Q200 — <title>`, the header fields in one inline-code line
+#     (with `archived:` and the original `file:`), then the body. Every id in a collection is found by
+#     actlib.entry_ids(), so the next free id and the duplicate check still see it. The archive date is the
+#     header field `archived:`, else the day Git first saw the file in the archive, else `created:`.
+#     Links to a merged file in any Markdown file of the project (not legacy/, not .act/) are rewritten to
+#     the collection plus anchor. The newest week, a subfolder (legacy/, proposals/), a README, an
+#     unreadable file and an entry whose id is carried twice stay as they are. Refuses (exit 2, nothing
+#     changed) when the project is not a Git repository with a commit or a file to merge is not committed.
+#     `--plan` lists what would be merged and writes nothing. A second run changes nothing. Prints one
+#     "entries: compacted|would compact <id>: <old path> -> <collection>#<anchor>" line per entry, one
+#     "entries: relinked ..." line per rewritten file and a closing "entries: wrote ..." line.
 
 from __future__ import annotations
 
@@ -105,15 +124,16 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import unicodedata
 import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 import actlib
 import board
@@ -322,11 +342,7 @@ def _canonical_id(raw: str) -> str:
     meaning) — the form every comparison and every duplicate-id report below uses. Falls back to
     the raw value, upper-cased, for anything that does not parse as letters+digits (defensive
     only; ID_FIELD_RE already restricts what reaches this function)."""
-    match = _ID_ARG_RE.match(raw)
-    if not match:
-        return raw.upper()
-    letters, digits, sub = match.groups()
-    return f"{letters.upper()}{int(digits)}{sub.lower()}"
+    return actlib.canonical_id(raw)
 
 
 def _id_number(canonical: str, prefix: str) -> Optional[int]:
@@ -475,9 +491,9 @@ def used_ids(root: Path, kind: str) -> set[str]:
     ids = set()
     for path in _entry_files(root):
         text = _safe_read(path)
-        canonical = _entry_id(text) if text is not None else None
-        if canonical is not None and _id_number(canonical, prefix) is not None:
-            ids.add(canonical)
+        for canonical in (actlib.entry_ids(text) if text is not None else []):
+            if _id_number(canonical, prefix) is not None:
+                ids.add(canonical)
     return ids
 
 
@@ -630,8 +646,7 @@ def find_duplicate_ids(root: Path) -> list[tuple[str, list[Path]]]:
         text = _safe_read(path)
         if text is None:
             continue
-        canonical = _entry_id(text)
-        if canonical is not None:
+        for canonical in actlib.entry_ids(text):  # a collection file lists one id per section
             by_id[canonical].append(path)
     return sorted((entry_id, paths) for entry_id, paths in by_id.items() if len(paths) > 1)
 
@@ -1036,7 +1051,6 @@ _MD_LINK_RE = re.compile(
 _CODE_SPAN_RE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")
 _HTML_SRC_RE = re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*)(["'])(.*?)\2""", re.IGNORECASE)
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:|^[A-Za-z]:[\\/]")  # a URL or a drive path
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # Names an IDE or screenshot tool hands out again and again; two entries would both own an "img.png".
 _GENERIC_STEM_RE = re.compile(r"^(?:(?:img|image|bild|foto|photo|clipboard|untitled|unbenannt)[ _-]?\d*"
                               r"|(?:pasted image|screenshot|screen shot|bildschirmfoto).*)$", re.IGNORECASE)
@@ -1071,7 +1085,8 @@ def _format_target(raw: str, path: str, suffix: str, html: bool) -> str:
     return f"<{path}{suffix}>" if " " in path else path + suffix
 
 
-LinkMapper = Callable[[str, Path], Optional[str]]
+# A mapper returns the new link path, or (path, fragment) to also replace the fragment, or None to keep the link.
+LinkMapper = Callable[[str, Path], Union[None, str, tuple[str, str]]]
 
 
 def _rewrite_segment(segment: str, base: Path, mapper: LinkMapper) -> str:
@@ -1083,7 +1098,12 @@ def _rewrite_segment(segment: str, base: Path, mapper: LinkMapper) -> str:
             return None
         path, suffix = parts
         new = mapper(path, Path(os.path.normpath(base / path)))
-        return None if new is None else (new, suffix)
+        if new is None:
+            return None
+        if isinstance(new, tuple):  # the target was merged: its old fragment names nothing in the new file
+            query = suffix[:suffix.find("#")] if "#" in suffix else suffix
+            return (new[0], f"{query}#{new[1]}")
+        return (new, suffix)
 
     def fix_markdown(match: "re.Match[str]") -> str:
         opener, text, middle, raw, tail = match.groups()
@@ -1106,13 +1126,10 @@ def _rewrite_links(text: str, base: Path, mapper: LinkMapper) -> str:
     and inline code; it returns the new link path (relative, "/" separators) or None to keep the
     link. The resolved path is `base` + the link target, normalised (symlinks untouched)."""
     out: list[str] = []
-    fenced = False
+    fence: actlib.FenceState = None
     for line in text.split("\n"):
-        if _FENCE_RE.match(line):
-            fenced = not fenced
-            out.append(line)
-            continue
-        if fenced:
+        was_fenced, fence = fence is not None, actlib.fence_step(fence, line)
+        if was_fenced or fence is not None:  # a fence line or a line inside a fenced block
             out.append(line)
             continue
         pieces: list[str] = []
@@ -1142,21 +1159,27 @@ def linked_local_files(text: str, base: Path) -> set[Path]:
 def _set_status_done(text: str) -> str:
     """`text` with `status: done` in its header — an existing status replaced, else the field added
     at the end of the header (a new frontmatter if the file has no header at all)."""
+    return _set_header_field(text, "status", "done")
+
+
+def _set_header_field(text: str, key: str, value: str) -> str:
+    """`text` with `<key>: <value>` in its header: an existing field replaced, else the field added
+    at the end of the header (a new frontmatter if the file has no header at all)."""
     head, body = actlib.split_header(text)
     if not head.strip():
-        return actlib.format_header(["status: done"], True) + f"\n{text}"
+        return actlib.format_header([f"{key}: {value}"], True) + f"\n{text}"
     lines = head.split("\n")
     framed = actlib.is_frontmatter(head)
     end = len(lines)
     if framed:
         end = max(i for i, line in enumerate(lines) if line.rstrip() == actlib.FRONTMATTER_DELIMITER)
     for index, line in enumerate(lines[:end]):
-        if re.match(r"(?i)status:", line):
-            lines[index] = "status: done"
+        if re.match(rf"(?i){re.escape(key)}:", line):
+            lines[index] = f"{key}: {value}"
             return "\n".join(lines) + body
     while end > 0 and not lines[end - 1].strip() and not framed:
         end -= 1
-    lines.insert(end, "status: done")
+    lines.insert(end, f"{key}: {value}")
     return "\n".join(lines) + body
 
 
@@ -1219,7 +1242,7 @@ def _is_inside(path: Path, folder: Path) -> bool:
     return folder == path or folder in path.parents
 
 
-def plan_archive(root: Path, entry: Path) -> ArchivePlan:
+def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> ArchivePlan:
     """Everything `archive` is going to do for `entry`, computed without touching a file: the new
     text, the destination, and the attachments to move or copy. Raises ArchiveError on a refusal."""
     text = _safe_read(entry)
@@ -1297,6 +1320,7 @@ def plan_archive(root: Path, entry: Path) -> ArchivePlan:
     plan.text = _rewrite_links(text, entry_dir, remap)
     if is_inbox:
         plan.text = _set_status_done(plan.text)
+    plan.text = _set_header_field(plan.text, "archived", (today or date.today()).isoformat())
     return plan
 
 
@@ -1357,6 +1381,346 @@ def cmd_archive(root: Path, ref: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# compact — merge old archived entries into one collection file per kind and month
+# ---------------------------------------------------------------------------
+
+LEDGER_DIR = Path("docs/ai/work/ledger")
+COMPACT_KEEP_DAYS = 7  # the newest week stays as single files: it is still linked to and looked up
+_LEDGER_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
+_ANY_ANCHOR_RE = re.compile(r'^<a id="[^"\n]+"></a>\s*$')
+_SKIP_WALK_DIRS = {".git", ".act", ".act-local", "node_modules", ".venv", "venv", "__pycache__"}
+
+
+class CompactError(Exception):
+    """A refusal of `compact` that is raised before anything is written."""
+
+
+@dataclass
+class CompactItem:
+    """One single file `compact` is going to fold into a collection."""
+
+    path: Path
+    origin: str  # project-relative folder the file lives in (archive or journal)
+    group: str  # "Q" | "T" | "B" | "U" | "other" | "ledger"
+    day: date  # the archive date (a journal entry: its file name's date)
+    anchor: str
+    section: str  # the section text; links are still relative to the original folder
+
+    @property
+    def month(self) -> str:
+        return self.day.strftime("%Y-%m")
+
+    @property
+    def collection_name(self) -> str:
+        return f"{self.group}-{self.month}.md"
+
+
+def _git_text(args: list[str], root: Path) -> Optional[str]:
+    """stdout of `git <args>` decoded as UTF-8 with paths left unquoted (`core.quotePath=false`), or
+    None if git fails; board.run_git decodes with the console code page, which garbles file names."""
+    try:
+        result = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=root, capture_output=True,
+                                check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+def _git_added_days(root: Path, folder: Path) -> dict[str, date]:
+    """posix path (relative to `root`) -> the day the file was first added under `folder`, from one
+    `git log`; a move into the archive counts as an add there (rename detection off)."""
+    output = _git_text(["log", "--no-renames", "--diff-filter=A", "--name-only", "--format=@@%as", "--",
+                       folder.as_posix()], root)
+    found: dict[str, date] = {}
+    current: Optional[date] = None
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if line.startswith("@@"):
+            try:
+                current = date.fromisoformat(line[2:])
+            except ValueError:
+                current = None
+        elif line and current is not None and (line not in found or current < found[line]):
+            found[line] = current
+    return found
+
+
+def _field_day(header: str, key: str) -> Optional[date]:
+    """The date a header field starts with (`created: 2026-10-08T10:00:00` -> 2026-10-08), or None."""
+    match = re.search(rf"(?im)^{key}:\s*(\d{{4}}-\d{{2}}-\d{{2}})", header)
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def _heading_split(text: str) -> tuple[str, str]:
+    """(title, body) of an entry: a Markdown heading (`#` to `######` and a space) that comes before the
+    first running text, outside a fenced code block, is the title and is taken out of the body, which is
+    everything below the header without that line. Any other text, a `#` line in a code block included,
+    stays in the body whole."""
+    lines = actlib.split_header(text)[1].split("\n")
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if re.match(r"^#{1,6}\s", line):
+            return line.lstrip("#").strip(), "\n".join(lines[:index] + lines[index + 1:]).strip("\n")
+        break
+    return "", "\n".join(lines).strip("\n")
+
+
+def _inline_code(content: str) -> str:
+    """`content` as one inline-code span: the delimiter is one backtick longer than the longest run
+    inside, with a padding space where the content starts or ends with a backtick."""
+    longest = max((len(run) for run in re.findall(r"`+", content)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if content.startswith("`") or content.endswith("`") else ""
+    return f"{fence}{pad}{content}{pad}{fence}"
+
+
+def _build_section(path: Path, text: str, entry_id: Optional[str], day: date) -> tuple[str, str]:
+    """(anchor, section text) for one single entry: anchor line, heading, the header fields in one
+    inline-code line (with `archived:` and the original `file:`), then the body."""
+    title, body = _heading_split(text)
+    fields = [line for line in actlib.header_block(text).split("\n")
+              if line.strip() and not re.match(r"(?i)id:", line)]
+    if not any(re.match(r"(?i)archived:", line) for line in fields):
+        fields.append(f"archived: {day.isoformat()}")
+    fields.append(f"file: {path.name}")
+    anchor = entry_id if entry_id else path.stem
+    heading = f"## {entry_id} — {title or path.stem}" if entry_id else f"## {title or path.stem}"
+    parts = [f'<a id="{anchor}"></a>', heading, _inline_code(" · ".join(fields))]
+    if body:
+        parts += ["", body]
+        fence: actlib.FenceState = None
+        for line in body.split("\n"):
+            fence = actlib.fence_step(fence, line)
+        if fence is not None:  # an unclosed fence would swallow the next section
+            parts.append(actlib.fence_closer(fence))
+    return anchor, "\n".join(parts) + "\n"
+
+
+def _id_sort_number(anchor: str) -> int:
+    match = _ID_ARG_RE.match(anchor)
+    return int(match.group(2)) if match else 0
+
+
+def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str], int]:
+    """(items to fold, notes on files left alone, number of single files kept because they are
+    newer than the keep window), computed without touching a file. A collection file, a README,
+    a subfolder (legacy/, proposals/) and an entry whose id is carried twice are never folded."""
+    archive = root / ARCHIVE_DIR
+    ledger = root / LEDGER_DIR
+    sources: list[tuple[Path, bool]] = []  # (file, lives in the journal folder)
+    for folder, journal in ((archive, False), (ledger, True)):
+        if folder.is_dir():
+            sources += [(p, journal) for p in sorted(folder.glob("*.md"))
+                        if p.is_file() and p.name.lower() != "readme.md"]
+    duplicated = {entry_id for entry_id, _paths in find_duplicate_ids(root)}
+    cutoff = today - timedelta(days=COMPACT_KEEP_DAYS)
+    git_days: Optional[dict[str, date]] = None
+    items: list[CompactItem] = []
+    notes: list[str] = []
+    kept = 0
+    for path, journal in sources:
+        text = _safe_read(path)
+        if text is None:
+            notes.append(f"left {_rel(path, root)} - not valid UTF-8")
+            continue
+        if actlib.is_collection(text):
+            continue
+        header = actlib.header_block(text)
+        ids = actlib.entry_ids(text)
+        entry_id = ids[0] if ids else None
+        if entry_id in duplicated:
+            notes.append(f"left {_rel(path, root)} - id {entry_id} is carried by more than one entry")
+            continue
+        named = _LEDGER_NAME_RE.match(path.name)
+        as_journal = journal or (named is not None and entry_id is None)
+        day = None
+        if as_journal and named:
+            try:
+                day = date.fromisoformat(named.group(1))
+            except ValueError:
+                notes.append(f"left {_rel(path, root)} - {named.group(1)} in the file name is not a valid date")
+                continue
+        if day is None:
+            day = _field_day(header, "archived")
+        if day is None and not journal:
+            if git_days is None:
+                git_days = _git_added_days(root, ARCHIVE_DIR)
+            day = git_days.get(_rel(path, root))
+        if day is None:
+            day = _field_day(header, "created") or date.fromtimestamp(path.stat().st_mtime)
+        if day >= cutoff:
+            kept += 1
+            continue
+        prefix = entry_id[0] if entry_id and entry_id[0] in "QTBU" and entry_id[1:2].isdigit() else None
+        group = prefix or ("ledger" if as_journal else "other")
+        anchor, section = _build_section(path, text, entry_id, day)
+        items.append(CompactItem(path=path, origin=_rel(path.parent, root), group=group, day=day,
+                                 anchor=anchor, section=section))
+    items.sort(key=lambda item: (item.group, item.day, _id_sort_number(item.anchor), item.path.name))
+    return items, notes, kept
+
+
+def _walk_markdown(root: Path) -> list[Path]:
+    """Every Markdown file of the project that may link to an archived entry: not the tool and
+    dependency folders, not the legacy archive."""
+    legacy = os.path.normcase(os.path.normpath(root / LEGACY_ROOT))
+    found: list[Path] = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _SKIP_WALK_DIRS
+                   and os.path.normcase(os.path.normpath(os.path.join(folder, d))) != legacy]
+        found += [Path(folder) / name for name in files if name.lower().endswith(".md")]
+    return sorted(found)
+
+
+def _collection_text(existing: Optional[str], members: list[CompactItem], sections: list[str],
+                     commit: str, today: date) -> str:
+    """The new text of a collection file: a fresh one, or `existing` with one more line in its head
+    naming the commit that still holds the full text, and the new sections appended."""
+    bullets = [f"- {today.isoformat()}, full text: `git show {commit}:{origin}/<file>` "
+               "(`<file>` is the `file:` value in the second line of a section)"
+               for origin in sorted({item.origin for item in members})]
+    if existing is None:
+        head = [actlib.COLLECTION_MARK, f"# {members[0].group} — {members[0].month}", "",
+                "Archived entries of one kind and month, merged by `entries.py compact`, one section per entry. "
+                "The single files stay in Git:", ""] + bullets + [""]
+        return "\n".join(head) + "\n" + "\n".join(sections)
+    lines = existing.replace("\r\n", "\n").split("\n")
+    first = next((i for i in range(len(lines) - 1)
+                  if _ANY_ANCHOR_RE.match(lines[i]) and lines[i + 1].startswith("## ")), len(lines))
+    head = lines[:first]
+    while head and not head[-1].strip():
+        head.pop()
+    rest = "\n".join(lines[first:]).rstrip("\n")
+    return "\n".join(head + bullets + [""]) + "\n" + (rest + "\n\n" if rest else "") + "\n".join(sections)
+
+
+def _porcelain_paths(output: str) -> set[str]:
+    """Every path named in `git status --porcelain -z` output; a rename or copy entry names two."""
+    names: set[str] = set()
+    parts = output.split("\0")
+    index = 0
+    while index < len(parts):
+        entry = parts[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        names.add(entry[3:])
+        if entry[0] in "RC" or entry[1] in "RC":
+            if index < len(parts):
+                names.add(parts[index])
+            index += 1
+    return names
+
+
+def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> int:
+    today = today or date.today()
+    items, notes, kept = plan_compact(root, today)
+    for note in notes:
+        print(f"entries: {note}")
+    if not items:
+        print(f"entries: nothing to compact ({kept} single file(s) newer than {COMPACT_KEEP_DAYS} days stay)")
+        return 0
+    archive = root / ARCHIVE_DIR
+    groups: dict[str, list[CompactItem]] = defaultdict(list)
+    for item in items:
+        groups[item.collection_name].append(item)
+    targets = {os.path.normcase(os.path.normpath(item.path)): (item.collection_name, item.anchor) for item in items}
+    for name in groups:
+        if (archive / name).is_file() and _safe_read(archive / name) is None:
+            raise CompactError(f"{_rel(archive / name, root)} exists but is not valid UTF-8: it would be "
+                               "replaced instead of extended")
+
+    commit = (board.run_git(["rev-parse", "--short=12", "HEAD"], root) or "").strip()
+    pending = _git_text(["status", "--porcelain", "-z", "--untracked-files=all", "--", ARCHIVE_DIR.as_posix(),
+                         LEDGER_DIR.as_posix()], root)
+    wanted = {_rel(item.path, root) for item in items}
+    dirty = sorted(name for name in _porcelain_paths(pending or "") if name in wanted)
+    if not plan_only:
+        if not commit or pending is None:
+            raise CompactError("needs a Git repository with a commit: the full text of every merged entry has "
+                               "to stay recoverable from Git")
+        if dirty:
+            raise CompactError("commit these first, their full text is not in Git yet: " + ", ".join(dirty))
+
+    verb = "would compact" if plan_only else "compacted"
+    for item in items:
+        print(f"entries: {verb} {item.anchor}: {_rel(item.path, root)} -> "
+              f"{_rel(archive / item.collection_name, root)}#{item.anchor}")
+    if plan_only:
+        print(f"entries: plan - {len(items)} entr(ies) into {len(groups)} collection file(s), {kept} newer single "
+              f"file(s) stay; nothing written" + (f"; not committed yet: {', '.join(dirty)}" if dirty else ""))
+        return 0
+
+    def mapper_for(dest_base: Path, everything: bool) -> LinkMapper:
+        """Link mapper for text that ends up in `dest_base`: a link to a merged entry becomes the
+        collection plus anchor; with `everything`, any other existing target is re-based as well
+        (a journal entry moves to another folder)."""
+        def mapper(path: str, resolved: Path) -> Optional[str]:
+            key = os.path.normcase(os.path.normpath(resolved))
+            try:
+                if key in targets:
+                    name, anchor = targets[key]
+                    return Path(os.path.relpath(archive / name, dest_base)).as_posix(), anchor
+                if everything and resolved.exists():
+                    new = Path(os.path.relpath(resolved, dest_base)).as_posix()
+                    return None if new == path else new
+            except ValueError:  # another drive: keep the link as written
+                return None
+            return None
+        return mapper
+
+    writes: dict[Path, str] = {}
+    for name, members in groups.items():
+        sections = []
+        for item in members:
+            if "](" in item.section or "src=" in item.section:
+                sections.append(_rewrite_links(item.section, item.path.parent,
+                                               mapper_for(archive, item.path.parent != archive)))
+            else:
+                sections.append(item.section)
+        target = archive / name
+        existing = _safe_read(target)
+        if existing is not None:  # older sections may link to an entry merged by this run
+            existing = _rewrite_links(existing, archive, mapper_for(archive, False))
+        writes[target] = _collection_text(existing, members, sections, commit, today)
+
+    skip = {os.path.normcase(os.path.normpath(item.path)) for item in items}
+    skip |= {os.path.normcase(os.path.normpath(path)) for path in writes}
+    names = [item.path.name for item in items]
+    relinked: list[Path] = []
+    for md in _walk_markdown(root):
+        if os.path.normcase(os.path.normpath(md)) in skip:
+            continue
+        try:
+            raw = md.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not any(name in raw for name in names):
+            continue
+        new = _rewrite_links(raw, md.parent, mapper_for(md.parent, False))
+        if new != raw:
+            writes[md] = new
+            relinked.append(md)
+
+    for path, text in writes.items():
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+    for item in items:
+        item.path.unlink()
+    for path in relinked:
+        print(f"entries: relinked links to merged entries in {_rel(path, root)}")
+    written = [_rel(path, root) for path in writes if path not in relinked]
+    print(f"entries: wrote {', '.join(written)}; {len(items)} single file(s) removed, full text in Git at {commit}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1414,6 +1778,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_archive = sub.add_parser("archive", help=archive_help, description=archive_help)
     p_archive.add_argument("entry", metavar="ID-OR-FILE", help="an id such as Q<n> or T<n>, or the entry file's path")
 
+    compact_help = ("merge archived entries older than 7 days (and journal entries) into one collection file per "
+                    "kind and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one "
+                    "section per entry with an anchor such as #Q200; links in the project are rewritten, the "
+                    "head of each collection names the commit that holds the full text; needs the entries "
+                    "committed; running it twice changes nothing")
+    p_compact = sub.add_parser("compact", help=compact_help, description=compact_help)
+    p_compact.add_argument("--plan", action="store_true", help="show what would be merged, write nothing")
+    p_compact.add_argument("--today", metavar="YYYY-MM-DD", help="count the keep window from this day (tests)")
+
     return parser
 
 
@@ -1444,6 +1817,15 @@ def main(argv: list[str]) -> int:
         return cmd_check(root)
     if args.command == "archive":
         return cmd_archive(root.resolve(), args.entry)
+    if args.command == "compact":
+        try:
+            return cmd_compact(root.resolve(), args.plan, date.fromisoformat(args.today) if args.today else None)
+        except ValueError as exc:
+            print(f"entries: --today {args.today!r}: {exc}", file=sys.stderr)
+            return 2
+        except CompactError as exc:
+            print(f"entries: {exc} - nothing changed", file=sys.stderr)
+            return 2
     return 2  # argparse's `required=True` already keeps this unreachable
 
 

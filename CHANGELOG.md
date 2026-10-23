@@ -50,6 +50,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **`docs/project/glossary.md` in every new project:** a place for the project's own terms, abbreviations and
   turns of phrase, listed in the docs index, checked by `act-audit-docs`, and not loaded every session. It is
   scaffold (`act:default`), so a non-English docs language lists it for translation.
+- **`entries.py compact` merges old archive entries into monthly collections.** Archived entries older than a
+  week, and journal entries, go into one file per kind and month (`Q-2026-09.md`, `ledger-2026-09.md` …) with
+  one anchored section per entry; links in the project are rewritten to the anchors, the head names the commit
+  that still holds the full text, `--plan` previews, a second run changes nothing. It refuses while a file to
+  merge is uncommitted. `entries.py archive` records the archive date as `archived:`, and the next free id and
+  the duplicate check also read collection files.
 
 ### Changed
 
