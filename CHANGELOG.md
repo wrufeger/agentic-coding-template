@@ -60,6 +60,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `&` stay refused, and `& 'pwsh' -Command …` is now scanned.
 - **The shell scanner behind the write guards is fast on long `cd` chains.** 800 statements took 21 s before and
   take well under a second now; the targets it finds are unchanged.
+- **The frontmatter migrations read headers exactly like the readers** (line breaks at LF only, a non-breaking
+  space counts as whitespace), write each file through a temporary file and an atomic replace, skip symbolic
+  links, and leave out `archive/legacy` whatever its letter case.
 
 ## [2.2.0] - 2026-10-20
 

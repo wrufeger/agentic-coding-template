@@ -25,6 +25,10 @@
 #              for the two new "---" lines.
 #            - A leading BOM is dropped (the opening "---" must be the very first thing in the file,
 #              or the frontmatter would not be recognized), as migrations 002 and 003 do.
+#            - The header is found the way actlib.split_header finds it: lines end at LF only (a lone
+#              CR is no line break) and a field is matched with the readers' own pattern.
+#            - Each file is replaced through a temporary file and os.replace, so an abort never leaves
+#              a cut-off file; a symbolic link is left alone instead of being written through.
 #            - Left byte-identical: a file that already starts with "---", a file without a header,
 #              the READMEs, the legacy archive and every other folder (docs/ai/inbox/ was handled by
 #              003). A file that is not valid UTF-8 is reported and left as it is.
@@ -39,7 +43,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -49,53 +55,78 @@ LEGACY_DIR = "archive/legacy"  # below WORK_DIR; never rewritten
 LIST_LIMIT = 10  # names listed in plan()/apply() descriptions before "... and N more"
 
 _BOM = b"\xef\xbb\xbf"
-_FIELD_RE = re.compile(rb"^[A-Za-z][A-Za-z-]*:\s")  # same shape as the header readers' field pattern
+_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z-]*:\s")  # same pattern as the header readers' (str, so \s also matches NBSP)
 
 
 def _is_readme(name: str) -> bool:
     return name.lower() == "readme.md"
 
 
-def _is_field(line: bytes) -> bool:
-    # without its line ending, as the header readers see it: "for:" with no value is not a field
-    return bool(_FIELD_RE.match(line.rstrip(b"\r\n")))
+def _is_field(line: str) -> bool:
+    # as the header readers see it: lines split at "\n" only, a trailing "\r" is not content, and
+    # "for:" with no value is not a field
+    return bool(_FIELD_RE.match(line.rstrip("\r")))
+
+
+def _is_legacy(relative: Path) -> bool:
+    """True for archive/legacy and everything below it, whatever the letter case (a case-folding
+    file system such as Windows' reports the folder under either spelling, others keep both)."""
+    legacy_parts = [part.lower() for part in LEGACY_DIR.split("/")]
+    return [part.lower() for part in relative.parts[:len(legacy_parts)]] == legacy_parts
+
+
+def _has_link(path: Path, base: Path) -> bool:
+    """True if `path` or a folder between `base` and it is a symbolic link."""
+    return any(part.is_symlink() for part in (path, *path.parents) if part != base and base in part.parents)
 
 
 def _convert(data: bytes) -> Optional[bytes]:
     """`data` in frontmatter form, or None when the file is not a candidate (already frontmatter,
-    no header). Raises UnicodeDecodeError for content that is not valid UTF-8."""
-    data.decode("utf-8")  # strict check; BOM bytes decode fine
-    body = data[len(_BOM):] if data.startswith(_BOM) else data
-    lines = body.splitlines(keepends=True)
-    header: list[bytes] = []
-    for line in lines:
-        if not _is_field(line):  # a blank or non-field line ends the run
-            break
-        header.append(line)
-    if not header:
+    no header). Raises UnicodeDecodeError for content that is not valid UTF-8. The header is found
+    the way actlib.split_header finds it: lines end at "\n" only (a lone "\r" is no line break),
+    a blank or non-field line ends the run."""
+    text = data.decode("utf-8")  # strict check
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    lines = text.split("\n")
+    count = 0
+    while count < len(lines) and lines[count].strip() and _is_field(lines[count]):
+        count += 1
+    if not count:
         return None
-    first = header[0]
-    newline = b"\r\n" if first.endswith(b"\r\n") else b"\r" if first.endswith(b"\r") else b"\n"
-    block = b"".join(header)
-    if not block.endswith((b"\n", b"\r")):  # header is the whole file and lacks a final newline
-        block += newline
-    rest = b"".join(lines[len(header):])
-    return b"---" + newline + block + b"---" + newline + rest
+    head_length = sum(len(line) + 1 for line in lines[:count])
+    head, rest = text[:head_length], text[head_length:]
+    newline = "\r\n" if lines[0].endswith("\r") else "\n"
+    if not head.endswith("\n"):  # header is the whole file and lacks a final newline
+        head += newline
+    return f"---{newline}{head}---{newline}{rest}".encode("utf-8")
+
+
+def _write_atomic(path: Path, content: bytes) -> None:
+    """Replace `path` by `content` through a temporary file in the same folder and os.replace, so
+    an abort leaves either the old or the new file, never a cut-off one; the file mode is kept."""
+    temp = path.with_name(f".{path.name}.migrating")
+    try:
+        temp.write_bytes(content)
+        shutil.copymode(path, temp)
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def _candidates(root: Path) -> list[Path]:
     """Every *.md file the migration looks at, sorted by project-relative path."""
     work = root / WORK_DIR
-    legacy = work / LEGACY_DIR
     found: list[Path] = []
     for name in SCAN_DIRS:
         base = work / name
         if not base.is_dir():
             continue
         for path in base.rglob("*.md"):
-            if not path.is_file() or _is_readme(path.name):
+            if not path.is_file() or _is_readme(path.name) or _is_legacy(path.relative_to(work)):
                 continue
-            if path == legacy or legacy in path.parents:
+            if _has_link(path, base):  # a link (file, or folder on the way) is not rewritten through
                 continue
             found.append(path)
     return sorted(found, key=lambda p: p.relative_to(root).as_posix())
@@ -143,7 +174,7 @@ def apply(root: Path) -> tuple[str, list[str]]:
     todo, skipped = _scan(root)
     touched: list[Path] = []
     for path, new in todo:
-        path.write_bytes(new)
+        _write_atomic(path, new)
         touched.append(path)
     parts: list[str] = []
     rels = [p.relative_to(root).as_posix() for p in touched]
