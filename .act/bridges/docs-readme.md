@@ -11,6 +11,7 @@ this file directly for anything those two miss — it stays a plain table, not a
 | File | Contents | Data as of | When to read |
 | :--- | :--- | :--- | :--- |
 | `docs/project/coding_rules.md` | Which rule sets/groups are on for this stack | <today> | before writing or reviewing code |
+| `docs/project/glossary.md` | Terms, abbreviations and turns of phrase specific to this project | <today> | when a term is unclear, and when a new one needs explaining |
 | `docs/ai/config.md` | Project configuration — steers the assistant | <today> | before any task; re-read after a change |
 | `docs/ai/board.md` | Board — generated overview of what is open (not versioned by default, see `board` in `config.md`) | <today> | at session start, for the current picture |
 | `docs/ai/rules.md` | Orchestrator-only rule digest, loaded at session start | <today> | orchestrator, every session (automatic) |

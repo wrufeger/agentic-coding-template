@@ -225,7 +225,7 @@ ORIGIN_UNKNOWN = "unknown (base_commit not reachable)"
 
 # Places init.py writes itself: an old file there is proposed adopt (merged into the template's
 # version), or legacy when it holds nothing of its own.
-INIT_WRITES = {"docs/README.md", "docs/project/coding_rules.md"}
+INIT_WRITES = {"docs/README.md", "docs/project/coding_rules.md", "docs/project/glossary.md"}
 SKILL_AGENT_PARENTS = {".claude/skills", ".codex/skills", ".claude/agents", ".codex/agents", ".github/agents"}
 AGENT_PARENTS = {".claude/agents", ".codex/agents", ".github/agents"}
 SKILL_PARENTS = {".claude/skills", ".codex/skills"}

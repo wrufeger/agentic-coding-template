@@ -47,6 +47,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   appears unchecked, a new group of a checked set appears checked; existing lines, boxes, reasons and own rules
   stay as they are. Before, the update only reported them. The scaffold says right after its introduction that a
   checked set is imported with `@`.
+- **`docs/project/glossary.md` in every new project:** a place for the project's own terms, abbreviations and
+  turns of phrase, listed in the docs index, checked by `act-audit-docs`, and not loaded every session. It is
+  scaffold (`act:default`), so a non-English docs language lists it for translation.
 
 ### Changed
 

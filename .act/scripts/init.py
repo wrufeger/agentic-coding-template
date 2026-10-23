@@ -131,6 +131,7 @@ BRIDGES: dict[str, BridgeSpec] = {
     "CLAUDE.md": {"dest": "CLAUDE.md", "tool": "claude-code", "kind": "verbatim"},
     "settings.hooks.json": {"dest": ".claude/settings.json", "tool": "claude-code", "kind": "json-merge"},
     "docs-readme.md": {"dest": "docs/README.md", "tool": None, "kind": "docs-index"},
+    "glossary.md": {"dest": "docs/project/glossary.md", "tool": None, "kind": "docs-index"},
 }
 
 # Plain skeleton -> docs/ai/ copies (step 6). Placeholders (see CONFIG_TOKENS) are replaced in all

@@ -20,7 +20,8 @@ by `act-doctor`.
    a newly learned convention into `coding_rules.md`, changed tests into `testing.md`, a severe
    failure into `docs/project/incidents/`. Maintaining `testing.md`: check that the runner it names
    actually exists and that its command isn't interactive (no unattended install prompt), same
-   check as before any test run (`.act/agents/builder.md`).
+   check as before any test run (`.act/agents/builder.md`). Also check `glossary.md`: add terms the wave
+   introduced, drop or correct entries the code no longer matches.
 4. `doc-writer` updates `docs/README.md` (index, data-as-of dates).
 
 In Claude Code, steps 2–4 can also run as the workflow script `workflow.js` beside this file — only
