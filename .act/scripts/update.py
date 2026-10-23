@@ -26,6 +26,8 @@
 # Usage:
 #   python .act/scripts/update.py                       # update from .act-lock.json's recorded source
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
+#   python .act/scripts/update.py --channel release|latest   # for this run; else `update-channel` in docs/ai/config.md, else release
+#   python .act/scripts/update.py --versions [--all]     # installed version, channel, source's releases and tip; git ls-remote only
 #   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10, write nothing
 #   python .act/scripts/update.py --allow-downgrade       # accept a fetched state older than (or unrelated to) the installed commit
 #   python .act/scripts/update.py --yes               # skip the interactive consent prompt (step 4)
@@ -54,6 +56,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -172,11 +175,11 @@ def _default_source(root: Path) -> str:
     remote = result.stdout.strip() if result.returncode == 0 else ""
     if locked:
         if remote and remote.rstrip("/").removesuffix(".git") != locked.rstrip("/").removesuffix(".git"):
-            print(f"update.py: using the source from .act-lock.json ({locked}); the git remote 'template' "
-                  f"points elsewhere ({remote}) and is ignored.")
+            print(f"update.py: using the source from .act-lock.json ({_mask_url_user(locked)}); the git remote "
+                  f"'template' points elsewhere ({_mask_url_user(remote)}) and is ignored.")
         return locked
     if remote:
-        print(f"update.py: .act-lock.json names no source; using the git remote 'template' ({remote}).")
+        print(f"update.py: .act-lock.json names no source; using the git remote 'template' ({_mask_url_user(remote)}).")
     return remote
 
 
@@ -191,16 +194,316 @@ def _source_origin(root: Path, source: str, explicit: Optional[str]) -> str:
     return "the git remote 'template'"
 
 
-def _fetch_failure_message(root: Path, source: str, args: argparse.Namespace, error: Exception) -> str:
+def _checkout_branch(checkout: Path) -> str:
+    """The branch a fresh clone is on (the source's default branch), "" for a detached HEAD or a
+    plain-directory fetch."""
+    result = _git(["symbolic-ref", "--short", "-q", "HEAD"], cwd=checkout, check=False)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _fetch_failure_message(
+    root: Path, source: str, args: argparse.Namespace, error: Exception, ref: Optional[str] = None,
+) -> str:
     """The message printed when step 1 fails: what failed, which source, where that source came
     from, and the way out (name another one with --source/--ref)."""
     origin = _source_origin(root, source, args.source)
-    ref_part = f" at ref '{args.ref}'" if args.ref else ""
+    ref = ref or args.ref
+    ref_part = f" at ref '{ref}'" if ref else ""
     return (
-        f"update.py: could not fetch the template from '{source}'{ref_part} (taken from {origin}): {error}\n"
+        f"update.py: could not fetch the template from '{_mask_url_user(source)}'{ref_part} (taken from {origin}): "
+        f"{_mask_url_user(str(error))}\n"
         "update.py: name another source with --source <path-or-url> (and --ref <tag-or-commit> for a "
         "specific state), or correct the source recorded in .act-lock.json / the git remote 'template'."
     )
+
+
+# ---------------------------------------------------------------------------
+# Update channel — `release` (newest stable tag) or `latest` (tip of the default branch)
+# ---------------------------------------------------------------------------
+
+CHANNELS = ("release", "latest")
+DEFAULT_CHANNEL = "release"
+_STABLE_TAG = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_URL_USER = re.compile(r"(?P<scheme>\b[a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s]*@")
+_CHANNEL_HINT_MARKER = Path(".act-local") / "update-channel-hint"
+_LS_REMOTE_TIMEOUT = 10
+
+
+def _mask_url_user(text: str) -> str:
+    """Replaces the user part of every `scheme://user[:token]@host` in `text` with `***@`, so a
+    source URL with credentials never reaches the output (R-safe-no-secret-log)."""
+    return _URL_USER.sub(lambda match: f"{match.group('scheme')}***@", text)
+
+
+def _parse_version(text: str) -> Optional[tuple[int, int, int]]:
+    """(major, minor, patch) of a stable `X.Y.Z` / `vX.Y.Z`; None for anything else, a
+    pre-release such as `1.1.0-beta` included."""
+    match = _STABLE_TAG.match(text.strip())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+class RemoteRefs:
+    """What `git ls-remote` shows of a source: stable release tags with their commit, the other
+    tags (not offered on the release channel), and the default branch tip."""
+
+    def __init__(self) -> None:
+        self.releases: list[tuple[tuple[int, int, int], str, str]] = []  # (version, tag, commit), newest first
+        self.other_tags: list[str] = []
+        self.head_branch: str = ""
+        self.head_commit: str = ""
+
+    def newest_release(self) -> Optional[tuple[tuple[int, int, int], str, str]]:
+        return self.releases[0] if self.releases else None
+
+
+def _read_remote_refs(source: str, cwd: Path) -> tuple[Optional[RemoteRefs], str]:
+    """Reads tags and the default branch tip of `source` with one `git ls-remote --symref` call,
+    no clone. Returns (refs, "") or (None, reason); the reason is masked of URL credentials.
+    A plain directory without .git has no refs: reason "no git source". Output goes to a file,
+    not a pipe, so the timeout holds even when git leaves a grandchild process holding the pipe."""
+    src_path = Path(source)
+    if src_path.is_dir() and not (src_path / ".git").exists():
+        return None, "no git source"
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=5")
+    # mkdtemp + rmtree(ignore_errors): on Windows a git child can still hold err.txt open after the
+    # timeout, and a failing cleanup must neither replace the timeout message nor raise
+    tmp_dir = tempfile.mkdtemp(prefix="act-ls-remote-")
+    try:
+        out_path = Path(tmp_dir) / "out.txt"
+        err_path = Path(tmp_dir) / "err.txt"
+        try:
+            with open(out_path, "wb") as out_file, open(err_path, "wb") as err_file:
+                result = subprocess.run(
+                    ["git", "ls-remote", "--symref", "--", source, "HEAD", "refs/tags/*"],
+                    cwd=cwd, stdout=out_file, stderr=err_file, timeout=_LS_REMOTE_TIMEOUT, env=env,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            output = out_path.read_text(encoding="utf-8", errors="replace")
+            error = err_path.read_text(encoding="utf-8", errors="replace").strip()
+        except subprocess.TimeoutExpired:
+            return None, f"git ls-remote timed out after {_LS_REMOTE_TIMEOUT} s"
+        except OSError as exc:
+            return None, _mask_url_user(f"git ls-remote could not run: {exc}")
+    finally:
+        # a git child may still hold a file open for a moment after the timeout (Windows)
+        for _attempt in range(8):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not os.path.isdir(tmp_dir):
+                break
+            time.sleep(0.25)
+    if result.returncode != 0:
+        return None, _mask_url_user(error.splitlines()[-1] if error else f"git ls-remote exited {result.returncode}")
+    refs = RemoteRefs()
+    tag_commits: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for line in output.splitlines():
+        if line.startswith("ref: "):
+            target, _, name = line[5:].partition("\t")
+            if name.strip() == "HEAD":
+                refs.head_branch = target.removeprefix("refs/heads/")
+            continue
+        commit, _, name = line.partition("\t")
+        name = name.strip()
+        if name == "HEAD":
+            refs.head_commit = commit
+        elif name.startswith("refs/tags/"):
+            tag = name[len("refs/tags/"):]
+            if tag.endswith("^{}"):
+                peeled[tag[:-3]] = commit  # annotated tag: the commit it points at
+            else:
+                tag_commits[tag] = commit
+    found: list[tuple[tuple[int, int, int], str, str]] = []
+    for tag, commit in tag_commits.items():
+        version = _parse_version(tag)
+        if version is None:
+            refs.other_tags.append(tag)
+        else:
+            found.append((version, tag, peeled.get(tag, commit)))
+    found.sort(key=lambda item: item[0], reverse=True)
+    refs.releases = found
+    refs.other_tags.sort()
+    return refs, ""
+
+
+def _config_channel(root: Path) -> tuple[Optional[str], Optional[str]]:
+    """(value, problem) of `update-channel` in docs/ai/config.md: (None, None) when the key is
+    missing or empty, (None, text) when it holds something that is not a channel."""
+    value = actlib.read_config(root).get("update-channel", "").strip().strip("`").lower()
+    if not value:
+        return None, None
+    if value not in CHANNELS:
+        return None, f"update-channel '{value}' in docs/ai/config.md is not one of {', '.join(CHANNELS)}"
+    return value, None
+
+
+def _resolve_channel(root: Path, explicit: Optional[str]) -> tuple[str, str, Optional[str]]:
+    """The channel of this run: --channel, then docs/ai/config.md, then the default. Returns
+    (channel, where it came from, a problem text for an unusable config value). The origin is
+    "--channel", "docs/ai/config.md" or "default"."""
+    if explicit:
+        return explicit, "--channel", None
+    value, problem = _config_channel(root)
+    if value:
+        return value, "docs/ai/config.md", None
+    if problem:
+        # an unusable value counts like an explicit `release`: no silent fall back to the tip, and
+        # no "key is missing" hint on top of the problem text
+        return DEFAULT_CHANNEL, "docs/ai/config.md", problem
+    return DEFAULT_CHANNEL, "default", None
+
+
+def _channel_hint_once(root: Path, origin: str, plan: bool) -> None:
+    """One line, once per checkout, when `update-channel` is missing from docs/ai/config.md: which
+    channel applies now and how to change it. The marker lives in the gitignored .act-local/."""
+    if origin != "default":
+        return
+    marker = root / _CHANNEL_HINT_MARKER
+    if marker.exists():
+        return
+    print(
+        f"[act] note: docs/ai/config.md has no `update-channel` key; using the default '{DEFAULT_CHANNEL}' "
+        "(only the newest release tag is offered). Add `update-channel: latest` to follow the tip of the "
+        "default branch instead."
+    )
+    if plan:
+        return  # a plan writes nothing, so the hint stays due for the real run
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("shown\n", encoding="utf-8")
+    except OSError:
+        pass  # the hint then simply shows again next time
+
+
+def _installed_state(root: Path) -> tuple[str, str]:
+    """(version, commit) recorded in the lock; the version falls back to .act/VERSION."""
+    template = actlib.read_lock().get("template", {}) or {}
+    version = str(template.get("version", "") or "")
+    commit = str(template.get("commit", "") or "")
+    if not version:
+        version, _ = _read_version_file(root / ".act")
+    return version, commit
+
+
+def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[str, Optional[str], str]:
+    """What the release channel does for `source`: ("take", tag, text), ("nothing", None, text) when
+    the project is at or ahead of the newest release, ("error", None, text) when the releases
+    could not be read or there are none, or ("latest", None, text) when `implicit` (the channel is
+    only the built-in default, nobody chose it) and the source has no releases to follow at all --
+    a plain directory or a repository without a stable tag. The text then says so; an explicit
+    `release` never falls back."""
+    refs, reason = _read_remote_refs(source, root)
+    if implicit and (reason == "no git source" or (refs is not None and refs.newest_release() is None)):
+        return "latest", None, (
+            f"the source '{_mask_url_user(source)}' has no release tag to follow; the default channel "
+            "'release' falls back to the tip of the source (set `update-channel` to choose one)"
+        )
+    if refs is None:
+        return "error", None, (
+            f"channel 'release' needs the tags of '{_mask_url_user(source)}', but they could not be read "
+            f"({reason}). Use --ref <tag-or-commit> for a specific state, or --channel latest for the tip of "
+            "the default branch."
+        )
+    newest = refs.newest_release()
+    if newest is None:
+        return "error", None, (
+            f"channel 'release' found no stable release tag (vX.Y.Z or X.Y.Z) in '{_mask_url_user(source)}'. "
+            "Use --ref <tag-or-commit> for a specific state, or --channel latest for the tip of the default branch."
+        )
+    version, tag, tag_commit = newest
+    installed_version, installed_commit = _installed_state(root)
+    if installed_commit and installed_commit == tag_commit:
+        return "nothing", tag, f"already at the newest release {tag}, nothing to update"
+    installed = _parse_version(installed_version)
+    if installed is not None and installed > version:
+        return "nothing", tag, (
+            f"ahead of the newest release {tag} (installed version {installed_version}), nothing to update"
+        )
+    if installed is not None and installed == version:
+        return "nothing", tag, f"installed version {installed_version} is the newest release {tag}, nothing to update"
+    return "take", tag, f"newest release {tag} ({tag_commit[:7]})"
+
+
+def _versions_report(root: Path, source: str, channel: str, origin: str, show_all: bool) -> tuple[int, list[str]]:
+    """Lines for `--versions`: the installed version, the channel, the releases and the default
+    branch tip of the source, and what act-update would take. Reads refs only (git ls-remote),
+    writes nothing, never clones. Returns (exit code, lines); a source that cannot be read still
+    shows the installed state, with the reason."""
+    version, commit = _installed_state(root)
+    refs, reason = _read_remote_refs(source, root) if source else (None, "no source recorded in .act-lock.json")
+    tag_of_installed = ""
+    if refs is not None and commit:
+        tag_of_installed = next((tag for _, tag, tag_commit in refs.releases if tag_commit == commit), "")
+    if commit:
+        if tag_of_installed:
+            commit_text = f"commit {commit[:7]} = {tag_of_installed}"
+        else:
+            commit_text = f"commit {commit[:7]}" + (", not a release tag" if refs is not None else "")
+    else:
+        commit_text = "commit unknown"
+    lines = [f"ACT {version or 'unknown'} installed ({commit_text}) · channel: {channel} ({origin})"]
+    if source:
+        lines.append(f"source:   {_mask_url_user(source)}")
+    if refs is None:
+        message = "no git source, nothing to list" if reason == "no git source" else f"could not read the source: {reason}"
+        lines.append(message)
+        return 0, lines
+
+    installed_tuple = _parse_version(version)
+    parts: list[str] = []
+    shown = refs.releases if show_all else refs.releases[:5]
+    for tag_version, tag, tag_commit in shown:
+        text = tag if not tag_commit else f"{tag} ({tag_commit[:7]})"
+        if commit and tag_commit == commit:
+            text += " ← installed"
+        elif installed_tuple is not None and tag_version > installed_tuple:
+            text += " ← newer"
+        parts.append(text)
+    if len(refs.releases) > len(shown):
+        parts.append(f"… {len(refs.releases) - len(shown)} older (--all)")
+    lines.append("releases: " + (" · ".join(parts) if parts else "none (no tag vX.Y.Z)"))
+    if refs.other_tags:
+        lines.append("          not offered: " + ", ".join(
+            f"{tag} (pre-release or not a version)" for tag in refs.other_tags[:5]))
+    branch = refs.head_branch or "HEAD"
+    if refs.head_commit:
+        if commit and refs.head_commit == commit:
+            tip_note = " ← installed"
+        elif commit:
+            tip_note = " (installed commit differs from it)"
+        else:
+            tip_note = ""
+        if channel == "release":
+            tip_note += " (not offered on channel release)"
+        lines.append(f"latest:   {branch} {refs.head_commit[:7]}{tip_note}")
+
+    newest = refs.newest_release()
+    if channel == "release":
+        if newest is None:
+            take = "nothing: no release tag in the source (use --ref or --channel latest)"
+        elif commit and commit == newest[2]:
+            take = "nothing, up to date"
+        elif installed_tuple is not None and installed_tuple > newest[0]:
+            take = f"nothing, ahead of the newest release {newest[1]}"
+        elif installed_tuple is not None and installed_tuple == newest[0]:
+            take = f"nothing, installed version {version} is the newest release {newest[1]}"
+        else:
+            take = newest[1]
+    else:
+        if not refs.head_commit:
+            take = "nothing: the source shows no default branch tip"
+        elif not commit:
+            take = "unknown, the lock records no installed commit"
+        elif commit == refs.head_commit:
+            take = "nothing, up to date"
+        else:
+            take = f"{branch} {refs.head_commit[:7]}"
+    lines.append(f"act-update would take: {take}")
+    return 0, lines
 
 
 def _reject_symlinks(act_dir: Path) -> None:
@@ -276,14 +579,14 @@ def _downgrade_warning(checkout: Path, fetched: Optional[str], source: str) -> O
     relation = _history_relation(checkout, fetched, installed)
     if relation == "older":
         return (
-            f"WARNING: downgrade. Installed template commit {installed[:12]}, but '{source}' only has the "
+            f"WARNING: downgrade. Installed template commit {installed[:12]}, but '{_mask_url_user(source)}' only has the "
             f"older {fetched[:12]}. Name the right source with --source <path-or-url> (e.g. your local template "
             "checkout), or pass --allow-downgrade to go back on purpose."
         )
     if relation == "unknown":
         return (
             f"WARNING: the installed template commit {installed[:12]} is not part of the history of "
-            f"'{source}' (fetched {fetched[:12]}). Likely cause: the source recorded in .act-lock.json points at "
+            f"'{_mask_url_user(source)}' (fetched {fetched[:12]}). Likely cause: the source recorded in .act-lock.json points at "
             "a repo that does not contain the installed commit, e.g. a local template checkout with unpushed "
             "commits; applying this could silently downgrade .act/. Use --source <local template checkout>, "
             "or pass --allow-downgrade if this state is meant."
@@ -1925,9 +2228,10 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path], list[Path]
 
 def step_lock(
     root: Path, plan: bool, source: str, new_copies: dict[str, dict], fetched_commit: Optional[str],
-    keep_commit: bool = False,
+    keep_commit: bool = False, ref: Optional[str] = None,
 ) -> str:
-    """`fetched_commit` is what step_fetch actually cloned (None for a plain-directory source, or
+    """`ref` is the tag or branch the state came from (recorded as template.ref; None keeps the
+    ref the lock already has, e.g. for a plain --catch-up). `fetched_commit` is what step_fetch actually cloned (None for a plain-directory source, or
     when this is a catch-up run with no fetch at all) — recorded as-is when known, so a later
     session's `git ls-remote` comparison (dispatch.py) has something real to compare against;
     falls back to .act/VERSION's own "commit=" line otherwise. `keep_commit` (a plain --catch-up:
@@ -1942,9 +2246,14 @@ def step_lock(
         old = actlib.read_lock().get("template", {})
         commit = str(old.get("commit", "") or "")
         source = source or str(old.get("source", "") or "")
+    if ref is None:
+        ref = str(actlib.read_lock().get("template", {}).get("ref", "") or "")
     manifest_hash = manifest.manifest_fingerprint(root / ".act")
     actlib.write_lock({
-        "template": {"version": version, "commit": commit, "source": source, "manifest_sha256": manifest_hash},
+        "template": {
+            "version": version, "commit": commit, "source": source, "ref": ref,
+            "manifest_sha256": manifest_hash,
+        },
         "copies": new_copies,
     })
     return f"lock updated (version '{version}')"
@@ -2081,6 +2390,7 @@ _SELF_RELAUNCH_GUARD_ENV = "ACT_UPDATE_RESTARTED"
 _SELF_RELAUNCH_FETCHED_COMMIT_ENV = "ACT_UPDATE_FETCHED_COMMIT"
 _SELF_RELAUNCH_RESCUE_ENV = "ACT_UPDATE_RESCUE"
 _SELF_RELAUNCH_NOTES_ENV = "ACT_UPDATE_NOTES"
+_SELF_RELAUNCH_REF_ENV = "ACT_UPDATE_REF"
 _SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py", "rules.py")
 
 
@@ -2094,7 +2404,7 @@ def _scripts_fingerprint(root: Path) -> dict[str, str]:
 
 def _relaunch_after_replace(
     root: Path, args, source: str,
-    fetched_commit: Optional[str], rescue_active: bool, notes: list[str],
+    fetched_commit: Optional[str], rescue_active: bool, notes: list[str], ref: Optional[str] = None,
 ) -> int:
     """--catch-up, not a plain re-run: the fetch/diff this process already did (steps 1-3) must
     not happen twice, and step 4's consent already covers this continuation, not a second
@@ -2123,6 +2433,8 @@ def _relaunch_after_replace(
         env[_SELF_RELAUNCH_FETCHED_COMMIT_ENV] = fetched_commit
     if rescue_active:
         env[_SELF_RELAUNCH_RESCUE_ENV] = "1"
+    if ref:
+        env[_SELF_RELAUNCH_REF_ENV] = ref
     if notes:
         env[_SELF_RELAUNCH_NOTES_ENV] = json.dumps(notes)
     # The child's own output must appear after everything this process has already printed, not
@@ -2141,6 +2453,7 @@ def _relaunch_after_replace(
 def _finish_update(
     root: Path, no_commit: bool, source: str, notes: list[str],
     fetched_commit: Optional[str], rescue_active: bool, keep_commit: bool = False,
+    ref: Optional[str] = None,
 ) -> int:
     sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
     # Own skills/roles written by hand under docs/ai/local/ get their tool copies/bridge too; the
@@ -2172,7 +2485,7 @@ def _finish_update(
     doctor_summary, doctor_inbox, doctor_touched = step_doctor(root, False)
     _print_step(9, doctor_summary)
 
-    _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit))
+    _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit, ref))
 
     _maybe_print_branch_hint(root, notes)
 
@@ -2241,6 +2554,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
     restarted = os.environ.get(_SELF_RELAUNCH_GUARD_ENV) == "1"
     inherited_fetched_commit = os.environ.get(_SELF_RELAUNCH_FETCHED_COMMIT_ENV) if restarted else None
     inherited_rescue = restarted and os.environ.get(_SELF_RELAUNCH_RESCUE_ENV) == "1"
+    inherited_ref = os.environ.get(_SELF_RELAUNCH_REF_ENV) if restarted else None
     if restarted:
         raw_notes = os.environ.get(_SELF_RELAUNCH_NOTES_ENV)
         if raw_notes:
@@ -2278,7 +2592,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
         return 1
 
     return _finish_update(root, args.no_commit, source, notes, inherited_fetched_commit, inherited_rescue,
-                          keep_commit=not restarted)
+                          keep_commit=not restarted, ref=inherited_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -2295,7 +2609,16 @@ def main(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(description="Pull a newer state of the template into this project.")
     parser.add_argument("--source", help="local directory or git URL/repo to update from (default: the source recorded in .act-lock.json; a 'template' remote only when the lock names none)")
-    parser.add_argument("--ref", help="tag or commit to update to (default: the source's default branch tip)")
+    parser.add_argument("--ref", help="tag or commit to update to (goes before the channel; default: what the channel picks)")
+    parser.add_argument("--channel", choices=CHANNELS, help=(
+        "update channel for this run, overriding `update-channel` in docs/ai/config.md (default: release): "
+        "'release' = the newest stable tag vX.Y.Z, 'latest' = the tip of the source's default branch"
+    ))
+    parser.add_argument("--versions", action="store_true", help=(
+        "list the installed version, the channel, the source's releases and default branch tip, and what an "
+        "update would take (git ls-remote only, no clone, writes nothing)"
+    ))
+    parser.add_argument("--all", action="store_true", help="with --versions: list every release, not the five newest")
     parser.add_argument("--allow-downgrade", action="store_true", help=(
         "apply the fetched state even when it is older than the installed template commit, or when "
         "the installed commit is not in the source's history (default: refuse, --plan only warns)"
@@ -2311,6 +2634,16 @@ def main(argv: list[str]) -> int:
         "still matches its own MANIFEST.json"
     ))
     args = parser.parse_args(argv)
+
+    if args.versions:
+        root = actlib.repo_root()
+        channel, origin, problem = _resolve_channel(root, args.channel)
+        source = args.source or _default_source(root)
+        code, lines = _versions_report(root, source, channel, origin, args.all)
+        if problem:
+            lines.append(f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies")
+        print("\n".join(lines))
+        return code
 
     if not (args.no_commit or args.plan):
         git_problem = actlib.git_version_problem()
@@ -2332,16 +2665,38 @@ def main(argv: list[str]) -> int:
     if args.catch_up:
         return _run_catch_up(root, plan, interactive, args, source, notes)
 
+    # Which state to fetch: --ref first, then the channel (--channel, config key, default).
+    target_ref: Optional[str] = args.ref
+    channel, channel_origin, channel_problem = _resolve_channel(root, args.channel)
+    if channel_problem:
+        print(f"[act] note: {channel_problem}; using the default '{DEFAULT_CHANNEL}'")
+    if not args.ref:
+        _channel_hint_once(root, channel_origin, plan)
+        if channel == "release":
+            decision_kind, release_tag, release_text = _release_decision(root, source, channel_origin == "default")
+            if decision_kind == "latest":
+                print(f"[act] note: {release_text}")
+            elif decision_kind == "error":
+                print(f"update.py: {release_text}", file=sys.stderr)
+                return 1
+            elif decision_kind == "nothing":
+                print(f"[act] done - {release_text}")
+                return 0
+            else:
+                target_ref = release_tag
+                print(f"[act] channel release: {release_text}")
+
     tmp_root = Path(root) / ".act-local" / "update-tmp"
     _rmtree_robust(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
     try:
         try:
-            new_act_dir, fetched_commit = step_fetch(source, args.ref, tmp_root / "checkout", notes)
+            new_act_dir, fetched_commit = step_fetch(source, target_ref, tmp_root / "checkout", notes)
         except RuntimeError as error:
-            print(_fetch_failure_message(root, source, args, error), file=sys.stderr)
+            print(_fetch_failure_message(root, source, args, error, target_ref), file=sys.stderr)
             return 1
-        _print_step(1, f"fetched '{source}'" + (f" @ {args.ref}" if args.ref else "") + f" -> {new_act_dir}")
+        _print_step(1, f"fetched '{_mask_url_user(source)}'" + (f" @ {target_ref}" if target_ref else "") + f" -> {new_act_dir}")
+        lock_ref = target_ref or (_checkout_branch(new_act_dir.parent) if fetched_commit else "")
 
         downgrade = _downgrade_warning(new_act_dir.parent, fetched_commit, source)
         if downgrade:
@@ -2376,7 +2731,7 @@ def main(argv: list[str]) -> int:
             print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [9/10] " + step_doctor(root, True)[0])
-            print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit))
+            print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit, ref=lock_ref))
             print("[act] done - --plan: nothing was written")
             return 0
 
@@ -2426,9 +2781,9 @@ def main(argv: list[str]) -> int:
             os.environ.get(_SELF_RELAUNCH_GUARD_ENV) != "1"
             and _scripts_fingerprint(root) != old_fingerprint
         ):
-            return _relaunch_after_replace(root, args, source, fetched_commit, decision == "rescue", notes)
+            return _relaunch_after_replace(root, args, source, fetched_commit, decision == "rescue", notes, lock_ref)
 
-        return _finish_update(root, args.no_commit, source, notes, fetched_commit, decision == "rescue")
+        return _finish_update(root, args.no_commit, source, notes, fetched_commit, decision == "rescue", ref=lock_ref)
     finally:
         try:
             _rmtree_robust(tmp_root)

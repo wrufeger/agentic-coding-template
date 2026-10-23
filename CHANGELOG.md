@@ -56,6 +56,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   that still holds the full text, `--plan` previews, a second run changes nothing. It refuses while a file to
   merge is uncommitted. `entries.py archive` records the archive date as `archived:`, and the next free id and
   the duplicate check also read collection files.
+- **Update channel `release` or `latest`.** The key `update-channel` in `docs/ai/config.md` (or
+  `update.py --channel`) chooses what `act-update` brings: `release`, the default, offers only the newest stable
+  release tag and never moves a project that is already past it; `latest` follows the default branch. The
+  session-start check follows the channel ("template release vX.Y.Z available"), `.act-lock.json` records
+  `template.ref`, and a project without the key gets a one-time note. A source without release tags is followed
+  at its tip with a note while the channel is only the built-in default; an explicit or invalid value stops.
+- **`/act-version` and `update.py --versions`** list the installed version, the channel, the source's releases
+  and the tip of its default branch, and what `act-update` would take, without a clone.
 
 ### Changed
 
@@ -164,6 +172,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   a protected file (`cp -r payload/. .` with a `.vscode/tasks.json`, `.git/config` or `.claude/settings.json`
   below it, `cp payload/* .vscode/`, `Copy-Item -Recurse`) is refused; the files below the source (at most
   2,000) are mapped onto where they land and checked one by one.
+- **Credentials in a template source URL are masked** in `update.py` output, plan, version list and fetch errors,
+  also with an `@` in the password.
 
 ## [2.2.0] - 2026-10-20
 

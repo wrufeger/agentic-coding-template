@@ -28,6 +28,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,6 +56,7 @@ __all__ = [
     "_bootstrap_marker", "_first_line", "_is_bootstrap_copy",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
+    "_ls_remote_output", "_update_channel", "_version_tuple", "_remote_release_available", "_release_note", "_update_channel_is_default",
     "_remote_update_available", "_update_check_result_path", "_consume_pending_update_note",
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
     "_security_scan_state_path", "_security_scan_already_checked_today",
@@ -600,6 +602,123 @@ def _mark_checked_today(root: Path) -> None:
         pass
 
 
+_STABLE_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+_UPDATE_CHANNELS = ("release", "latest")
+
+
+def _ls_remote_output(root: Path, source: str, patterns: list[str]) -> Optional[str]:
+    """`git ls-remote -- <source> <patterns>` as text, None when it failed, timed out or the source
+    is not a git remote/repo. Output goes to a real temp file, not a pipe -- the reason is
+    written out at _remote_update_available below. GIT_TERMINAL_PROMPT/GCM_INTERACTIVE/
+    GIT_SSH_COMMAND keep git from ever pausing for a credential prompt or a slow ssh handshake in an
+    unattended background process."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3")
+    # mkdtemp + rmtree(ignore_errors): on Windows a git child can still hold a file open after the
+    # timeout, and a failing cleanup must not raise
+    tmp_dir = tempfile.mkdtemp(prefix="act-update-check-")
+    try:
+        out_path = Path(tmp_dir) / "ls-remote.out"
+        try:
+            with open(out_path, "wb") as out_file:
+                result = subprocess.run(
+                    ["git", "ls-remote", "--", source, *patterns],
+                    cwd=root, stdout=out_file, stderr=subprocess.DEVNULL,
+                    timeout=5, env=env,
+                    # no console window for git.exe on Windows, where the worker has none
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            if result.returncode != 0:
+                return None
+            return out_path.read_text(encoding="utf-8", errors="replace").strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+    finally:
+        # a git child may still hold a file open for a moment after the timeout (Windows)
+        for _attempt in range(8):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if not os.path.isdir(tmp_dir):
+                break
+            time.sleep(0.25)
+
+
+def _update_channel(root: Path) -> str:
+    """`update-channel` from docs/ai/config.md: "release" (the default, also for a missing or
+    unusable value) or "latest"."""
+    value = actlib.read_config(root).get("update-channel", "").strip().strip("`").lower()
+    return value if value in _UPDATE_CHANNELS else "release"
+
+
+def _update_channel_is_default(root: Path) -> bool:
+    """True when docs/ai/config.md names no `update-channel` at all, i.e. `release` only by default.
+    An unusable value is not the default: it counts like an explicit `release`."""
+    return not actlib.read_config(root).get("update-channel", "").strip().strip("`")
+
+
+def _version_tuple(text: str) -> Optional[tuple[int, int, int]]:
+    match = _STABLE_TAG_RE.match(text.strip())
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3))) if match else None
+
+
+def _remote_release_available(root: Path) -> Optional[dict]:
+    """The newest stable release tag (vX.Y.Z or X.Y.Z, no pre-release) of the source as
+    {"release": tag, "release_commit": commit}; {} when the source answered but has no such tag; None
+    when it could not be read -- silent in both cases, like _remote_update_available. Same
+    constraints: only called from the background worker, one `git ls-remote` with the same 5 s limit."""
+    source = (actlib.read_lock().get("template") or {}).get("source") or ""
+    if not source:
+        return None
+    output = _ls_remote_output(root, source, ["refs/tags/*"])
+    if output is None:
+        return None
+    commits: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for line in output.splitlines():
+        commit, _, name = line.partition("\t")
+        name = name.strip()
+        if not name.startswith("refs/tags/"):
+            continue
+        tag = name[len("refs/tags/"):]
+        if tag.endswith("^{}"):
+            peeled[tag[:-3]] = commit
+        else:
+            commits[tag] = commit
+    best: Optional[tuple[tuple[int, int, int], str, str]] = None
+    for tag, commit in commits.items():
+        version = _version_tuple(tag)
+        if version is not None and (best is None or version > best[0]):
+            best = (version, tag, peeled.get(tag, commit))
+    if best is None:
+        return {}
+    return {"release": best[1], "release_commit": best[2]}
+
+
+def _release_note(root: Path, tag: str, tag_commit: str) -> Optional[str]:
+    """The session-start note for a release newer than the installed one, None when the project is
+    at or ahead of it (a project that followed `main` past the newest tag stays quiet)."""
+    template = actlib.read_lock().get("template") or {}
+    installed_commit = template.get("commit") or ""
+    installed_version = str(template.get("version") or "")
+    if not installed_version:
+        version_file = root / ".act" / "VERSION"
+        try:
+            for line in version_file.read_text(encoding="utf-8").splitlines():
+                key, _, value = line.partition("=")
+                if key.strip() == "version":
+                    installed_version = value.strip()
+        except OSError:
+            pass
+    if installed_commit and installed_commit == tag_commit:
+        return None
+    wanted, have = _version_tuple(tag), _version_tuple(installed_version)
+    if wanted is not None and have is not None and have >= wanted:
+        return None
+    return (f"[act] note: template release {tag} available (installed {installed_version or 'unknown'}) "
+            "-- run `python .act/scripts/update.py`")
+
+
 def _remote_update_available(root: Path) -> Optional[str]:
     """None if the check could not be made at all (no source/commit recorded, no network, the
     source is not a git remote/repo, or it took too long) -- always silent in that case, never a
@@ -626,26 +745,7 @@ def _remote_update_available(root: Path) -> Optional[str]:
     commit = template.get("commit") or ""
     if not source or not commit:
         return None
-    env = dict(os.environ)
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["GCM_INTERACTIVE"] = "never"
-    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3")
-    try:
-        with tempfile.TemporaryDirectory(prefix="act-update-check-") as tmp_dir:
-            out_path = Path(tmp_dir) / "ls-remote.out"
-            with open(out_path, "wb") as out_file:
-                result = subprocess.run(
-                    ["git", "ls-remote", "--", source, "HEAD"],
-                    cwd=root, stdout=out_file, stderr=subprocess.DEVNULL,
-                    timeout=5, env=env,
-                    # no console window for git.exe on Windows, where the worker has none
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            if result.returncode != 0:
-                return None
-            output = out_path.read_text(encoding="utf-8", errors="replace").strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    output = _ls_remote_output(root, source, ["HEAD"])
     if not output:
         return None
     remote_commit = output.split()[0].strip()
@@ -667,7 +767,8 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
     itself, so a project that ran `update.py` between the background check and this session
     doesn't get told about an update it already has: the note fires only if `remote_commit` still
     differs from the *current* lock's `template.commit`, re-read here rather than trusted from
-    whatever the worker saw at the time."""
+    whatever the worker saw at the time. A result file from an older version has no `channel`; it
+    was written when the tip was the only thing followed, so it counts as `latest`."""
     path = _update_check_result_path(root)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -679,8 +780,17 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
         pass
     if not isinstance(data, dict):
         return None
+    release = data.get("release")
+    if release:
+        # a release found by the release channel: only counts while that channel is still the
+        # project's, and while the project is still behind that tag (re-read now, not trusted)
+        if data.get("channel") != "release" or _update_channel(root) != "release":
+            return None
+        return _release_note(root, str(release), str(data.get("release_commit") or ""))
     remote_commit = data.get("remote_commit")
     if not remote_commit:
+        return None
+    if data.get("channel", "latest") == "latest" and _update_channel(root) != "latest" and not _update_channel_is_default(root):
         return None
     lock = actlib.read_lock()
     current_commit = (lock.get("template") or {}).get("commit") or ""
@@ -701,15 +811,25 @@ def _run_update_check_worker(root: Path) -> int:
     nothing reads this process's own exit code, and every exception here must stay inside this
     process."""
     try:
-        remote_commit = _remote_update_available(root)
+        if _update_channel(root) == "release":
+            found = _remote_release_available(root)
+            result = {"channel": "release", **found} if found else None
+            if found == {} and _update_channel_is_default(root):
+                # the built-in default on a source without any release tag (a local copy, a young
+                # repository): follow the tip, as update.py does in the same case
+                remote_commit = _remote_update_available(root)
+                result = {"channel": "latest", "remote_commit": remote_commit} if remote_commit else None
+        else:
+            remote_commit = _remote_update_available(root)
+            result = {"channel": "latest", "remote_commit": remote_commit} if remote_commit else None
     except Exception:
         return 0
-    if remote_commit is None:
+    if result is None:
         return 0
     try:
         path = _update_check_result_path(root)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"remote_commit": remote_commit}) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(result) + "\n", encoding="utf-8")
     except OSError:
         pass
     return 0

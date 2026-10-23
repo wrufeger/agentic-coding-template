@@ -9,6 +9,15 @@ Thin wrapper around `python .act/scripts/update.py` — the script runs ten step
 option list in the script's own header comment). No merge, no conflicts to resolve by hand: steps
 1-3 only fetch, diff, and report; nothing from the fetched state runs before consent.
 
+## Channel
+
+`update-channel` in `docs/ai/config.md` picks what an update offers: `release` (the default) is the newest stable
+tag `vX.Y.Z` of the source — a project already past it, e.g. one that followed `main`, hears "ahead of the newest
+release" and keeps its state; `latest` is the tip of the source's default branch. `--channel release|latest`
+overrides it for one run, `--ref <tag-or-commit>` beats both. `/act-version` (`update.py --versions`) lists the
+installed version, the releases and what an update would take, without a clone. A source with no release tag stops
+an explicit `release` with a hint to use `--ref` or `latest`.
+
 ## Steps
 
 1. `python .act/scripts/update.py --plan` — shows the `.act/` diff (rule/coding IDs individually)
