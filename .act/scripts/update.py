@@ -351,7 +351,7 @@ def _resolve_channel(root: Path, explicit: Optional[str]) -> tuple[str, str, Opt
     if value:
         return value, "docs/ai/config.md", None
     if problem:
-        # an unusable value counts like an explicit `release`: no silent fall back to the tip, and
+        # an unusable value counts like --channel release: no silent fall back to the tip, and
         # no "key is missing" hint on top of the problem text
         return DEFAULT_CHANNEL, "docs/ai/config.md", problem
     return DEFAULT_CHANNEL, "default", None
@@ -392,15 +392,16 @@ def _installed_state(root: Path) -> tuple[str, str]:
 def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[str, Optional[str], str]:
     """What the release channel does for `source`: ("take", tag, text), ("nothing", None, text) when
     the project is at or ahead of the newest release, ("error", None, text) when the releases
-    could not be read or there are none, or ("latest", None, text) when `implicit` (the channel is
-    only the built-in default, nobody chose it) and the source has no releases to follow at all --
-    a plain directory or a repository without a stable tag. The text then says so; an explicit
-    `release` never falls back."""
+    could not be read or there are none, or ("latest", None, text) when `implicit` (the built-in
+    default or `release` in docs/ai/config.md) and the source has no releases to follow at all --
+    a plain directory or a repository without a stable tag. The text then says so; `--channel release`
+    and an unusable config value never fall back."""
     refs, reason = _read_remote_refs(source, root)
     if implicit and (reason == "no git source" or (refs is not None and refs.newest_release() is None)):
         return "latest", None, (
-            f"the source '{_mask_url_user(source)}' has no release tag to follow; the default channel "
-            "'release' falls back to the tip of the source (set `update-channel` to choose one)"
+            f"the source '{_mask_url_user(source)}' has no release tag to follow; the channel 'release' "
+            "falls back to the tip of the source (`update-channel` latest in docs/ai/config.md makes that "
+            "the choice, `--channel release` stops instead)"
         )
     if refs is None:
         return "error", None, (
@@ -428,11 +429,20 @@ def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[
     return "take", tag, f"newest release {tag} ({tag_commit[:7]})"
 
 
-def _versions_report(root: Path, source: str, channel: str, origin: str, show_all: bool) -> tuple[int, list[str]]:
+def _release_falls_back(origin: str, problem: Optional[str]) -> bool:
+    """Whether the release channel follows the tip of a source without any release tag: for the
+    default and for `release` in docs/ai/config.md (init writes it into every new project), never
+    for --channel release or an unusable value."""
+    return origin == "default" or (origin == "docs/ai/config.md" and not problem)
+
+
+def _versions_report(root: Path, source: str, channel: str, origin: str, show_all: bool,
+                     falls_back: bool = False) -> tuple[int, list[str]]:
     """Lines for `--versions`: the installed version, the channel, the releases and the default
     branch tip of the source, and what act-update would take. Reads refs only (git ls-remote),
     writes nothing, never clones. Returns (exit code, lines); a source that cannot be read still
-    shows the installed state, with the reason."""
+    shows the installed state, with the reason. `falls_back`: the release channel follows the tip
+    of a source without release tags, as act-update does then (_release_falls_back)."""
     version, commit = _installed_state(root)
     refs, reason = _read_remote_refs(source, root) if source else (None, "no source recorded in .act-lock.json")
     tag_of_installed = ""
@@ -451,6 +461,9 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
     if refs is None:
         message = "no git source, nothing to list" if reason == "no git source" else f"could not read the source: {reason}"
         lines.append(message)
+        if reason == "no git source" and channel == "release" and falls_back:
+            lines.append("act-update would take: the source as it is (no release tag to follow, "
+                         "channel release falls back to it)")
         return 0, lines
 
     installed_tuple = _parse_version(version)
@@ -470,6 +483,8 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
         lines.append("          not offered: " + ", ".join(
             f"{tag} (pre-release or not a version)" for tag in refs.other_tags[:5]))
     branch = refs.head_branch or "HEAD"
+    newest = refs.newest_release()
+    on_tip = channel == "latest" or (falls_back and newest is None)
     if refs.head_commit:
         if commit and refs.head_commit == commit:
             tip_note = " ← installed"
@@ -478,11 +493,10 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
         else:
             tip_note = ""
         if channel == "release":
-            tip_note += " (not offered on channel release)"
+            tip_note += " (no release tag: channel release falls back to it)" if on_tip else " (not offered on channel release)"
         lines.append(f"latest:   {branch} {refs.head_commit[:7]}{tip_note}")
 
-    newest = refs.newest_release()
-    if channel == "release":
+    if not on_tip:
         if newest is None:
             take = "nothing: no release tag in the source (use --ref or --channel latest)"
         elif commit and commit == newest[2]:
@@ -2639,7 +2653,7 @@ def main(argv: list[str]) -> int:
         root = actlib.repo_root()
         channel, origin, problem = _resolve_channel(root, args.channel)
         source = args.source or _default_source(root)
-        code, lines = _versions_report(root, source, channel, origin, args.all)
+        code, lines = _versions_report(root, source, channel, origin, args.all, _release_falls_back(origin, problem))
         if problem:
             lines.append(f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies")
         print("\n".join(lines))
@@ -2673,7 +2687,8 @@ def main(argv: list[str]) -> int:
     if not args.ref:
         _channel_hint_once(root, channel_origin, plan)
         if channel == "release":
-            decision_kind, release_tag, release_text = _release_decision(root, source, channel_origin == "default")
+            decision_kind, release_tag, release_text = _release_decision(
+                root, source, _release_falls_back(channel_origin, channel_problem))
             if decision_kind == "latest":
                 print(f"[act] note: {release_text}")
             elif decision_kind == "error":

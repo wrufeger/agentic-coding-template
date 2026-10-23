@@ -61,7 +61,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   release tag and never moves a project that is already past it; `latest` follows the default branch. The
   session-start check follows the channel ("template release vX.Y.Z available"), `.act-lock.json` records
   `template.ref`, and a project without the key gets a one-time note. A source without release tags is followed
-  at its tip with a note while the channel is only the built-in default; an explicit or invalid value stops.
+  at its tip with a note while the channel is the built-in default or `release` in `docs/ai/config.md` (which
+  `init` writes); `--channel release` and an invalid value stop.
 - **`/act-version` and `update.py --versions`** list the installed version, the channel, the source's releases
   and the tip of its default branch, and what `act-update` would take, without a clone.
 - **`init` asks which update channel to follow** (`release` by default, or `latest`), accepts

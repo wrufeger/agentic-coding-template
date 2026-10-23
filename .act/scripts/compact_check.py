@@ -337,6 +337,14 @@ def overview_problems(archive: Path, month: str, collections: list[Path]) -> lis
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    # Findings quote section titles and bodies with umlauts or an em dash; on Windows, stdout/stderr otherwise
+    # default to the console's legacy code page. Same fix as .act/scripts/rules.py.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(description="Check shortened archive sections and the monthly overview "
                                                  "against the full text in Git.")
     parser.add_argument("--root", default=".", help="project root (default: the current folder)")

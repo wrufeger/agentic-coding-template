@@ -58,6 +58,7 @@ __all__ = [
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
     "_ls_remote_output", "_update_channel", "_version_tuple", "_remote_release_available", "_release_note", "_update_channel_is_default",
+    "_update_channel_follows_tip_without_tags",
     "_remote_update_available", "_update_check_result_path", "_consume_pending_update_note",
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
     "_security_scan_state_path", "_security_scan_already_checked_today",
@@ -751,8 +752,15 @@ def _update_channel(root: Path) -> str:
 
 def _update_channel_is_default(root: Path) -> bool:
     """True when docs/ai/config.md names no `update-channel` at all, i.e. `release` only by default.
-    An unusable value is not the default: it counts like an explicit `release`."""
+    An unusable value is not the default: it counts like `--channel release`."""
     return not actlib.read_config(root).get("update-channel", "").strip().strip("`")
+
+
+def _update_channel_follows_tip_without_tags(root: Path) -> bool:
+    """True when a source without any release tag is followed at its tip, as update.py does: for the
+    default and for `release` in docs/ai/config.md (init writes it into every new project). An
+    unusable value counts like `--channel release` and never falls back."""
+    return actlib.read_config(root).get("update-channel", "").strip().strip("`").lower() in ("", "release")
 
 
 def _version_tuple(text: str) -> Optional[tuple[int, int, int]]:
@@ -866,7 +874,9 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
     doesn't get told about an update it already has: the note fires only if `remote_commit` still
     differs from the *current* lock's `template.commit`, re-read here rather than trusted from
     whatever the worker saw at the time. A result file from an older version has no `channel`; it
-    was written when the tip was the only thing followed, so it counts as `latest`."""
+    was written when the tip was the only thing followed, so it counts as `latest`.
+    A tip result reaches a release project only on the default, or when the worker marked it
+    `tip_fallback` (a source without release tags) and the key still allows that."""
     path = _update_check_result_path(root)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -888,7 +898,11 @@ def _consume_pending_update_note(root: Path) -> Optional[str]:
     remote_commit = data.get("remote_commit")
     if not remote_commit:
         return None
-    if data.get("channel", "latest") == "latest" and _update_channel(root) != "latest" and not _update_channel_is_default(root):
+    # a tip result in a release project: only the default (as before the channel existed) or the
+    # fallback on a source without release tags, never an older result file or one from `latest`
+    if data.get("channel", "latest") == "latest" and _update_channel(root) != "latest" and not (
+            _update_channel_is_default(root)
+            or (data.get("tip_fallback") and _update_channel_follows_tip_without_tags(root))):
         return None
     lock = actlib.read_lock()
     current_commit = (lock.get("template") or {}).get("commit") or ""
@@ -912,11 +926,12 @@ def _run_update_check_worker(root: Path) -> int:
         if _update_channel(root) == "release":
             found = _remote_release_available(root)
             result = {"channel": "release", **found} if found else None
-            if found == {} and _update_channel_is_default(root):
-                # the built-in default on a source without any release tag (a local copy, a young
-                # repository): follow the tip, as update.py does in the same case
+            if found == {} and _update_channel_follows_tip_without_tags(root):
+                # the default or `release` in config.md on a source without any release tag (a local
+                # copy, a young repository): follow the tip, as update.py does in the same case
                 remote_commit = _remote_update_available(root)
-                result = {"channel": "latest", "remote_commit": remote_commit} if remote_commit else None
+                result = ({"channel": "latest", "remote_commit": remote_commit, "tip_fallback": True}
+                          if remote_commit else None)
         else:
             remote_commit = _remote_update_available(root)
             result = {"channel": "latest", "remote_commit": remote_commit} if remote_commit else None
