@@ -138,6 +138,8 @@ _RUNS_KEPT = 50  # newest measured runs kept per role and tier in usage.json
 _MEASURED_ROLE_SKIP = ("fork",)  # not a role choice, see checks/usage.py
 # like checks/usage.py, but also skips Markdown emphasis/backticks around the value (`Tier: `standard``)
 _TIER_RE = re.compile(r"Tier:\s*[`*_]*([A-Za-z][A-Za-z0-9-]*)", re.IGNORECASE)
+_LINE_STAMP_RE = re.compile(r'"timestamp"\s*:\s*"([^"]+)"')
+_IDLE_GAP_MINUTES = 30.0  # a pause between two records longer than this is idle time, not work
 _AGENT_FILE_RE = re.compile(r"\Aagent-([A-Za-z0-9_-]+)\.meta\.json\Z")
 _LOCK_STALE_AFTER = 60.0  # seconds — a lock file older than this is treated as an orphan, not slow
 _SESSION_START_BUDGET = 1.0  # seconds, wall clock incl. lock wait — SessionStart must stay fast
@@ -270,6 +272,21 @@ def _record_text(line: str) -> str:
     return ""
 
 
+def _active_minutes(stamps: list[datetime], wall_minutes: float) -> float:
+    """Working time of a run: the sum of the gaps between consecutive records that are at most
+    _IDLE_GAP_MINUTES long. A worker that ended and was continued with a message hours later would
+    otherwise carry the whole pause in its minutes. Fewer than two readable stamps: the wall-clock
+    minutes stand. May raise TypeError when naive and aware stamps are mixed."""
+    if len(stamps) < 2:
+        return wall_minutes
+    total = 0.0
+    for before, after in zip(stamps, stamps[1:]):
+        gap = (after - before).total_seconds() / 60
+        if 0 <= gap <= _IDLE_GAP_MINUTES:
+            total += gap
+    return min(total, wall_minutes)
+
+
 def measure_transcript(path: Path, agent_id: str, role: str) -> Optional[RunMeasure]:
     """Read one worker transcript line by line and return what the run cost, or None when the
     file is missing, unreadable or holds no usable record (never raises). Tokens are summed per
@@ -277,6 +294,7 @@ def measure_transcript(path: Path, agent_id: str, role: str) -> Optional[RunMeas
     first_line = ""
     last_line = ""
     last_usage_ts: Optional[datetime] = None
+    stamps: list[datetime] = []
     messages: dict[str, tuple[int, int, int]] = {}
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
@@ -286,6 +304,10 @@ def measure_transcript(path: Path, agent_id: str, role: str) -> Optional[RunMeas
                 if not first_line:
                     first_line = line
                 last_line = line
+                stamp_match = _LINE_STAMP_RE.search(line)
+                line_stamp = _parse_timestamp(stamp_match.group(1)) if stamp_match else None
+                if line_stamp is not None:
+                    stamps.append(line_stamp)
                 if '"usage"' not in line:
                     continue
                 try:
@@ -324,6 +346,7 @@ def measure_transcript(path: Path, agent_id: str, role: str) -> Optional[RunMeas
     tier_match = _TIER_RE.search(_record_text(first_line))
     try:
         minutes = max(0.0, (last_ts - first_ts).total_seconds() / 60)
+        minutes = _active_minutes(stamps, minutes)
     except TypeError:  # one naive and one aware timestamp
         return None
     return RunMeasure(
@@ -392,7 +415,58 @@ def _read_store(root: Path) -> dict:
             value = data.get(cat)
             if isinstance(value, dict):
                 store[cat] = value
+    _sanitize_store(store, path)
     return store
+
+
+# Fields of a store entry that hold a mapping, and the type their values must have.
+_ENTRY_MAPS = {"tiers": int, "models": int, "kinds": int, "runs": list, "outcomes": dict}
+
+
+def _sanitize_store(store: dict, path: Path) -> None:
+    """Drop what has the wrong type in a hand-edited or damaged usage.json - an entry that is not
+    an object, a `count` that is not a number, a `tiers`/`models`/`kinds`/`runs`/`outcomes` field of
+    the wrong shape - with one note per read on stderr naming the place, so folding events and
+    every read path work on a clean store instead of ending in a traceback. The file itself is
+    rewritten by the next consolidation."""
+    problems: list[str] = []
+    for cat in _CATEGORIES:
+        entries = store[cat]
+        for name in list(entries):
+            entry = entries[name]
+            if not isinstance(entry, dict):
+                problems.append(f"{cat}.{name} is {type(entry).__name__}, not an object")
+                del entries[name]
+                continue
+            count = entry.get("count", 0)
+            if isinstance(count, bool) or not isinstance(count, int):
+                problems.append(f"{cat}.{name}.count is {count!r}, not a number")
+                entry["count"] = 0
+            for field, inner in _ENTRY_MAPS.items():
+                if field not in entry:
+                    continue
+                value = entry[field]
+                if not isinstance(value, dict):
+                    problems.append(f"{cat}.{name}.{field} is {type(value).__name__}, not an object")
+                    del entry[field]
+                    continue
+                for key in list(value):
+                    if not isinstance(value[key], inner):
+                        problems.append(f"{cat}.{name}.{field}.{key or '?'} is "
+                                        f"{type(value[key]).__name__}, not {inner.__name__}")
+                        del value[key]
+                if field == "outcomes":
+                    # Each tier maps outcome names to counts; a count of another type would end
+                    # in a TypeError when the next outcome is added or a proposal is computed.
+                    for tier_key, counts in value.items():
+                        for kind in list(counts):
+                            number = counts[kind]
+                            if isinstance(number, bool) or not isinstance(number, int):
+                                problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is "
+                                                f"{number!r}, not a number")
+                                del counts[kind]
+    for problem in problems:
+        print(f"usage: ignoring {problem} in {path}", file=sys.stderr)
 
 
 def _write_store(root: Path, store: dict) -> None:
@@ -640,6 +714,9 @@ _LABELS = {
 
 def _format_entry(cat: str, name: str, entry: dict) -> str:
     count = entry.get("count", 0)
+    if cat == "roles" and not count and entry.get("runs"):
+        measured = sum(len(runs) for runs in entry["runs"].values() if isinstance(runs, list))
+        return f"  {name}: no start counted, {measured} measured run(s)"
     span = ""
     first = entry.get("first_used")
     if first:

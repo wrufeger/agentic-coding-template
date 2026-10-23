@@ -85,6 +85,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   can be switched on in `docs/project/coding_rules.md`; the import names the file actually loaded (local before
   template), and `rules.py --validate` and the doctor accept it.
 - **A hand-edited usage store with non-numeric outcome counts no longer breaks the doctor's tier check.**
+- **Worker run measurement is sturdier.** Idle gaps over 30 minutes are left out, so a worker continued hours
+  later no longer inflates its minutes; a damaged `usage.json` (wrong types, non-numeric counts) is reported per
+  field instead of a traceback; roles with measured runs but no counted start no longer show as `0x`; `Tier:`
+  values in backticks, bold or underscores are read as the bare tier.
 
 ### Security
 

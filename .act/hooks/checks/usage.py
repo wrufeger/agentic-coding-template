@@ -95,7 +95,7 @@ __all__ = [
 # "Tier: standard" land in the same usage.json bucket instead of splitting the count.
 _SAFE_AGENT_ID_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")  # becomes part of a file name
 
-_TIER_RE = re.compile(r"Tier:\s*([^\s.,;·]+)", re.IGNORECASE)
+_TIER_RE = re.compile(r"Tier:\s*[`*_]*([^\s.,;·`*_]+)", re.IGNORECASE)
 
 # ".act/scripts/<name>.py" run *through an interpreter* — either a literal "python"/"python3"/"py"
 # (optionally ".exe") or a shell variable holding a resolved interpreter path, the pattern
