@@ -77,9 +77,11 @@
 #   - `composer audit` names no fixed version in its own JSON output -- `fixed_version` is always
 #     None for a composer finding;
 #   - `detect_lock_files` walks the whole project tree (skipping `.git`, `.act`, `node_modules`,
-#     `vendor`, `.venv`/`venv`, `__pycache__`, `dist`, `build`, and any dot-directory) -- a lock
-#     file placed somewhere else this list does not skip is still found, one placed *inside* one of
-#     these directories on purpose (an unusual layout) is not;
+#     `vendor`, `.venv`/`venv`, `__pycache__`, `dist`, `build`, any dot-directory, and any
+#     sub-directory with a `.git` of its own, i.e. another repository's checkout) and drops lock
+#     files `git check-ignore` reports as ignored -- a lock file placed somewhere else this list
+#     does not skip is still found, one placed *inside* one of these directories on purpose (an
+#     unusual layout) is not;
 #   - every tool call is a real subprocess with argument lists, never a shell string -- a tool that
 #     needs network access (osv-scanner's own database lookup, if not run with a local database)
 #     reaches it itself; this module never opens a connection of its own.
@@ -151,21 +153,50 @@ _SKIP_DIR_NAMES = frozenset({
 })
 
 
+def _git_ignored(root: Path, paths: "list[Path]") -> set[str]:
+    """The subset of `paths` (as `str(path)`) that git reports as ignored in `root`'s repository --
+    empty when `root` is no git work tree, git is missing, or the call fails: a scan that cannot ask
+    git simply keeps every path (the own-`.git` rule in `detect_lock_files` still applies)."""
+    if not paths or shutil.which("git") is None:
+        return set()
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "check-ignore", "-z", "--stdin"],
+            input="\0".join(str(path) for path in paths) + "\0",
+            capture_output=True, text=True, encoding="utf-8", timeout=30.0, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if proc.returncode not in (0, 1):  # 1 = nothing ignored; anything else = git could not answer
+        return set()
+    return {entry for entry in proc.stdout.split("\0") if entry}
+
+
 def detect_lock_files(root: Path) -> dict[str, list[Path]]:
     """Every lock file `root` actually holds, grouped by ecosystem -- absolute paths. A directory
-    name in `_SKIP_DIR_NAMES`, or any dot-directory, is never walked into (see the module
-    docstring's "Known limits")."""
+    name in `_SKIP_DIR_NAMES`, any dot-directory, and any sub-directory that holds a `.git` of its
+    own (a separate checkout of another repository) is never walked into; a lock file that git
+    reports as ignored is left out too (see the module docstring's "Known limits")."""
     name_to_ecosystems: dict[str, list[str]] = {}
     for ecosystem, names in LOCK_FILE_NAMES.items():
         for name in names:
             name_to_ecosystems.setdefault(name, []).append(ecosystem)
 
-    found: dict[str, list[Path]] = {}
+    candidates: list[tuple[str, Path]] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR_NAMES and not d.startswith(".")]
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _SKIP_DIR_NAMES and not d.startswith(".")
+            and not (Path(dirpath) / d / ".git").exists()
+        ]
         for filename in filenames:
             for ecosystem in name_to_ecosystems.get(filename, ()):
-                found.setdefault(ecosystem, []).append(Path(dirpath) / filename)
+                candidates.append((ecosystem, Path(dirpath) / filename))
+    ignored = _git_ignored(root, [path for _, path in candidates])
+    found: dict[str, list[Path]] = {}
+    for ecosystem, path in candidates:
+        if str(path) not in ignored and path.as_posix() not in ignored:
+            found.setdefault(ecosystem, []).append(path)
     return found
 
 

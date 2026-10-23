@@ -52,6 +52,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   itself were counted; built-in and own commands stay out, as before.
 - **The board no longer drops tasks silently.** Open tasks list the most recently worked task first, show the task
   id before the title, and end with `… +N more` when there are more than five; the session-start excerpt does the same.
+- **The daily dependency scan skips lock files git ignores** and nested checkouts with their own `.git`. The
+  session-start note groups findings per lock file, states the age of the scan, and drops a result once a scanned
+  lock file has changed or disappeared.
 
 ## [2.2.0] - 2026-10-20
 

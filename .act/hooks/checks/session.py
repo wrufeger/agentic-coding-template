@@ -857,7 +857,9 @@ def _run_security_scan_worker(
             security_scan.clear_running_marker(root, state_hash)
         return 0
     try:
-        result = security_scan.run_scan(root, security_scan.detect_lock_files(root))
+        scanned_at = time.time()
+        lock_files = security_scan.detect_lock_files(root)
+        result = security_scan.run_scan(root, lock_files)
         accepted = security_scan.load_accepted(root)
         unaccepted_high = [
             finding for finding in result.findings
@@ -870,7 +872,14 @@ def _run_security_scan_worker(
         path = _security_scan_result_path(root)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            json.dumps({"findings": [dataclasses.asdict(f) for f in unaccepted_high]}, ensure_ascii=False) + "\n",
+            json.dumps(
+                {
+                    "scanned_at": scanned_at,
+                    "lock_files": sorted(str(p) for paths in lock_files.values() for p in paths),
+                    "findings": [dataclasses.asdict(f) for f in unaccepted_high],
+                },
+                ensure_ascii=False,
+            ) + "\n",
             encoding="utf-8",
         )
     except OSError:
@@ -933,18 +942,56 @@ def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
     findings = data.get("findings")
     if not isinstance(findings, list) or not findings:
         return None
-    shown = findings[:5]
-    rest = len(findings) - len(shown)
-    more = f" (+{rest} more)" if rest > 0 else ""
-    parts = [
-        f"{item.get('package', '?')} {item.get('version', '?')} "
-        f"({item.get('advisory_id', '?')}, {item.get('severity', '?')})"
-        for item in shown if isinstance(item, dict)
-    ]
+    scanned_at = data.get("scanned_at")
+    lock_files = data.get("lock_files")
+    if isinstance(scanned_at, (int, float)) and isinstance(lock_files, list):
+        for name in lock_files:
+            try:
+                changed = Path(str(name)).stat().st_mtime > scanned_at
+            except OSError:
+                changed = True  # the lock file is gone: the result no longer describes the project
+            if changed:
+                return None  # a lock file changed after the scan: the findings may no longer hold
+    return _format_security_scan_note(root, [item for item in findings if isinstance(item, dict)], scanned_at)
+
+
+def _format_age(seconds: float) -> str:
+    minutes = int(max(seconds, 0) // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    return f"{hours} h" if hours < 48 else f"{hours // 24} d"
+
+
+def _format_security_scan_note(root: Path, findings: "list[dict]", scanned_at: object) -> Optional[str]:
+    """One line for the unaccepted findings of the daily scan, grouped by lock file (path relative to
+    `root`) so a new finding in the project's own lock file does not drown in a long list, and with
+    the age of the scan when it is known."""
+    groups: dict[str, list[dict]] = {}
+    for item in findings:
+        groups.setdefault(str(item.get("lock_file") or "?"), []).append(item)
+    parts: list[str] = []
+    for lock_file, items in groups.items():
+        try:
+            shown_name = Path(lock_file).resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            shown_name = lock_file
+        shown = items[:3]
+        rest = len(items) - len(shown)
+        more = f" (+{rest} more)" if rest > 0 else ""
+        entries = ", ".join(
+            f"{item.get('package', '?')} {item.get('version', '?')} "
+            f"({item.get('advisory_id', '?')}, {item.get('severity', '?')})"
+            for item in shown
+        )
+        parts.append(f"{shown_name} [{len(items)}]: {entries}{more}")
     if not parts:
         return None
-    return ("[act] security-check (deps): unaccepted dependency vulnerability: "
-            + "; ".join(parts) + more + " -- see `python .act/scripts/security_scan.py --deps`")
+    age = ""
+    if isinstance(scanned_at, (int, float)):
+        age = f" (scan {_format_age(time.time() - scanned_at)} old)"
+    return (f"[act] security-check (deps){age}: unaccepted dependency vulnerability: "
+            + "; ".join(parts) + " -- see `python .act/scripts/security_scan.py --deps`")
 
 
 def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[str]":
