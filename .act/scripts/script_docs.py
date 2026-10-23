@@ -56,6 +56,7 @@ HELP_COLUMNS = "100"
 SCRIPT_INFO: dict[str, dict[str, str]] = {
     "actlib.py": {"kind": "library"},
     "board.py": {"kind": "direct"},
+    "compact_check.py": {"kind": "skill", "skill": "act-compact"},
     "adopt.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "adopt_config.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "adopt_entries.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
@@ -85,7 +86,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "settings_load.py": {"kind": "skill", "skill": "act-load-settings"},
     "skills.py": {"kind": "direct", "note": "used by skill `act` and by dispatch.py's `/act` fast path"},
     "tiers.py": {"kind": "library"},
-    "update.py": {"kind": "skill", "skill": "act-update", "note": "`--plan` alone is direct"},
+    "update.py": {"kind": "skill", "skill": "act-update", "note": "`--plan` and `--versions` alone are direct (skill `act-version`)"},
     "unit_copies.py": {"kind": "direct", "note": "session start and update.py call it; run by hand to create the copies at once"},
     "usage.py": {"kind": "direct"},
 }

@@ -68,6 +68,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `--update-channel` (also through `act-adopt --apply`), writes it to `docs/ai/config.md` § Update, and notes when
   the template clone is already past the newest release. `act-doctor` reports a value other than `release` or
   `latest`. Existing projects keep their `config.md`; without the key they get the one-time note of `act-update`.
+- **Archive compaction, part 2: `act-compact` and `compact_check.py`.** After `entries.py compact`, workers may
+  shorten only text that is recognisably the assistant's (paragraphs with a bold label and the option list below
+  them) and write a monthly topic overview `archive/YYYY-MM.md`. `compact_check.py` compares every section with
+  the original in git: ids, hashes, versions, dates, paths, numbers and every line the human wrote, marked or
+  not, must survive; a section deleted by hand is reported; `--restore` puts a section back in full length. The
+  session start says once a day when compaction is due (`archive-compact: 30d 300`, `archive-shorten: on` in
+  `docs/ai/config.md`).
 
 ### Changed
 
@@ -88,6 +95,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **`update` checks at the start that Git is 2.25 or newer** and stops with a message naming the version found,
   instead of failing at the commit after all files are written; `--plan` and `--no-commit` are not affected.
 - **The `security-check: deps` offer at `init` covers pnpm projects.**
+- **`R-human-text` names one exception:** `act-compact` may shorten the assistant's own text in the sections of
+  an archive collection file; every line the human wrote stays verbatim.
 
 ### Fixed
 

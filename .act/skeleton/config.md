@@ -269,6 +269,21 @@ stable release tag of the template source and the session start announces only t
 the tip of the source's default branch. `--channel` on `update.py` overrides it for one run. Details:
 `.act/skills/act-update/SKILL.md`.
 
+## Archive
+
+| Key | Value |
+| :--- | :--- |
+| `archive-compact` | 30d 300 |
+| `archive-shorten` | on |
+
+`archive-compact`: `<n>d <n>` \| `off`. `entries.py compact` is due for the archive or the journal folder once its
+oldest single entry is older than this many days, or the folder holds more than this many single files; the session
+start says so once a day, with the number of entries and the worker runs to expect (`act-compact`). Only entries
+archived more than 7 days ago are merged. A missing or malformed value counts as `30d 300`; in team mode the note
+appears only on the default branch. `archive-shorten`: `on` \| `off`. `on` (the default) has workers shorten the
+merged sections and write a monthly topic overview `archive/YYYY-MM.md`, checked by `compact_check.py`; `off` merges
+only.
+
 ## Tips
 
 | Key | Value |

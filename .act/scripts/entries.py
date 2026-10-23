@@ -111,7 +111,7 @@
 #     header field `archived:`, else the day Git first saw the file in the archive, else `created:`.
 #     Links to a merged file in any Markdown file of the project (not legacy/, not .act/) are rewritten to
 #     the collection plus anchor. The newest week, a subfolder (legacy/, proposals/), a README, an
-#     unreadable file and an entry whose id is carried twice stay as they are. Refuses (exit 2, nothing
+#     unreadable file, an entry whose id is carried twice and a monthly topic overview (`YYYY-MM.md`) stay as they are. Refuses (exit 2, nothing
 #     changed) when the project is not a Git repository with a commit or a file to merge is not committed.
 #     `--plan` lists what would be merged and writes nothing. A second run changes nothing. Prints one
 #     "entries: compacted|would compact <id>: <old path> -> <collection>#<anchor>" line per entry, one
@@ -1387,6 +1387,7 @@ def cmd_archive(root: Path, ref: str) -> int:
 LEDGER_DIR = Path("docs/ai/work/ledger")
 COMPACT_KEEP_DAYS = 7  # the newest week stays as single files: it is still linked to and looked up
 _LEDGER_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
+_OVERVIEW_NAME_RE = re.compile(r"^\d{4}-\d{2}\.md$")  # the monthly topic overview: written by hand, never folded
 _ANY_ANCHOR_RE = re.compile(r'^<a id="[^"\n]+"></a>\s*$')
 _SKIP_WALK_DIRS = {".git", ".act", ".act-local", "node_modules", ".venv", "venv", "__pycache__"}
 
@@ -1529,7 +1530,7 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
         if text is None:
             notes.append(f"left {_rel(path, root)} - not valid UTF-8")
             continue
-        if actlib.is_collection(text):
+        if actlib.is_collection(text) or (not journal and _OVERVIEW_NAME_RE.match(path.name)):
             continue
         header = actlib.header_block(text)
         ids = actlib.entry_ids(text)

@@ -103,7 +103,7 @@ this machine, `.act-local/`, never versioned). Before there is anything to recog
 summary: the human's own words left untouched, comments only beneath them
 
 Text the human wrote (answers, comments, decisions) is never edited or deleted — only commented on
-underneath it.
+underneath it. Exception: `act-compact` may shorten the assistant's own text in the sections of an archive collection file; every line the human wrote, marked or not, stays verbatim.
 
 ## `R-human-external` — Every external request gets an answer
 

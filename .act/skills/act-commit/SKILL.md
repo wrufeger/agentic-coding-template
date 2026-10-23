@@ -37,7 +37,9 @@ secures the result.
    (renamed with the id in front where the name is generic) and prints every path it moved, copied
    or changed: stage all of them. Short IDs already assigned stay valid; the file keeps its name.
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step
-   isn't recorded yet, older entries left as they are otherwise.
+   isn't recorded yet, older entries left as they are otherwise. Journal entries stay single files
+   only until they are old: `act-compact` later folds them, like archived entries, into one file per
+   month (`archive/ledger-<YYYY-MM>.md`).
 5. **Docs index.** New files go into `docs/README.md`; check the data-as-of note on files that
    changed.
 6. **Learning check.** Did the task need at least two rework rounds (a worker result rejected
