@@ -73,7 +73,7 @@ summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route 
   default description) go into `app.vue` **and** `error.vue`, since Nuxt renders `error.vue` in place of `app.vue`.
   A head value that is missing is left out, never passed as `undefined` — `useSeoMeta({ description: undefined })`
   removes the fallback.
-- No `compilerOptions.baseUrl` in `tsconfig.json` — Nuxt ignores it; aliases go into `paths` and `nuxt.config.ts`
+- No `compilerOptions.baseUrl` in `tsconfig.json` — Nuxt ignores it; aliases go into `nuxt.config.ts` only
   (`CR-nuxt-basics`).
 
 ## `CR-nuxt5-checks` — Checks after every Nuxt update

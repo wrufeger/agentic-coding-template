@@ -23,5 +23,6 @@ summary: utilities in markup, tokens, theme, dark mode, extraction, tooling, pit
 - Pitfalls:
   - Use `@apply` only in exceptions (e.g. base styles of a third-party component), never as the default way
     to style.
-  - Keep `content` paths in the config correct — a wrong or missing path either drops classes that are
-    actually used or leaves unused utility classes in the build.
+  - Keep source detection correct — v3: the `content` paths in the config; v4 and later: automatic, with
+    `@source` for additions. A wrong or missing source either drops classes that are actually used or
+    leaves unused utility classes in the build.

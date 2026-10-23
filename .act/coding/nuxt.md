@@ -38,8 +38,24 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
       }
       ```
 
-- Declare path aliases in `tsconfig.json` **and** `nuxt.config.ts`. Since Nuxt 4, `~` points at `app/`,
-  so without its own entry `~/types` resolves somewhere other than `~types`.
+- Path aliases, by installed Nuxt major (`R-code-version`). Since Nuxt 4, `~` points at `app/`, so without its
+  own entry `~/types` resolves somewhere other than `~types`.
+  - Nuxt 4 and later: declare aliases only in `nuxt.config.ts` (`alias`); Nuxt copies each into the generated
+    `.nuxt/tsconfig*.json`. The root `tsconfig.json` holds nothing but `references` to those generated configs
+    and never its own `paths`: with `files: []` plus `references` a `paths` there replaces nothing, it simply
+    does not reach the referenced projects, so the alias works nowhere. Only a root that extends a generated
+    config replaces the whole generated mapping with its `paths`, and the framework aliases disappear.
+  - Nuxt 3: declare aliases in `nuxt.config.ts` as well; a root `tsconfig.json` that extends
+    `./.nuxt/tsconfig.json` may add `paths` only if it repeats every generated entry. Nuxt 3 also writes each
+    `alias` into the generated `paths`, so the `nuxt.config.ts` entry alone is enough; the generated
+    `.nuxt/tsconfig.json` shows it.
+- Files the generated contexts leave out (unit and e2e tests, test-runner configs) are skipped by
+  `nuxt typecheck` without a message. Add them through Nuxt's TypeScript options in `nuxt.config.ts`
+  (`typescript.tsConfig.include`, or the per-context `typescript.sharedTsConfig` / `typescript.nodeTsConfig`
+  / `typescript.tsConfig` objects on Nuxt 4; the server context via `nitro.typescript.tsConfig`), then prove each context once: put a deliberate type error in one
+  file of it, see `nuxt typecheck` fail, remove it. Check the option names in the docs of the installed Nuxt
+  version before using them.
+- pnpm projects: see the package-manager notes in the JavaScript rules.
 - Use `runtimeConfig` for configuration values instead of reading `process.env` in components; secrets
   live in the private part of `runtimeConfig`, never under `public`.
 - Write out types for props, emits, store actions, composables and `defineEventHandler`, including

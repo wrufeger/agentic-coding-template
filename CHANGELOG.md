@@ -92,6 +92,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   later no longer inflates its minutes; a damaged `usage.json` (wrong types, non-numeric counts) is reported per
   field instead of a traceback; roles with measured runs but no counted start no longer show as `0x`; `Tier:`
   values in backticks, bold or underscores are read as the bare tier.
+- **The Nuxt coding set no longer breaks the typecheck on Nuxt 4 and later.** Path aliases go into
+  `nuxt.config.ts` only, the root `tsconfig.json` holds just `references`; test files outside the generated
+  contexts are added through Nuxt's TypeScript options (including `nitro.typescript.tsConfig` for the server)
+  and proven with one deliberate type error per context.
+- **The Tailwind coding set is version-bound for source detection:** `content` paths on v3, automatic detection
+  with `@source` for additions from v4 on.
 
 ### Security
 
