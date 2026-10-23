@@ -440,6 +440,24 @@ _METRICS_SKIP_DIRS = {".git", "node_modules", ".venv", "dist", "build", ".output
                        "__pycache__"}
 
 
+def _project_files(root: Path) -> list[Path]:
+    """The files that make up the project: in a git checkout the tracked and the untracked but
+    not ignored ones (`git ls-files -co --exclude-standard`), so a vendor folder, IDE folder or
+    large ignored media folder does not count. Outside git, a walk that skips the usual build and
+    dependency folders. NUL-separated bytes, so no file name is quoted or mis-decoded."""
+    try:
+        result = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard",
+                                 "--", "."], capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        result = None
+    if result is not None and result.returncode == 0:
+        names = [os.fsdecode(name) for name in result.stdout.split(b"\0") if name]
+        return [root / name for name in names if (root / name).is_file()]
+    return [path for path in root.rglob("*")
+            if not any(part in _METRICS_SKIP_DIRS for part in path.relative_to(root).parts)
+            and path.is_file()]
+
+
 def _metrics(root: Path) -> dict:
     """Scope "a": numbers from `git log` and the filesystem only — nothing that could name or
     identify the project. What cannot be determined is left out, never guessed."""
@@ -457,17 +475,14 @@ def _metrics(root: Path) -> dict:
     docs_ai_hits = _git(root, "log", "--format=%h", "--", "docs/ai").split()
     if docs_ai_hits:
         metrics["commits_docs_ai"] = len(docs_ai_hits)
-    file_count, total_bytes = 0, 0
-    for path in root.rglob("*"):
-        if any(part in _METRICS_SKIP_DIRS for part in path.relative_to(root).parts):
-            continue
-        if path.is_file():
-            file_count += 1
-            try:
-                total_bytes += path.stat().st_size
-            except OSError:
-                pass
-    metrics["files"] = file_count
+    files = _project_files(root)
+    total_bytes = 0
+    for path in files:
+        try:
+            total_bytes += path.stat().st_size
+        except OSError:
+            pass
+    metrics["files"] = len(files)
     metrics["size_mb"] = round(total_bytes / 1_048_576, 1)
     log_path = root / "ai.log"
     if log_path.exists():  # only if logging is actually on — off by default
@@ -534,18 +549,29 @@ def _template_names(root: Path) -> tuple[set[str], set[str]]:
 def _usage_counts(root: Path) -> dict[str, dict[str, int]]:
     """Raw invocation counts per category ("skills", "scripts") from .act-local/usage.json,
     read directly (never consolidated - building a payload must not write). Missing or unreadable
-    file: empty counts."""
+    file: empty counts.
+
+    A skill the human starts by typing its slash command is recorded under "commands", not
+    "skills" (only the model's own Skill call lands in "skills"). So a command whose name is a
+    skill the template ships is added to that skill's count; any other command (a built-in, a
+    project command) is not counted at all."""
     try:
         data = json.loads((root / ".act-local" / "usage.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
     result: dict[str, dict[str, int]] = {"skills": {}, "scripts": {}}
+    template_skills = _template_names(root)[0]
     for category in result:
-        section = data.get(category) if isinstance(data, dict) else None
-        for name, entry in (section.items() if isinstance(section, dict) else ()):
-            count = entry.get("count") if isinstance(entry, dict) else None
-            if isinstance(count, int) and count > 0:
-                result[category][str(name)] = count
+        sections = [data.get(category) if isinstance(data, dict) else None]
+        if category == "skills":
+            sections.append(data.get("commands") if isinstance(data, dict) else None)
+        for section in sections:
+            for name, entry in (section.items() if isinstance(section, dict) else ()):
+                if section is not sections[0] and str(name) not in template_skills:
+                    continue
+                count = entry.get("count") if isinstance(entry, dict) else None
+                if isinstance(count, int) and count > 0:
+                    result[category][str(name)] = result[category].get(str(name), 0) + count
     return result
 
 

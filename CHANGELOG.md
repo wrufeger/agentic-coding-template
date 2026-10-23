@@ -44,6 +44,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 - **`act-release` keeps Markdown headings in the tag message.** The tag is created with `--cleanup=verbatim`,
   and the stored message is compared with the release notes before anything is pushed.
+- **Feedback metrics count only the project's files.** `files` and `size_mb` come from `git ls-files -co
+  --exclude-standard` in a git checkout, so a vendor, IDE or media folder that git ignores no longer inflates them.
+- **Skills started by typing their slash command count in feedback usage.** Before, only skills the model invoked
+  itself were counted; built-in and own commands stay out, as before.
 
 ## [2.2.0] - 2026-10-20
 
