@@ -170,21 +170,6 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
     return result
 
 
-def _git_add_paths(rels: list[str], cwd: Path) -> None:
-    """`git add` for `rels` with the paths on stdin (`--pathspec-from-file`, Git 2.25 or newer): a
-    long list passed as arguments fails on Windows (WinError 206, about 32,000 characters). An empty
-    list is refused: git would read it as "no pathspec" and stage the whole tree."""
-    if not rels:
-        raise ValueError("git add: empty path list, refusing to stage the whole tree")
-    args = ["add", "--pathspec-from-file=-", "--pathspec-file-nul"]
-    result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        input="".join(f"{rel}\0" for rel in rels),
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-
-
 def _print_step(n: int, text: str) -> None:
     print(f"[{n}/10] {text}")
 
@@ -845,7 +830,8 @@ def step_thin_bridges(tools: list[str]) -> tuple[dict[str, BridgeSpec], str]:
 # Only used to order *enabled* sets in the generated file; every set the template actually
 # ships under .act/coding/ is included either way, checked or not, even one missing here.
 CODING_SET_DETECTION_ORDER = [
-    "nuxt", "nuxt5", "vue", "typescript", "tailwind", "php", "python", "go", "java", "csharp", "bash", "sql",
+    "nuxt", "nuxt5", "vue", "react", "typescript", "javascript", "tailwind", "css", "php", "python", "go",
+    "java", "kotlin", "csharp", "rust", "c", "cpp", "bash", "powershell", "docker", "ci", "sql",
 ]
 
 # A `nuxt` version spec at major 5 also checks the `nuxt5` set: a range ("^5.0.0", "~5.1", ">=5", "=5.0.0",
@@ -901,6 +887,154 @@ def _uses_sql_library(root: Path, npm_deps: dict[str, object]) -> bool:
     return bool(_SQL_PYTHON_PACKAGES & _python_dependency_names(root))
 
 
+# Directories never searched for source files by the marker scans below.
+_SCAN_SKIP_DIRS = {"node_modules", "build", "dist", "target", "vendor", "venv", "out", "__pycache__"}
+
+
+def _suffixes_below(base: Path, suffixes: tuple[str, ...], max_depth: int,
+                    deep_dirs: tuple[str, ...] = (), deep_depth: int = 0) -> set[str]:
+    """The subset of `suffixes` that some file under `base` (itself depth 0) ends in (lower-cased
+    name), down to `max_depth` folder levels, or `deep_depth` below a top-level folder named in
+    `deep_dirs`; hidden folders and `_SCAN_SKIP_DIRS` are not entered. One pass, which stops as
+    soon as every suffix has been seen."""
+    found: set[str] = set()
+    if not base.is_dir():
+        return found
+    base_depth = len(base.parts)
+    for current, dirs, files in os.walk(base):
+        rel = Path(current).parts[base_depth:]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _SCAN_SKIP_DIRS]
+        limit = deep_depth if rel and rel[0] in deep_dirs else max_depth
+        if len(rel) >= limit:
+            dirs[:] = []
+        for name in files:
+            lowered = name.lower()
+            found.update(suffix for suffix in suffixes if lowered.endswith(suffix))
+        if len(found) == len(suffixes):
+            break
+    return found
+
+
+# Tool configuration files in the project root (`commitlint.config.js`, `.eslintrc.cjs` ...): they say
+# nothing about the language the project itself is written in.
+_TOOL_CONFIG_NAME = re.compile(r"\.config\.|^\..*rc\.[a-z]+$")
+
+
+def _has_flat(root: Path, folders: tuple[str, ...], suffixes: tuple[str, ...], skip_config: bool = False) -> bool:
+    """True if the project root or one of `folders` (directly inside it, not deeper) holds a file with a
+    suffix; with `skip_config`, tool configuration files in the project root itself do not count."""
+    for folder in ("",) + folders:
+        base = root / folder if folder else root
+        if not base.is_dir():
+            continue
+        ignore_config = skip_config and not folder
+        if any(f.is_file() and f.name.lower().endswith(suffixes)
+               and not (ignore_config and _TOOL_CONFIG_NAME.search(f.name.lower()))
+               for f in base.iterdir()):
+            return True
+    return False
+
+
+_KOTLIN_GRADLE_PLUGIN = re.compile(
+    r"org\.jetbrains\.kotlin|kotlin-gradle-plugin|libs\.plugins\.kotlin|\bkotlin\s*\(|id\s*\(?\s*[\"']kotlin")
+_GRADLE_BUILD_NAMES = ("build.gradle", "build.gradle.kts")
+
+
+def _gradle_modules(root: Path) -> list[Path]:
+    """Sub-project folders of a Gradle build: the modules `settings.gradle(.kts)` includes plus every
+    folder directly in the project root that has its own Gradle build file or a `src` folder."""
+    modules: dict[str, Path] = {}
+    for name in ("settings.gradle", "settings.gradle.kts"):
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        in_include = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("include"):
+                in_include = True
+            elif not stripped.startswith(("\"", "'", ",")):
+                in_include = False
+            if in_include:
+                for spec in re.findall(r"[\"']([^\"']+)[\"']", stripped):
+                    parts = [part for part in spec.replace(":", "/").split("/") if part]
+                    if parts and ".." not in parts and root.joinpath(*parts).is_dir():
+                        modules[spec] = root.joinpath(*parts)
+    try:
+        children = sorted(root.iterdir())
+    except OSError:
+        children = []
+    for child in children:
+        if not child.is_dir() or child.name.startswith(".") or child.name in _SCAN_SKIP_DIRS:
+            continue
+        if (child / "src").is_dir() or any((child / n).is_file() for n in _GRADLE_BUILD_NAMES):
+            modules[child.name] = child
+    return list(modules.values())
+
+
+def _gradle_uses_kotlin(root: Path) -> bool:
+    """True if the Gradle build applies a Kotlin plugin: in the root build or settings file, in the
+    version catalog `gradle/libs.versions.toml`, or in the build file of a sub-project."""
+    candidates = [root / n for n in (*_GRADLE_BUILD_NAMES, "settings.gradle", "settings.gradle.kts")]
+    candidates.append(root / "gradle" / "libs.versions.toml")
+    for module in _gradle_modules(root):
+        candidates.extend(module / n for n in _GRADLE_BUILD_NAMES)
+    for path in candidates:
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _KOTLIN_GRADLE_PLUGIN.search(text):
+                return True
+    return False
+
+
+def _jvm_source_languages(root: Path) -> set[str]:
+    """`.kt` and `.java` suffixes found under `src/` of the project root, of every Gradle sub-project
+    and of every other folder directly in the root that has a `src/` folder."""
+    found: set[str] = set()
+    for base in [root, *_gradle_modules(root)]:
+        found |= _suffixes_below(base / "src", (".kt", ".java"), 8)
+        if len(found) == 2:
+            break
+    return found
+
+
+_C_FAMILY_SUFFIXES = (".c", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx")
+
+
+def _detect_native_languages(root: Path) -> set[str]:
+    """`c` for *.c and `cpp` for C++ sources (*.cpp, *.cc, *.cxx, *.hpp, *.hh, *.hxx) in src/, lib/,
+    include/ and the project root down to two folder levels; a lone *.h says nothing."""
+    found = _suffixes_below(root, _C_FAMILY_SUFFIXES, 2, ("src", "lib", "include"), 5)
+    return {"c" if suffix == ".c" else "cpp" for suffix in found}
+
+
+def _languages_without_set(root: Path) -> list[str]:
+    """Languages recognized by a marker file for which the template ships no coding rule set."""
+    names: list[str] = []
+    if (root / "pubspec.yaml").is_file():
+        names.append("Dart/Flutter (pubspec.yaml)")
+    gemfile = root / "Gemfile"
+    if gemfile.is_file():
+        try:
+            gem_text = gemfile.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            gem_text = ""
+        is_rails = re.search(r"(?m)^\s*gem\s+['\"]rails['\"]", gem_text)
+        names.append("Ruby on Rails (Gemfile)" if is_rails else "Ruby (Gemfile)")
+    if (root / "DESCRIPTION").is_file() or any(root.glob("*.Rproj")):
+        names.append("R (DESCRIPTION / *.Rproj)")
+    if (root / "artisan").is_file():
+        names.append("Laravel (artisan)")
+    return names
+
+
 def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str]:
     """Direct hits from the target directory, plus the free-text `stack` config value where its
     text contains a known set's name — before the requires: closure. `known` is every set name
@@ -929,6 +1063,14 @@ def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str
         detected.add("typescript")
     if "tailwindcss" in deps or any(root.glob("tailwind.config.*")):
         detected.add("tailwind")
+    if "react" in deps or "react-dom" in deps or "next" in deps:
+        detected.add("react")
+    if "tailwind" not in detected and _has_flat(root, ("src", "styles", "assets"), (".css", ".scss")):
+        detected.add("css")
+    if (package_json.is_file() and "typescript" not in detected
+            and (_has_flat(root, ("src", "lib", "scripts"), (".js", ".jsx", ".mjs", ".cjs"), skip_config=True)
+                 or any(root.glob("eslint.config.*")))):
+        detected.add("javascript")
 
     if (root / "composer.json").is_file():
         detected.add("php")
@@ -936,20 +1078,43 @@ def _detect_coding_sets(root: Path, stack_hint: str, known: set[str]) -> set[str
         detected.add("python")
     if (root / "go.mod").is_file():
         detected.add("go")
-    if (root / "pom.xml").is_file() or any(root.glob("build.gradle*")):
-        detected.add("java")
+    jvm_sources = _jvm_source_languages(root)
+    kotlin = _gradle_uses_kotlin(root) or ".kt" in jvm_sources
+    if kotlin:
+        detected.add("kotlin")
+    if (root / "pom.xml").is_file() or any(root.glob("build.gradle*")) or any(root.glob("settings.gradle*")):
+        # a Kotlin project is not a Java project unless it also has Java sources
+        if not kotlin or ".java" in jvm_sources:
+            detected.add("java")
+    if (root / "Cargo.toml").is_file():
+        detected.add("rust")
+    detected |= _detect_native_languages(root)
     if any(root.glob("*.csproj")) or any(root.glob("*.sln")):
         detected.add("csharp")
     scripts_dir = root / "scripts"
     if any(root.glob("*.sh")) or (scripts_dir.is_dir() and any(scripts_dir.glob("*.sh"))):
         detected.add("bash")
+    if _has_flat(root, ("scripts",), (".ps1", ".psm1", ".psd1")):
+        detected.add("powershell")
+    if (any((root / name).is_file() for name in ("Dockerfile", "compose.yml", "compose.yaml",
+                                                 "docker-compose.yml", "docker-compose.yaml"))
+            or any(root.glob("Dockerfile.*")) or any(root.glob("*.Dockerfile"))):
+        detected.add("docker")
+    workflows = root / ".github" / "workflows"
+    if (root / ".gitlab-ci.yml").is_file() or (
+            workflows.is_dir() and (any(workflows.glob("*.yml")) or any(workflows.glob("*.yaml")))):
+        detected.add("ci")
     if any(root.glob("*.sql")) or (root / "migrations").is_dir() or _uses_sql_library(root, deps):
         detected.add("sql")
 
     stack_lower = stack_hint.lower()
     for name in known:
-        if name in stack_lower:
+        # whole words only: a short set name like `c` must not match inside any other word, nor `cpp` in "cppcheck"
+        # `python3`, `Vue3` and `PHP8` count; `c++`, `c#` and `objective-c` do not switch `c` on
+        if re.search(rf"(?<![\w+#])(?<!objective-){re.escape(name)}(?![a-z_+#])", stack_lower):
             detected.add(name)
+    if re.search(r"(?<![\w+#])(?:postgres(?:ql)?|mysql|sqlite3?|mariadb)(?![a-z_+#])", stack_lower):
+        detected.add("sql")
     if _NUXT5_STACK_HINT.search(stack_lower):
         detected.add("nuxt5")
 
@@ -997,7 +1162,7 @@ _CODING_RULES_MARKER = "<!-- act:coding-rules-sets -->"
 
 
 def _write_coding_rules(
-    src: Path, dest: Path, cfg: ProjectConfig, plan: bool, root: Path
+    src: Path, dest: Path, cfg: ProjectConfig, plan: bool, root: Path, notes: Optional[list[str]] = None
 ) -> tuple[str, bool]:
     """Like _write_text_file, but fills the .act/bridges/coding_rules.md template's rule-set
     marker with the detected list instead of a fixed token substitution. Never overwrites an
@@ -1015,6 +1180,12 @@ def _write_coding_rules(
     text = text.replace(_CODING_RULES_MARKER, body.rstrip("\n"))
     actlib.write_text_lf(dest, text)  # LF regardless of platform, matches .gitattributes
     summary = ", ".join(enabled) if enabled else "(none detected)"
+    unsupported = _languages_without_set(root)
+    if unsupported and notes is not None:
+        notes.append(
+            f"Detected {', '.join(unsupported)}, but the template ships no coding rule set for it — "
+            "ask for one with the `act-feedback` skill (a missing set is a gap worth reporting)."
+        )
     return f"{label}: created — sets enabled: {summary}", True
 
 
@@ -2192,7 +2363,7 @@ def step_materialize(
             if changed or dest.is_file():
                 touched.append(dest)
         elif spec["kind"] == "coding-rules":
-            message, created = _write_coding_rules(bridges_dir / key, dest, cfg, plan, root)
+            message, created = _write_coding_rules(bridges_dir / key, dest, cfg, plan, root, notes)
             messages.append(message)
             if created:
                 generated[spec["dest"]] = dest
@@ -2236,7 +2407,7 @@ def step_materialize(
         if created or dest.is_file():
             touched.append(dest)
         if not plan and dest.is_file():
-            copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.sha256_file(dest)}
+            copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.lock_hash(dest.read_bytes())}
 
     for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
         role = Path(dest_rel).stem
@@ -2284,18 +2455,26 @@ def _append_block(dest: Path, src: Path, plan: bool) -> tuple[str, bool]:
     bridges_applied = dict(lock.get("bridges_applied", {}))
     applied_lines = bridges_applied.get(dest.name)
     new_text, added = actlib.merge_text_block(existing, block_text, applied_lines)
+    replaced_count = len(actlib._classify_block_lines(existing, block_text, applied_lines)[2])
+    appended_count = len(added) - replaced_count
     conflicts = actlib.text_block_conflicts(existing, block_text, applied_lines)
     suffix = f"; {len(conflicts)} conflicting line(s) kept as-is: {', '.join(conflicts)}" if conflicts else ""
     if plan:
         if not added:
             return f"{dest.name}: already present, left unchanged{suffix}", False
-        return f"{dest.name}: would add {len(added)} missing line(s){suffix}", False
+        parts = ([f"add {appended_count} missing line(s)"] if appended_count else []) + (
+            [f"replace {replaced_count} line(s) of an earlier template wording"] if replaced_count else [])
+        return f"{dest.name}: would {' and '.join(parts)}{suffix}", False
     bridges_applied[dest.name] = block_text.splitlines()
     actlib.write_lock({"bridges_applied": bridges_applied})
     if not added:
         return f"{dest.name}: already present, left unchanged{suffix}", False
     actlib.write_text_lf(dest, new_text)  # LF regardless of platform, matches .gitattributes
-    label = "template block appended" if not existing else f"{len(added)} missing line(s) added"
+    if not existing:
+        label = "template block appended"
+    else:
+        label = ", ".join(([f"{appended_count} missing line(s) added"] if appended_count else [])
+                          + ([f"{replaced_count} line(s) replaced"] if replaced_count else []))
     return f"{dest.name}: {label}{suffix}", True
 
 
@@ -2767,7 +2946,7 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
         return "nothing to commit"
     if plan:
         return f"would commit {len(rels)} path(s): {', '.join(rels)}"
-    _git_add_paths(rels, cwd=root)
+    actlib.git_pathspec_stdin(["add"], rels, cwd=root)
     diff = _git(["diff", "--cached", "--name-only"], cwd=root)
     if not diff.stdout.strip():
         return "nothing staged, no commit made"
@@ -2894,6 +3073,8 @@ def step_security_check_offer(root: Path, plan: bool) -> tuple[Optional[Path], s
         relevant["osv-scanner"] = tools["osv-scanner"]
     if "npm" in lock_files and "npm" in tools:
         relevant["npm"] = tools["npm"]
+    if "pnpm" in lock_files and "pnpm" in tools:
+        relevant["pnpm"] = tools["pnpm"]
     if "composer" in lock_files and "composer" in tools:
         relevant["composer"] = tools["composer"]
     if "pip-audit" in tools and any(

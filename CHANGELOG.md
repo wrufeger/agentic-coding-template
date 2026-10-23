@@ -36,6 +36,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   that loads at every start. `act-adopt` proposes to keep such files instead of merging them, which would lose
   their binding. The `explorer` and `builder` roles note that a path-bound rule loads only once a matching file is
   read or written through a file tool.
+- **Ten new coding rule sets:** PowerShell, Docker, CI (GitHub Actions, GitLab CI), Rust, C, C++, Kotlin, CSS (for
+  projects without Tailwind), JavaScript (for projects without TypeScript) and React. Each holds what goes beyond
+  general knowledge (typical agent mistakes, version-dependent rules, toolchain, tests). `init` switches them on
+  from marker files (`Dockerfile`/Compose files, `*.ps1`, workflow files, `Cargo.toml`, a Kotlin Gradle build or
+  version catalog, C and C++ sources, stylesheets without Tailwind, `package.json` with JavaScript sources,
+  `react`/`next` dependencies); `init-notes` name detected languages that have no set yet (Flutter, Rails, Ruby,
+  R, Laravel) with a pointer to `act-feedback`.
 
 ### Changed
 
@@ -55,6 +62,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   role and tier; a second run on the same day keeps it in the open daily report.
 - **`update` checks at the start that Git is 2.25 or newer** and stops with a message naming the version found,
   instead of failing at the commit after all files are written; `--plan` and `--no-commit` are not affected.
+- **The `security-check: deps` offer at `init` covers pnpm projects.**
 
 ### Fixed
 
@@ -119,6 +127,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   still kept.
 - **`update` reads file lists from git without path quoting,** so files with non-ASCII names are recognised and a
   deleted one reaches the update commit.
+- **A Kotlin project no longer gets the Java set** unless it also has Java sources; Android layouts and
+  multi-module builds are recognised.
+- **The free-text `stack` value switches a set on only for a whole name** (`python3`, `Vue3`, `PHP8` count, `C#`
+  and `objective-c` no longer switch on `c`); PostgreSQL, MySQL, SQLite and MariaDB switch on the SQL set.
+- **The summary of the `.gitattributes`/`.gitignore` block names replaced lines** separately from added ones.
 
 ### Security
 
