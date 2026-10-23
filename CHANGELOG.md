@@ -64,6 +64,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   space counts as whitespace), write each file through a temporary file and an atomic replace, skip symbolic
   links, and leave out `archive/legacy` whatever its letter case.
 
+### Security
+
+- **`secret-scan` catches a literal fallback after an environment lookup in more spellings:** Laravel
+  `env('X', 'v')`, keyword defaults (`default=`), `os.environ.pop`, `import.meta.env`, `Deno.env.get`, Ruby
+  `ENV[...]` and `ENV.fetch`, Python string prefixes and triple quotes, nested defaults, and lookup chains of more
+  than six names. An f-string that interpolates a value is not read as a literal.
+
 ## [2.2.0] - 2026-10-20
 
 Quick capture from the chat, entries with YAML frontmatter, a one-step archive that takes pasted images along, four

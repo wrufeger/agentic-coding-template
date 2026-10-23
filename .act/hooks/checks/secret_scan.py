@@ -69,7 +69,8 @@
 #          PHP `getenv('API_TOKEN') ?: '<value>'`; _ENV_FALLBACK_RE, keyed by the variable's name, and
 #          in a chain of lookups by every name in it; the default as the second argument
 #          `os.environ.get("API_TOKEN", "<value>")`, _ENV_DEFAULT_RE) -- both under the same key-name,
-#          length, placeholder and entropy gates; a single-quoted key (`{'token': '<value>'}`) counts
+#          length, placeholder and entropy gates; the lookups also cover `import.meta.env`, `Deno.env.get`, Ruby `ENV`,
+#          Laravel `env('API_TOKEN', '<value>')`, keyword defaults and Python string prefixes; a single-quoted key (`{'token': '<value>'}`) counts
 #          like a double-quoted one, and so does a PHP array entry (`'token' => '<value>'`, _ARROW_RE).
 #          All findings are named in the hold message, up to _MAX_FINDINGS one by one, then "+N more"
 #          with the total and the affected files, so one round of marking is enough;
@@ -258,8 +259,8 @@ _KEY_VALUE_RE = re.compile(
     r"""(?:"(?P<qkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})"|'(?P<sqkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})'|(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60}))
         \s*[:=]\s*
         (?:
-            "(?P<dq>[^"]{20,})"
-          | '(?P<sq>[^']{20,})'
+            (?P<dpre>[rRbBfFuU]{0,2})"(?P<dq>[^"]{20,})"
+          | (?P<spre>[rRbBfFuU]{0,2})'(?P<sq>[^']{20,})'
           | (?P<bare>[^\s'"#,;]{20,})
         )""",
     re.VERBOSE,
@@ -275,38 +276,63 @@ _URL_QUERY_RE = re.compile(
 # `os.getenv('API_TOKEN') or '<value>'`, `os.environ["API_TOKEN"] or "<value>"`): the key is the
 # environment variable's name, the value the quoted literal after `or`/`||`/`??`.
 #
-# The lookup is Python's `environ`/`getenv`, JavaScript's `process.env.NAME` / `process.env["NAME"]` or
-# PHP's `$_ENV["NAME"]`; the operator `or`, `||`, `??` or PHP's `?:`. A chain of lookups
+# The lookup is Python's `environ`/`getenv`, JavaScript's `process.env.NAME` / `process.env?.NAME` /
+# `process.env["NAME"]` / `import.meta.env.NAME` / Deno's `Deno.env.get("NAME")`, PHP's `$_ENV["NAME"]` /
+# `env('NAME')`, Ruby's `ENV['NAME']`; the operator `or`, `||`, `??` or PHP's `?:` (blanks allowed
+# inside). A lookup may be parenthesised, end in TypeScript's `!`, and an inline `/* ... */` comment may
+# sit between the operands. A chain of lookups
 # (`environ.get("API_TOKEN") or environ.get("X") or "<value>"`) is one match: every name in it is a
 # candidate key, since any of them may carry the secret. The literal is double-quoted, single-quoted
-# or a backtick string without `${`. Every gap is bounded, so the scan stays linear on one long line.
+# (Python string prefixes `r`/`b`/`f`/`u` and triple quotes included) or a backtick string without `${`.
+# Every gap is bounded, so the scan stays linear on one long line.
 _ENV_NAME = r"""["'][A-Za-z][A-Za-z0-9_.\-]{0,60}["']"""
+_BARE_NAME = r"[A-Za-z_][A-Za-z0-9_]{0,60}"
+_GAP = r"(?:\s|/\*[^*\n]{0,80}\*/){0,20}"
+_CLOSE = r"!?(?:\s{0,20}\))?"
 _ENV_LOOKUP = (
-    r"(?:(?:\bos\s{0,20}\.\s{0,20})?(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}" + _ENV_NAME + r"[^)\]]{0,200}[)\]]"
-    r"|process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}[A-Za-z_][A-Za-z0-9_]{0,60}"
-    r"|\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\])"
-    r"|\$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\])"
+    r"(?:(?:\bos\s{0,20}\.\s{0,20})?(?:environ(?:\s{0,20}\.\s{0,20}(?:get|pop))?|getenv)\s{0,20}[(\[]\s{0,20}" + _ENV_NAME + r"[^)\]]{0,200}[)\]]"
+    r"|(?:process\s{0,20}\.\s{0,20}env|import\s{0,20}\.\s{0,20}meta\s{0,20}\.\s{0,20}env)\s{0,20}"
+    r"(?:\??\.\s{0,20}" + _BARE_NAME + r"|(?:\?\.\s{0,20})?\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\])"
+    r"|\bDeno\s{0,20}\.\s{0,20}env\s{0,20}\.\s{0,20}get\s{0,20}\(\s{0,20}" + _ENV_NAME + r"\s{0,20}\)"
+    r"|\$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\]"
+    r"|(?<![\w$])ENV\s{0,20}\[\s{0,20}" + _ENV_NAME + r"\s{0,20}\]"
+    r"|(?<![\w.$>:])env\s{0,20}\(\s{0,20}" + _ENV_NAME + r"\s{0,20}\))"
 )
-_ENV_OPERATOR = r"(?:\bor\b|\|\||\?\?|\?:)"
-_QUOTED_LITERAL = r"""(?:"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})'|`(?P<bt>(?:[^`$]|\$(?!\{)){20,})`)"""
+_ENV_OPERATOR = r"(?:\bor\b|\|\||\?\?|\?\s{0,20}:)"
+_STR_PREFIX = r"[rRbBfFuU]{1,2}"
+_QUOTED_LITERAL = (
+    r"""(?:""" + _STR_PREFIX + r""")?(?:\"\"\"(?P<tdq>[^"]{20,})\"\"\"|\'\'\'(?P<tsq>[^']{20,})\'\'\'"""
+    r"""|"(?P<dq>[^"]{20,})"|'(?P<sq>[^']{20,})'|`(?P<bt>(?:[^`$]|\$(?!\{)){20,})`)"""
+)
 _ENV_FALLBACK_RE = re.compile(
-    r"(?P<chain>" + _ENV_LOOKUP + r"(?:\s{0,20}" + _ENV_OPERATOR + r"\s{0,20}" + _ENV_LOOKUP + r"){0,5})"
-    r"\s{0,20}" + _ENV_OPERATOR + r"\s{0,20}" + _QUOTED_LITERAL
+    r"(?P<chain>" + _ENV_LOOKUP + r"(?:" + _CLOSE + _GAP + _ENV_OPERATOR + _GAP + r"(?:\(\s{0,20})?" + _ENV_LOOKUP + r"){0,24})"
+    + _CLOSE + _GAP + _ENV_OPERATOR + _GAP + _QUOTED_LITERAL
 )
 # The variable names inside one matched chain (_ENV_FALLBACK_RE's "chain" group).
 _ENV_KEY_RE = re.compile(
-    r"""(?:environ(?:\s{0,20}\.\s{0,20}get)?|getenv)\s{0,20}[(\[]\s{0,20}["'](?P<k1>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
-      | process\s{0,20}\.\s{0,20}env\s{0,20}(?:\.\s{0,20}(?P<k2>[A-Za-z_][A-Za-z0-9_]{0,60})
-          | \[\s{0,20}["'](?P<k3>[A-Za-z][A-Za-z0-9_.\-]{0,60})["'])
-      | \$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}["'](?P<k4>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']""",
+    r"""(?:environ(?:\s{0,20}\.\s{0,20}(?:get|pop))?|getenv)\s{0,20}[(\[]\s{0,20}["'](?P<k1>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+      | (?:process\s{0,20}\.\s{0,20}env|import\s{0,20}\.\s{0,20}meta\s{0,20}\.\s{0,20}env)\s{0,20}
+          (?:\??\.\s{0,20}(?P<k2>[A-Za-z_][A-Za-z0-9_]{0,60})
+          | (?:\?\.\s{0,20})?\[\s{0,20}["'](?P<k3>[A-Za-z][A-Za-z0-9_.\-]{0,60})["'])
+      | \$_(?:ENV|SERVER)\s{0,20}\[\s{0,20}["'](?P<k4>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+      | Deno\s{0,20}\.\s{0,20}env\s{0,20}\.\s{0,20}get\s{0,20}\(\s{0,20}["'](?P<k5>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+      | (?<![\w$])ENV\s{0,20}\[\s{0,20}["'](?P<k6>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']
+      | (?<![\w.$>:])env\s{0,20}\(\s{0,20}["'](?P<k7>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']""",
     re.VERBOSE,
 )
 # The default as the lookup's own second argument (`os.environ.get("API_TOKEN", "<value>")`,
-# `os.getenv('API_TOKEN', '<value>')`, `os.environ.setdefault(...)`): the key is the first argument.
-_ENV_DEFAULT_RE = re.compile(
-    r"(?:environ\s{0,20}\.\s{0,20}(?:get|setdefault)|getenv)\s{0,20}\(\s{0,20}"
-    r"""["'](?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60})["']\s{0,20},\s{0,20}""" + _QUOTED_LITERAL
+# `os.getenv('API_TOKEN', '<value>')`, `os.environ.setdefault(...)`, `os.environ.pop("API_TOKEN", "<v>")`,
+# a keyword `default="<v>"` / `key="API_TOKEN"`, Laravel `env('API_TOKEN', '<v>')`, Ruby
+# `ENV.fetch('API_TOKEN', '<v>')`, and a nested default `environ.get("A", environ.get("API_TOKEN", "<v>"))`):
+# the keys are the first arguments of the calls in "head".
+_DEFAULT_FUNC = (
+    r"(?:environ\s{0,20}\.\s{0,20}(?:get|setdefault|pop)|getenv|(?<![\w.$>:])env|\bENV\s{0,20}\.\s{0,20}fetch)"
 )
+_DEFAULT_HEAD = r"(?:os\s{0,20}\.\s{0,20})?" + _DEFAULT_FUNC + r"\s{0,20}\(\s{0,20}(?:key\s{0,20}=\s{0,20})?" + _ENV_NAME + r"\s{0,20},\s{0,20}"
+_ENV_DEFAULT_RE = re.compile(
+    r"(?P<head>(?:" + _DEFAULT_HEAD + r"){1,6})(?:default\s{0,20}=\s{0,20})?" + _QUOTED_LITERAL
+)
+_QUOTED_NAME_RE = re.compile(r"""["']([A-Za-z][A-Za-z0-9_.\-]{0,60})["']""")
 # A PHP-style array entry (`'token' => '<value>'`), the key quoted or bare, the value quoted and
 # without a blank (a sentence is not a secret). The bare key only starts where no name character
 # precedes it -- otherwise a long run of letters is retried at every position.
@@ -476,6 +502,14 @@ def _is_expression_value(value: str, path: Optional[str], line: str = "", start:
     return any(shape.match(value) for shape in shapes)
 
 
+def _literal_of(match: "re.Match[str]") -> Optional[str]:
+    """The quoted literal of an _ENV_FALLBACK_RE / _ENV_DEFAULT_RE match, whichever quoting it used."""
+    for name in ("dq", "sq", "bt", "tdq", "tsq"):
+        if match.group(name):
+            return match.group(name)
+    return None
+
+
 def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, str]]:
     """(kind, matched value) for the first thing in `line` that looks like a secret, or None. `path`
     (the file the line came from, when known) decides whether an unquoted identifier is code or a
@@ -512,6 +546,9 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
         for match in _KEY_VALUE_RE.finditer(line, pos, endpos):
             key = match.group("qkey") or match.group("sqkey") or match.group("key")
             quoted = match.group("dq") or match.group("sq")
+            prefix = match.group("dpre") if match.group("dq") else match.group("spre")
+            if quoted and prefix and "f" in prefix.lower() and "{" in quoted:
+                continue  # an f-string with interpolation is an expression, not a literal
             value = quoted or match.group("bare")
             if counts(key, value, bool(quoted), match.start()):
                 return value
@@ -532,15 +569,16 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
     if found:
         return "high-entropy assignment", found
     for match in _ENV_FALLBACK_RE.finditer(line):
-        value = match.group("dq") or match.group("sq") or match.group("bt")
+        value = _literal_of(match)
         for key_match in _ENV_KEY_RE.finditer(match.group("chain")):
             key = next(name for name in key_match.groups() if name)
             if counts(key, value, True, match.start()):
                 return "high-entropy assignment", value
     for match in _ENV_DEFAULT_RE.finditer(line):
-        value = match.group("dq") or match.group("sq") or match.group("bt")
-        if counts(match.group("key"), value, True, match.start()):
-            return "high-entropy assignment", value
+        value = _literal_of(match)
+        for key in _QUOTED_NAME_RE.findall(match.group("head")):
+            if counts(key, value, True, match.start()):
+                return "high-entropy assignment", value
     for match in _ARROW_RE.finditer(line):
         key = match.group("qkey") or match.group("sqkey") or match.group("key")
         value = match.group("dq") or match.group("sq")
