@@ -160,6 +160,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `unzip -d` into a literal temp folder pass the write-scope check, as long as every entry of that folder, hidden
   ones and links included, lies inside the temp directory; globs earlier in the path, `..`, leading-dot globs and
   variables stay refused.
+- **A quoted here-doc for a program that is not a shell is no longer read as commands** when its opening line
+  also holds `[`, `${`, a backtick or `((`; a body fed to a shell (`bash <<'EOF'`, `sh -s`, `| bash`) is still
+  scanned. This also ends the recursive-delete false alarm on prose in such a body.
 
 ### Security
 
