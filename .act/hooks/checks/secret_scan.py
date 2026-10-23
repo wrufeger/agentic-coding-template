@@ -51,6 +51,15 @@
 #          key-name gate already keeps ordinary code/prose out, so the bar itself can sit lower). A
 #          line containing the marker `act:allow-secret`, or a value that reads as a placeholder
 #          (`<token>`, `${VAR}`, `xxx...`, `changeme`, `example`, ...), is never reported.
+#          For a file that cannot carry a comment (JSON), the project lists accepted lines in
+#          `docs/ai/local/secret-accepted.md`, one `- <path> <hash>: <reason>` per line (_ACCEPTED_REL;
+#          _load_accepted, _line_hash): <path> is root-relative with `/`, <hash> the first 16 hex digits
+#          of the SHA-256 of the finding's line as UTF-8 with surrounding whitespace removed and no line
+#          ending, so any other change to the line (or the same line in another file) is held again.
+#          The hold message prints the finished entry for each finding, never the value. Fail-closed: a
+#          file that cannot be read or decoded accepts nothing, a line that does not match the format is
+#          skipped, and an entry naming the list itself is ignored, so the list can never exempt its own
+#          lines (a value written into a reason is scanned like any other text).
 #          An *unquoted* value that is code rather than a literal is never measured, but only in a
 #          source-code file (_SOURCE_EXTENSIONS: .py .js .ts .vue .php .java .go .cs ... ; the path
 #          comes from the diff section / new-file name), never on a comment line (leading `#`,
@@ -159,9 +168,11 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import math
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -194,7 +205,7 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_ALLOW_MARK", "_ENV_ALLOWED", "_MAX_DIFF_BYTES", "_MAX_FINDINGS", "_MAX_COLLECTED", "_TIME_BUDGET",
+    "_ALLOW_MARK", "_ACCEPTED_REL", "_ACCEPTED_HASH_RE", "_LazyAccepted", "_diff_prefix_args", "_line_hash", "_load_accepted", "_ENV_ALLOWED", "_MAX_DIFF_BYTES", "_MAX_FINDINGS", "_MAX_COLLECTED", "_TIME_BUDGET",
     "_SOURCE_EXTENSIONS", "_MEMBER_ACCESS_RE", "_IDENTIFIER_RE", "_CALL_RE", "_is_source_file", "_incomplete_note",
     "_GIT_TIMEOUT", "_ALIAS_TIMEOUT", "_MAX_NESTED_DEPTH", "_NOTES_DIRNAME",
     "_SAFE_SESSION_ID_RE", "_KNOWN_PATTERNS", "_KEY_VALUE_RE", "_PLACEHOLDER_RE", "_HUNK_RE",
@@ -214,6 +225,13 @@ __all__ = [
 ]
 
 _ALLOW_MARK = "act:allow-secret"
+# The project's list of accepted lines (see the module docstring), relative to the repository root.
+_ACCEPTED_REL = "docs/ai/local/secret-accepted.md"
+_ACCEPTED_HASH_RE = re.compile(r"^[0-9a-f]{16}$")
+# The list is read only when a finding needs it, and only if it is a plain file of at most this size; a
+# line over _ACCEPTED_MAX_LINE characters is skipped (a list entry is one short line).
+_ACCEPTED_MAX_BYTES = 256 * 1024
+_ACCEPTED_MAX_LINE = 2000
 _ENV_ALLOWED = {".env.example", ".env.sample", ".env.template"}
 _MAX_DIFF_BYTES = 2 * 1024 * 1024
 # Findings named one by one in the hold message; the rest is counted ("+N more", total, files).
@@ -589,6 +607,83 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
     return None
 
 
+def _line_hash(content: str) -> str:
+    """The first 16 hex digits of the SHA-256 of `content` as UTF-8, surrounding whitespace removed
+    (the line ending is never part of it) -- the key of an entry in the accepted list."""
+    return hashlib.sha256(content.strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _normalized_rel(path: str) -> str:
+    rel = path.strip().replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    return rel
+
+
+def _parse_accepted_line(raw: str) -> Optional[tuple[str, str]]:
+    """(root-relative path, hash) of one `- <path> <hash>: <reason>` line, or None. Linear in the
+    line: split, never a backtracking pattern."""
+    line = raw.strip()
+    if len(line) > _ACCEPTED_MAX_LINE or not line.startswith("-"):
+        return None
+    head, colon, reason = line[1:].partition(":")
+    if not colon or not reason.strip():
+        return None
+    words = head.split()
+    if len(words) < 2 or not _ACCEPTED_HASH_RE.match(words[-1]):
+        return None
+    rel = _normalized_rel(" ".join(words[:-1]))
+    return (rel, words[-1]) if rel else None
+
+
+def _load_accepted(toplevel: Optional[str], deadline: Optional[float] = None) -> frozenset[tuple[str, str]]:
+    """The (root-relative path, line hash) pairs accepted in the project's list. Fail-closed: no
+    repository top level, anything but a plain file (a symlink, a pipe, a device, a directory), a file
+    over _ACCEPTED_MAX_BYTES, a missing, unreadable or undecodable file, or a deadline already past
+    gives an empty set; a line that does not match the format is skipped on its own. An entry for the
+    list itself is ignored (compared case-insensitively)."""
+    if not toplevel:
+        return frozenset()
+    path = Path(toplevel) / _ACCEPTED_REL
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _ACCEPTED_MAX_BYTES:
+            return frozenset()
+        with open(path, "rb") as handle:
+            text = handle.read(_ACCEPTED_MAX_BYTES + 1).decode("utf-8")
+    except (OSError, ValueError):
+        return frozenset()
+    if len(text) > _ACCEPTED_MAX_BYTES or (deadline is not None and time.monotonic() >= deadline):
+        return frozenset()
+    own = _ACCEPTED_REL.casefold()
+    accepted: set[tuple[str, str]] = set()
+    for raw in text.splitlines():
+        entry = _parse_accepted_line(raw)
+        if entry is not None and entry[0].casefold() != own:
+            accepted.add(entry)
+    return frozenset(accepted)
+
+
+class _LazyAccepted:
+    """The accepted list, read on the first lookup -- a commit without a finding never touches it."""
+
+    def __init__(self, toplevel: Optional[str], deadline: Optional[float]) -> None:
+        self._toplevel = toplevel
+        self._deadline = deadline
+        self._entries: Optional[frozenset[tuple[str, str]]] = None
+
+    def __contains__(self, item: object) -> bool:
+        if self._entries is None:
+            self._entries = _load_accepted(self._toplevel, self._deadline)
+        return item in self._entries
+
+
+def _diff_prefix_args() -> list[str]:
+    """Fixed `a/` and `b/` prefixes for every diff call: `diff.noprefix` or `diff.mnemonicPrefix` in a
+    configuration would otherwise change the file names the scan reads back."""
+    return ["--src-prefix=a/", "--dst-prefix=b/"]
+
+
 def _is_env_filename(path: str) -> bool:
     name = path.rsplit("/", 1)[-1].lower()
     if name in _ENV_ALLOWED:
@@ -606,6 +701,16 @@ def _format_finding(finding: dict) -> str:
     return f"{location} ({finding['kind']}){shown_value}"
 
 
+def _accept_hint(findings: list[dict]) -> str:
+    """For a line that cannot carry a comment: the finished entries for the accepted list, one per
+    finding with a line (path and hash, never the value), the reason left for the person to write."""
+    entries = sorted({(f["file"], f["hash"]) for f in findings if f.get("hash")})
+    if not entries:
+        return ""
+    lines = "; ".join(f"- {path} {digest}: <reason>" for path, digest in entries)
+    return f" — or, for a false alarm in a file without comments, add to {_ACCEPTED_REL}: {lines}"
+
+
 def _build_message(findings: list[dict]) -> str:
     shown = findings[:_MAX_FINDINGS]
     rest = findings[_MAX_FINDINGS:]
@@ -618,6 +723,7 @@ def _build_message(findings: list[dict]) -> str:
     return (
         "[act] commit held: possible secret in " + "; ".join(_format_finding(f) for f in shown)
         + more + " — remove it or mark the line act:allow-secret"
+        + _accept_hint(shown)
     )
 
 
@@ -718,7 +824,10 @@ def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]
     return entries
 
 
-def _scan_diff_text(diff_text: str, findings: list[dict], oversized: list[str]) -> None:
+def _scan_diff_text(
+    diff_text: str, findings: list[dict], oversized: list[str],
+    accepted: "frozenset[tuple[str, str]] | _LazyAccepted" = frozenset(),
+) -> None:
     """Append findings (up to _MAX_COLLECTED total) from `diff_text` in place, per file section —
     a section over _MAX_DIFF_BYTES is skipped and its name appended to `oversized` instead of
     scanned; every other section in the same diff is still scanned normally (item 7)."""
@@ -740,11 +849,17 @@ def _scan_diff_text(diff_text: str, findings: list[dict], oversized: list[str]) 
                     continue
                 hit = _match_secret(content, file)
                 if hit is not None:
+                    digest = _line_hash(content)
+                    if (_normalized_rel(file), digest) in accepted:
+                        continue
                     kind, value = hit
-                    findings.append({"file": file, "line": line_no, "kind": kind, "value": value})
+                    findings.append({"file": file, "line": line_no, "kind": kind, "value": value, "hash": digest})
 
 
-def _scan_new_file(path: Path, rel: str, findings: list[dict], oversized: list[str]) -> None:
+def _scan_new_file(
+    path: Path, rel: str, findings: list[dict], oversized: list[str],
+    accepted: "frozenset[tuple[str, str]] | _LazyAccepted" = frozenset(),
+) -> None:
     """Same content checks as _scan_diff_text, for a brand-new untracked file's whole content
     (there is no diff for it — everything in it is new). A file over _MAX_DIFF_BYTES is skipped
     and named in `oversized`, same as an oversized diff section."""
@@ -768,8 +883,11 @@ def _scan_new_file(path: Path, rel: str, findings: list[dict], oversized: list[s
             continue
         hit = _match_secret(content, rel)
         if hit is not None:
+            digest = _line_hash(content)
+            if (_normalized_rel(rel), digest) in accepted:
+                continue
             kind, value = hit
-            findings.append({"file": rel, "line": line_no, "kind": kind, "value": value})
+            findings.append({"file": rel, "line": line_no, "kind": kind, "value": value, "hash": digest})
 
 
 def _run_git(args: list[str], cwd: str, timeout: float) -> Optional[str]:
@@ -1249,22 +1367,23 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
     if toplevel is None:
         incomplete = timed_out = True  # not a repository (git commit itself would fail), or out of time
     git_cwd = toplevel or cwd
+    accepted = _LazyAccepted(toplevel, deadline)
     staged = _run_git(
-        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+        ["diff", "--cached", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
     )
     if staged is None:
         incomplete = timed_out = True
     else:
-        _scan_diff_text(staged, findings, oversized)
+        _scan_diff_text(staged, findings, oversized, accepted)
 
     if invocation["all"] and len(findings) < _MAX_COLLECTED:
         unstaged = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+            ["diff", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
         )
         if unstaged is None:
             incomplete = timed_out = True
         else:
-            _scan_diff_text(unstaged, findings, oversized)
+            _scan_diff_text(unstaged, findings, oversized, accepted)
 
     for entry in invocation["add_paths"]:
         if len(findings) >= _MAX_COLLECTED:
@@ -1276,13 +1395,13 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
         if raw_path != _WHOLE_TREE_PATHSPEC:
             # the whole-tree entry's own unstaged diff is the `all` pass above (always set with it)
             path_diff = _run_git(
-                ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
+                ["diff", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
                 git_cwd, budget(),
             )
             if path_diff is None:
                 incomplete = timed_out = True
             else:
-                _scan_diff_text(path_diff, findings, oversized)
+                _scan_diff_text(path_diff, findings, oversized, accepted)
 
         if len(findings) >= _MAX_COLLECTED or deadline - time.monotonic() <= 0:
             if deadline - time.monotonic() <= 0:
@@ -1306,7 +1425,7 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
             if deadline - time.monotonic() <= 0:
                 incomplete = timed_out = True
                 break
-            _scan_new_file(Path(toplevel) / rel, rel, findings, oversized)
+            _scan_new_file(Path(toplevel) / rel, rel, findings, oversized, accepted)
     if oversized:
         incomplete = True
     return findings, incomplete, oversized, timed_out

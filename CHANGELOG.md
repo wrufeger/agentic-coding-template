@@ -11,6 +11,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- **Commit secret scan: accepted false alarms in `docs/ai/local/secret-accepted.md`.** A line that cannot carry the
+  `act:allow-secret` comment (for example a JSON script entry whose name looks like a credential) can be accepted as
+  `- <path> <hash>: <reason>`; the hold message prints the finished entry. A changed line or another file is held
+  again, and a missing, oversized or unreadable list accepts nothing.
 - **Reads and writes outside the project root are checked.** The new check `outside-root` (rule
   `R-safe-outside-root`, `docs/ai/config.md` § Checks) refuses Read, Write, Edit, Grep, Glob and shell commands that
   name a path outside the project root, for the orchestrator and workers alike. Allowed without an entry: the folders
