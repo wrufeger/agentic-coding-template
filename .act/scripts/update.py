@@ -466,6 +466,21 @@ def _rule_id_diff(old_path: Optional[Path], new_path: Optional[Path]) -> tuple[l
     return added, changed, removed
 
 
+def step_list_new_coding_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
+    """Enter what the replaced .act/coding/ added into docs/project/coding_rules.md: a new rule set
+    as an unchecked line, a new group of a checked set as a checked line (rules.add_new_coding_entries).
+    Returns (summary, touched); nothing is written under plan."""
+    try:
+        messages = rules.add_new_coding_entries(root, write=not plan)
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"not checked ({exc.__class__.__name__}: {exc})", []
+    if not messages:
+        return "docs/project/coding_rules.md lists everything", []
+    verb = "would list" if plan else "listed"
+    summary = f"{verb} in docs/project/coding_rules.md: {'; '.join(messages)}"
+    return summary, ([] if plan else [root / rules.AREAS["coding"].project_file])
+
+
 def _print_content_diff(old_path: Path, new_path: Path, limit: int = 20) -> None:
     """Best-effort, capped unified diff for a changed non-rule file — rule/coding .md files keep
     the ID view instead (see the caller). Silently skipped for anything not decodable as UTF-8
@@ -2066,7 +2081,7 @@ _SELF_RELAUNCH_GUARD_ENV = "ACT_UPDATE_RESTARTED"
 _SELF_RELAUNCH_FETCHED_COMMIT_ENV = "ACT_UPDATE_FETCHED_COMMIT"
 _SELF_RELAUNCH_RESCUE_ENV = "ACT_UPDATE_RESCUE"
 _SELF_RELAUNCH_NOTES_ENV = "ACT_UPDATE_NOTES"
-_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py")
+_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py", "rules.py")
 
 
 def _scripts_fingerprint(root: Path) -> dict[str, str]:
@@ -2144,7 +2159,9 @@ def _finish_update(
     except Exception as exc:
         notes.append(f"own skill/role copies not checked ({exc.__class__.__name__}: {exc})")
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
-    _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}")
+    coding_summary, coding_touched = step_list_new_coding_entries(root, False)
+    sync_touched = [*sync_touched, *coding_touched]
+    _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}; coding rules: {coding_summary}")
 
     hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
     _print_step(7, hooks_gitfiles_summary)

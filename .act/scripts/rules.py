@@ -750,6 +750,58 @@ def sync_coding_imports(root: Path, write: bool = True) -> int:
     return changed
 
 
+def add_new_coding_entries(root: Path, write: bool = True) -> list[str]:
+    """List in docs/project/coding_rules.md what the template's .act/coding/ has and the file does
+    not: a rule set the file never mentions as "- [ ] use: .act/coding/<set>.md" (off, after the
+    last set), and a group of a checked set that the file does not list as "  - [x] `ID`" (at the
+    end of that set's groups). A group left unlisted counts as switched on anyway (classify), so
+    this only makes the file show what applies; boxes, reasons and every other line stay as they
+    are, and a second run finds nothing. Returns one message per addition (also with write=False,
+    which only reports); empty if the file or .act/coding/ is missing or lists no set at all."""
+    path = root / AREAS["coding"].project_file
+    coding_dir = root / ".act" / "coding"
+    if not path.is_file() or not coding_dir.is_dir():
+        return []
+    area = AREAS["coding"]
+    project = parse_project_file(path, area)
+    if not project.sets:
+        return []
+    listed = {strip_template_prefix(pset.path) for pset in project.sets}
+    messages: list[str] = []
+    inserts: list[tuple[int, list[str]]] = []  # (index to insert before, lines), file order
+
+    for pset in project.sets:
+        if not pset.enabled:
+            continue
+        template = resolve_template_set(pset)
+        if template is None:
+            continue
+        missing = [gid for gid in template.groups if gid not in pset.groups]
+        if missing:
+            last = max([pset.line, *(group.line for group in pset.groups.values())])
+            inserts.append((last, [f"  - [x] `{gid}`" for gid in missing]))
+            messages.append(f"{pset.path}: added group(s) {', '.join(missing)}")
+
+    new_sets = [p.name for p in sorted(coding_dir.glob("*.md")) if f"coding/{p.name}" not in listed]
+    if new_sets:
+        last_block_end = max(
+            max([pset.line, *(group.line for group in pset.groups.values())]) for pset in project.sets
+        )
+        inserts.append((last_block_end, [f"- [ ] use: .act/coding/{name}" for name in new_sets]))
+        messages.extend(f".act/coding/{name}: added as a rule set (off)" for name in new_sets)
+
+    if inserts and write:
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        # bottom-up, so an insertion never shifts the index of one still to do; at the same index
+        # the groups of the last set go in before the new sets' lines
+        for index, new_lines in sorted(inserts, key=lambda item: (item[0], item[1][0].startswith("- ")), reverse=True):
+            lines[index:index] = new_lines
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Import check — follows "@" imports from CLAUDE.md the way Claude Code does
 # (code.claude.com/docs/en/memory.md, "Import additional files"): relative to the file that holds

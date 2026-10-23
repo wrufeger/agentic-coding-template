@@ -5,12 +5,16 @@ Rule sets for whoever writes or reviews code in this project — read with
 `.act/scripts/rules.py`, or by hand if that script is unavailable: this file only says which sets
 and groups are in use, the rule text itself lives under `.act/coding/<set>.md`.
 
+A checked set is imported (`@` before its path, set at session start), so its whole file loads: an
+unchecked group in it is **off** — ignore its text. An unchecked set stays a bare path and is not
+loaded; `act-update` lists a rule set or group the template adds later here (a set unchecked, a group
+of a checked set checked).
+
 Check a box below to turn a rule set on, uncheck one to turn it off; the boxes below were
 pre-checked from what `init` detected in this project (see `docs/ai/config.md` § `stack` to
 correct it), adjust freely — the project always overrides the template (`R-work-override`). A
 checked set lists its groups underneath, also checked; uncheck a single group to switch it off,
-optionally with a reason after " — ". A checked set is imported (`@` before its path, set at
-session start), so its whole file loads: an unchecked group in it is **off** — ignore its text.
+optionally with a reason after " — ".
 
 ## Rule sets from the template
 

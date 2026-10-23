@@ -1511,7 +1511,7 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
                 if created:
                     copies[copy_key] = {
                         "source": src.relative_to(root).as_posix(),
-                        "sha256": actlib.sha256_file(copy_dest),
+                        "sha256": actlib.lock_hash(copy_dest.read_bytes()),
                     }
                 elif copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == copy_data:
                     # A hand-placed copy already sitting there, byte-identical to what this import
@@ -1520,7 +1520,7 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
                     # a later `update`/doctor.py does not flag it as an untracked duplicate.
                     copies[copy_key] = {
                         "source": src.relative_to(root).as_posix(),
-                        "sha256": actlib.sha256_file(copy_dest),
+                        "sha256": actlib.lock_hash(copy_dest.read_bytes()),
                     }
         if copies != lock.get("copies", {}):
             actlib.write_lock({"copies": copies})

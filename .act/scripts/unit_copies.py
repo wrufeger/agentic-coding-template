@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -198,7 +197,7 @@ def ensure_own_unit_copies(
             if key in deleted_before and not dest.is_file():
                 continue  # committed once, missing now: the project deleted it
             data = init.skill_copy_bytes(root, key, src, tiers_data, overrides)
-            entry = {"source": src.relative_to(root).as_posix(), "sha256": hashlib.sha256(data).hexdigest()}
+            entry = {"source": src.relative_to(root).as_posix(), "sha256": actlib.lock_hash(data)}
             if dest.is_file():
                 if _fold(dest.read_bytes()) == _fold(data):
                     recorded[key] = entry  # identical, hand-placed: taken over

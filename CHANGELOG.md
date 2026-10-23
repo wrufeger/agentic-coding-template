@@ -43,6 +43,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   version catalog, C and C++ sources, stylesheets without Tailwind, `package.json` with JavaScript sources,
   `react`/`next` dependencies); `init-notes` name detected languages that have no set yet (Flutter, Rails, Ruby,
   R, Laravel) with a pointer to `act-feedback`.
+- **`act-update` lists new coding sets and groups in `docs/project/coding_rules.md`.** A set the template adds
+  appears unchecked, a new group of a checked set appears checked; existing lines, boxes, reasons and own rules
+  stay as they are. Before, the update only reported them. The scaffold says right after its introduction that a
+  checked set is imported with `@`.
 
 ### Changed
 
@@ -132,6 +136,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The free-text `stack` value switches a set on only for a whole name** (`python3`, `Vue3`, `PHP8` count, `C#`
   and `objective-c` no longer switch on `c`); PostgreSQL, MySQL, SQLite and MariaDB switch on the SQL set.
 - **The summary of the `.gitattributes`/`.gitignore` block names replaced lines** separately from added ones.
+- **Copies recorded by `act-load-settings` and for own skills are hashed over their LF form,** like all other
+  copies.
 
 ### Security
 
