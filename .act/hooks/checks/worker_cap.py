@@ -485,7 +485,8 @@ def check_worker_cap(payload: dict) -> int:
     if denied:
         print(
             f"[act] cap of {cap} tool calls exceeded ({count + 1} so far) — "
-            "deliver your state via your final report",
+            "deliver your state via your final report (the orchestrator sets the cap with a line "
+            "`Cap: <n>` in the assignment; defaults and detail: .act/rules/topics/checks.md)",
             file=sys.stderr,
         )
         return 2

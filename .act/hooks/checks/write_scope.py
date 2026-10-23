@@ -154,7 +154,8 @@ def _root_relative_pattern(pattern: str, root: Path) -> tuple[Optional[str], Opt
     except (OSError, ValueError):
         message = (
             f"[act] write scope pattern is outside the project root: {pattern} "
-            "(a Write scope pattern is always project-root-relative, R-cost-delegate)"
+            "(a Write scope pattern is always project-root-relative, R-cost-delegate; syntax: "
+            ".act/rules/topics/checks.md)"
         )
         return None, message
     rel_str = rel.as_posix()
@@ -247,7 +248,7 @@ def _scope_pattern(pattern: str, root: Path) -> tuple[Optional[str], Optional[st
     message = (
         f"[act] write scope pattern is outside the project root: {pattern} "
         "(a Write scope pattern is project-root-relative, or leads into a directory listed in "
-        "permissions.additionalDirectories, R-cost-delegate)"
+        "permissions.additionalDirectories, R-cost-delegate; syntax: .act/rules/topics/checks.md)"
     )
     return None, message
 
@@ -781,7 +782,9 @@ def _write_scope_message(target: str, scope: dict, hint: str = "") -> str:
         allowed = ", ".join(scope.get("patterns") or []) or "none"
     message = (
         f"[act] outside this assignment's write scope: {target} (allowed: {allowed}; "
-        "Write scope patterns are project-root-relative)"
+        "Write scope patterns are project-root-relative). The assignment names its scope as one line "
+        "`Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: src/**, tests/*.py` (`dir/` means everything "
+        "under dir, `none` means read-only); syntax: .act/rules/topics/checks.md"
     )
     return f"{message} -- {hint}" if hint else message
 
@@ -892,7 +895,8 @@ def check_worker_write_scope(payload: dict) -> int:
             return 0  # scoping is not demonstrably in use nearby — nothing to fail closed against
         message = (
             "[act] could not bind this worker to its assignment's write scope, and a restricted "
-            "scope was registered recently — denying as a precaution (R-cost-delegate)"
+            "scope was registered recently — denying as a precaution (R-cost-delegate; the assignment needs a "
+            "`Write scope: <glob>[, <glob> ...]` line, see .act/rules/topics/checks.md)"
         )
         if mode == "warn":
             print(message)

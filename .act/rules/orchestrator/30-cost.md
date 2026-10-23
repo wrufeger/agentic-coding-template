@@ -8,78 +8,47 @@ summary: tier, estimate in minutes and tkn fresh/cache, a mechanically checked c
 
 Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
 implementation, `elevated` for review/security judgment, `expert` only for an escalation after two
-failed attempts on the same task — an estimate in the fixed form `~<n> min · ~<n> tkn fresh · ~<n> tkn
-cache` (wall-clock minutes; `fresh` = input, cache-writing and output tokens, `cache` = cache-read tokens; never
-person-days), based on `python .act/scripts/usage.py --estimates` where it has measured runs of that role/tier —
-and a cap. Name the cap as its
-own `Cap: <n>`, checked mechanically, not from memory (`worker-cap`, `docs/ai/config.md` § Checks).
-`Cap:` is recognized either on its own line or right after a `·`/`|`/`;`/`,` further into a line, so
-a compact header works too, e.g. `Tier: standard · Estimate: ~30 min · ~400k tkn fresh · ~8M tkn cache ·
-Cap: 95.` Leaving the line out falls back to the tier's own default: `light` 10, `standard` 40, `elevated`
-60, `high`/`expert` 80; with neither a `Cap:` nor a `Tier:` line, `standard`. The worker gets one
-note on reaching the cap ("cap reached — deliver your current state now") and is refused from 1.5×
-the cap onward — wrap up and report rather than push past it. Need more reasoning for one assignment
-without raising the role's tier itself: name its `-high` variant instead (same tier, one reasoning
-step further — see `docs/ai/config.md` § Roles for a permanent override). Read large files in
-excerpts rather than in full. Cut assignments small: a judgment assignment (a verdict per entry or
-per file) covers about 10–12 units per worker — with more, the verdicts turn shallow while every
-further tool call re-reads a growing context; rework goes out as a new, short assignment instead of
-continuing a worker whose context is already full; plain reading and counting suits `light`. Only
-the orchestrator starts workers; a worker's proposal to split its task comes back to the
-orchestrator, which cuts and starts the new assignments itself.
+failed attempts on the same task — an estimate in the fixed form `~<n> min · ~<n> tkn fresh · ~<n>
+tkn cache` (wall-clock minutes; `fresh` = input, cache-writing and output tokens, `cache` =
+cache-read tokens; never person-days), based on `python .act/scripts/usage.py --estimates` where it
+has measured runs of that role/tier — and a cap. Name the cap as its own `Cap: <n>`, checked
+mechanically, not from memory (`worker-cap`, `docs/ai/config.md` § Checks). Need more reasoning for
+one assignment without raising the role's tier itself: name its `-high` variant instead (same tier,
+one reasoning step further — see `docs/ai/config.md` § Roles for a permanent override). Read large
+files in excerpts rather than in full. Cut assignments small: a judgment assignment (a verdict per
+entry or per file) covers about 10–12 units per worker — with more, the verdicts turn shallow while
+every further tool call re-reads a growing context; rework goes out as a new, short assignment
+instead of continuing a worker whose context is already full; plain reading and counting suits
+`light`. Only the orchestrator starts workers; a worker's proposal to split its task comes back to
+the orchestrator, which cuts and starts the new assignments itself. Details (compact header, default
+cap per tier, the note at the cap and the refusal beyond it): `topics/checks.md`.
 
-Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
-patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`
-already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
-shorthand, `dir/` (read the same way); brackets in a path are taken literally, so
-`server/api/[id]/**` names the folder called `[id]`, as framework route folders are — a shell
-command should quote such a path, and a shell target whose wildcard expansion reaches outside the
-scope is refused. A relative pattern (`src/**`) is the usual case; an absolute path inside the
-project root (`D:/dev/x/project/src/**`) is accepted too and read as if it had been written
-relative — one outside the project root is refused, unless it lies in a directory listed in
-`permissions.additionalDirectories` (a sibling checkout: `../other/.act/**` or its absolute path).
-`Write scope: none` means read-only: no writes in the project, only into the system temp directory as a path
-written out (`/tmp/...` in Bash, or its absolute path) — every worker may write there, whatever its scope, unless
-the project itself lies inside it. Leaving the line out means no restriction
-beyond the template's own `.act/` write-guard.
-`worker-write-scope` (`docs/ai/config.md` § Checks) checks it mechanically, the same way the cap is
-checked mechanically rather than from memory — for a Bash command this is best-effort (it catches
-redirection and the common write commands, not a full shell parse), not a complete guarantee:
-writes made from inside a program (`python -c "open(...)"`, a script file) stay invisible to it.
+Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line, patterns
+relative to the project root. `Write scope: none` means read-only: no writes in the project, only
+into the system temp directory as a path written out (`/tmp/...` in Bash, or its absolute path) —
+every worker may write there, whatever its scope, unless the project itself lies inside it. Leaving
+the line out means no restriction beyond the template's own `.act/` write-guard. Checked
+mechanically by `worker-write-scope` (`docs/ai/config.md` § Checks); pattern syntax and limits:
+`topics/checks.md`.
 
 Workers running at the same time get separate write scopes; assignments whose scopes overlap run one
-after the other. `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope
-overlaps that of a worker still running: `none` overlaps nothing, a missing `Write scope:` line counts
-as everything, and the overlap is estimated cautiously from the fixed leading directory of the
-patterns. A finished worker or a failed start frees its scope; a crashed worker does so after three
-hours, or when its file under `.act-local/worker-scopes/` is deleted. Limit: a worker continued with
-a message (`SendMessage`) is invisible to the check once it has ended, so the orchestrator keeps the
-scopes apart itself. Whoever stops a worker and assigns it anew (`R-cost-amend`) first deletes its
-file there, if it still stands.
+after the other. Checked mechanically by `worker-scope-overlap` (`docs/ai/config.md` § Checks).
 
 An assignment that reads another worker's result names it as its own line, `Depends on: <whose
-result>`. The orchestrator starts it only after that worker has ended — only a rule, since a hook
-can refuse a start but not wait.
-
-When several workers are to read the same material, the orchestrator reads it once and writes what
-it found to `.act-local/notes/brief-<slug>.md` (source, state, `<path>:<line>` references), then names
-that file in each assignment. The workers read the note instead of the sources and look up only what
-is missing from it. The note is the orchestrator's own text, not foreign content
-(`R-safe-foreign-text`): the one-day rule applies to the sources it rests on, the note itself only
-to the workers of this one start.
+result>`. It starts only after that worker has ended. When several workers are to read the same
+material, the orchestrator writes what it found once to a brief note
+`.act-local/notes/brief-<slug>.md` and names that file in each assignment.
 
 ## `R-cost-wait` — Let a started worker finish
 
 summary: letting a started worker finish; checking in only past the estimate
 
-A worker reports back on its own when it is done; polling its status repeatedly does not speed it
-up — it costs tokens on every call and clutters the chat (trigger: over forty consecutive idle
-status checks in one real case, none of them changing anything). Start the assignment, then either
-work on something independent or wait; check in only once runtime clearly exceeds the estimate
-given in the assignment — not on a hunch. Mechanically refused from the second status query in a
-row (`status-poll`, `docs/ai/config.md` § Checks) — any other tool use in between resets it. An
-addition from the human that concerns the running assignment does not wait for its end
-(`R-cost-amend`).
+A worker reports back on its own when it is done; polling its status repeatedly does not speed it up
+— it costs tokens on every call and clutters the chat. Start the assignment, then either work on
+something independent or wait; check in only once runtime clearly exceeds the estimate given in the
+assignment — not on a hunch. Checked mechanically by `status-poll` (`docs/ai/config.md` § Checks),
+which refuses a second status query in a row. An addition from the human that concerns the running
+assignment does not wait for its end (`R-cost-amend`). Details: `topics/checks.md`.
 
 ## `R-cost-amend` — Amend a running assignment instead of queuing a second
 

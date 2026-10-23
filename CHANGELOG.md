@@ -112,6 +112,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   their `-high` variants (your own roles and an explicit `omitClaudeMd: false` stay as they are) and the hook entries
   to `.claude/settings.json`. `rules.py --worker` shows the parts. Claude Code before 2.1.271 ignores the field, so
   workers there get the rules twice; details in `.act/rules/topics/worker-rules.md`.
+- **The seven mechanically checked rules are shortened to what they forbid or require**
+  (`R-safe-no-secret-read`, `R-safe-outside-root`, `R-safe-git-reset`, `R-safe-git-discard`, `R-safe-git-metadata`,
+  `R-cost-delegate`, `R-cost-wait`): recognition details, limits, switches and the `Write scope:`/`Cap:` syntax moved
+  word for word to the new `.act/rules/topics/checks.md`, about 4.3k characters less in every session and worker.
+  The block messages of the write-scope, cap and scope-overlap checks name the syntax themselves and point there.
 
 ### Fixed
 

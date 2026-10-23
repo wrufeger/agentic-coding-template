@@ -38,9 +38,7 @@ keystores), cloud and registry credentials (`~/.ssh`, `~/.aws`, `~/.config/gclou
 whatever enters the context is sent on with every later step. Ask the owner for the non-secret
 values you need, or read `.env.example`, `.env.sample` or `.env.template`; public keys (`*.pub`)
 stay free. Applies to orchestrator and workers alike. Checked mechanically by `secret-read`
-(`docs/ai/config.md` § Checks); the owner may set it to `warn` or `off` there, or for one run with
-`ACT_SECRET_READ` in the environment. Limit: a program that opens the file itself (`python
-script.py`, `docker run --env-file`) is invisible to the check.
+(`docs/ai/config.md` § Checks). Details (switches, limit): `topics/checks.md`.
 
 ## `R-safe-outside-root` — Stay inside the project
 
@@ -48,18 +46,14 @@ summary: read and write only in the project root and its allowed places; any oth
 
 Read and write only inside the project root and the places allowed for it: the folders in
 `permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for this
-project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders (`~/.claude/plugins/`, `~/.claude/skills/`), and the
-entries of `outside-root-allow` (`docs/ai/config.md` § Checks; `(read)` after a path allows reading
-only). Any other place — a neighbouring repository, another project, the home
-directory — only on the owner's word for this case, and then as an entry in `outside-root-allow` or
-`additionalDirectories`, never as a one-off workaround. `act-adopt` is the one exception: the owner
-starts the first scan with the `!` prefix, which opens the target folder for 24 hours or until
-`--abort` (also past `--finish`) through a marker under `.act-local/outside-allow/` that nobody but the
-adopt scripts writes; `--apply` only refreshes a valid marker for the same target. Applies to every role and
-tool. Checked mechanically by `outside-root` (`docs/ai/config.md` § Checks); the owner may set it to
-`warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in the environment. Limits: the shell
-check is best effort, a program that opens files itself (`python script.py`, `docker run -v`) is
-invisible to it, and MCP tools that take a path are not checked.
+project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders
+(`~/.claude/plugins/`, `~/.claude/skills/`), and the entries of `outside-root-allow`
+(`docs/ai/config.md` § Checks; `(read)` after a path allows reading only). Any other place — a
+neighbouring repository, another project, the home directory — only on the owner's word for this
+case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
+workaround. Applies to every role and tool. Checked mechanically by `outside-root`
+(`docs/ai/config.md` § Checks). Details (`act-adopt` exception, switches, limits):
+`topics/checks.md`.
 
 ## `R-safe-no-secret-log` — Never credentials or personal data in a log
 
@@ -90,47 +84,38 @@ No recursive deletion through a shell command. Clean up with the language's own 
 summary: status check first, never over open changes, verify the discarded commit, no experiments in a dirty tree
 
 Before `git reset --hard`, run `git status --porcelain`. With open changes — including untracked
-files, which `git reset --hard` overwrites silently too — never run it: use `git stash -u` or
-`git reset --soft` instead. Check what would be discarded first, with `git log -1` or `git
-reflog`. Never run Git experiments in a tree with open changes. Checked mechanically by
-`git-reset-hard` (`docs/ai/config.md` § Checks).
+files, which `git reset --hard` overwrites silently too — never run it: use `git stash -u` or `git
+reset --soft` instead. Check what would be discarded first, with `git log -1` or `git reflog`. Never
+run Git experiments in a tree with open changes. Checked mechanically by `git-reset-hard`
+(`docs/ai/config.md` § Checks). Details: `topics/checks.md`.
 
 ## `R-safe-git-discard` — Don't discard work with other git commands either
 
 summary: no clean -f, folder checkout/restore on changes, stash drop/clear, force push to the default branch, or branch -D of an unmerged branch
 
-Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f` (or
-`git clean` with `clean.requireForce` switched off) when `git clean -n` with the same switches lists
-something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`, `git checkout -f`,
-`git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
-forced push (`-f`, `--force-with-lease`, `+refspec`, `--mirror`) to the default branch, or deleting
-it on the remote (`git push origin :main`, `--delete`); `git branch -D` of a branch `git branch
---no-merged` lists, and `git branch -M`/`-C` over one. Single files stay free. A call too long to
-check in time, or a check that fails, is refused — run smaller calls. Commit, `git stash`, or have
-the owner do it instead. Checked mechanically by `git-discard` (`docs/ai/config.md` § Checks).
+Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f`;
+`git checkout -- <folder>`, `git checkout .`, `git restore <folder>`, `git checkout -f` and `git
+switch -f` over uncommitted changes; `git stash drop` and `git stash clear`; a forced push to the
+default branch, or deleting it on the remote; `git branch -D` of an unmerged branch. Single files
+stay free. Commit, `git stash`, or have the owner do it instead. Checked mechanically by
+`git-discard` (`docs/ai/config.md` § Checks). Details (exact conditions, refused calls):
+`topics/checks.md`.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
 summary: no write to .git/hooks or .git/config, no git config key that runs code, no folderOpen task; workers also not to .claude settings, roles, skills, .vscode/tasks.json, .devcontainer, .envrc, .mcp.json
 
-Nobody writes `.git/hooks/**` or `.git/config` (also `config.worktree`, submodule and
-linked-worktree git directories), and copies nothing into them — neither with a file tool nor a
-shell command, nor with `git config`, `git -c` or `GIT_CONFIG_KEY_<n>` for a key that starts a
-program (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, a `!` alias, `include.path`, a
-filter, textconv or credential helper, an `ext::` remote URL, `protocol.allow=always` …), and
-`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` or `GIT_CONFIG` pointing at `.git/config` counts like
-`--file`; `git init --template` is refused the same way. A hook or such a key runs at the next git
-command, past every other check and beyond the session. A worker also never writes
-`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**` or `.claude/commands/**`, in the
-project or in `~/.claude`; the orchestrator changes them on the human's request. Reading, `git
-config --get`/`--list`, `--global`/`--system` and unsetting stay free. Files that start code when the
-folder is opened are covered too: a worker never writes `.vscode/tasks.json`, `.devcontainer/**`,
-`.devcontainer.json`, `.envrc` or `.mcp.json` (file tool or shell, also by copying into their
-directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds a task that runs
-on `folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool (judged on the
-text the edit produces); the human writes such a file themselves. Limit: what a program or
-script writes itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
-Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
+Nobody writes `.git/hooks/**` or `.git/config`, or copies anything into them — with a file tool, a
+shell command or a `git config` key that starts a program (`core.hooksPath`, `core.fsmonitor`,
+`core.sshCommand`, a `!` alias …). A hook or such a key runs at the next git command, past every
+other check and beyond the session. A worker also never writes `.claude/settings*.json`,
+`.claude/agents/**`, `.claude/skills/**` or `.claude/commands/**`, in the project or in `~/.claude`;
+the orchestrator changes them on the human's request. Reading, `git config --get`/`--list`,
+`--global`/`--system` and unsetting stay free. Files that start code when the folder is opened are
+covered too: a worker never writes `.vscode/tasks.json`, `.devcontainer/**`, `.devcontainer.json`,
+`.envrc` or `.mcp.json`, and nobody adds a task that runs on `folderOpen`; the human writes such a
+file themselves. Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
+Details (every key, path and form covered, limit): `topics/checks.md`.
 
 ## `R-safe-dev-server` — The owner's dev server is theirs
 
