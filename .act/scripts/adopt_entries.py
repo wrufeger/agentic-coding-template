@@ -201,14 +201,16 @@ def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
 def write_proposal(root: Path, item: dict) -> Path:
     """Write one proposal file under docs/ai/proposals/ — not one of entries.py's own kinds (no
     id, no KIND_DIR entry): the skeleton's own docs/ai/proposals/README.md asks for a header
-    naming author, date and target, one file per proposed change. Reuses entries.py's own
+    (frontmatter, like every other entry) naming author, date and target, one file per proposed
+    change; readers accept the older plain form too. Reuses entries.py's own
     _slugify()/_create_unique() so a name collision never overwrites an existing file — a numeric
     suffix is appended instead, same as every other kind here."""
     entry_dir = root / PROPOSAL_DIR
     entry_dir.mkdir(parents=True, exist_ok=True)
     today = date.today().isoformat()
-    header = f"author: {item['author']}\ndate: {today}\ntarget: {item['target']}\n\n"
-    text = header + f"# {item['title']}\n\n" + item["body"]
+    header = actlib.format_header([f"author: {item['author']}", f"date: {today}", f"target: {item['target']}"],
+                                  actlib.writes_frontmatter(PROPOSAL_KIND))
+    text = header + f"\n# {item['title']}\n\n" + item["body"]
     return entries._create_unique(entry_dir, f"{today}-{entries._slugify(item['title'])}.md", text)
 
 

@@ -98,6 +98,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The `security-check: deps` offer at `init` covers pnpm projects.**
 - **`R-human-text` names one exception:** `act-compact` may shorten the assistant's own text in the sections of
   an archive collection file; every line the human wrote stays verbatim.
+- **Proposals under `docs/ai/proposals/` carry a frontmatter header** (`---` around `author`, `date`, `target`) like
+  every other entry, including those written by the adoption content step, so they keep that form when archived.
+  Older proposals with the plain header lines are still read.
 
 ### Fixed
 
