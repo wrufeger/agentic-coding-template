@@ -296,6 +296,20 @@ def _task_text(task: dict) -> str:
     return f"{title} — {task['state']}" if task["state"] else title
 
 
+def _order_tasks(tasks: list[dict]) -> list[dict]:
+    """Most recently worked first: the latest dated state line leads, started tasks come before
+    unstarted ones at equal stamps, the rest keeps its created order (the sorts are stable)."""
+    ordered = list(tasks)
+    ordered.sort(key=lambda t: not t["started"])
+    ordered.sort(key=lambda t: parse_state_line(t["state"])[0] or datetime.min, reverse=True)
+    return ordered
+
+
+def _task_line(task: dict) -> str:
+    """One task as shown on the board: its id before the text when it has one."""
+    return f"{task['id']} {_task_text(task)}" if task.get("id") else _task_text(task)
+
+
 def task_wait_hours(config: dict[str, str]) -> float:
     """The `task-wait-hours` config value as a number of hours; a missing, malformed or non-positive
     value (or one that is not a finite number) counts as DEFAULT_TASK_WAIT_HOURS."""
@@ -463,7 +477,7 @@ def read_other_boards(root: Path, own_name: str) -> list[tuple[str, list[str]]]:
             if line.startswith("## "):
                 inside = line.strip() == "## Open tasks"
                 continue
-            if inside and line.startswith("- ") and line.strip() != "- (none)":
+            if inside and line.startswith("- ") and line.strip() != "- (none)" and not line.startswith("- … +"):
                 tasks.append(line[2:].strip())
         found.append((path.stem[len("board-"):], tasks))
     return found
@@ -794,9 +808,7 @@ def render_excerpt(root: Path, limit: int = EXCERPT_LIMIT, board_file: str = "do
         answered = [_format_entry(e) for e in answered_all[:ANSWERED_LIMIT]]
     if all_tasks is not None:
         own = [t for t in all_tasks if _is_own_task(t, my_identity)]
-        own.sort(key=lambda t: not t["started"])  # stable: started tasks first ...
-        own.sort(key=lambda t: parse_state_line(t["state"])[0] or datetime.min, reverse=True)  # ... latest state first
-        tasks = [f"{t['id']} {_task_text(t)}" if t["id"] else _task_text(t) for t in own]
+        tasks = [_task_line(t) for t in _order_tasks(own)]
     if not (waiting or answered or tasks):
         return ""
     more = f"… +{{n}} more (full board: {board_file})"
@@ -915,11 +927,17 @@ def main(argv: list[str]) -> int:
     inbox_entries = read_inbox_entries(root)
     all_tasks = read_tasks(root)
     task_titles: Optional[list[str]] = None
+    task_count = 0
     others: Optional[list[str]] = None
     if all_tasks is not None:
         own_tasks = [t for t in all_tasks if _is_own_task(t, my_identity)]
-        task_titles = [_task_text(t) for t in own_tasks[:TASKS_LIMIT]]
+        ordered_tasks = _order_tasks(own_tasks)
+        task_titles = [_task_line(t) for t in ordered_tasks[:TASKS_LIMIT]]
+        task_count = len(task_titles)
+        if len(ordered_tasks) > TASKS_LIMIT:
+            task_titles.append(f"… +{len(ordered_tasks) - TASKS_LIMIT} more")
     known_titles = [t["title"] for t in (all_tasks or [])]
+    known_titles += [f"{t['id']} {t['title']}" for t in (all_tasks or []) if t.get("id")]
     other_tasks = [t for t in (all_tasks or []) if not _is_own_task(t, my_identity)]
     others_own_files: list[str] = []
     if others_value == "on":
@@ -1009,7 +1027,6 @@ def main(argv: list[str]) -> int:
     waiting_total = (
         waiting_mine_total + waiting_all_total + waiting_other_count if waiting_mine is not None else 0
     )
-    task_count = len(task_titles) if task_titles is not None else 0
     backlog_count = len(backlog_titles) if backlog_titles is not None else 0
     rel = board_path.relative_to(root).as_posix()
     print(

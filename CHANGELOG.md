@@ -48,6 +48,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   --exclude-standard` in a git checkout, so a vendor, IDE or media folder that git ignores no longer inflates them.
 - **Skills started by typing their slash command count in feedback usage.** Before, only skills the model invoked
   itself were counted; built-in and own commands stay out, as before.
+- **The board no longer drops tasks silently.** Open tasks list the most recently worked task first, show the task
+  id before the title, and end with `… +N more` when there are more than five; the session-start excerpt does the same.
 
 ## [2.2.0] - 2026-10-20
 
