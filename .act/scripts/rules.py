@@ -177,6 +177,9 @@ KNOWN_OTHER_HEADINGS = {
 }
 
 
+LOCAL_PREFIX = "docs/ai/local/"
+
+
 def normalize_set_path(raw: str) -> str:
     """A set path as written in a project file, in any of its forms — "@../../.act/coding/x.md"
     (an import, relative to the project file), the older "@.act/coding/x.md", "`...`" or a
@@ -190,18 +193,39 @@ def normalize_set_path(raw: str) -> str:
     return path
 
 
-def import_path(set_path: str, project_file: str) -> str:
+def import_path(set_path: str, project_file: str, root: Optional[Path] = None) -> str:
     """Root-relative `set_path` as an "@" import written from `project_file` (root-relative):
     Claude Code resolves imports relative to the importing file, so docs/ai/rules.md imports
-    ".act/rules/shared/00-core.md" as "@../../.act/rules/shared/00-core.md"."""
-    return "@" + "../" * project_file.count("/") + normalize_set_path(set_path)
+    ".act/rules/shared/00-core.md" as "@../../.act/rules/shared/00-core.md". With `root`, the
+    import names the file that backs the set (loaded_set_path), so a local override or a set of
+    the project's own is the one Claude Code loads."""
+    path = loaded_set_path(set_path, root) if root is not None else normalize_set_path(set_path)
+    return "@" + "../" * project_file.count("/") + path
 
 
 def strip_template_prefix(path: str) -> str:
-    """Turn a set path as written in the project file (e.g. ".act/coding/nuxt.md") into the
-    template-relative path actlib.resolve() expects (e.g. "coding/nuxt.md")."""
-    if path.startswith(".act/"):
-        return path[len(".act/"):]
+    """Turn a set path as written in the project file (e.g. ".act/coding/nuxt.md" or
+    "docs/ai/local/coding/nuxt.md") into the template-relative path actlib.resolve() expects
+    (e.g. "coding/nuxt.md"), which then finds the local file before the template's."""
+    for prefix in (".act/", LOCAL_PREFIX):
+        if path.startswith(prefix):
+            return path[len(prefix):]
+    return path
+
+
+def loaded_set_path(set_path: str, root: Path) -> str:
+    """Root-relative path of the file that actually backs a set path: the project's own file
+    under docs/ai/local/ when it exists (a new set, or an override of a template set), else the
+    template's under .act/. A path outside both trees, or one with no file behind it, stays as
+    written, so a missing target still shows up as unresolved."""
+    path = normalize_set_path(set_path)
+    rel = strip_template_prefix(path)
+    if rel == path:
+        return path
+    if (root / LOCAL_PREFIX / rel).is_file():
+        return LOCAL_PREFIX + rel
+    if (root / ".act" / rel).is_file():
+        return ".act/" + rel
     return path
 
 
@@ -687,10 +711,11 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
 # unchecked one stays a bare path, which Claude Code never follows
 # ---------------------------------------------------------------------------
 
-def coding_set_line(line: str) -> str:
+def coding_set_line(line: str, root: Optional[Path] = None) -> str:
     """One "- [x] use: <path>" line of docs/project/coding_rules.md in its canonical form: the
     path as an import when the box is checked, bare when not. Anything after the path, the
-    indentation and the checkbox itself are kept; a line that is no set line comes back as is."""
+    indentation and the checkbox itself are kept; a line that is no set line comes back as is.
+    With `root`, a checked set is imported from the file that backs it (import_path)."""
     checkbox = RE_CHECKBOX.match(line)
     if not checkbox or checkbox.group("indent"):
         return line
@@ -698,7 +723,7 @@ def coding_set_line(line: str) -> str:
     if not use:
         return line
     set_path = normalize_set_path(use.group("path"))
-    wanted = import_path(set_path, AREAS["coding"].project_file) \
+    wanted = import_path(set_path, AREAS["coding"].project_file, root) \
         if checkbox.group("mark") in ("x", "X") else set_path
     start, end = checkbox.start("rest") + use.start("path"), checkbox.start("rest") + use.end("path")
     return line[:start] + wanted + line[end:]
@@ -713,7 +738,7 @@ def sync_coding_imports(root: Path, write: bool = True) -> int:
         return 0
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    fixed = [coding_set_line(line) for line in lines]
+    fixed = [coding_set_line(line, root) for line in lines]
     changed = sum(1 for old, new in zip(lines, fixed) if old != new)
     if changed and write:
         with open(path, "w", encoding="utf-8", newline="\n") as handle:

@@ -41,6 +41,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   (`.vscode/tasks.json`, `.devcontainer/**`, `.devcontainer.json`, `.envrc`, `.mcp.json`, `folderOpen` tasks).
 - **`act-adopt` keeps a `.junie/guidelines.md` that only points to `AGENTS.md` or `CLAUDE.md`** instead of
   proposing to adopt it; Junie still gets no bridge.
+- **The doctor's tier proposal is remembered.** `doctor.py --inbox` notes count and day in
+  `.act-local/tier-proposals.json` and files the same proposal again only after at least 8 more outcomes for that
+  role and tier; a second run on the same day keeps it in the open daily report.
 
 ### Fixed
 
@@ -78,6 +81,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   hyphenated words.** `sql-fstring` and `sql-concat` require a statement structure (`SELECT … FROM`, `INSERT
   INTO`/`VALUES`, `UPDATE … SET`, `DELETE … FROM`); aliases, placeholders, optimizer hints and statements split
   across concatenated literals are still caught.
+- **A project's own coding set, or a local override of a template set, under `docs/ai/local/coding/` works.** It
+  can be switched on in `docs/project/coding_rules.md`; the import names the file actually loaded (local before
+  template), and `rules.py --validate` and the doctor accept it.
+- **A hand-edited usage store with non-numeric outcome counts no longer breaks the doctor's tier check.**
 
 ### Security
 

@@ -1111,11 +1111,12 @@ def check_imports(root: Path) -> list[Finding]:
                      f"load — add {wanted} here, or uncheck the sets"),
         )]
     for pset in (coding.sets if coding is not None else []):
-        if pset.enabled and pset.path not in loaded:
+        wanted_path = rules.loaded_set_path(pset.path, root)
+        if pset.enabled and wanted_path not in loaded:
             findings.append(Finding(
                 path=rules.AREAS["coding"].project_file, line=pset.line, kind="import",
                 message=(f"checked set {pset.path} is not loaded by Claude Code — write it as "
-                         f"{rules.import_path(pset.path, coding_rel)} (the session start does this)"),
+                         f"{rules.import_path(pset.path, coding_rel, root)} (the session start does this)"),
             ))
     return findings
 
@@ -1310,6 +1311,99 @@ def check_manifest_drift(root: Path) -> list[Finding]:
 # reviewing role, so lowering a tier stays the owner's own idea.
 _TIER_PROPOSAL_MIN_RAISE = 8
 _TIER_PROPOSAL_RAISE_RATIO = 0.4
+# A proposal that was already filed is not filed again until at least this many further outcomes
+# have been recorded for the same role/tier -- new material, not the same count after the owner
+# decided to leave the tier as it is.
+_TIER_PROPOSAL_RENEW_AFTER = _TIER_PROPOSAL_MIN_RAISE
+_TIER_MEMORY_FILE = Path(".act-local") / "tier-proposals.json"
+
+
+def _tier_memory(root: Path) -> dict[str, tuple[int, str]]:
+    """role|tier -> (number of outcomes, date YYYY-MM-DD) when that proposal was last filed (empty
+    if there is no memory yet or it cannot be read -- then every proposal counts as new). The
+    older form, a bare count, reads as filed on an unknown day ("")."""
+    try:
+        data = json.loads((root / _TIER_MEMORY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    memory: dict[str, tuple[int, str]] = {}
+    for key, value in data.items():
+        if isinstance(value, int) and not isinstance(value, bool):
+            memory[str(key)] = (value, "")
+        elif (isinstance(value, dict) and isinstance(value.get("count"), int)
+              and not isinstance(value["count"], bool)):
+            filed = value.get("filed")
+            memory[str(key)] = (value["count"], filed if isinstance(filed, str) else "")
+    return memory
+
+
+def _tier_proposals(root: Path) -> list[tuple[str, int, Finding]]:
+    """(role|tier key, outcomes counted, finding) for every role/tier over the threshold, filed
+    before or not."""
+    try:
+        import usage
+    except ImportError:
+        return []
+    store = usage.consolidate(root)
+    found: list[tuple[str, int, Finding]] = []
+    for role in sorted(store.get("roles", {})):
+        outcomes = store["roles"][role].get("outcomes") or {}
+        for tier in sorted(outcomes):
+            counts = outcomes[tier] if isinstance(outcomes[tier], dict) else {}
+            accepted, reworked, escalated = (
+                counts.get(kind) if isinstance(counts.get(kind), int)
+                and not isinstance(counts.get(kind), bool) else 0
+                for kind in ("accepted", "reworked", "escalated"))
+            total = accepted + reworked + escalated
+            trouble = reworked + escalated
+            tier_label = tier or "(no tier)"
+            if total >= _TIER_PROPOSAL_MIN_RAISE and trouble / total >= _TIER_PROPOSAL_RAISE_RATIO:
+                found.append((f"{role}|{tier}", total, Finding(
+                    path=".act-local/usage.json", line=None, kind="tier-proposal",
+                    message=(f"role `{role}` at tier `{tier_label}`: {trouble}/{total} outcomes "
+                             "reworked or escalated -- consider a higher tier "
+                             "(R-role-outcome)"),
+                )))
+    return found
+
+
+def _new_tier_proposals(root: Path) -> list[tuple[str, int, Finding]]:
+    """The proposals not filed yet, or filed when far fewer outcomes were recorded."""
+    memory = _tier_memory(root)
+    return [(key, total, finding) for key, total, finding in _tier_proposals(root)
+            if key not in memory or total >= memory[key][0] + _TIER_PROPOSAL_RENEW_AFTER]
+
+
+def todays_tier_proposals(root: Path) -> list[Finding]:
+    """The proposals filed earlier today that are still due no new one: a second `--inbox` run
+    replaces today's still-open report, so they must go into it again or the person would never
+    see them."""
+    today = date.today().isoformat()
+    memory = _tier_memory(root)
+    new = {key for key, _, _ in _new_tier_proposals(root)}
+    return [finding for key, _, finding in _tier_proposals(root)
+            if key not in new and key in memory and memory[key][1] == today]
+
+
+def remember_tier_proposals(root: Path) -> None:
+    """Note the outcome count of every proposal being filed now (doctor.py --inbox), so the same
+    proposal does not come back with each run until new outcomes have piled up. Best effort: a
+    memory that cannot be written only means the proposal returns."""
+    new = _new_tier_proposals(root)
+    if not new:
+        return
+    memory = _tier_memory(root)
+    today = date.today().isoformat()
+    memory.update({key: (total, today) for key, total, _ in new})
+    path = root / _TIER_MEMORY_FILE
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {key: {"count": count, "filed": filed} for key, (count, filed) in memory.items()}
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def check_tier_proposal(root: Path) -> list[Finding]:
@@ -1317,31 +1411,9 @@ def check_tier_proposal(root: Path) -> list[Finding]:
     the orchestrator per R-role-outcome after every worker acceptance/rework/escalation) and
     proposes raising a role's tier once its outcomes cross the threshold above.
     A proposal only, surfaced as a finding -- deciding and editing docs/ai/config.md stays with the
-    human/orchestrator. Silent if usage.py cannot be imported or the store is empty."""
-    try:
-        import usage
-    except ImportError:
-        return []
-    store = usage.consolidate(root)
-    findings: list[Finding] = []
-    for role in sorted(store.get("roles", {})):
-        outcomes = store["roles"][role].get("outcomes") or {}
-        for tier in sorted(outcomes):
-            counts = outcomes[tier] or {}
-            accepted = counts.get("accepted", 0)
-            reworked = counts.get("reworked", 0)
-            escalated = counts.get("escalated", 0)
-            total = accepted + reworked + escalated
-            trouble = reworked + escalated
-            tier_label = tier or "(no tier)"
-            if total >= _TIER_PROPOSAL_MIN_RAISE and trouble / total >= _TIER_PROPOSAL_RAISE_RATIO:
-                findings.append(Finding(
-                    path=".act-local/usage.json", line=None, kind="tier-proposal",
-                    message=(f"role `{role}` at tier `{tier_label}`: {trouble}/{total} outcomes "
-                             "reworked or escalated -- consider a higher tier "
-                             "(R-role-outcome)"),
-                ))
-    return findings
+    human/orchestrator. A proposal already filed in the inbox (remember_tier_proposals) stays quiet
+    until new outcomes have piled up. Silent if usage.py cannot be imported or the store is empty."""
+    return [finding for _, _, finding in _new_tier_proposals(root)]
 
 
 def _git_out(root: Path, *args: str) -> Optional[str]:
@@ -1854,9 +1926,11 @@ def main(argv: list[str]) -> int:
     findings, effective = run(root, accept_ids, args.accept_all)
 
     if args.inbox:
+        findings = findings + todays_tier_proposals(root)
         written = write_inbox(root, findings)
         if written is not None:
             print(f"doctor.py: wrote {_rel(written, root)}")
+            remember_tier_proposals(root)
 
     if args.json:
         payload = {
