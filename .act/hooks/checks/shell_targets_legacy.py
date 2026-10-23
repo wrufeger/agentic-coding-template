@@ -93,6 +93,7 @@
 from __future__ import annotations
 
 import bisect
+import functools
 import io
 import os
 import re
@@ -876,6 +877,16 @@ def _operands(args: list[str], value_flags: frozenset = frozenset()) -> tuple[li
     return operands, values
 
 
+@functools.lru_cache(maxsize=1 << 16)
+def _joined_base(base: Optional[str], native: str) -> Optional[str]:
+    """One base directory with a relative `cd` target appended; None (unknown) stays None. Cached,
+    since a long `cd a; cd a; ...` chain asks for the same join once per base on every step, and
+    the set of bases grows by one per step, so uncached the cost grew with the cube of the chain."""
+    if base is None:
+        return None
+    return str(Path(_to_native_path(base)) / native)
+
+
 def _cd_bases(bases: _Bases, directory: str) -> _Bases:
     """The possible directories after `cd <directory>` from each of `bases`. A rooted path without
     a drive on Windows (`/tmp`, Git Bash's own mount points) has no knowable native location."""
@@ -884,10 +895,12 @@ def _cd_bases(bases: _Bases, directory: str) -> _Bases:
         return frozenset({native})
     if native.startswith(("/", "\\")):
         return frozenset({None})
-    return frozenset(str(Path(_to_native_path(base)) / native) if base is not None else None for base in bases)
+    return frozenset(_joined_base(base, native) for base in bases)
 
 
 def _pairs(raw_targets: list[str], bases: _Bases) -> list[_Target]:
+    if not raw_targets:
+        return []  # nothing to pair: skip sorting a set that grows with a long `cd` chain
     ordered = sorted(bases, key=lambda base: (base is None, base or ""))
     return [(raw, base) for raw in raw_targets for base in ordered]
 

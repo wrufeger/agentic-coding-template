@@ -58,6 +58,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - **The PowerShell write guard accepts the call operator with a literal program.** `& 'python3' .act/scripts/x.py …`
   or `& "C:\…\python.exe" … > <temp file>` is checked like a direct call. Variables, script blocks and `iex` after
   `&` stay refused, and `& 'pwsh' -Command …` is now scanned.
+- **The shell scanner behind the write guards is fast on long `cd` chains.** 800 statements took 21 s before and
+  take well under a second now; the targets it finds are unchanged.
 
 ## [2.2.0] - 2026-10-20
 
