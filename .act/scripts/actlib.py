@@ -1313,8 +1313,8 @@ def fence_closer(state: FenceState) -> str:
 
 
 def canonical_id(raw: str) -> str:
-    """An id with its number normalised, so "T012" and "T12" compare equal and a sub-letter is
-    lower case ("Q55A" -> "Q55a"). Anything that is not letters + digits comes back upper-cased."""
+    """An id with its number normalised, so "X012" and "X12" compare equal and a sub-letter is
+    lower case ("X55A" -> "X55a"). Anything that is not letters + digits comes back upper-cased."""
     match = _ID_PARTS_RE.match(raw.strip())
     if not match:
         return raw.strip().upper()
@@ -1329,7 +1329,7 @@ def is_collection(text: str) -> bool:
 
 def collection_sections(text: str) -> list[tuple[str, int]]:
     """(canonical id, 1-based line of the anchor) for every entry section of a collection: a line
-    `<a id="Q200"></a>` directly followed by a heading `## Q200 — <title>` naming the same id. A pair
+    `<a id="<id>"></a>` directly followed by a heading `## <id> — <title>` naming the same id. A pair
     inside a fenced code block is an example and does not count, except that a section boundary always
     resets the fence state, so a fence an earlier section left unclosed cannot hide the sections after
     it; a section without an id (its anchor is not an id) is not listed."""

@@ -105,7 +105,7 @@
 #     other- for entries without an id, ledger- for journal entries (the date is the file name's). A
 #     collection opens with actlib.COLLECTION_MARK, names the commit that still holds the single files
 #     ("full text: git show <hash>:<folder>/<file>") and has one section per entry: an anchor line
-#     `<a id="Q200"></a>`, the heading `## Q200 — <title>`, the header fields in one inline-code line
+#     `<a id="<id>"></a>`, the heading `## <id> — <title>`, the header fields in one inline-code line
 #     (with `archived:` and the original `file:`), then the body. Every id in a collection is found by
 #     actlib.entry_ids(), so the next free id and the duplicate check still see it. The archive date is the
 #     header field `archived:`, else the day Git first saw the file in the archive, else `created:`.
@@ -1780,7 +1780,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     compact_help = ("merge archived entries older than 7 days (and journal entries) into one collection file per "
                     "kind and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one "
-                    "section per entry with an anchor such as #Q200; links in the project are rewritten, the "
+                    "section per entry with an anchor such as #<id>; links in the project are rewritten, the "
                     "head of each collection names the commit that holds the full text; needs the entries "
                     "committed; running it twice changes nothing")
     p_compact = sub.add_parser("compact", help=compact_help, description=compact_help)
