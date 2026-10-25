@@ -1277,8 +1277,10 @@ def worker_rule_parts(root: Path, home: Optional[Path] = None) -> list[WorkerPar
     for item in worker_files(root, home):
         # Every `## ` section is its own block, so packing fills a part across file boundaries
         # instead of starting a new part whenever the next whole file does not fit.
+        # Room for the label line too ("=== <label> (continued) ===", newlines included), so a long
+        # label cannot push a part past the limit.
         pieces = [piece for section in _top_sections(item.text)
-                  for piece in _split_text(section, budget - 100)]
+                  for piece in _split_text(section, budget - 100 - len(item.label))]
         for index, piece in enumerate(pieces):
             blocks.append((item.label, piece if piece.endswith("\n") else piece + "\n", index > 0))
     # A file's label line opens its first piece in a part; following pieces of the same file in
@@ -1315,6 +1317,51 @@ def worker_rule_parts(root: Path, home: Optional[Path] = None) -> list[WorkerPar
     return parts
 
 
+_OVERFLOW_SOURCES_MAX = 300   # characters of file names in the pointer line, so it stays short
+
+
+def _overflow_sources(parts: list[WorkerPart]) -> list[str]:
+    """Source files of the parts no hook entry delivers (those after the last entry), each once."""
+    sources: list[str] = []
+    for part in parts[WORKER_PARTS:]:
+        for label in part.sources:
+            if label not in sources:
+                sources.append(label)
+    return sources
+
+
+def worker_overflow_warning(parts: list[WorkerPart]) -> str:
+    """One warning line when the rules need more parts than there are hook entries, else ''.
+    Used by `rules.py --worker` and by doctor.py."""
+    if len(parts) <= WORKER_PARTS:
+        return ""
+    files = ", ".join(_overflow_sources(parts))
+    return (f"warning: the worker rules need {len(parts)} parts but there are only {WORKER_PARTS} hook "
+            f"entries, so parts {WORKER_PARTS + 1}-{len(parts)} never reach a worker (files: {files}) "
+            f"- shorten the rule files until they fit into {WORKER_PARTS} parts")
+
+
+def worker_overflow_pointer(parts: list[WorkerPart]) -> str:
+    """The short line the last hook entry appends when parts are left over, else ''. At most
+    about 450 characters, whatever the number of files, so part + line stays under 10,000."""
+    if len(parts) <= WORKER_PARTS:
+        return ""
+    shown = ""
+    names = _overflow_sources(parts)
+    for index, name in enumerate(names):
+        if not shown and len(name) > _OVERFLOW_SOURCES_MAX:
+            # The first file is always named, even one too long for the limit: its end, which
+            # carries the file name.
+            name = "..." + name[-(_OVERFLOW_SOURCES_MAX - 3):]
+        candidate = (shown + ", " if shown else "") + name
+        if len(candidate) > _OVERFLOW_SOURCES_MAX:
+            shown += f", and {len(names) - index} more"
+            break
+        shown = candidate
+    return ("Further worker rules did not fit into the hook output. Before your first step, read these "
+            f"files yourself, skipping .act/rules/orchestrator/: {shown}.")
+
+
 def cmd_worker(root: Path, home: Optional[Path] = None) -> str:
     home = home if home is not None else Path.home()
     parts = worker_rule_parts(root, home)
@@ -1330,9 +1377,9 @@ def cmd_worker(root: Path, home: Optional[Path] = None) -> str:
         lines.append(f"  part {number}: {len(part.text)} characters — {', '.join(part.sources)}")
     lines.append(f"worker total: {sum(len(part.text) for part in parts)} characters")
     lines.append(f"CLAUDE.md load today (all {len(full)} files, raw): {full_size} characters")
-    if len(parts) > WORKER_PARTS:
-        lines.append(f"note: {len(parts)} parts, more than the {WORKER_PARTS} hook entries; "
-                     "the last entry carries the rest and Claude Code moves it into a file")
+    warning = worker_overflow_warning(parts)
+    if warning:
+        lines.append(warning)
     return "\n".join(lines) + "\n"
 
 

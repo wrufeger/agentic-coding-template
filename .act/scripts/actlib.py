@@ -680,7 +680,7 @@ def _hook_command_suffix_old_form(event: str) -> str:
 # SubagentStart carries one more per worker-rules part (.act/hooks/checks/worker_rules.py): the
 # commands differ so Claude Code does not merge them as duplicates, and a count change here must
 # follow .act/bridges/settings.hooks.json.
-WORKER_RULES_PARTS = 6
+WORKER_RULES_PARTS = 12
 
 _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
     "UserPromptSubmit": ("--act-check",),

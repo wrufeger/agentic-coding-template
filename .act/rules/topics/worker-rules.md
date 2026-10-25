@@ -11,8 +11,8 @@ loads them into every worker start as well. The template's roles therefore carry
 variants): Claude Code then loads no `CLAUDE.md` level for them. A `SubagentStart` hook hands the
 worker what it needs instead.
 
-- The hook is `dispatch.py SubagentStart --worker-rules <i>`, six fixed entries in
-  `.claude/settings.json` (`<i>` = 1..6, from `.act/bridges/settings.hooks.json`). The plain
+- The hook is `dispatch.py SubagentStart --worker-rules <i>`, twelve fixed entries in
+  `.claude/settings.json` (`<i>` = 1..12, from `.act/bridges/settings.hooks.json`). The plain
   `SubagentStart` entry stays for the usage and event log.
 - It acts only if the role file of the started `agent_type` (`.claude/agents/<type>.md`, else
   `~/.claude/agents/<type>.md`) says `omitClaudeMd: true`. Any other agent (`general-purpose`, an own
@@ -23,9 +23,12 @@ worker what it needs instead.
   the path. The rest of `docs/ai/rules.md` stays, so an unchecked rule is still off.
 - Claude Code moves a hook string longer than 10,000 characters into a file and shows a short preview
   only, so the text is cut into parts of at most 9,500 characters (at file boundaries, a long file at
-  `## ` headings); entry 6 carries any remainder, which Claude Code then moves into a file.
+  `## ` headings); each entry prints its own part.
+  Parts beyond the twelfth are not delivered: entry 12 appends one short line naming their source files,
+  and the worker reads them itself.
 - `python .act/scripts/rules.py --worker` shows the parts: characters and sources per part, the total, and
-  the size of the full `CLAUDE.md` load for comparison.
+  the size of the full `CLAUDE.md` load for comparison, plus a warning when the parts exceed the entries
+  (`doctor.py` reports the same).
 
 ## Limits
 
@@ -38,7 +41,8 @@ worker what it needs instead.
   skip the orchestrator directory. The hook never exits non-zero.
 - Only the user level, the project `CLAUDE.md` / `.claude/CLAUDE.md` and `CLAUDE.local.md` are assembled;
   `CLAUDE.md` files in parent folders and `.claude/rules/` files are not.
-- A project with very large rule files can need more than six parts; the overflow lands in a file.
+- A project with very large rule files can need more than twelve parts; the rest is not delivered, only
+  named in a pointer line (see the warning from `rules.py --worker` and `doctor.py`).
 
 ## Turning it off
 

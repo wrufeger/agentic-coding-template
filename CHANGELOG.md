@@ -17,6 +17,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   MCP tool that takes a path. The list of allowed places moved to `topics/checks.md`. Each session
   loads about 400 characters less.
 
+### Fixed
+
+- Workers no longer lose part of their rules once the project's rules outgrow six hook entries:
+  Claude Code cuts every hook output above 10,000 characters down to a short preview, so the worker
+  rules now go out over 12 `SubagentStart` entries instead of 6. If even 12 are not enough, the last
+  entry names the files the worker has to read itself, and `rules.py --worker` and `act-doctor`
+  warn which rule files to shorten. `act-update` replaces the old six entries and leaves your own
+  hooks alone.
+
 ## [2.3.0] - 2026-10-25
 
 Reads and writes outside the project root are checked, updates follow either the newest release or the default

@@ -7,7 +7,8 @@ This module gives such a worker what CLAUDE.md would have loaded, minus those or
 (`dispatch.py SubagentStart --worker-rules <i>`), each entry printing part <i> as one
 hookSpecificOutput.additionalContext string: Claude Code moves a single string over 10,000 characters
 into a file and shows a short preview only, so the text is cut into parts of at most 9,500
-characters (rules.WORKER_PART_LIMIT); the last entry carries any remainder.
+characters (rules.WORKER_PART_LIMIT). Parts beyond the last entry are not delivered: the last entry
+appends one short line naming their source files, which the worker reads itself.
 
 Delivered only when the role file of the started `agent_type` (.claude/agents/<type>.md in the project,
 else ~/.claude/agents/<type>.md) says `omitClaudeMd: true`. A role without the field loads CLAUDE.md
@@ -112,10 +113,14 @@ def emit(part: int, payload: dict) -> None:
         if not role_omits_claude_md(agent_type, root, home):
             return
         parts = rules.worker_rule_parts(root, home)
-        if part >= rules.WORKER_PARTS:   # the last entry takes whatever is left
-            text = "\n".join(item.text for item in parts[part - 1:])
-        else:
-            text = parts[part - 1].text if part - 1 < len(parts) else ""
+        text = parts[part - 1].text if 1 <= part <= len(parts) else ""
+        if part == rules.WORKER_PARTS:
+            # Parts beyond the last entry are not joined (the output would pass 10,000 characters
+            # and land in a file): one short pointer line follows instead. A part is at most 9,500
+            # characters and the line at most about 450, so the output stays under 10,000.
+            pointer = rules.worker_overflow_pointer(parts)
+            if pointer:
+                text = text + "\n" + pointer + "\n"
         if text:
             _print_context(text)
     except Exception:  # noqa: BLE001 — a hook never ends in a traceback; SubagentStart blocks nothing

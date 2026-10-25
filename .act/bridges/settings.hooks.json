@@ -137,6 +137,66 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 7; true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 8; true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 9; true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 10; true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 11; true",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "P=\"\"; for c in python3 python; do \"$c\" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' >/dev/null 2>&1 && { P=\"$c\"; break; }; done; D=\"${CLAUDE_PROJECT_DIR:-.}/.act/hooks/dispatch.py\"; if [ -z \"$P\" ]; then exit 0; fi; if [ ! -f \"$D\" ]; then exit 0; fi; \"$P\" \"$D\" SubagentStart --worker-rules 12; true",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SubagentStop": [

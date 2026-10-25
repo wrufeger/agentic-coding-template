@@ -72,6 +72,9 @@
 #          20. a `revisit: YYYY-MM-DD` line under a decision in docs/project/decisions.md or
 #               docs/project/decisions/*.md whose date has passed (today is not yet due), or that is not
 #               a valid date. Nothing for a decision without the line or with a future date.
+#          21. worker rules that need more parts than there are SubagentStart hook entries
+#               (rules.py worker_overflow_warning): the parts beyond the last entry never reach a
+#               worker, so the named rule files need shortening. Nothing without the overflow.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -184,6 +187,7 @@ KIND_LABELS: dict[str, str] = {
     "frontmatter-unknown": "Skill/role frontmatter fields or tool names no known tool reads (maybe newer than this check)",
     "revisit-due": "Decisions whose `revisit:` date has passed",
     "revisit-invalid": "Decisions with a `revisit:` line that is not a YYYY-MM-DD date",
+    "worker-rules": "Worker rules that do not fit into the SubagentStart hook entries",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -220,6 +224,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "frontmatter-unknown": "Skill-/Rollen-Frontmatter-Felder oder Werkzeugnamen, die kein bekanntes Werkzeug liest (evtl. neuer als diese Prüfung)",
     "revisit-due": "Entscheidungen, deren `revisit:`-Datum verstrichen ist",
     "revisit-invalid": "Entscheidungen mit einer `revisit:`-Zeile, die kein Datum JJJJ-MM-TT ist",
+    "worker-rules": "Worker-Regeln, die nicht in die SubagentStart-Hook-Einträge passen",
 }
 
 
@@ -1122,6 +1127,21 @@ def check_imports(root: Path) -> list[Finding]:
     return findings
 
 
+def check_worker_rules(root: Path) -> list[Finding]:
+    """Worker rules that need more parts than there are SubagentStart hook entries: the parts
+    beyond the last entry never reach a worker. Skipped without a CLAUDE.md."""
+    if not (root / "CLAUDE.md").is_file():
+        return []
+    try:
+        warning = rules.worker_overflow_warning(rules.worker_rule_parts(root))
+    except Exception:  # noqa: BLE001 - a check that cannot assemble the parts says nothing here
+        return []
+    if not warning:
+        return []
+    return [Finding(path="CLAUDE.md", line=None, kind="worker-rules",
+                    message=warning.removeprefix("warning: "))]
+
+
 STATUS_SCAN_DIRS = ("docs/ai/inbox", "docs/ai/proposals", "docs/ai/work")
 _STATUS_FIELD_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
 
@@ -1845,6 +1865,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_legacy_config_keys(root)
     findings += check_config_values(root)
     findings += check_imports(root)
+    findings += check_worker_rules(root)
     findings += check_status_values(root)
     findings += check_revisit_dates(root)
     findings += check_manifest_drift(root)
