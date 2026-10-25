@@ -42,18 +42,13 @@ stay free. Applies to orchestrator and workers alike. Checked mechanically by `s
 
 ## `R-safe-outside-root` — Stay inside the project
 
-summary: read and write only in the project root and its allowed places; any other place only on the owner's word, as an entry; mechanically checked
+summary: only the project and its allowed places; a new place on the owner's word, as an entry, even where the check only warns or cannot see; mechanically checked
 
-Read and write only inside the project root and the places allowed for it: the folders in
-`permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for this
-project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders
-(`~/.claude/plugins/`, `~/.claude/skills/`), and the entries of `outside-root-allow`
-(`docs/ai/config.md` § Checks; `(read)` after a path allows reading only). Any other place — a
-neighbouring repository, another project, the home directory — only on the owner's word for this
-case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
-workaround. Applies to every role and tool. Checked mechanically by `outside-root`
-(`docs/ai/config.md` § Checks). Details (`act-adopt` exception, switches, limits):
-`topics/checks.md`.
+Read and write only inside the project and its allowed places. A new place only on the owner's
+word, as an entry in `outside-root-allow` — even when the check only warns, and also where it
+cannot see: a program that opens files itself, an MCP tool that takes a path. Checked mechanically
+by `outside-root` (`docs/ai/config.md` § Checks). Details (allowed places, `act-adopt` exception,
+switches, limits): `topics/checks.md`.
 
 ## `R-safe-no-secret-log` — Never credentials or personal data in a log
 

@@ -18,6 +18,15 @@ opens the file itself (`python script.py`, `docker run --env-file`) is invisible
 
 Checks: outside-root.
 
+Read and write only inside the project root and the places allowed for it: the folders in
+`permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for this
+project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders
+(`~/.claude/plugins/`, `~/.claude/skills/`), and the entries of `outside-root-allow`
+(`docs/ai/config.md` § Checks; `(read)` after a path allows reading only). Any other place — a
+neighbouring repository, another project, the home directory — only on the owner's word for this
+case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
+workaround. Applies to every role and tool.
+
 `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix, which opens
 the target folder for 24 hours or until `--abort` (also past `--finish`) through a marker under
 `.act-local/outside-allow/` that nobody but the adopt scripts writes; `--apply` only refreshes a

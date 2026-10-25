@@ -9,6 +9,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Changed
+
+- `R-safe-outside-root` is cut down to what the `outside-root` check cannot do itself: a new place
+  needs the owner's word and an entry in `outside-root-allow`, even when the check only warns, and
+  the rule also covers what the check cannot see, such as a program that opens files itself or an
+  MCP tool that takes a path. The list of allowed places moved to `topics/checks.md`. Each session
+  loads about 400 characters less.
+
 ## [2.3.0] - 2026-10-25
 
 Reads and writes outside the project root are checked, updates follow either the newest release or the default
