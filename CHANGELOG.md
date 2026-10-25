@@ -9,6 +9,26 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-25
+
+Reads and writes outside the project root are checked, updates follow either the newest release or the default
+branch, worker runs are measured and start with far less rule text, ten new coding rule sets arrive, old archive
+entries can be compacted, and the dependency scan no longer passes findings as a clean result on Windows. Projects
+on v2.2.0 update with `act-update`.
+
+### Upgrading from v2.2.0
+
+- Run `act-update` (or `python .act/scripts/update.py`), then start a new session so the new hooks and role fields
+  take effect. No new migration; the existing ones read headers more exactly.
+- `update-channel` decides what the next `act-update` brings. A project without the key in `docs/ai/config.md`
+  follows `release`, the newest stable release tag, and gets a one-time note; set `update-channel: latest` to keep
+  following the default branch.
+- The new check `outside-root` runs as `warn` in a project without the row in `docs/ai/config.md` § Checks; a
+  one-time note at session start says how to switch it to `block` and where further allowed places go
+  (`outside-root-allow`).
+- The template's roles get `omitClaudeMd: true` and `.claude/settings.json` a `SubagentStart` hook. Claude Code
+  before 2.1.271 ignores the field, so workers there get the rules twice until Claude Code is updated.
+
 ### Added
 
 - **Commit secret scan: accepted false alarms in `docs/ai/local/secret-accepted.md`.** A line that cannot carry the
@@ -522,7 +542,8 @@ First public pre-release of the previous generation (today the branch `v1`), doc
   coding rule modules for 10 languages and stacks; `AI-CONFIG.md` steers the collaboration.
 - Optional live log `ai.log` through hooks.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/wrufeger/agentic-coding-template/releases/tag/v2.0.0
