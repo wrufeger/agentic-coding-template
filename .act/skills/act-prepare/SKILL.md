@@ -23,11 +23,12 @@ code already answers, so research comes before the question round, never after.
    `docs/ai/work/tasks/` (`python .act/scripts/entries.py new task <title>`).
 4. **Check readiness** — goal unambiguous, acceptance checkable, decisions made, preconditions
    met, unknowns researched. Anything failing this stays marked open and **doesn't start**.
-5. **One bundled question round.** Numbered, answer options, a marked recommendation where there
-   is one, ordered by how much each blocks, with one line on what happens if it stays unanswered.
-   File the same questions in the inbox (`entries.py new question <title>` per question, `kind:
-   question`) so the answer has somewhere to land — the board's Waiting section already surfaces
-   them, no separate inbox entry needed. Under `inbox-decisions: at-start` this is where a backlog
+5. **One bundled question round.** Questions numbered, answer options as `a)`, `b)`, `c)`, a
+   marked recommendation where there is one, ordered by how much each blocks, with one line on what
+   happens if it stays unanswered. File the same questions in the inbox (`entries.py new question
+   <title>` per question, `kind: question`, in the form the inbox README gives) so the answer has
+   somewhere to land — the board's Waiting section already surfaces them, no separate inbox entry
+   needed. Under `inbox-decisions: at-start` this is where a backlog
    entry's `decision: open` points get asked; under `immediate` they are already in the inbox —
    still check the backlog entries in scope for any left over.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked

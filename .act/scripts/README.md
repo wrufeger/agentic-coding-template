@@ -426,7 +426,8 @@ options:
                         question/todo/report/note entry (default open)
   --for IDENTITY        task/todo/report/note entry: recipient (todo/report/note default all, task
                         default this identity; all = shared)
-  --body-file PATH      body below the heading, copied verbatim (UTF-8)
+  --body-file PATH      body below the heading, copied verbatim (UTF-8); a question ends with an
+                        empty answer label below it
 ```
 
 ### `entries.py assign`

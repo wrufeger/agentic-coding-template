@@ -141,7 +141,8 @@ def human_lines(text: str, header: str = "") -> list[str]:
     """The lines of an entry body that must stay verbatim, whitespace folded: everything except text that is
     recognisably the assistant's. That is a paragraph opening with a bold label (other than Answer/Antwort/
     Reply) and the option list directly below it; after an empty label (`**Label:**` alone on its line) the
-    lines up to the next blank line are the human's. Block quotes and Answer/Antwort/Reply lines are the
+    lines up to the next blank line are the human's, after an empty Answer/Antwort/Reply label (the last line
+    of every new question) everything up to the next paragraph opening with a bold label. Block quotes and Answer/Antwort/Reply lines are the
     human's everywhere. With `triage:` in the header (captured from a chat prefix) the whole text is the
     human's, in a `kind: note` everything before the assistant's first reply block."""
     lines = text.split("\n")

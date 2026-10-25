@@ -26,9 +26,9 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    dependency or a paid service is set against building it in the project, and the other way
    round — weighed on maintenance, security, lock-in and running cost, not on build effort alone.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
-   question <title>` — writes `kind: question` and `for: all` into the header), options
-   labeled, recommendation marked. Nothing built, no task filed, before it's answered. Any other
-   open decision that comes up while filing goes into the inbox too, or stays on the backlog item
+   question <title>` — writes `kind: question` and `for: all` into the header), options as
+   `a)`, `b)` …, recommendation marked, in the form the inbox README gives. Nothing built, no
+   task filed, before it's answered. Any other open decision that comes up while filing goes into the inbox too, or stays on the backlog item
    as `decision: open` under `inbox-decisions: at-start` (`R-human-ask`).
 5. **Estimate for the chosen path only**, as duration and tokens, never person-days: `~45 min · ~600k tkn
    fresh · ~15M tkn cache`, plus the assumption it rests on ("2 builder, 1 reviewer, 1 test run"). Work

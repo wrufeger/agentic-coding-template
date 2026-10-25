@@ -5,7 +5,7 @@ and archived.
 
 | `kind` | id | who creates it | lifecycle |
 | :--- | :--- | :--- | :--- |
-| `question` | `Q<n>` | assistant (`entries.py new question`) | `open` -> `answered` (reply below the question) -> `done` -> archive |
+| `question` | `Q<n>` | assistant (`entries.py new question`); form below | `open` -> `answered` (answer below its `**Answer:**` line) -> `done` -> archive |
 | `todo` | `U<n>` | assistant or human; a task for a human, filed only once it is actionable (code pushed, questions answered) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset); also a chat message starting `todo:` (filed by the `UserPromptSubmit` hook, `quick-capture` in `config.md`) | `open` -> `done` -> archive |
 | `report` | none | a tool's own read-only report of what it found or did: `doctor --inbox`, `act-adopt` (adoption report) | `open` -> `done` (read) -> archive |
 | `note` | none | human; the assistant replies below it; also a chat message starting `note:` (filed by the hook, `quick-capture` in `config.md`) | `open` -> `answered` -> `done` -> archive |
@@ -52,6 +52,32 @@ questions included. Archive with `python .act/scripts/entries.py archive <id|fil
 into the entry lands next to it as `img.png`). A generic or already taken name gets the id in front
 (`Q<n>-img.png`) and the links are rewritten. `doctor` reports a file here that no Markdown file
 under `docs/` links.
+
+## `question` entries
+
+One question per file — a part with options of its own becomes a question of its own.
+`entries.py new question <title>` writes the header and the heading and ends the file with an empty
+answer label, `**Answer:**` (`**Antwort:**` when `language-docs` is `de`). The question goes between
+the heading and that label, which stays the last line:
+
+```text
+# TITLE
+
+WHAT IS TO BE DECIDED, AND WHY NOW
+
+- **a)** OPTION — CONSEQUENCE
+- **b)** OPTION — CONSEQUENCE. **Recommended:** REASON
+- **c)** OPTION — CONSEQUENCE
+
+**Answer:**
+```
+
+Options are always lines `- **a)** …`, never a numbered list: the answer then reads `Q<n> a`, and a
+tool that shows the question elsewhere (a web form, say) can offer the letters as choices. Other
+lists in the question are bullets too. The human writes the answer on the lines below the label, or
+gives it in chat. Before booking an answer, read the file again: an answer already below the label
+stays as it is, and one from chat or another tool goes below the existing label as well — never under
+a second one. Then set `status: answered`.
 
 ## `note` entries
 

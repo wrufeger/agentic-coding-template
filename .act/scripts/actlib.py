@@ -402,6 +402,13 @@ def localized(language: str, en: str, de: str) -> str:
     return de if language.strip().lower().split("-")[0] == "de" else en
 
 
+def answer_label(language: str) -> str:
+    """The empty label a new question ends with (`entries.py new question`): the human writes the
+    answer on the lines below it, so an answer booked later has exactly one place to go and never
+    gets a second label. In `language` (`language-docs`) through localized()."""
+    return localized(language, "**Answer:**", "**Antwort:**")
+
+
 def remembered_chat_language() -> Optional[str]:
     """The chat language remembered for this person on this machine (`board.py --chat-language`,
     .act-local/identity.json, never versioned) — used only while `language-chat` is `auto`."""

@@ -16,6 +16,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   the rule also covers what the check cannot see, such as a program that opens files itself or an
   MCP tool that takes a path. The list of allowed places moved to `topics/checks.md`. Each session
   loads about 400 characters less.
+- A new question from `entries.py new question` ends with an empty `**Answer:**` line
+  (`**Antwort:**` when `language-docs` is `de`); the answer goes below it. The inbox README now
+  describes the form of a question: one question per file, options as `- **a)** …` rather than a
+  numbered list, the recommendation marked, and when booking an answer the file is read again and
+  the answer goes below the existing label, never under a second one. `act-prepare` and `act-idea`
+  point to that form. Adopted questions keep their text as it was.
 
 ### Fixed
 

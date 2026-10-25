@@ -37,6 +37,8 @@
 #                                 defaults to this checkout's identity, `all` = shared; a question
 #                                 is always "all")
 #       [--body-file <path>]      body below the heading, copied verbatim (UTF-8)
+#       # a question always ends with an empty "**Answer:**" line ("**Antwort:**" with
+#       # language-docs de) — the human answers below it
 #   python .act/scripts/entries.py assign                  # hand out ids still missing (and rename; an
 #                                                          # old "todo-<stamp>-<slug>.md" becomes "U<n>-<slug>.md")
 #   python .act/scripts/entries.py state <T-id> <text...>   # append a working-state line
@@ -704,12 +706,14 @@ def create_entry(
     root: Path, kind: str, title: str, entry_id: Optional[str] = None, formerly: Optional[str] = None,
     status: Optional[str] = None, recipient: Optional[str] = None, body: str = "",
     slug: Optional[str] = None, extra_header: Optional[list[tuple[str, str]]] = None,
-    lock_timeout: Optional[float] = None,
+    lock_timeout: Optional[float] = None, answer_block: bool = False,
 ) -> tuple[Path, Optional[str]]:
     """Write one entry file, return (path, id written or None). `extra_header` adds (key, value)
     header lines of an inbox entry directly after `status:` (the quick capture writes `triage: open`).
     `lock_timeout` shortens the wait for entries.lock (seconds; default _LOCK_TIMEOUT) for a caller
-    with a hard time limit. The caller has validated
+    with a hard time limit. `answer_block` ends the file with the empty answer label
+    (actlib.answer_label(), a new question from `new`); off for an adopted entry, which may carry
+    its answer already. The caller has validated
     (validate_entry()). An explicit `entry_id` is written in either mode — it is an id the entry
     already had (adoption); without one, "solo" hands out the next free id and "team" leaves
     it to `assign`. `body` goes below the heading exactly as given (no newline translation).
@@ -756,6 +760,15 @@ def create_entry(
                 header_lines.append(f"{extra_key}: {extra_value}")
         header_lines.append(f"created: {created_at}")
 
+        if answer_block:
+            # The label goes last, one blank line below the body, in the body's own newline style;
+            # the body itself stays byte for byte (a blank line it already ends with is reused).
+            newline = "\r\n" if "\r\n" in body else "\n"
+            if body and not body.endswith("\n"):
+                body += newline
+            if body and not body.endswith(("\n\n", "\n\r\n")):
+                body += newline
+            body += actlib.answer_label(actlib.docs_language(root)) + newline
         text = (actlib.format_header(header_lines, actlib.writes_frontmatter(kind))
                 + "\n" + f"# {title.strip()}\n\n" + body)
         slug = _slugify(slug if slug else title)
@@ -852,7 +865,11 @@ def cmd_new(
             print(f"entries: {problem} — nothing written", file=sys.stderr)
         return 2
 
-    dest, assigned_id = create_entry(root, kind, title, entry_id, formerly, status, recipient, body)
+    # Only a question asked now gets the empty answer label; one taken over from an older numbering
+    # (--id, --formerly) or already answered keeps its text as it was.
+    fresh_question = kind == "question" and entry_id is None and formerly is None and status != "answered"
+    dest, assigned_id = create_entry(root, kind, title, entry_id, formerly, status, recipient, body,
+                                     answer_block=fresh_question)
     if kind == "ledger":
         label = "no id — journal entries aren't numbered"
     elif kind in ("report", "note"):
@@ -1748,7 +1765,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_new.add_argument("--for", dest="recipient", metavar="IDENTITY",
                        help="task/todo/report/note entry: recipient (todo/report/note default all, "
                             "task default this identity; all = shared)")
-    p_new.add_argument("--body-file", metavar="PATH", help="body below the heading, copied verbatim (UTF-8)")
+    p_new.add_argument("--body-file", metavar="PATH",
+                       help="body below the heading, copied verbatim (UTF-8); a question ends with an "
+                            "empty answer label below it")
 
     sub.add_parser("assign", help="hand out ids still missing ('team' mode: only on the default branch)")
 

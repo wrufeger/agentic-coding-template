@@ -35,8 +35,9 @@ default branch, so two branches never write the same month file; elsewhere say s
    the assistant's: a paragraph that opens with a bold label (`**Context**`, `**Question:**`,
    `**Booked 2026-01-01:**`) and the option list directly below it. Every other non-empty line stays
    word for word, marked or not — an answer under "please answer here" has no marker, a bare "1a 2a"
-   is an answer. Text after an empty label (`**Answer:**` alone on its line) up to the next blank
-   line is the human's; so is the whole text of a `note` up to the assistant's first reply block, and
+   is an answer. Text below an empty answer label (`**Answer:**` or `**Antwort:**` alone on its
+   line, the last line of every new question) is the human's, up to the next paragraph that opens
+   with a bold label; so is the whole text of a `note` up to the assistant's first reply block, and
    of a `todo` captured from a chat prefix. A worker that is unsure leaves the section in full length.
 4. **Overview.** For every month with a Q-, T-, B- or U- collection, write `archive/<YYYY-MM>.md`
    from the short sections (not the full texts): one line per topic, naming its ids —
