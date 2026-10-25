@@ -424,6 +424,7 @@ def result_from_dict(data: dict) -> "ScanResult":
         missing_tools=[str(item) for item in data.get("missing_tools", [])],
         errors=[str(item) for item in data.get("errors", [])],
         scanned_files=[str(item) for item in data.get("scanned_files", [])],
+        unreadable_reports=[str(item) for item in data.get("unreadable_reports", [])],
     )
 
 
@@ -480,6 +481,10 @@ class ScanResult:
     missing_tools: "list[str]" = dataclasses.field(default_factory=list)
     errors: "list[str]" = dataclasses.field(default_factory=list)
     scanned_files: "list[str]" = dataclasses.field(default_factory=list)
+    # The `errors` entries whose tool signalled findings but whose report could not be read
+    # (`UnreadableReport`): each counts like an unaccepted high finding -- the run holds a commit and
+    # the command line exits 1 -- since nobody can tell what was found.
+    unreadable_reports: "list[str]" = dataclasses.field(default_factory=list)
 
     def is_clean(self) -> bool:
         """True when every lock file was actually looked at by a working tool -- no tool error, no
@@ -546,7 +551,14 @@ def _run(
     used to come back as a silent "clean" result -- `returncode`/`stderr` are now handed back so
     each runner can tell that apart from a real "nothing found")."""
     try:
-        result = subprocess.run(args, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+        # Every tool here prints UTF-8 JSON. Without an explicit encoding Python reads it in the
+        # locale's code page (cp1252 on many Windows machines): a byte that code page lacks kills the
+        # reader thread, stdout comes back empty, and a tool that exits 1 *because* it found
+        # something looked like a tool that printed nothing.
+        result = subprocess.run(
+            args, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         return None, None, None, f"timed out after {timeout:.0f}s"
     except OSError as exc:
@@ -651,6 +663,43 @@ def _unexpected_empty_output(returncode: Optional[int]) -> bool:
     return returncode is not None and returncode != 0
 
 
+# The exit codes a tool uses for "found something", per runner: 1 for osv-scanner (127/128 are its
+# own failures) and npm/pnpm audit (a failure there prints a JSON `error`), composer audit's bit 1
+# ("vulnerable") as 1 or 3 (with bit 2, "abandoned"). pip-audit exits 1 for findings *and* for its
+# own fatal errors (no network, a traceback), both times with empty stdout -- so for pip-audit only
+# a non-empty but unreadable report counts, an empty one stays a plain error.
+_FINDINGS_EXIT_1 = frozenset({1})
+_COMPOSER_FINDINGS_EXIT = frozenset({1, 3})
+_NO_FINDINGS_EXIT: "frozenset[int]" = frozenset()
+
+
+class UnreadableReport(str):
+    """A tool error whose tool exited with its "found something" code (`_FINDINGS_EXIT_1` and its
+    siblings, per runner) but whose report could not be read (no output, or no valid JSON). It is
+    never a clean result: there
+    may be findings nobody has seen. A `str`, so every caller that prints errors keeps working;
+    `run_scan` lists it in `ScanResult.unreadable_reports` as well."""
+
+
+def _tool_error(returncode: Optional[int], message: str, findings_codes: "frozenset[int]") -> str:
+    if returncode in findings_codes:
+        return UnreadableReport(f"{message} -- the exit code means findings, the report is unreadable")
+    return message
+
+
+def _empty_output_error(returncode: Optional[int], stderr: Optional[str], findings_codes: "frozenset[int]") -> str:
+    detail = (stderr or "").strip().splitlines()[:1]
+    return _tool_error(
+        returncode, f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else ""), findings_codes,
+    )
+
+
+def _unparsable_output_error(
+    returncode: Optional[int], exc: json.JSONDecodeError, findings_codes: "frozenset[int]",
+) -> str:
+    return _tool_error(returncode, f"could not parse its own JSON output ({exc})", findings_codes)
+
+
 # osv-scanner is given every lock file as an argument. A few hundred absolute paths overrun the
 # Windows command-line limit (32,767 characters; a `.cmd` shim only 8,191), so the files go to it in
 # chunks whose arguments stay below this many characters.
@@ -677,13 +726,15 @@ def _run_osv_scanner(
     tool_path: str, root: Path, lock_paths: "list[Path]",
 ) -> "tuple[list[Finding], Optional[str]]":
     """One osv-scanner run over `lock_paths`, split into several calls when the list would not fit
-    on one command line; the findings are joined, the first error wins."""
+    on one command line; the findings are joined, the first error wins -- an `UnreadableReport` wins
+    over a plain error, so a later chunk's unread findings are never hidden behind an earlier note."""
     findings: "list[Finding]" = []
     error: Optional[str] = None
     for chunk in _osv_chunks(lock_paths) or [[]]:
         chunk_findings, chunk_error = _run_osv_scanner_chunk(tool_path, root, chunk)
         findings.extend(chunk_findings)
-        error = error or chunk_error
+        if error is None or (isinstance(chunk_error, UnreadableReport) and not isinstance(error, UnreadableReport)):
+            error = chunk_error or error
     return findings, error
 
 
@@ -705,13 +756,12 @@ def _run_osv_scanner_chunk(
             return [], start_error
     if not stdout or not stdout.strip():
         if _unexpected_empty_output(returncode):
-            detail = (stderr or "").strip().splitlines()[:1]
-            return [], f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else "")
+            return [], _empty_output_error(returncode, stderr, _FINDINGS_EXIT_1)
         return [], None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        return [], f"could not parse its own JSON output ({exc})"
+        return [], _unparsable_output_error(returncode, exc, _FINDINGS_EXIT_1)
 
     findings: list[Finding] = []
     for scan_result in data.get("results", []) if isinstance(data, dict) else ():
@@ -747,13 +797,12 @@ def _run_npm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[F
         return [], start_error
     if not stdout or not stdout.strip():
         if _unexpected_empty_output(returncode):
-            detail = (stderr or "").strip().splitlines()[:1]
-            return [], f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else "")
+            return [], _empty_output_error(returncode, stderr, _FINDINGS_EXIT_1)
         return [], None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        return [], f"could not parse its own JSON output ({exc})"
+        return [], _unparsable_output_error(returncode, exc, _FINDINGS_EXIT_1)
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         # npm's own top-level {"error": {...}} shape (bad lockfile, network, ...) -- not a
         # vulnerability report at all (2026-09-27 review, item 5)
@@ -815,13 +864,12 @@ def _run_pnpm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[
         return [], start_error
     if not stdout or not stdout.strip():
         if _unexpected_empty_output(returncode):
-            detail = (stderr or "").strip().splitlines()[:1]
-            return [], f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else "")
+            return [], _empty_output_error(returncode, stderr, _FINDINGS_EXIT_1)
         return [], None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        return [], f"could not parse its own JSON output ({exc})"
+        return [], _unparsable_output_error(returncode, exc, _FINDINGS_EXIT_1)
     if isinstance(data, dict) and isinstance(data.get("error"), dict):
         error_info = data["error"]
         message = error_info.get("message") or error_info.get("summary") or error_info.get("code") or "unknown pnpm error"
@@ -889,13 +937,12 @@ def _run_composer_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[l
         return [], start_error
     if not stdout or not stdout.strip():
         if _unexpected_empty_output(returncode):
-            detail = (stderr or "").strip().splitlines()[:1]
-            return [], f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else "")
+            return [], _empty_output_error(returncode, stderr, _COMPOSER_FINDINGS_EXIT)
         return [], None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        return [], f"could not parse its own JSON output ({exc})"
+        return [], _unparsable_output_error(returncode, exc, _COMPOSER_FINDINGS_EXIT)
 
     findings: list[Finding] = []
     advisories = data.get("advisories") if isinstance(data, dict) else None
@@ -930,13 +977,12 @@ def _run_pip_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[F
         return [], start_error
     if not stdout or not stdout.strip():
         if _unexpected_empty_output(returncode):
-            detail = (stderr or "").strip().splitlines()[:1]
-            return [], f"exited {returncode} with no output" + (f" ({detail[0]})" if detail else "")
+            return [], _empty_output_error(returncode, stderr, _NO_FINDINGS_EXIT)
         return [], None
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        return [], f"could not parse its own JSON output ({exc})"
+        return [], _unparsable_output_error(returncode, exc, _FINDINGS_EXIT_1)
 
     dependencies = data.get("dependencies") if isinstance(data, dict) else (data if isinstance(data, list) else None)
     findings: list[Finding] = []
@@ -966,6 +1012,14 @@ def _run_pip_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[F
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _record_error(result: ScanResult, text: str, error: str) -> None:
+    """`text` (the error with its tool and lock file) into `result.errors`, and into
+    `result.unreadable_reports` too when `error` is an `UnreadableReport`."""
+    result.errors.append(text)
+    if isinstance(error, UnreadableReport):
+        result.unreadable_reports.append(text)
+
+
 def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -> ScanResult:
     """One scan of `root`'s lock files: `osv-scanner` if installed (every detected lock file, one
     call), else one ecosystem-specific fallback tool per ecosystem that has one and is installed
@@ -986,7 +1040,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
         findings, error = _run_osv_scanner(tools["osv-scanner"], root, all_lock_paths)
         result.tools_used.append("osv-scanner")
         if error:
-            result.errors.append(f"osv-scanner: {error}")
+            _record_error(result, f"osv-scanner: {error}", error)
         result.findings.extend(findings)
         return result
 
@@ -997,7 +1051,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
                 if "npm" not in result.tools_used:
                     result.tools_used.append("npm")
                 if error:
-                    result.errors.append(f"npm audit ({_relative(lock_path, root)}): {error}")
+                    _record_error(result, f"npm audit ({_relative(lock_path, root)}): {error}", error)
                 result.findings.extend(findings)
         else:
             result.missing_tools.append(
@@ -1013,7 +1067,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
                 if "pnpm" not in result.tools_used:
                     result.tools_used.append("pnpm")
                 if error:
-                    result.errors.append(f"pnpm audit ({_relative(lock_path, root)}): {error}")
+                    _record_error(result, f"pnpm audit ({_relative(lock_path, root)}): {error}", error)
                 result.findings.extend(findings)
         else:
             reason = f" ({too_old})" if too_old else ""
@@ -1029,7 +1083,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
                 if "composer" not in result.tools_used:
                     result.tools_used.append("composer")
                 if error:
-                    result.errors.append(f"composer audit ({_relative(lock_path, root)}): {error}")
+                    _record_error(result, f"composer audit ({_relative(lock_path, root)}): {error}", error)
                 result.findings.extend(findings)
         else:
             result.missing_tools.append(
@@ -1047,7 +1101,7 @@ def run_scan(root: Path, lock_files: "Optional[dict[str, list[Path]]]" = None) -
                 if "pip-audit" not in result.tools_used:
                     result.tools_used.append("pip-audit")
                 if error:
-                    result.errors.append(f"pip-audit ({_relative(lock_path, root)}): {error}")
+                    _record_error(result, f"pip-audit ({_relative(lock_path, root)}): {error}", error)
                 result.findings.extend(findings)
         else:
             result.missing_tools.append(
@@ -1134,14 +1188,19 @@ def main(argv: "Optional[list[str]]" = None) -> int:
             if result.findings:
                 for finding in result.findings:
                     print("  " + _format_finding_line(finding, accepted))
-            else:
-                print("[security_scan] no known vulnerability found")
+            for report in result.unreadable_reports:
+                print(f"[security_scan] UNREAD FINDINGS: {report}")
+            if not result.findings:
+                if result.is_clean():
+                    print("[security_scan] no known vulnerability found")
+                else:
+                    print("[security_scan] scan incomplete -- no clean result, see the notes above")
 
     unaccepted_high = [
         finding for finding in result.findings
         if finding.severity in ("critical", "high") and not is_accepted(finding.advisory_id, accepted)
     ]
-    return 1 if unaccepted_high else 0
+    return 1 if unaccepted_high or result.unreadable_reports else 0
 
 
 if __name__ == "__main__":

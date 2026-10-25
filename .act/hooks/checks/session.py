@@ -1055,7 +1055,8 @@ def _run_security_scan_worker(
     check, never delay the one that triggered it (same reasoning as `_run_update_check_worker`'s
     own docstring). Two modes:
       - daily (root only): every lock file `security_scan.detect_lock_files` finds; writes
-        `security-scan-result.json` (every unaccepted high/critical finding) for the SessionStart
+        `security-scan-result.json` (every unaccepted high/critical finding, and every tool that
+        signalled findings with an unreadable report) for the SessionStart
         note — unchanged contract, severity/acceptance already filtered here;
       - request (`state_hash` plus `lock_paths`, spawned by checks/deps_scan.py for one commit):
         exactly those lock files and nothing else (2026-09-27 review 2, m7). The state hash is
@@ -1110,6 +1111,7 @@ def _run_security_scan_worker(
                     "scanned_at": scanned_at,
                     "lock_files": sorted(str(p) for paths in lock_files.values() for p in paths),
                     "findings": [dataclasses.asdict(f) for f in unaccepted_high],
+                    "unreadable_reports": list(result.unreadable_reports),
                 },
                 ensure_ascii=False,
             ) + "\n",
@@ -1173,7 +1175,10 @@ def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
     if not isinstance(data, dict):
         return None
     findings = data.get("findings")
-    if not isinstance(findings, list) or not findings:
+    findings = findings if isinstance(findings, list) else []
+    unreadable = data.get("unreadable_reports")
+    unreadable = [str(item) for item in unreadable] if isinstance(unreadable, list) else []
+    if not findings and not unreadable:
         return None
     scanned_at = data.get("scanned_at")
     lock_files = data.get("lock_files")
@@ -1185,7 +1190,9 @@ def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
                 changed = True  # the lock file is gone: the result no longer describes the project
             if changed:
                 return None  # a lock file changed after the scan: the findings may no longer hold
-    return _format_security_scan_note(root, [item for item in findings if isinstance(item, dict)], scanned_at)
+    return _format_security_scan_note(
+        root, [item for item in findings if isinstance(item, dict)], scanned_at, unreadable,
+    )
 
 
 def _format_age(seconds: float) -> str:
@@ -1196,10 +1203,13 @@ def _format_age(seconds: float) -> str:
     return f"{hours} h" if hours < 48 else f"{hours // 24} d"
 
 
-def _format_security_scan_note(root: Path, findings: "list[dict]", scanned_at: object) -> Optional[str]:
+def _format_security_scan_note(
+    root: Path, findings: "list[dict]", scanned_at: object, unreadable: "Optional[list[str]]" = None,
+) -> Optional[str]:
     """One line for the unaccepted findings of the daily scan, grouped by lock file (path relative to
     `root`) so a new finding in the project's own lock file does not drown in a long list, and with
-    the age of the scan when it is known."""
+    the age of the scan when it is known. A tool that signalled findings with an unreadable report
+    (`unreadable`) is named as its own part: it is never a clean scan."""
     groups: dict[str, list[dict]] = {}
     for item in findings:
         groups.setdefault(str(item.get("lock_file") or "?"), []).append(item)
@@ -1218,6 +1228,8 @@ def _format_security_scan_note(root: Path, findings: "list[dict]", scanned_at: o
             for item in shown
         )
         parts.append(f"{shown_name} [{len(items)}]: {entries}{more}")
+    for report in (unreadable or [])[:3]:
+        parts.append(f"unread findings: {report}")
     if not parts:
         return None
     age = ""

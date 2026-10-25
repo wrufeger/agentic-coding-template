@@ -526,12 +526,26 @@ def _build_note_message(findings: "list[security_scan.Finding]", accepted: "dict
 
 def _judge(payload: dict, root: Path, result: security_scan.ScanResult) -> int:
     """The verdict for a finished scan: missing tools note once per machine, tool errors
-    note every time, an unaccepted high/critical finding holds (exit 2), everything else notes."""
+    note every time, an unaccepted high/critical finding holds (exit 2), and so does a tool that
+    signalled findings but whose report could not be read (`ScanResult.unreadable_reports`): nobody
+    can tell what was found. A timeout or a tool that would not start stays a note, so a machine
+    without network can still commit. Everything else notes."""
     accepted = security_scan.load_accepted(root)
     for missing in result.missing_tools:
         _note_once(payload, f"missing_tool:{missing}", f"[act] security-check (deps): {missing}")
     for error in result.errors:
-        _note(payload, f"[act] security-check (deps): {error}")
+        if error not in result.unreadable_reports:
+            _note(payload, f"[act] security-check (deps): {error}")
+
+    if result.unreadable_reports:
+        print(
+            "[act] commit held: dependency scan could not read a report with findings -- "
+            + "; ".join(result.unreadable_reports)
+            + ". See them with `python .act/scripts/security_scan.py --deps`; fix the tool, or the owner"
+            " lowers `security-check` in docs/ai/config.md.",
+            file=sys.stderr,
+        )
+        return 2
 
     unaccepted_high = [
         finding for finding in result.findings
@@ -912,9 +926,11 @@ def _claim_reported_marker(marker: Path) -> bool:
 def _report_result(root: Path, state_hash: str, result: security_scan.ScanResult, paths: "list[Path]") -> bool:
     """One inbox report entry for the unaccepted findings in `result`; False (nothing written) for
     a clean result, only accepted findings, a state already reported (the marker never expires: the
-    same lock-file state is reported once), or a failed write -- which releases the marker again."""
+    same lock-file state is reported once), or a failed write -- which releases the marker again. A
+    tool that signalled findings with an unreadable report is reported like a finding."""
     findings = _unaccepted_findings(root, result)
-    if not findings:
+    unreadable = result.unreadable_reports
+    if not findings and not unreadable:
         return False
     marker = _reported_marker(root, state_hash)
     if marker.exists() or not _claim_reported_marker(marker):
@@ -925,20 +941,28 @@ def _report_result(root: Path, state_hash: str, result: security_scan.ScanResult
         shown_files = ", ".join(names[:10]) + (f" (+{len(names) - 10} more)" if len(names) > 10 else "")
         lines = "\n".join(f"- {_format_finding(finding, {})}" for finding in findings[:20])
         more = f"\n- (+{len(findings) - 20} more)" if len(findings) > 20 else ""
+        unread = (
+            "Reports with findings that could not be read (the tool's exit code means findings):\n"
+            + "\n".join(f"- {report}" for report in unreadable) + "\n\n"
+        ) if unreadable else ""
         body = (
             "The lock files that `git merge`, `git pull` or `git cherry-pick` just brought in were scanned "
             "for known vulnerabilities (`security-check: deps`). Nothing was blocked.\n\n"
             f"Lock files checked: {shown_files}\n\n"
-            f"Unaccepted findings:\n{lines}{more}\n\n"
+            + (f"Unaccepted findings:\n{lines}{more}\n\n" if findings else "")
+            + unread +
             "Update the package, or accept an advisory with a reason in "
             "`docs/ai/local/security-accepted.md` (a line `- <advisory-id>: <reason>`). "
             "The commit check holds an unaccepted high or critical finding in a lock file a commit touches. "
             "Rescan with `python .act/scripts/security_scan.py --deps`.\n"
         )
         count = len(findings)
+        unread_count = (
+            f", {len(unreadable)} unreadable report{'s' if len(unreadable) != 1 else ''}" if unreadable else ""
+        )
         entries.create_entry(
             root, "report",
-            f"Dependency scan after merge: {count} unaccepted finding{'s' if count != 1 else ''}",
+            f"Dependency scan after merge: {count} unaccepted finding{'s' if count != 1 else ''}{unread_count}",
             body=body, slug="dependency-scan-after-merge",
         )
     except Exception:  # noqa: BLE001 -- best effort: a failed report must never disturb the hook chain
@@ -988,7 +1012,7 @@ def _scan_after_integration(payload: dict) -> None:
 
     cached = _current_cache(root, state_hash, date.today().isoformat())
     if cached is not None:
-        if _unaccepted_findings(root, cached):
+        if _unaccepted_findings(root, cached) or cached.unreadable_reports:
             # the inbox write can wait on the entries lock: the detached worker does it, not this hook
             _spawn_scan_worker(root, state_hash, paths, report=True)
         return

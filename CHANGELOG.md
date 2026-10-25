@@ -199,6 +199,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- **The dependency scan no longer passes findings as a clean result.** On Windows with a non-UTF-8 code page
+  (cp1252), `security_scan.py` read the scanner's UTF-8 report in that code page; one unknown byte emptied the
+  output, and a tool that exited 1 *because* it found something ended as "no known vulnerability found" with exit 0.
+  Tool output is now read as UTF-8. A tool that exits with its findings code but leaves no readable report (for
+  pip-audit, whose own fatal errors also exit 1, only a non-empty one) holds
+  the commit, makes `security_scan.py --deps` exit 1 with an `UNREAD FINDINGS` line, and shows up in the
+  session-start note and the report after a merge. Any other tool error prints "scan incomplete" instead of the
+  clean line; a timeout or a tool that will not start still only notes, so a machine without network can commit.
 - **`secret-scan` catches a literal fallback after an environment lookup in more spellings:** Laravel
   `env('X', 'v')`, keyword defaults (`default=`), `os.environ.pop`, `import.meta.env`, `Deno.env.get`, Ruby
   `ENV[...]` and `ENV.fetch`, Python string prefixes and triple quotes, nested defaults, and lookup chains of more
