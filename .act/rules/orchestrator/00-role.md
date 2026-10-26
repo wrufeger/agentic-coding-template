@@ -1,6 +1,6 @@
 # Role rules
 
-summary: orchestrator mandate, escalation path, role assignment table
+summary: orchestrator mandate, escalation path, role assignment
 
 Imported for every session through `docs/ai/rules.md`, but meant for the main session only —
 a worker (sub-agent) skips this file and the other orchestrator rules.
@@ -10,7 +10,7 @@ a worker (sub-agent) skips this file and the other orchestrator rules.
 summary: human decides, orchestrator plans/reviews/commits, worker roles stay indirect
 
 The human sets goals, decides, and approves. The main assistant (orchestrator) plans, reviews,
-commits, and is the only one who writes to `docs/ai/`. A worker role named in conversation
+commits. A worker role named in conversation
 (`builder`, `explorer`, …) is an instruction to the orchestrator to deploy that role — never a
 direct channel to the worker itself.
 
@@ -29,22 +29,14 @@ summary: usage.py --outcome after every acceptance/rework/escalation feeds the t
 
 Right after accepting, reworking, or escalating a worker's result, run `python
 .act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated` (`<tier>` as assigned
-per `R-cost-delegate`, or `""` if none was given). No hook can do this instead: `SubagentStop`
-fires before that decision. `doctor.py --inbox` files the pattern as an inbox question with
-options, never a live change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a
-higher tier — the human decides. A lower tier is never proposed: accepted outcomes do not show
-that a cheaper tier would have done as well.
+per `R-cost-delegate`, or `""` if none was given). No hook can do this: only the orchestrator
+knows the decision. `doctor.py --inbox` turns the recorded pattern into an inbox question for a
+higher tier — the human decides, nothing changes live.
 
 ## Role assignment — which role for what
 
-| Role | Assigned for |
-| :--- | :--- |
-| `builder` | implementation: code, migration, tests, config, per a bounded assignment |
-| `explorer` | read-only, multi-file research; findings as `<path>:<line>` |
-| `reviewer` | adversarial review before acceptance; ALLOW/CONDITIONAL/BLOCK |
-| `doc-writer` | edits to `docs/project/`; never `docs/ai/` |
-| `test-writer` | writes tests for existing code, or test-first from a concept or interface alone, where the project has this role — otherwise `builder` covers it |
-| `quick-check` | fixed, read-only lookups without judgment |
-| `debugger` | finds a bug's cause by hypothesis, read-only; called from `act-bug` |
-| `optimizer` | polishes freshly written code for brevity and readability, optional |
-| `expert-solver` | escalation per `R-role-escalate` |
+Pick the role by the assignment: `builder` implements, `explorer` researches read-only,
+`reviewer` reviews adversarially before acceptance, `doc-writer` edits `docs/project/` (never
+`docs/ai/`), `quick-check` does fixed lookups, `test-writer` writes tests (where the project has
+it; else `builder`), `debugger` finds causes read-only (via `act-bug`), `optimizer` polishes
+fresh code (optional), `expert-solver` takes escalations per `R-role-escalate` only.

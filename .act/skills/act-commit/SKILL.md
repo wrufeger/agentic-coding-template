@@ -6,7 +6,7 @@ description: Use right after a task is accepted and its evidence (a test run, an
 # Close out a task and commit
 
 Runs **after every accepted task**, not just at session end. Applies `R-work-evidence`,
-`R-code-commit`, and `R-role-main` (only the orchestrator writes to `docs/ai/` and commits).
+`R-code-commit`, and `R-role-worker` (only the orchestrator writes to `docs/ai/` and commits).
 
 Journal, task status, and open questions are already current at this point — that happens during
 the work itself (`R-work-record-now`), not here. This skill cleans up what accumulated and
@@ -62,7 +62,7 @@ secures the result.
 ## Limits
 
 - Never runs as a sub-agent — only the orchestrator writes to `docs/ai/` and commits
-  (`R-role-main`).
+  (`R-role-worker`, `R-code-commit`).
 - A task that isn't accepted (red checks, missing evidence, an open question) doesn't get
   committed — its status under `docs/ai/work/tasks/` is updated to say what's still open instead.
   The one exception: the question or todo filed in step 1 for a `CONDITIONAL` does not hold the

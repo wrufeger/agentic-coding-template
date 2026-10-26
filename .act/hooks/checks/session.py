@@ -1417,7 +1417,7 @@ def _filter_orchestrator_file(
     Split one .act/rules/orchestrator/*.md file into its "## " sections. A section whose heading
     carries a `R-...` id (every actual rule) is dropped when that id is off in `enabled` and has
     no entry in `overrides`; if it has one, the override text replaces the section body. A
-    section without an id in its heading (the file's title/intro, a plain reference table such as
+    section without an id in its heading (the file's title/intro, a plain reference passage such as
     "Role assignment" in 00-role.md) is never gated and always kept.
 
     Returns (filtered_text, rule_count): the filtered file, and how many gated sections survived

@@ -38,6 +38,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   below; what moved stands on the topic pages.
 - Shorter code rules (`shared/20-code.md`): `R-code-language` names `language-docs` for prose,
   `R-code-tools` and `R-code-version` drop their examples.
+- Shorter role rules (`orchestrator/00-role.md`): the role table becomes one sentence on the special
+  cases, and `R-role-outcome` leaves the threshold of the tier proposal to `act-doctor`. `act-commit`
+  points to `R-role-worker` and `R-code-commit` for who commits.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a
