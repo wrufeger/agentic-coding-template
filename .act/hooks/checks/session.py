@@ -65,6 +65,8 @@ __all__ = [
     "_mark_security_scan_checked_today", "_security_scan_result_path", "_run_security_scan_worker",
     "_spawn_security_scan_worker", "_consume_pending_security_scan_note",
     "_check_security_scan_awareness",
+    "_consume_pending_tidy_note", "_run_act_local_tidy_worker", "_spawn_act_local_tidy_worker",
+    "_check_act_local_tidy",
     "_CHECKBOX_RE", "_OVERRIDE_RE", "_SECTION_HEADING_RE", "_RULE_ID_IN_TEXT_RE",
     "_read_rule_states", "_filter_orchestrator_file", "_deliver_orchestrator_rules",
     "_chat_language_line", "_orchestrator_short_lines", "_orchestrator_rules_imported",
@@ -1268,6 +1270,91 @@ def _check_security_scan_awareness(root: Path, config: dict[str, str]) -> "list[
 
 
 # ---------------------------------------------------------------------------
+# `act-local-tidy` at session start (docs/ai/config.md § Checks): keeps .act-local/ small. Same shape as
+# the update check above -- once a day a detached worker (`_act-local-tidy-worker` in dispatch.py) runs
+# scripts/act_local_tidy.py's run_daily(); the finding goes to a result file that the *next* session
+# start reports, so this start never waits for a directory walk.
+# ---------------------------------------------------------------------------
+
+def _tidy_module():
+    import act_local_tidy  # deferred: a session start pays for it only here
+    return act_local_tidy
+
+
+def _consume_pending_tidy_note(root: Path) -> Optional[str]:
+    """Reads and deletes .act-local/act-local-tidy-result.json (written by `_run_act_local_tidy_worker`)
+    and returns the one-line report, None when there is none."""
+    tidy = _tidy_module()
+    path = tidy.result_path(root)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    line = (tidy.format_result(data) if isinstance(data, dict) else "") or None
+    if line and isinstance(data, dict) and data.get("mode") == "would":
+        tidy.record_reported(root)  # a report-only result was shown today: removal may start on a later day
+    return line
+
+
+def _run_act_local_tidy_worker(root: Path) -> int:
+    """Body of the detached process: one daily tidy run. Always exits 0; every error stays in here."""
+    try:
+        _tidy_module().run_daily(root)
+    except Exception:  # noqa: BLE001 -- nothing can observe a failure of this process
+        pass
+    return 0
+
+
+def _spawn_act_local_tidy_worker(root: Path) -> None:
+    """Fire-and-forget, as `_spawn_update_check_worker`: dispatch.py's `_act-local-tidy-worker` event as a
+    fully detached process, all standard streams to DEVNULL."""
+    script = Path(__file__).resolve().parent.parent / "dispatch.py"
+    args = [sys.executable, str(script), "_act-local-tidy-worker", str(root)]
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True,
+            )
+        else:
+            subprocess.Popen(
+                args, cwd=root,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, close_fds=True,
+            )
+    except OSError:
+        pass
+
+
+def _check_act_local_tidy(root: Path, config: dict[str, str], state: dict) -> "list[str]":
+    """Reports a previous run's finding (post-status-line note, plus `state["tidy"]` for the human line)
+    and, at most once a calendar day, starts the detached worker. `act-local-tidy: off` does neither.
+    The marker `spawned` in .act-local/act-local-tidy.json keeps parallel session starts from each
+    spawning one. Never raises past the caller's own try/except."""
+    if _check_mode(config, "act-local-tidy", default="block") == "off" or not (root / ".act-local").is_dir():
+        return []
+    tidy = _tidy_module()
+    notes: list[str] = []
+    if tidy.base_is_link(root):  # nothing is read, written or spawned through a linked .act-local
+        return [f"[act] note: act-local-tidy: {tidy.LINK_NOTE}"]
+    pending = _consume_pending_tidy_note(root)
+    if pending:
+        notes.append(f"[act] note: {pending}")
+        state["tidy"] = pending
+    today = date.today().isoformat()
+    if tidy.read_state(root).get("spawned") != today:
+        tidy.write_state(root, spawned=today)
+        _spawn_act_local_tidy_worker(root)
+    return notes
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator-only rules (.act/rules/orchestrator/) — imported by docs/ai/rules.md
 # like the shared ones (marked "main session only, workers skip this section"). The hook hands
 # over a short form only as a fallback, while a locally changed docs/ai/rules.md does not import
@@ -1954,6 +2041,8 @@ def _human_line(state: dict) -> Optional[str]:
         parts.append(f"ideas: {state['ideas']} new")
     if state.get("old_imports"):
         parts.append("docs/ai/rules.md uses the old import form, see note")
+    if state.get("tidy"):
+        parts.append(str(state["tidy"]))
     return "act · " + " · ".join(parts) if parts else None
 
 
@@ -2341,6 +2430,11 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         post_update_notes.extend(_check_security_scan_awareness(root, config))
     except Exception:
         pass  # security-check's own daily scan is informational only, must never block the session
+
+    try:
+        post_update_notes.extend(_check_act_local_tidy(root, config, state))
+    except Exception:
+        pass  # keeping .act-local/ small is housekeeping, must never block the session
 
     rules_delivered: Optional[int] = None
     for key, compact in (("full", False), ("compact", True)):

@@ -2589,7 +2589,9 @@ def step_git_files(root: Path, plan: bool) -> tuple[list[str], list[Path]]:
         touched.append(root / ".gitattributes")
     if ignore_changed or (root / ".gitignore").is_file():
         touched.append(root / ".gitignore")
-    return [attrs_msg, ignore_msg], touched
+    ide_messages, ide_changed = actlib.register_ide_excludes(root, plan)
+    touched.extend(ide_changed)
+    return [attrs_msg, ignore_msg, *(f"IDE: {m}" for m in ide_messages)], touched
 
 
 # ---------------------------------------------------------------------------

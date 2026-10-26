@@ -9,6 +9,25 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Added
+
+- `R-work-throwaway`: throwaway material — probes, throwaway projects, scratch files — goes into
+  the system temp directory, or, where the tool refuses that to a worker, into
+  `.act-local/tmp/<task-id>-<slug>/`, never directly under `.act-local/`. `act-commit` removes a
+  task's folders after the commit (`act_local_tidy.py --task <id>`).
+- Session-start check `act-local-tidy` keeps `.act-local/` small in every project: once a day, in
+  a background process, it removes `tmp/` entries and unknown entries directly under
+  `.act-local/` that are older than 7 days and whose name does not start with an open task's id,
+  and all but the newest 5 backups of `update`. Entries the template's own scripts create are
+  never removed. The next session start reports count, size and names. The first run in a project
+  only reports what it would remove; removal starts the day after a session start has shown that
+  report. Nothing is removed when `.act-local/` itself is a link. `act-local-keep` in
+  `docs/ai/config.md` § Checks protects a project's own entries, `act-local-tidy: warn` only
+  reports, `off` skips it. `python .act/scripts/act_local_tidy.py` lists what would go.
+- `update` names in its summary what the next session start will remove from `.act-local/`.
+- `init` and `update` keep IDEs from indexing `.act-local/`: an `excludeFolder` in a JetBrains
+  `.idea/*.iml`, and `files.watcherExclude` in `.vscode/settings.json` where `.vscode/` exists.
+
 ### Changed
 
 - `rules.py --imports` shows how much every always-loaded instruction file costs: each file it

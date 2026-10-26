@@ -1,6 +1,6 @@
 # Core rules
 
-summary: evidence over claims, template overrides, docs language, worker scope and git access
+summary: evidence over claims, template overrides, docs language, throwaway material, worker scope and git access
 
 Rules every role loads — orchestrator and every sub-agent. IDs (`R-<area>-<name>`) are stable and
 never reassigned, even if the wording changes later. Companion files in this layer:
@@ -72,6 +72,17 @@ the system temp directory (writable for every worker, as a path written out) and
 Build and test output goes the same way: read only the failures. A large file is read in excerpts
 (`offset`/`limit`), not whole. Every line that enters the context is read again with each following
 step.
+
+## `R-work-throwaway` — Throwaway material has one place and goes away
+
+summary: probes, throwaway projects and scratch files in the system temp directory, else .act-local/tmp/<task-id>-<slug>/; removed with the task's commit; act-local-tidy clears the rest; mechanically checked
+
+Throwaway material — probes, throwaway projects, scratch files — goes into the system temp
+directory. Where the tool refuses that to a worker, it goes into `.act-local/tmp/<task-id>-<slug>/`,
+never directly under `.act-local/`. The orchestrator removes a task's folders when it commits the
+task (`act-commit`). At session start, `act-local-tidy` removes what is left after 7 days unless its
+name starts with an open task's id or `act-local-keep` lists it (`docs/ai/config.md` § Checks).
+Details: `topics/checks.md`.
 
 ## `R-role-worker` — What a worker may and may not do
 

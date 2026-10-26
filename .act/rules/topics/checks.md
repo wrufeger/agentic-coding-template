@@ -72,6 +72,33 @@ directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds
 the edit produces); the human writes such a file themselves. Limit: what a program or script writes
 itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
 
+## `R-work-throwaway` — Throwaway material in the system temp directory
+
+Checks: act-local-tidy.
+
+Throwaway material (probes, scratch projects, scratch files) goes into the system temp directory; where
+the tool refuses that to a worker, into `.act-local/tmp/<task-id>-<slug>/`, never directly under
+`.act-local/`. The orchestrator removes a task's folders when it commits the task
+(`python .act/scripts/act_local_tidy.py --task <id>`).
+
+Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
+detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
+older than 7 days that belong to no open task; all but the newest 5 folders in `.act-local/backup/`; every
+other entry directly under `.act-local/` that no template script creates. Age is the newest change of
+anything inside an entry, so an entry still written to stays. An entry belongs to an open task when its
+name equals the task's id or starts with it followed by a non-digit (`<id>-x` belongs to the task,
+`<id>0-x` does not). Links are removed as links, never followed; if `.act-local` itself is a link, nothing is touched.
+`act-local-keep` lists patterns relative to `.act-local/` (`exports, tmp/long-*`) that are never removed;
+a pattern naming a folder keeps its contents (`tmp` keeps `tmp/x`), and one naming something inside an
+entry keeps that whole entry (`mydata/important` keeps `mydata`). `act-local-tidy: warn` only reports
+what would go, `off` skips the check. Report first: removal starts only on a calendar day after the day a
+report-only result was shown (by the session start, or by `--apply` on a hand run), so the first result in
+a project is a report with the date the next start may remove; until a report was shown a run only reports.
+`python .act/scripts/act_local_tidy.py` lists the plan without removing anything. Limits: an entry that a
+parallel session uses for more than 7 days without an open task id in its name is removed - name it with the
+task id or list it in `act-local-keep`; a task file without an `id:` line (team mode before `assign`)
+protects no folder.
+
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
 Checks: worker-cap, worker-write-scope, worker-scope-overlap.

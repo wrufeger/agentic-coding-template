@@ -6,6 +6,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 
 | Script | Purpose | Call |
 | :--- | :--- | :--- |
+| `act_local_tidy.py` | Keeps `.act-local/` small. Throwaway material (probes, scratch projects, old backups, leftovers of earlier versions) piles up there without… | direct (session start runs it daily in the background; `--task` is a step of skill `act-commit`) |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
 | `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout against a project that… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
@@ -49,6 +50,27 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `frontmatter.py` — One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one…
+
+## `act_local_tidy.py`
+
+Call: direct (session start runs it daily in the background; `--task` is a step of skill `act-commit`)
+
+```text
+usage: act_local_tidy.py [-h] [--list | --apply | --task ID]
+
+Keep .act-local/ small: removes tmp/ entries older than 7 days that belong to no open task, all
+but the newest 5 backups, and unknown old entries. Without an option the plan is listed and
+nothing is written.
+
+options:
+  -h, --help  show this help message and exit
+  --list      list what would be removed (default); writes nothing
+  --apply     remove per the plan, honouring `act-local-tidy` (block|warn|off) in
+              docs/ai/config.md and the report-first rule (removal only on a calendar day after a
+              report-only result was shown; a hand run that only reports counts as shown)
+  --task ID   remove .act-local/tmp/<ID> and .act-local/tmp/<ID>-* of any age (the act-commit
+              step)
+```
 
 ## `adopt.py`
 

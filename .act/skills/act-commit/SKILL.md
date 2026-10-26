@@ -52,9 +52,11 @@ secures the result.
    style, attribution as given for the running session; after a `CONDITIONAL`, the message names
    the id of the inbox entry from step 1. Don't silently sweep up another session's
    uncommitted changes — look at them, then decide.
-8. **Anyone waiting?** Is anyone waiting for a reply from this session? Then file or close the todo
+8. **Throwaway folders.** Remove the task's folders under `.act-local/tmp/` with `python .act/scripts/act_local_tidy.py
+   --task <id>` (`R-work-throwaway`); it removes `tmp/<id>` and `tmp/<id>-*` and nothing else.
+9. **Anyone waiting?** Is anyone waiting for a reply from this session? Then file or close the todo
    (`entries.py new todo`, `for:` naming whom, `R-human-external`).
-9. **Report to the human.** Result first, evidence (hash, test numbers), open points and questions
+10. **Report to the human.** Result first, evidence (hash, test numbers), open points and questions
    by ID (`R-human-chat`).
 
 ## Limits

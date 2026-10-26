@@ -1533,3 +1533,161 @@ def is_interactive() -> bool:
         return sys.stdin.isatty()
     except (AttributeError, ValueError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# IDE exclusions: keep .act-local/ out of the editors' indexes
+# ---------------------------------------------------------------------------
+
+_IML_CONTENT_RE = re.compile(r'<content\b[^>]*?\burl=(["\'])file://\$MODULE_DIR\$\1[^>]*?(/?)>')
+_IML_EXCLUDE_LINE = '<excludeFolder url="file://$MODULE_DIR$/.act-local" />'
+_IML_EXCLUDE_RE = re.compile(
+    r'<excludeFolder\b[^>]*\burl=(["\'])file://\$(?:MODULE|PROJECT)_DIR\$/\.act-local/?\1')
+_VSCODE_EXCLUDE_GLOB = "**/.act-local/**"
+_VSCODE_LINE = '"files.watcherExclude": {"**/.act-local/**": true}'
+
+
+def _exclude_in_iml(path: Path, plan: bool) -> tuple[str, bool]:
+    """Adds the .act-local exclude to the root content entry of one JetBrains module file, as a text
+    edit that leaves every other byte alone. Returns (message, changed)."""
+    name = f".idea/{path.name}"
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return f"{name}: not readable as UTF-8, skipped", False
+    match = _IML_CONTENT_RE.search(text)
+    if match is None:
+        return f"{name}: no content entry for the project root, skipped", False
+    eol = "\r\n" if "\r\n" in text else "\n"
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    tag_indent = text[line_start:match.start()]
+    if tag_indent.strip():
+        return f"{name}: unusual layout of the content entry, skipped", False
+    if match.group(2):  # self-closing: <content url="..." />
+        if plan:
+            return f"{name}: would add the .act-local exclude", False
+        head = re.sub(r"\s*/>$", ">", match.group(0))
+        child_indent = tag_indent + "  "
+        new_block = f"{head}{eol}{child_indent}{_IML_EXCLUDE_LINE}{eol}{tag_indent}</content>"
+        new_text = text[:match.start()] + new_block + text[match.end():]
+    else:
+        close = text.find("</content>", match.end())
+        if close < 0:
+            return f"{name}: content entry is not closed, skipped", False
+        body = text[match.end():close]
+        if _IML_EXCLUDE_RE.search(body):
+            return f"{name}: .act-local already excluded", False
+        close_start = text.rfind("\n", 0, close) + 1
+        if text[close_start:close].strip():
+            return f"{name}: unusual layout of the content entry, skipped", False
+        if plan:
+            return f"{name}: would add the .act-local exclude", False
+        children = re.findall(r"^([ \t]+)<", body, flags=re.M)
+        child_indent = children[0] if children else tag_indent + "  "
+        new_text = text[:close_start] + f"{child_indent}{_IML_EXCLUDE_LINE}{eol}" + text[close_start:]
+    overwrite_text(path, new_text, newline="")
+    return f"{name}: .act-local exclude added", True
+
+
+def _exclude_in_vscode(root: Path, plan: bool) -> tuple[str, bool]:
+    settings = root / ".vscode" / "settings.json"
+    if not settings.is_file():
+        if plan:
+            return ".vscode/settings.json: would be created with the .act-local watcher exclude", False
+        new_obj = {"files.watcherExclude": {_VSCODE_EXCLUDE_GLOB: True}}
+        overwrite_text(settings, json.dumps(new_obj, indent=4) + "\n", newline="\n")
+        return ".vscode/settings.json: created with the .act-local watcher exclude", True
+    try:
+        text = settings.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return f".vscode/settings.json: not readable as UTF-8, skipped; add {_VSCODE_LINE}", False
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    body = text[len(bom):]
+    if not body.strip():
+        data: Any = {}
+    else:
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return (f".vscode/settings.json: not plain JSON (comments or trailing commas), left alone; "
+                    f"add this line yourself: {_VSCODE_LINE}"), False
+    if not isinstance(data, dict):
+        return f".vscode/settings.json: not a JSON object, left alone; add {_VSCODE_LINE}", False
+    current = data.get("files.watcherExclude")
+    if "files.watcherExclude" in data and not isinstance(current, dict):
+        return f".vscode/settings.json: files.watcherExclude is not an object, left alone; add {_VSCODE_LINE}", False
+    if isinstance(current, dict) and _VSCODE_EXCLUDE_GLOB in current:
+        return ".vscode/settings.json: .act-local watcher exclude already there", False
+    if plan:
+        return ".vscode/settings.json: would add the .act-local watcher exclude", False
+    data.setdefault("files.watcherExclude", {})[_VSCODE_EXCLUDE_GLOB] = True
+    eol = "\r\n" if "\r\n" in body else "\n"
+    indent_match = re.search(r"^([ \t]+)\S", body, flags=re.M)
+    indent = indent_match.group(1) if indent_match else "    "
+    out = json.dumps(data, indent=indent, ensure_ascii=False).replace("\n", eol)
+    if body.endswith("\n") or not body.strip():
+        out += eol
+    overwrite_text(settings, bom + out, newline="")
+    return ".vscode/settings.json: .act-local watcher exclude added", True
+
+
+def register_ide_excludes(root: Path, plan: bool = False) -> tuple[list[str], list[Path]]:
+    """Keeps .act-local/ out of the IDEs' indexes: a JetBrains exclude in every .idea/*.iml whose content
+    root is the project root, a watcher exclude in .vscode/settings.json. Nothing is created for an IDE
+    the project does not use (settings.json only inside an existing .vscode/), and a file that cannot
+    be edited safely is left alone with a message. Idempotent.
+    Returns (one message per file looked at, paths to put into the template commit): a changed file
+    goes into the commit only if git tracks it and it had no uncommitted changes before the edit.
+    A write error never raises -- the message names the line to add by hand."""
+    messages: list[str] = []
+    changed: list[Path] = []
+
+    def step(path: Path, name: str, line: str, action: Any) -> None:
+        was_clean = False if plan else _tracked_and_clean(root, path)
+        try:
+            message, did = action()
+        except (OSError, ValueError, TypeError) as exc:
+            messages.append(f"{name}: could not be written ({exc}), skipped; add {line} yourself")
+            return
+        if did and was_clean:
+            changed.append(path)
+        elif did:
+            message += " (not committed: untracked, or it had uncommitted changes before the edit)"
+        messages.append(message)
+
+    idea = root / ".idea"
+    if idea.is_dir():
+        for iml in sorted(idea.glob("*.iml")):
+            if iml.is_file():
+                step(iml, f".idea/{iml.name}", _IML_EXCLUDE_LINE, lambda iml=iml: _exclude_in_iml(iml, plan))
+    if (root / ".vscode").is_dir():
+        step(root / ".vscode" / "settings.json", ".vscode/settings.json", _VSCODE_LINE,
+             lambda: _exclude_in_vscode(root, plan))
+    return messages, changed
+
+
+def _tracked_and_clean(root: Path, path: Path) -> bool:
+    """True if git tracks `path` and it equals HEAD (nothing staged or unstaged) right now."""
+    if not tracked_paths(root, [path]):
+        return False
+    try:
+        rel = path.relative_to(root).as_posix()
+        return subprocess.run(["git", "diff", "--quiet", "HEAD", "--", rel], cwd=root, capture_output=True,
+                              timeout=60).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def tracked_paths(root: Path, paths: list[Path]) -> list[Path]:
+    """The subset of `paths` git already tracks -- an IDE file the project keeps out of git is changed
+    but never added to the template commit."""
+    if not paths:
+        return []
+    rels = [p.relative_to(root).as_posix() for p in paths]
+    try:
+        out = subprocess.run(["git", "ls-files", "-z", "--", *rels], cwd=root, capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    tracked = set(out.split("\0"))
+    return [p for p, rel in zip(paths, rels) if rel in tracked]

@@ -14,6 +14,7 @@ template text of its rule, checked or not.
   - [x] `R-work-language`
   - [x] `R-work-second-check`
   - [x] `R-work-bounded-output`
+  - [x] `R-work-throwaway`
   - [x] `R-role-worker`
 
 @../../.act/rules/shared/10-safety.md

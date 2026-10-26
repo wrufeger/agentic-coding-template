@@ -143,6 +143,10 @@
 #                 process (see main() below). Not documented to the harness, not something a hook
 #                 config ever names.
 #
+#   "_act-local-tidy-worker" <root>: the same kind of internal-only event, launched by
+#                 checks.session._spawn_act_local_tidy_worker() once a day: scripts/act_local_tidy.py
+#                 keeps .act-local/ small; the next session start reports what it found.
+#
 #   "_security-scan-worker" <root> [<state-hash> <lock-file>...]: the same kind of internal-only
 #                 event, launched by checks.session._spawn_security_scan_worker() — with the root
 #                 alone for the daily dependency-vulnerability scan at session start (security-
@@ -696,6 +700,8 @@ def main(argv: list[str]) -> int:
     # extra argv entry here can never fall through to "no event named".
     if len(argv) == 2 and argv[0] == "_update-check-worker":
         return _run_update_check_worker(Path(argv[1]))
+    if len(argv) == 2 and argv[0] == "_act-local-tidy-worker":
+        return _run_act_local_tidy_worker(Path(argv[1]))  # internal event, as above: the daily .act-local/ tidy
     if len(argv) >= 2 and argv[0] == "_security-scan-worker":
         # argv[1] the project root; optionally argv[2] a state hash and argv[3:] the lock files a
         # commit touches, for checks/deps_scan.py (see checks.session._run_security_scan_worker).

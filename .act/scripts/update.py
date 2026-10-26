@@ -2049,7 +2049,7 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
     if plan:
         return (
             "would reconcile .claude/settings.json hook entries and the "
-            ".gitattributes/.gitignore template blocks",
+            ".gitattributes/.gitignore template blocks and the IDE exclusions for .act-local/",
             [],
         )
 
@@ -2097,6 +2097,12 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
         touched.append(root / ".gitattributes")
     if ignore_changed:
         touched.append(root / ".gitignore")
+
+    # IDE exclusions for .act-local/ (JetBrains .iml, VS Code settings): one message per file, and only
+    # a tracked file goes into the template commit.
+    ide_messages, ide_changed = actlib.register_ide_excludes(root, False)
+    parts.extend(f"IDE: {m}" for m in ide_messages)
+    touched.extend(ide_changed)
 
     return ("; ".join(parts) if parts else "nothing to reconcile"), touched
 
@@ -2544,6 +2550,22 @@ def _relaunch_after_replace(
 # (which skips fetch/diff/replace because .act/ is already a clean, fetched-equivalent state)
 # ---------------------------------------------------------------------------
 
+def _print_tidy_preview(root: Path, notes: list[str]) -> None:
+    """One line on what the next session start's .act-local/ tidy would do (the updated
+    act_local_tidy.py, so this runs only after the self-relaunch). Never fails the update."""
+    try:
+        import act_local_tidy
+        if act_local_tidy.tidy_mode(root) == "off":
+            return
+        items = act_local_tidy.plan(root)
+        if items:
+            summary = act_local_tidy.format_summary(items, act_local_tidy.is_first_run(root))
+            if summary:
+                print(f"[act] act-local-tidy: next session start: {summary}")
+    except Exception as exc:
+        notes.append(f".act-local tidy preview skipped ({exc.__class__.__name__}: {exc})")
+
+
 def _finish_update(
     root: Path, no_commit: bool, source: str, notes: list[str],
     fetched_commit: Optional[str], rescue_active: bool, keep_commit: bool = False,
@@ -2603,6 +2625,8 @@ def _finish_update(
         (root / ".act-local" / "update-check-result.json").unlink()
     except OSError:
         pass
+
+    _print_tidy_preview(root, notes)
 
     if notes:
         print(f"[act] done - {len(notes)} open point(s)")

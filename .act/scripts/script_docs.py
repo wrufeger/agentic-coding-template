@@ -55,6 +55,7 @@ HELP_COLUMNS = "100"
 # needs a skill).
 SCRIPT_INFO: dict[str, dict[str, str]] = {
     "actlib.py": {"kind": "library"},
+    "act_local_tidy.py": {"kind": "direct", "note": "session start runs it daily in the background; `--task` is a step of skill `act-commit`"},
     "board.py": {"kind": "direct"},
     "compact_check.py": {"kind": "skill", "skill": "act-compact"},
     "adopt.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
