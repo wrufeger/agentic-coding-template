@@ -61,7 +61,8 @@ non-repeated mention as for any other finding under `feedback: off`.
 Recurring shapes this takes in practice (patterns to recognize, not a checklist to fill in): a
 rule or a file format turned out to be impractical in real use, a workflow the template assumed
 had no matching command or skill, a workaround was needed because the intended path did not work.
-Each is worth its own entry the moment it happens, not batched for later.
+Each is worth its own entry the moment it happens, not batched for later. With `feedback: automatic`
+the assistant files these itself.
 
 ## What a good entry looks like
 

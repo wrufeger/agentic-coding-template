@@ -32,6 +32,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- Shorter core rules (`.act/rules/shared/00-core.md`): `R-work-override`, `R-work-language` and
+  `R-role-worker` leave details that `.act/bridges/rules.md`, `topics/feedback.md` and the scaffold's
+  own inbox entry already state. No rule and no obligation is removed, here and in the six rule files
+  below; what moved stands on the topic pages.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a

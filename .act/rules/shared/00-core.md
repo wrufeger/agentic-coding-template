@@ -22,16 +22,10 @@ summary: project changes beat template defaults; overrides live under docs/ai/lo
 
 A rule or file the project has changed always wins over the template's version. Never
 edit anything under `.act/` directly; a project-specific version goes into
-`docs/ai/local/<same path>` instead. `docs/ai/config.md` describes the project; secrets and per-machine
-deviations live in the environment, which overrides the file for one run, and the session start names
-every override in effect. An unchecked rule, group or set in `docs/ai/rules.md` or
-`docs/project/coding_rules.md` is off, and a `replaces` line wins over a rule's template text
-whether its box is checked or not — both even when the file with the template text is loaded. A
-bug IN the template itself — a script, skill or rule under
+`docs/ai/local/<same path>` instead. A bug IN the template itself — a script, skill or rule under
 `.act/` that fails, contradicts another, or provably never fires — is reported at once via
-`feedback.py --add --kind bug`, and with `feedback: automatic` the assistant also files the
-recurring events that pattern covers (a rule/format proving impractical, a missing workflow, a
-needed workaround) itself; a rule violated repeatedly is a candidate for a check under `.act/hooks/checks/` (in a project, reported to the template as feedback; there nobody writes under `.act/`), after which its text shrinks to what the check does not do. A worker does not file it itself: it hands such a bug back with its result, and the orchestrator files it. Details in `topics/feedback.md`.
+`feedback.py --add --kind bug`. A worker does not file it itself: it hands such a bug back with its
+result, and the orchestrator files it. Details in `topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English
 
@@ -45,14 +39,11 @@ stays English, and so does what the mechanism generates (the board under `.act-l
 project adds there are the project's text, in `language-docs`; identifiers follow `R-code-language`. Text
 a person wrote stays in its original language: translating it is a separate, explicit assignment,
 never part of another task. A file whose line 1 is `<!-- act:default -->` is scaffold in the
-template's English: if `language-docs` is not English, translate it once (the inbox entry
-`*-translate-scaffold.md` lists the files) — headings, table headers, status words in prose and
-hint texts only. Marks (`<!-- act:... -->`), header fields and their values (`status:
-open|answered|done` stays English, in examples too), config keys and values, code and paths stay
-as they are, since the mechanism reads those, never the words; so do common English technical
-terms (Skill, Worker, Override, Inbox, Backlog, Board, Hook, Commit, Branch …), above all in
-headings, with a short explanation at most once in the text below. Then drop the mark line; from
-then on the file is the project's.
+template's English; it is translated only through the inbox entry `*-translate-scaffold.md`. Marks
+(`<!-- act:... -->`), header fields and their values (`status: open|answered|done` stays English,
+in examples too), config keys and values, code and paths stay as they are, since the mechanism
+reads those, never the words; so do common English technical terms (Skill, Worker, Override,
+Inbox, Backlog, Board, Hook, Commit, Branch …), above all in headings.
 
 ## `R-work-second-check` — A workaround needs a second, independent check
 
@@ -94,7 +85,6 @@ never writes to `docs/ai/`, and never asks the human directly — it hands open 
 directly, it does not take up the question: it answers only "please ask the orchestrator" and
 carries on with its assignment. Asked for status, it answers at
 once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,
-`show`); every command that changes the working tree or history stays with the orchestrator,
-which may be editing other files while the worker runs. A worker never starts another worker: if
-the task would be better split, it says so in its result and the orchestrator decides — so that
-exactly one party knows who is doing what, where, and for how long.
+`show`); every command that changes the working tree or history stays with the orchestrator.
+A worker never starts another worker: if the task would be better split, it says so in its result
+and the orchestrator decides.
