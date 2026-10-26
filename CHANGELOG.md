@@ -25,6 +25,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- On Windows, the board showed umlauts and other non-ASCII characters in the branch name and the
+  last commit garbled (`ü` as `Ã¼`), and a commit subject with a character the Windows code page
+  does not know made the last commit vanish from the board. Every script and hook of the template
+  now reads the output of git and Semgrep as UTF-8, the board, the session start, the feedback
+  numbers and the deep security scan included.
 - Workers no longer lose part of their rules once the project's rules outgrow six hook entries:
   Claude Code cuts every hook output above 10,000 characters down to a short preview, so the worker
   rules now go out over 12 `SubagentStart` entries instead of 6. If even 12 are not enough, the last

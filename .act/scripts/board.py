@@ -146,7 +146,8 @@ def run_git(args: list[str], root: Path) -> Optional[str]:
     not a repository, command exits non-zero) — callers treat that as "source unavailable"."""
     try:
         result = subprocess.run(
-            ["git", *args], cwd=root, capture_output=True, text=True, check=True,
+            ["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            check=True,
         )
     except (OSError, subprocess.CalledProcessError):
         return None

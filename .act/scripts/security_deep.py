@@ -106,7 +106,8 @@ def _security_check_level(config: dict[str, str]) -> str:
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
     try:
         result = subprocess.run(
-            ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+            ["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_GIT_TIMEOUT,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -226,7 +227,8 @@ def _run_semgrep_once(
     command = [*base_cmd, "--config", _SEMGREP_CONFIG, "--metrics=off", "--json", *targets]
     try:
         result = subprocess.run(
-            command, cwd=str(cwd), capture_output=True, text=True, timeout=_SEMGREP_TIMEOUT,
+            command, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_SEMGREP_TIMEOUT,
         )
     except subprocess.TimeoutExpired:
         return None, f"semgrep timed out after {_SEMGREP_TIMEOUT:.0f}s"

@@ -82,7 +82,7 @@ def _current_branch(root: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=root, capture_output=True, text=True, timeout=5,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
@@ -249,7 +249,7 @@ def _commits_since(root: Path, when: date) -> int:
         # of `when`'s day count, matching what a human reading "since 2026-08-01" expects.
         result = subprocess.run(
             ["git", "rev-list", "--count", f"--since={when.isoformat()}T00:00:00", "HEAD"],
-            cwd=root, capture_output=True, text=True, timeout=10,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 0

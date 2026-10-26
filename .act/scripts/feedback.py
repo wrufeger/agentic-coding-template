@@ -430,7 +430,7 @@ def _git(root: Path, *args: str) -> str:
     are simply no numbers."""
     try:
         result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                 timeout=20)
+                                 encoding="utf-8", errors="replace", timeout=20)
     except (OSError, subprocess.SubprocessError):
         return ""
     return result.stdout if result.returncode == 0 else ""

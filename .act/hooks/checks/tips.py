@@ -254,7 +254,7 @@ def _last_commit_time(root: Path, path_str: str) -> Optional[float]:
     try:
         result = subprocess.run(
             ["git", "log", "-1", "--format=%ct", "--", path_str],
-            cwd=str(root), capture_output=True, text=True, timeout=3,
+            cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3,
         )
     except Exception:
         return None
