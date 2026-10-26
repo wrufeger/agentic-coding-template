@@ -1,10 +1,18 @@
 # Cost rules
 
-summary: delegation tiers and caps, waiting on workers, amending a running assignment, scripting recurring checks, commit gate
+summary: when to delegate, delegation tiers and caps, waiting on workers, amending a running assignment, scripting recurring checks, commit gate
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments
+summary: delegate where a handover pays off, template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments
+
+A handover costs a worker's fresh start and loses context, so delegate only where it pays off:
+independent parts that run in parallel, a check that should not share the implementation's
+context (the review), output of unknown or large length not needed afterwards, long reading or
+runs that a cheaper tier does just as well. A known file or spot, a few tool calls or a small
+change you do yourself; its review still follows `R-code-commit`. The template's roles come before
+the tool's own agents (in Claude Code `Explore`, `general-purpose`, `Plan`; its `claude-code-guide`
+stays for questions about the tool itself).
 
 Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
 implementation, `elevated` for review/security judgment, `expert` only for an escalation after two

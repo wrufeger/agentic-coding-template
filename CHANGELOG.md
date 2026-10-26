@@ -11,6 +11,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `R-cost-delegate` now says when a handover to a worker pays off, not only how to make one:
+  independent parts that run in parallel, the review, which should not share the implementation's
+  context, output of unknown or large length not needed afterwards, and long reading or runs that
+  a cheaper tier does just as well. A known file or spot, a few tool calls or a small change the
+  main session does itself; its review still follows `R-code-commit`. The template's roles come
+  before the tool's own agents (in Claude Code `Explore`, `general-purpose`, `Plan`; its
+  `claude-code-guide` stays for questions about the tool).
 - `R-safe-outside-root` is cut down to what the `outside-root` check cannot do itself: a new place
   needs the owner's word and an entry in `outside-root-allow`, even when the check only warns, and
   the rule also covers what the check cannot see, such as a program that opens files itself or an
