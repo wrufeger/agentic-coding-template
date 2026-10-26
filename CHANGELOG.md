@@ -30,6 +30,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
+  command (`disable-model-invocation: true`): their descriptions no longer take up room in every
+  Claude Code session, and a request in plain words no longer starts them. Usage measured over a
+  month showed no call of any of them; the tips name the slash command.
 - `rules.py --imports` shows how much every always-loaded instruction file costs: each file it
   reaches, and each file Claude Code loads on its own, ends with its size in characters (a CRLF
   line end counts as one), and a last line gives the total, split into the template's share under

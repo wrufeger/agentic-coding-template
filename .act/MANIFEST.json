@@ -182,7 +182,7 @@
   "skills/act-design-build/SKILL.md": "7543e8194f5a15100510f99a135782c6500e7a09cb40850fe0b9a55beb682ac4",
   "skills/act-design-ideas/SKILL.md": "0a3c998ddf885a408e8c2807d31d279985d198a3530b070ccbd431d0e55528ba",
   "skills/act-doctor/SKILL.md": "277435d02dea860c9e7e2af2573be55bb70ddb2b5564155f07f1fddab7e2723b",
-  "skills/act-export-settings/SKILL.md": "77dc3e25cb6915d892fff022c5ac460b670f4f8f6cd7c8259a3b35c5937d9f7e",
+  "skills/act-export-settings/SKILL.md": "a51c04ad649525324ef69d21af0575792efef429fc1db9567a5858979d366962",
   "skills/act-feedback/SKILL.md": "57b8e6a17d66c9a706de18348b017bfecf8d8bbac06fa9f86d1232fcdeb5ea21",
   "skills/act-handover/SKILL.md": "2aaf5204b9c7a40e627af4cbe88a631f4dc3f913c379f335f2e7e51d98f35d53",
   "skills/act-idea/SKILL.md": "5dae4d89bd39865b6739d5b0e069e98b46cab721e762dd11183a6231ee90dfa8",
@@ -190,7 +190,7 @@
   "skills/act-integrations/references/catalog.md": "470c1bff2a2ecfe4c8e9799ca613e32fa1803bddace70331041cdda78008f0ba",
   "skills/act-integrations/references/failure-causes.md": "e34ca24eafb022beb9f161553e384c8e0b361c8fa8cf9214a25e422dd9c0b432",
   "skills/act-issue/SKILL.md": "0f91161ea0f0304951f7a779aaf402820d8d7ab4e12450c1faad08af19857c79",
-  "skills/act-load-settings/SKILL.md": "4ad4f5500945366609a4c81483b0481f27afe490a035f642b0b687c7e9e656af",
+  "skills/act-load-settings/SKILL.md": "4ca9b5c29ab37bda7f9530047a95461692fa12cd58c3bcb4ca8167f9bb94e8f2",
   "skills/act-load-settings/references/refused-units.md": "8e71fa9a4affe18340850bcded8a48453d02d44c1dce1f5455fe2dad57012341",
   "skills/act-load-settings/references/unresolved-files.md": "2efb61d1e3638ddb61496062b4f941900040b354c19d5b17698b12faca959b3d",
   "skills/act-perf/SKILL.md": "9578244277c9479cac4be25e4f1bcfc4f148080e5bb5c2c1bc52bcf8c5e5f7ce",
@@ -208,8 +208,8 @@
   "skills/act-teach/references/topic-template.md": "5f3112e522a2e72426a65257d27abe5fc41bd980f6618e78200df29225ae8e1b",
   "skills/act-test-gap/SKILL.md": "d121af710688ce9244cb232f0c6880f0e5c369b5598476ac9e91d5619a4f6db3",
   "skills/act-update/SKILL.md": "467f67a1a16f3944c0c097f14840d9a1e08daed9a737f72caddef0b2ded3727d",
-  "skills/act-version/SKILL.md": "1fdf4427822a34b1ce880dcecd28caffc6b404c45ac74e42394ced3de74b7ced",
+  "skills/act-version/SKILL.md": "ef0bee9de206eb405e721b684befc4df1c97e67ae08391c771172c94da62b3c5",
   "skills/act/SKILL.md": "2996a1394e5c66780d6b32009cc7278f763eb7faa2b14fa9397ef4f11cf74d58",
   "tiers.json": "5dbe585726c2c3a2a82085c64df1551822820026dc0e4ecb4a572405d2d1de50",
-  "tips.md": "79f951a5c016fd0161cd3ea3dc60f9293132f22f56a32d866201ecab7fb28ce1"
+  "tips.md": "527d8fa55b5ff66e5d703c89dde1402fc90b63b4442fe6e612efefef496a3431"
 }

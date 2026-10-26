@@ -1,6 +1,7 @@
 ---
 name: act-version
 description: Use when asked which template version is installed, which versions or releases the source offers, or what act-update would take ("act-version", "which ACT version", "is there a newer release"). Prints the answer from a script, writes nothing. Not for applying an update - use act-update.
+disable-model-invocation: true
 ---
 
 # Show the template version

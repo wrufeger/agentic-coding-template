@@ -27,13 +27,13 @@ after every step, and proposes the plan before touching anything.
 
 ### TIP-export-settings
 when: unused:act-export-settings
-`act-export-settings` writes this project's own rule deviations — and, if wanted, its scripts,
+`/act-export-settings` (started only by typing it) writes this project's own rule deviations — and, if wanted, its scripts,
 checklists, agents and skills — to a portable file: handy for carrying a setup into a new project,
 or for checking what an export would reveal before sending it anywhere.
 
 ### TIP-load-settings
 when: unused:act-load-settings
-`act-load-settings` imports another project's exported settings file: mechanical checks sort
+`/act-load-settings` (started only by typing it) imports another project's exported settings file: mechanical checks sort
 new/identical/dead on their own, real overlaps go to a model for judgment, and anything unresolved
 lands in the inbox instead of being applied silently.
 

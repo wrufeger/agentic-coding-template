@@ -1,6 +1,7 @@
 ---
 name: act-export-settings
 description: Use to hand this project's setup to a new project, or to check what a settings export would reveal before sending it anywhere. Writes the project's own rule deviations, optionally scripts, checklists, agents, skills and topics, to a portable settings file.
+disable-model-invocation: true
 ---
 
 # Export the project's settings

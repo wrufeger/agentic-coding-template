@@ -1,6 +1,7 @@
 ---
 name: act-load-settings
 description: Use when handed a settings.md or settings.zip file (act-export-settings output) to bring into this project. Mechanical checks sort new, identical and dead items, content overlaps go to a model for judgment, unresolved items land in the inbox. Not for a template update conflict - use act-update.
+disable-model-invocation: true
 ---
 
 # Import a settings file
