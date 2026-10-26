@@ -41,6 +41,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - Shorter role rules (`orchestrator/00-role.md`): the role table becomes one sentence on the special
   cases, and `R-role-outcome` leaves the threshold of the tier proposal to `act-doctor`. `act-commit`
   points to `R-role-worker` and `R-code-commit` for who commits.
+- Shorter work rules (`orchestrator/10-work.md`): updating `config.md` moves from `R-work-record-now`
+  to `R-work-config`, and `R-work-handover` names `act-handover` before `/clear` or a restart.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a
