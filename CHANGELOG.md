@@ -50,6 +50,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   units, the temp-directory exception and the brief-note details move to `topics/checks.md`, and
   `R-code-commit` points to the `reviewer` role and `act-commit` for `CONDITIONAL`. `topics/checks.md`
   also gains a section on what `secret-scan` looks for.
+- Shorter safety rules (`shared/10-safety.md`): `R-safe-no-secret-diff` points to the `secret-scan`
+  check instead of describing a hand check, the git rules name groups of commands instead of every
+  form, and `R-safe-git-metadata` and `R-safe-dev-server` drop examples.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a
