@@ -48,8 +48,9 @@
 #               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
 #               someone still writes to at the old location with an older checkout falls here.
 #           16. a role/tier whose recorded usage.py outcomes cross a threshold
-#               raise proposed at 8+ outcomes with 40%+ reworked/escalated — a finding only, never
-#               a live change to docs/ai/config.md. A lower tier is never proposed: a run of
+#               raise proposed at 8+ outcomes with 40%+ reworked/escalated — a finding (with
+#               --inbox an inbox question of its own with options, filed once and not again until
+#               8 more outcomes are recorded), never a live change to docs/ai/config.md. A lower tier is never proposed: a run of
 #               accepted outcomes says nothing about whether a cheaper tier would have done as well.
 #           17. a git remote whose address points at the template repository (its repository name is
 #               exactly `agentic-coding-template`, or equals the source in .act-lock.json) while the current
@@ -88,7 +89,9 @@
 #   python .act/scripts/doctor.py --inbox            # also write a report-<YYYYMMDD-HHMM>-doctor.md entry
 #                                                     # under docs/ai/inbox/, if there are findings
 #                                                     # (a second run with the same findings updates
-#                                                     # that same entry instead of adding another)
+#                                                     # that same entry instead of adding another),
+#                                                     # and one question per new tier proposal (16),
+#                                                     # not part of the report
 #   python .act/scripts/doctor.py --accept ID [...]  # record ID's current template text as the
 #                                                     # accepted baseline (clears finding 4 for it)
 #   python .act/scripts/doctor.py --accept-all       # same, for every stale override/off found
@@ -1326,7 +1329,7 @@ def check_manifest_drift(root: Path) -> list[Finding]:
 
 # Thresholds are this check's own proposal, not a fixed standard: at
 # least 8 outcomes for a role/tier with 40%+ reworked/escalated suggests raising the tier. It
-# only ever writes a finding (surfaced via --inbox) -- never docs/ai/config.md itself
+# only ever writes a finding, or with --inbox an inbox question -- never docs/ai/config.md itself
 # (a tier is never silently switched). There is no proposal in the other direction: accepted
 # outcomes cannot show that a cheaper tier would have found the same, least of all for a
 # reviewing role, so lowering a tier stays the owner's own idea.
@@ -1391,40 +1394,191 @@ def _tier_proposals(root: Path) -> list[tuple[str, int, Finding]]:
 
 
 def _new_tier_proposals(root: Path) -> list[tuple[str, int, Finding]]:
-    """The proposals not filed yet, or filed when far fewer outcomes were recorded."""
+    """The proposals not filed yet, or filed when far fewer outcomes were recorded. Counts only
+    grow, so fewer outcomes than remembered means usage.json was reset: the memory no longer
+    applies and the proposal counts as new."""
     memory = _tier_memory(root)
     return [(key, total, finding) for key, total, finding in _tier_proposals(root)
-            if key not in memory or total >= memory[key][0] + _TIER_PROPOSAL_RENEW_AFTER]
+            if key not in memory or total < memory[key][0]
+            or total >= memory[key][0] + _TIER_PROPOSAL_RENEW_AFTER]
 
 
-def todays_tier_proposals(root: Path) -> list[Finding]:
-    """The proposals filed earlier today that are still due no new one: a second `--inbox` run
-    replaces today's still-open report, so they must go into it again or the person would never
-    see them."""
-    today = date.today().isoformat()
-    memory = _tier_memory(root)
-    new = {key for key, _, _ in _new_tier_proposals(root)}
-    return [finding for key, _, finding in _tier_proposals(root)
-            if key not in new and key in memory and memory[key][1] == today]
+# The tiers a role moves up through, one step at a time. .act/tiers.json maps each name to a model
+# per tool but does not order them (its "high" entry is a reasoning bump, not a step), so the
+# order lives here.
+_TIER_LADDER = ("light", "standard", "elevated", "expert")
+# Columns of the table under <!-- act:roles --> in docs/ai/config.md (Role, Tier, Reasoning, Model).
+_ROLES_TABLE_COLUMNS = 4
 
 
-def remember_tier_proposals(root: Path) -> None:
-    """Note the outcome count of every proposal being filed now (doctor.py --inbox), so the same
-    proposal does not come back with each run until new outcomes have piled up. Best effort: a
-    memory that cannot be written only means the proposal returns."""
+def _next_tier(tier: str) -> Optional[str]:
+    """The tier one step above `tier`, or None for the top tier, an empty or an unknown one."""
+    if tier not in _TIER_LADDER:
+        return None
+    index = _TIER_LADDER.index(tier) + 1
+    return _TIER_LADDER[index] if index < len(_TIER_LADDER) else None
+
+
+def _outcome_counts(store: dict, role: str, tier: str) -> tuple[int, int, int]:
+    """(accepted, reworked, escalated) recorded for role/tier in usage.json's `store`."""
+    outcomes = (store.get("roles", {}).get(role) or {}).get("outcomes") or {}
+    counts = outcomes.get(tier) if isinstance(outcomes.get(tier), dict) else {}
+    accepted, reworked, escalated = (
+        counts.get(kind) if isinstance(counts.get(kind), int) and not isinstance(counts.get(kind), bool)
+        else 0 for kind in ("accepted", "reworked", "escalated"))
+    return accepted, reworked, escalated
+
+
+def _related_roles(role: str, store: dict) -> list[str]:
+    """`role` itself, then its counterpart that has recorded outcomes: the base role of an
+    `<x>-high` variant, or the `<x>-high` variant of a base role."""
+    other = role[:-len("-high")] if role.endswith("-high") else f"{role}-high"
+    roles = [role]
+    if other and other in store.get("roles", {}) and (store["roles"][other].get("outcomes") or {}):
+        roles.append(other)
+    return roles
+
+
+def tier_question_text(store: dict, role: str, tier: str, language: str) -> tuple[str, str]:
+    """(title, body) of the inbox question for the proposal to raise `role` at `tier`. Numbers come
+    from `store` (usage.json) and this check's threshold constants, never from fixed text."""
+    def loc(en: str, de: str) -> str:
+        return actlib.localized(language, en, de)
+
+    accepted, reworked, escalated = _outcome_counts(store, role, tier)
+    trouble = reworked + escalated
+    total = accepted + trouble
+    percent = round(_TIER_PROPOSAL_RAISE_RATIO * 100)
+    no_tier = loc("(no tier)", "(ohne Stufe)")
+    nxt = _next_tier(tier)
+    title = loc(f"{role}: {trouble} of {total} outcomes reworked or escalated - raise the tier?",
+                f"{role}: {trouble} von {total} Ergebnissen nachgearbeitet oder eskaliert - Stufe anheben?")
+    at_tier = loc(f"at tier `{tier}`", f"auf der Stufe `{tier}`") if tier else loc("with no tier", "ohne Stufe")
+    rows = [loc("| Role | Tier | accepted | reworked | escalated | reworked or escalated |",
+                "| Rolle | Stufe | angenommen | nachgearbeitet | eskaliert | nachgearbeitet oder eskaliert |"),
+            "| :--- | :--- | ---: | ---: | ---: | ---: |"]
+    def ladder_order(tier_name: str) -> tuple[int, str]:
+        rank = _TIER_LADDER.index(tier_name) if tier_name in _TIER_LADDER else len(_TIER_LADDER)
+        return rank, tier_name
+
+    for name in _related_roles(role, store):
+        for tier_name in sorted(store["roles"][name].get("outcomes") or {}, key=ladder_order):
+            a, r, e = _outcome_counts(store, name, tier_name)
+            tier_cell = f"`{tier_name}`" if tier_name else no_tier
+            rows.append(f"| `{name}` | {tier_cell} | {a} | {r} | {e} | {r + e}/{a + r + e} |")
+    empty_cells = " |" * (_ROLES_TABLE_COLUMNS - 2)
+    # A generated `<x>-high` variant has no row of its own in § Roles: it runs at its base role's
+    # tier, one reasoning step further (init.py), so only the base role's row raises it.
+    config_role = role[:-len("-high")] if role.endswith("-high") else role
+    next_numbers = ""
+    if nxt:
+        na, nr, ne = _outcome_counts(store, role, nxt)
+        if na + nr + ne:
+            next_numbers = " " + loc(
+                f"On `{nxt}`, `{role}` has {na + nr + ne} outcomes, {nr + ne} of them reworked or escalated.",
+                f"Auf `{nxt}` hat `{role}` {na + nr + ne} Ergebnisse, davon {nr + ne} nachgearbeitet oder eskaliert.")
+        applied = loc(f"Applied, that is a row in `docs/ai/config.md` § Roles: `| {config_role} | {nxt} |{empty_cells}`.",
+                      f"Umgesetzt wäre das diese Zeile in `docs/ai/config.md` § Rollen: "
+                      f"`| {config_role} | {nxt} |{empty_cells}`.")
+        option_a = loc("Raise the tier: put the row above into `docs/ai/config.md` § Roles.",
+                       "Stufe anheben: die Zeile oben in `docs/ai/config.md` § Rollen eintragen.")
+    else:
+        applied = loc(f"Applied, that means setting a higher tier for `{config_role}` in `docs/ai/config.md` § Roles.",
+                      f"Umgesetzt hieße das, eine höhere Stufe für `{config_role}` in `docs/ai/config.md` § Rollen "
+                      "zu setzen.")
+        option_a = loc(f"Raise the tier: set a higher tier for `{config_role}` in `docs/ai/config.md` § Roles.",
+                       f"Stufe anheben: eine höhere Stufe für `{config_role}` in `docs/ai/config.md` § Rollen setzen.")
+    if config_role != role:
+        applied += " " + loc(
+            f"`{role}` has no row of its own: it runs at the tier of `{config_role}`, so the row raises both.",
+            f"`{role}` hat keine eigene Zeile: Die Rolle läuft auf der Stufe von `{config_role}`, die Zeile hebt "
+            "also beide an.")
+        if nxt == _TIER_LADDER[-1]:
+            applied += " " + loc(
+                f"On `{nxt}` there is no `{role}` any more; `{config_role}` takes its work.",
+                f"Auf `{nxt}` entfällt `{role}`, `{config_role}` übernimmt seine Arbeit.")
+    applied += " " + loc(f"Every run of `{config_role}` gets more expensive.",
+                         f"Jeder Lauf von `{config_role}` wird damit teurer.")
+    renew_at = total + _TIER_PROPOSAL_RENEW_AFTER
+    lines = [
+        loc(f"**Finding (`R-role-outcome`):** Role `{role}` has {total} outcomes {at_tier}, {trouble} of them "
+            f"reworked or escalated. From {_TIER_PROPOSAL_MIN_RAISE} outcomes with at least {percent}% rework or "
+            "escalation the doctor proposes a higher tier. The numbers from `.act-local/usage.json`:",
+            f"**Befund (`R-role-outcome`):** Die Rolle `{role}` hat {at_tier} {total} Ergebnisse, davon {trouble} "
+            f"nachgearbeitet oder eskaliert. Ab {_TIER_PROPOSAL_MIN_RAISE} Ergebnissen mit mindestens {percent} % "
+            "Nacharbeit oder Eskalation schlägt der Doctor eine höhere Stufe vor. Die Zahlen aus `.act-local/usage.json`:"),
+        "", *rows, "",
+        loc("The numbers do not show what caused the rework: an unclear assignment or a model that is too weak.",
+            "Die Zahlen zeigen nicht, woran die Nacharbeit lag: an einem unklaren Auftrag oder an einem zu schwachen Modell.")
+        + next_numbers,
+        "", applied, "",
+        loc("**Options:**", "**Optionen:**"), "",
+        f"- **a)** {option_a}",
+        "- **b)** " + loc(f"Leave it. The proposal comes back after {_TIER_PROPOSAL_RENEW_AFTER} more outcomes, at "
+                          f"{renew_at}, if at least {percent}% of them are then reworked or escalated.",
+                          f"So lassen. Der Vorschlag kommt nach {_TIER_PROPOSAL_RENEW_AFTER} weiteren Ergebnissen wieder, "
+                          f"also bei {renew_at}, wenn dann noch mindestens {percent} % nachgearbeitet oder eskaliert "
+                          "sind."),
+        "- **c)** " + loc("Look at the cases first: check the journal and transcripts of the reworked and escalated runs "
+                          "for the cause, then decide. **Recommended:** the numbers alone do not show whether a higher "
+                          "tier helps.",
+                          "Erst die Fälle ansehen: Journal und Transkripte der nachgearbeiteten und eskalierten Läufe "
+                          "auf die Ursache prüfen, dann entscheiden. **Empfehlung:** Die Zahlen allein zeigen nicht, "
+                          "ob eine höhere Stufe hilft."),
+    ]
+    return title, "\n".join(lines) + "\n"
+
+
+def file_tier_questions(root: Path) -> list[Path]:
+    """Write one inbox question (kind: question, answer line last) for every proposal not filed
+    yet, note the outcome count of each one actually written, and return the files. A proposal
+    whose question is written never comes back until _TIER_PROPOSAL_RENEW_AFTER more outcomes are
+    recorded, however many reports are written or archived meanwhile. Each question is noted right
+    after it is written. Best effort: a question that cannot be written is skipped with a warning
+    and returns with the next run; a memory that cannot be written is warned about, since the same
+    question would then be filed again with every run."""
     new = _new_tier_proposals(root)
     if not new:
-        return
+        return []
+    try:
+        import usage
+    except ImportError:
+        return []
+    store = usage.consolidate(root)
+    language = actlib.docs_language(root)
+    written: list[Path] = []
+    for key, total, _ in new:
+        role, _, tier = key.partition("|")
+        title, body = tier_question_text(store, role, tier, language)
+        try:
+            path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True)
+        except (OSError, ValueError) as exc:
+            print(f"doctor.py: tier proposal {key!r} not filed as a question: {exc}", file=sys.stderr)
+            continue
+        written.append(path)
+        if not remember_tier_proposals(root, {key: total}):
+            print(f"doctor.py: could not write {_TIER_MEMORY_FILE.as_posix()} -- the question for {key!r} "
+                  "will be filed again with the next run", file=sys.stderr)
+    return written
+
+
+def remember_tier_proposals(root: Path, filed: dict[str, int]) -> bool:
+    """Note the outcome count of each proposal whose question was written (key -> count), so the
+    same proposal does not come back with each run until new outcomes have piled up. An unreadable
+    memory is replaced by one holding `filed`. Returns False if the memory cannot be written."""
+    if not filed:
+        return True
     memory = _tier_memory(root)
     today = date.today().isoformat()
-    memory.update({key: (total, today) for key, total, _ in new})
+    memory.update({key: (total, today) for key, total in filed.items()})
     path = root / _TIER_MEMORY_FILE
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {key: {"count": count, "filed": filed} for key, (count, filed) in memory.items()}
+        data = {key: {"count": count, "filed": filed_on} for key, (count, filed_on) in memory.items()}
         path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError:
-        return
+        return False
+    return True
 
 
 def check_tier_proposal(root: Path) -> list[Finding]:
@@ -1432,8 +1586,9 @@ def check_tier_proposal(root: Path) -> list[Finding]:
     the orchestrator per R-role-outcome after every worker acceptance/rework/escalation) and
     proposes raising a role's tier once its outcomes cross the threshold above.
     A proposal only, surfaced as a finding -- deciding and editing docs/ai/config.md stays with the
-    human/orchestrator. A proposal already filed in the inbox (remember_tier_proposals) stays quiet
-    until new outcomes have piled up. Silent if usage.py cannot be imported or the store is empty."""
+    human/orchestrator. With --inbox the proposal becomes an inbox question (file_tier_questions)
+    instead of a line in the report; one already filed stays quiet until new outcomes have piled
+    up. Silent if usage.py cannot be imported or the store is empty."""
     return [finding for _, _, finding in _new_tier_proposals(root)]
 
 
@@ -1909,7 +2064,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", metavar="DIR", help="check this project instead of the current checkout")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings")
+    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings, and one inbox question per new tier proposal")
     parser.add_argument("--accept", action="append", default=[], metavar="ID", help="accept the current template text for ID (repeatable)")
     parser.add_argument("--accept-all", action="store_true", help="accept the current template text for every stale override/off")
     return parser
@@ -1948,11 +2103,13 @@ def main(argv: list[str]) -> int:
     findings, effective = run(root, accept_ids, args.accept_all)
 
     if args.inbox:
-        findings = findings + todays_tier_proposals(root)
-        written = write_inbox(root, findings)
+        # A tier proposal is a decision, so it goes into a question of its own, not into the
+        # report; the report carries the other findings and is skipped when there are none.
+        for question in file_tier_questions(root):
+            print(f"doctor.py: wrote {_rel(question, root)}")
+        written = write_inbox(root, [f for f in findings if f.kind != "tier-proposal"])
         if written is not None:
             print(f"doctor.py: wrote {_rel(written, root)}")
-            remember_tier_proposals(root)
 
     if args.json:
         payload = {

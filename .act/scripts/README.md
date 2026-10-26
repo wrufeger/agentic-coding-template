@@ -361,7 +361,8 @@ options:
   -h, --help    show this help message and exit
   --target DIR  check this project instead of the current checkout
   --json        machine-readable output
-  --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings
+  --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings,
+                and one inbox question per new tier proposal
   --accept ID   accept the current template text for ID (repeatable)
   --accept-all  accept the current template text for every stale override/off
 ```

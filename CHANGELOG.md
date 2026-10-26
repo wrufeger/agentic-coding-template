@@ -22,6 +22,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   numbered list, the recommendation marked, and when booking an answer the file is read again and
   the answer goes below the existing label, never under a second one. `act-prepare` and `act-idea`
   point to that form. Adopted questions keep their text as it was.
+- `doctor.py --inbox` files each new tier proposal (`R-role-outcome`) as an inbox question of its
+  own instead of a line in the doctor report: the finding with its numbers, a table of the role's
+  outcomes per tier, the row for `docs/ai/config.md` § Roles with the next tier, and three options
+  (raise it, leave it until 8 more outcomes, look at the cases first). `update` commits the
+  questions with the report and names both in its summary. Without `--inbox` and with `--json` the
+  proposal stays a finding.
 
 ### Fixed
 
@@ -30,6 +36,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   does not know made the last commit vanish from the board. Every script and hook of the template
   now reads the output of git and Semgrep as UTF-8, the board, the session start, the feedback
   numbers and the deep security scan included.
+- A tier proposal the owner had already decided came back in the next doctor report of the same
+  day. A proposal whose question is filed no longer returns, not even on the same day, until 8
+  more outcomes are recorded.
 - Workers no longer lose part of their rules once the project's rules outgrow six hook entries:
   Claude Code cuts every hook output above 10,000 characters down to a short preview, so the worker
   rules now go out over 12 `SubagentStart` entries instead of 6. If even 12 are not enough, the last

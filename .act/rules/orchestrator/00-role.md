@@ -25,15 +25,15 @@ already ruled out).
 
 ## `R-role-outcome` — Record every worker outcome
 
-summary: usage.py --outcome after every acceptance/rework/escalation feeds the tier proposal, never a live edit
+summary: usage.py --outcome after every acceptance/rework/escalation feeds the tier proposal (an inbox question), never a live edit
 
 Right after accepting, reworking, or escalating a worker's result, run `python
 .act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated` (`<tier>` as assigned
 per `R-cost-delegate`, or `""` if none was given). No hook can do this instead: `SubagentStop`
-fires before that decision. `doctor.py --inbox` turns the pattern into a proposal, never a live
-change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a higher tier — the human
-decides. A lower tier is never proposed: accepted outcomes do not show that a cheaper tier would
-have done as well.
+fires before that decision. `doctor.py --inbox` files the pattern as an inbox question with
+options, never a live change: 8+ outcomes for a role/tier with 40%+ reworked/escalated suggest a
+higher tier — the human decides. A lower tier is never proposed: accepted outcomes do not show
+that a cheaper tier would have done as well.
 
 ## Role assignment — which role for what
 

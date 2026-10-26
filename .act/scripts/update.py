@@ -2258,36 +2258,44 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
     return "; ".join(parts), touched
 
 
-def step_doctor(root: Path, plan: bool) -> tuple[str, Optional[Path], list[Path]]:
-    """Returns (summary, inbox_path, touched). doctor.py's own exit codes: 0 = no findings, 1 =
-    findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md), 2 = a real
-    failure. `touched` carries the bridge files _refresh_generated_bridges rewrote, so the caller
-    can add them to the commit alongside the inbox file."""
+def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
+    """Returns (summary, inbox_paths, touched). doctor.py's own exit codes: 0 = no findings, 1 =
+    findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md and one
+    question per new tier proposal, each announced by a `doctor.py: wrote <path>` line), 2 = a real
+    failure. `inbox_paths` holds every file doctor.py wrote, report and questions. `touched` carries
+    the bridge files _refresh_generated_bridges rewrote, so the caller can add them to the commit
+    alongside the inbox files."""
     bridge_summary, bridge_touched = _refresh_generated_bridges(root, plan)
     doctor_path = root / ".act" / "scripts" / "doctor.py"
     if not doctor_path.is_file():
-        return f"{bridge_summary}; doctor not available", None, bridge_touched
+        return f"{bridge_summary}; doctor not available", [], bridge_touched
     if plan:
-        return f"{bridge_summary}; would run: python .act/scripts/doctor.py --inbox", None, []
+        return f"{bridge_summary}; would run: python .act/scripts/doctor.py --inbox", [], []
     result = subprocess.run(
         [sys.executable, str(doctor_path), "--inbox"], cwd=root, capture_output=True, text=True, encoding="utf-8",
     )
     if result.returncode not in (0, 1):
         detail = (result.stderr or result.stdout).strip().splitlines()
         last = detail[-1] if detail else f"exit code {result.returncode}"
-        return f"{bridge_summary}; doctor.py --inbox failed (update not aborted over this): {last}", None, bridge_touched
-    if result.returncode == 0:
-        return f"{bridge_summary}; doctor.py --inbox ran, no findings", None, bridge_touched
+        return f"{bridge_summary}; doctor.py --inbox failed (update not aborted over this): {last}", [], bridge_touched
 
     lines = result.stdout.splitlines()
-    inbox_rel = next(
-        (line[len("doctor.py: wrote "):].strip() for line in lines if line.startswith("doctor.py: wrote ")), None,
-    )
+    wrote = [line[len("doctor.py: wrote "):].strip() for line in lines if line.startswith("doctor.py: wrote ")]
+    inbox_paths = [root / rel for rel in wrote]
+    if result.returncode == 0 and not wrote:
+        return f"{bridge_summary}; doctor.py --inbox ran, no findings", [], bridge_touched
+
+    reports = [rel for rel in wrote if Path(rel).name.startswith("report-")]
+    questions = [rel for rel in wrote if rel not in reports]
+    # doctor.py's closing count includes the tier proposals, which went into questions, not the report.
     count_match = re.match(r"(\d+) finding", lines[-1].strip()) if lines else None
-    count = count_match.group(1) if count_match else "some"
-    inbox_path = root / inbox_rel if inbox_rel else None
-    where = inbox_rel if inbox_rel else "docs/ai/inbox/"
-    return f"{bridge_summary}; {count} finding(s) -> {where}", inbox_path, bridge_touched
+    count = str(max(int(count_match.group(1)) - len(questions), 0)) if count_match else "some"
+    parts = []
+    if reports or not questions:
+        parts.append(f"{count} finding(s) -> {', '.join(reports) if reports else 'docs/ai/inbox/'}")
+    if questions:
+        parts.append(f"{len(questions)} question(s) -> {', '.join(questions)}")
+    return f"{bridge_summary}; " + "; ".join(parts), inbox_paths, bridge_touched
 
 
 # ---------------------------------------------------------------------------
@@ -2550,7 +2558,7 @@ def _finish_update(
     migrate_summary, newly_applied, migration_touched = step_migrate(root, False)
     _print_step(8, migrate_summary)
 
-    doctor_summary, doctor_inbox, doctor_touched = step_doctor(root, False)
+    doctor_summary, doctor_inbox_paths, doctor_touched = step_doctor(root, False)
     _print_step(9, doctor_summary)
 
     _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit, ref))
@@ -2563,8 +2571,7 @@ def _finish_update(
     commit_paths.extend(frontmatter_touched)
     commit_paths.extend(hooks_gitfiles_touched)
     commit_paths.extend(doctor_touched)
-    if doctor_inbox is not None:
-        commit_paths.append(doctor_inbox)
+    commit_paths.extend(doctor_inbox_paths)
     rescue_dir = root / "docs" / "ai" / "local"
     if rescue_active and rescue_dir.is_dir():
         commit_paths.append(rescue_dir)
