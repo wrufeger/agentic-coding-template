@@ -59,7 +59,7 @@
   "hooks/checks/commit_pathspec.py": "45296f2058829cec818b8c4481331ed9e0a4a1b1dc93b6676eb5dbd643fb915f",
   "hooks/checks/common.py": "a6f88188360c1e8a62cc26d0a4766be3dd67392c4665efad85ebd73404334872",
   "hooks/checks/context_hint.py": "bca0922fc943c5c7aeef5ee1076f4e1a23a2ab9a647f7deb615fb2e19dc4500b",
-  "hooks/checks/danger_scan.py": "826ffd35ed225b59681a626c2d9ccb885984b4e11b95a5a9606fac92808a3a28",
+  "hooks/checks/danger_scan.py": "3ae6ec0453ef5cee66e4dd4c2ab53838c692c6b4813c1d3a346029ff494d9cc8",
   "hooks/checks/deps_scan.py": "fceebbf1b3a8b636c9c15d70cf6d61da094cea126f78a6cf95a03bdbe14564ab",
   "hooks/checks/encoding_hint.py": "acae10da35a6bc6e4510154dc00c8774583a9eae0aed95c9ca19302a4f574dd8",
   "hooks/checks/event_log.py": "d55142eee0e8bdce20589f89e63fcafbf31f3c324e4ba34f67306cf34ba307b5",

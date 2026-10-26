@@ -56,6 +56,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   entry names the files the worker has to read itself, and `rules.py --worker` and `act-doctor`
   warn which rule files to shorten. `act-update` replaces the old six entries and leaves your own
   hooks alone.
+- The SQL checks of `security-check` no longer hold a commit for a query builder's tagged template
+  literal, where every `${…}` is a bound parameter: ``sql`select … where code = ${code}` `` (Kysely,
+  Drizzle, postgres.js, also `sql<T>` and `<name>.sql`), ``Prisma.sql`…` ``, ``$queryRaw`…` `` and
+  ``$executeRaw`…` ``. A line with a raw helper (`sql.raw`, `sql.lit`, `sql.literal`, `sql.unsafe`,
+  `Prisma.raw`, `$queryRawUnsafe`, a bare `raw(…)`, `sql.__dangerous__rawValue`) is still reported,
+  and so are untagged template literals and real `+` concatenation.
 
 ## [2.3.0] - 2026-10-25
 
