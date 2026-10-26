@@ -766,7 +766,8 @@ options:
   --area {coding,core}  which rule area to read (default: coding)
   --list                human overview, one line per set/group
   --validate            schema + cross-checks, exit 1 on findings
-  --imports             files Claude Code loads through @-imports, exit 1 on any it cannot follow
+  --imports             files Claude Code loads through @-imports with their size in characters
+                        and totals, exit 1 on any it cannot follow
   --worker              the parts a worker is handed instead of CLAUDE.md: size and sources per
                         part, total
   --from FILE           start file for --imports, root-relative (default: CLAUDE.md)

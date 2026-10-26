@@ -36,6 +36,9 @@
 #     load order, then "unresolved <n>:" and one "<file>:<line>: @<target> — <reason>" per import
 #     it cannot follow (exit 1 if there is any). Same rule as Claude Code: relative to the
 #     importing file, at most four hops below the start file, never inside a code span or block.
+#     Each reached file, and each file under "also loaded by Claude Code", ends in " — <n> chars"
+#     (characters of the UTF-8 decoded text, not bytes). A last line "total <n> chars in <k> files:
+#     template <n> (under .act/), project <n>" sums them, the project share being everything else.
 #   --worker: what the SubagentStart hook hands a worker whose role has `omitClaudeMd: true`: the
 #     files CLAUDE.md loads (user level, project, CLAUDE.local.md) without any import below
 #     .act/rules/orchestrator/, cut into parts of at most WORKER_PART_LIMIT characters. Prints
@@ -1089,15 +1092,36 @@ def other_instruction_files(root: Path) -> list[str]:
     return found
 
 
+def _char_count(root: Path, shown: str) -> Optional[int]:
+    """Characters of the file as read (UTF-8 decoded, bytes that do not decode count one each,
+    CRLF counted as one line break so a Windows checkout gives the same number), or None if it
+    cannot be read. `shown` is a root-relative path or an absolute one."""
+    try:
+        return len((root / shown).read_bytes().decode("utf-8", errors="replace").replace("\r\n", "\n"))
+    except OSError:
+        return None
+
+
 def cmd_imports(root: Path, start: str) -> tuple[str, bool]:
     reached, unresolved = resolve_imports(root, start)
-    lines = [f"reached {len(reached)}:"] + [f"  {path}" for path in reached]
-    lines.append(f"unresolved {len(unresolved)}:")
-    lines += [f"  {entry}" for entry in unresolved]
     others = other_instruction_files(root)
+    sizes: dict[str, Optional[int]] = {path: _char_count(root, path) for path in reached + others}
+
+    def entry(path: str) -> str:
+        size = sizes[path]
+        return f"  {path}" + ("" if size is None else f" — {size} chars")
+
+    lines = [f"reached {len(reached)}:"] + [entry(path) for path in reached]
+    lines.append(f"unresolved {len(unresolved)}:")
+    lines += [f"  {item}" for item in unresolved]
     if others:
         lines.append(f"also loaded by Claude Code, not followed here ({len(others)}):")
-        lines += [f"  {path}" for path in others]
+        lines += [entry(path) for path in others]
+    counted = {path: size for path, size in sizes.items() if size is not None}
+    template = sum(size for path, size in counted.items() if path.startswith(".act/"))
+    total = sum(counted.values())
+    lines.append(f"total {total} chars in {len(counted)} files: "
+                 f"template {template} (under .act/), project {total - template}")
     return "\n".join(lines) + "\n", not unresolved
 
 
@@ -1399,7 +1423,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--list", action="store_true", help="human overview, one line per set/group")
     mode.add_argument("--validate", action="store_true", help="schema + cross-checks, exit 1 on findings")
     mode.add_argument("--imports", action="store_true",
-                      help="files Claude Code loads through @-imports, exit 1 on any it cannot follow")
+                      help="files Claude Code loads through @-imports with their size in characters and totals, "
+                           "exit 1 on any it cannot follow")
     mode.add_argument("--worker", action="store_true",
                       help="the parts a worker is handed instead of CLAUDE.md: size and sources per part, total")
     parser.add_argument("--from", dest="start", metavar="FILE", default="CLAUDE.md",

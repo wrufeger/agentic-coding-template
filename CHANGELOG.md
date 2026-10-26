@@ -11,6 +11,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `rules.py --imports` shows how much every always-loaded instruction file costs: each file it
+  reaches, and each file Claude Code loads on its own, ends with its size in characters (a CRLF
+  line end counts as one), and a last line gives the total, split into the template's share under
+  `.act/` and the project's. The `reached`/`unresolved` headers and the exit code are unchanged.
 - `R-cost-delegate` now says when a handover to a worker pays off, not only how to make one:
   independent parts that run in parallel, the review, which should not share the implementation's
   context, output of unknown or large length not needed afterwards, and long reading or runs that
