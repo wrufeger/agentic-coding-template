@@ -46,7 +46,10 @@
 # Known limits:
 #   - the SQL-string-concatenation patterns are a rough heuristic (an SQL keyword near a quote-and-
 #     `+` or an f-string/template-literal placeholder) - a real query builder's `.format()`/`%`-
-#     style call is not covered, and a false positive on ordinary string handling near the word
+#     style call is not covered, nor PHP's `.` concatenation, a `"... $var"` interpolation or a
+#     `+` continued on the next line; for SELECT and UPDATE the quote-and-`+` must sit within 200
+#     characters of the statement with no `;` in between (INSERT INTO and DELETE FROM: anywhere
+#     on the line), and a false positive on ordinary string handling near the word
 #     "select" is possible; documented as an open point for the concept rather than tuned further
 #     here (2026-09-25, review). A query builder's tagged template literal (sql`...`) is the safe
 #     form and is blanked out first (see _SQL_TAGGED_TEMPLATE); only its first line is recognized
@@ -139,18 +142,26 @@ class DangerPattern(NamedTuple):
 _SQL_START = r"(?:(?<![\w/.\-])|(?<=\*/))"
 
 
-def _sql_struct(mid: str) -> str:
+# INSERT INTO and DELETE [t] FROM: no text between the two words that could hold a concatenation
+_SQL_PAIR = r"(?:insert\s+into\b | delete\s+(?:[\w.`{}]+\s+)?from\b)"
+
+
+def _sql_struct(mid: str, spanning: bool = False) -> str:
+    # spanning: `mid` holds the concatenation itself, so _SQL_PAIR is left out; otherwise every
+    # plain "DELETE FROM t" would count as concatenated
+    pair = "" if spanning else r" | " + _SQL_PAIR
     return (
-        r"(?:select\b" + mid + r"\bfrom\b"
-        r" | insert\s+into\b | insert\b" + mid + r"\bvalues\b"
-        r" | update\b" + mid + r"\bset\b"
-        r" | delete\s+(?:[\w.`{}]+\s+)?from\b)"
+        r"(?:select\b" + mid + r"\bfrom\b | insert\b" + mid + r"\bvalues\b"
+        r" | update\b" + mid + r"\bset\b" + pair + r")"
     )
 
 
 _SQL_STRUCT = _sql_struct(r"[^\n;]{0,200}?")
 # keyword and counterpart word in different literals of one concatenation
-_SQL_SPAN = _sql_struct(r"""[^\n;]{0,200}?["']\s*\+[^\n;]{0,200}?""")
+_SQL_SPAN = _sql_struct(r"""[^\n;]{0,200}?["']\s*\+[^\n;]{0,200}?""", spanning=True)
+# _SQL_PAIR with a quote-and-`+` (or `+=`) anywhere on the line - no window and `;` allowed, the reach
+# these two had while every one of them counted as concatenated
+_SQL_PAIR_ON_LINE = r"""^(?=.*?(?:["']\s*\+|\+=?\s*["'])).*?""" + _SQL_START + _SQL_PAIR
 
 # A tagged template literal of a query builder binds every `${...}` as a parameter - the safe form, not a
 # string built from values: sql`...` (Kysely, Drizzle, postgres.js), <name>.sql`...`, Prisma.sql`...`,
@@ -224,7 +235,8 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
             re.compile(
                 r"(?ix)" + _SQL_START + _SQL_STRUCT + r"""[^\n;]{0,200} ["']\s*\+
                   | """ + _SQL_START + _SQL_SPAN + r"""
-                  | \+\s*["'] [^\n;]{0,200}""" + _SQL_START + _SQL_STRUCT,
+                  | \+\s*["'] [^\n;]{0,200}""" + _SQL_START + _SQL_STRUCT + r"""
+                  | """ + _SQL_PAIR_ON_LINE,
             ),
             prepare=_without_tagged_sql,
         ),

@@ -62,6 +62,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   ``$executeRaw`…` ``. A line with a raw helper (`sql.raw`, `sql.lit`, `sql.literal`, `sql.unsafe`,
   `Prisma.raw`, `$queryRawUnsafe`, a bare `raw(…)`, `sql.__dangerous__rawValue`) is still reported,
   and so are untagged template literals and real `+` concatenation.
+- The SQL check of `security-check` no longer holds a commit for a fixed `DELETE … FROM` or
+  `INSERT INTO` string without concatenation, such as `"DELETE FROM sessions WHERE expired = 1"` or a
+  parameterized `"INSERT INTO t (a) VALUES (?)"`. These two now count as built by concatenation only
+  when their line carries a quote and `+` (or `+=`), as far away and past a `;` as before. Python
+  `%`-formatting, PHP's `.`, PHP string interpolation and a `+` continued on the next line were never
+  covered for SELECT or UPDATE; for DELETE and INSERT they are no longer reported by accident either.
 
 ## [2.3.0] - 2026-10-25
 
