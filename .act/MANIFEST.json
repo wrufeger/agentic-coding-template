@@ -110,7 +110,7 @@
   "rules/topics/logging.md": "d47b650c96e6861be646def1d984b55a990c2c87614f95519c5177e64e4c6d7c",
   "rules/topics/safeguards.md": "158aa272c0a076ce617642c042f22a7800e73fc426f305c71b2aa92a487f9084",
   "rules/topics/worker-rules.md": "5dcdd04cd1e3fa88292dba8f9698a51ff5e922964afbb527f523e853605b596d",
-  "scripts/README.md": "c37b68521b15d23c6be7a5c0b73b181ab180a690109283a8246adc3c59456d06",
+  "scripts/README.md": "a4df908a74c03cf2d1c5b99627705f5687d25c413bfca4b598179baca36c4e68",
   "scripts/act_local_tidy.py": "c1bc58058ed54d4e65d2cdb915c6cd2dcbc5137c8b554e2e3f5d26c343a93bb4",
   "scripts/actlib.py": "995df37a65797b70ec557746e4abdae243d4db1994ddcd663f8b2c9ff2bf7955",
   "scripts/adopt.py": "f3a61a0b5b5e29c4178778093506a1a7ff78ff6eb13eb076e4c2dab3edd8c7fc",
@@ -142,7 +142,7 @@
   "scripts/settings_export.py": "c02827c78ba8599292c761e3b2e6ec11b984a01ddba138a217b5aac976a00a79",
   "scripts/settings_format.py": "d9ec941cdf0f439c16e19caea360967066cb2bd13d4925d8d3bc540c5f4c70f7",
   "scripts/settings_load.py": "e0fdcda00a4e71361994592d1111bb65a6e45c2df168f8b35a77c0e5087be33c",
-  "scripts/skills.py": "5cba37e3d1425b810f86a87b261c60cdb152014601886924e09887855c7cc5ae",
+  "scripts/skills.py": "6fb150983f66cc33906612cc6df2af2f0917ce73f92f40a64f9364f3dea9bb1b",
   "scripts/tiers.py": "3dc58954b41aab48ae61df4951af1d9433fbb6bda882e54e71220ac2a8936109",
   "scripts/unit_copies.py": "4c18aa657ea1ba808dd2c9da07fffcde6344ad1f0981590bfe4810d847ae922c",
   "scripts/update.py": "0bd1c2cbf836703f45c3fd2d7e945118bb747a7343b78f5ec80d2f4e52c6dac0",
@@ -209,7 +209,7 @@
   "skills/act-test-gap/SKILL.md": "d121af710688ce9244cb232f0c6880f0e5c369b5598476ac9e91d5619a4f6db3",
   "skills/act-update/SKILL.md": "467f67a1a16f3944c0c097f14840d9a1e08daed9a737f72caddef0b2ded3727d",
   "skills/act-version/SKILL.md": "ef0bee9de206eb405e721b684befc4df1c97e67ae08391c771172c94da62b3c5",
-  "skills/act/SKILL.md": "2996a1394e5c66780d6b32009cc7278f763eb7faa2b14fa9397ef4f11cf74d58",
+  "skills/act/SKILL.md": "fdcd9b2301336ace05e88e06bcf6ec8704ab56ac7fca1e0f97aead509d9cbf32",
   "tiers.json": "5dbe585726c2c3a2a82085c64df1551822820026dc0e4ecb4a572405d2d1de50",
-  "tips.md": "527d8fa55b5ff66e5d703c89dde1402fc90b63b4442fe6e612efefef496a3431"
+  "tips.md": "22468e7d9e637743af132bab63224f68c55e81448a44f33237bab87e54b21f0a"
 }

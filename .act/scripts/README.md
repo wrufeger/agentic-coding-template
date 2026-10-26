@@ -956,7 +956,7 @@ usage: skills.py [-h] [--check] [name]
 List the project's skills (name + description), or print one in full.
 
 positional arguments:
-  name        print exactly this skill's SKILL.md in full
+  name        print this skill's SKILL.md in full; the act- prefix may be left out
 
 options:
   -h, --help  show this help message and exit

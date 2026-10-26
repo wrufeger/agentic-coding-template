@@ -58,7 +58,7 @@ config) without needing write access to the file itself — the owner reviews an
 ### TIP-act-overview
 when: always
 `/act` lists every project skill with a one-line description, like a man page; `/act <name>` shows
-one skill's instructions in full.
+one skill's instructions in full, `act-` may be left out (`/act version`).
 
 ### TIP-doctor
 when: unused:act-doctor

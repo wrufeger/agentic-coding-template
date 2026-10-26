@@ -22,7 +22,8 @@
 #
 # Usage:
 #   python .act/scripts/skills.py            # table: name + description, sorted by name
-#   python .act/scripts/skills.py <name>     # that skill's SKILL.md, in full and unchanged
+#   python .act/scripts/skills.py <name>     # that skill's SKILL.md, in full and unchanged;
+#                                            # "version" finds act-version unless a skill is named "version"
 #   python .act/scripts/skills.py --check    # lint every skill; exit 1 on an error, else 0
 #
 # Output format:
@@ -64,6 +65,9 @@ INDENT = "      "   # six spaces — description lines, under the two-space-inde
 # convention seen across this template's SKILL.md files reads "Use when ...", "Use after ...",
 # "Use to ...", "Use right after ...", so the generic prefix is what's checked, not a fixed list.
 _TRIGGER_PREFIX = "Use "
+
+# Prefix of the template's own skill names; `/act <name>` may leave it out (render()).
+_NAME_PREFIX = "act-"
 
 # Description lint limits (words) — .act/skills/README.md § "Writing a skill description".
 MIN_WORDS = 15
@@ -179,7 +183,7 @@ def _short_description(description: str) -> str:
 def render_table(skills: list[Skill]) -> str:
     if not skills:
         return "No skills found under .act/skills/ — is this a template checkout?"
-    lines = ["PROJECT SKILLS — /act <name> shows one in full", ""]
+    lines = ["PROJECT SKILLS — /act <name> shows one in full (act- may be left out)", ""]
     for skill in skills:
         suffix = f" ({skill.marker})" if skill.marker else ""
         lines.append(f"  /{skill.name}{suffix}")
@@ -286,7 +290,8 @@ def render_check(root: Path) -> tuple[str, int]:
 
 
 def render(root: Path, name: str = "") -> str:
-    """The full text for `name` (its SKILL.md, unchanged) or, with no name, the table from
+    """The full text for `name` (its SKILL.md, unchanged; `name` without `_NAME_PREFIX` finds
+    the prefixed skill when no skill has that exact name) or, with no name, the table from
     render_table() — what every caller (this script's CLI, the `act` skill's fallback, the
     UserPromptSubmit fast path) shows. Never raises: a read error falls back to the table with a
     note, same as an unknown name."""
@@ -295,6 +300,9 @@ def render(root: Path, name: str = "") -> str:
     if not name:
         return render_table(skills)
     match = next((skill for skill in skills if skill.name == name), None)
+    if match is None:
+        # "/act version" for "/act act-version": an exact name always wins, the prefix only fills in.
+        match = next((skill for skill in skills if skill.name == f"{_NAME_PREFIX}{name}"), None)
     if match is None:
         return f"Unknown skill '{name}'.\n\n{render_table(skills)}"
     try:
@@ -312,7 +320,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="skills.py",
         description="List the project's skills (name + description), or print one in full.",
     )
-    parser.add_argument("name", nargs="?", default="", help="print exactly this skill's SKILL.md in full")
+    parser.add_argument("name", nargs="?", default="",
+                        help="print this skill's SKILL.md in full; the act- prefix may be left out")
     parser.add_argument("--check", action="store_true",
                         help="lint every skill's description and body; exit 1 if there is an error")
     return parser

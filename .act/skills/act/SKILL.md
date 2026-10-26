@@ -11,5 +11,6 @@ intercepted before it ever reaches the model (`.act/hooks/dispatch.py`'s `UserPr
 cannot: a tool without harness hooks, or a session with hooks turned off.
 
 Run `python .act/scripts/skills.py` (no argument: the table, sorted by name) or
-`python .act/scripts/skills.py <name>` (that skill's `SKILL.md` in full) and put its stdout,
-unchanged, in a code block. Nothing else: no commentary, no summary, no skill started.
+`python .act/scripts/skills.py <name>` (that skill's `SKILL.md` in full; `version` finds
+`act-version` unless a skill is named exactly `version`) and put its stdout, unchanged, in a code
+block. Nothing else: no commentary, no summary, no skill started.

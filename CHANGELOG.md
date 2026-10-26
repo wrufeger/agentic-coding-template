@@ -11,6 +11,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `/act <name>` also finds a template skill without its `act-` prefix: `/act version` shows
+  `act-version`. A skill whose name matches exactly still wins.
 - `R-work-throwaway`: throwaway material — probes, throwaway projects, scratch files — goes into
   the system temp directory, or, where the tool refuses that to a worker, into
   `.act-local/tmp/<task-id>-<slug>/`, never directly under `.act-local/`. `act-commit` removes a
