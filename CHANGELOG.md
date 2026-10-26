@@ -43,6 +43,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   points to `R-role-worker` and `R-code-commit` for who commits.
 - Shorter work rules (`orchestrator/10-work.md`): updating `config.md` moves from `R-work-record-now`
   to `R-work-config`, and `R-work-handover` names `act-handover` before `/clear` or a restart.
+- Shorter human-facing rules (`orchestrator/20-human.md`): the threshold for a question mid-task
+  stands only in `R-human-ask`; `R-human-chat` and `R-human-capture` drop style sentences and the
+  hook's field list.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a

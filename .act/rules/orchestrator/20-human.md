@@ -6,9 +6,8 @@ summary: inbox order, bundled questions, short final chat answers, chat language
 
 summary: clearing answered inbox entries before other work
 
-Process inbox entries the human has already answered before starting anything else — an
-answer left unread blocks whatever depends on it from stalling behind it. An entry marked
-`triage: open` comes right after them (`R-human-capture`).
+Process inbox entries the human has already answered before starting anything else. An entry
+marked `triage: open` comes right after them (`R-human-capture`).
 
 ## `R-human-ask` — Bundle questions; never decide one yourself
 
@@ -16,19 +15,17 @@ summary: bundled questions upfront, stated assumptions, no silent decisions, inb
 
 Questions are bundled at the start of a block, not dropped in one at a time as they occur.
 Mid-task, ask only if continuing without an answer would mean discarding the work already done —
-the one threshold for asking in chat (`R-human-chat`). An
-open question is never decided on its own initiative — a recommendation is fine, an assumption must
-be stated as an assumption, never silently promoted to a decision. A default the tool or the
-assistant states is an assumption, not a decision; here the project's rule wins over the tool's
-habit of picking a sensible default.
+the one threshold for asking in chat. An open question is never decided on its own initiative — a
+recommendation is fine, an assumption must be stated as an assumption, never silently promoted to
+a decision. A default the tool or the assistant states is an assumption, not a decision; here the
+project's rule wins over the tool's habit of picking a sensible default.
 
 Where an open decision waits follows `inbox-decisions` in `docs/ai/config.md`. With `immediate`
 (the default), an open decision that arises while booking a finding, a backlog item or a task, and
 every step only the human can take and can take now, goes into the inbox in the same step (question
-or todo, `R-human-chat`), and the booked entry names its id — the inbox always shows everything
-waiting. With `at-start`, a backlog entry may keep its open decisions, marked `decision: open` in
-its header, and they are asked when work on it starts (`act-prepare`); a task's open decisions are
-always in the inbox.
+or todo, `R-human-chat`), and the booked entry names its id. With `at-start`, a backlog entry may
+keep its open decisions (details in `docs/ai/config.md`); a task's open decisions are always in the
+inbox.
 
 ## `R-human-capture` — Chat prefixes `todo:`, `note:`, `idea:` capture
 
@@ -36,15 +33,14 @@ summary: a message starting todo:/note:/idea: becomes an inbox entry or ideas se
 
 A chat message that begins with `todo:`, `note:` or `idea:` (any letter case) is a capture, not an
 assignment. With `quick-capture` on in `docs/ai/config.md` (a missing key counts as `on`) the
-`UserPromptSubmit` hook files it and the message never reaches the model: `todo:` and `note:`
-become an inbox entry (`kind: todo|note`, `for:` the writer, `status: open`, header field
-`triage: open` right after `status:`), `idea:` a new section at the end of the writer's
-`docs/ai/concept/ideas-<identity>.md`. Where the hook does not run (another tool, hook missing) and
-a message with such a prefix arrives anyway, file it yourself at once the same way — create the entry
-with `entries.py new`, the human's wording as the body, then insert the line `triage: open` directly
-after `status:` (the command cannot write it); an `idea:` goes as a new section at
-the end of the ideas file, text untouched — and answer with one line naming the file. Do not start
-on the todo itself. With `quick-capture` off, the prefixes mean nothing special.
+`UserPromptSubmit` hook files it and the message never reaches the model. Where the hook does not
+run (another tool, hook missing) and a message with such a prefix arrives anyway, file it yourself
+at once: `todo:` and `note:` become an inbox entry — create it with `entries.py new`, the human's
+wording as the body (`kind: todo|note`, `for:` the writer, `status: open`), then insert the line
+`triage: open` directly after `status:` (the command cannot write it); `idea:` goes as a new
+section at the end of the writer's `docs/ai/concept/ideas-<identity>.md`, text untouched. Answer
+with one line naming the file. Do not start on the todo itself. With `quick-capture` off, the
+prefixes mean nothing special.
 
 Entries with `triage: open` are yours, whatever their kind: handle them right after the answered
 inbox entries (`R-human-inbox-first`). A `todo`: decide whom it is for and set `for:` (the writer,
@@ -63,30 +59,25 @@ one-line status is fine ("builder done, now review and tests"). A turn triggered
 worker's completion notice ends with no text at all, or at most one line — never a multi-sentence
 status recap — except when that very notice makes the answer final: then the short closing summary
 below follows. In chat, ask only what `R-human-ask` allows mid-task; every other question
-goes to `docs/ai/inbox/` as `kind: question` (one file per question, `entries.py new question
-<title>`) and is not repeated in chat — a decision question is created *only* as that inbox file,
-chat names at most its id (e.g. "see Q<n>"), never restates the question itself. An inbox entry
-the human has already answered is booked and archived in the same turn that notices the answer
-(`entries.py archive <id>` — it takes pasted images along), never left open. Close with a
-short summary — done · next · problems · to discuss — short, but without dropping anything that
-matters, and name new questions and tasks together in one closing
-line ("New questions: Q12–Q14, new task T7"). Details only on request.
+goes to `docs/ai/inbox/` as `kind: question` (`entries.py new question <title>`) and is not
+repeated in chat — chat names at most its id (e.g. "see Q<n>"). An inbox entry the human has
+already answered is booked and archived in the same turn that notices the answer
+(`entries.py archive <id>`), never left open. Close with a short summary — done · next · problems ·
+to discuss — without dropping anything that matters, and name new questions and tasks together in
+one closing line ("New questions: Q12–Q14, new task T7"). Details only on request.
 
 Saving tokens is one of the goals, since every answer is read again in each later step. So chat
-text is compact and to the point: answer first, three bullets rather than three paragraphs, no
-announcing what follows, no repeating it at the end (the closing summary is the answer, not a
-repeat), no filler or hedging. Numbers, negations, paths, identifiers, code and error text stay
-verbatim, never shortened; a warning, an irreversible or outward-facing step, and a question or
-decision put to the human are written in full sentences.
+text is compact: answer first, three bullets rather than three paragraphs. Numbers, negations,
+paths, identifiers, code and error text stay verbatim, never shortened; a warning, an irreversible
+or outward-facing step, and a question or decision put to the human are written in full sentences.
 
 `output-depth` in `docs/ai/config.md` sets the level. `normal` (the default) is the paragraph above.
 `sparse` cuts further: only what is needed, no interim status line at all (instead of the one-line
 status above), and one question gets exactly one answer. `verbose` writes chat answers out in full
 and so overrides "briefly" and "details only on request" above: it restates the question as
 understood where that helps, explains the answer and its reasons, and for code it wrote says why it
-was done this way and what to watch out for. At every level, what stays verbatim stays verbatim,
-the full-sentence cases stay full sentences, and text under `docs/` keeps its full form whatever the
-chat level. An unknown value counts as `normal`.
+was done this way and what to watch out for. Verbatim and full-sentence cases hold at every level,
+and `docs/` text keeps its full form. An unknown value counts as `normal`.
 
 ## `R-human-language` — Talk in the owner's language
 
@@ -98,9 +89,7 @@ in the tool itself. If neither is
 there, recognize it once from the owner's own messages — not from quoted text, code or file
 contents — and remember it with `python .act/scripts/board.py --chat-language <code>` (this person,
 this machine, `.act-local/`, never versioned). Before there is anything to recognize, use
-`language-docs`. When starting `init.py` for the owner, suggest their language as
-`--language-docs <code>`. The chat language never changes what goes under `docs/`
-(`R-work-language`).
+`language-docs`.
 
 ## `R-human-text` — The human's own words are untouchable
 
