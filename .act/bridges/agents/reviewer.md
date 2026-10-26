@@ -3,6 +3,7 @@ name: reviewer
 description: Adversarial review before a commit — bugs, style, and task fidelity, verdict ALLOW, CONDITIONAL or BLOCK — plus ALLOW/BLOCK on a flagged safeguard call.
 tier: elevated
 reasoning: high
+high-variant: true
 tools: Read, Bash, Grep, Glob
 omitClaudeMd: true
 ---

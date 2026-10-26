@@ -13,11 +13,16 @@ under `.act/` a real model name is allowed, alongside a project's own fixed-mode
 its bridge and, via `.act/scripts/tiers.py`, resolves that bridge's `tier`/`reasoning` — overridden
 per role, or set outright, in `docs/ai/config.md` § Roles — into the generated file's `model`/
 `effort` frontmatter, written to `.claude/agents/<name>.md` when `claude-code` is one of the
-project's configured tools. A second file, `.claude/agents/<name>-high.md`
-(`agent_bridge_variant_targets()`), gets the same resolution with the reasoning bumped one step
+project's configured tools. A template role whose bridge declares `high-variant: true` in its
+frontmatter (`builder` and `reviewer`; the key is read by the scripts and never copied into the
+generated file) gets a second file, `.claude/agents/<name>-high.md`
+(`agent_bridge_variant_targets()`), with the same resolution and the reasoning bumped one step
 further — the runtime choice of giving one assignment more reasoning without ever writing a real
-model ID into an assignment. No variant is generated for a role whose template reasoning is
-already the top of the tool's reasoning scale (`expert-solver`).
+model ID into an assignment. A project's own role (bridge under `docs/ai/local/agents/`) keeps a
+variant as before whenever its bridge has a `tier`. No variant is generated for a template role
+without that key, nor for one whose reasoning is already the top of the tool's reasoning scale.
+`update.py` removes a generated variant (frontmatter `variant-of:`) whose template role no longer
+declares one.
 
 **No sub-sub-agents (`R-role-worker`):** a role's `tools` list never includes `Agent`/`Task` — a
 worker starts no further workers. `.act/hooks/dispatch.py`'s `worker-nesting-guard` check backs
@@ -29,7 +34,7 @@ calls this way; the orchestrator's own calls carry none) is refused.
 role bridge's body — everything below the frontmatter, including a project's own additions — is
 never replaced, not even when it still matches what the template ships
 ("once created, the user owns it from then on"). `.act/scripts/init.py` creates a role's bridge (and its `-high`
-variant, where one applies) once; `.act/scripts/update.py` only creates bridges for roles new since
+variant, where its bridge declares one) once; `.act/scripts/update.py` only creates bridges for roles new since
 the last update, or a missing `-high` variant for an already-known role. What *does* change on
 every `update` and at every session start (`dispatch.py`'s `session-start-refresh`) is the
 `model`/`effort` frontmatter pair alone, re-derived from the current `.act/tiers.json` and

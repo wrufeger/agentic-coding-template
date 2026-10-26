@@ -1413,7 +1413,9 @@ def step_new_role_bridges(
     generated from — see _bridge_edited()) is backed up into `backup_dir` and regenerated, or left
     as it is and reported "kept (backup failed)" if the backup did not land; a template-generated
     "-high" variant (frontmatter `variant-of: <role>`) the new value no longer calls for is removed
-    the same way — a project's own "...-high" role without that field is never touched.
+    the same way — as is one whose role's bridge no longer declares a variant at all (`high-variant:`
+    in .act/bridges/agents/<role>.md), changed or not; a project's own "...-high" role without that
+    field is never touched.
 
     `notes`, if given, collects messages the same way step_fetch() above does. Returns (summary,
     touched_paths, reset_or_removed_edited, had_failure) — the last one true when a bridge that
@@ -1424,7 +1426,8 @@ def step_new_role_bridges(
     if plan:
         return (
             "would create bridges for roles new since the last update, and any missing "
-            "'-high' variant, leaving existing and deleted files untouched unless their role's "
+            "'-high' variant, remove generated variants their template role no longer declares, "
+            "leaving existing and deleted files untouched unless their role's "
             "row in docs/ai/config.md changed",
             [], [], False,
         )
@@ -1498,9 +1501,21 @@ def step_new_role_bridges(
         else:
             had_failure = True
 
-    # A changed role's template-generated "-high" variant the new value no longer calls for (e.g.
-    # the role moved to tier "expert", or to the top reasoning step).
+    # A template-generated "-high" variant the role no longer calls for: its bridge declares none
+    # (`high-variant:` absent — checked for every role, changed or not), or the role's new value
+    # rules it out (e.g. the role moved to tier "expert", or to the top reasoning step — changed
+    # roles only).
     changed = {_role_of(rel) for rel in targets} if force_all else set(changed_roles)
+    undeclared: set[str] = set()
+    undeclared_removed: list[str] = []
+    for base_rel, base_src in base_targets.items():
+        try:
+            base_fields, _body, _order = new_init.tiers.split_frontmatter(base_src.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not new_init.bridge_wants_variant(root, base_src, base_fields):
+            changed.add(Path(base_rel).stem)
+            undeclared.add(Path(base_rel).stem)
     for role in sorted(changed):
         dest_rel = f".claude/agents/{role}-high.md"
         dest_path = root / dest_rel
@@ -1526,6 +1541,8 @@ def step_new_role_bridges(
         touched.append(dest_path)
         if edited:
             reset.append(dest_rel)
+            if role in undeclared:
+                undeclared_removed.append(dest_rel)
 
     if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
         # written only when it changed ("nothing to change" must leave the lock untouched)
@@ -1535,7 +1552,8 @@ def step_new_role_bridges(
         _list_part(label, items, brief) for label, items in (
             ("created", created),
             ("restored (value changed)", restored),
-            ("reset, edit backed up (value changed)", reset),
+            ("reset, edit backed up (value changed)", [r for r in reset if r not in undeclared_removed]),
+            ("removed, edit backed up (its role no longer has a variant)", undeclared_removed),
             ("removed (no longer applies)", dropped),
             ("left deleted", left_deleted),
             ("kept (backup failed)", kept_failed),

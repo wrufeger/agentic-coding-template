@@ -1474,14 +1474,49 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     return targets
 
 
+# Frontmatter key of a role bridge that only the scripts read: it says the role gets a "-high"
+# variant and is never copied into the generated .claude/agents/ file (Claude Code would see an
+# unknown field there).
+HIGH_VARIANT_KEY = "high-variant"
+
+
+def bridge_declares_high_variant(fields: dict[str, str]) -> bool:
+    """Whether a role bridge's parsed frontmatter `fields` declare a "-high" variant
+    (`high-variant: true`); absent or any other value means none."""
+    return str(fields.get(HIGH_VARIANT_KEY, "")).strip().lower() == "true"
+
+
+def bridge_wants_variant(root: Path, bridge_src: Path, fields: dict[str, str]) -> bool:
+    """Whether the role whose bridge is `bridge_src` (parsed frontmatter `fields`) may get a "-high"
+    variant on the declaration alone: a template role's bridge (under .act/bridges/agents/) must
+    declare one; a project's own role (bridge source under docs/ai/local/agents/) is not subject
+    to the declaration and keeps a variant whenever it has a `tier`."""
+    if bridge_src.parent != root / ".act" / "bridges" / "agents":
+        return True
+    return bridge_declares_high_variant(fields)
+
+
+def _without_bridge_only_keys(text: str) -> str:
+    """`text` (a role bridge) with its script-only frontmatter lines (HIGH_VARIANT_KEY) removed,
+    everything else byte for byte."""
+    match = re.match(r"---\r?\n(.*?\r?\n)---(?=\r?\n)", text, re.S)
+    if not match:
+        return text
+    kept = [line for line in match.group(1).splitlines(keepends=True)
+            if not line.startswith(f"{HIGH_VARIANT_KEY}:")]
+    return text[:match.start(1)] + "".join(kept) + text[match.end(1):]
+
+
 def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     """Every applicable role's "-high" variant destination -> the same .act/bridges/agents/
     source agent_bridge_targets() uses for its base file — the runtime choice of "give this one
     assignment more reasoning" without ever writing a real model ID into an assignment
    . Only a role whose template bridge declares a
     `tier`/`reasoning` pair gets one (an older or hand-authored bridge with a fixed
-    `model:` and no `tier:` already has nothing to bump); skipped outright for `tier: expert` or a `reasoning`
-    already at the top of the tool's reasoning scale — one step further does not exist there."""
+    `model:` and no `tier:` already has nothing to bump); a template role's bridge must also declare
+    `high-variant: true` in its frontmatter (bridge_wants_variant() below; a project's own role needs
+    no declaration); skipped outright for `tier: expert` or a
+    `reasoning` already at the top of the tool's reasoning scale — one step further does not exist there."""
     base_targets = agent_bridge_targets(root, tools)
     if not base_targets:
         return {}
@@ -1492,7 +1527,7 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
     for dest_rel, bridge_src in base_targets.items():
         role = Path(dest_rel).stem
         tmpl_fields, _, _ = tiers.split_frontmatter(bridge_src.read_text(encoding="utf-8"))
-        if "tier" not in tmpl_fields:
+        if "tier" not in tmpl_fields or not bridge_wants_variant(root, bridge_src, tmpl_fields):
             continue
         template_tier = tmpl_fields.get("tier", "")
         template_reasoning = tmpl_fields.get("reasoning", "")
@@ -1543,7 +1578,7 @@ def write_agent_bridge_file(
         return f"{label}: already present, left unchanged", False
     if plan:
         return f"{label}: would create", False
-    bridge_text = bridge_src.read_text(encoding="utf-8")
+    bridge_text = _without_bridge_only_keys(bridge_src.read_text(encoding="utf-8"))
     tmpl_fields, _, _ = tiers.split_frontmatter(bridge_text)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if "tier" not in tmpl_fields:

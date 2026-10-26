@@ -54,6 +54,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   no separate request (`R-code-commit`), a default the tool or the assistant states is an
   assumption, not a decision (`R-human-ask`), and `language-chat` wins over a language set in the
   tool (`R-human-language`).
+- Only `builder` and `reviewer` still get a `-high` variant (`.claude/agents/<role>-high.md`); a
+  template role's bridge declares it with `high-variant: true`. `update` removes the generated
+  variants of `explorer`, `quick-check`, `doc-writer`, `debugger`, `test-writer` and `optimizer`
+  and names each one in its preview and summary. That saves six entries in the tool's agent list,
+  which is sent with every call. A project's own roles keep their variant as before. An assignment
+  that named a removed variant names the role itself, or `builder-high`/`reviewer-high`.
 
 ### Fixed
 

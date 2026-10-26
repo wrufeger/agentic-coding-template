@@ -7,8 +7,8 @@ when a role file is changed, or when `CLAUDE.md` grows large.
 
 The orchestrator rules (`.act/rules/orchestrator/`) only concern the main session, yet `CLAUDE.md`
 loads them into every worker start as well. The template's roles therefore carry
-`omitClaudeMd: true` in their frontmatter (`.act/bridges/agents/`, also on the generated `-high`
-variants): Claude Code then loads no `CLAUDE.md` level for them. A `SubagentStart` hook hands the
+`omitClaudeMd: true` in their frontmatter (`.act/bridges/agents/`, also on the `-high` variants
+generated for `builder` and `reviewer`): Claude Code then loads no `CLAUDE.md` level for them. A `SubagentStart` hook hands the
 worker what it needs instead.
 
 - The hook is `dispatch.py SubagentStart --worker-rules <i>`, twelve fixed entries in

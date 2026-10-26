@@ -21,8 +21,9 @@ tkn cache` (wall-clock minutes; `fresh` = input, cache-writing and output tokens
 cache-read tokens; never person-days), based on `python .act/scripts/usage.py --estimates` where it
 has measured runs of that role/tier — and a cap. Name the cap as its own `Cap: <n>`, checked
 mechanically, not from memory (`worker-cap`, `docs/ai/config.md` § Checks). Need more reasoning for
-one assignment without raising the role's tier itself: name its `-high` variant instead (same tier,
-one reasoning step further — see `docs/ai/config.md` § Roles for a permanent override). Read large
+one assignment without raising the role's tier itself: name `builder-high` or `reviewer-high` instead
+(same tier, one reasoning step further; the other template roles have no such variant — see
+`docs/ai/config.md` § Roles for a permanent override). Read large
 files in excerpts rather than in full. Cut assignments small: a judgment assignment (a verdict per
 entry or per file) covers about 10–12 units per worker — with more, the verdicts turn shallow while
 every further tool call re-reads a growing context; rework goes out as a new, short assignment

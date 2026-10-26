@@ -1681,10 +1681,10 @@ _SKILL_FIELDS = frozenset({
     "effort", "context", "agent", "hooks", "argument-hint", "when_to_use", "paths", "shell",
     "metadata", "license", "compatibility", "version",
 })
-# The template's role fields (name, description, tier, reasoning, tools), the ones tiers.py
+# The template's role fields (name, description, tier, reasoning, high-variant, tools), the ones tiers.py
 # generates (model, effort, variant-of) and the ones Claude Code adds on top.
 _ROLE_FIELDS = frozenset({
-    "name", "description", "tier", "reasoning", "tools", "model", "effort", "variant-of",
+    "name", "description", "tier", "reasoning", "high-variant", "tools", "model", "effort", "variant-of",
     "permissionMode", "hooks", "mcpServers", "color", "disallowedTools", "skills", "memory",
     "maxTurns", "background", "isolation", "initialPrompt", "omitClaudeMd",
 })
