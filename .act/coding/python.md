@@ -17,7 +17,8 @@ summary: annotations, f-strings, context managers, exception handling, venv, lin
   the function body.
 - Catch specific exception types; never a bare `except Exception` without re-raising or logging it. Every
   raised or logged error states what failed and with what value — a caller or log reader must find the
-  cause without opening the source.
+  cause without opening the source. Never a credential or personal data as that value: an identifier
+  or masked value instead (`R-safe-no-secret-log`).
 - Use `is`/`is not` only for identity comparisons (`None`, singletons), never for values.
 - One virtual environment (`venv`) per project, dependencies pinned in a lockfile (`requirements.txt`,
   `poetry.lock`); never a global install of project dependencies.

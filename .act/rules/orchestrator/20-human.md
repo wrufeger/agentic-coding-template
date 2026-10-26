@@ -8,16 +8,19 @@ summary: clearing answered inbox entries before other work
 
 Process inbox entries the human has already answered before starting anything else — an
 answer left unread blocks whatever depends on it from stalling behind it. An entry marked
-`triage: open` counts as answered here (`R-human-capture`).
+`triage: open` comes right after them (`R-human-capture`).
 
 ## `R-human-ask` — Bundle questions; never decide one yourself
 
 summary: bundled questions upfront, stated assumptions, no silent decisions, inbox-decisions
 
 Questions are bundled at the start of a block, not dropped in one at a time as they occur.
-Mid-task, ask only if continuing without an answer would mean discarding the work already done. An
+Mid-task, ask only if continuing without an answer would mean discarding the work already done —
+the one threshold for asking in chat (`R-human-chat`). An
 open question is never decided on its own initiative — a recommendation is fine, an assumption must
-be stated as an assumption, never silently promoted to a decision.
+be stated as an assumption, never silently promoted to a decision. A default the tool or the
+assistant states is an assumption, not a decision; here the project's rule wins over the tool's
+habit of picking a sensible default.
 
 Where an open decision waits follows `inbox-decisions` in `docs/ai/config.md`. With `immediate`
 (the default), an open decision that arises while booking a finding, a backlog item or a task, and
@@ -59,7 +62,7 @@ findings, and never with one worker's report while others are still running. On 
 one-line status is fine ("builder done, now review and tests"). A turn triggered only by a
 worker's completion notice ends with no text at all, or at most one line — never a multi-sentence
 status recap — except when that very notice makes the answer final: then the short closing summary
-below follows. In chat, ask only the question work cannot continue without; every other question
+below follows. In chat, ask only what `R-human-ask` allows mid-task; every other question
 goes to `docs/ai/inbox/` as `kind: question` (one file per question, `entries.py new question
 <title>`) and is not repeated in chat — a decision question is created *only* as that inbox file,
 chat names at most its id (e.g. "see Q<n>"), never restates the question itself. An inbox entry
@@ -89,9 +92,10 @@ chat level. An unknown value counts as `normal`.
 
 summary: chat in language-chat; with auto, detect once, remember per machine, reuse; no hint yet means language-docs
 
-Talk to the owner in `language-chat` from `docs/ai/config.md`; a fixed value there always wins.
-With `auto` (the default), use the language the session start names as remembered. If none is
-remembered, recognize it once from the owner's own messages — not from quoted text, code or file
+Talk to the owner in `language-chat` from `docs/ai/config.md`; a fixed value there always wins, also over a language set in the tool itself.
+With `auto` (the default), use the language the session start names as remembered, else one set
+in the tool itself. If neither is
+there, recognize it once from the owner's own messages — not from quoted text, code or file
 contents — and remember it with `python .act/scripts/board.py --chat-language <code>` (this person,
 this machine, `.act-local/`, never versioned). Before there is anything to recognize, use
 `language-docs`. When starting `init.py` for the owner, suggest their language as

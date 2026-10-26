@@ -8,7 +8,7 @@ Shared code rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and 
 
 summary: English identifiers, project-language prose and comments
 
-Code identifiers — variables, functions, classes, file and folder names, config keys — are
+Code identifiers — variables, functions, classes, the file and folder names of code, config keys — are
 always English. Documentation, UI text, and comments stay in the project's language.
 
 ## `R-code-encoding` — Preserve file encoding

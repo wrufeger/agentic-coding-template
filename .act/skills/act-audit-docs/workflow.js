@@ -91,7 +91,7 @@ function readAreas(input) {
 
 function explorerPrompt(area) {
   return [
-    'Tier: standard · Estimate: 15–30 tool calls · Cap: 40',
+    'Tier: standard · Estimate: ~10 min · ~150k tkn fresh · ~1M tkn cache · Cap: 40',
     'Write scope: none',
     '',
     `act-audit-docs, doc area "${area.name}", explorer step. Establish what actually exists in the code for this area: modules, endpoints, tables, commands, tests, configuration.`,
@@ -105,7 +105,7 @@ function explorerPrompt(area) {
 
 function writerPrompt(area, report) {
   return [
-    'Tier: standard · Estimate: 10–25 tool calls · Cap: 40',
+    'Tier: standard · Estimate: ~8 min · ~100k tkn fresh · ~800k tkn cache · Cap: 40',
     `Write scope: ${area.docs.join(', ')}`,
     '',
     `act-audit-docs, doc area "${area.name}", doc-writer step. Compare the explorer report below against ${area.docs.join(', ')} and correct those files directly, so they describe the actual state, never the plan.`,
@@ -123,7 +123,7 @@ function writerPrompt(area, report) {
 
 function readmePrompt(changed) {
   return [
-    'Tier: standard · Estimate: 3–8 tool calls · Cap: 15',
+    'Tier: standard · Estimate: ~3 min · ~40k tkn fresh · ~200k tkn cache · Cap: 15',
     `Write scope: ${README}`,
     '',
     `act-audit-docs, index step. Update ${README}: its index entries and data-as-of dates (${args.date}) for these files, changed in this pass:`,

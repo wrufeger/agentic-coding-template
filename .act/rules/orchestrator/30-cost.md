@@ -84,7 +84,8 @@ comes up, then is only run, not re-delegated to a worker.
 
 summary: pathspec-only commits after lint/typecheck/tests where configured; reviewer verdict CONDITIONAL filed in the inbox
 
-Only accepted work gets committed, staged by pathspec — never `git add -A`, `git add .`, or
+Only accepted work gets committed, and it needs no separate request, whatever the tool's own default
+says. It is staged by pathspec — never `git add -A`, `git add .`, or
 `git commit -a`. Lint, typecheck, and tests run first, but only where the project has them set up
 (an IDE's own check counts as evidence, not as a configured lint) and no rule suspends the check for
 this case. A missing tool is not a reason to install one or add tests on the spot — at most a

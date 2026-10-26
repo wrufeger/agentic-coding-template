@@ -31,7 +31,7 @@ bug IN the template itself — a script, skill or rule under
 `.act/` that fails, contradicts another, or provably never fires — is reported at once via
 `feedback.py --add --kind bug`, and with `feedback: automatic` the assistant also files the
 recurring events that pattern covers (a rule/format proving impractical, a missing workflow, a
-needed workaround) itself; a rule violated repeatedly is a candidate for a check under `.act/hooks/checks/`, after which its text shrinks to what the check does not do; details in `topics/feedback.md`.
+needed workaround) itself; a rule violated repeatedly is a candidate for a check under `.act/hooks/checks/` (in a project, reported to the template as feedback; there nobody writes under `.act/`), after which its text shrinks to what the check does not do. A worker does not file it itself: it hands such a bug back with its result, and the orchestrator files it. Details in `topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English
 
@@ -41,7 +41,8 @@ Everything the assistant writes under `docs/` is in `language-docs` from `docs/a
 (default `en`) — journal, questions, tasks, backlog, inbox, proposals and new documentation alike,
 whatever language the chat runs in and whoever it runs with, so the record reads as one. `.act/`
 stays English, and so does what the mechanism generates (the board under `.act-local/`,
-`docs/ai/rules.md`, which the template keeps current); identifiers follow `R-code-language`. Text
+`docs/ai/rules.md`, whose generated parts the template keeps current); rules and overrides the
+project adds there are the project's text, in `language-docs`; identifiers follow `R-code-language`. Text
 a person wrote stays in its original language: translating it is a separate, explicit assignment,
 never part of another task. A file whose line 1 is `<!-- act:default -->` is scaffold in the
 template's English: if `language-docs` is not English, translate it once (the inbox entry
@@ -64,10 +65,10 @@ independent check confirms the diagnosis, not on the first plausible explanation
 
 ## `R-work-bounded-output` — Keep output of unknown length out of the context
 
-summary: head/tail/grep or a scratchpad file for unbounded output; read only the failures of a build or test run; large files in excerpts
+summary: head/tail/grep or a file in the system temp directory for unbounded output; read only the failures of a build or test run; large files in excerpts
 
 Output whose length is not known beforehand is cut with `head`/`tail`/`grep`, or written to a file in
-the scratchpad (where writes are allowed) and read from there, never taken whole into the context.
+the system temp directory (writable for every worker, as a path written out) and read from there, never taken whole into the context.
 Build and test output goes the same way: read only the failures. A large file is read in excerpts
 (`offset`/`limit`), not whole. Every line that enters the context is read again with each following
 step.

@@ -41,7 +41,7 @@ that a cheaper tier would have done as well.
 | :--- | :--- |
 | `builder` | implementation: code, migration, tests, config, per a bounded assignment |
 | `explorer` | read-only, multi-file research; findings as `<path>:<line>` |
-| `reviewer` | adversarial review before acceptance; ALLOW/BLOCK |
+| `reviewer` | adversarial review before acceptance; ALLOW/CONDITIONAL/BLOCK |
 | `doc-writer` | edits to `docs/project/`; never `docs/ai/` |
 | `test-writer` | writes tests for existing code, or test-first from a concept or interface alone, where the project has this role — otherwise `builder` covers it |
 | `quick-check` | fixed, read-only lookups without judgment |

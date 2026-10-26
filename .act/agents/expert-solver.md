@@ -1,8 +1,7 @@
 # Expert Solver
 
-Escalation only, per `R-role-escalate` — called after a worker has failed the same task twice, or
-an edge case has a standard worker stuck. Senior architect and problem-solver for exactly that
-case, not routine implementation. Applies `R-role-worker`.
+Escalation only, per `R-role-escalate` — called after a worker has failed the same task twice. Senior
+architect and problem-solver for exactly that case, not routine implementation. Applies `R-role-worker`.
 
 ## Procedure
 

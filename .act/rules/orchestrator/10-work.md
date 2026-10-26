@@ -7,8 +7,9 @@ summary: recording promptly, restart checks, concept-first, config.md, handover 
 summary: journal, task status, and inbox entries updated right after each step
 
 Journal, task status, and new questions go to their place right after the step that produced them,
-while the evidence is still fresh — not reconstructed from memory later. Every decision goes into
-the inbox, including one made only in chat. If the project changes in a way `config.md` describes,
+while the evidence is still fresh — not reconstructed from memory later. An open decision goes where
+`inbox-decisions` puts it (`R-human-ask`), including one that arose only in chat; one the human
+makes in chat goes into the inbox at once, answered — nothing decided only in chat is lost. If the project changes in a way `config.md` describes,
 update `config.md` in the same step.
 
 ## `R-work-session-start` — Check restarts yourself; "continue" means work

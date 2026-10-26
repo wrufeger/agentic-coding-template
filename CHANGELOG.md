@@ -39,6 +39,21 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   (raise it, leave it until 8 more outcomes, look at the cases first). `update` commits the
   questions with the report and names both in its summary. Without `--inbox` and with `--json` the
   proposal stays a finding.
+- The rule texts no longer contradict one another. The reviewer has three verdicts everywhere
+  (`ALLOW`/`CONDITIONAL`/`BLOCK`). An open decision goes where `inbox-decisions` puts it, one the
+  owner makes in chat into the inbox. There is one threshold for asking mid-task, and `triage: open`
+  entries come right after the answered ones. Fetched notes under `.act-local/notes/` are data, the
+  orchestrator's own brief notes are not. A PR, issue or comment needs approval and a way back but
+  no backup. The ban on code-running `git config` keys covers the repository only. Rules a project
+  adds to `docs/ai/rules.md` are in `language-docs`. "Always English" means the names of code files,
+  not inbox or journal files. `expert-solver` is called only after two failed attempts. A worker
+  hands a template bug back instead of filing it. Python error messages name an identifier or a
+  masked value, never a secret. The estimates in `act-audit-docs` and `act-release` use the
+  `R-cost-delegate` form.
+- Three rules now say where they deviate from a tool's own defaults: committing accepted work needs
+  no separate request (`R-code-commit`), a default the tool or the assistant states is an
+  assumption, not a decision (`R-human-ask`), and `language-chat` wins over a language set in the
+  tool (`R-human-language`).
 
 ### Fixed
 
