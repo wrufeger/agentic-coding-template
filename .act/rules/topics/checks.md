@@ -14,6 +14,20 @@ Checked mechanically by `secret-read` (`docs/ai/config.md` § Checks); the owner
 or `off` there, or for one run with `ACT_SECRET_READ` in the environment. Limit: a program that
 opens the file itself (`python script.py`, `docker run --env-file`) is invisible to the check.
 
+## `R-safe-no-secret-diff` — Check the diff before every commit
+
+Checks: secret-scan.
+
+Before a `git commit` (also inside a chain or a nested shell), `secret-scan` scans what the commit
+would take — the staged diff, plus unstaged changes or new files where the call stages them itself
+(`-a`, `git add -A`). Only added lines count. It looks for key/token formats, private keys, an added
+`.env` file (`.env.example`, `.env.sample`, `.env.template` excepted) and assignments to a
+credential-like name with a long, high-entropy value. A match stops the commit and is reported
+without the value, never silently stripped. A line carrying `act:allow-secret`, or a value that reads
+as a placeholder, is not reported; for a file that cannot carry a comment (JSON), list the line in
+`docs/ai/local/secret-accepted.md` as `- <path> <hash>: <reason>` (the hold message prints the
+finished entry). Switch: `secret-scan` in `docs/ai/config.md` § Checks (`block`, `warn` or `off`).
+
 ## `R-safe-outside-root` — Stay inside the project
 
 Checks: outside-root.
@@ -103,6 +117,14 @@ protects no folder.
 
 Checks: worker-cap, worker-write-scope, worker-scope-overlap.
 
+In the estimate, `fresh` = input, cache-writing and output tokens, `cache` = cache-read tokens; base
+it on `python .act/scripts/usage.py --estimates` where it has measured runs of that role/tier, not on
+memory. `builder-high` and `reviewer-high` are the same tier one reasoning step further; the other
+template roles have no such variant (`docs/ai/config.md` § Roles for a permanent override). About
+10–12 units (a verdict per entry or per file) per judgment worker because with more, the verdicts turn shallow while every further tool
+call re-reads a growing context. Only the orchestrator starts workers: a worker's proposal to split its
+task comes back, and the orchestrator cuts and starts the new assignments.
+
 `Cap:` is recognized either on its own line or right after a `·`/`|`/`;`/`,` further into a line, so
 a compact header works too, e.g.
 
@@ -113,9 +135,11 @@ out falls back to the tier's own default: `light` 10, `standard` 40, `elevated` 
 The worker gets one note on reaching the cap ("cap reached — deliver your current state now") and is
 refused from 1.5× the cap onward — wrap up and report rather than push past it.
 
-Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line —
-patterns relative to the project root, `/` as the separator, `*` crossing `/` freely (so `src/*`
-already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
+`Write scope: none` allows no writes in the project, only into the system temp directory as a path
+written out (`/tmp/...` in Bash, or its absolute path) — every worker may write there, unless the
+project itself lies inside it. Leaving the `Write scope:` line out means no restriction beyond the
+template's own `.act/` write-guard. Patterns are relative to the project root, `/` as the separator,
+`*` crossing `/` freely (so `src/*` already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
 shorthand, `dir/` (read the same way); brackets in a path are taken literally, so
 `server/api/[id]/**` names the folder called `[id]`, as framework route folders are — a shell
 command should quote such a path, and a shell target whose wildcard expansion reaches outside the
@@ -126,9 +150,8 @@ A relative pattern (`src/**`) is the usual case; an absolute path inside the pro
 outside the project root is refused, unless it lies in a directory listed in
 `permissions.additionalDirectories` (a sibling checkout: `../other/.act/**` or its absolute path).
 
-`worker-write-scope` (`docs/ai/config.md` § Checks) checks it mechanically, the same way the cap is
-checked mechanically rather than from memory — for a Bash command this is best-effort (it catches
-redirection and the common write commands, not a full shell parse), not a complete guarantee: writes
+`worker-write-scope` (`docs/ai/config.md` § Checks) checks it; for a Bash command this is
+best-effort (it catches redirection and the common write commands, not a full shell parse): writes
 made from inside a program (`python -c "open(...)"`, a script file) stay invisible to it.
 
 `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope overlaps that of a
@@ -147,14 +170,11 @@ still stands.
 The orchestrator starts it only after that worker has ended — only a rule, since a hook can refuse a
 start but not wait.
 
-When several workers are to read the same material, the orchestrator reads it once and writes what
-it found to `.act-local/notes/brief-<slug>.md` (source, state, `<path>:<line>` references), then
-names that file in each assignment.
-
-The workers read the note instead of the sources and look up only what is missing from it.
-
-The note is the orchestrator's own text, not foreign content (`R-safe-foreign-text`): the one-day
-rule applies to the sources it rests on, the note itself only to the workers of this one start.
+The brief note `.act-local/notes/brief-<slug>.md` holds what the orchestrator found once (source,
+state, `<path>:<line>` references); the workers read it instead of the sources and look up only what is
+missing from it. The note is the orchestrator's own text, not foreign content (`R-safe-foreign-text`):
+the one-day rule applies to the sources it rests on, the note itself only to the workers of this one
+start.
 
 ## `R-cost-wait` — Let a started worker finish
 

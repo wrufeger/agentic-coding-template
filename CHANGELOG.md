@@ -46,6 +46,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - Shorter human-facing rules (`orchestrator/20-human.md`): the threshold for a question mid-task
   stands only in `R-human-ask`; `R-human-chat` and `R-human-capture` drop style sentences and the
   hook's field list.
+- Shorter cost rules (`orchestrator/30-cost.md`): the estimate basis, `-high`, the reason for 10–12
+  units, the temp-directory exception and the brief-note details move to `topics/checks.md`, and
+  `R-code-commit` points to the `reviewer` role and `act-commit` for `CONDITIONAL`. `topics/checks.md`
+  also gains a section on what `secret-scan` looks for.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a
