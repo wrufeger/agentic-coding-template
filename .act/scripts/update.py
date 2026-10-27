@@ -389,10 +389,10 @@ def _installed_state(root: Path) -> tuple[str, str]:
     return version, commit
 
 
-def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[str, Optional[str], str]:
-    """What the release channel does for `source`: ("take", tag, text), ("nothing", None, text) when
-    the project is at or ahead of the newest release, ("error", None, text) when the releases
-    could not be read or there are none, or ("latest", None, text) when `implicit` (the built-in
+def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[str, Optional[str], str, str]:
+    """What the release channel does for `source`: ("take", tag, text, tag_commit), ("nothing", tag, text,
+    tag_commit) when the project is at or ahead of the newest release, ("error", None, text, "") when the
+    releases could not be read or there are none, or ("latest", None, text, "") when `implicit` (the built-in
     default or `release` in docs/ai/config.md) and the source has no releases to follow at all --
     a plain directory or a repository without a stable tag. The text then says so; `--channel release`
     and an unusable config value never fall back."""
@@ -402,31 +402,31 @@ def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[
             f"the source '{_mask_url_user(source)}' has no release tag to follow; the channel 'release' "
             "falls back to the tip of the source (`update-channel` latest in docs/ai/config.md makes that "
             "the choice, `--channel release` stops instead)"
-        )
+        ), ""
     if refs is None:
         return "error", None, (
             f"channel 'release' needs the tags of '{_mask_url_user(source)}', but they could not be read "
             f"({reason}). Use --ref <tag-or-commit> for a specific state, or --channel latest for the tip of "
             "the default branch."
-        )
+        ), ""
     newest = refs.newest_release()
     if newest is None:
         return "error", None, (
             f"channel 'release' found no stable release tag (vX.Y.Z or X.Y.Z) in '{_mask_url_user(source)}'. "
             "Use --ref <tag-or-commit> for a specific state, or --channel latest for the tip of the default branch."
-        )
+        ), ""
     version, tag, tag_commit = newest
     installed_version, installed_commit = _installed_state(root)
     if installed_commit and installed_commit == tag_commit:
-        return "nothing", tag, f"already at the newest release {tag}, nothing to update"
+        return "nothing", tag, f"already at the newest release {tag}, nothing to update", tag_commit
     installed = _parse_version(installed_version)
     if installed is not None and installed > version:
         return "nothing", tag, (
             f"ahead of the newest release {tag} (installed version {installed_version}), nothing to update"
-        )
+        ), tag_commit
     if installed is not None and installed == version:
-        return "nothing", tag, f"installed version {installed_version} is the newest release {tag}, nothing to update"
-    return "take", tag, f"newest release {tag} ({tag_commit[:7]})"
+        return "nothing", tag, f"installed version {installed_version} is the newest release {tag}, nothing to update", tag_commit
+    return "take", tag, f"newest release {tag} ({tag_commit[:7]})", tag_commit
 
 
 def _release_falls_back(origin: str, problem: Optional[str]) -> bool:
@@ -436,12 +436,29 @@ def _release_falls_back(origin: str, problem: Optional[str]) -> bool:
     return origin == "default" or (origin == "docs/ai/config.md" and not problem)
 
 
+def _release_result(tag: str, tag_commit: str) -> dict:
+    """The pending-update note for a newer release (what actlib.pending_update reads)."""
+    return {"channel": "release", "release": tag, "release_commit": tag_commit,
+            "label": tag.lstrip("vV")}
+
+
+def _tip_result(root: Path, tip_commit: str, installed_commit: str, tip_fallback: bool) -> dict:
+    """The pending-update note for a tip that differs from the installed commit."""
+    result: dict = {"channel": "latest", "remote_commit": tip_commit,
+                    "label": actlib.remote_commit_label(root, tip_commit),
+                    "installed_commit": installed_commit}
+    if tip_fallback:
+        result["tip_fallback"] = True
+    return result
+
+
 def _versions_report(root: Path, source: str, channel: str, origin: str, show_all: bool,
-                     falls_back: bool = False) -> tuple[int, list[str]]:
+                     falls_back: bool = False, record: bool = False) -> tuple[int, list[str]]:
     """Lines for `--versions`: the installed version, the channel, the releases and the default
     branch tip of the source, and what act-update would take. Reads refs only (git ls-remote),
-    writes nothing, never clones. Returns (exit code, lines); a source that cannot be read still
-    shows the installed state, with the reason. `falls_back`: the release channel follows the tip
+    never clones; the only thing it writes is the local update note (actlib.record_update_result),
+    and only with `record` (the project's own channel and source, not a one-off override). Returns
+    (exit code, lines); a source that cannot be read still shows the installed state, with the reason. `falls_back`: the release channel follows the tip
     of a source without release tags, as act-update does then (_release_falls_back)."""
     version, commit = _installed_state(root)
     refs, reason = _read_remote_refs(source, root) if source else (None, "no source recorded in .act-lock.json")
@@ -517,6 +534,20 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
         else:
             take = f"{branch} {refs.head_commit[:7]}"
     lines.append(f"act-update would take: {take}")
+    if record:
+        # the same decision as `take`, kept for the status line and the board
+        if not on_tip:
+            if newest is not None:
+                if take == newest[1]:
+                    actlib.record_update_result(root, _release_result(newest[1], newest[2]))
+                else:
+                    actlib.record_update_result(root, None)
+        elif refs.head_commit and commit:
+            if commit == refs.head_commit:
+                actlib.record_update_result(root, None)
+            else:
+                actlib.record_update_result(
+                    root, _tip_result(root, refs.head_commit, commit, channel == "release"))
     return 0, lines
 
 
@@ -2756,7 +2787,7 @@ def main(argv: list[str]) -> int:
     ))
     parser.add_argument("--versions", action="store_true", help=(
         "list the installed version, the channel, the source's releases and default branch tip, and what an "
-        "update would take (git ls-remote only, no clone, writes nothing)"
+        "update would take (git ls-remote only, no clone; writes only the local update note under .act-local/)"
     ))
     parser.add_argument("--all", action="store_true", help="with --versions: list every release, not the five newest")
     parser.add_argument("--allow-downgrade", action="store_true", help=(
@@ -2779,7 +2810,9 @@ def main(argv: list[str]) -> int:
         root = actlib.repo_root()
         channel, origin, problem = _resolve_channel(root, args.channel)
         source = args.source or _default_source(root)
-        code, lines = _versions_report(root, source, channel, origin, args.all, _release_falls_back(origin, problem))
+        # only the project's own channel and source say whether it is behind
+        code, lines = _versions_report(root, source, channel, origin, args.all, _release_falls_back(origin, problem),
+                                       record=not (args.channel or args.source))
         if problem:
             lines.append(f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies")
         print("\n".join(lines))
@@ -2810,21 +2843,30 @@ def main(argv: list[str]) -> int:
     channel, channel_origin, channel_problem = _resolve_channel(root, args.channel)
     if channel_problem:
         print(f"[act] note: {channel_problem}; using the default '{DEFAULT_CHANNEL}'")
+    # Only the project's own channel and source say whether it is behind; --channel, --source and --ref
+    # aim this one run elsewhere, so they leave the local update note alone.
+    own_state = not (args.channel or args.source or args.ref)
+    follows_tip_without_tags = False
     if not args.ref:
         _channel_hint_once(root, channel_origin, plan)
         if channel == "release":
-            decision_kind, release_tag, release_text = _release_decision(
+            decision_kind, release_tag, release_text, release_tag_commit = _release_decision(
                 root, source, _release_falls_back(channel_origin, channel_problem))
             if decision_kind == "latest":
+                follows_tip_without_tags = True
                 print(f"[act] note: {release_text}")
             elif decision_kind == "error":
                 print(f"update.py: {release_text}", file=sys.stderr)
                 return 1
             elif decision_kind == "nothing":
+                if own_state:
+                    actlib.record_update_result(root, None)
                 print(f"[act] done - {release_text}")
                 return 0
             else:
                 target_ref = release_tag
+                if own_state:
+                    actlib.record_update_result(root, _release_result(release_tag or "", release_tag_commit))
                 print(f"[act] channel release: {release_text}")
 
     tmp_root = Path(root) / ".act-local" / "update-tmp"
@@ -2838,6 +2880,16 @@ def main(argv: list[str]) -> int:
             return 1
         _print_step(1, f"fetched '{_mask_url_user(source)}'" + (f" @ {target_ref}" if target_ref else "") + f" -> {new_act_dir}")
         lock_ref = target_ref or (_checkout_branch(new_act_dir.parent) if fetched_commit else "")
+
+        if own_state and fetched_commit and (channel == "latest" or follows_tip_without_tags):
+            # the tip just fetched against the installed commit: same answer as `--versions` gives
+            installed_tip = _installed_state(root)[1]
+            relation = _history_relation(new_act_dir.parent, fetched_commit, installed_tip) if installed_tip else ""
+            if relation == "same":
+                actlib.record_update_result(root, None)
+            elif relation == "newer":
+                actlib.record_update_result(
+                    root, _tip_result(root, fetched_commit, installed_tip, channel == "release"))
 
         downgrade = _downgrade_warning(new_act_dir.parent, fetched_commit, source)
         if downgrade:

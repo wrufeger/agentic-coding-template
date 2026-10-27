@@ -26,7 +26,9 @@ credential-like name with a long, high-entropy value. A match stops the commit a
 without the value, never silently stripped. A line carrying `act:allow-secret`, or a value that reads
 as a placeholder, is not reported; for a file that cannot carry a comment (JSON), list the line in
 `docs/ai/local/secret-accepted.md` as `- <path> <hash>: <reason>` (the hold message prints the
-finished entry). Switch: `secret-scan` in `docs/ai/config.md` § Checks (`block`, `warn` or `off`).
+finished entry). The one exemption by shape: a line of `.act-lock.json` at the project root that holds
+only a rule ID and a 64-digit lowercase hex digest (an override hash). Switch: `secret-scan` in
+`docs/ai/config.md` § Checks (`block`, `warn` or `off`).
 
 ## `R-safe-outside-root` — Stay inside the project
 

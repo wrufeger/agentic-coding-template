@@ -84,6 +84,13 @@
 #          All findings are named in the hold message, up to _MAX_FINDINGS one by one, then "+N more"
 #          with the total and the affected files, so one round of marking is enough;
 #          the scan itself stops collecting at _MAX_COLLECTED.
+#          One narrow exemption by shape: in the file `.act-lock.json` at the repository root (the
+#          path exactly, not one in a subfolder), a line that consists of nothing but a rule ID as
+#          key (`R-...` or `CR-...`) and a value of exactly 64 lowercase hex digits (the override
+#          hashes `doctor --accept` writes; _LOCK_OVERRIDE_RE, applied in _match_secret after the
+#          known token patterns, so the diff and the new-file path alike). Any other key, any other
+#          value shape (63 or 65 digits, upper case, not hex), any other line in that file and the
+#          same line in any other file is scanned as before.
 #          Deliberately not flagged, by construction rather than as a special case: a lockfile's
 #          `"integrity": "sha512-..."`/`"resolved": "..."` or a bare UUID never matches the
 #          assignment rule, because their key names are not in the credential vocabulary.
@@ -212,7 +219,7 @@ __all__ = [
     "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_ENV_KEY_RE", "_ENV_DEFAULT_RE", "_ARROW_RE", "_RULE_LIST_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
     "_COMMIT_VALUE_FLAGS", "_ADD_ALL_FLAGS", "_ADD_FORCE_FLAGS", "_GIT_COMMIT_FALLBACK_RE",
     "_entropy_threshold", "_shannon_entropy", "_looks_like_placeholder", "_normalized_key",
-    "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
+    "_LOCK_FILE_REL", "_LOCK_OVERRIDE_RE", "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
     "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries",
     "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
     "_git_call", "_nested_command", "_simple_commands", "_with_span_commands", "_tokenize_chain",
@@ -232,6 +239,9 @@ _ACCEPTED_HASH_RE = re.compile(r"^[0-9a-f]{16}$")
 # line over _ACCEPTED_MAX_LINE characters is skipped (a list entry is one short line).
 _ACCEPTED_MAX_BYTES = 256 * 1024
 _ACCEPTED_MAX_LINE = 2000
+# One line of the lock file's override table: a rule ID and a SHA-256 hex digest, nothing else on the line.
+_LOCK_FILE_REL = ".act-lock.json"
+_LOCK_OVERRIDE_RE = re.compile(r'\s*"(?:R|CR)-[a-z0-9]+(?:-[a-z0-9]+)+"\s*:\s*"[0-9a-f]{64}"\s*,?\s*')
 _ENV_ALLOWED = {".env.example", ".env.sample", ".env.template"}
 _MAX_DIFF_BYTES = 2 * 1024 * 1024
 # Findings named one by one in the hold message; the rest is counted ("+N more", total, files).
@@ -540,6 +550,9 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
         match = pattern.search(line)
         if match and not _looks_like_placeholder(match.group(0)):
             return kind, match.group(0)
+    # after the known patterns, so a provider token shape in the key itself is still caught
+    if path is not None and path == _LOCK_FILE_REL and _LOCK_OVERRIDE_RE.fullmatch(line):
+        return None  # an override hash in the root lock file, see the module docstring
     def counts(key: str, value: Optional[str], quoted: bool, start: int) -> bool:
         return bool(
             value

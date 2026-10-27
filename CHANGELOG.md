@@ -114,6 +114,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   and names each one in its preview and summary. That saves six entries in the tool's agent list,
   which is sent with every call. A project's own roles keep their variant as before. An assignment
   that named a removed variant names the role itself, or `builder-high`/`reviewer-high`.
+- A pending template update stays visible until it is installed. The session start names it in the
+  line the human sees (`update 2.4.0 available`) and repeats the note to the assistant at every start,
+  the board lists it under Status, and Claude Code's status line shows `update: 2.4.0` on the release
+  channel or `update: <date>` on `latest` (the date of the newer commit where it can be read without
+  the network, in `DD.MM.YYYY` when `language-docs` is `de`; otherwise its short hash). The note used
+  to appear once, only in the assistant's context, and could get lost. Once the lock has moved on
+  since the check (an update pulled from another checkout), the old finding is dropped and the next
+  check runs at once. Every look at the source refreshes the note, not only the daily check:
+  `update.py --versions` (what `act-version` runs), `--plan` and an update run record what they
+  found, or clear the note when the project is up to date; `--channel`, `--source` and `--ref` aim
+  a single run elsewhere and leave it alone. `act-update` answers a question about the installed
+  or newest version with `update.py --versions`.
 
 ### Fixed
 
@@ -143,6 +155,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   when their line carries a quote and `+` (or `+=`), as far away and past a `;` as before. Python
   `%`-formatting, PHP's `.`, PHP string interpolation and a `+` continued on the next line were never
   covered for SELECT or UPDATE; for DELETE and INSERT they are no longer reported by accident either.
+- `secret-scan` no longer holds a commit for the override hashes `doctor --accept` writes into
+  `.act-lock.json`: a rule ID with a credential word in its name (`R-safe-no-secret-cli` …) next to a
+  64-digit hex value read like a credential. Exempt is only that shape — a rule ID as key, exactly 64
+  lowercase hex digits as value, nothing else on the line — and only in the lock file at the project
+  root; a known token shape on the line is still caught.
 
 ### Security
 

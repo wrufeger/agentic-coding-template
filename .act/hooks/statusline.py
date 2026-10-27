@@ -23,6 +23,10 @@
 #                                                              entries without an id as a count per kind
 #   "act · tasks: 5 new"                                     -- nothing waiting, no list shown
 #   "act"                                                    -- nothing waiting and no open task
+#   "act · tasks: 1 run · update: 2.4.0 · ctx 127k"          -- a template update waits to be installed
+#                                                              (the release, or the date / short hash of
+#                                                              the newest commit), before the context size
+#   "act · update: 25.10.2026"                               -- the date in the docs language's own format
 #   "act · tasks: 1 run · ctx 127k"                          -- context size last, when Claude Code
 #                                                              passes it (or the transcript has it)
 # Never writes to stderr, never a non-zero exit: any failure (malformed stdin JSON, no project
@@ -31,7 +35,7 @@
 # statusLine contract, and this hook is deliberately never allowed to block anything (unlike
 # PreToolUse's write_guard/write_scope/nesting_guard, it has no blocking channel to begin with).
 #
-# Performance: no git call, no subprocess — only local file reads under docs/ai/, capped by the
+# Performance: no git call, no subprocess — only local file reads (docs/ai/, .act-local/), capped by the
 # same OPEN_LIMIT-sized data board.py already reads, well under the < 200 ms budget this hook has
 # to meet since it runs after every assistant message.
 
@@ -167,6 +171,18 @@ def _context_text(data: Optional[dict]) -> Optional[str]:
         return None
 
 
+def _update_text(root: Path) -> Optional[str]:
+    """"update: 2.4.0" -- a template update the background check found and the project has not
+    installed yet (actlib.pending_update(): files only), else None. A failure only drops the field."""
+    try:
+        info = actlib.pending_update(root)
+    except Exception:
+        return None
+    if not info or not info["pending"] or not info["label"]:
+        return None
+    return f"update: {info['label']}"
+
+
 def status_line(root: Path, data: Optional[dict] = None) -> str:
     """The one line this hook prints for a project at `root`; `data` is the stdin JSON."""
     waiting_count, entries = _waiting_summary(root)
@@ -178,6 +194,9 @@ def status_line(root: Path, data: Optional[dict] = None) -> str:
         segments.append(_waiting_text(entries))
     if task_counts is not None and sum(task_counts):
         segments.append(_tasks_text(*task_counts))
+    update = _update_text(root)
+    if update:
+        segments.append(update)
     context = _context_text(data)
     if context:
         segments.append(context)

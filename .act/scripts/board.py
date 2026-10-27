@@ -656,6 +656,18 @@ def _format_entry(entry: dict) -> str:
 # Rendering — board
 # ---------------------------------------------------------------------------
 
+def read_update_line(root: Path) -> Optional[str]:
+    """"Template update available: 2.4.0 — run `python .act/scripts/update.py`" while the project is
+    behind the state the background check found (actlib.pending_update(): files only), else None."""
+    try:
+        info = actlib.pending_update(root)
+    except Exception:
+        return None
+    if not info or not info["pending"] or not info["label"]:
+        return None
+    return f"Template update available: {info['label']} — run `python .act/scripts/update.py`"
+
+
 def render_board(
     branch_label: str,
     commit: Optional[dict[str, str]],
@@ -673,8 +685,10 @@ def render_board(
     decisions: Optional[list[str]] = None,
     others: Optional[list[str]] = None,
     footer: bool = True,
+    update_line: Optional[str] = None,
 ) -> str:
-    """`footer` False leaves the closing "Generated" lines out (the session-start excerpt).
+    """`update_line` (a pending template update) goes under "Status" when that section is shown.
+    `footer` False leaves the closing "Generated" lines out (the session-start excerpt).
     `generated_at` None (mode `shared`) leaves the timestamp out; with `commit` and `dirty` None
     as well the output holds nothing volatile. `heading` replaces the branch in the title;
     `decisions` (open decisions in the backlog) and `others` (section "Others", None = off) are
@@ -690,6 +704,8 @@ def render_board(
             lines.append("- Last commit: n/a (no commits yet)")
         if dirty is not None:
             lines.append(f"- Working tree: {'has uncommitted changes' if dirty else 'clean'}")
+        if update_line:
+            lines.append(f"- {update_line}")
         lines.append("")
 
     if ledger_entries is not None:
@@ -1003,7 +1019,7 @@ def main(argv: list[str]) -> int:
     content = render_board(
         branch_label, commit, dirty, ledger_entries, waiting_mine, waiting_all,
         waiting_other_count, answered_entries, task_titles, backlog_titles, generated_at,
-        heading=None, decisions=decisions, others=others,
+        heading=None, decisions=decisions, others=others, update_line=read_update_line(root),
     )
 
     board_path = root / board_rel

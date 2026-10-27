@@ -1,6 +1,6 @@
 ---
 name: act-update
-description: Use to check for or apply a newer template version in this project ("update the template", "act-update"). Brings in the new version only after you have seen the diff and agreed. Not for checking local drift - use act-doctor.
+description: Use to check for or apply a newer template version, or when asked which template version is installed or newest ("update the template", "act-update"). Brings in the new version only after you have seen the diff and agreed. Not for checking local drift - use act-doctor.
 ---
 
 # Update the template
@@ -15,7 +15,10 @@ option list in the script's own header comment). No merge, no conflicts to resol
 tag `vX.Y.Z` of the source — a project already past it, e.g. one that followed `main`, hears "ahead of the newest
 release" and keeps its state; `latest` is the tip of the source's default branch. `--channel release|latest`
 overrides it for one run, `--ref <tag-or-commit>` beats both. `/act-version` (`update.py --versions`) lists the
-installed version, the releases and what an update would take, without a clone. A source with no release tag is followed
+installed version, the releases and what an update would take, without a clone. Asked which version is installed
+or which is the newest, run `python .act/scripts/update.py --versions` — never answer from memory or from the
+session context; that is the command `act-version` runs, and it refreshes the update note the status line and
+board show. A source with no release tag is followed
 at its tip with a note while `release` is the default or the value in `docs/ai/config.md`; `--channel release`
 and an unusable value stop with a hint to use `--ref` or `latest`.
 

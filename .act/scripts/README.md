@@ -1000,8 +1000,8 @@ options:
                         docs/ai/config.md (default: release): 'release' = the newest stable tag
                         vX.Y.Z, 'latest' = the tip of the source's default branch
   --versions            list the installed version, the channel, the source's releases and default
-                        branch tip, and what an update would take (git ls-remote only, no clone,
-                        writes nothing)
+                        branch tip, and what an update would take (git ls-remote only, no clone;
+                        writes only the local update note under .act-local/)
   --all                 with --versions: list every release, not the five newest
   --allow-downgrade     apply the fetched state even when it is older than the installed template
                         commit, or when the installed commit is not in the source's history

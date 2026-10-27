@@ -182,6 +182,155 @@ def write_lock(data: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Pending template update — the result of the session-start background check
+# (.act-local/update-check-result.json), read by the session start, the board and the status line
+# ---------------------------------------------------------------------------
+
+_STABLE_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+# What a label may hold: a version, a date or a short hash -- nothing that could break a line.
+_UPDATE_LABEL_RE = re.compile(r"[0-9A-Za-z.\-]{1,20}")
+
+
+def update_result_path(root: Path) -> Path:
+    """Where the background update check leaves its result for `root`."""
+    return root / ".act-local" / "update-check-result.json"
+
+
+def _stable_version(text: str) -> Optional[tuple[int, int, int]]:
+    match = _STABLE_VERSION_RE.match(text.strip())
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3))) if match else None
+
+
+def pending_update(root: Path) -> Optional[dict]:
+    """Whether the template has a newer state than this project, from files only (no git call, nothing
+    written, `root` given explicitly): the result file the background check left, judged against the
+    lock and `docs/ai/config.md` as they are now, never against what the check saw. None when there is
+    no usable result, `update-check` is off, or the result does not belong to the project's channel (a
+    release result once the key says `latest`; a tip result for a release project, unless it is the
+    default or the check's fallback for a source without release tags). Otherwise a dict:
+      pending    True while the project is behind; False once it has caught up (the caller may then
+                 delete the result file)
+      label      what to show: the release without a leading `v` (`2.4.0`), or the date / short hash of
+                 the remote commit as the check recorded it
+      release    the release tag, "" for a tip result
+      installed  the installed version ("" when unknown)"""
+    data = _read_json(update_result_path(root))
+    if not data:
+        return None
+    config = read_config(root)
+    if config.get("update-check", "").strip().lower() == "off":
+        return None
+    raw_key = config.get("update-channel", "").strip().strip("`")
+    key = raw_key.lower()
+    channel = key if key in ("release", "latest") else "release"
+    lock = _read_json(root / ".act-lock.json") or {}
+    template = lock.get("template") if isinstance(lock.get("template"), dict) else {}
+    installed_commit = str(template.get("commit") or "")
+    release = str(data.get("release") or "")
+    label = str(data.get("label") or "").strip()
+    if not _UPDATE_LABEL_RE.fullmatch(label):
+        label = ""  # a hand-edited value must not break the one-line status line; fall back below
+    if release:
+        if data.get("channel") != "release" or channel != "release":
+            return None
+        tag_commit = str(data.get("release_commit") or "")
+        installed_version = str(template.get("version") or "")
+        if not installed_version:
+            try:
+                for line in (root / ".act" / "VERSION").read_text(encoding="utf-8").splitlines():
+                    name, _, value = line.partition("=")
+                    if name.strip() == "version":
+                        installed_version = value.strip()
+            except OSError:
+                pass
+        wanted, have = _stable_version(release), _stable_version(installed_version)
+        behind = not ((installed_commit and installed_commit == tag_commit)
+                      or (wanted is not None and have is not None and have >= wanted))
+        return {"pending": behind, "label": label or release.lstrip("vV"), "release": release,
+                "installed": installed_version}
+    remote_commit = str(data.get("remote_commit") or "")
+    if not remote_commit:
+        return None
+    if data.get("channel", "latest") == "latest" and channel != "latest" and not (
+            not raw_key or (data.get("tip_fallback") and key in ("", "release"))):
+        return None
+    # The lock moved since the check (another checkout updated and the lock came in by a pull, or a
+    # newer tip was installed): the recorded tip says nothing any more. `stale` asks the caller to
+    # drop the result and check again; a result from before this field existed has no such marker.
+    checked_from = str(data.get("installed_commit") or "")
+    stale = bool(checked_from) and installed_commit != checked_from and installed_commit != remote_commit
+    return {"pending": remote_commit != installed_commit and not stale,
+            "label": label or remote_commit[:7], "release": "",
+            "installed": str(template.get("version") or ""), "stale": stale}
+
+
+def commit_day(repo: Path, commit: str) -> Optional[str]:
+    """The committer date (YYYY-MM-DD) of `commit` in the git repository at `repo`, read locally:
+    no fetch, nothing written. None when `repo` is not a repository, lacks the commit, or git fails."""
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit) or not repo.is_dir():
+        return None
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_NO_LAZY_FETCH"] = "1"  # a partial clone must not go to the network for it
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), "show", "-s", "--format=%cs", commit, "--"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, env=env,
+            stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    day = result.stdout.strip()
+    return day if result.returncode == 0 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else None
+
+
+def locked_commit(root: Path) -> str:
+    """The template commit the lock of `root` records now."""
+    lock = _read_json(root / ".act-lock.json") or {}
+    template = lock.get("template") if isinstance(lock.get("template"), dict) else {}
+    return str(template.get("commit") or "")
+
+
+def remote_commit_label(root: Path, commit: str) -> str:
+    """What the status line and the board show for a template tip: its date -- `DD.MM.YYYY` when
+    `language-docs` is German, else `YYYY-MM-DD` -- when it can be read without the network (a local
+    source, or a commit the project repository already holds); otherwise the short hash."""
+    lock = _read_json(root / ".act-lock.json") or {}
+    template = lock.get("template") if isinstance(lock.get("template"), dict) else {}
+    source = str(template.get("source") or "")
+    repos = ([Path(root, source)] if source else []) + [root]
+    for repo in repos:
+        day = commit_day(repo, commit)
+        if day:
+            year, month, date_ = day.split("-")
+            return localized(docs_language(root), day, f"{date_}.{month}.{year}")
+    return commit[:7]
+
+
+def record_update_result(root: Path, result: Optional[dict]) -> None:
+    """Leave what a look at the template source found where the status line, the board and the session
+    start read it (`pending_update`): write `result` to `.act-local/update-check-result.json`, or remove
+    the file when `result` is None (nothing is pending), and mark today as checked so the daily
+    background check does not repeat it. Does nothing when `update-check` is off. Best-effort: an I/O
+    problem is silent. The caller decides what `result` is and only calls this for a conclusive answer."""
+    if read_config(root).get("update-check", "").strip().lower() == "off":
+        return
+    path = update_result_path(root)
+    try:
+        if result is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(result) + "\n", encoding="utf-8")
+        state = root / ".act-local" / "update-check.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"last_checked": datetime.now().date().isoformat()}) + "\n",
+                         encoding="utf-8")
+    except OSError:
+        pass
+
+
+# ---------------------------------------------------------------------------
 # .act-local/identity.json — per-checkout identity, gitignored
 # ---------------------------------------------------------------------------
 

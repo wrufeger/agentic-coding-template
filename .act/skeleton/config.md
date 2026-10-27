@@ -230,7 +230,7 @@ refuses") treats `block` as `warn`.
 | `status-poll` | block | repeated status queries on a running worker with no real work in between — refused from the second in a row (`R-cost-wait`) |
 | `encoding-hint` | block | writing to a file that is not UTF-8 — the first write per session and file is stopped once with a note, the repeat goes through; `warn` only notes after the write (`R-code-encoding`) |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
-| `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — at most once a day — a note if the template has moved on; never refuses, `off` skips both |
+| `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — checked at most once a day — a note that the template has moved on, repeated at every start and shown on the board and in the status line until the update is installed; never refuses, `off` skips both |
 
 ## Logging
 

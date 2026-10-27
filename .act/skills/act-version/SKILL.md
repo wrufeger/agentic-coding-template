@@ -1,13 +1,15 @@
 ---
 name: act-version
-description: Use when asked which template version is installed, which versions or releases the source offers, or what act-update would take ("act-version", "which ACT version", "is there a newer release"). Prints the answer from a script, writes nothing. Not for applying an update - use act-update.
+description: Use when asked which template version is installed, which versions or releases the source offers, or what act-update would take ("act-version", "which ACT version", "is there a newer release"). Prints the answer from a script, writes only the local update note under `.act-local/` (status line, board). Not for applying an update - use act-update.
 disable-model-invocation: true
 ---
 
 # Show the template version
 
 Run `python .act/scripts/update.py --versions` and pass its output on unchanged. The script reads only
-`git ls-remote` (tags and the tip of the default branch), clones nothing and writes nothing.
+`git ls-remote` (tags and the tip of the default branch), clones nothing and writes only the local
+update note under `.act-local/` (status line, board): whether the project is behind, judged for its own channel and
+source, and not for a `--channel` or `--source` given to this run.
 
 It shows, in this order: the installed version and commit with the update channel (`update-channel` in
 `docs/ai/config.md`, `release` by default), the source (a user name in a URL is masked), the releases
