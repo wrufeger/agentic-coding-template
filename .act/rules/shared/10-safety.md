@@ -1,6 +1,6 @@
 # Safety rules
 
-summary: approval before irreversible actions, secrets in diffs and reads, staying inside the project root, deletion, discarded git work, git hooks and config, the owner's dev server, safeguard blocks, foreign content
+summary: approval before irreversible actions, secrets on the command line, in reads and logs, staying inside the project root, deletion, git hooks and config, the owner's dev server, safeguard blocks, foreign content
 
 Shared safety rules, loaded by every role. IDs (`R-<area>-<name>`) are stable and never
 reassigned.
@@ -21,14 +21,6 @@ summary: secrets via file or environment, never command-line arguments
 
 No secret ever goes on the command line — as an argument or an inline assignment — not even a
 throwaway test value. Use a file or the process environment instead.
-
-## `R-safe-no-secret-diff` — Check the diff before every commit
-
-summary: a secret in the diff stops the commit; mechanically checked
-
-A secret in the diff stops the commit and is reported, never silently stripped. Checked
-mechanically by `secret-scan` (`docs/ai/config.md` § Checks); what it looks for:
-`topics/checks.md`.
 
 ## `R-safe-no-secret-read` — Never read a secret file into the context
 
@@ -73,26 +65,6 @@ summary: recursive deletes via language means, not a shell command
 
 No recursive deletion through a shell command. Clean up with the language's own means (e.g.
 `shutil.rmtree`) or file by file.
-
-## `R-safe-git-reset` — Check before `git reset --hard`
-
-summary: status check first, never over open changes, verify the discarded commit, no experiments in a dirty tree
-
-With open changes — including untracked files, which `git reset --hard` overwrites silently too —
-never run `git reset --hard`: use `git stash -u` or `git reset --soft` instead. Check what would be discarded
-first, with `git log -1` or `git reflog`. Never run Git experiments in a tree with open changes.
-Checked mechanically by `git-reset-hard` (`docs/ai/config.md` § Checks).
-
-## `R-safe-git-discard` — Don't discard work with other git commands either
-
-summary: no clean -f, folder checkout/restore on changes, stash drop/clear, force push to the default branch, or branch -D of an unmerged branch
-
-Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f`;
-a folder checkout or restore, or a forced checkout or switch, over uncommitted changes; dropping
-or clearing the stash; a forced push to the default branch, or deleting it on the remote; `git
-branch -D` of an unmerged branch. Single files stay free. Commit, `git stash`, or have the owner do it instead. Checked mechanically by
-`git-discard` (`docs/ai/config.md` § Checks). Details (exact conditions, refused calls):
-`topics/checks.md`.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 

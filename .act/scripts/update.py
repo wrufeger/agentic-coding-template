@@ -798,6 +798,27 @@ def step_list_new_coding_entries(root: Path, plan: bool) -> tuple[str, list[Path
     return summary, ([] if plan else [root / rules.AREAS["coding"].project_file])
 
 
+def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
+    """Follow a rule the replaced .act/rules/ moved to another file in docs/ai/rules.md
+    (rules.move_core_entries). A docs/ai/rules.md that is still exactly its generated copy is
+    skipped: the bridge refresh re-derives it, and moving lines first would make it look edited.
+    Returns (summary, touched); nothing is written under plan."""
+    rel = rules.AREAS["core"].project_file
+    path = root / rel
+    if not path.is_file():
+        return "", []
+    try:
+        if actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rel, "")):
+            return "", []
+        messages = rules.move_core_entries(root, write=not plan)
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"rule moves not checked ({exc.__class__.__name__}: {exc})", []
+    if not messages:
+        return "", []
+    verb = "would follow" if plan else "followed"
+    return f"{verb} in {rel}: {'; '.join(messages)}", ([] if plan else [path])
+
+
 def _print_content_diff(old_path: Path, new_path: Path, limit: int = 20) -> None:
     """Best-effort, capped unified diff for a changed non-rule file — rule/coding .md files keep
     the ID view instead (see the caller). Silently skipped for anything not decodable as UTF-8
@@ -2589,8 +2610,10 @@ def _finish_update(
         notes.append(f"own skill/role copies not checked ({exc.__class__.__name__}: {exc})")
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
     coding_summary, coding_touched = step_list_new_coding_entries(root, False)
-    sync_touched = [*sync_touched, *coding_touched]
-    _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}; coding rules: {coding_summary}")
+    moved_summary, moved_touched = step_move_core_entries(root, False)
+    sync_touched = [*sync_touched, *coding_touched, *moved_touched]
+    _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}; coding rules: {coding_summary}"
+                   + (f"; rule moves: {moved_summary}" if moved_summary else ""))
 
     hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
     _print_step(7, hooks_gitfiles_summary)

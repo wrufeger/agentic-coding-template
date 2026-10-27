@@ -1,6 +1,6 @@
 # Cost rules
 
-summary: when to delegate, delegation tiers and caps, waiting on workers, amending a running assignment, scripting recurring checks, commit gate
+summary: when to delegate, delegation tiers and caps, waiting on workers, amending a running assignment, scripting recurring checks, commit gate, the secret check on the diff, reset and discard
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
@@ -83,3 +83,31 @@ only) the orchestrator skips it and says so. On `CONDITIONAL` the orchestrator c
 condition in the same step as a `todo` or `question` in the inbox (`entries.py new …`), and names its
 id in the commit message (`act-commit`). After a BLOCK the orchestrator checks the fixes itself — a
 second review only for a critical finding.
+
+## `R-safe-no-secret-diff` — Check the diff before every commit
+
+summary: a secret in the diff stops the commit; mechanically checked
+
+A secret in the diff stops the commit and is reported, never silently stripped. Checked
+mechanically by `secret-scan` (`docs/ai/config.md` § Checks); what it looks for:
+`topics/checks.md`.
+
+## `R-safe-git-reset` — Check before `git reset --hard`
+
+summary: status check first, never over open changes, verify the discarded commit, no experiments in a dirty tree
+
+With open changes — including untracked files, which `git reset --hard` overwrites silently too —
+never run `git reset --hard`: use `git stash -u` or `git reset --soft` instead. Check what would be discarded
+first, with `git log -1` or `git reflog`. Never run Git experiments in a tree with open changes.
+Checked mechanically by `git-reset-hard` (`docs/ai/config.md` § Checks).
+
+## `R-safe-git-discard` — Don't discard work with other git commands either
+
+summary: no clean -f, folder checkout/restore on changes, stash drop/clear, force push to the default branch, or branch -D of an unmerged branch
+
+Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f`;
+a folder checkout or restore, or a forced checkout or switch, over uncommitted changes; dropping
+or clearing the stash; a forced push to the default branch, or deleting it on the remote; `git
+branch -D` of an unmerged branch. Single files stay free. Commit, `git stash`, or have the owner do it instead. Checked mechanically by
+`git-discard` (`docs/ai/config.md` § Checks). Details (exact conditions, refused calls):
+`topics/checks.md`.

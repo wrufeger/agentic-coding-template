@@ -810,6 +810,104 @@ def add_new_coding_entries(root: Path, write: bool = True) -> list[str]:
     return messages
 
 
+def _rule_files_holding(root: Path, gid: str) -> list[str]:
+    """Root-relative paths of the rule files that hold a rule with this ID: the shared and
+    orchestrator files under .act/rules/ and docs/ai/local/rules/ (never topics/, whose detail
+    pages repeat rule headings)."""
+    found: list[str] = []
+    for top in (root / ".act" / "rules", root / LOCAL_PREFIX / "rules"):
+        for base in (top / "shared", top / "orchestrator"):
+            if base.is_dir():
+                found.extend(_holding_in(root, base, gid))
+    return found
+
+
+def _holding_in(root: Path, base: Path, gid: str) -> list[str]:
+    found: list[str] = []
+    for path in sorted(base.glob("*.md")):
+        try:
+            template = parse_template_set(path, "template")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if gid in template.groups:
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
+def move_core_entries(root: Path, write: bool = True) -> list[str]:
+    """Follow a rule that the template moved from one rule file to another in docs/ai/rules.md. The
+    file lists each rule as a checkbox line under the import of the file that holds it; after a
+    move the line still sits under the old file, which the per-file checks (--list, --effective,
+    --validate) read as "not a group of ..." and as the rule switched on again. For every line
+    listed under a file that no longer holds its ID: if exactly one other imported file holds it,
+    the line moves there verbatim (box and reason kept), after the last listed rule that precedes
+    it in that file, else first. A rule that now lives in a file this file does not import stays
+    where it is and is reported (it does not load). An ID that no rule file holds, one that is
+    listed under the right file already, and an ambiguous one are left alone. Returns one message
+    per moved or reported ID (also with write=False, which only reports); a second run finds
+    nothing to move."""
+    area = AREAS["core"]
+    path = root / area.project_file
+    if not path.is_file():
+        return []
+    project = parse_project_file(path, area)
+    templates = [resolve_template_set(pset) for pset in project.sets]
+    messages: list[str] = []
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    removed: set[int] = set()
+    # anchor line index -> [(position in the target file, line)], written right after that line
+    inserts: dict[int, list[tuple[int, str]]] = {}
+    # per target block: (position in its file, anchor line index) of every line listed or moved there
+    placed: dict[int, list[tuple[int, int]]] = {}
+    moves: list[tuple[int, int, int, str, int]] = []  # (target, position, source, id, line index)
+
+    for si, (pset, template) in enumerate(zip(project.sets, templates)):
+        if template is None:
+            continue
+        for gid, group in pset.groups.items():
+            if gid in template.groups:
+                continue
+            holders = [ti for ti, other in enumerate(templates)
+                       if ti != si and other is not None and gid in other.groups]
+            holders = [ti for ti in holders if gid not in project.sets[ti].groups]
+            if len(holders) == 1:
+                ti = holders[0]
+                moves.append((ti, list(templates[ti].groups).index(gid), si, gid, group.line - 1))
+            elif not holders and not any(gid in project.sets[ti].groups for ti, other in enumerate(templates)
+                                         if other is not None and gid in other.groups):
+                imported = {strip_template_prefix(p.path) for p in project.sets}
+                elsewhere = [f for f in _rule_files_holding(root, gid)
+                             if strip_template_prefix(f) not in imported and f not in imported]
+                if len(elsewhere) == 1:
+                    messages.append(
+                        f"{gid}: listed under {pset.path}, now in {elsewhere[0]}, which {area.project_file} "
+                        "does not import — the rule does not load")
+
+    for ti, position, si, gid, index in sorted(moves):
+        target, template = project.sets[ti], templates[ti]
+        order = list(template.groups)
+        candidates = [(order.index(g), group.line - 1) for g, group in target.groups.items() if g in order]
+        candidates += placed.get(ti, [])
+        before = [item for item in candidates if item[0] < position]
+        anchor = max(before)[1] if before else target.line - 1
+        placed.setdefault(ti, []).append((position, anchor))
+        inserts.setdefault(anchor, []).append((position, lines[index]))
+        removed.add(index)
+        mark = "checked" if project.sets[si].groups[gid].enabled else "unchecked"
+        messages.append(f"{gid}: moved from {project.sets[si].path} to {target.path} ({mark})")
+
+    if moves and write:
+        out: list[str] = []
+        for number, line in enumerate(lines):
+            if number not in removed:
+                out.append(line)
+            out.extend(new for _pos, new in sorted(inserts.get(number, [])))
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(out) + ("\n" if text.endswith("\n") else ""))
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Import check — follows "@" imports from CLAUDE.md the way Claude Code does
 # (code.claude.com/docs/en/memory.md, "Import additional files"): relative to the file that holds

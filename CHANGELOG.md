@@ -27,6 +27,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `docs/ai/config.md` § Checks protects a project's own entries, `act-local-tidy: warn` only
   reports, `off` skips it. `python .act/scripts/act_local_tidy.py` lists what would go.
 - `update` names in its summary what the next session start will remove from `.act-local/`.
+- `update` follows a rule that moved to another rule file in an edited `docs/ai/rules.md`: its
+  checkbox line moves, mark and reason unchanged, from the block of its old file to the block of
+  its new one, so a rule switched off stays off. A rule whose new file the project does not import
+  is only reported. An unedited `docs/ai/rules.md` is re-derived from the template as before.
 - `init` and `update` keep IDEs from indexing `.act-local/`: an `excludeFolder` in a JetBrains
   `.idea/*.iml`, and `files.watcherExclude` in `.vscode/settings.json` where `.vscode/` exists.
 
@@ -53,6 +57,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - Shorter safety rules (`shared/10-safety.md`): `R-safe-no-secret-diff` points to the `secret-scan`
   check instead of describing a hand check, the git rules name groups of commands instead of every
   form, and `R-safe-git-metadata` and `R-safe-dev-server` drop examples.
+- `R-safe-no-secret-diff`, `R-safe-git-reset` and `R-safe-git-discard` move from `shared/10-safety.md`
+  to the end of `orchestrator/30-cost.md`, next to `R-code-commit`: only the main session commits or
+  changes the working tree, so workers no longer load them (about 1,600 characters less per worker).
+  IDs, wording and the checks `secret-scan`, `git-reset-hard` and `git-discard` stay as they were.
 - `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
   command (`disable-model-invocation: true`): their descriptions no longer take up room in every
   Claude Code session, and a request in plain words no longer starts them. Usage measured over a
