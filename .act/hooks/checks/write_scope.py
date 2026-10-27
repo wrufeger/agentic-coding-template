@@ -34,6 +34,12 @@
 # spaces), while the record before it only forwards the human's request and is never read.
 # _agent_assignment_text finds it (exactly one run must hold the agent_id, the id is checked
 # against _SAFE_ID_RE first) and is shared with worker_cap.py. No such record: unbound.
+#
+# Inline interpreter code (`python - <<'EOF' ... Path('x').write_text(...)`, `python -c`, `node -e`, a
+# literal piped into `python -`) is read for a restricted worker only: shell_targets.py /
+# powershell_targets.py find the call, its code and its directory, inline_code.py finds a write call and
+# the path literals, and _inline_target_offends judges each literal like a write target (but not as a
+# shell word). No other check sees these targets.
 
 from __future__ import annotations
 
@@ -52,9 +58,14 @@ import actlib
 
 from .brace_expand import literal_brace_variants
 from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode
-from .powershell_targets import _powershell_write_targets, _ps_raw_redirect_targets
+from .powershell_targets import (
+    _powershell_inline_code_targets,
+    _powershell_write_targets,
+    _ps_raw_redirect_targets,
+)
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
+    _bash_inline_code_targets,
     _bash_write_targets,
     _is_absolute_target,
     _is_dynamic_target,
@@ -72,7 +83,7 @@ __all__ = [
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
     "_agent_assignment_text",
     "_normalize_candidate_path", "_within_scratchpad", "_within_system_temp", "_offending_hint", "_matches_scope", "_shell_expansion_escapes",
-    "_write_scope_message",
+    "_write_scope_message", "_INLINE_DYNAMIC_RE", "_inline_target_offends", "_inline_hint",
     "check_worker_write_scope",
 ]
 
@@ -822,6 +833,58 @@ def _offending_hint(
     return "; ".join(hints)
 
 
+# A path literal of inline interpreter code that holds a `$` or a backtick: the shell left it unexpanded
+# (or it is literal text in the code) and the real path is unknown. Other characters the shell treats
+# specially (`{`, a leading `~`) are plain characters to the interpreter and not dynamic here.
+_INLINE_DYNAMIC_RE = re.compile(r"[$`]")
+
+
+def _inline_literal_path(raw: str, base: Optional[str], root: Path) -> str:
+    """A path literal of inline interpreter code as the interpreter itself resolves it. On Windows a
+    rooted literal without a drive (`/d/x`, `/tmp/x`, or one that starts with a single backslash) lies
+    on the drive of the directory the program runs in (`/d/x` is the folder `d` there) - it is not the
+    Git-Bash spelling of drive D, which only a shell maps, so it gets that drive here and the shared
+    `_to_native_path` finds nothing left to map. Anywhere else, and for a relative, UNC or
+    drive-qualified literal, it comes back unchanged."""
+    if sys.platform != "win32" or not raw.startswith(("/", "\\")) or raw[1:2] in ("/", "\\"):
+        return raw
+    drive = Path(base if base is not None else str(root)).drive
+    return f"{drive}{raw}" if drive else raw
+
+
+def _inline_target_offends(
+    raw: str, base: Optional[str], root: Path, scope: dict, scratchpad_dir: object
+) -> bool:
+    """True if a path literal of inline interpreter code (`python - <<EOF ... Path('x').write_text(...)`)
+    lies outside what the worker may write: judged like any other write target (system temp directory
+    and the worker's scratchpad are open, the rest must match the scope, `Write scope: none` allows
+    nothing else), except that the literal is not a shell word - no `/tmp` mapping, no brace or tilde
+    expansion, no wildcard escape check. A literal with a `$` or a backtick is dynamic and offends, and
+    so does a relative one without a known directory. A literal is judged as written: see
+    _inline_literal_path for the one Windows case where that takes a drive."""
+    raw = _inline_literal_path(raw, base, root)
+    dynamic = _INLINE_DYNAMIC_RE.search(raw) is not None
+    if not dynamic and _within_system_temp(raw, base, root, literal_brace=True):
+        return False
+    if not dynamic and isinstance(scratchpad_dir, str) and scratchpad_dir and _within_scratchpad(raw, scratchpad_dir, base):
+        return False
+    if scope.get("mode") == "none" or dynamic or (base is None and not _is_absolute_target(raw)):
+        return True
+    rel = _normalize_candidate_path(raw, root, base if base is not None else str(root))
+    return rel is None or not _matches_scope(rel, scope.get("patterns") or [])
+
+
+def _inline_hint(language: str, raw: str) -> str:
+    """How to proceed after a refusal of inline interpreter code: what was found, and the two ways out."""
+    hint = (
+        f"inline {language} code with a write call names a path outside the write scope: write the file with "
+        "Write/Edit; read outside the scope in a separate call without a write call"
+    )
+    if _INLINE_DYNAMIC_RE.search(raw):
+        hint += "; a path with `$` or a backtick in the code cannot be checked, write it out"
+    return hint
+
+
 def check_worker_write_scope(payload: dict) -> int:
     """Check 1c: a worker may only write where its assignment's `Write scope:` line allows
     (R-cost-delegate). See this module's docstring for the binding mechanism. Unlike check 1
@@ -859,6 +922,10 @@ def check_worker_write_scope(payload: dict) -> int:
         return 0
 
     write_targets: list[tuple[str, Optional[str]]] = []
+    # A Bash or PowerShell command whose inline interpreter code is read further down, once the
+    # worker's scope is known to be restricted (an unrestricted worker runs none of that reading):
+    # (tool, command, directory it runs in).
+    inline_source: Optional[tuple[str, str, str]] = None
     if tool_name in _TOOL_PATH_FIELDS:
         for field in _TOOL_PATH_FIELDS[tool_name]:
             value = tool_input.get(field)
@@ -870,6 +937,7 @@ def check_worker_write_scope(payload: dict) -> int:
             cwd_raw = payload.get("cwd")
             base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
             write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+            inline_source = (tool_name, command, base_cwd)
     elif tool_name == "PowerShell":
         command = tool_input.get("command")
         if isinstance(command, str):
@@ -886,13 +954,28 @@ def check_worker_write_scope(payload: dict) -> int:
             # the same "base is None and not absolute -> offending" branch a Bash target with an
             # unknown base would.
             write_targets = [(target, None) for target in ps_targets]
-    if not write_targets:
+            inline_source = (tool_name, command, base_cwd)
+    if not write_targets and inline_source is None:
         return 0  # not a tool/shape this check understands as a write
 
     scope = _resolve_worker_scope(root, payload)
+    if scope is None and not _recent_restricted_scope_registered(root):
+        return 0  # scoping is not demonstrably in use nearby — nothing to fail closed against
+    if scope is not None and scope.get("mode") == "unrestricted":
+        return 0
+    # Path literals of inline interpreter code that holds a write call (inline_code.py), judged apart
+    # from the shell targets: (path, base directory or None, language).
+    inline_targets: list[tuple[str, Optional[str], str]] = []
+    if inline_source is not None:
+        source_tool, source_command, source_cwd = inline_source
+        if source_tool == "Bash":
+            inline_targets = _bash_inline_code_targets(source_command, source_cwd)
+        else:
+            inline_targets = _powershell_inline_code_targets(source_command, source_cwd)
+    if not write_targets and not inline_targets:
+        return 0  # nothing this check reads as a write
+
     if scope is None:
-        if not _recent_restricted_scope_registered(root):
-            return 0  # scoping is not demonstrably in use nearby — nothing to fail closed against
         message = (
             "[act] could not bind this worker to its assignment's write scope, and a restricted "
             "scope was registered recently — denying as a precaution (R-cost-delegate; the assignment needs a "
@@ -903,9 +986,6 @@ def check_worker_write_scope(payload: dict) -> int:
             return 0
         print(message, file=sys.stderr)
         return 2
-
-    if scope.get("mode") == "unrestricted":
-        return 0
 
     if scope.get("mode") == "error":
         # An absolute pattern outside the project root — refused here, at the first write
@@ -959,6 +1039,15 @@ def check_worker_write_scope(payload: dict) -> int:
         message = _write_scope_message(
             offending, scope, _offending_hint(offending, checked_targets, scope, literal_brace)
         )
+        if mode == "warn":
+            print(message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+    for raw_path, base, language in inline_targets:
+        if not _inline_target_offends(raw_path, base, root, scope, scratchpad_dir):
+            continue
+        message = _write_scope_message(raw_path, scope, _inline_hint(language, raw_path))
         if mode == "warn":
             print(message)
             return 0

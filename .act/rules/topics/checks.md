@@ -152,7 +152,60 @@ outside the project root is refused, unless it lies in a directory listed in
 
 `worker-write-scope` (`docs/ai/config.md` § Checks) checks it; for a Bash command this is
 best-effort (it catches redirection and the common write commands, not a full shell parse): writes
-made from inside a program (`python -c "open(...)"`, a script file) stay invisible to it.
+made from inside a script file stay invisible to it.
+
+Inline interpreter code is read too, for a worker with a restricted scope (`none` or patterns; a worker
+without a `Write scope:` line and the orchestrator are not affected). A Bash or PowerShell call that runs
+`python`, `python3`, `python3.N`, `pythonw`, `py` (also `py -3`) or `node` (an `.exe` suffix and a
+directory in front are fine, and so are the usual prefixes such as `env`) with code of its own is refused
+when the code holds **a write call and a path written out as a literal that lies outside the scope** (the
+system temp directory and the worker's scratchpad stay open, as for any write). The code comes from `-c`
+(also a cluster such as `-Ic`, with options like `-X utf8` before it) or `node -e`/`--eval`/`-p`/`--print`
+(also after `-i`/`--interactive`, which still runs the code); or from standard input - `-` or no script argument, with a heredoc (`python - <<'EOF'`), a here-string, or
+a literal piped in (`cat <<'EOF' | python -`, `{ cat <<'EOF'; } | python -`, `cat <<'EOF' | (python -)`,
+`echo '...' | python3`, `printf '%s' '...' | node`, in PowerShell a string or here-string piped into
+`python -`); `<<-` counts with or without a blank before the delimiter, and a `$'...'` elsewhere in the
+command does not hide the heredoc. Write calls: Python `open(...)` with a literal
+write mode (`w`, `a`, `x` or `+`), `.write_text`, `.write_bytes`, `.touch`, `.mkdir`, `.unlink`, `.rmdir`,
+`.rename`, `.symlink_to`, `.hardlink_to`, `shutil.copy*`/`move`/`rmtree`, and `os.remove`, `rename`,
+`replace`, `makedirs`, `mkdir`, `rmdir`, `symlink`, `link`, `truncate`, `open`; Node `writeFile`,
+`appendFile`, `createWriteStream`, `copyFile`, `cp`, `rename`, `unlink`, `rm`, `rmdir`, `mkdir`,
+`symlink`, `truncate` (and their `Sync` forms). A string counts as a path when it contains `/` or `\`, or
+is a bare file name with an extension (`out.txt`; not a number like `1.0`), is not a URL and holds none of
+`*?[]^|()<>`; its escapes are decoded the way the language does before that test (`'caf\u00e9'` is text,
+`'a\x2fb'` is a path; a raw Python literal stays as written); an f-string or template literal is judged
+by the part before its first interpolation, up to the last separator. Every such literal is judged like a
+shell target, against the directory the call runs in (a `cd` before it counts), but as written: no
+`/tmp` mapping, no brace or tilde expansion, and no Git-Bash drive form - on Windows a literal such as
+`/d/work/x` is the folder `d` on the drive of the directory the call runs in, as the interpreter sees it,
+not drive D. A literal holding `$` or a backtick counts as unknown and is refused. The refusal says to write the file with
+Write/Edit; code that only reads - no write call - may name any path, so read outside the scope in a call
+of its own.
+
+Limits of that reading (what stays unseen; it catches the common form, not every form):
+- the program is not in the command: a script file run by path (`python /tmp/x.py`), code held in a
+  shell variable or read from a file (`cat x.py | python`);
+- the path is not a literal that tells it: built at run time (`Path(a) / b`, `os.path.join('out', name)`
+  whose parts hold no separator, `os.environ[...]`, a variable); a name without extension and without
+  separator (`open('out', 'w')`), which includes dotfiles such as `.envrc` (a leading dot is no extension:
+  `open('.envrc', 'w')` is not judged); a glob- or regex-looking literal (`*?[]^|()<>`);
+- the write is not in the list: writes through `subprocess`, `os.system` or `child_process`; a bare
+  `.write(` such as `sys.stdout.write`, `str.replace` and `Path.replace`, `print(..., file=...)`,
+  `fs.openSync`; a name imported under another one;
+- the code is another interpreter's: perl, ruby, php, deno, bun;
+- the shell scan does not reach the code: a heredoc after a line that does not tokenize on its own (a
+  string spanning lines, an unterminated quote) or after a `$'...'` the scan misreads (`$'it\'s'`); a
+  pipe into a group counts only for the group's first command (`cat <<'EOF' | (true; python -)`); a
+  heredoc given to a group or subshell (`( python - ) <<'EOF'`);
+- the code text is misread: a JavaScript regular expression after `)`, `]` or `}` (taken for a division,
+  so a `//` in it starts a comment that hides the rest of its line), a string nested in an f-string
+  field that reuses the quote of the f-string;
+- PowerShell: the directory is followed through `Set-Location`, `cd` and `Push-Location` only (not
+  `Pop-Location`, not a script block), as for every PowerShell write target.
+
+When the reading meets text it cannot read, the call is not refused for it and
+`[act] inline interpreter code not read (...)` goes to standard error; the rest of the check runs as
+before.
 
 `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope overlaps that of a
 worker still running: `none` overlaps nothing, a missing `Write scope:` line counts as everything,

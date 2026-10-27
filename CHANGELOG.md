@@ -144,6 +144,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `%`-formatting, PHP's `.`, PHP string interpolation and a `+` continued on the next line were never
   covered for SELECT or UPDATE; for DELETE and INSERT they are no longer reported by accident either.
 
+### Security
+
+- `worker-write-scope` reads inline interpreter code: a worker with a restricted `Write scope:` that
+  runs `python`, `python3`, `py` or `node` with `-c`/`-e`, or with code from a heredoc, a here-string
+  or a pipe, in Bash or PowerShell, is refused when the code holds a write call (`open(…, 'w')`, `write_text`, `shutil.copy`,
+  `fs.writeFileSync` …) and a path written out that lies outside the scope, the system temp directory
+  and its scratchpad. Workers had written files outside their scope this way, some right after the
+  check refused the same write. Best effort: a script file, a path built at run time and writes through
+  `subprocess` stay unseen (`topics/checks.md`).
+- `R-role-worker`: a write a check refused is never made another way; the worker reports the refusal
+  with its result.
+
 ## [2.3.0] - 2026-10-25
 
 Reads and writes outside the project root are checked, updates follow either the newest release or the default

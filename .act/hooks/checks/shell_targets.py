@@ -53,8 +53,11 @@
 #
 # Known limits (a target missed here is simply not checked — resolved toward over-blocking wherever
 # the command itself is ambiguous):
-#   - writes made from inside a program are invisible: `python -c "open(...)"`, a script file,
-#     `find -exec`, `xargs` fed from stdin, an alias or shell function;
+#   - writes made from inside a program are invisible to _bash_write_targets: `python -c "open(...)"`,
+#     a script file, `find -exec`, `xargs` fed from stdin, an alias or shell function. Only the worker
+#     write scope reads inline interpreter code on top of that, through _bash_inline_code_targets (a
+#     second walk of the same scan with a side channel, _INLINE_SINK; reading and limits in
+#     inline_code.py); what _bash_write_targets returns is not changed by it;
 #   - a target containing a variable, a command substitution, a brace expansion or a leading `~` is
 #     never resolved (_is_dynamic_target): check 1c denies it, check 1 passes it unless its text
 #     names .act/;
@@ -136,6 +139,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import inline_code as _inline_code
 from . import shell_targets_legacy as _legacy_targets
 # The `$'` / quoted-heredoc pass is shared with the legacy half: one definition of what bash reads as
 # ANSI-C quoting, so the two halves of the union never disagree on it.
@@ -164,6 +168,7 @@ __all__ = [
     "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
     "_scan_command", "_bash_write_targets_new", "_bash_write_targets",
+    "_HeredocOperand", "_InlineTarget", "_bash_inline_code_targets",
 ]
 
 _SHELL_OPERATOR_CHARS = "();<>|&"
@@ -693,6 +698,36 @@ class _Word(str):
         return word
 
 
+# A backslash before a backslash, a dollar sign or a backtick: what bash resolves in the body of a heredoc
+# with an unquoted delimiter.
+_HEREDOC_ESCAPE_RE = re.compile(r"\\([\\$`])")
+
+
+class _HeredocOperand(_Word):
+    """The delimiter word of a heredoc, carrying the text bash hands to the command as its standard input
+    (`heredoc_text`): the body lines, with the leading tabs of `<<-` removed and, for an unquoted
+    delimiter, the backslash escapes bash resolves in an expanded body (_HEREDOC_ESCAPE_RE).
+    Its own text is the delimiter as before. Only built while
+    _bash_inline_code_targets scans; no other caller ever sees one."""
+
+    heredoc_text: str
+
+    def __new__(cls, word: str, body_lines: list[str], expands: bool) -> "_HeredocOperand":
+        operand = super().__new__(
+            cls, str(word), getattr(word, "subs", ()), getattr(word, "bare", None), getattr(word, "live", None)
+        )
+        lines = [line.lstrip("\t") for line in body_lines] if str(word).startswith("-") else list(body_lines)
+        text = "\n".join(lines)
+        operand.heredoc_text = _HEREDOC_ESCAPE_RE.sub(r"\1", text) if expands else text
+        return operand
+
+
+# The write targets inline interpreter code names (see _bash_inline_code_targets), collected as a side
+# channel while _scan_command walks a command; None outside that scan, so every other caller of the
+# scanner gets exactly the result it always got. A hook process scans one command at a time.
+_INLINE_SINK: Optional[list] = None
+
+
 class _TokenizeError(ValueError):
     """A ValueError from the tokenizers that also carries `partial`, the tokens read before the word
     that failed (an unclosed quote or span, a trailing backslash). Whatever came before that word is
@@ -1073,6 +1108,19 @@ def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str],
     return found
 
 
+# `<<-` followed by blanks and the delimiter word (not `<<<-`, a here-string).
+_DASH_HEREDOC_BLANK_RE = re.compile(r"(?<!<)<<-[ \t]+(?=\S)")
+
+
+def _heredoc_operand_positions(tokens: list[_Token]) -> list[int]:
+    """The index of the delimiter word of every heredoc a line opens, in the order and by the same
+    reading as _heredoc_delimiters (a `<<` operator followed by a word)."""
+    return [
+        index + 1 for index in range(len(tokens) - 1)
+        if tokens[index][1] and tokens[index][0] == "<<" and not tokens[index + 1][1]
+    ]
+
+
 def _command_prefix_end(words: list[str]) -> int:
     """Index of the command name in a simple command's words: assignments, `if`/`{`-style prefixes,
     backtick-span words and wrappers (`env`, `sudo`, `time` ... with their options) skipped, as
@@ -1297,19 +1345,30 @@ def _line_mode_tokens(command: str) -> list[_Token]:
     index = 0
     while index < len(lines):
         line = lines[index]
+        if _INLINE_SINK is not None:
+            # Inline-code reading only: `<<- 'EOF'` (blanks after the `-`) names its delimiter after them,
+            # as bash does; the other callers keep reading `-` as the delimiter and scan the body.
+            line = _DASH_HEREDOC_BLANK_RE.sub("<<-", line)
         try:
             line_tokens = _shell_tokens(line, newline_is_operator=False)
         except _TokenizeError as error:
             raise _TokenizeError(str(error), tokens + error.partial) from error
+        line_first = len(tokens)
         tokens.extend(line_tokens)
         tokens.append(("\n", True))
         index += 1
         delimiters = _heredoc_delimiters(line_tokens, line)
         feeds_shell = _heredoc_shell_flags(line_tokens) if delimiters else []
+        operand_positions = _heredoc_operand_positions(line_tokens) if delimiters and _INLINE_SINK is not None else []
         for position, (candidates, expands) in enumerate(delimiters):
             end = _heredoc_terminator(line_positions, candidates, index)
             if end is None:
                 break
+            if position < len(operand_positions):
+                # Inline-code reading only (_bash_inline_code_targets): the delimiter word carries its
+                # body, so the command the heredoc feeds can read it. The word's text stays the same.
+                at = line_first + operand_positions[position]
+                tokens[at] = (_HeredocOperand(tokens[at][0], lines[index:end], expands), False)
             if position < len(feeds_shell) and feeds_shell[position]:
                 # The body is a script for a shell: scanned as a command text of its own (the same
                 # route a `sh -c` text takes), so the commands in it count, an expansion in an
@@ -1624,6 +1683,126 @@ def _simple_command_targets(
     return _pairs(raw_targets, bases), None
 
 
+# (path literal, the directory a relative one resolves against - None = unknown, interpreter language)
+_InlineTarget = tuple[str, Optional[str], str]
+_ECHO_FLAGS_RE = re.compile(r"^-[neE]+$")
+# A printf format that prints its arguments and nothing else.
+_PRINTF_ARGS_ONLY_RE = re.compile(r"^(?:%[sb]|\\n| )+$")
+
+
+def _stdin_redirect(operator: str, word: str) -> Optional[str | bool]:
+    """What an input redirection does to a command's standard input, for the inline-code reading: the
+    literal text (a heredoc body, a here-string) as a `str`, or False for a redirection from something
+    that is not literal text (a file, a descriptor, a heredoc whose body was not kept); None if the
+    operator is no input redirection."""
+    if operator == "<<":
+        return getattr(word, "heredoc_text", False)
+    if operator == "<<<":
+        return str(word) + "\n"
+    if operator in ("<", "<&", "<>"):
+        return False
+    return None
+
+
+def _literal_output(words: list[str], stdin_text: Optional[str]) -> Optional[str]:
+    """The text a simple command writes to its standard output when that text is literally known: `cat`
+    without a file operand (its own standard input, a heredoc), `echo` and `printf` (their arguments).
+    None for anything else - a pipe from `cat file.py` yields nothing."""
+    at = _command_prefix_end(words)
+    if at >= len(words):
+        return None
+    name = _command_name(words[at])
+    args = [str(word) for word in words[at + 1:]]
+    if name == "cat":
+        return stdin_text if not [arg for arg in args if arg != "-" and not arg.startswith("-")] else None
+    if name == "echo":
+        while args and _ECHO_FLAGS_RE.match(args[0]):
+            args = args[1:]
+        return " ".join(args) + "\n"
+    if name == "printf" and args:
+        if "%" not in args[0]:
+            return args[0].replace("\\n", "\n")
+        if _PRINTF_ARGS_ONLY_RE.match(args[0]):
+            return " ".join(args[1:]) + "\n"
+    return None
+
+
+def _collect_inline_code(
+    words: list[str], bases: _Bases, stdin_redirected: bool, stdin_text: Optional[str], pipe_input: Optional[str]
+) -> None:
+    """If this simple command runs inline interpreter code (inline_code.py: `python -c`, `node -e`, or a
+    program read from standard input), add the path literals of that code - when it holds a write call -
+    to the active _INLINE_SINK, once per directory the command may run in. The program on standard input
+    is a heredoc body or here-string of the command itself, else the literal output of the previous stage
+    of its pipeline. Best effort: an error here costs this command's result, never the scan."""
+    sink = _INLINE_SINK
+    if sink is None:
+        return
+    try:
+        at = _command_prefix_end(words)
+        if at >= len(words):
+            return
+        language = _inline_code.interpreter_language(_command_name(words[at]))
+        if language is None:
+            return
+        kind, code = _inline_code.code_source(language, [str(word) for word in words[at + 1:]])
+        if kind == _inline_code.SOURCE_STDIN:
+            code = stdin_text if stdin_redirected else pipe_input
+        elif kind != _inline_code.SOURCE_CODE:
+            return
+        if code is None:
+            return
+        paths = _inline_code.write_paths(language, code)
+        if not paths:
+            return
+        if any(str(word) in ("-C", "--chdir") or str(word).startswith("--chdir=") for word in words[:at]):
+            bases = frozenset({None})  # `env -C dir python ...`: the directory is not followed
+        for path in paths:
+            for base in sorted(bases, key=lambda candidate: (candidate is None, candidate or "")):
+                sink.append((path, base, language))
+    except Exception as error:  # noqa: BLE001
+        # Deliberately broad: whatever goes wrong while reading one command's inline code (newer,
+        # best-effort code on top of the scan) must neither refuse the call nor end the walk over the
+        # commands that follow - only this command's inline part is lost. Said on standard error.
+        _inline_code.report_skipped("one command", error)
+
+
+def _track_group_output(
+    group_outputs: list[list[Optional[str]]], words: list[str], separator: Optional[str],
+    produced: Optional[str], closed_group: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Inline-code reading only: follow the literal output of `{ ...; }` and `( ... )` groups through
+    _scan_tokens, so a pipe behind a group (`{ cat <<'EOF'; } | python -`, `(echo ...) | node`) hands
+    the group's text on. Called at the end of each segment with its words, its separator and the output
+    its command produced; `group_outputs` holds one list per open group. Returns (the output the segment
+    stands for - a closing `}` stands for its group, an empty segment behind a `)` for the subshell that
+    closed -, the output of a subshell that this segment's `)` closes). A group with a statement whose
+    output is not literal has none."""
+    texts = [str(word) for word in words]
+    if texts and texts[0] == "{":
+        group_outputs.append([])
+    if texts == ["}"] and group_outputs:
+        produced = _joined_group_output(group_outputs.pop())
+    elif not texts and closed_group is not None:
+        produced = closed_group
+    if (texts or produced is not None) and group_outputs:
+        group_outputs[-1].append(produced)
+    closed: Optional[str] = None
+    if separator == "(":
+        group_outputs.append([])
+    elif separator == ")" and group_outputs:
+        closed = _joined_group_output(group_outputs.pop())
+    return produced, closed
+
+
+def _joined_group_output(parts: list[Optional[str]]) -> Optional[str]:
+    """The text the statements of a group wrote together, None if one of them has no literal output
+    (or the group has no statement at all)."""
+    if not parts or any(part is None for part in parts):
+        return None
+    return "".join(part for part in parts if part is not None)
+
+
 def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """Walk a token stream command by command (step 4 of the section comment). Directory tracking,
     as a set of possible directories (None = unknown):
@@ -1643,6 +1822,14 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     redirect_targets: list[str] = []
     other_redirect_words: list[str] = []
     prev_sep: Optional[str] = None
+    # Inline-code reading only (_INLINE_SINK): what the segment's standard input is, the literal output of
+    # the previous stage of its pipeline, the outputs of the statements of each open `{ }` / `( )` group
+    # (None for one that is not literal), and the output of the group that closed just before.
+    stdin_redirected = False
+    stdin_text: Optional[str] = None
+    pipe_input: Optional[str] = None
+    group_outputs: list[list[Optional[str]]] = []
+    closed_group: Optional[str] = None
     index = 0
     while True:
         at_end = index >= len(tokens)
@@ -1662,10 +1849,16 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     redirect_targets.append(word)
                 else:
                     other_redirect_words.append(word)  # an input redirect has no target, a span in it still runs
+                if _INLINE_SINK is not None:
+                    redirect_input = _stdin_redirect(text, word)
+                    if redirect_input is not None:
+                        stdin_redirected = True
+                        stdin_text = redirect_input if isinstance(redirect_input, str) else None
             index += 2 if has_word else 1
             continue
 
         separator = None if at_end else text
+        produced: Optional[str] = None
         if words or redirect_targets or other_redirect_words:
             found.extend(_pairs(redirect_targets, bases))
             for word in words + redirect_targets:
@@ -1677,6 +1870,9 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     found.extend(_scan_command(span, bases, git_writes, depth + 1))
             targets, cd_change = _simple_command_targets(words, bases, git_writes, depth)
             found.extend(targets)
+            if _INLINE_SINK is not None:
+                _collect_inline_code(words, bases, stdin_redirected, stdin_text, pipe_input)
+                produced = _literal_output(words, stdin_text)
             if cd_change is not None:
                 directory, prefixed = cd_change
                 near_pipe = prev_sep in _PIPE_OPS or separator in _PIPE_OPS or separator == "&"
@@ -1692,9 +1888,19 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     else:
                         after_list = after_list | new_bases
                     bases = new_bases
+        if _INLINE_SINK is not None:
+            produced, closed_group = _track_group_output(group_outputs, words, separator, produced, closed_group)
+        # A pipe hands the stage's literal output on; a `(` right behind a pipe (`cat <<EOF | (python -)`)
+        # passes what it got to the first command inside.
+        if separator in _PIPE_OPS:
+            pipe_input = produced
+        elif not (separator == "(" and not words):
+            pipe_input = None
         words = []
         redirect_targets = []
         other_redirect_words = []
+        stdin_redirected = False
+        stdin_text = None
         if separator is None:
             return found
         if separator == "||":
@@ -1708,6 +1914,21 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             bases, list_start, after_list = saved.pop()
         prev_sep = separator
         index += 1
+
+
+def _scan_heredocs_for_inline_code(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> None:
+    """Inline-code reading only (_INLINE_SINK set), for a command that may use ANSI-C quoting `$'...'`:
+    _scan_command then tokenizes the whole command without reading heredocs, so a program fed as a
+    heredoc (`IFS=$'\\n'; python - <<'EOF' ...`) would never be seen. This walks the line-wise reading
+    once more - the one that knows heredocs - and keeps only what it adds to the sink; its targets are
+    dropped, and a `$'` this lexer misreads costs this pass its tokens from there on (what it read
+    before still counts), never the result of any other check."""
+    try:
+        tokens = _line_mode_tokens(command)
+    except ValueError as error:
+        tokens = getattr(error, "partial", [])
+    if tokens:
+        _scan_tokens(tokens, bases, git_writes, depth)
 
 
 def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
@@ -1745,6 +1966,8 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
             prefixes.append(getattr(error, "partial", []))
         if tokens is None or ansi_c_quoting:
             found.extend((target, None) for target in _raw_redirect_targets(whole))
+    if ansi_c_quoting and _INLINE_SINK is not None:
+        _scan_heredocs_for_inline_code(command, bases, git_writes, depth)
     if tokens is not None:
         found.extend(_scan_tokens(tokens, bases, git_writes, depth))
     else:
@@ -1835,3 +2058,30 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
             seen.add(key)
             merged.append(pair)
     return merged
+
+
+def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget]:
+    """The path literals that inline interpreter code in a Bash command names next to a write call -
+    (path, the directory it resolves against or None when unknown, language) - for the worker write
+    scope only (check 1c); no other check calls this, and _bash_write_targets is unchanged. The command
+    is walked once more with _INLINE_SINK set, so the interpreter calls are found in the same places
+    and under the same directory tracking (`cd`, `&&` chains, `sh -c`, heredoc bodies fed to a shell)
+    as every write target. A literal path is not a shell word: the caller must not map `/tmp` or
+    expand braces or `~` in it. Best effort: a command that does not mention an interpreter, or whose
+    scan fails, yields what was found so far (see inline_code.py for the reading and its limits)."""
+    global _INLINE_SINK
+    if not _inline_code.mentions_interpreter(command):
+        return []
+    found: list[_InlineTarget] = []
+    previous = _INLINE_SINK
+    _INLINE_SINK = found
+    try:
+        _scan_command(command, frozenset({base_cwd}), frozenset(), depth=0)
+    except (ValueError, RecursionError) as error:
+        # What the tokenizers and the nested scans are known to raise on a command they cannot read;
+        # the inline part ends here, with what was found so far. Another kind of error is a bug and
+        # propagates (the dispatcher then decides, as for any check that fails).
+        _inline_code.report_skipped("command scan", error)
+    finally:
+        _INLINE_SINK = previous
+    return list(dict.fromkeys(found))

@@ -105,6 +105,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+from . import inline_code as _inline_code
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
@@ -127,6 +128,7 @@ __all__ = [
     "_extract_ps_command_flag", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
     "_broad_guard_candidates", "_resolve_ps_target", "_resolve_cd_target", "_flush_ps_statement",
     "_scan_ps_tokens", "_ps_raw_redirect_targets", "_powershell_write_targets",
+    "_PsInlineTarget", "_powershell_inline_code_targets",
 ]
 
 _Token = tuple[str, bool]  # (text, is_operator) — same shape as shell_targets._Token
@@ -746,3 +748,97 @@ def _powershell_write_targets(
         # A bug in this scanner must never turn into a silent allow (dispatch.py's docstring,
         # "when in doubt, deny"): None makes the caller fall back to its own raw-text search.
         return None
+
+
+# (path literal, the directory it resolves against or None when unknown, interpreter language)
+_PsInlineTarget = tuple[str, Optional[str], str]
+
+
+def _unwrap_here_string(word: str) -> str:
+    """The text of a here-string word (`@'`, a line break, the body, a line break, `'@`) without its
+    markers; any other word comes back as it is."""
+    if not _is_here_string_word(word) or len(word) < 4:
+        return word
+    inner = word[2:-2].replace("\r\n", "\n")
+    newline = inner.find("\n")
+    body = inner[newline + 1:] if newline >= 0 else inner
+    return body.rstrip(" \t").removesuffix("\n")
+
+
+def _ps_literal_output(words: list[str]) -> Optional[str]:
+    """The text a PowerShell statement sends down the pipeline when it is literally known: a lone string
+    or here-string, or `echo`/`Write-Output` with literal arguments. Quoting is gone from the words, so a
+    lone word that is really a command name counts as text too, which holds no write call anyway."""
+    if not words:
+        return None
+    if len(words) == 1:
+        return _unwrap_here_string(words[0])
+    if _ps_command_name(words[0]) in ("echo", "write-output"):
+        return " ".join(_unwrap_here_string(word) for word in words[1:])
+    return None
+
+
+def _scan_ps_inline(tokens: list[_Token], base_cwd: str) -> list[_PsInlineTarget]:
+    """Walk the statements the way _scan_ps_tokens does (one current directory, followed through
+    Set-Location/cd/Push-Location) and collect the path literals of inline interpreter code: `python -c
+    '<code>'`, `node -e "..."`, and a literal piped into `python -` / `python` / `node`."""
+    found: list[_PsInlineTarget] = []
+    cwd: Optional[str] = base_cwd
+    words: list[str] = []
+    piped: Optional[str] = None
+    index = 0
+    size = len(tokens)
+    while True:
+        at_end = index >= size
+        text, is_op = tokens[index] if not at_end else ("", True)
+        if not at_end and not is_op:
+            words.append(text)
+            index += 1
+            continue
+        if not at_end and text in _PS_REDIRECT_OPS:
+            index += 2 if index + 1 < size and not tokens[index + 1][1] else 1
+            continue
+        produced: Optional[str] = None
+        statement = _strip_literal_call(words)
+        if statement:
+            name = _ps_command_name(statement[0])
+            args = statement[1:]
+            language = _inline_code.interpreter_language(name)
+            if name in _CD_ALIASES:
+                positionals, values = _ps_split_args(args)
+                cwd = _resolve_cd_target(_target_from_flags(positionals, values, ("path", "literalpath")), cwd)
+            elif language is not None:
+                kind, code = _inline_code.code_source(language, args)
+                if kind == _inline_code.SOURCE_STDIN:
+                    code = piped
+                elif kind == _inline_code.SOURCE_CODE and code is not None:
+                    code = _unwrap_here_string(code)
+                if kind != _inline_code.SOURCE_NONE and code is not None:
+                    for path in _inline_code.write_paths(language, code):
+                        found.append((path, cwd, language))
+            produced = _ps_literal_output(statement)
+        if at_end:
+            return found
+        piped = produced if text == "|" else None
+        words = []
+        index += 1
+
+
+def _powershell_inline_code_targets(command: str, base_cwd: str) -> list[_PsInlineTarget]:
+    """The PowerShell counterpart of shell_targets._bash_inline_code_targets, for the worker write scope
+    only: the path literals that inline interpreter code names next to a write call, each with the
+    directory a relative one resolves against (None when a Set-Location target could not be followed)
+    and the language. Empty when the command is not safely evaluable (an unterminated quote or
+    here-string, Invoke-Expression) or does not mention an interpreter."""
+    if not _inline_code.mentions_interpreter(command):
+        return []
+    try:
+        tokens = _ps_tokens(command)
+        if tokens is None or _uses_invoke_expression(tokens):
+            return []
+        return list(dict.fromkeys(_scan_ps_inline(tokens, base_cwd)))
+    except (ValueError, RecursionError) as error:
+        # What the PowerShell tokenizer and the scan raise on text they cannot read: the inline part
+        # ends here. Another kind of error is a bug and propagates to the dispatcher.
+        _inline_code.report_skipped("PowerShell scan", error)
+        return []

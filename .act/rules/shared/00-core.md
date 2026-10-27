@@ -77,7 +77,7 @@ Details: `topics/checks.md`.
 
 ## `R-role-worker` — What a worker may and may not do
 
-summary: bounded assignment, evidence and marked assumptions, no commits, no docs/ai/, read-only git, no sub-workers
+summary: bounded assignment, evidence and marked assumptions, no commits, no docs/ai/, read-only git, no refused write made another way, no sub-workers
 
 A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at
 most 40 lines, no raw dumps, every assumption it made marked **assumption**. It never commits,
@@ -86,5 +86,7 @@ directly, it does not take up the question: it answers only "please ask the orch
 carries on with its assignment. Asked for status, it answers at
 once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,
 `show`); every command that changes the working tree or history stays with the orchestrator.
+A write a check refused is never made another way — not through an interpreter, a script, another
+tool or a detour; the worker reports the refusal with its result.
 A worker never starts another worker: if the task would be better split, it says so in its result
 and the orchestrator decides.
