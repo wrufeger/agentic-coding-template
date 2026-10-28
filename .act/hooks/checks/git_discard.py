@@ -17,7 +17,12 @@
 #            - `git stash drop`, `git stash clear` always;
 #            - a forced push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) whose
 #              target is the default branch;
-#            - `git branch -D` (and `-d -f`) of a branch that `git branch --no-merged` lists.
+#            - `git branch -D` (and `-d -f`) of a branch that `git branch --no-merged` lists, unless
+#              it was taken over by cherry-pick: `git cherry` shows only `-` lines (an equivalent
+#              patch in HEAD, whitespace ignored), it has no merge commit and no empty commit of its
+#              own, and merging it into HEAD would change nothing (`git merge-tree --write-tree`
+#              gives HEAD's tree; git 2.38 or later, else it stays refused). A move or copy that
+#              overwrites an existing branch (`-M`, `-C`) gets no such release.
 #
 #          The default branch is read from `git symbolic-ref refs/remotes/origin/HEAD`, else
 #          `init.defaultBranch`, else both `main` and `master`.
@@ -453,6 +458,39 @@ def _push_verdict(
     return None
 
 
+def _fully_taken_over(name: str, remote: bool, target: Path, budget: _Budget) -> bool:
+    """True if the branch `name` was taken over into HEAD by cherry-pick, so deleting it loses
+    nothing: every commit of it has an equivalent patch in HEAD (`git cherry` marks it `-`), none
+    of them is a merge (`git cherry` does not see merges) or empty (every empty commit matches any
+    other), and merging the branch into HEAD gives HEAD's own tree. The last condition catches what
+    the patch comparison misses, since it ignores whitespace. Any doubt (a git error, a conflict, a
+    timeout, a used-up budget, git older than 2.38) is False: the name then stays blocked as if
+    this check did not exist."""
+    ref = ("refs/remotes/" if remote else "refs/heads/") + name
+    try:
+        cherry = budget.run(["cherry", "HEAD", ref], target)
+        if cherry.returncode != 0 or cherry.stdout is None:
+            return False
+        lines = [line for line in cherry.stdout.splitlines() if line.strip()]
+        if not lines or not all(line.startswith("-") for line in lines):
+            return False
+        merges = budget.run(["rev-list", "--merges", f"HEAD..{ref}"], target)
+        if merges.returncode != 0 or merges.stdout is None or merges.stdout.strip():
+            return False
+        # with a pathspec, rev-list leaves out commits that change no file: fewer means an empty one
+        changing = budget.run(["rev-list", f"HEAD..{ref}", "--", ":/"], target)
+        if changing.returncode != 0 or changing.stdout is None                 or len(changing.stdout.split()) != len(lines):
+            return False
+        merged = budget.run(["merge-tree", "--write-tree", "HEAD", ref], target)
+        head_tree = budget.run(["rev-parse", "HEAD^{tree}"], target)
+    except _Unknown:
+        return False
+    if merged.returncode != 0 or merged.stdout is None or head_tree.returncode != 0 or head_tree.stdout is None:
+        return False
+    merged_lines = merged.stdout.split()
+    return len(merged_lines) == 1 and merged_lines[0] == head_tree.stdout.strip()
+
+
 def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
     head = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     delete = any(_long_is(a, "delete", 5) for a in head) or _has_letter(head, "d", "")
@@ -469,12 +507,18 @@ def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optio
         return None
     if overwrite and not force_delete:
         names = names[-1:]  # a move or copy overwrites only its destination
-    listing_args = ["branch", "--format=%(refname:short)", "--no-merged", "HEAD"]
+    # lstrip=2, not short: `short` prints `heads/x` when a tag `x` exists too, and the name would
+    # no longer match
+    listing_args = ["branch", "--format=%(refname:lstrip=2)", "--no-merged", "HEAD"]
     if remote:
         listing_args.insert(1, "-r")
     fold = sys.platform in ("win32", "darwin")  # ref names are looked up without regard to case there
     unmerged = {name.lower() if fold else name for name in budget.out(listing_args, target).split()}
     blocked = [name for name in names if (name.lower() if fold else name) in unmerged]
+    if force_delete:
+        # Work taken over by cherry-pick leaves the branch "not merged" by ancestry; release only a
+        # branch whose content is in HEAD already (see _fully_taken_over). Any doubt refuses.
+        blocked = [name for name in blocked if not _fully_taken_over(name, remote, target, budget)]
     if blocked:
         return "not merged into HEAD: " + ", ".join(f"`{n}`" for n in blocked)
     return None

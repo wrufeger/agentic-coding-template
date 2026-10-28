@@ -36,6 +36,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `git-discard` lets `git branch -D` (also `-d -f`, with `-r`) through for a branch taken over
+  by cherry-pick, as after taking over a worker's worktree branch: `git cherry HEAD <branch>`
+  shows only `-` lines, the branch has no merge and no empty commit of its own, and merging it
+  into HEAD would change nothing (`git merge-tree --write-tree`, git 2.38 or later). Any other
+  result, an error or a timeout still refuses; `-M`/`-C` over a branch are unchanged.
 - Shorter core rules (`.act/rules/shared/00-core.md`): `R-work-override`, `R-work-language` and
   `R-role-worker` leave details that `.act/bridges/rules.md`, `topics/feedback.md` and the scaffold's
   own inbox entry already state. No rule and no obligation is removed, here and in the six rule files
@@ -163,6 +168,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `git-discard` refuses `git branch -D <name>` of an unmerged branch also when a tag of the same
+  name exists. Before, `git branch --no-merged` listed the branch as `heads/<name>`, the name did
+  not match, and the delete went through.
 - `worker-write-scope` reads inline interpreter code: a worker with a restricted `Write scope:` that
   runs `python`, `python3`, `py` or `node` with `-c`/`-e`, or with code from a heredoc, a here-string
   or a pipe, in Bash or PowerShell, is refused when the code holds a write call (`open(…, 'w')`, `write_text`, `shutil.copy`,

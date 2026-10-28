@@ -67,8 +67,11 @@ something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`,
 `git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
 forced push (`-f`, `--force-with-lease`, `+refspec`, `--mirror`) to the default branch, or deleting
 it on the remote (`git push origin :main`, `--delete`); `git branch -D` of a branch `git branch
---no-merged` lists, and `git branch -M`/`-C` over one. A call too long to check in time, or a check
-that fails, is refused — run smaller calls.
+--no-merged` lists, and `git branch -M`/`-C` over one. `git branch -D` is let through for a branch
+taken over by cherry-pick: `git cherry HEAD <branch>` shows only `-` lines, the branch has no merge
+and no empty commit of its own, and merging it into HEAD would change nothing (`git merge-tree
+--write-tree`, git 2.38 or later). A branch HEAD has edited further after the pick stays refused. A
+call too long to check in time, or a check that fails, is refused — run smaller calls.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
