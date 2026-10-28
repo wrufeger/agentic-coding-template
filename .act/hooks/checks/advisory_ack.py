@@ -7,7 +7,8 @@
 #          closing `.` or `!`. When at least one named (or, without an id, any) advisory is active it is
 #          acknowledged through advisory.py and the reason to show is returned -- dispatch.py then blocks
 #          the prompt so it never reaches the model, as the quick capture does. Otherwise handle()
-#          returns None and the prompt goes through unchanged. Files only: no git, no network.
+#          returns None and the prompt goes through unchanged. Files only, no network; after an
+#          acknowledgement advisory.py runs board.py once (local git state) so the board drops the line.
 
 from __future__ import annotations
 

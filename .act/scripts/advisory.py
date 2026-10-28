@@ -8,7 +8,9 @@
 #          own (`.act-local/advisories.git`, never the project's `.git`), validates the file and keeps
 #          the accepted entries in `.act-local/advisories.json`. Everything that shows an advisory (the
 #          session start, the status line, the board, the chat acknowledgement) reads only that cache,
-#          the installed version (`.act/VERSION`) and the lock: files, no git, no network.
+#          the installed version (`.act/VERSION`) and the lock: files, no git, no network. An
+#          acknowledgement then runs board.py once, as the session start does, so the board drops the
+#          line at once (board.py reads local git state, never the network).
 #
 #          The file is data, never code: it is read as JSON, every field is checked, only the known
 #          fields are kept, and nothing from it is executed, imported, formatted into a format string,
@@ -24,7 +26,8 @@
 #          python .act/scripts/advisory.py --refresh         run the fetch now (5 s limit per git call)
 # Writes:  only under .act-local/ (advisories.json, advisories-state.json, advisories-seen.json,
 #          advisories-ack.json, advisories.git/); --ack and the session start (inbox todo) also write
-#          the acknowledgement / seen records and, once per critical advisory, one inbox todo.
+#          the acknowledgement / seen records and, once per critical advisory, one inbox todo; an
+#          acknowledgement also rewrites the board view (docs/ai/board.md or .act-local/board-<branch>.md).
 # Exit:    0 normally; 1 when --check-file rejects something or --ack names an unknown id;
 #          2 outside a project (except --check-file) or on a usage error.
 
@@ -61,6 +64,7 @@ REPEATS = ("once", "every-start")
 BRANCH_REF = "refs/heads/advisories"
 BRANCH_FILE = "advisories.json"
 GIT_TIMEOUT = 5
+BOARD_TIMEOUT = 5  # the board rewrite after an acknowledgement; the chat hook itself has 10 s
 _STATE_READ_LIMIT = 1024 * 1024
 # Characters no field may contain: control, format (bidi overrides, zero width), private use,
 # surrogates and the line/paragraph separators.
@@ -593,10 +597,23 @@ def session_report(root: Path, file_todos: bool = True) -> SessionReport:
 # Acknowledge
 # ---------------------------------------------------------------------------
 
+def _refresh_board(root: Path) -> None:
+    """Rewrite the board view with board.py, as the session start does, so a board generated before the
+    acknowledgement drops its line at once. A subprocess, not an import: board.py imports this module. A
+    missing board.py, an error or a timeout leaves the board to the next session start."""
+    board_script = root / ".act" / "scripts" / "board.py"
+    if not board_script.is_file():
+        return
+    try:
+        subprocess.run([sys.executable, str(board_script)], cwd=root, timeout=BOARD_TIMEOUT, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def acknowledge(root: Path, ids: list[str]) -> tuple[list[str], list[str]]:
-    """Acknowledge the named advisories (no id: every active one) in .act-local/advisories-ack.json.
-    Returns (acknowledged ids, ids that name no cached advisory); raises OSError when the record cannot be
-    written."""
+    """Acknowledge the named advisories (no id: every active one) in .act-local/advisories-ack.json, then
+    rewrite the board view. Returns (acknowledged ids, ids that name no cached advisory); raises OSError when
+    the record cannot be written."""
     known = {standing.advisory.id: standing for standing in evaluate(root)}
     wanted = [item.upper() for item in ids] or [adv_id for adv_id, item in known.items() if item.state == "active"]
     done: list[str] = []
@@ -612,6 +629,8 @@ def acknowledge(root: Path, ids: list[str]) -> tuple[list[str], list[str]]:
             done.append(adv_id)
     if done and not _write_json(ack_path(root), record):
         raise OSError("cannot write .act-local/advisories-ack.json")
+    if done:
+        _refresh_board(root)
     return done, unknown
 
 

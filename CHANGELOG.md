@@ -21,7 +21,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   todo; a `warning` shows at session start only (`once` or `every-start`). It stops when `act-update`
   brings in a version outside the range, or when the human acknowledges it: say "Warnung quittiert"
   or "warning acknowledged" (also "Warnung akzeptiert", "Hinweis gelesen", "warning accepted",
-  "notice read"), or run `python .act/scripts/advisory.py --ack A<n>`. `advisory-check: off` in
+  "notice read"), or run `python .act/scripts/advisory.py --ack A<n>`; either way the board is
+  rewritten at once. `advisory-check: off` in
   `docs/ai/config.md` switches it off; `advisory.py --status` shows the state, `--refresh` checks at
   once, `--check-file` validates a file.
 - `/act <name>` also finds a template skill without its `act-` prefix: `/act version` shows
