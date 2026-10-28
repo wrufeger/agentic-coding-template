@@ -36,6 +36,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- At a task boundary once the context has reached `context-hint`, the assistant checks the handover
+  itself (`handover.py`, state lines that name each open task's next step) before its closing line says
+  "now `/clear`". There is no sentence to copy any more: after `/clear` a bare "continue" picks up from
+  the board. `act-handover` ends the same way and stays for the question whether the session can be
+  left (`R-work-handover`, `R-work-session-start`, the context-size note).
 - `CR-nuxt-root-folders` names `shared/utils/` as a fourth fixed folder, for code that the app and the
   server both run, with Nuxt's limit (no Vue or Nitro imports there) and the Nuxt version it needs.
   Types stay in `/types`; `shared/types/` is not used.

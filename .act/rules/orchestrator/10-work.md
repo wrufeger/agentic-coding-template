@@ -16,10 +16,11 @@ one the human makes in chat goes into the inbox at once, answered.
 summary: verifying a forced restart; a bare continue means keep working
 
 After a forced restart (needed for a hook, a tool setting, or a new rule file to take effect), check
-unprompted whether it worked and report the result. A bare "continue" or "go on" means: read the
-current status and keep working from there — not a question back to the human. With `board-at-start`
-on (`docs/ai/config.md`), a bare "continue" works from the board excerpt at session start and reads
-only the named task and its state further.
+unprompted whether it worked and report the result. A bare "continue" or "go on", also the one
+after `/clear` at a task boundary (`R-work-handover`), means: read the current status — the board and
+the open task's state — and keep working from there, not a question back to the human. With
+`board-at-start` on (`docs/ai/config.md`), a bare "continue" works from the board excerpt at session
+start and reads only the named task and its state further.
 
 ## `R-work-idea-first` — Concept before code
 
@@ -38,7 +39,7 @@ unchanged. If the project changes in a way `config.md` describes, update it in t
 
 ## `R-work-handover` — Every step ends ready to hand over
 
-summary: status, open task, decisions and accepted assumptions left for a fresh session to continue; /clear suggested at a task boundary once the context is large
+summary: status, open task, decisions and accepted assumptions left for a fresh session to continue; at a task boundary once the context is large, the handover checked first, then /clear and a bare continue
 
 Even a sub-step (a stage, a partial task) is done only once a fresh session with no prior context
 could pick it up: status and next step recorded with `entries.py state <id> <text>`
@@ -49,11 +50,15 @@ result rests on is confirmed, put to the human in the inbox, or recorded with th
 never left only in the worker's report. A work place outside the repo — a
 second checkout, a worktree — goes into the task with its full path. Before advising a restart
 ahead of a big rebuild, first confirm this handover actually holds; only then give the advice. Before
-`/clear` or a restart, run `act-handover`. Before a
+a restart, run `act-handover`. Before a
 manual compaction (`/compact`), record the state with `entries.py state` first; after any compaction,
 re-read the open task's state before continuing — the summary may have lost detail. A task waiting
 on someone or something gets its state with `entries.py state <id> --wait <text>`.
 
-At a task boundary (task done and committed, no worker running, nothing left only in chat) the
-closing line suggests `/clear` once the context has reached `context-hint` (`docs/ai/config.md`);
-`act-handover` checks the handover and gives the sentence for the new session.
+At a task boundary (task done and committed, no worker running, nothing left only in chat), once the
+context has reached `context-hint` (`docs/ai/config.md`), check the handover yourself first: run
+`python .act/scripts/handover.py` and fix what it finds, and leave every open task's state line so
+that the board alone names its next step. Only then does the closing line say "now `/clear`" — with
+no sentence to copy: after `/clear` a bare "continue" picks up from the board
+(`R-work-session-start`). `act-handover` stays for the human's question whether the session can be
+left.

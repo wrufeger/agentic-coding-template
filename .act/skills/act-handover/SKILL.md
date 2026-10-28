@@ -1,6 +1,6 @@
 ---
 name: act-handover
-description: Use when the human wants to hand over or leave the session - "hand over", "can I close the session", "is it safe to /clear", "new session". Checks that nothing is lost, fixes what it can, and ends with the sentence to type into the new session. Never clears on its own.
+description: Use when the human wants to hand over or leave the session - "hand over", "can I close the session", "is it safe to /clear", "new session". Checks that nothing is lost, fixes what it can, and ends ready for a bare "continue" in the new session. Never clears on its own.
 ---
 
 # Hand over the session
@@ -22,9 +22,10 @@ start a new session at any task boundary. Applies `R-work-handover`, `R-human-ex
    since: `python .act/scripts/entries.py state <id> <text>` with status and next step
    (`R-work-handover`).
 5. **Answered inbox entries.** Book them first (`R-human-inbox-first`).
-6. **Close.** Run the check again. Ready: give the one sentence for the new session in the chat
-   language, e.g. "continue with T<n> - <next step>", and say "now `/clear` or a new session". Not
-   ready: the short list of what still blocks it.
+6. **Close.** Run the check again. Ready: say "now `/clear` or a new session" - a bare "continue"
+   in the chat language is then enough, since the state lines of step 4 put the next step on the
+   board (`R-work-session-start`); no sentence to copy. Not ready: the short list of what still
+   blocks it.
 
 ## Limits
 

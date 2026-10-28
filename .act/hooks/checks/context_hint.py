@@ -94,8 +94,10 @@ def observe(event: str, payload: dict) -> None:
         state["sessions"] = _prune(state["sessions"])
         _write_state(root, state)
         line = (f"[act] context ~{round(tokens / 1000)}k tokens (context-hint {threshold}): at the next task "
-                "boundary — task done and committed, no worker running, nothing left only in chat — suggest "
-                "/clear or a new session in the closing line (R-work-handover).")
+                "boundary — task done and committed, no worker running, nothing left only in chat — run "
+                "python .act/scripts/handover.py, fix what it finds and leave each open task's state line, "
+                "then say \"now /clear\" in the closing line; a bare \"continue\" picks up after it "
+                "(R-work-handover).")
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}}))
     except Exception:  # noqa: BLE001 — an observer never blocks
         return
