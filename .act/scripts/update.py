@@ -942,8 +942,10 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # "entries" and "board" are here because init.py imports entries (which imports board): left out, the
 # fresh init.py would bind the entries module this run loaded at start-up — the older one, without the
 # functions the new init.py calls — and, being cached, board's older copy under it. "unit_copies"
-# imports init the same way, so a cached copy of it would keep the older init bound.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board", "unit_copies")
+# imports init the same way, so a cached copy of it would keep the older init bound. "advisory" is
+# imported by board (and entries, through board), so the same holds for it.
+_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board", "unit_copies",
+                       "advisory")
 
 
 def _project_tools(root: Path) -> list[str]:

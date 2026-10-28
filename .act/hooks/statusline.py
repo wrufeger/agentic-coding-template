@@ -29,6 +29,8 @@
 #   "act · update: 25.10.2026"                               -- the date in the docs language's own format
 #   "act · tasks: 1 run · ctx 127k"                          -- context size last, when Claude Code
 #                                                              passes it (or the transcript has it)
+#   "act · ⚠ A1 · Q105 · tasks: 1 run"                       -- a critical template advisory applies and is
+#                                                              not acknowledged (advisory.py): first field
 # Never writes to stderr, never a non-zero exit: any failure (malformed stdin JSON, no project
 # found from cwd, an unreadable inbox/tasks directory, ...) prints an empty line and exits 0 — a
 # broken status line must never show an error banner in Claude Code, per Claude Code's own
@@ -58,6 +60,10 @@ try:
 except Exception:
     actlib = None  # type: ignore[assignment]
     board = None  # type: ignore[assignment]
+try:
+    import advisory  # noqa: E402 -- the cached template advisories, files only; a failure only drops the segment
+except Exception:
+    advisory = None  # type: ignore[assignment]
 try:
     # Separate from the imports above: without it the line still shows the inbox and the tasks.
     import context_size  # noqa: E402
@@ -183,12 +189,26 @@ def _update_text(root: Path) -> Optional[str]:
     return f"update: {info['label']}"
 
 
+def _advisory_text(root: Path) -> Optional[str]:
+    """"⚠ A1 A3" -- the template advisories of critical severity that apply to this project and are not
+    acknowledged (advisory.status_segment(): files only), else None. A failure only drops the field."""
+    if advisory is None:
+        return None
+    try:
+        return advisory.status_segment(root)
+    except Exception:
+        return None
+
+
 def status_line(root: Path, data: Optional[dict] = None) -> str:
     """The one line this hook prints for a project at `root`; `data` is the stdin JSON."""
     waiting_count, entries = _waiting_summary(root)
     task_counts = _task_counts(root)
 
     segments = ["act"]
+    warning = _advisory_text(root)
+    if warning:
+        segments.append(warning)  # first of the fields: a critical warning must not be missed
     if waiting_count:
         # No total in front: the ids and per-kind counts already say how much is waiting.
         segments.append(_waiting_text(entries))

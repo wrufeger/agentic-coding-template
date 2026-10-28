@@ -1048,6 +1048,7 @@ _CONFIG_VALUES = {
     "teach-lessons": ("local", "docs"),
     "artifacts": ("on", "off"),
     "update-channel": ("release", "latest"),
+    "advisory-check": ("on", "off"),
 }
 
 

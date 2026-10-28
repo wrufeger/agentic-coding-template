@@ -265,6 +265,28 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
     if _payload2.get("agent_id"):
         sys.exit(0)  # a worker's own payload — nothing to do here
     if _match2 is None:
+        # Advisory acknowledgement: the whole prompt is a sentence like "Warnung quittiert" (optionally
+        # with advisory ids). The cheap start test decides before checks.advisory_ack is imported; the
+        # module answers only when at least one advisory is active (files only), else the prompt goes on
+        # unchanged. A block answers like the quick capture below: the prompt never reaches the model.
+        if isinstance(_prompt2, str) and _re.match(r"\s*(?:warnung|hinweis|warning|notice)\s", _prompt2, _re.IGNORECASE):
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            try:
+                from checks import advisory_ack as _advisory_ack  # noqa: E402
+                _reason4 = _advisory_ack.handle(Path(__file__).resolve().parents[2], _payload2)
+            except Exception as _exc4:  # noqa: BLE001 -- a bug here must never eat the user's prompt
+                print(f"[act] advisory acknowledgement: failed, message passed through ({_exc4!r})", file=sys.stderr)
+                _reason4 = None
+            if _reason4:
+                try:
+                    sys.stdout.reconfigure(encoding="utf-8")
+                except (AttributeError, ValueError):
+                    pass
+                print(json.dumps({"decision": "block", "reason": _reason4,
+                                  "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                         "suppressOriginalPrompt": True}}, ensure_ascii=False))
+                sys.exit(0)
         # Quick capture: the first non-blank line starts with todo:/note:/idea: (case-insensitive).
         # One regex on the raw prompt decides, before checks.quick_capture is imported; every other
         # prompt ends here. capture() files the entries and returns the text to show, or None

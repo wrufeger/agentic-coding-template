@@ -13,6 +13,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
+| `advisory.py` | Warnings from the template author to projects running an affected template version ("advisories"). The template source carries an orphan… | direct (session start fetches daily in the background; `--ack` also by the chat sentences) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
 | `compact_check.py` | Check the sections of the archive collection files (`entries.py compact`) against their full text, and the monthly overview against the ids… | skill `act-compact` |
 | `context_size.py` | Context size of the running Claude Code session, for the status line ("ctx 127k") and for the one-time /clear hint… | direct (also imported by the status line and the context hint) |
@@ -316,6 +317,28 @@ delete (tooling, examples, docs/project/coding_rules.d/: template only), else le
 lines included — the origin shows them); unknown -> keep. A link or protected row is always keep.
 Line breaks do not count: a line that is a stretch of a base paragraph (whitespace collapsed, at
 least 20 characters) is the template's.
+```
+
+## `advisory.py`
+
+Call: direct (session start fetches daily in the background; `--ack` also by the chat sentences)
+
+```text
+usage: advisory.py [-h] [--status | --ack [ID ...] | --check-file PATH | --refresh]
+
+Warnings from the template author for the installed template version (advisories). Without an
+option: --status.
+
+options:
+  -h, --help         show this help message and exit
+  --status           show the installed version, the cache and each advisory as active, acked or
+                     not affected (default)
+  --ack [ID ...]     acknowledge the named advisories (no id: every active one); it then no longer
+                     shows at session start, in the status line or on the board
+  --check-file PATH  validate an advisories.json file: print the accepted ids and each rejection
+                     with its reason, exit 1 if anything was rejected; works outside a project
+  --refresh          fetch the source's advisories branch now (5 s limit per git call) instead of
+                     waiting for the daily background check; needs `advisory-check` on
 ```
 
 ## `board.py`

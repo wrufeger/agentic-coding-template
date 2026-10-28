@@ -81,6 +81,9 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "security-scan-lists",      # hooks/checks/deps_scan.py
     "security-scan-check.json", "security-scan-result.json",   # hooks/checks/session.py
     "update-check.json", "update-check-result.json",           # hooks/checks/session.py
+    "advisories.git",           # advisory.py: bare repository the advisories branch is fetched into
+    "advisories.json", "advisories-state.json",                # advisory.py: cache and check state
+    "advisories-seen.json", "advisories-ack.json",             # advisory.py: todos/warnings shown, acknowledgements
     "update-tmp",               # update.py
     "template-dev",             # marker: this checkout builds the template (init.py refuses to convert it)
     "identity.json", "cache.json", "last-applied.json",        # actlib.py

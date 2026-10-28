@@ -11,6 +11,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Advisories: the template author can warn projects on an affected template version. An orphan
+  branch `advisories` in the template source holds `advisories.json`. The daily background update
+  check also looks at that ref and, when it changed, fetches only that branch into
+  `.act-local/advisories.git` (never the project's `.git`, 5 s limit). Only validated JSON is used:
+  text limited in length and characters, a link shown but never opened, nothing executed. A
+  `critical` advisory that matches the installed version shows at every session start in a line of
+  its own, as `⚠ A<n>` in the status line, as a line below the board title and once as an inbox
+  todo; a `warning` shows at session start only (`once` or `every-start`). It stops when `act-update`
+  brings in a version outside the range, or when the human acknowledges it: say "Warnung quittiert"
+  or "warning acknowledged" (also "Warnung akzeptiert", "Hinweis gelesen", "warning accepted",
+  "notice read"), or run `python .act/scripts/advisory.py --ack A<n>`. `advisory-check: off` in
+  `docs/ai/config.md` switches it off; `advisory.py --status` shows the state, `--refresh` checks at
+  once, `--check-file` validates a file.
 - `/act <name>` also finds a template skill without its `act-` prefix: `/act version` shows
   `act-version`. A skill whose name matches exactly still wins.
 - `R-work-throwaway`: throwaway material — probes, throwaway projects, scratch files — goes into
@@ -197,6 +210,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- The daily update check's `git ls-remote` allows only the `file`, `git`, `http`, `https` and `ssh`
+  protocols, also over a `GIT_ALLOW_PROTOCOL` of your own: a template source using a remote helper
+  such as `ext::` cannot start a program from the session start. A source behind another remote
+  helper gets no update note at session start; `act-update` itself is unchanged.
 - `git-discard` refuses `git branch -D <name>` of an unmerged branch also when a tag of the same
   name exists. Before, `git branch --no-merged` listed the branch as `heads/<name>`, the name did
   not match, and the delete went through.

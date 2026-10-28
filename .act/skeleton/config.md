@@ -265,11 +265,18 @@ random project id (a reply address only if you name one). Details: `.act/rules/t
 | Key | Value |
 | :--- | :--- |
 | `update-channel` | <update-channel> |
+| `advisory-check` | on |
 
 `update-channel`: `release` \| `latest`. With `release` (the default) `act-update` offers only the newest
 stable release tag of the template source and the session start announces only that; with `latest` it follows
 the tip of the source's default branch. `--channel` on `update.py` overrides it for one run. Details:
 `.act/skills/act-update/SKILL.md`.
+
+`advisory-check`: `on` \| `off`. `on` (default; a missing key counts as `on`): the daily background check also asks
+the template source for warnings about template versions with a known serious problem and shows the ones that apply to
+your installed version (session start, status line, board, inbox) until you update or acknowledge them; `off` asks and
+shows nothing. The lookup runs with the `update-check` background run, so `update-check: off` stops it too. Details:
+`python .act/scripts/advisory.py --help`.
 
 ## Archive
 

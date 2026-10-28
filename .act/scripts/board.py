@@ -668,6 +668,17 @@ def read_update_line(root: Path) -> Optional[str]:
     return f"Template update available: {info['label']} — run `python .act/scripts/update.py`"
 
 
+def read_advisory_lines(root: Path) -> list[str]:
+    """One line per template advisory of critical severity that applies to this project and is not
+    acknowledged (advisory.board_lines(): files only), for the top of the board; empty when there is none
+    or advisory.py cannot be used."""
+    try:
+        import advisory
+        return advisory.board_lines(root)
+    except Exception:
+        return []
+
+
 def render_board(
     branch_label: str,
     commit: Optional[dict[str, str]],
@@ -686,14 +697,19 @@ def render_board(
     others: Optional[list[str]] = None,
     footer: bool = True,
     update_line: Optional[str] = None,
+    advisory_lines: Optional[list[str]] = None,
 ) -> str:
     """`update_line` (a pending template update) goes under "Status" when that section is shown.
+    `advisory_lines` (active critical template advisories) go right below the title, whatever sections follow.
     `footer` False leaves the closing "Generated" lines out (the session-start excerpt).
     `generated_at` None (mode `shared`) leaves the timestamp out; with `commit` and `dirty` None
     as well the output holds nothing volatile. `heading` replaces the branch in the title;
     `decisions` (open decisions in the backlog) and `others` (section "Others", None = off) are
     left out when empty/None respectively."""
     lines: list[str] = [f"# Board — {heading or branch_label}", ""]
+    if advisory_lines:
+        lines.extend(advisory_lines)
+        lines.append("")
 
     if commit is not None or dirty is not None:
         lines.append("## Status")
@@ -1020,6 +1036,7 @@ def main(argv: list[str]) -> int:
         branch_label, commit, dirty, ledger_entries, waiting_mine, waiting_all,
         waiting_other_count, answered_entries, task_titles, backlog_titles, generated_at,
         heading=None, decisions=decisions, others=others, update_line=read_update_line(root),
+        advisory_lines=read_advisory_lines(root),
     )
 
     board_path = root / board_rel
