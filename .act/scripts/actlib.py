@@ -1086,7 +1086,10 @@ def merge_settings_status_line(current: dict, bridge_data: dict) -> tuple[dict, 
 def merge_settings_env(current: dict, bridge_data: dict) -> tuple[dict, bool]:
     """Merges bridge_data["env"] (e.g. settings.hooks.json's top-level "env" key —
     CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1: without it a Bash tool's own `cd` survives
-    across tool calls, breaking the hooks' file lookup by relative path) onto `current["env"]`.
+    across tool calls, breaking the hooks' file lookup by relative path; PYTHON_BASIC_REPL=1: on
+    Windows, Python 3.13+ reads an empty heredoc (`python - <<'EOF'` with nothing in it) as a
+    console, starts its new REPL, finds no console handle and writes the same traceback endlessly
+    until the Bash tool's timeout) onto `current["env"]`.
     Additive only — adds a key `current` does not already have, never overwrites or removes a key
     the project set itself, even to a different value. Returns (new_current, changed); `changed`
     is False and `new_current` is `current` itself, unchanged, when there is nothing to add — the

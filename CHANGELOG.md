@@ -144,6 +144,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- On Windows, a Bash call such as `python - <<'EOF'` with an empty heredoc no longer hangs until the
+  tool's timeout on Python 3.13 and later. Python took the empty input for a console, started its new
+  REPL, found no console handle and wrote the same traceback again and again, hundreds of megabytes
+  per call. `init`, `act-adopt` and `update` now set `PYTHON_BASIC_REPL=1` under `env` in
+  `.claude/settings.json`: the plain REPL reads the end of input and exits. A value the project set
+  itself is kept; older Python versions ignore the variable. The report of all three names the env
+  keys they add.
 - The session start's note that archive compaction is due counted entries archived before
   `archived:` was written by their `created:` date, while `entries.py compact` dates them by the day
   Git added them to the archive. Both now count the same way: the note no longer reports entries

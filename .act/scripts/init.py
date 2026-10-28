@@ -1724,7 +1724,9 @@ def _merge_settings_hooks(
         # finding 6).
         return f"{_relative_label(dest, root)}: not a valid hooks structure, left unchanged", False
     new_current, changed_events = actlib.merge_settings_hooks(current, bridge_data)
+    env_before = new_current.get("env") if isinstance(new_current.get("env"), dict) else {}
     new_current, env_changed = actlib.merge_settings_env(new_current, bridge_data)
+    env_added = sorted(set(new_current["env"]) - set(env_before)) if env_changed else []
     # `artifacts` (config.md): only against a real project root -- update.py's reference rendering
     # passes none, and a plan books nothing.
     artifact_changed, artifact_notes, booking = False, [], None
@@ -1750,7 +1752,7 @@ def _merge_settings_hooks(
     if changed_events:
         parts.append(f"hook entries for {', '.join(changed_events)}")
     if env_changed:
-        parts.append("env")
+        parts.append(f"env ({', '.join(env_added)})")
     if artifact_changed:
         parts.append(actlib.ARTIFACT_SETTING)
     if plan:
