@@ -131,9 +131,23 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   found, or clear the note when the project is up to date; `--channel`, `--source` and `--ref` aim
   a single run elsewhere and leave it alone. `act-update` answers a question about the installed
   or newest version with `update.py --versions`.
+- `act-compact` only merges: every entry goes into its collection word for word, and no worker
+  shortens sections any more. `entries.py compact` writes the monthly overview `archive/YYYY-MM.md`
+  itself, one line per Q, T, B and U entry with a link to its section, title and status; an existing
+  overview, also a hand-written one, only gets the lines of entries it does not list yet. The session
+  start's note names the entries to merge, no worker runs.
+
+### Removed
+
+- `archive-shorten` in `docs/ai/config.md` § Archive. A value left in a project is passed over.
+  `R-human-text` loses its exception for `act-compact`.
 
 ### Fixed
 
+- The session start's note that archive compaction is due counted entries archived before
+  `archived:` was written by their `created:` date, while `entries.py compact` dates them by the day
+  Git added them to the archive. Both now count the same way: the note no longer reports entries
+  that `compact` would leave alone, and it does not repeat after a run that merged everything due.
 - On Windows, the board showed umlauts and other non-ASCII characters in the branch name and the
   last commit garbled (`ü` as `Ã¼`), and a commit subject with a character the Windows code page
   does not know made the last commit vanish from the board. Every script and hook of the template

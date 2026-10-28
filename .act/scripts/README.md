@@ -14,7 +14,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
-| `compact_check.py` | Check the shortened sections of the archive collection files (`entries.py compact`) against their full text, and the monthly topic overview… | skill `act-compact` |
+| `compact_check.py` | Check the sections of the archive collection files (`entries.py compact`) against their full text, and the monthly overview against the ids… | skill `act-compact` |
 | `context_size.py` | Context size of the running Claude Code session, for the status line ("ctx 127k") and for the one-time /clear hint… | direct (also imported by the status line and the context hint) |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
@@ -343,7 +343,7 @@ Call: skill `act-compact`
 ```text
 usage: compact_check.py [-h] [--root ROOT] [--month YYYY-MM] [--restore] [--no-overview]
 
-Check shortened archive sections and the monthly overview against the full text in Git.
+Check archive collection sections and the monthly overview against the full text in Git.
 
 options:
   -h, --help       show this help message and exit
@@ -420,7 +420,8 @@ positional arguments:
                         collection file per kind and month in docs/ai/work/archive/ (Q-2026-09.md,
                         T-, B-, U-, other-, ledger-), one section per entry with an anchor such as
                         #<id>; links in the project are rewritten, the head of each collection
-                        names the commit that holds the full text; needs the entries committed;
+                        names the commit that holds the full text; each month's overview <YYYY-
+                        MM>.md gets one line per Q, T, B and U entry; needs the entries committed;
                         running it twice changes nothing
 
 options:
@@ -543,8 +544,8 @@ usage: entries.py compact [-h] [--plan] [--today YYYY-MM-DD]
 merge archived entries older than 7 days (and journal entries) into one collection file per kind
 and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one section per
 entry with an anchor such as #<id>; links in the project are rewritten, the head of each
-collection names the commit that holds the full text; needs the entries committed; running it
-twice changes nothing
+collection names the commit that holds the full text; each month's overview <YYYY-MM>.md gets one
+line per Q, T, B and U entry; needs the entries committed; running it twice changes nothing
 
 options:
   -h, --help          show this help message and exit

@@ -344,7 +344,6 @@ def _dependency_check_note(root: Path, config: dict[str, str]) -> Optional[str]:
 
 
 _COMPACT_KEEP_DAYS = 7  # entries archived within the last week stay single files (as `entries.py compact` has it)
-_COMPACT_WORKER_BATCH = 25  # entries one `light` worker shortens in a run
 
 
 def _parse_archive_compact(raw: str) -> "Optional[tuple[int, int]]":
@@ -356,13 +355,15 @@ def _parse_archive_compact(raw: str) -> "Optional[tuple[int, int]]":
     return (int(match.group(1)), int(match.group(2))) if match else (30, 300)
 
 
-def _single_entry_days(folder: Path, journal: bool) -> "list[date]":
-    """The date of every single entry file in `folder`, without Git: the header field `archived:`, a
-    journal file's date in its name, else `created:`, else the modification time. A collection, a
-    README and the monthly overview are no single entries."""
+def _single_entry_days(root: Path, folder: Path, journal: bool) -> "list[date]":
+    """The date of every single entry file in `folder`, counted like `entries.py compact` does
+    (entries.ArchiveDays: Git only for an archived file without `archived:`). A collection, a README
+    and the monthly overview are no single entries."""
+    import entries
     days: list[date] = []
     if not folder.is_dir():
         return days
+    dating = entries.ArchiveDays(root)
     for path in folder.glob("*.md"):
         if path.name.lower() == "readme.md" or (not journal and re.match(r"^\d{4}-\d{2}\.md$", path.name)):
             continue
@@ -374,23 +375,11 @@ def _single_entry_days(folder: Path, journal: bool) -> "list[date]":
             continue
         if actlib.is_collection(text):
             continue
-        header = actlib.header_block(text)
-        sources: list[str] = []
-        named = _LEDGER_DATE_IN_NAME_RE.match(path.name) if journal else None
-        if named:
-            sources.append(named.group(1))
-        for key in ("archived", "created"):
-            found = re.search(rf"(?im)^{key}:\s*(\d{{4}}-\d{{2}}-\d{{2}})", header)
-            if found:
-                sources.append(found.group(1))
-        day: Optional[date] = None
-        for source in sources:
-            try:
-                day = date.fromisoformat(source)
-                break
-            except ValueError:
-                continue
-        days.append(day or date.fromtimestamp(path.stat().st_mtime))
+        try:
+            name_day = entries.ArchiveDays.name_day(path, journal, bool(actlib.entry_ids(text)))
+        except ValueError:
+            continue  # an impossible date in the file name: `compact` leaves the file alone
+        days.append(dating.day(path, actlib.header_block(text), journal, name_day))
     return days
 
 
@@ -398,8 +387,8 @@ def _compact_due_note(root: Path, config: dict[str, str]) -> Optional[str]:
     """With `archive-compact` not `off`, a note (at most once a day) once the archive or the journal
     folder is due for `entries.py compact`: its oldest single entry is older than the day limit, or it
     holds more single files than the count limit, and at least one entry is older than a week. Names
-    the number of entries and, with `archive-shorten: on`, the worker runs the shortening takes. In
-    team mode only on the default branch, so two branches never write the same month file."""
+    the number of entries. In team mode only on the default branch, so two branches never write the
+    same month file."""
     limits = _parse_archive_compact(config.get("archive-compact", "30d 300"))
     if limits is None:
         return None
@@ -416,7 +405,7 @@ def _compact_due_note(root: Path, config: dict[str, str]) -> Optional[str]:
     foldable = 0
     for label, folder, journal in (("archive", root / "docs" / "ai" / "work" / "archive", False),
                                    ("journal", root / "docs" / "ai" / "work" / "ledger", True)):
-        days = _single_entry_days(folder, journal)
+        days = _single_entry_days(root, folder, journal)
         old = sum(1 for day in days if (today - day).days > _COMPACT_KEEP_DAYS)
         if not old:
             continue
@@ -431,13 +420,9 @@ def _compact_due_note(root: Path, config: dict[str, str]) -> Optional[str]:
     if not reasons:
         return None
     actlib.write_cache({"compact_due_last_noted": stamp})
-    cost = "merge only"
-    if config.get("archive-shorten", "on").strip().lower() != "off":
-        runs = -(-foldable // _COMPACT_WORKER_BATCH)
-        cost = f"about {runs} `light` worker run(s) of ~{_COMPACT_WORKER_BATCH} entries to shorten, plus one overview per month"
     return (f"[act] note: archive compaction is due ({'; '.join(reasons)}; limits {max_days}d / {max_files} files): "
-            f"{foldable} entr(ies) older than {_COMPACT_KEEP_DAYS} days, {cost} -- act-compact at the next task boundary "
-            "(archive-compact in docs/ai/config.md)")
+            f"{foldable} entr(ies) older than {_COMPACT_KEEP_DAYS} days to merge, no worker -- act-compact at the next "
+            "task boundary (archive-compact in docs/ai/config.md)")
 
 
 def _refresh_board(root: Path) -> None:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Check the shortened sections of the archive collection files (`entries.py compact`) against
-#          their full text, and the monthly topic overview against the ids of its month. A shortened
-#          section may leave out the assistant's prose, never an id, hash, version, date, path or number
-#          of the original, nor a line of the human's own words. Only text that is recognisably the
-#          assistant's may be shortened (a paragraph opening with a bold label such as "**Context**"
+# Purpose: Check the sections of the archive collection files (`entries.py compact`) against their
+#          full text, and the monthly overview against the ids of its month. `compact` copies every entry
+#          word for word; a section edited later may leave out the assistant's prose, never an id, hash,
+#          version, date, path or number of the original, nor a line of the human's own words. Only text
+#          that is recognisably the assistant's may go (a paragraph opening with a bold label such as "**Context**"
 #          and the option list directly below it); every other non-empty line of the original, marked
 #          or not, counts as the human's and must stand verbatim. A note, and a todo captured from a
 #          chat prefix, are the human's in full (a note up to the assistant's first reply block). The
@@ -346,7 +346,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (AttributeError, ValueError):
             pass
 
-    parser = argparse.ArgumentParser(description="Check shortened archive sections and the monthly overview "
+    parser = argparse.ArgumentParser(description="Check archive collection sections and the monthly overview "
                                                  "against the full text in Git.")
     parser.add_argument("--root", default=".", help="project root (default: the current folder)")
     parser.add_argument("--month", metavar="YYYY-MM", help="check only the collections of this month")

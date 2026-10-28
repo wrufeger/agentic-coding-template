@@ -113,7 +113,14 @@
 #     header field `archived:`, else the day Git first saw the file in the archive, else `created:`.
 #     Links to a merged file in any Markdown file of the project (not legacy/, not .act/) are rewritten to
 #     the collection plus anchor. The newest week, a subfolder (legacy/, proposals/), a README, an
-#     unreadable file, an entry whose id is carried twice and a monthly topic overview (`YYYY-MM.md`) stay as they are. Refuses (exit 2, nothing
+#     unreadable file and an entry whose id is carried twice stay single files; a monthly overview
+#     (`YYYY-MM.md`) is never folded. For every month with a Q-, T-, B- or U- collection (also when nothing
+#     is left to merge), the overview `archive/<YYYY-MM>.md` lists each entry of those collections in one
+#     line: a link to its anchor, the title, the `status:`. A new overview gets one section per kind; an
+#     existing one, written by hand or by an earlier run, only gets the lines of entries it does not name
+#     yet (an id counts as named when a line other than a heading names it before its first " — "), each
+#     after the last bullet line that links into the same collection, else in a new section at the end; a
+#     byte order mark and CRLF line ends stay. Refuses (exit 2, nothing
 #     changed) when the project is not a Git repository with a commit or a file to merge is not committed.
 #     `--plan` lists what would be merged and writes nothing. A second run changes nothing. Prints one
 #     "entries: compacted|would compact <id>: <old path> -> <collection>#<anchor>" line per entry, one
@@ -1404,8 +1411,12 @@ def cmd_archive(root: Path, ref: str) -> int:
 LEDGER_DIR = Path("docs/ai/work/ledger")
 COMPACT_KEEP_DAYS = 7  # the newest week stays as single files: it is still linked to and looked up
 _LEDGER_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})-")
-_OVERVIEW_NAME_RE = re.compile(r"^\d{4}-\d{2}\.md$")  # the monthly topic overview: written by hand, never folded
+_OVERVIEW_NAME_RE = re.compile(r"^\d{4}-\d{2}\.md$")  # the monthly overview: extended by compact, never folded
+_OVERVIEW_HEADINGS = {"Q": "Questions", "T": "Tasks", "B": "Backlog", "U": "Todos"}  # its kinds, in this order
+_OVERVIEW_ID_RE = re.compile(r"\b[QTBU]\d+[a-z]?\b")
 _ANY_ANCHOR_RE = re.compile(r'^<a id="[^"\n]+"></a>\s*$')
+_ANCHOR_VALUE_RE = re.compile(r'^<a id="([^"\n]+)"></a>')
+_STATUS_FIELD_RE = re.compile(r"(?:^`+ ?|· )status:\s*([^\s·`]+)")
 _SKIP_WALK_DIRS = {".git", ".act", ".act-local", "node_modules", ".venv", "venv", "__pycache__"}
 
 
@@ -1474,6 +1485,36 @@ def _field_day(header: str, key: str) -> Optional[date]:
         return None
 
 
+class ArchiveDays:
+    """The archive date of a single entry, the same for `compact` and the session start's due note: a
+    journal entry's date from its file name, else the header field `archived:`, else (a file in the
+    archive folder) the day Git first saw it there, else `created:`, else the modification time. Git
+    is asked at most once, and only for a file without `archived:` — entries archived before
+    `entries.py archive` wrote that field."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self._git_days: Optional[dict[str, date]] = None
+
+    @staticmethod
+    def name_day(path: Path, in_journal: bool, has_id: bool) -> Optional[date]:
+        """The date in a journal entry's file name (`2026-09-02-<slug>.md`): every file in the journal
+        folder, and one in the archive folder without an id. Raises ValueError for an impossible date
+        in the name — `compact` leaves such a file alone."""
+        named = _LEDGER_NAME_RE.match(path.name)
+        if named is None or not (in_journal or not has_id):
+            return None
+        return date.fromisoformat(named.group(1))
+
+    def day(self, path: Path, header: str, in_journal: bool, name_day: Optional[date] = None) -> date:
+        day = name_day or _field_day(header, "archived")
+        if day is None and not in_journal:
+            if self._git_days is None:
+                self._git_days = _git_added_days(self.root, ARCHIVE_DIR)
+            day = self._git_days.get(_rel(path, self.root))
+        return day or _field_day(header, "created") or date.fromtimestamp(path.stat().st_mtime)
+
+
 def _heading_split(text: str) -> tuple[str, str]:
     """(title, body) of an entry: a Markdown heading (`#` to `######` and a space) that comes before the
     first running text, outside a fenced code block, is the title and is taken out of the body, which is
@@ -1538,7 +1579,7 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
                         if p.is_file() and p.name.lower() != "readme.md"]
     duplicated = {entry_id for entry_id, _paths in find_duplicate_ids(root)}
     cutoff = today - timedelta(days=COMPACT_KEEP_DAYS)
-    git_days: Optional[dict[str, date]] = None
+    dating = ArchiveDays(root)
     items: list[CompactItem] = []
     notes: list[str] = []
     kept = 0
@@ -1557,21 +1598,12 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
             continue
         named = _LEDGER_NAME_RE.match(path.name)
         as_journal = journal or (named is not None and entry_id is None)
-        day = None
-        if as_journal and named:
-            try:
-                day = date.fromisoformat(named.group(1))
-            except ValueError:
-                notes.append(f"left {_rel(path, root)} - {named.group(1)} in the file name is not a valid date")
-                continue
-        if day is None:
-            day = _field_day(header, "archived")
-        if day is None and not journal:
-            if git_days is None:
-                git_days = _git_added_days(root, ARCHIVE_DIR)
-            day = git_days.get(_rel(path, root))
-        if day is None:
-            day = _field_day(header, "created") or date.fromtimestamp(path.stat().st_mtime)
+        try:
+            name_day = ArchiveDays.name_day(path, journal, entry_id is not None)
+        except ValueError:
+            notes.append(f"left {_rel(path, root)} - {named.group(1)} in the file name is not a valid date")
+            continue
+        day = dating.day(path, header, journal, name_day)
         if day >= cutoff:
             kept += 1
             continue
@@ -1618,6 +1650,108 @@ def _collection_text(existing: Optional[str], members: list[CompactItem], sectio
     return "\n".join(head + bullets + [""]) + "\n" + (rest + "\n\n" if rest else "") + "\n".join(sections)
 
 
+def _overview_lines(name: str, collection: str) -> list[tuple[str, str]]:
+    """(canonical id, overview line) for every entry section of the collection `name`, in file order:
+    a link to the section's anchor, the title from its heading, the `status:` of its header line."""
+    lines = collection.split("\n")
+    found: list[tuple[str, str]] = []
+    for entry_id, number in actlib.collection_sections(collection):
+        anchor = _ANCHOR_VALUE_RE.match(lines[number - 1]).group(1)
+        title = lines[number].rstrip("\r").partition(" — ")[2].strip()
+        fields = lines[number + 1] if number + 1 < len(lines) else ""
+        status = _STATUS_FIELD_RE.search(fields) if fields.startswith("`") else None
+        line = f"- [`{anchor}`]({name}#{anchor})" + (f" — {title}" if title else "")
+        found.append((entry_id, line + (f" ({status.group(1)})" if status else "")))
+    return found
+
+
+def _overview_named(lines: list[str]) -> set[str]:
+    """The ids an overview already lists: those a line other than a heading names before its first
+    " — " (a generated line's link, a hand-written "`Q<n>`, `Q<m>` — topic", a numbered line, a table
+    row); an id in a title after the dash does not count."""
+    named: set[str] = set()
+    for line in lines:
+        if not line.lstrip().startswith("#"):
+            named |= {actlib.canonical_id(match.group(0))
+                      for match in _OVERVIEW_ID_RE.finditer(line.partition(" — ")[0])}
+    return named
+
+
+def _overview_text(existing: Optional[str], month: str, collections: dict[str, str]) -> Optional[str]:
+    """The new text of the overview `<month>.md` for the month's Q-, T-, B- and U- collections (group
+    -> text), or None when there is nothing to add: a fresh file with one section per kind, or
+    `existing` with every line it lacks inserted after the last bullet line that links into the same
+    collection (a bullet's indented continuation stays with it), else in a new section at the end.
+    A byte order mark and CRLF line ends of `existing` are kept."""
+    if existing is None:
+        parts = [f"# Archive {month} — overview", "",
+                 f"One line per archived entry, written by `entries.py compact` from the collections `<kind>-{month}.md`; "
+                 "the full text is in the collection under the entry's anchor. Lines are added, never removed."]
+        for group, heading in _OVERVIEW_HEADINGS.items():
+            if group in collections:
+                entry_lines = [line for _id, line in _overview_lines(f"{group}-{month}.md", collections[group])]
+                if entry_lines:
+                    parts += ["", f"## {heading}", ""] + entry_lines
+        return "\n".join(parts) + "\n" if len(parts) > 3 else None
+    bom = "﻿" if existing.startswith("﻿") else ""
+    newline = "\r\n" if "\r\n" in existing else "\n"
+    lines = existing[len(bom):].replace("\r\n", "\n").split("\n")
+    named = _overview_named(lines)
+    changed = False
+    for group, heading in _OVERVIEW_HEADINGS.items():
+        name = f"{group}-{month}.md"
+        missing = [line for entry_id, line in _overview_lines(name, collections.get(group, ""))
+                   if entry_id not in named]
+        if not missing:
+            continue
+        changed = True
+        last = max((i for i, line in enumerate(lines)
+                    if line.lstrip().startswith(("- ", "* ")) and f"]({name}#" in line), default=None)
+        if last is None:
+            while lines and not lines[-1].strip():
+                lines.pop()
+            lines += ["", f"## {heading}", ""] + missing + [""]
+            continue
+        end = last + 1
+        while end < len(lines) and lines[end].strip() and lines[end][:1] in " \t":
+            end += 1
+        lines[end:end] = missing
+    return bom + newline.join(lines) if changed else None
+
+
+def _collection_months(archive: Path) -> set[str]:
+    """Every month that has a Q-, T-, B- or U- collection file in `archive`."""
+    found = (re.match(r"^[QTBU]-(\d{4}-\d{2})\.md$", path.name) for path in archive.glob("*.md"))
+    return {match.group(1) for match in found if match} if archive.is_dir() else set()
+
+
+def _overview_writes(root: Path, months: set[str], writes: dict[Path, str]) -> dict[Path, str]:
+    """overview path -> new text, for every month in `months` whose overview lacks a line. `writes`
+    holds what this run is about to write (collections, relinked files) and wins over the disk.
+    Raises CompactError, before anything is written, for an overview that is not valid UTF-8."""
+    archive = root / ARCHIVE_DIR
+    found: dict[Path, str] = {}
+    for month in sorted(months):
+        overview = archive / f"{month}.md"
+        current = writes.get(overview)
+        if current is None and overview.is_file():
+            try:
+                current = overview.read_bytes().decode("utf-8")  # raw: a byte order mark stays
+            except (OSError, UnicodeDecodeError) as exc:
+                raise CompactError(f"{_rel(overview, root)} cannot be read as UTF-8 ({exc}): it would be "
+                                   "replaced instead of extended") from exc
+        collections: dict[str, str] = {}
+        for group in _OVERVIEW_HEADINGS:
+            path = archive / f"{group}-{month}.md"
+            text = writes.get(path) or (_safe_read(path) if path.is_file() else None)
+            if text is not None:
+                collections[group] = text.replace("\r\n", "\n")
+        new = _overview_text(current, month, collections)
+        if new is not None:
+            found[overview] = new
+    return found
+
+
 def _porcelain_paths(output: str) -> set[str]:
     """Every path named in `git status --porcelain -z` output; a rename or copy entry names two."""
     names: set[str] = set()
@@ -1641,10 +1775,17 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
     items, notes, kept = plan_compact(root, today)
     for note in notes:
         print(f"entries: {note}")
-    if not items:
-        print(f"entries: nothing to compact ({kept} single file(s) newer than {COMPACT_KEEP_DAYS} days stay)")
-        return 0
     archive = root / ARCHIVE_DIR
+    if not items:  # an overview a month still lacks (an older run, a skipped step) is written all the same
+        overviews = _overview_writes(root, _collection_months(archive), {})
+        if not plan_only:
+            for path, text in overviews.items():
+                with open(path, "w", encoding="utf-8", newline="") as handle:
+                    handle.write(text)
+        done = (f"{'would write' if plan_only else 'wrote'} {', '.join(_rel(p, root) for p in overviews)}; "
+                if overviews else "")
+        print(f"entries: {done}nothing to compact ({kept} single file(s) newer than {COMPACT_KEEP_DAYS} days stay)")
+        return 0
     groups: dict[str, list[CompactItem]] = defaultdict(list)
     for item in items:
         groups[item.collection_name].append(item)
@@ -1726,6 +1867,9 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
             writes[md] = new
             relinked.append(md)
 
+    months = _collection_months(archive) | {item.month for item in items if item.group in _OVERVIEW_HEADINGS}
+    writes.update(_overview_writes(root, months, writes))
+
     for path, text in writes.items():
         with open(path, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
@@ -1801,8 +1945,9 @@ def build_parser() -> argparse.ArgumentParser:
     compact_help = ("merge archived entries older than 7 days (and journal entries) into one collection file per "
                     "kind and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one "
                     "section per entry with an anchor such as #<id>; links in the project are rewritten, the "
-                    "head of each collection names the commit that holds the full text; needs the entries "
-                    "committed; running it twice changes nothing")
+                    "head of each collection names the commit that holds the full text; each month's overview "
+                    "<YYYY-MM>.md gets one line per Q, T, B and U entry; needs the entries committed; running it "
+                    "twice changes nothing")
     p_compact = sub.add_parser("compact", help=compact_help, description=compact_help)
     p_compact.add_argument("--plan", action="store_true", help="show what would be merged, write nothing")
     p_compact.add_argument("--today", metavar="YYYY-MM-DD", help="count the keep window from this day (tests)")
