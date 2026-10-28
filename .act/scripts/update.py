@@ -28,7 +28,7 @@
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
 #   python .act/scripts/update.py --channel release|latest   # for this run; else `update-channel` in docs/ai/config.md, else release
 #   python .act/scripts/update.py --versions [--all]     # installed version, channel, source's releases and tip; git ls-remote only
-#   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10, write nothing
+#   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10; writes only the local update-check files
 #   python .act/scripts/update.py --allow-downgrade       # accept a fetched state older than (or unrelated to) the installed commit
 #   python .act/scripts/update.py --yes               # skip the interactive consent prompt (step 4)
 #   python .act/scripts/update.py --on-local-changes rescue|discard|abort   # skip the step-2 prompt
@@ -121,7 +121,13 @@ def _print_step(n: int, text: str) -> None:
 
 
 def _ask_choice(prompt_text: str, choices: tuple[str, ...], default: str) -> str:
-    raw = input(f"{prompt_text} [{'/'.join(choices)}] ({default}): ").strip().lower()
+    try:
+        raw = input(f"{prompt_text} [{'/'.join(choices)}] ({default}): ").strip().lower()
+    except (EOFError, OSError):
+        # isatty() can say yes with nothing to read: on Windows the NUL device (`< /dev/null`) counts as
+        # a terminal. Same safe answer as an empty one; the caller's next line names what happens.
+        print(f"(no input, taking '{default}')")
+        return default
     return raw if raw in choices else default
 
 
@@ -371,7 +377,7 @@ def _channel_hint_once(root: Path, origin: str, plan: bool) -> None:
         "default branch instead."
     )
     if plan:
-        return  # a plan writes nothing, so the hint stays due for the real run
+        return  # a plan leaves the marker unwritten, so the hint stays due for the real run
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("shown\n", encoding="utf-8")
@@ -2798,7 +2804,9 @@ def main(argv: list[str]) -> int:
     ))
     parser.add_argument("--on-local-changes", choices=("rescue", "discard", "abort"), help="skip the step-2 prompt")
     parser.add_argument("--yes", action="store_true", help="skip the interactive consent prompt (step 4)")
-    parser.add_argument("--plan", action="store_true", help="show steps 1-3, describe 5-10, change nothing")
+    parser.add_argument("--plan", action="store_true",
+                        help="show steps 1-3, describe 5-10; changes nothing in the project, only the local "
+                             "update-check files under .act-local/ may be refreshed")
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt")
     parser.add_argument("--catch-up", action="store_true", help=(
@@ -2927,7 +2935,7 @@ def main(argv: list[str]) -> int:
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [9/10] " + step_doctor(root, True)[0])
             print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit, ref=lock_ref))
-            print("[act] done - --plan: nothing was written")
+            print("[act] done - --plan: nothing changed in the project (at most the local update note was refreshed)")
             return 0
 
         resume_migrations_note = ""

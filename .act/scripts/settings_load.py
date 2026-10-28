@@ -1539,7 +1539,10 @@ def write_files(root: Path, result: Analysis, yes: bool) -> list[str]:
             if interactive:
                 print(f"--- {item['dest']} ({item['file']}) ---")
                 print(item["text"])
-                answer = input(f"Write {item['dest']}? [y/N]: ").strip().lower()
+                try:
+                    answer = input(f"Write {item['dest']}? [y/N]: ").strip().lower()
+                except (EOFError, OSError):
+                    answer = ""  # nothing to read although isatty() said yes: same as no answer, not written
                 if answer != "y":
                     result.findings.append(Finding(
                         kind="file-collision", area=item["area"],

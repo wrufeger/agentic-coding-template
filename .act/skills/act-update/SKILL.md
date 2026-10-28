@@ -25,7 +25,8 @@ and an unusable value stop with a hint to use `--ref` or `latest`.
 ## Steps
 
 1. `python .act/scripts/update.py --plan` — shows the `.act/` diff (rule/coding IDs individually)
-   and describes steps 5-10, writes nothing. Share the summary with the human.
+   and describes steps 5-10. It changes nothing in the project; only the local update note under
+   `.act-local/` may be refreshed. Share the summary with the human.
 2. Clean working tree first (`git status`) — an unfinished task closes via `act-commit` before an
    update starts.
 3. **Consent before step 5**, where `.act/` gets replaced: rerun the command without `--plan`, or

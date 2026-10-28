@@ -179,7 +179,12 @@ def _print_step(n: int, text: str) -> None:
 def _ask(prompt_text: str, default: str, interactive: bool) -> str:
     if not interactive:
         return default
-    raw = input(f"{prompt_text} [{default}]: ").strip()
+    try:
+        raw = input(f"{prompt_text} [{default}]: ").strip()
+    except (EOFError, OSError):
+        # isatty() can say yes with nothing to read (on Windows the NUL device): take the default.
+        print(f"(no input, taking '{default}')")
+        return default
     return raw or default
 
 

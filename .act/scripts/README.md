@@ -1033,7 +1033,8 @@ options:
   --on-local-changes {rescue,discard,abort}
                         skip the step-2 prompt
   --yes                 skip the interactive consent prompt (step 4)
-  --plan                show steps 1-3, describe 5-10, change nothing
+  --plan                show steps 1-3, describe 5-10; changes nothing in the project, only the
+                        local update-check files under .act-local/ may be refreshed
   --no-commit           do everything except the final commit
   --non-interactive     never prompt
   --catch-up            skip the fetch/diff/replace; finish steps 6-10 from the .act/ already on

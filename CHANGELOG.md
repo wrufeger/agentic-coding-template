@@ -166,6 +166,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `update.py` and `init.py` no longer stop with an `EOFError` traceback when a question finds no
+  input although stdin looks like a terminal, as on Windows with `< /dev/null` (the NUL device counts
+  as one). The question takes its safe default instead: no consent to the update, `abort` on local
+  changes in `.act/`, the shown default in `init`, and a file not written when importing a
+  settings file asks.
+- `update.py --plan` and `act-update` no longer claim to write nothing: the plan changes nothing in
+  the project but may refresh the local update note under `.act-local/`, and now says so in
+  `--help`, in its closing line and in the skill.
 - On Windows, a Bash call such as `python - <<'EOF'` with an empty heredoc no longer hangs until the
   tool's timeout on Python 3.13 and later. Python took the empty input for a console, started its new
   REPL, found no console handle and wrote the same traceback again and again, hundreds of megabytes
