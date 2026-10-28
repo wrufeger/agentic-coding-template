@@ -44,8 +44,8 @@ summary: explicit imports from `nuxt/server`, `event.req` as a web request, type
 - `event.req` is the web `Request` (there is no `event.node`); read a multipart body with `event.req.formData()`.
 - `readBody<T>()` with an `interface` of its own, fallback `.catch((): Body => ({}))`. The type is no validation —
   validate the body as before (e.g. with a schema library).
-- Type a response at the return value (`const response: ApiThing = …; return response`), the type in the shared
-  types folder (`CR-nuxt-root-folders`).
+- Type a response at the return value (`const response: ApiThing = …; return response`), the type in `/types`
+  (`CR-nuxt-root-folders`).
 - Errors with `createError({ status, statusText })`; `statusText` in ASCII only (e.g. `'Unprocessable Entity'`),
   localized text goes into `data`.
 - On the client, `createError({ data })` arrives under `response._data.data`; the field errors of a 422 sit under

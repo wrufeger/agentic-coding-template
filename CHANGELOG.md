@@ -36,6 +36,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `CR-nuxt-root-folders` names `shared/utils/` as a fourth fixed folder, for code that the app and the
+  server both run, with Nuxt's limit (no Vue or Nitro imports there) and the Nuxt version it needs.
+  Types stay in `/types`; `shared/types/` is not used.
 - `git-discard` lets `git branch -D` (also `-d -f`, with `-r`) through for a branch taken over
   by cherry-pick, as after taking over a worker's worktree branch: `git cherry HEAD <branch>`
   shows only `-` lines, the branch has no merge and no empty commit of its own, and merging it

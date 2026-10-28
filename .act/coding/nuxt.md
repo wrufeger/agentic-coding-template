@@ -84,13 +84,18 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
 
 ## `CR-nuxt-root-folders` — Fixed root folders with their own aliases
 
-summary: /types, /constants and /server at the repo root, each the only place of its kind
+summary: /types, /constants, /server and shared/utils/ at the repo root, each the only place of its kind
 
-- Keep three folders at the repository root, each with its own alias and each the only place of its kind:
+- Keep four folders at the repository root, each with its own alias and each the only place of its kind:
   `/types` (`~types`, shared types and interfaces), `/constants` (`~constants`, constants, enumerations,
-  fixed keys), `/server` (`~server`, the Nitro backend).
+  fixed keys), `/server` (`~server`, the Nitro backend), `shared/utils/` (Nuxt's `#shared`, code that the app
+  and the server both run, such as formatting, validation or calculations).
 - Import types and constants from there instead of duplicating them in components. A second type folder
-  under `app/types/` is a mistake, not an addition.
+  under `app/types/` or `shared/types/` is a mistake, not an addition: types stay in `/types`.
+- Code in `shared/` imports no Vue and no Nitro code (Nuxt's own limit). Code only the app runs stays in
+  `app/utils/`, code only the server runs in `server/utils/`.
+- `shared/` needs Nuxt 3.14 or later (`R-code-version`). Nuxt 4 auto-imports `shared/utils/` in app and server;
+  Nuxt 3 does so only with `future.compatibilityVersion: 4`, otherwise import from `#shared/utils/…`.
 
 ## `CR-nuxt-ssr` — Choose the SSR mode on purpose
 
