@@ -166,8 +166,9 @@ def _git_ignored(root: Path, paths: "list[Path]") -> set[str]:
             ["git", "-C", str(root), "check-ignore", "-z", "--stdin"],
             input="\0".join(str(path) for path in paths) + "\0",
             capture_output=True, text=True, encoding="utf-8", timeout=30.0, check=False,
+            errors="surrogateescape",  # exact round trip: a non-UTF-8 name equals os.walk's name on POSIX, never a real one elsewhere
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, UnicodeError):  # a name that cannot be encoded: keep every path
         return set()
     if proc.returncode not in (0, 1):  # 1 = nothing ignored; anything else = git could not answer
         return set()

@@ -1630,7 +1630,8 @@ MIN_GIT_VERSION = (2, 25)  # git add/commit --pathspec-from-file
 def git_version() -> Optional[tuple[int, ...]]:
     """The installed git's version as a tuple of ints (e.g. (2, 56, 0)), or None if it cannot be read."""
     try:
-        out = subprocess.run(["git", "--version"], capture_output=True, text=True, encoding="utf-8").stdout
+        out = subprocess.run(["git", "--version"], capture_output=True, text=True, encoding="utf-8",
+                             errors="replace").stdout
     except OSError:
         return None
     found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out)
@@ -1658,6 +1659,7 @@ def git_pathspec_stdin(args: list[str], rels: list[str], cwd: Path, check: bool 
     full = [*args, "--pathspec-from-file=-", "--pathspec-file-nul"]
     result = subprocess.run(
         ["git", *full], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+        errors="surrogateescape",  # a path in a legacy encoding travels back to git byte for byte; "replace" would turn it into a "?" wildcard
         input="".join(f"{rel}\0" for rel in rels),
     )
     if check and result.returncode != 0:

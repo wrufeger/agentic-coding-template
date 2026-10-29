@@ -326,6 +326,22 @@ def _recipient_value(recipient: Optional[str]) -> str:
     return "all" if text.lower() == "all" else actlib.recipient_slug(text)
 
 
+_PERMISSION_RETRY_PAUSES = (0.2, 0.3, 0.5)  # three retries within about a second
+
+
+def _retry_on_permission_error(action: Callable[[], object]) -> None:
+    """Run `action`; on a PermissionError retry up to three times with short pauses (an editor or
+    indexer on Windows often holds a just-written file open for a moment), then raise the last
+    error. Any other OSError is raised at once."""
+    for pause in _PERMISSION_RETRY_PAUSES:
+        try:
+            action()
+            return
+        except PermissionError:
+            time.sleep(pause)
+    action()
+
+
 def _rename_with_id(path: Path, entry_id: str) -> Path:
     """Rename `path` to "<entry_id>-<slug>.md" in the same directory (cmd_assign()'s second half,
     after _insert_id() has written the header) — slug via _derive_slug(path.stem). A name collision
@@ -342,7 +358,7 @@ def _rename_with_id(path: Path, entry_id: str) -> Path:
         if dest.exists():
             n += 1
             continue
-        path.rename(dest)
+        _retry_on_permission_error(lambda: path.rename(dest))
         return dest
 
 
@@ -1389,12 +1405,12 @@ def cmd_archive(root: Path, ref: str) -> int:
             target = archive / name
             shutil.copy2(source, target)
             created.append(target)
-        entry.unlink()  # last step that can fail the whole run; the rollback below covers it
+        _retry_on_permission_error(entry.unlink)  # last step that can fail the whole run; the rollback below covers it
     except OSError as exc:
         stuck: list[str] = []
         for path in created:
             try:
-                path.unlink()
+                _retry_on_permission_error(path.unlink)
             except OSError as undo_exc:
                 stuck.append(f"{_rel(path, root)} ({undo_exc!r})")
         print(f"entries: archiving {_rel(entry, root)} failed ({exc!r}) — the entry stays where it is",

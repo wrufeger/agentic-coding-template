@@ -455,9 +455,19 @@ def _project_files(root: Path) -> list[Path]:
     if result is not None and result.returncode == 0:
         names = [os.fsdecode(name) for name in result.stdout.split(b"\0") if name]
         return [root / name for name in names if (root / name).is_file()]
-    return [path for path in root.rglob("*")
-            if not any(part in _METRICS_SKIP_DIRS for part in path.relative_to(root).parts)
-            and path.is_file()]
+    found: list[Path] = []
+    # onerror: a directory that cannot be listed is skipped, not fatal; symlinked directories are
+    # not followed (they show up in `dirs` but are never descended into).
+    for current, dirs, names in os.walk(root, onerror=lambda _error: None, followlinks=False):
+        dirs[:] = sorted(name for name in dirs if name not in _METRICS_SKIP_DIRS)
+        for name in sorted(names):
+            path = Path(current) / name
+            try:
+                if path.is_file():
+                    found.append(path)
+            except OSError:
+                continue
+    return found
 
 
 def _metrics(root: Path) -> dict:

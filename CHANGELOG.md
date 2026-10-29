@@ -243,6 +243,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   64-digit hex value read like a credential. Exempt is only that shape — a rule ID as key, exactly 64
   lowercase hex digits as value, nothing else on the line — and only in the lock file at the project
   root; a known token shape on the line is still caught.
+- `entries.py archive` and the renaming of a new entry no longer give up at once when Windows reports
+  the file as in use, as it does while an IDE re-indexes a file just written: they retry up to three
+  times within about a second before reporting as before (`archive` also rolls back as before).
+- `feedback.py --plan`/`--send` outside a git checkout skip a directory or link they cannot read
+  instead of stopping there.
+- `init.py`, `update.py`, the dependency scan's ignore lookup and the git helpers in `actlib.py` no
+  longer stop with a traceback when git prints bytes that are not UTF-8, such as a file name or commit
+  subject in a legacy encoding. Output that is only shown or compared is decoded with replacement
+  characters; file names that go back to git or are matched against files on disk keep their bytes.
 
 ### Security
 

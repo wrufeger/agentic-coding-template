@@ -88,7 +88,8 @@ def _categorize(rel_path: str) -> str:
 
 def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8"
+        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+        errors="replace",  # a name that is not UTF-8 never equals a known path; at worst git rejects it later
     )
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
@@ -682,7 +683,7 @@ def _local_act_differences_from_git(root: Path) -> Optional[list[str]]:
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain", "--", ".act"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8",
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
     except OSError:
         return None
@@ -2357,6 +2358,7 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
         return f"{bridge_summary}; would run: python .act/scripts/doctor.py --inbox", [], []
     result = subprocess.run(
         [sys.executable, str(doctor_path), "--inbox"], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="replace",
     )
     if result.returncode not in (0, 1):
         detail = (result.stderr or result.stdout).strip().splitlines()
