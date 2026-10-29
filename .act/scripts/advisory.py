@@ -13,8 +13,17 @@
 #          line at once (board.py reads local git state, never the network).
 #
 #          The file is data, never code: it is read as JSON, every field is checked, only the known
-#          fields are kept, and nothing from it is executed, imported, formatted into a format string,
-#          passed to a shell or used as a path. A link is shown as plain text and never opened.
+#          fields are kept, and nothing from it is executed, imported, formatted into a format string
+#          or passed to a shell. The only paths taken from it are the `files` paths, and only after
+#          check_files() accepted them: they are read as bytes and never executed. A link is shown as
+#          plain text and never opened.
+#
+#          An entry may carry `files`: paths under .act/ with a literal snippet only the faulty version
+#          holds. When every listed file (the project override under docs/ai/local/ if there is one,
+#          else the .act/ file) is missing or no longer holds its snippet, the project fixed the problem
+#          another way: the entry counts as `fixed`, shows one line at the next start (recorded in
+#          advisories-seen.json) and is silent after. A bad `files` field is dropped; the entry then
+#          works by version range alone. The files are read as bytes, never executed.
 #
 #          Library part (used by hooks/checks/session.py, hooks/statusline.py, board.py and
 #          hooks/checks/advisory_ack.py): validate_document(), load_cache(), active_advisories(),
@@ -39,6 +48,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -70,6 +80,8 @@ _STATE_READ_LIMIT = 1024 * 1024
 # surrogates and the line/paragraph separators.
 _FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Zl", "Zp"})
 _ID_RE = re.compile(r"A[1-9][0-9]{0,3}")
+# Windows device names, with or without an extension (`NUL`, `nul.txt`): opening one reaches the device
+_RESERVED_NAME_RE = re.compile(r"(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?", re.IGNORECASE)
 # text ends up in the board and the inbox, where a renderer could fetch an image: no link or code syntax,
 # no tag start (`<` + letter, `/`, `!` or `?`); a plain `<2.2.0` stays fine
 _MARKUP_RE = re.compile(r"[\[\]`]|<[A-Za-z/!?]")
@@ -80,9 +92,19 @@ _SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _PRESENT_VERSION_RE = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 # Field names the file may carry. Everything else is ignored: never shown, never used, never
-# evaluated. `files` is reserved for a later check ("fixed otherwise") and ignored for now too.
+# evaluated. `files` (below) is checked on its own: a bad one is dropped, never the entry.
 KNOWN_FIELDS = ("id", "severity", "affected", "commits", "fixed-in", "repeat", "text", "link")
-RESERVED_FIELDS = ("files",)
+
+# `files`: {path relative to the project root under .act/: literal snippet only the faulty version holds}.
+# When every listed file is missing or no longer holds its snippet, the project fixed the problem another
+# way and the warning ends. A path is at most 120 characters (the longest path under .act/ is far shorter),
+# a snippet 200 (enough to be unique, short enough to stay one line and cheap to compare), at most 5
+# files (a fault rarely sits in more places; a long list is more likely a mistake). The snippet is a
+# single line: a control character, a line break included, is not allowed, so line endings never matter.
+MAX_FILES = 5
+MAX_FILE_PATH = 120
+MAX_SNIPPET = 200
+PROJECT_FILE_LIMIT = 1024 * 1024  # a project file read for the snippet check; larger counts as "still there"
 
 Version = tuple[int, int, int]
 
@@ -102,6 +124,7 @@ class Advisory:
     fixed_in: Optional[str] = None
     repeat: str = "once"
     link: Optional[str] = None
+    files: tuple[tuple[str, str], ...] = ()
 
     @property
     def critical(self) -> bool:
@@ -122,6 +145,8 @@ class Advisory:
             data["repeat"] = self.repeat
         if self.link:
             data["link"] = self.link
+        if self.files:
+            data["files"] = dict(self.files)
         return data
 
 
@@ -145,11 +170,13 @@ class Validation:
     advisories: list[Advisory] = field(default_factory=list)
     rejected: list[Rejection] = field(default_factory=list)
     invalid: Optional[str] = None
+    notes: list[str] = field(default_factory=list)  # accepted entries whose `files` field was dropped
 
 
 @dataclass
 class Standing:
-    """An advisory judged against this project: `state` is active, acked or not-affected."""
+    """An advisory judged against this project: `state` is active, acked, fixed (the project's own files no
+    longer hold the faulty code) or not-affected."""
     advisory: Advisory
     state: str
 
@@ -219,8 +246,48 @@ def version_satisfies(version: Version, affected: str) -> bool:
     return True
 
 
-def _validate_entry(raw: dict) -> tuple[Optional[Advisory], Optional[str]]:
-    """(advisory, None) for a valid entry, (None, reason) otherwise. Unknown fields are not looked at."""
+def check_files(value: object) -> tuple[tuple[tuple[str, str], ...], Optional[str]]:
+    """Judge a `files` field: (pairs, None) when valid, ((), reason) when not. Valid means a non-empty object of
+    at most MAX_FILES entries; each key a relative path of `/`-separated parts under `.act/` (no `..`, `.`,
+    empty part, backslash, drive letter or leading slash, at most MAX_FILE_PATH characters, no control
+    character); each value a non-empty string of at most MAX_SNIPPET characters without a control character."""
+    if not isinstance(value, dict) or not value:
+        return (), "files must be a non-empty object of path: snippet"
+    if len(value) > MAX_FILES:
+        return (), f"files holds more than {MAX_FILES} entries"
+    pairs: list[tuple[str, str]] = []
+    for path, snippet in value.items():
+        if not isinstance(path, str) or not 1 <= len(path) <= MAX_FILE_PATH:
+            return (), f"a files path must be 1 to {MAX_FILE_PATH} characters"
+        if _bad_char(path) or "\\" in path or ":" in path or path.startswith("/"):
+            return (), f"files path {path[:40]!r} is not a relative path with / separators"
+        parts = path.split("/")
+        if len(parts) < 2 or parts[0] != ".act" or any(part in ("", ".", "..") for part in parts):
+            return (), f"files path {path[:40]!r} must be a file under .act/ without .. or empty parts"
+        if any(part.endswith((".", " ")) or _RESERVED_NAME_RE.fullmatch(part) for part in parts):
+            return (), f"files path {path[:40]!r} has a part Windows treats as a device or strips (reserved name, trailing dot or space)"
+        if not isinstance(snippet, str) or not 1 <= len(snippet) <= MAX_SNIPPET:
+            return (), f"the files snippet of {path} must be 1 to {MAX_SNIPPET} characters"
+        if _bad_char(snippet):
+            return (), f"the files snippet of {path} contains a control or format character"
+        pairs.append((path, snippet))
+    return tuple(pairs), None
+
+
+def _validate_entry(raw: dict) -> tuple[Optional[Advisory], Optional[str], Optional[str]]:
+    """(advisory, None, note) for a valid entry (`note` names a dropped `files` field), (None, reason, None)
+    otherwise. Unknown fields are not looked at."""
+    advisory, reason = _validate_core(raw)
+    if advisory is None or "files" not in raw:
+        return advisory, reason, None
+    pairs, bad = check_files(raw["files"])
+    if bad:
+        return advisory, None, f"{advisory.id}: files ignored ({bad}); the warning works by version range alone"
+    return Advisory(**{**advisory.__dict__, "files": pairs}), None, None
+
+
+def _validate_core(raw: dict) -> tuple[Optional[Advisory], Optional[str]]:
+    """(advisory, None) for a valid entry without looking at `files`, (None, reason) otherwise."""
     for name in KNOWN_FIELDS:
         value = raw.get(name)
         strings = value if isinstance(value, list) and name == "commits" else [value]
@@ -313,7 +380,9 @@ def validate_document(data: bytes) -> Validation:
         if not isinstance(raw, dict):
             result.rejected.append(Rejection(label, "entry is not an object"))
             continue
-        advisory, reason = _validate_entry(raw)
+        advisory, reason, note = _validate_entry(raw)
+        if note:
+            result.notes.append(note)
         if advisory is None:
             result.rejected.append(Rejection(label, reason or "invalid entry"))
         elif advisory.id in seen:
@@ -439,12 +508,62 @@ def _lock_template(root: Path) -> dict:
     return template if isinstance(template, dict) else {}
 
 
+_CODE_PREFIXES = (".act/scripts/", ".act/hooks/")  # code always runs from .act/, never from an override
+
+
+def _project_file(root: Path, rel: str) -> Path:
+    """The file that takes effect for a `.act/<x>` path: the project override `docs/ai/local/<x>` if it
+    exists, else the `.act/` file (the rule of actlib.resolve(), which works from the working directory, not a
+    root). Scripts and hooks are never taken from an override: they run from `.act/` whatever is in
+    docs/ai/local/, so for them the `.act/` file is the effective one."""
+    if not rel.startswith(_CODE_PREFIXES):
+        local = root / "docs" / "ai" / "local" / rel[len(".act/"):]
+        if local.is_file():
+            return local
+    return root / rel
+
+
+def still_holds(root: Path, rel: str, snippet: str) -> bool:
+    """True when the effective file of `rel` contains `snippet` -- or cannot be judged: doubt keeps the
+    warning. False only for a file that is missing (FileNotFoundError / NotADirectoryError on stat) or read
+    in full without the snippet. Anything else counts as still there: another OS error, a file that is not
+    a regular file (device, FIFO, directory: never opened), a path that resolves outside the project (a
+    symlink or junction), a file larger than PROJECT_FILE_LIMIT. Read as bytes, never executed."""
+    path = _project_file(root, rel)
+    try:
+        info = os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except (OSError, ValueError):
+        return True
+    if not stat.S_ISREG(info.st_mode) or info.st_size > PROJECT_FILE_LIMIT:
+        return True
+    try:
+        resolved = path.resolve()
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return True
+    try:
+        with open(resolved, "rb") as handle:
+            data = handle.read(PROJECT_FILE_LIMIT + 1)
+    except OSError:
+        return True
+    if len(data) > PROJECT_FILE_LIMIT:
+        return True
+    return snippet.encode("utf-8") in data
+
+
+def fixed_otherwise(root: Path, advisory: Advisory) -> bool:
+    """True when the advisory lists `files` and every one is missing or no longer holds its snippet."""
+    return bool(advisory.files) and not any(still_holds(root, rel, snippet) for rel, snippet in advisory.files)
+
+
 def evaluate(root: Path) -> list[Standing]:
     """Each cached advisory judged against the installed version and the lock commit, acknowledgements
-    applied. Files only: no git, no network. Empty while `advisory-check` is off.
+    and the `files` check applied. Files only: no git, no network. Empty while `advisory-check` is off.
     An entry is active when (the version satisfies `affected` OR the lock commit starts with one of `commits`)
-    AND it is not acknowledged. Hook point: a later condition "fixed otherwise" (the reserved `files`
-    field) narrows the first part here, so every reader follows."""
+    AND it is not acknowledged AND it is not fixed otherwise (state `fixed`: its `files` all lost the faulty
+    snippet). Every reader goes through here, so all follow."""
     if not enabled(root):
         return []
     version = parse_version(installed_version(root))
@@ -458,6 +577,8 @@ def evaluate(root: Path) -> list[Standing]:
             standings.append(Standing(advisory, "not-affected"))
         elif advisory.id in acked:
             standings.append(Standing(advisory, "acked"))
+        elif fixed_otherwise(root, advisory):
+            standings.append(Standing(advisory, "fixed"))
         else:
             standings.append(Standing(advisory, "active"))
     return sorted(standings, key=lambda item: (not item.advisory.critical, int(item.advisory.id[1:])))
@@ -490,6 +611,11 @@ def warning_line(advisory: Advisory, version: str) -> str:
     """The session-start line of a warning."""
     line = f"⚠ {advisory.id} (template {version or 'unknown'}): {advisory.text}"
     return f"{line} {advisory.link}" if advisory.link else line
+
+
+def fixed_line(advisory: Advisory, version: str) -> str:
+    """The one-time session-start line when the project's own files no longer hold the faulty code."""
+    return f"✓ {advisory.id} (template {version or 'unknown'}): affected code changed, treated as fixed."
 
 
 def model_note(advisory: Advisory) -> str:
@@ -562,11 +688,15 @@ def _file_todo(root: Path, advisory: Advisory, version: str) -> Optional[str]:
 def session_report(root: Path, file_todos: bool = True) -> SessionReport:
     """What the session start shows for the active advisories, from files only: critical ones at every
     start with a note for the model and, once per id, an inbox todo (`file_todos`); warnings by `repeat`.
-    Nothing is raised. The seen record (.act-local/advisories-seen.json) keeps the todos and the warnings
-    already shown, so none is filed or shown twice."""
+    An advisory judged fixed (its `files` lost the faulty snippet) adds one line "affected code changed,
+    treated as fixed", once per id, and nothing else. Nothing is raised. The seen record
+    (.act-local/advisories-seen.json) keeps the todos, the warnings and the fixed notes already shown, so
+    none is filed or shown twice."""
     report = SessionReport()
-    active = active_advisories(root)
-    if not active:
+    standings = evaluate(root)
+    active = [item.advisory for item in standings if item.state == "active"]
+    fixed = [item.advisory for item in standings if item.state == "fixed"]
+    if not active and not fixed:
         return report
     version = installed_version(root)
     seen = _read_state_file(seen_path(root))
@@ -586,6 +716,14 @@ def session_report(root: Path, file_todos: bool = True) -> SessionReport:
             if not advisory.every_start:
                 record["shown"] = datetime.now().replace(microsecond=0).isoformat()
         if record != seen.get(advisory.id) and record:
+            seen[advisory.id] = record
+            changed = True
+    for advisory in fixed:  # once per id, then silent everywhere
+        record = seen.get(advisory.id)
+        record = dict(record) if isinstance(record, dict) else {}
+        if not record.get("fixed"):
+            report.lines.append(fixed_line(advisory, version))
+            record["fixed"] = datetime.now().replace(microsecond=0).isoformat()
             seen[advisory.id] = record
             changed = True
     if changed:
@@ -874,6 +1012,8 @@ def _cmd_check_file(path_text: str) -> int:
         print(f"accepted {advisory.id}: {advisory.severity}, affected {advisory.affected}")
     for rejection in result.rejected:
         print(f"rejected {rejection.id or 'file'}: {rejection.reason}")
+    for note in result.notes:
+        print(f"note {note}")
     print(f"{len(result.advisories)} accepted, {len(result.rejected)} rejected")
     return 1 if result.rejected else 0
 

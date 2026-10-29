@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -538,6 +539,38 @@ def docs_language(root: Optional[Path] = None) -> str:
     (`R-work-language`). A thin wrapper over read_config()/language_settings() so a writer needs
     neither name itself."""
     return language_settings(read_config(root))[1]
+
+
+# ---------------------------------------------------------------------------
+# Session title — the name the SessionStart hook gives a Claude Code session (`session-name`),
+# shown in the session list, in Remote Control and on the phone.
+# ---------------------------------------------------------------------------
+
+SESSION_TITLE_MAX = 80
+# Unicode categories never part of a title shown on another device: control, format (bidi,
+# zero width, tags), private use, surrogates and the line/paragraph separators.
+_TITLE_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Zl", "Zp"})
+
+
+def session_title(config: dict[str, str], root: Path) -> Optional[str]:
+    """The session title `session-name` in a read_config() result asks for, or None for `auto`.
+    `project` (also a missing or empty key) takes `name`, falling back to the name of the
+    project folder `root` while `name` is empty or still an unfilled `<...>` placeholder; any
+    other value is the title itself. Unsafe characters become spaces, whitespace is collapsed and
+    the result capped at SESSION_TITLE_MAX characters; None when nothing is left."""
+    mode = config.get("session-name", "").strip().strip("`").strip()
+    if mode.lower() == "auto":
+        return None
+    if not mode or mode.lower() == "project":
+        title = config.get("name", "").strip().strip("`").strip()
+        if not title or (title.startswith("<") and title.endswith(">")):
+            title = root.name
+    else:
+        title = mode
+    title = "".join(" " if unicodedata.category(char) in _TITLE_UNSAFE_CATEGORIES else char
+                    for char in title)
+    title = " ".join(title.split())
+    return title[:SESSION_TITLE_MAX].rstrip() or None
 
 
 def localized(language: str, en: str, de: str) -> str:

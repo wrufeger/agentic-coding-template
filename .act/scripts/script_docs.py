@@ -74,6 +74,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "i18n_check.py": {"kind": "skill", "skill": "act-check-translations"},
     "ideas.py": {"kind": "direct", "note": "session start and init call it; run by hand to record entries as processed"},
     "handover.py": {"kind": "skill", "skill": "act-handover"},
+    "info.py": {"kind": "skill", "skill": "act-info"},
     "init.py": {"kind": "direct"},
     "integrations.py": {"kind": "skill", "skill": "act-integrations", "note": "`status` alone is direct"},
     "log.py": {"kind": "direct"},

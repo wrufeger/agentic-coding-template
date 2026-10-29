@@ -112,6 +112,7 @@ the question as understood, reasons, notes on code it wrote and what to watch ou
 | `context-hint` | 180000 |
 | `task-wait-hours` | 12 |
 | `board-at-start` | on |
+| `session-name` | project |
 | `artifacts` | off |
 
 `board-at-start`: `on` \| `off`. `on` (default; a missing key counts as `on`) adds an excerpt of the
@@ -120,6 +121,14 @@ board to the session start — the "Open tasks" (with each task's last state lin
 the waiting entries fill the rest and end in a `+N more` line — so a bare "continue" can work from it
 without first reading the board. It is shortened or dropped first when the session-start output
 nears its size cap, and left out after a compaction (the compaction note already names the tasks).
+
+`session-name`: `project` \| `auto` \| any other text. `project` (default; a missing key counts as
+`project`) sets the Claude Code session title to the `name` from this file, or the project folder's name
+while `name` is empty or still the placeholder, so a Remote Control session on the phone shows which
+project it is. `auto` leaves naming to the tool. Any other text is used as the title itself (control
+characters removed, 80 characters at most). Claude Code only; the title is set when a session starts,
+resumes or forks, and never overwrites one you set with `/rename` or `claude -n`. A named session keeps
+its title across `/clear`.
 
 `artifacts`: `on` \| `off`. `off` (default; a missing key or any other value counts as `off`) puts
 `"enableArtifact": false` into `.claude/settings.json`, so Claude Code no longer loads the `Artifact` tool —

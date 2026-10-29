@@ -26,6 +26,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `handover.py` | Answer "can this session be left now?" mechanically, read-only: uncommitted changes, started tasks without a working-state line, inbox… | skill `act-handover` |
 | `i18n_check.py` | Check a project's translation files for completeness and consistency — the mechanical half of skill `act-check-translations`. Code-only… | skill `act-check-translations` |
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
+| `info.py` | Show, in a compact block, which project this session works in and its state: project name, folder and host, the session name the project… | skill `act-info` |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
@@ -702,6 +703,22 @@ options:
   --check     list new or changed entries (default)
   --seen      record every entry as processed
   --ensure    create the README.md and own file if missing
+```
+
+## `info.py`
+
+Call: skill `act-info`
+
+```text
+usage: info.py [-h] [--limit N]
+
+Show which project this session works in and its state: name, folder, host, session name, branch,
+last commit, uncommitted changes, installed template version and channel, open tasks and what
+waits for a human. Read-only, no network.
+
+options:
+  -h, --help  show this help message and exit
+  --limit N   list at most N tasks and N waiting entries, then '+n more' (default 5)
 ```
 
 ## `init.py`

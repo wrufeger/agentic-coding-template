@@ -114,7 +114,9 @@
 #                 moves a hook output into a file and shows the model a 2,000-character
 #                 preview), and a top-level `systemMessage` holds one line for the human (rule
 #                 files loaded per `rules.py --imports`, chat language, inbox entries to
-#                 process). The lines: an optional
+#                 process). `hookSpecificOutput.sessionTitle` names the session after the project
+#                 (config key `session-name`) on source startup, resume or fork, unless the
+#                 input already carries a `session_title`. The lines: an optional
 #                 block of orchestrator-only rules, one line per rule plus where the full text
 #                 lives (main session only, never seen by a sub-agent), zero or more "[act] note: ..."
 #                 lines (a changed/unrefreshable bridge, an unresolvable tier/reasoning value, a

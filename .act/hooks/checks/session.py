@@ -2095,6 +2095,22 @@ def _fit_context(text: str, rules_full: str, rules_compact: str, excerpt: str = 
     return kept + "\n" + tail
 
 
+def _session_title_for(payload: dict) -> Optional[str]:
+    """The title `session-name` asks for, or None. Claude Code applies a SessionStart title only
+    when the session starts, resumes or forks, so any other source gets none; a title the human
+    already set (`/rename`, `--name`) arrives as `session_title` and is never overwritten. Any
+    error means no title - the rest of the session-start output stays as it is."""
+    try:
+        if payload.get("source") not in ("startup", "resume", "fork"):
+            return None
+        existing = payload.get("session_title")
+        if isinstance(existing, str) and existing.strip():
+            return None
+        return actlib.session_title(actlib.read_config(), actlib.repo_root())
+    except Exception:  # never fail the session over a title
+        return None
+
+
 def refresh_session(payload: dict) -> int:
     """Check 2: runs only for SessionStart. Never fails the session. Prints exactly one JSON
     object: the notes and the status line as `hookSpecificOutput.additionalContext`, one
@@ -2112,6 +2128,9 @@ def refresh_session(payload: dict) -> int:
         return 0
     context = _fit_context(buffer.getvalue(), rules_text["full"], rules_text["compact"], rules_text["excerpt"])
     output: dict = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
+    title = _session_title_for(payload)
+    if title:
+        output["hookSpecificOutput"]["sessionTitle"] = title
     message = _human_line(state)
     if message:
         output["systemMessage"] = message

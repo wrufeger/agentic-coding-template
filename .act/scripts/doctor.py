@@ -1039,6 +1039,8 @@ def check_legacy_config_keys(root: Path) -> list[Finding]:
 
 
 # Allowed values of config keys the mechanism and skills read; an empty value means the default.
+# Keys that take free text (`session-name`: project | auto | any title) are not listed: every
+# value is valid, and an empty one simply means the default.
 _CONFIG_VALUES = {
     "board": ("docs", "shared", "local"),
     "board-others": ("on", "off"),
