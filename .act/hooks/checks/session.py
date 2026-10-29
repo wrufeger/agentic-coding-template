@@ -28,10 +28,8 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from datetime import date, datetime, timezone
@@ -707,11 +705,11 @@ def _ls_remote_output(root: Path, source: str, patterns: list[str]) -> Optional[
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3")
     # never a user value here: a source such as `ext::<command>` must not start a program
     env["GIT_ALLOW_PROTOCOL"] = "file:git:http:https:ssh"
-    # mkdtemp + rmtree(ignore_errors): on Windows a git child can still hold a file open after the
-    # timeout, and a failing cleanup must not raise
-    tmp_dir = tempfile.mkdtemp(prefix="act-update-check-")
-    try:
-        out_path = Path(tmp_dir) / "ls-remote.out"
+    # The output folder lives under the project's .act-local/tmp/ and is removed again with retries:
+    # on Windows a git child can still hold a file open after the timeout, and a failing cleanup must
+    # not raise. git itself runs in `root`, never in the folder.
+    with actlib.scratch_dir("update-check", root) as tmp_dir:
+        out_path = tmp_dir / "ls-remote.out"
         try:
             with open(out_path, "wb") as out_file:
                 result = subprocess.run(
@@ -726,13 +724,6 @@ def _ls_remote_output(root: Path, source: str, patterns: list[str]) -> Optional[
             return out_path.read_text(encoding="utf-8", errors="replace").strip()
         except (OSError, subprocess.TimeoutExpired):
             return None
-    finally:
-        # a git child may still hold a file open for a moment after the timeout (Windows)
-        for _attempt in range(8):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not os.path.isdir(tmp_dir):
-                break
-            time.sleep(0.25)
 
 
 def _update_channel(root: Path) -> str:

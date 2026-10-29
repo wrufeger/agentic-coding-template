@@ -56,22 +56,26 @@ independent check confirms the diagnosis, not on the first plausible explanation
 
 ## `R-work-bounded-output` — Keep output of unknown length out of the context
 
-summary: head/tail/grep or a file in the system temp directory for unbounded output; read only the failures of a build or test run; large files in excerpts
+summary: head/tail/grep or a file in the task's throwaway folder for unbounded output; read only the failures of a build or test run; large files in excerpts
 
 Output whose length is not known beforehand is cut with `head`/`tail`/`grep`, or written to a file in
-the system temp directory (writable for every worker, as a path written out) and read from there, never taken whole into the context.
+the task's throwaway folder (`R-work-throwaway`) and read from there, never taken whole into the
+context; a worker whose assignment names no such folder cuts instead.
 Build and test output goes the same way: read only the failures. A large file is read in excerpts
 (`offset`/`limit`), not whole. Every line that enters the context is read again with each following
 step.
 
 ## `R-work-throwaway` — Throwaway material has one place and goes away
 
-summary: probes, throwaway projects and scratch files in the system temp directory, else .act-local/tmp/<task-id>-<slug>/; removed with the task's commit; act-local-tidy clears the rest; mechanically checked
+summary: probes, throwaway projects, clones and scratch files only when needed and only under .act-local/tmp/<task-id>-<slug>/, never in the system temp directory; removed after use by whoever made them; no access right the owner cannot take back; act-local-tidy clears the rest; mechanically checked
 
-Throwaway material — probes, throwaway projects, scratch files — goes into the system temp
-directory. Where the tool refuses that to a worker, it goes into `.act-local/tmp/<task-id>-<slug>/`,
-never directly under `.act-local/`. The orchestrator removes a task's folders when it commits the
-task (`act-commit`). At session start, `act-local-tidy` removes what is left after 7 days unless its
+Throwaway material — probes, throwaway projects, clones, output files, scratch files — is made only
+when the work needs it, and only under `.act-local/tmp/<task-id>-<slug>/`: never in the system temp
+directory, where nobody tracks or removes it, and never directly under `.act-local/`. Whoever makes it
+removes it once it has served; a worker says in its result that it did, or what is left and why, and
+an assignment that needs such a folder names it in its `Write scope:`. A probe never sets an access
+right its owner could not take back alone, and takes back every right it set in a `finally`. The
+orchestrator removes a task's folders when it commits the task (`act-commit`). At session start, `act-local-tidy` removes what is left after 7 days unless its
 name starts with an open task's id or `act-local-keep` lists it (`docs/ai/config.md` § Checks).
 Details: `topics/checks.md`.
 

@@ -55,8 +55,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
-import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -277,12 +275,12 @@ def _read_remote_refs(source: str, cwd: Path) -> tuple[Optional[RemoteRefs], str
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "never"
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=5")
-    # mkdtemp + rmtree(ignore_errors): on Windows a git child can still hold err.txt open after the
-    # timeout, and a failing cleanup must neither replace the timeout message nor raise
-    tmp_dir = tempfile.mkdtemp(prefix="act-ls-remote-")
-    try:
-        out_path = Path(tmp_dir) / "out.txt"
-        err_path = Path(tmp_dir) / "err.txt"
+    # The output folder lives under the project's .act-local/tmp/ (`cwd` is the project) and is removed
+    # again with retries: on Windows a git child can still hold err.txt open after the timeout, and a
+    # failing cleanup must neither replace the timeout message nor raise. git runs in `cwd`, not in it.
+    with actlib.scratch_dir("ls-remote", cwd) as tmp_dir:
+        out_path = tmp_dir / "out.txt"
+        err_path = tmp_dir / "err.txt"
         try:
             with open(out_path, "wb") as out_file, open(err_path, "wb") as err_file:
                 result = subprocess.run(
@@ -296,13 +294,6 @@ def _read_remote_refs(source: str, cwd: Path) -> tuple[Optional[RemoteRefs], str
             return None, f"git ls-remote timed out after {_LS_REMOTE_TIMEOUT} s"
         except OSError as exc:
             return None, _mask_url_user(f"git ls-remote could not run: {exc}")
-    finally:
-        # a git child may still hold a file open for a moment after the timeout (Windows)
-        for _attempt in range(8):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not os.path.isdir(tmp_dir):
-                break
-            time.sleep(0.25)
     if result.returncode != 0:
         return None, _mask_url_user(error.splitlines()[-1] if error else f"git ls-remote exited {result.returncode}")
     refs = RemoteRefs()
@@ -1396,8 +1387,8 @@ def _bridge_edited(
         return True
     try:
         current = dest_path.read_text(encoding="utf-8")
-        with tempfile.TemporaryDirectory() as tmp:
-            reference_path = Path(tmp) / dest_path.name
+        with actlib.scratch_dir("bridge-check", root) as tmp:
+            reference_path = tmp / dest_path.name
             new_init.write_agent_bridge_file(
                 role, source_path, reference_path, False, root, tiers_data, overrides, variant, None,
             )
@@ -1671,8 +1662,8 @@ def _render_tool_bridge(new_init, root: Path, key: str, spec: dict) -> Optional[
     reference a removal compares against. None if it cannot be rendered."""
     src = root / ".act" / "bridges" / key
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            dest = Path(tmp) / Path(spec["dest"]).name
+        with actlib.scratch_dir("bridge-render", root) as tmp:
+            dest = tmp / Path(spec["dest"]).name
             if spec["kind"] == "json-merge":
                 new_init._merge_settings_hooks(src, dest, False, None)
             else:

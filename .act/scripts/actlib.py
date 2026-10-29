@@ -21,17 +21,21 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 
 # Pauses between the replace attempts below, in seconds: about 0.35 s in all, so a hook stays fast.
@@ -53,6 +57,63 @@ def replace_file(src: "str | os.PathLike[str]", dst: "str | os.PathLike[str]") -
         except PermissionError:
             time.sleep(pause)
     os.replace(src, dst)
+
+
+# ---------------------------------------------------------------------------
+# Short-lived folders: <project>/.act-local/tmp/, else the system temp directory
+# ---------------------------------------------------------------------------
+
+def scratch_base(root: "Optional[Path]") -> Optional[str]:
+    """`<root>/.act-local/tmp` (created if needed) when `root` is a project (it has `.act/` or
+    `.act-local/`), else None -- the caller then falls back to the system temp directory. Never raises."""
+    if root is None:
+        return None
+    try:
+        root = Path(root)
+        if not ((root / ".act").is_dir() or (root / ".act-local").is_dir()):
+            return None
+        base = root / ".act-local" / "tmp"
+        base.mkdir(parents=True, exist_ok=True)
+        return str(base)
+    except OSError:
+        return None
+
+
+def remove_tree(path: "str | os.PathLike[str]") -> None:
+    """Removes a folder the caller made, never raising: read-only files are made writable first
+    (Windows refuses to delete them), and a few short retries cover a git child or a scanner that still
+    holds a file open for a moment."""
+    for attempt in range(8):
+        shutil.rmtree(path, ignore_errors=True)
+        if not os.path.isdir(path):
+            return
+        for folder, _dirs, files in os.walk(path):
+            for name in files:
+                try:
+                    os.chmod(os.path.join(folder, name), stat.S_IWRITE | stat.S_IREAD)
+                except OSError:
+                    pass
+        if attempt < 7:
+            time.sleep(0.25)
+
+
+@contextlib.contextmanager
+def scratch_dir(purpose: str, root: "Optional[Path]" = None) -> Iterator[Path]:
+    """A short-lived folder `act-<purpose>-<random>`: under `<root>/.act-local/tmp/` when `root` is a
+    project, else in the system temp directory. Removed on leaving the block, whatever happens.
+    Git calls with this folder as cwd would find the project's repository above it -- run them
+    with GIT_CEILING_DIRECTORIES set, or do not run git there."""
+    base = scratch_base(root)
+    try:
+        path = tempfile.mkdtemp(prefix=f"act-{purpose}-", dir=base)
+    except OSError:
+        if base is None:
+            raise
+        path = tempfile.mkdtemp(prefix=f"act-{purpose}-")  # the project folder is not writable
+    try:
+        yield Path(path)
+    finally:
+        remove_tree(path)
 
 
 # ---------------------------------------------------------------------------

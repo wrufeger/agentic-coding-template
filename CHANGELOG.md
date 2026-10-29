@@ -66,6 +66,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- Throwaway material (probes, throwaway projects, clones, output files) has one place now:
+  `.act-local/tmp/<task-id>-<slug>/`, never the system temp directory, where nothing tracked or
+  removed it. It is made only when the work needs it and removed after use by whoever made it; a
+  worker says so in its result. A probe never sets an access right its owner could not take back
+  alone, and takes back every right it set in a `finally` (`R-work-throwaway`, `R-work-bounded-output`).
+- The hooks' compiled-module cache moved from `act-pycache` in the system temp directory, where it
+  grew with every project path and was never removed, to `.act-local/pyc/` in the project. In a
+  project path longer than about 76 characters the hooks write no cache (each hook call then takes
+  about 35 ms longer), so no cache path passes Windows' 260-character limit. An old `act-pycache`
+  folder in the system temp directory can be deleted once every project on the machine is updated.
+- The short-lived folders of the update check, `update.py`, `advisory.py` and `init.py` are created
+  under `.act-local/tmp/act-<purpose>-*` in the project now (outside a project still in the system
+  temp directory) and removed when the script ends.
 - At a task boundary once the context has reached `context-hint`, the assistant checks the handover
   itself (`handover.py`, state lines that name each open task's next step) before its closing line says
   "now `/clear`". There is no sentence to copy any more: after `/clear` a bare "continue" picks up from

@@ -51,8 +51,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
-import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -788,13 +786,15 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def run_git(args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT) -> Optional[tuple[int, bytes]]:
+def run_git(args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT,
+            project: Optional[Path] = None) -> Optional[tuple[int, bytes]]:
     """`git <args>` (a list: no shell) with a time limit; (return code, stdout bytes), None when git could
     not be run or took too long. stdout goes to a real temp file, not a pipe, so a grandchild that keeps a
-    pipe open (an ssh transport) cannot hold the call past its timeout."""
-    tmp_dir = tempfile.mkdtemp(prefix="act-advisory-")
-    try:
-        out_path = Path(tmp_dir) / "git.out"
+    pipe open (an ssh transport) cannot hold the call past its timeout. The file lives in a short-lived
+    folder under the project's .act-local/tmp/ (`project`, default `cwd`), removed afterwards; git itself
+    runs in `cwd`, never in that folder."""
+    with actlib.scratch_dir("advisory", project if project is not None else cwd) as tmp_dir:
+        out_path = tmp_dir / "git.out"
         try:
             with open(out_path, "wb") as out_file:
                 result = subprocess.run(
@@ -804,18 +804,12 @@ def run_git(args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT) -> Optional[
             return result.returncode, out_path.read_bytes()
         except (OSError, subprocess.TimeoutExpired):
             return None
-    finally:
-        for _attempt in range(8):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            if not os.path.isdir(tmp_dir):
-                break
-            time.sleep(0.25)
 
 
 def ls_remote(root: Path, source: str, patterns: list[str]) -> Optional[str]:
     """`git ls-remote -- <source> <patterns>` as text; None when it failed, timed out or the source is not
     a git remote or repository. (The session start's worker passes its own helper with the same limits.)"""
-    outcome = run_git(["ls-remote", "--", source, *patterns], root)
+    outcome = run_git(["ls-remote", "--", source, *patterns], root, project=root)
     if outcome is None or outcome[0] != 0:
         return None
     return outcome[1].decode("utf-8", errors="replace").strip()
@@ -900,7 +894,7 @@ def _fetch_branch(root: Path, source: str) -> Optional[bytes]:
     cwd = store.parent
     cwd.mkdir(parents=True, exist_ok=True)
     git_dir = f"--git-dir={store}"  # explicit on every call: git never searches upward into the project's .git
-    healthy = store.is_dir() and (run_git([git_dir, "rev-parse", "--git-dir"], cwd) or (1,))[0] == 0
+    healthy = store.is_dir() and (run_git([git_dir, "rev-parse", "--git-dir"], cwd, project=root) or (1,))[0] == 0
     if not healthy:
         try:
             if store.is_dir() and not store.is_symlink():
@@ -912,16 +906,16 @@ def _fetch_branch(root: Path, source: str) -> Optional[bytes]:
                 store.unlink()
         except OSError:
             return None
-        outcome = run_git(["init", "-q", "--bare", "--template=", str(store)], cwd)
+        outcome = run_git(["init", "-q", "--bare", "--template=", str(store)], cwd, project=root)
         if outcome is None or outcome[0] != 0:
             return None
     fetched = run_git([git_dir, "-c", "transfer.fsckObjects=true", "fetch", "-q", "--depth", "1",
                        "--no-tags", "--no-recurse-submodules", "--", source, f"+{BRANCH_REF}:{BRANCH_REF}"],
-                      cwd)
+                      cwd, project=root)
     if fetched is None or fetched[0] != 0:
         return None
     spec = f"{BRANCH_REF}:{BRANCH_FILE}"
-    size = run_git([git_dir, "cat-file", "-s", spec], cwd)
+    size = run_git([git_dir, "cat-file", "-s", spec], cwd, project=root)
     if size is None or size[0] != 0:
         return None
     try:
@@ -930,7 +924,7 @@ def _fetch_branch(root: Path, source: str) -> Optional[bytes]:
         return None
     if length > MAX_FILE_BYTES:
         raise ValueError(f"file is larger than 64 KiB ({length} bytes)")
-    blob = run_git([git_dir, "cat-file", "blob", spec], cwd)
+    blob = run_git([git_dir, "cat-file", "blob", spec], cwd, project=root)
     if blob is None or blob[0] != 0:
         return None
     return blob[1]

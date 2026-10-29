@@ -199,6 +199,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import time
 
@@ -212,14 +213,31 @@ from pathlib import Path  # noqa: E402
 _HOOK_STARTED = time.monotonic()
 
 # Must run before importing anything under .act/ (actlib/manifest/tiers, the checks package):
-# compiled caches go to the system temp directory instead of __pycache__/ folders under the
+# compiled caches go to <project>/.act-local/pyc instead of __pycache__/ folders under the
 # template tree. Keeping them (rather than sys.dont_write_bytecode) saves ~35 ms per hook call,
-# which runs twice for every tool call. Not under .act-local/: pycache_prefix mirrors the full
-# source path below the prefix, which inside the project doubles the path length and breaks
-# Windows' 260-character limit (and `git clean`) in deep checkouts. Writing a cache is best
-# effort in Python — a failure there never fails the hook.
-import tempfile  # noqa: E402
-sys.pycache_prefix = str(Path(tempfile.gettempdir()) / "act-pycache")
+# which runs twice for every tool call. The project, not the system temp directory: a cache there
+# grows with every project path and is never cleaned up; here it is gitignored with the rest of
+# .act-local/ and goes away with the project. The limit: pycache_prefix mirrors the full source path
+# (without the drive letter) below the prefix, so inside the project the cache path is about twice as
+# long as the source path, and Windows fails at 260 characters (deleting the folder, `git clean`).
+# If the longest cache path of this tree or of the standard library (cached below the prefix too)
+# could pass _PYC_PATH_BUDGET, no cache is written at all — sys.dont_write_bytecode, so there is no
+# __pycache__/ under .act/ either. Writing a cache is best effort in Python — a failure there never
+# fails the hook.
+_PYC_PATH_BUDGET = 240  # characters; Windows' limit is 260 including the drive and the file name
+_PYC_LONGEST_TAIL = 70  # below .act/: "/hooks/checks/<longest module>.cpython-3NN.pyc" is about 50 today
+try:
+    _project_root = Path(__file__).resolve().parents[2]
+    _pyc_prefix = _project_root / ".act-local" / "pyc"
+    # The mirrored path drops only a drive letter ("D:"); a UNC share stays in it.
+    _sources = (str(_project_root / ".act"), os.path.dirname(os.__file__))
+    _longest_source = max(len(s) - 2 if s[1:2] == ":" else len(s) for s in _sources)
+    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET:
+        sys.dont_write_bytecode = True
+    else:
+        sys.pycache_prefix = str(_pyc_prefix)
+except (IndexError, OSError, ValueError, RuntimeError):  # no usable project path: no cache either
+    sys.dont_write_bytecode = True
 
 # PostToolUse fires after every tool call, but only a worker's calls (cap note) and the writing
 # tools (encoding note, secret-scan note after a commit) can produce a note. Everything else

@@ -91,14 +91,22 @@ directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds
 the edit produces); the human writes such a file themselves. Limit: what a program or script writes
 itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
 
-## `R-work-throwaway` — Throwaway material in the system temp directory
+## `R-work-throwaway` — Throwaway material under `.act-local/tmp/`
 
 Checks: act-local-tidy.
 
-Throwaway material (probes, scratch projects, scratch files) goes into the system temp directory; where
-the tool refuses that to a worker, into `.act-local/tmp/<task-id>-<slug>/`, never directly under
+Throwaway material (probes, scratch projects, clones, output files, scratch files) goes into
+`.act-local/tmp/<task-id>-<slug>/`, never into the system temp directory and never directly under
 `.act-local/`. The orchestrator removes a task's folders when it commits the task
-(`python .act/scripts/act_local_tidy.py --task <id>`).
+(`python .act/scripts/act_local_tidy.py --task <id>`); whoever made a folder removes it earlier, once
+it has served. The template's own scripts keep to the same place: their short-lived folders are
+`.act-local/tmp/act-<purpose>-*`, removed when the script ends (outside a project they use the system
+temp directory), and the hooks' compiled-module cache is `.act-local/pyc/`. Such a folder lies inside the project's work tree: git run in a subfolder that is not a
+repository of its own finds the project's repository and acts on it, so set `GIT_CEILING_DIRECTORIES`
+to the folder above it, `.act-local/tmp` (git never climbs into a ceiling folder, so a throwaway
+repository still finds itself), or call git only on a repository of its own. A deny entry on Windows can
+lock out the owner too (`(RX)` also denies `READ_CONTROL` and `SYNCHRONIZE`): deny only the one right
+the probe needs, such as `(RD)`, and run `icacls <path> /reset` in the `finally`.
 
 Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
 detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
@@ -142,7 +150,9 @@ refused from 1.5× the cap onward — wrap up and report rather than push past i
 
 `Write scope: none` allows no writes in the project, only into the system temp directory as a path
 written out (`/tmp/...` in Bash, or its absolute path) — every worker may write there, unless the
-project itself lies inside it. Leaving the `Write scope:` line out means no restriction beyond the
+project itself lies inside it. That opening does not make the system temp directory a place for
+throwaway material: that goes under `.act-local/tmp/<task-id>-<slug>/` (`R-work-throwaway`), and an
+assignment that needs it names the folder in its scope. Leaving the `Write scope:` line out means no restriction beyond the
 template's own `.act/` write-guard. Patterns are relative to the project root, `/` as the separator,
 `*` crossing `/` freely (so `src/*` already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
 shorthand, `dir/` (read the same way); brackets in a path are taken literally, so

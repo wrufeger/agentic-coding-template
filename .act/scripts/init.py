@@ -43,7 +43,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import uuid
 from datetime import date
 from pathlib import Path
@@ -1830,8 +1829,9 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
             "committed there (HEAD), the working-tree edits were not taken along; commit them in the "
             "source project and copy them by hand."
         )
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        head_copy = Path(tmp_dir) / source_path.name
+    # the target project's own scratch folder: this run is about to write into it anyway
+    with actlib.scratch_dir("carry-over", root) as tmp_dir:
+        head_copy = tmp_dir / source_path.name
         head_copy.write_bytes(head_bytes)
         source_project = rules.parse_project_file(head_copy, area)
     has_deviation = source_project.overrides or source_project.own_rules or any(
