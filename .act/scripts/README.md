@@ -474,7 +474,8 @@ options:
   --for IDENTITY        task/todo/report/note entry: recipient (todo/report/note default all, task
                         default this identity; all = shared)
   --body-file PATH      body below the heading, copied verbatim (UTF-8); a question ends with an
-                        empty answer label below it
+                        empty answer label below it, unless --status answered or the text has one
+                        already
 ```
 
 ### `entries.py assign`
@@ -595,7 +596,8 @@ options:
   --status              show the current state
   --enable              set consent
   --disable             revoke consent
-  --add                 store a finding in the outbox
+  --add                 store a finding in the outbox; sends it at once with mode 'automatic' and
+                        cadence 'immediate', or with --kind bug (consent and mode still apply)
   --plan                show the payload, send nothing (default)
   --send                send if consent, the privacy check and the cadence gate all allow it
   --direct TEXT         send a hand-written message at once - works even with feedback off

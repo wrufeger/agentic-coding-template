@@ -166,6 +166,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `entries.py new question` with `--id` or `--formerly` now ends an open question with the empty
+  answer label as well; before, any question filed under a given id was left without it. A text
+  that already carries an answer label at the start of a line, in English or German, gets no
+  second one, nor does a question filed with `--status answered`.
+- `.act-lock.json` is written with LF line endings on every platform. On Windows, every update and
+  `doctor.py --accept` wrote it with CRLF, so git warned about the conversion or the diff showed
+  every line.
+- With `feedback-cadence: immediate`, `feedback.py --send` with an empty outbox no longer sends a
+  batch of 0 entries with only the numbers and a second journal entry: `--add` has already sent
+  each entry. `--send --force` and the other cadences keep that send. The help for `--add` says
+  when it sends by itself.
 - `update.py` and `init.py` no longer stop with an `EOFError` traceback when a question finds no
   input although stdin looks like a terminal, as on Windows with `< /dev/null` (the NUL device counts
   as one). The question takes its safe default instead: no consent to the update, `abort` on local

@@ -87,6 +87,8 @@
 #       Sends if consent, the privacy check and the cadence gate all allow it. --force lifts the
 #       cadence gate (not the consent gate — `feedback: off` still refuses). --yes confirms an
 #       actual send when `feedback` is `confirm` (without it, that mode only shows the payload).
+#       With cadence `immediate` and an empty outbox nothing goes out unless --force: --add has
+#       sent each entry already, a send now would carry only the numbers a second time.
 #   python .act/scripts/feedback.py --direct "<text>" [--contact <email>]
 #       Sends a hand-written message AT ONCE — independent of consent and cadence. Whoever writes
 #       the text and triggers the send has already done everything consent is otherwise for. With
@@ -1026,6 +1028,12 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
             print(f"nothing sent: last send {hours_since:.1f}h ago, cadence '{cadence}' allows "
                   f"earliest after {hours_min}h. The outbox is kept and goes out next time.")
             return 0
+        if cadence == "immediate" and not force and not _read_entries(root):
+            # --add sends each entry itself under this cadence; a send with an empty outbox would
+            # carry only the numbers, as a second send of the same moment.
+            print("nothing sent: the outbox is empty - cadence 'immediate' sends each entry when "
+                  "it is added.")
+            return 0
     payload = _build_payload(root, config)
     # _build_payload may have created and saved the project id (_ensure_project_id); read the state
     # again so the writes below keep it instead of putting back the copy read before.
@@ -1336,7 +1344,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--status", action="store_true", help="show the current state")
     group.add_argument("--enable", action="store_true", help="set consent")
     group.add_argument("--disable", action="store_true", help="revoke consent")
-    group.add_argument("--add", action="store_true", help="store a finding in the outbox")
+    group.add_argument("--add", action="store_true",
+                       help="store a finding in the outbox; sends it at once with mode 'automatic' and "
+                            "cadence 'immediate', or with --kind bug (consent and mode still apply)")
     group.add_argument("--plan", action="store_true", help="show the payload, send nothing (default)")
     group.add_argument("--send", action="store_true",
                         help="send if consent, the privacy check and the cadence gate all allow it")

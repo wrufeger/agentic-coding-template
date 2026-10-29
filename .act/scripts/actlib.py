@@ -132,7 +132,8 @@ def _write_json_merged(path: Path, data: dict) -> dict:
     merged.update(data)
     if existing is not None and merged == existing:
         return merged  # nothing changed: leave the file (and a versioned one's git status) alone
-    overwrite_text(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
+    # LF on every platform: .act-lock.json is versioned in that form.
+    write_text_lf(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
     return merged
 
 
@@ -1207,7 +1208,7 @@ def write_settings_booking(root: Path, booking: Optional[dict]) -> None:
     else:
         new_lock.pop(SETTINGS_BOOKED_KEY, None)
     if new_lock != lock or not lock_path.is_file():
-        overwrite_text(lock_path, json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n")
+        write_text_lf(lock_path, json.dumps(new_lock, indent=2, ensure_ascii=False) + "\n")
 
 
 # Earlier wordings of a template block line that a project from before line-state tracking
