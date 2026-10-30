@@ -457,10 +457,11 @@ def _human_size(size: int) -> str:
     return f"{size} B"
 
 
-def _line(count: int, size: int, kinds: dict[str, int], names: list[str], verb: str, tail: str) -> str:
+def _line(count: int, size: int, kinds: dict[str, int], verb: str, tail: str) -> str:
+    """Count, size and kinds only: the entry names stay out of the session start and the update summary
+    (`python .act/scripts/act_local_tidy.py` lists them)."""
     split = ", ".join(f"{kind} {n}" for kind, n in sorted(kinds.items()))
-    shown = ", ".join(names[:5]) + (f", +{count - 5} more" if count > 5 else "")
-    return f"act-local-tidy: {verb} {count} entr{'y' if count == 1 else 'ies'} in .act-local/ ({_human_size(size)}; {split}): {shown}{tail}"
+    return f"act-local-tidy: {verb} {count} entr{'y' if count == 1 else 'ies'} in .act-local/ ({_human_size(size)}; {split}){tail}"
 
 
 def _names(items: list[TidyItem]) -> list[str]:
@@ -475,6 +476,7 @@ def _kinds(items: list[TidyItem]) -> dict[str, int]:
 
 
 _KEEP_HINT = " - keep an entry with `act-local-keep` in docs/ai/config.md"
+_LIST_HINT = " - list them with `python .act/scripts/act_local_tidy.py`"
 
 
 def format_summary(items: list[TidyItem], first_run: bool) -> str:
@@ -482,8 +484,8 @@ def format_summary(items: list[TidyItem], first_run: bool) -> str:
     if not items:
         return ""
     tail = (" - report only, nothing removed; removal starts on a later day, after this has been shown at a "
-            "session start" if first_run else "") + _KEEP_HINT
-    return _line(len(items), sum(i.size for i in items), _kinds(items), _names(items), "would remove", tail)
+            "session start" if first_run else "") + _LIST_HINT + _KEEP_HINT
+    return _line(len(items), sum(i.size for i in items), _kinds(items), "would remove", tail)
 
 
 def format_result(data: dict, shown: Optional[date] = None) -> str:
@@ -500,10 +502,9 @@ def format_result(data: dict, shown: Optional[date] = None) -> str:
             first = ((shown or date.today()) + timedelta(days=1)).isoformat()
             tail = "" if removed else (
                 f" - report only, nothing removed; removal starts on a later day, the first start on or after {first}"
-                if data.get("pending_removal") else " - report only")
+                if data.get("pending_removal") else " - report only") + _LIST_HINT
             parts.append(_line(count, int(data.get("bytes", 0)), dict(data.get("kinds", {})),
-                               [str(n) for n in data.get("names", [])], "removed" if removed else "would remove",
-                               tail + _KEEP_HINT))
+                               "removed" if removed else "would remove", tail + _KEEP_HINT))
         if failures:
             parts.append(f"act-local-tidy: could not remove {len(failures)}: {'; '.join(failures[:3])}")
         return " | ".join(parts)
@@ -680,6 +681,7 @@ def _run_daily_locked(root: Path, now: float, today: date, mode: str) -> dict:
             result = {"mode": "would", "count": len(items), "bytes": sum(i.size for i in items),
                       "pending_removal": mode == "block"}
         if result:
+            # `names` is kept for diagnosis in the result file only; the session-start line does not show it.
             result.update({"kinds": _kinds(shown), "names": _names(shown)[:5], "failures": failures[:5],
                            "day": today.isoformat()})
     fields = {"last_run": today.isoformat()}

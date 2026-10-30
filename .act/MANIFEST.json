@@ -113,7 +113,7 @@
   "rules/topics/safeguards.md": "158aa272c0a076ce617642c042f22a7800e73fc426f305c71b2aa92a487f9084",
   "rules/topics/worker-rules.md": "5dcdd04cd1e3fa88292dba8f9698a51ff5e922964afbb527f523e853605b596d",
   "scripts/README.md": "e188be9d275878179745a63ef34f67c1e1cb434242daa39d4456abc3b9065583",
-  "scripts/act_local_tidy.py": "40ef71555fcc3060de07b7ab5c7d97b5551402f5682553baf2d828a4b5d89c11",
+  "scripts/act_local_tidy.py": "ee9d3f001d5788338cfa8ed659c4a9a0a8eb4151d68e7fdf35c38e0e1352519c",
   "scripts/actlib.py": "2c1ee474e8915c28feddc70ff087e14a96f9fc4894fdd01e4e0756e1f1e69df7",
   "scripts/adopt.py": "f3a61a0b5b5e29c4178778093506a1a7ff78ff6eb13eb076e4c2dab3edd8c7fc",
   "scripts/adopt_config.py": "c98b986e402ec59d093ff12eae105e6b2e66aedd106e2a31a1deddaeb5d759c9",

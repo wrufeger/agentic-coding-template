@@ -9,6 +9,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Changed
+
+- The `act-local-tidy` line at session start and in the `update` summary gives count, size and kinds only, no
+  longer up to five entry names. A line that only reports what would go points to
+  `python .act/scripts/act_local_tidy.py`, which still lists every entry. Entries that could not be removed are
+  still named, since they need your attention.
+
 ## [2.4.0] - 2026-10-30
 
 Sessions carry their project's name and `/act-info` shows where one works, the template author can warn projects on a
