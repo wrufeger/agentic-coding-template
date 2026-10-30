@@ -431,6 +431,73 @@ def write_identity(data: dict) -> dict:
     return _write_json_merged(_identity_path(), data)
 
 
+# Git user names that stand for "nobody set this" (init.py shows the same ones as placeholders).
+PLACEHOLDER_GIT_NAMES = {"test", "your name", "user"}
+
+
+def git_user_name(root: Path) -> str:
+    """`git config user.name` as seen from `root`, or "" when unset, a placeholder, or git fails."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "config", "user.name"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    name = result.stdout.strip() if result.returncode == 0 else ""
+    return "" if name.lower() in PLACEHOLDER_GIT_NAMES else name
+
+
+def _identity_fill(root: Path, slug: str, existing: Optional[dict]) -> dict:
+    """Merge `slug` onto the identity file of `root`, adding a workspace id and creation date only
+    where the file has none; every other key stays. Returns the merged dict."""
+    import uuid
+    data: dict = {"identity": slug}
+    if not str((existing or {}).get("workspace") or "").strip():
+        data["workspace"] = uuid.uuid4().hex[:12]
+    if not str((existing or {}).get("created") or "").strip():
+        data["created"] = datetime.now().date().isoformat()
+    return _write_json_merged(_identity_path(root), data)
+
+
+def ensure_identity(root: Path, owner: Optional[str] = None, plan: bool = False) -> tuple[str, Optional[dict]]:
+    """Make sure `.act-local/identity.json` of `root` has an `identity`. Returns (status, data):
+    "present" (nothing written), "created" (the file was missing or had no/empty `identity`;
+    `data` is the file as written), "unreadable" (the file exists but is no JSON object -- nothing
+    written, so a person's identity, chat language and workspace id are not lost; `data` is None)
+    or "none" (nothing to derive it from: no `owner`, no usable `git config user.name`, or a name
+    with no letter or digit that would only become the guessed slug `user` -- nothing is guessed
+    and nothing written). The identity is the slug of `owner` if given, else of the git user name.
+    A present identity is never overwritten; other keys (e.g. `chat_language`) are kept. With
+    `plan` nothing is written; `data` then shows what would be."""
+    existing = read_identity(root)
+    if existing is None and _identity_path(root).is_file():
+        return "unreadable", None
+    if str((existing or {}).get("identity") or "").strip():
+        return "present", existing
+    name = (owner or "").strip() or git_user_name(root)
+    slug = identity_slug(name) if name else ""
+    if not slug or (slug == "user" and name.strip().lower() != "user"):
+        return "none", None
+    if plan:
+        return "created", {**(existing or {}), "identity": slug}
+    return "created", _identity_fill(root, slug, existing)
+
+
+def set_identity(root: Path, name: str) -> tuple[str, dict]:
+    """Set the identity of `root` to the slug of `name` (an explicit choice, so it replaces an
+    existing one, and an unreadable file too). Returns (previous identity or "", data as written).
+    Other keys stay; a missing workspace id is added. Raises ValueError for a name with no letter
+    or digit (`???`), which would silently become the slug `user`."""
+    slug = identity_slug(name)
+    if slug == "user" and name.strip().lower() != "user":
+        raise ValueError(f"{name.strip()!r} has no letter or digit to form an identity from")
+    existing = read_identity(root)
+    previous = str((existing or {}).get("identity") or "").strip()
+    return previous, _identity_fill(root, slug, existing)
+
+
 # ---------------------------------------------------------------------------
 # .act-local/cache.json — generated-file cache, gitignored
 # ---------------------------------------------------------------------------

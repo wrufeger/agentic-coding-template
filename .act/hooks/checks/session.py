@@ -1629,6 +1629,24 @@ def _compact_note(root: Path) -> str:
     return "\n".join(lines)
 
 
+def _identity_note(root: Path) -> Optional[str]:
+    """Make sure this checkout has an identity (.act-local/identity.json is gitignored, so a fresh
+    clone or a second machine lacks it): create it from `git config user.name` and say so in one
+    line; with no usable git name say that none exists. None when it was there already."""
+    status, data = actlib.ensure_identity(root)
+    if status == "created" and data:
+        return (f"[act] identity `{data['identity']}` created from git user.name (workspace "
+                f"{data.get('workspace', '?')}); change with `python .act/scripts/board.py --identity <name>`")
+    if status == "unreadable":
+        return ("[act] `.act-local/identity.json` is unreadable: fix it or run "
+                "`python .act/scripts/board.py --identity <name>`")
+    if status == "none":
+        return ("[act] no identity for this checkout (git user.name is not set or has no letter or digit); board, ideas and new "
+                "entries need one: ask the human for their name, then run "
+                "`python .act/scripts/board.py --identity <name>`")
+    return None
+
+
 def _env_override_note() -> Optional[str]:
     """One note naming every active environment override, or None when none is set."""
     active = [name for name in _ENV_OVERRIDES if os.environ.get(name, "").strip()]
@@ -2149,6 +2167,16 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     # topic's own switch (docs/ai/config.md § Logging/Feedback), not this check, decides whether
     # it is active, and its rule file has to be named either way — "session-start-refresh: off"
     # only turns off the bridge/board/rules re-derivation this function does, not topic awareness.
+    # The identity first, so the "ideas" topic below already sees one created now (fresh clone). It is
+    # written even when session-start-refresh is "warn" or "off": without it nothing else works.
+    try:
+        identity_note = _identity_note(root)
+    except Exception as exc:  # never block the session over an identity
+        print(f"[act] identity check failed ({exc.__class__.__name__})", file=sys.stderr)
+        identity_note = None
+    if identity_note:
+        print(identity_note)
+
     try:
         topics = _active_topics(root, config)
     except Exception:

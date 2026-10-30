@@ -347,7 +347,7 @@ options:
 Call: direct
 
 ```text
-usage: board.py [-h] [--chat-language CODE] [--shared]
+usage: board.py [-h] [--chat-language CODE] [--identity NAME] [--shared]
 
 Write the board view chosen by `board` in docs/ai/config.md: docs/ai/board.md (docs, shared) or
 .act-local/board-<branch>.md (local).
@@ -356,6 +356,9 @@ options:
   -h, --help            show this help message and exit
   --chat-language CODE  remember the chat language recognized for this person on this machine
                         (.act-local/identity.json) while language-chat is auto, then exit
+  --identity NAME       set or change this checkout's identity (the short form of NAME, .act-
+                        local/identity.json), keep its other keys, then exit; board and ideas
+                        files of a former identity are not renamed
   --shared              with `board: shared`: also write the versioned docs/ai/board-<identity>.md
                         (act-commit calls it; a plain run never touches that file)
 ```

@@ -2,7 +2,9 @@
 Everyone on the project has their own file here for ideas, wishes and concept notes:
 `ideas-<identity>.md`, `<identity>` being the short name in `.act-local/identity.json` (the same one
 `for:` and the board use). `init` creates it for the owner, the session start for everyone else the
-first time they open a session in this project. It is versioned, and nobody but its owner writes
+first time they open a session in this project. If `.act-local/identity.json` is missing (a fresh
+clone, a second machine), the session start creates it from `git config user.name`; change the name
+with `python .act/scripts/board.py --identity <name>`. It is versioned, and nobody but its owner writes
 entries in it — so two people never edit the same file.
 
 Write each idea as its own `## <title>` section. The next session start notices what is new or

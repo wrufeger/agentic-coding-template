@@ -148,11 +148,16 @@ out falls back to the tier's own default: `light` 10, `standard` 40, `elevated` 
 The worker gets one note on reaching the cap ("cap reached — deliver your current state now") and is
 refused from 1.5× the cap onward — wrap up and report rather than push past it.
 
-`Write scope: none` allows no writes in the project, only into the system temp directory as a path
-written out (`/tmp/...` in Bash, or its absolute path) — every worker may write there, unless the
-project itself lies inside it. That opening does not make the system temp directory a place for
-throwaway material: that goes under `.act-local/tmp/<task-id>-<slug>/` (`R-work-throwaway`), and an
-assignment that needs it names the folder in its scope. Leaving the `Write scope:` line out means no restriction beyond the
+`Write scope: none` allows no writes at all: not in the project, and not in the system temp directory or
+the worker's scratchpad either (only `/dev/null`, `NUL` and the standard streams stay free). A worker with
+any `Write scope:` line writes only what that scope allows; the system temp directory and the scratchpad
+are no exception. Throwaway material goes under `.act-local/tmp/<task-id>-<slug>/` (`R-work-throwaway`),
+and an assignment that needs it names the folder in its scope (`.act-local/tmp/<task-id>-<slug>/**`); the
+refusal of a write into the system temp directory or the scratchpad, every refusal under `none`, and the
+refusal of a target that starts with a temp variable (`$TEMP`, `${TMPDIR}`, `$env:TEMP` ...) say so. Limit:
+`mktemp` (also `-d`, `-p`), PowerShell `New-TemporaryFile` and `tempfile` in inline code create a file in
+the system temp directory without a path in the command, so the check does not see it; a later write
+through the variable that holds the name is refused. Leaving the `Write scope:` line out means no restriction beyond the
 template's own `.act/` write-guard. Patterns are relative to the project root, `/` as the separator,
 `*` crossing `/` freely (so `src/*` already reaches any depth under `src/`); a whole directory can also be named as `dir/**` or, as a
 shorthand, `dir/` (read the same way); brackets in a path are taken literally, so
@@ -174,7 +179,7 @@ without a `Write scope:` line and the orchestrator are not affected). A Bash or 
 `python`, `python3`, `python3.N`, `pythonw`, `py` (also `py -3`) or `node` (an `.exe` suffix and a
 directory in front are fine, and so are the usual prefixes such as `env`) with code of its own is refused
 when the code holds **a write call and a path written out as a literal that lies outside the scope** (the
-system temp directory and the worker's scratchpad stay open, as for any write). The code comes from `-c`
+system temp directory and the worker's scratchpad are not exempt, as for any write). The code comes from `-c`
 (also a cluster such as `-Ic`, with options like `-X utf8` before it) or `node -e`/`--eval`/`-p`/`--print`
 (also after `-i`/`--interactive`, which still runs the code); or from standard input - `-` or no script argument, with a heredoc (`python - <<'EOF'`), a here-string, or
 a literal piped in (`cat <<'EOF' | python -`, `{ cat <<'EOF'; } | python -`, `cat <<'EOF' | (python -)`,

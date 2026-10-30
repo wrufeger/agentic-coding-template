@@ -27,8 +27,9 @@ compact header, default cap per tier, the note at the cap and the refusal beyond
 
 Every assignment also states its write scope as a `Write scope: <glob>[, <glob> ...]` line, patterns
 relative to the project root; `Write scope: none` means read-only. Checked mechanically by
-`worker-write-scope` (`docs/ai/config.md` § Checks); pattern syntax, the temp exception and limits:
-`topics/checks.md`.
+`worker-write-scope` (`docs/ai/config.md` § Checks); a worker with a scope writes nowhere else, the
+system temp directory and its scratchpad included, so an assignment that needs throwaway material names
+`.act-local/tmp/<task-id>-<slug>/**` in it. Pattern syntax and limits: `topics/checks.md`.
 
 Workers running at the same time get separate write scopes, otherwise they run one after the other
 (`worker-scope-overlap`, `docs/ai/config.md` § Checks).

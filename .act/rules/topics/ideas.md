@@ -6,6 +6,12 @@ own ideas file — `docs/ai/concept/ideas-<identity>.md`, rules for the human in
 start names them in an `[act] ideas:` note. Mechanism: `.act/scripts/ideas.py`, called from
 `.act/hooks/checks/session.py`.
 
+`<identity>` is the short name in `.act-local/identity.json` (gitignored). The session start creates
+that file from `git config user.name` when a checkout lacks it (fresh clone, second machine) and says
+so in an `[act] identity` line — also when `session-start-refresh` is `warn` or `off`, the one thing it writes then; a file that exists but is unreadable is never overwritten, the session start only says so; without a usable git name it says that none exists — ask the human for
+their name and run `python .act/scripts/board.py --identity <name>`. Files of a former identity are
+not renamed.
+
 ## When
 
 After the answered inbox entries (`R-human-inbox-first`), before new work of your own — unless the

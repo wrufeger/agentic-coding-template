@@ -43,7 +43,6 @@ import re
 import shutil
 import subprocess
 import sys
-import uuid
 from datetime import date
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional, TypedDict, Union
@@ -89,7 +88,7 @@ class BridgeSpec(TypedDict):
 # ---------------------------------------------------------------------------
 
 # Recognizable placeholder git identities (step 3). Compared case-insensitively.
-PLACEHOLDER_NAMES = {"test", "your name", "user"}
+PLACEHOLDER_NAMES = actlib.PLACEHOLDER_GIT_NAMES
 PLACEHOLDER_EMAIL_SUFFIXES = ("@example.com",)
 
 # Known origins of the template itself (step 2). A repo whose "origin" normalizes to one of these
@@ -827,13 +826,15 @@ def step_identity(root: Path, plan: bool, interactive: bool, notes: list[str]) -
 # ---------------------------------------------------------------------------
 
 def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
-    if actlib.read_identity() is not None:
+    status, data = actlib.ensure_identity(root, owner=owner, plan=plan)
+    if status == "unreadable":
+        return ".act-local/identity.json is unreadable, left unchanged: fix it or run board.py --identity <name>"
+    if status == "none":
+        return "no usable name, nothing created: run board.py --identity <name>"
+    if status != "created" or data is None:
         return "already present, left unchanged"
-    slug = actlib.identity_slug(owner)
-    workspace = uuid.uuid4().hex[:12]
-    if not plan:
-        actlib.write_identity({"identity": slug, "workspace": workspace, "created": date.today().isoformat()})
-    return f"identity '{slug}', workspace '{workspace}'" + (" (plan)" if plan else "")
+    return (f"identity '{data['identity']}', workspace '{data.get('workspace', '(to be created)')}'"
+            + (" (plan)" if plan else ""))
 
 
 _IMPORT_README_TEXT = """\

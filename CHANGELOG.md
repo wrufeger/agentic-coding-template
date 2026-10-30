@@ -63,6 +63,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   is only reported. An unedited `docs/ai/rules.md` is re-derived from the template as before.
 - `init` and `update` keep IDEs from indexing `.act-local/`: an `excludeFolder` in a JetBrains
   `.idea/*.iml`, and `files.watcherExclude` in `.vscode/settings.json` where `.vscode/` exists.
+- The session start creates `.act-local/identity.json` when it is missing or has no `identity` (a
+  fresh clone, a second machine): the short name comes from `git config user.name`, as with `init`,
+  plus a new workspace id, and one `[act] identity` line in the start context names both. Other keys
+  in the file, such as `chat_language`, stay. Without a usable git name (unset, a placeholder, or no
+  letter or digit in it) nothing is guessed: the start context says so and names the command. An
+  unreadable file is never overwritten, the start context says that too; this also holds with
+  `session-start-refresh: warn` or `off`. `python .act/scripts/board.py --identity <name>` sets or
+  changes the identity, also over an unreadable file; files of a former identity are named, not
+  renamed.
 
 ### Changed
 
@@ -195,6 +204,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- In a checkout without `.act-local/identity.json`, the board no longer skips its per-person file,
+  new entries no longer get `unknown`, a new idea no longer aborts and quick capture works again,
+  since the session start now creates the identity. `init` also fills an identity file that lacks
+  the `identity` key, instead of taking any existing file as set up.
 - `entries.py new question` with `--id` or `--formerly` now ends an open question with the empty
   answer label as well; before, any question filed under a given id was left without it. A text
   that already carries an answer label at the start of a line, in English or German, gets no
@@ -268,6 +281,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `worker-write-scope`: for a worker whose assignment has a `Write scope:` line, a write target in
+  the system temp directory or its scratchpad is now refused like any other target outside the
+  scope, and `Write scope: none` allows no writes at all.
+  Throwaway material goes under `.act-local/tmp/<task-id>-<slug>/`, which the assignment names in its
+  scope (`.act-local/tmp/<task-id>-<slug>/**`); the refusal says so. Workers without a `Write scope:`
+  line, the orchestrator, the `outside-root` check and writes to `/dev/null`, `NUL` and the standard
+  streams are unchanged.
 - The daily update check's `git ls-remote` allows only the `file`, `git`, `http`, `https` and `ssh`
   protocols, also over a `GIT_ALLOW_PROTOCOL` of your own: a template source using a remote helper
   such as `ext::` cannot start a program from the session start. A source behind another remote

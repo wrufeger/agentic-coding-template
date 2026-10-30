@@ -6,8 +6,9 @@
 #          result and lets the orchestrator record it. No exception for docs/ai/local/: that
 #          directory holds the *project's* override of a template file, still something
 #          only the orchestrator decides to write, not a worker's scratch space (a worker's
-#          scratch space is scratchpad_dir, exempted the same way checks/write_scope.py exempts
-#          it via _within_scratchpad — reused here, not copied). The orchestrator's own calls are
+#          scratch space is scratchpad_dir, which this check skips via write_scope._within_scratchpad:
+#          the target is not in docs/ai/. That says nothing about write scope, which opens neither the
+#          scratchpad nor the system temp directory). The orchestrator's own calls are
 #          never checked here — it is exactly who is *allowed* to write to docs/ai/.
 #
 #          Shape mirrors checks/write_guard.py (protected-path regex over a Write/Edit/MultiEdit/
@@ -89,9 +90,9 @@ def _bash_targets_docs_ai(
     themselves paths worth checking here; a worker's `git add`/`git commit`/... is blocked outright
     by checks/worker_git_write.py regardless of what path it names, so this check does not need to
     special-case every write-ish git subcommand itself. A target inside the worker's own
-    scratchpad_dir (write_scope._within_scratchpad) is exempt, same as check_worker_write_
-    scope treats it — a worker's scratch space is never "docs/ai/" in the sense R-role-worker
-    means. A target whose base directory is unknown, that contains a shell variable/substitution,
+    scratchpad_dir (write_scope._within_scratchpad) is skipped here: a worker's scratch space
+    is never "docs/ai/" in the sense R-role-worker means (whether it may write there at all is
+    check_worker_write_scope's question, not this one's). A target whose base directory is unknown, that contains a shell variable/substitution,
     or whose own project `root` could not be determined is judged denied only if its own text
     names docs/ai — mirrors checks/write_guard.py's _bash_targets_protected_path exactly (a
     *determinable* target is resolved and checked against `root`'s own docs/ai/ only,

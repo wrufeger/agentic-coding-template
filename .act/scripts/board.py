@@ -26,10 +26,14 @@
 #          this machine while `language-chat` is `auto` (R-human-language) — per checkout in
 #          .act-local/identity.json, never versioned; the session start names it again.
 #
+#          `--identity` sets or changes the identity of this checkout (the short form of the name
+#          given); the session start creates it from `git config user.name` when it is missing.
+#
 # Usage:
 #   python .act/scripts/board.py
 #   python .act/scripts/board.py --shared             # `board: shared`: also the versioned board
 #   python .act/scripts/board.py --chat-language de   # remember the owner's chat language here
+#   python .act/scripts/board.py --identity "Jane Doe" # identity `jane-doe` for this checkout
 #
 # Output format:
 #   Writes the view chosen by `board` (docs/ai/board.md, or .act-local/board-<branch>.md for
@@ -920,12 +924,38 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--chat-language", metavar="CODE",
                         help="remember the chat language recognized for this person on this machine "
                              "(.act-local/identity.json) while language-chat is auto, then exit")
+    parser.add_argument("--identity", metavar="NAME",
+                        help="set or change this checkout's identity (the short form of NAME, "
+                             ".act-local/identity.json), keep its other keys, then exit; board and "
+                             "ideas files of a former identity are not renamed")
     parser.add_argument("--shared", action="store_true",
                         help="with `board: shared`: also write the versioned docs/ai/board-<identity>.md "
                              "(act-commit calls it; a plain run never touches that file)")
     args = parser.parse_args(argv)
 
     root = actlib.repo_root()
+
+    if args.identity is not None:
+        if not args.identity.strip():
+            print("board: --identity needs a name", file=sys.stderr)
+            return 2
+        try:
+            previous, data = actlib.set_identity(root, args.identity)
+        except ValueError as exc:
+            print(f"board: --identity: {exc}; give a name with letters or digits (a-z, 0-9)", file=sys.stderr)
+            return 2
+        print(f"board: identity {data['identity']!r} set for this checkout in .act-local/identity.json"
+              + (f" (was {previous!r})" if previous and previous != data["identity"] else ""))
+        if previous and previous != data["identity"]:
+            old_files = [p for p in (root / ".act-local" / f"board-{previous}.md",
+                                     root / ".act-local" / f"inbox-{previous}.md",
+                                     root / "docs" / "ai" / f"board-{previous}.md",
+                                     root / "docs" / "ai" / "concept" / f"ideas-{previous}.md")
+                         if p.is_file()]
+            if old_files:
+                print("board: files of the former identity stay as they are (rename or merge them by hand): "
+                      + ", ".join(p.relative_to(root).as_posix() for p in old_files))
+        return 0
 
     if args.chat_language is not None:
         code = actlib.normalize_language(args.chat_language)

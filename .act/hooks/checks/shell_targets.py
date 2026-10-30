@@ -625,7 +625,7 @@ def _is_remote_unc(path: Path) -> bool:
 def _resolve_path(raw: str, base: Optional[str] = None) -> Optional[Path]:
     """`raw` as one absolute, resolved, native path — the single way every check turns a write
     target into something it can compare against a project directory (write-guard, docs/ai/
-    guard, worker write scope, scratchpad exemption, the PowerShell scanner's own resolution and
+    guard, worker write scope, the PowerShell scanner's own resolution and
     checks/mcp_ide.py's translated targets all go through here). A relative `raw` is joined onto
     `base` first (None back when there is no `base` to join it onto — the caller decides what an
     unplaceable target means for it); both sides pass through _to_native_path before resolving,

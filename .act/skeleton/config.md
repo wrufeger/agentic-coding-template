@@ -215,7 +215,7 @@ refuses") treats `block` as `warn`.
 | Check | Value | Guards |
 | :--- | :--- | :--- |
 | `template-write-guard` | block | writes under `.act/` — put a project version in `docs/ai/local/<same path>` instead |
-| `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` only reports what it would refresh (once per change, not at every start) and writes nothing, here and in `update.py`'s bridge step; `off` skips it, and `update.py` then only reports too |
+| `session-start-refresh` | block | rebuilds the generated bridges and the board at session start; `warn` only reports what it would refresh (once per change, not at every start) and writes nothing (one exception: a missing `.act-local/identity.json` is still created from `git config user.name`), here and in `update.py`'s bridge step; `off` skips it, and `update.py` then only reports too |
 | `orchestrator-rules` | block | fallback only: while `docs/ai/rules.md` does not import the orchestrator-only rules (an older, locally changed copy), the session start names them in short; `off` skips it |
 | `worker-nesting-guard` | block | a sub-agent calling `Agent`/`Task` (no sub-sub-agents, `R-role-worker`) — `warn` reports without blocking, `off` skips it |
 | `worker-write-scope` | block | a worker writing outside its assignment's `Write scope:` line (`R-cost-delegate`) — `warn` reports without blocking, `off` skips it |

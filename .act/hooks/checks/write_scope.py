@@ -82,7 +82,7 @@ __all__ = [
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
     "_agent_assignment_text",
-    "_normalize_candidate_path", "_within_scratchpad", "_within_system_temp", "_offending_hint", "_matches_scope", "_shell_expansion_escapes",
+    "_normalize_candidate_path", "_within_scratchpad", "_names_throwaway_place", "_throwaway_way_out", "_offending_hint", "_matches_scope", "_shell_expansion_escapes",
     "_write_scope_message", "_INLINE_DYNAMIC_RE", "_inline_target_offends", "_inline_hint",
     "check_worker_write_scope",
 ]
@@ -562,7 +562,7 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
     to an absolute path at all. Both the target and `root` go through shell_targets._resolve_path
     (the shared normalization — a `\\\\?\\D:\\...` or `\\\\localhost\\D$\\...` spelling of an in-scope
     path is judged as the in-scope path it is, review finding M-c). The worker's own
-    scratchpad is exempted separately by the caller, before this is ever called."""
+    scratchpad has no exemption: it is judged like any other path outside the root."""
     if not raw:
         return None
     resolved = _resolve_path(raw, base)
@@ -575,20 +575,20 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
         return str(resolved).replace("\\", "/")
 
 
-# A glob character in a path the temp or scratchpad exemption would judge: the shell may expand it to
-# names the path text does not show -- with `globskipdots` off (bash before 5.2, or `shopt -u`) `.*`
-# matches `.` and `.?` matches `..`, so `<temp>/.*/../<project>/x` writes into the project while
-# its text resolves inside temp. Such a path is never exempt; the scope check judges it as usual.
+# A glob character in a path the scratchpad test (_within_scratchpad) would judge: the shell may expand
+# it to names the path text does not show -- with `globskipdots` off (bash before 5.2, or `shopt -u`)
+# `.*` matches `.` and `.?` matches `..`, so `<scratchpad>/.*/../<project>/x` writes into the project
+# while its text resolves inside the scratchpad. Such a path never counts as inside it.
 _GLOB_CHAR_RE = re.compile(r"[*?\[]")
 
 
 def _within_scratchpad(raw: str, scratchpad_dir: str, base: Optional[str] = None) -> bool:
-    """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload) —
-    exempt from write-scope enforcement per shell_targets' module docstring step 4 (a worker's temp
-    files are never "the project" in the sense a Write scope line means). A relative `raw` counts
-    only with a known `base` (the directory a shell command's `cd` led to) it resolves against:
-    `cd <scratchpad> && echo x > out.txt` writes into the scratchpad, not the project. Without a
-    `base` a relative path stays unplaceable and is never exempt. Neither is a path with a glob
+    """True if `raw` resolves under the worker's own scratchpad_dir (from the hook payload). The
+    worker write scope no longer exempts it (a scratchpad write is judged like any path outside the
+    scope); it serves the docs/ai/ guard (worker_docs_ai.py), which only asks whether a target lies
+    in docs/ai/. A relative `raw` counts
+    only with a known `base` (the directory a shell command's `cd` led to) it resolves against.
+    Without a `base` a relative path stays unplaceable. Neither is a path with a glob
     character (see `_GLOB_CHAR_RE`)."""
     if _GLOB_CHAR_RE.search(raw):
         return False
@@ -612,8 +612,9 @@ _TargetForm = tuple[str, bool]
 
 
 def _system_temp_roots() -> list[Path]:
-    """The resolved system temp directories a worker may write into: `tempfile.gettempdir()` and,
-    off Windows, `/tmp`."""
+    """The resolved system temp directories: `tempfile.gettempdir()` and, off Windows, `/tmp`. The
+    worker write scope opens none of them; outside_root.py allows them, and a refused write names
+    the way out when it lies in one (_names_throwaway_place)."""
     roots: list[Path] = []
     candidates = [tempfile.gettempdir()]
     if sys.platform != "win32":
@@ -631,11 +632,11 @@ def _target_forms(tool_name: str, raw: str) -> list[_TargetForm]:
     every word it expands to *and* for its literal name: with brace expansion switched off (`set +B`,
     `set +o braceexpand`, a sourced file that does so) bash writes that one name instead, and nothing
     in the text says reliably which it will be — so both have to lie inside the scope. On Windows a
-    leading `/tmp`, which Git Bash maps to the temp directory, becomes that directory. Any other
-    tool's target stays as it is, and so does a target whose quoting is not known or that came out
-    of a nested shell, `eval` or `$(...)` (no `live`): its `{` keeps it dynamic. A variable is never
-    replaced, whatever its name: `$TEMP`, `$TMPDIR`, `$env:TEMP` stay dynamic, and the way into the
-    temp directory is the path written out (`/tmp/...` in Bash, or its absolute path)."""
+    leading `/tmp`, which Git Bash maps to the temp directory, becomes that directory (so a refused
+    target is named and judged as the place it is). Any other tool's target stays as it is, and so
+    does a target whose quoting is not known or that came out of a nested shell, `eval` or `$(...)`
+    (no `live`): its `{` keeps it dynamic. A variable is never replaced, whatever its name: `$TEMP`,
+    `$TMPDIR`, `$env:TEMP` stay dynamic."""
     if tool_name != "Bash":
         return [(raw, False)]
     text = str(raw)
@@ -651,80 +652,6 @@ def _target_forms(tool_name: str, raw: str) -> list[_TargetForm]:
                 for path, literal in forms
             ]
     return forms
-
-
-def _within_system_temp(raw: str, base: Optional[str], root: Path, literal_brace: bool = False) -> bool:
-    """True if `raw` resolves under the system temp directory (`tempfile.gettempdir()`, `/tmp`) and
-    not under the project root: any worker may write there, a `Write scope:` line or not. Only the
-    resolved path counts, so `..` out of the temp directory and a symlink from it back into the
-    project are judged where they lead. Any variable or expansion in `raw` (`$TEMP`, `$TMPDIR`,
-    `$env:TEMP`, `$(mktemp -d)` ...) is not knowable and never exempt: only a path written out counts;
-    `literal_brace` says `raw` is the literal name of a resolved brace list (`_target_forms`), whose
-    `{` is a character of the name. A relative `raw` counts only with a known `base`. A project that
-    itself lies inside the temp directory gets no such exemption: it would open the project's
-    neighbours. A glob character is allowed in the last segment only (see the comment in the body)."""
-    roots = _system_temp_roots()
-    if not roots:
-        return False
-    if _is_dynamic_target(raw) and not literal_brace:
-        return False
-    glob_matches: list[str] = []
-    if _GLOB_CHAR_RE.search(raw):
-        # A glob in the last path segment only (`/tmp/x/*`, also what `tar -C <dir>` is read as):
-        # exempt when the literal directory in front of it lies in temp and every name it matches
-        # today does too. A glob earlier in the path, a `..` anywhere, or a last segment starting
-        # with "." (`.*` matches `..` with globskipdots off) is never exempt.
-        head, _sep, last = raw.rpartition("/")
-        if _GLOB_CHAR_RE.search(head) or ".." in raw.replace("\\", "/").split("/") or last.startswith("."):
-            return False
-        if not head or (not _is_absolute_target(head) and base is None):
-            return False
-        head_path = _resolve_path(head, base)
-        if head_path is None:
-            return False
-        # Every entry of the directory counts, hidden ones included and without comparing names:
-        # bash with `dotglob` or `nocaseglob` matches names a plain glob skips, and a junction or
-        # symlink among them may lead out of temp.
-        try:
-            with os.scandir(head_path) as entries:
-                glob_matches = [entry.path for entry in entries]
-        except (FileNotFoundError, NotADirectoryError):
-            glob_matches = []
-        except (OSError, ValueError):
-            return False
-        raw = head
-    if not _is_absolute_target(raw) and base is None:
-        return False
-    target = _resolve_path(raw, base)
-    root_resolved = _resolve_path(str(root)) or root.resolve()
-    if target is None:
-        return False
-    try:
-        target.relative_to(root_resolved)
-        return False  # a project target, however it was reached
-    except ValueError:
-        pass
-    for temp_root in roots:
-        try:
-            root_resolved.relative_to(temp_root)
-            return False  # the project itself lies in temp: "temp" would reach its neighbours
-        except ValueError:
-            pass
-    for temp_root in roots:
-        try:
-            target.relative_to(temp_root)
-        except ValueError:
-            continue
-        for match in glob_matches:
-            resolved = _resolve_path(match)
-            try:
-                if resolved is None:
-                    return False
-                resolved.relative_to(temp_root)  # a match leading out of temp is not exempt
-            except ValueError:
-                return False
-        return True
-    return False
 
 
 def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
@@ -800,25 +727,87 @@ def _write_scope_message(target: str, scope: dict, hint: str = "") -> str:
     return f"{message} -- {hint}" if hint else message
 
 
+def _names_throwaway_place(
+    raw: str, base: Optional[str], root: Path, scratchpad_dir: object = None, literal_brace: bool = False
+) -> bool:
+    """True if `raw` is a path written out that lies in the system temp directory or the worker's
+    scratchpad (and not under the project root): the places a worker used to write throwaway
+    material, which its scope no longer opens. Used for the hint of a refusal only, never for a
+    verdict. A variable or expansion in `raw` is not knowable and does not count."""
+    if _is_dynamic_target(raw) and not literal_brace:
+        return False
+    if not _is_absolute_target(raw) and base is None:
+        return False
+    literal = _GLOB_CHAR_RE.split(raw, maxsplit=1)[0] or raw
+    target = _resolve_path(literal, base)
+    root_resolved = _resolve_path(str(root)) or root.resolve()
+    if target is None:
+        return False
+    try:
+        target.relative_to(root_resolved)
+        return False
+    except ValueError:
+        pass
+    if isinstance(scratchpad_dir, str) and scratchpad_dir:
+        scratchpad = _resolve_path(scratchpad_dir)
+        if scratchpad is not None and (target == scratchpad or scratchpad in target.parents):
+            return True
+    return any(target == temp_root or temp_root in target.parents for temp_root in _system_temp_roots())
+
+
+_THROWAWAY_FOLDER = ".act-local/tmp/<task-id>-<slug>/"
+
+
+def _throwaway_way_out(scope: dict, in_throwaway_place: bool) -> str:
+    """The way out of a refusal that concerns throwaway material: the system temp directory and the
+    worker's scratchpad are not open to a worker with a `Write scope:` line, whatever the scope says,
+    and a read-only assignment (`Write scope: none`) has no writable place at all. What is open is
+    the task's throwaway folder, once the assignment names it in its scope. Empty when neither
+    applies (a path in the project, a scope with patterns)."""
+    way = (
+        f"throwaway material belongs in `{_THROWAWAY_FOLDER}`: have the assignment add "
+        f"`{_THROWAWAY_FOLDER}**` to its `Write scope:` and write there"
+    )
+    if scope.get("mode") == "none":
+        return f"read-only assignment: nothing is writable, the system temp directory and the scratchpad included; {way}"
+    if in_throwaway_place:
+        return f"the system temp directory and the worker's scratchpad are not open to a worker with a `Write scope:` line; {way}"
+    return ""
+
+
+# A target that starts with a temp-directory variable (`$TEMP`, `${TMPDIR}`, `$env:TMP`, `%TEMP%`).
+_TEMP_VARIABLE_RE = re.compile(r"""^["']?(?:\$\{?(?:env:)?(?:TEMP|TMP|TMPDIR)\}?(?![A-Za-z0-9_])|%(?:TEMP|TMP)%)""", re.IGNORECASE)
+
+
 def _offending_hint(
-    target: str, write_targets: list[tuple[str, Optional[str], bool]], scope: dict, literal_brace: bool = False
+    target: str,
+    write_targets: list[tuple[str, Optional[str], bool]],
+    scope: dict,
+    literal_brace: bool = False,
+    in_throwaway_place: bool = False,
 ) -> str:
     """How to get a refused target through, where the refusal is a limit of the reading rather than
     a verdict on the path: a variable or command substitution in it cannot be checked (`$TEMP`,
-    `$TMPDIR` and `$env:TEMP` included — the temp directory is open only as a path written out), the
-    literal name of a brace list (`literal_brace`) is judged next to its expansions, and a relative
-    target that resolves against several directories (a `cd` on an earlier line may have failed) has
-    no single place to be judged in. With a read-only assignment (`Write scope: none`) none of those
-    ways out helps, since nothing but the system temp directory is writable there."""
-    temp_written_out = "`/tmp/...` in Bash, or its absolute path"
+    `$TMPDIR` and `$env:TEMP` included), the literal name of a brace list (`literal_brace`) is
+    judged next to its expansions, and a relative target that resolves against several directories
+    (a `cd` on an earlier line may have failed) has no single place to be judged in. A target in the
+    system temp directory or the scratchpad (`in_throwaway_place`) and every target of a read-only
+    assignment (`Write scope: none`) get the way out from _throwaway_way_out; with a read-only
+    assignment none of the other ways out helps."""
     if scope.get("mode") == "none":
-        return f"read-only assignment: only the system temp directory is writable, as a path written out ({temp_written_out})"
+        return _throwaway_way_out(scope, in_throwaway_place)
     hints: list[str] = []
     if re.search(r"[$`]", target):
-        hints.append(
-            "a target with a variable or command substitution cannot be checked: write the path out "
-            f"(for the system temp directory {temp_written_out}) or use Write/Edit"
-        )
+        if _TEMP_VARIABLE_RE.match(target):
+            hints.append(
+                "a target that starts with a temp variable cannot be checked, and writing the path out "
+                "leads into the next refusal; " + _throwaway_way_out(scope, True)
+            )
+        else:
+            hints.append(
+                "a target with a variable or command substitution cannot be checked: write the path out "
+                "or use Write/Edit"
+            )
     if literal_brace:
         hints.append(
             "a brace list counts as every path it expands to and as the one literal name bash writes with "
@@ -830,6 +819,9 @@ def _offending_hint(
             "a `cd` on an earlier line can fail, so the directory is uncertain: name an absolute path, "
             "chain with `&&` on the same line, or use Write/Edit"
         )
+    way_out = _throwaway_way_out(scope, in_throwaway_place)
+    if way_out:
+        hints.insert(0, way_out)
     return "; ".join(hints)
 
 
@@ -852,37 +844,32 @@ def _inline_literal_path(raw: str, base: Optional[str], root: Path) -> str:
     return f"{drive}{raw}" if drive else raw
 
 
-def _inline_target_offends(
-    raw: str, base: Optional[str], root: Path, scope: dict, scratchpad_dir: object
-) -> bool:
+def _inline_target_offends(raw: str, base: Optional[str], root: Path, scope: dict) -> bool:
     """True if a path literal of inline interpreter code (`python - <<EOF ... Path('x').write_text(...)`)
-    lies outside what the worker may write: judged like any other write target (system temp directory
-    and the worker's scratchpad are open, the rest must match the scope, `Write scope: none` allows
-    nothing else), except that the literal is not a shell word - no `/tmp` mapping, no brace or tilde
+    lies outside what the worker may write: judged like any other write target (it must match the
+    scope; `Write scope: none` allows nothing; the system temp directory and the scratchpad are no
+    exception), except that the literal is not a shell word - no `/tmp` mapping, no brace or tilde
     expansion, no wildcard escape check. A literal with a `$` or a backtick is dynamic and offends, and
     so does a relative one without a known directory. A literal is judged as written: see
     _inline_literal_path for the one Windows case where that takes a drive."""
     raw = _inline_literal_path(raw, base, root)
     dynamic = _INLINE_DYNAMIC_RE.search(raw) is not None
-    if not dynamic and _within_system_temp(raw, base, root, literal_brace=True):
-        return False
-    if not dynamic and isinstance(scratchpad_dir, str) and scratchpad_dir and _within_scratchpad(raw, scratchpad_dir, base):
-        return False
     if scope.get("mode") == "none" or dynamic or (base is None and not _is_absolute_target(raw)):
         return True
     rel = _normalize_candidate_path(raw, root, base if base is not None else str(root))
     return rel is None or not _matches_scope(rel, scope.get("patterns") or [])
 
 
-def _inline_hint(language: str, raw: str) -> str:
-    """How to proceed after a refusal of inline interpreter code: what was found, and the two ways out."""
+def _inline_hint(language: str, raw: str, scope: dict, in_throwaway_place: bool = False) -> str:
+    """How to proceed after a refusal of inline interpreter code: what was found, and the ways out."""
     hint = (
         f"inline {language} code with a write call names a path outside the write scope: write the file with "
         "Write/Edit; read outside the scope in a separate call without a write call"
     )
     if _INLINE_DYNAMIC_RE.search(raw):
         hint += "; a path with `$` or a backtick in the code cannot be checked, write it out"
-    return hint
+    way_out = _throwaway_way_out(scope, in_throwaway_place)
+    return f"{hint}; {way_out}" if way_out else hint
 
 
 def check_worker_write_scope(payload: dict) -> int:
@@ -1002,24 +989,14 @@ def check_worker_write_scope(payload: dict) -> int:
     scratchpad_dir = payload.get("scratchpad_dir")
     # A target is judged as the paths it stands for: a live brace list (`app/{css,js}`) as every path
     # it expands to and as its literal name (what bash writes with brace expansion off). Every variable
-    # keeps the target dynamic, a temp-directory variable (`$TEMP`, `$env:TEMP`) too: the temp
-    # directory is open only as a path written out.
+    # keeps the target dynamic, a temp-directory variable (`$TEMP`, `$env:TEMP`) too.
     checked_targets: list[tuple[str, Optional[str], bool]] = []
     for raw_target, base in write_targets:
         for path, literal_brace in _target_forms(tool_name, raw_target):
             if (path, base, literal_brace) not in checked_targets:
                 checked_targets.append((path, base, literal_brace))
     for raw_target, base, literal_brace in checked_targets:
-        if _within_system_temp(raw_target, base, root, literal_brace):
-            continue
         dynamic = _is_dynamic_target(raw_target) and not literal_brace
-        if (
-            not dynamic
-            and isinstance(scratchpad_dir, str)
-            and scratchpad_dir
-            and _within_scratchpad(raw_target, scratchpad_dir, base)
-        ):
-            continue
         if scope.get("mode") == "none":
             offending = raw_target
         elif dynamic or (base is None and not _is_absolute_target(raw_target)):
@@ -1037,7 +1014,12 @@ def check_worker_write_scope(payload: dict) -> int:
                 continue
             offending = raw_target
         message = _write_scope_message(
-            offending, scope, _offending_hint(offending, checked_targets, scope, literal_brace)
+            offending,
+            scope,
+            _offending_hint(
+                offending, checked_targets, scope, literal_brace,
+                _names_throwaway_place(offending, base, root, scratchpad_dir, literal_brace),
+            ),
         )
         if mode == "warn":
             print(message)
@@ -1045,9 +1027,12 @@ def check_worker_write_scope(payload: dict) -> int:
         print(message, file=sys.stderr)
         return 2
     for raw_path, base, language in inline_targets:
-        if not _inline_target_offends(raw_path, base, root, scope, scratchpad_dir):
+        if not _inline_target_offends(raw_path, base, root, scope):
             continue
-        message = _write_scope_message(raw_path, scope, _inline_hint(language, raw_path))
+        in_throwaway_place = _names_throwaway_place(
+            _inline_literal_path(raw_path, base, root), base, root, scratchpad_dir, literal_brace=True
+        )
+        message = _write_scope_message(raw_path, scope, _inline_hint(language, raw_path, scope, in_throwaway_place))
         if mode == "warn":
             print(message)
             return 0
