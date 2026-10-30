@@ -9,6 +9,31 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-30
+
+Sessions carry their project's name and `/act-info` shows where one works, the template author can warn projects on a
+faulty version through advisories, throwaway material and the hooks' cache move from the system temp directory into
+`.act-local/`, which `act-local-tidy` keeps small, workers start with less rule text, and a pending update stays
+visible until it is installed. Projects on v2.3.0 update with `act-update`.
+
+### Upgrading from v2.3.0
+
+- Run `act-update` (or `python .act/scripts/update.py`), then start a new session so the new hooks take effect. No
+  new migration. The update sets `PYTHON_BASIC_REPL=1` under `env` in `.claude/settings.json`, removes the `-high`
+  variants of six roles (assignments that named one name the role itself, or `builder-high`/`reviewer-high`), and in
+  an edited `docs/ai/rules.md` moves the checkbox lines of `R-safe-no-secret-diff`, `R-safe-git-reset` and
+  `R-safe-git-discard` to `orchestrator/30-cost.md`, marks unchanged.
+- The session title now follows the project's name (`session-name`, default `project`). Set `session-name: auto` to
+  leave naming to Claude Code; a title set with `/rename` or `claude -n` is never overwritten.
+- A worker whose assignment has a `Write scope:` line can no longer write to the system temp directory or its
+  scratchpad. An assignment that needs throwaway material names `.act-local/tmp/<task-id>-<slug>/**` in its scope.
+- Advisories are on by default; `advisory-check: off` in `docs/ai/config.md` switches them off.
+- `act-local-tidy` only reports on its first run in a project; removal starts the day after that report was shown.
+  `act-local-keep` protects a project's own entries under `.act-local/`.
+- `act-version`, `act-export-settings` and `act-load-settings` now start only when typed as a slash command.
+- `archive-shorten` is no longer read and can go from `docs/ai/config.md`. Once every project on the machine is
+  updated, an old `act-pycache` folder in the system temp directory can be deleted.
+
 ### Added
 
 - Session title from the project: new config key `session-name` (default `project`). At session
@@ -43,10 +68,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   works by version range alone.
 - `/act <name>` also finds a template skill without its `act-` prefix: `/act version` shows
   `act-version`. A skill whose name matches exactly still wins.
-- `R-work-throwaway`: throwaway material — probes, throwaway projects, scratch files — goes into
-  the system temp directory, or, where the tool refuses that to a worker, into
-  `.act-local/tmp/<task-id>-<slug>/`, never directly under `.act-local/`. `act-commit` removes a
-  task's folders after the commit (`act_local_tidy.py --task <id>`).
+- `R-work-throwaway`: throwaway material — probes, throwaway projects, clones, output files,
+  scratch files — has one place, `.act-local/tmp/<task-id>-<slug>/`: never the system temp
+  directory, where nothing tracked or removed it, and never directly under `.act-local/`. It is
+  made only when the work needs it and removed after use by whoever made it; a worker says so in
+  its result, and `act-commit` removes a task's folders after the commit (`act_local_tidy.py --task
+  <id>`). A probe never sets an access right its owner could not take back alone, and takes back
+  every right it set in a `finally`. `R-work-bounded-output` writes long output to the same place.
 - Session-start check `act-local-tidy` keeps `.act-local/` small in every project: once a day, in
   a background process, it removes `tmp/` entries and unknown entries directly under
   `.act-local/` that are older than 7 days and whose name does not start with an open task's id,
@@ -75,11 +103,6 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
-- Throwaway material (probes, throwaway projects, clones, output files) has one place now:
-  `.act-local/tmp/<task-id>-<slug>/`, never the system temp directory, where nothing tracked or
-  removed it. It is made only when the work needs it and removed after use by whoever made it; a
-  worker says so in its result. A probe never sets an access right its owner could not take back
-  alone, and takes back every right it set in a `finally` (`R-work-throwaway`, `R-work-bounded-output`).
 - The hooks' compiled-module cache moved from `act-pycache` in the system temp directory, where it
   grew with every project path and was never removed, to `.act-local/pyc/` in the project. In a
   project path longer than about 76 characters the hooks write no cache (each hook call then takes
@@ -298,8 +321,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `worker-write-scope` reads inline interpreter code: a worker with a restricted `Write scope:` that
   runs `python`, `python3`, `py` or `node` with `-c`/`-e`, or with code from a heredoc, a here-string
   or a pipe, in Bash or PowerShell, is refused when the code holds a write call (`open(…, 'w')`, `write_text`, `shutil.copy`,
-  `fs.writeFileSync` …) and a path written out that lies outside the scope, the system temp directory
-  and its scratchpad. Workers had written files outside their scope this way, some right after the
+  `fs.writeFileSync` …) and a path written out that lies outside the scope. Workers had written files outside their scope this way, some right after the
   check refused the same write. Best effort: a script file, a path built at run time and writes through
   `subprocess` stay unseen (`topics/checks.md`).
 - `R-role-worker`: a write a check refused is never made another way; the worker reports the refusal
@@ -838,7 +860,8 @@ First public pre-release of the previous generation (today the branch `v1`), doc
   coding rule modules for 10 languages and stacks; `AI-CONFIG.md` steers the collaboration.
 - Optional live log `ai.log` through hooks.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.0.0...v2.1.0
