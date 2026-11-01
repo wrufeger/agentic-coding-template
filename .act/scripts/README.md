@@ -440,9 +440,10 @@ positional arguments:
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
     archive             archive a finished task, backlog item or inbox entry to
-                        docs/ai/work/archive/ — an inbox entry gets `status: done`; files it links
-                        beside itself (pasted images) move along, generic or colliding names get
-                        the entry's id in front, links are rewritten
+                        docs/ai/work/archive/ — an inbox entry gets `status: done`, a task
+                        `finished: <timestamp>`; files it links beside itself (pasted images) move
+                        along, generic or colliding names get the entry's id in front, links are
+                        rewritten
     compact             merge archived entries older than 7 days (and journal entries) into one
                         collection file per kind and month in docs/ai/work/archive/ (Q-2026-09.md,
                         T-, B-, U-, other-, ledger-), one section per entry with an anchor such as
@@ -554,8 +555,8 @@ options:
 usage: entries.py archive [-h] ID-OR-FILE
 
 archive a finished task, backlog item or inbox entry to docs/ai/work/archive/ — an inbox entry
-gets `status: done`; files it links beside itself (pasted images) move along, generic or colliding
-names get the entry's id in front, links are rewritten
+gets `status: done`, a task `finished: <timestamp>`; files it links beside itself (pasted images)
+move along, generic or colliding names get the entry's id in front, links are rewritten
 
 positional arguments:
   ID-OR-FILE  an id such as Q<n> or T<n>, or the entry file's path

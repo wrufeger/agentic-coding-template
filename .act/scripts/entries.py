@@ -87,7 +87,8 @@
 #     checks call instead of repeating the scan.
 #   "archive": for a task, a backlog item or an inbox entry (found by id or path; directly in its
 #     folder). Moves the file to docs/ai/work/archive/; an inbox entry gets `status: done` in its
-#     header (either header form), a task or backlog item keeps its header as it is. Non-Markdown
+#     header (either header form), a task gets `finished: <timestamp>` (right below `started:`, else
+#     below `created:`; an existing `finished:` stays), a backlog item keeps its header. Non-Markdown
 #     files the entry links by a relative path from its own folder (Markdown image or link, `<img
 #     src>`, also `<...>` and %20 forms) move along; an IDE's generic name (img.png, image_1.png,
 #     "Pasted image ...", screenshot ...) or a name already taken in the archive gets the entry's id in
@@ -224,6 +225,8 @@ STATUS_VALUES = ("open", "answered")
 # A task's versioned "started:" header field (entries.py state / start) — board.py and the status
 # line count a task carrying it as running, one without it as new.
 STARTED_RE = re.compile(r"(?im)^started:\s*(\S+)\s*$")
+# A task's versioned "finished:" header field, written by `archive` once the task is accepted.
+FINISHED_RE = re.compile(r"(?im)^finished:")
 
 # Solo-mode id assignment (cmd_new) is guarded by a short-lived lock file under .act-local/, so two
 # processes started at the same instant never compute the same "next free id" from the same disk
@@ -566,6 +569,29 @@ def _started_value(text: str) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def _insert_header_field(text: str, key: str, value: str, after: tuple[str, ...]) -> str:
+    """`text` with `<key>: <value>` inserted into its header — right below the first field named in
+    `after` that the header carries (tried in that order), else below the last header field, else
+    as a new header above the heading."""
+    lines = text.split("\n")
+    head = actlib.split_header(text)[0]
+    head_count = head.count("\n") + (1 if head and not head.endswith("\n") else 0)
+    # the field lines are lines[first:last]: all header lines, or those between the `---` delimiters
+    framed = actlib.is_frontmatter(head)
+    first, last = (1, head_count - 1) if framed else (0, head_count)
+    if head_count == 0:
+        lines[0:0] = [f"{key}: {value}", ""]
+        return "\n".join(lines)
+    position = last
+    for name in after:
+        hits = [i for i in range(first, last) if lines[i].lower().startswith(f"{name}:")]
+        if hits:
+            position = hits[-1] + 1
+            break
+    lines.insert(position, f"{key}: {value}")
+    return "\n".join(lines)
+
+
 def _mark_started(path: Path) -> Optional[str]:
     """Write `started: <now>` into the task's header — right below `created:`, else below the last
     header field, else as a new header above the heading. Returns the value written, or None when
@@ -574,19 +600,8 @@ def _mark_started(path: Path) -> Optional[str]:
     if text is None or _started_value(text) is not None:
         return None
     value = datetime.now().isoformat(timespec="seconds")
-    lines = text.split("\n")
-    head = actlib.split_header(text)[0]
-    head_count = head.count("\n") + (1 if head and not head.endswith("\n") else 0)
-    # the field lines are lines[first:last]: all header lines, or those between the `---` delimiters
-    framed = actlib.is_frontmatter(head)
-    first, last = (1, head_count - 1) if framed else (0, head_count)
-    if head_count == 0:
-        lines[0:0] = [f"started: {value}", ""]
-    else:
-        created = [i for i in range(first, last) if lines[i].lower().startswith("created:")]
-        lines.insert((created[-1] + 1) if created else last, f"started: {value}")
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(lines))
+        handle.write(_insert_header_field(text, "started", value, ("created",)))
     return value
 
 
@@ -1382,6 +1397,9 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> Archi
     plan.text = _rewrite_links(text, entry_dir, remap)
     if is_inbox:
         plan.text = _set_status_done(plan.text)
+    if entry_dir == (root / KIND_DIR["task"]).resolve() and not FINISHED_RE.search(actlib.header_block(plan.text)):
+        plan.text = _insert_header_field(plan.text, "finished", datetime.now().isoformat(timespec="seconds"),
+                                         ("started", "created"))
     plan.text = _set_header_field(plan.text, "archived", (today or date.today()).isoformat())
     return plan
 
@@ -1976,7 +1994,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check", help="report a duplicate id or an entry file that isn't valid UTF-8")
 
     archive_help = ("archive a finished task, backlog item or inbox entry to docs/ai/work/archive/ — an inbox "
-                    "entry gets `status: done`; files it links beside itself (pasted images) move along, "
+                    "entry gets `status: done`, a task `finished: <timestamp>`; files it links beside itself "
+                    "(pasted images) move along, "
                     "generic or colliding names get the entry's id in front, links are rewritten")
     p_archive = sub.add_parser("archive", help=archive_help, description=archive_help)
     p_archive.add_argument("entry", metavar="ID-OR-FILE", help="an id such as Q<n> or T<n>, or the entry file's path")

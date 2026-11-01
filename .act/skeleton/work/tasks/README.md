@@ -12,7 +12,9 @@ state ("Stand ...") never goes into this file — it goes to the gitignored
 which the board then shows next to the task title. The first `state` also writes
 `started: <timestamp>` into this header (`entries.py start <T-id>` does it without a state line):
 the board marks the task "(running)", the status line counts running and new tasks apart — so a
-note on a task not begun yet belongs in this file, not in `state`. The header also carries `for: <identity>` (whose
+note on a task not begun yet belongs in this file, not in `state`. `entries.py archive` adds
+`finished: <timestamp>` below `started:` (else below `created:`) when the accepted task moves to
+the archive. The header also carries `for: <identity>` (whose
 task it is; `entries.py new task` writes the current identity, `--for` changes it, `all` or no
 field = shared); the board lists tasks for others apart (`board-others` in `docs/ai/config.md`). A size in
 the body is written as duration and tokens, never person-days: `~45 min · ~600k tkn fresh · ~15M tkn cache` plus

@@ -11,6 +11,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `entries.py archive` writes `finished: <timestamp>` into an archived task's header, below `started:` (else below
+  `created:`), so a task records when it was created, started and finished. An existing `finished:` stays; backlog
+  items and inbox entries get no such field.
 - `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
   `.claude/skills/act-*/**`) whenever the template ships a `*.js`, `*.mjs` or `*.cjs` file under `.act/`. The current
   template ships none, so the note does not appear.
