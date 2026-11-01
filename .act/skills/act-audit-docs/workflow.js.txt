@@ -9,6 +9,12 @@ export const meta = {
   ],
 }
 
+// Why this file ends in .txt: the Workflow tool runs the script as a function body and needs a top-level
+// `return`, which no module parser accepts. JS linters such as ESLint collect `**/*.js` and do not skip
+// dot folders, so a `.js` name would fail lint in every project that ships this skill. Start it through
+// `scriptPath`; the extension does not matter to the tool. The tool wants `export const meta` as the
+// first line, so this note sits below it.
+
 // args: {date: 'YYYY-MM-DD', areas: [{name, docs: [...], code?: [...], focus?}], wave?: string, readme?: false}
 // A doc path is a file or a folder (ending in / or /**) under docs/project/. No path may sit in two areas:
 // the check that compares parallel workers' write scopes does not see workflow agents, so this script does.

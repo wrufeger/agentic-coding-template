@@ -9,12 +9,28 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Added
+
+- `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
+  `.claude/skills/act-*/**`) whenever the template ships a `*.js`, `*.mjs` or `*.cjs` file under `.act/`. The current
+  template ships none, so the note does not appear.
+
 ### Changed
 
+- The `act-audit-docs` workflow script is now `workflow.js.txt` (it was `workflow.js`). It needs a top-level `return`
+  that no module parser accepts, so `eslint .` failed on it in projects that do not exclude `.act/` and `.claude/`
+  from lint. `act-update` removes the old file from `.act/skills/` and from `.claude/skills/act-audit-docs/`. If your
+  project overrides the script at `docs/ai/local/skills/act-audit-docs/workflow.js`, rename that file to
+  `workflow.js.txt` too, or the override no longer applies.
 - The `act-local-tidy` line at session start and in the `update` summary gives count, size and kinds only, no
   longer up to five entry names. A line that only reports what would go points to
   `python .act/scripts/act_local_tidy.py`, which still lists every entry. Entries that could not be removed are
   still named, since they need your attention.
+
+### Fixed
+
+- The `act-compact` skill said uncommitted archive changes "stay as they are"; `entries.py compact` actually stops
+  until they are committed. The skill now says so.
 
 ## [2.4.0] - 2026-10-30
 

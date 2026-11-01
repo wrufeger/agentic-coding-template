@@ -2,9 +2,9 @@
 
 Claude Code only (its `Workflow` tool), and only when the human asks for the workflow variant in so many
 words: the script starts many workers at once, and that is the human's call — naming the skill is not
-such a request. The script is `workflow.js` beside `SKILL.md`; the project copy lies at
-`.claude/skills/act-audit-docs/workflow.js`, and a project override at
-`docs/ai/local/skills/act-audit-docs/workflow.js` wins, as for any skill file.
+such a request. The script is `workflow.js.txt` beside `SKILL.md`; the project copy lies at
+`.claude/skills/act-audit-docs/workflow.js.txt`, and a project override at
+`docs/ai/local/skills/act-audit-docs/workflow.js.txt` wins, as for any skill file.
 
 1. Step 1 of the skill stays with you: `git status`, `git diff --stat -- docs/project`.
 2. Cut the doc areas **by file**: each area names the files or folders under `docs/project/` its
@@ -14,7 +14,7 @@ such a request. The script is `workflow.js` beside `SKILL.md`; the project copy 
    compares parallel workers' write scopes does not see workflow agents. At most 12 areas per run;
    split a larger pass into two runs.
 3. Start it: `Workflow` with `scriptPath` set to the absolute path of
-   `.claude/skills/act-audit-docs/workflow.js` in the project root, and `args`:
+   `.claude/skills/act-audit-docs/workflow.js.txt` in the project root, and `args`:
 
    ```json
    {

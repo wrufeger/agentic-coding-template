@@ -97,6 +97,20 @@ def remove_tree(path: "str | os.PathLike[str]") -> None:
             time.sleep(0.25)
 
 
+_JS_SUFFIXES = (".js", ".mjs", ".cjs")
+
+
+def lint_exclusion_hint(root: Path) -> Optional[str]:
+    """One report line naming the lint exclusion a project needs, or None. Only when the delivered
+    .act/ holds a JavaScript file (*.js, *.mjs, *.cjs): a JS linter such as ESLint collects those
+    and does not skip dot folders, so the project must exclude the template's folders itself."""
+    for _folder, _dirs, files in os.walk(root / ".act"):
+        if any(name.endswith(_JS_SUFFIXES) for name in files):
+            return ("[act] note: the template ships JavaScript files under .act/; exclude `.act/**` and "
+                    "`.claude/skills/act-*/**` in your JS linter (for ESLint: `ignores` in the flat config)")
+    return None
+
+
 @contextlib.contextmanager
 def scratch_dir(purpose: str, root: "Optional[Path]" = None) -> Iterator[Path]:
     """A short-lived folder `act-<purpose>-<random>`: under `<root>/.act-local/tmp/` when `root` is a

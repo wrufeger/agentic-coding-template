@@ -2659,6 +2659,9 @@ def _finish_update(
     _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit, ref))
 
     _maybe_print_branch_hint(root, notes)
+    lint_hint = actlib.lint_exclusion_hint(root)
+    if lint_hint:
+        print(lint_hint)
 
     commit_paths = [root / ".act", root / ".act-lock.json", *migration_touched]
     commit_paths.extend(root / rel for rel in new_copies)

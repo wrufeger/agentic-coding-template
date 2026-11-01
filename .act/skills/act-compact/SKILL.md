@@ -20,8 +20,8 @@ so and stop.
 ## Steps
 
 1. **Plan.** `python .act/scripts/entries.py compact --plan` lists what would be merged and writes
-   nothing. Entries archived within the last 7 days, `archive/legacy/` and anything not committed stay
-   as they are; commit pending archive changes first, the full text must be in Git.
+   nothing. Entries archived within the last 7 days and `archive/legacy/` stay as they are. Anything
+   not committed stops the run: commit pending archive changes first, the full text must be in Git.
 2. **Merge.** `python .act/scripts/entries.py compact`. It writes
    `archive/<Q|T|B|U|other|ledger>-<YYYY-MM>.md`, one section per entry in full, names the commit that
    still holds the single files, and rewrites links. For every month with a Q, T, B or U section it

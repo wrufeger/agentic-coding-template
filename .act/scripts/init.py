@@ -3631,6 +3631,9 @@ def main(argv: list[str]) -> int:
         commit_message += f"; {_remove_old_template_branch(root, plan, old_branch_tip)}"
     _print_step(10, commit_message)
 
+    lint_hint = actlib.lint_exclusion_hint(root)
+    if lint_hint:
+        print(lint_hint)
     if notes:
         print(f"[act] done - {len(notes)} open point(s) " + ("would go to" if plan else "left in") + " docs/ai/inbox/")
     else:

@@ -24,7 +24,7 @@ by `act-doctor`.
    introduced, drop or correct entries the code no longer matches.
 4. `doc-writer` updates `docs/README.md` (index, data-as-of dates).
 
-In Claude Code, steps 2–4 can also run as the workflow script `workflow.js` beside this file — only
+In Claude Code, steps 2–4 can also run as the workflow script `workflow.js.txt` beside this file — only
 when the human asks for that variant explicitly. Read `references/workflow.md` before starting it.
 
 A full pass across all doc areas logs a journal entry whose title starts with `act-audit-docs`
