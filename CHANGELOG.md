@@ -14,6 +14,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
   `.claude/skills/act-*/**`) whenever the template ships a `*.js`, `*.mjs` or `*.cjs` file under `.act/`. The current
   template ships none, so the note does not appear.
+- Open questions with an answer written under the `**Answer:**` line now show as answered in the board ("answer in
+  file, status still open").
+- `act-local-tidy` removes compiled-cache folders under `.act-local/pyc/` whose source folder no longer exists.
+- secret-scan finds a literal fallback split over two lines (`process.env.X ||` then the literal), Ruby
+  `ENV.fetch('X') { '<literal>' }`, and triple-quoted literals assigned to a credential-named key.
+- danger-scan: `sql-php-concat` and `sql-php-interpolation` (PHP files) and `sql-format` (`"..." % x`,
+  `"...".format(...)`) report SQL built from values; `LIKE '%…%'` operands and date formats such as
+  `strftime('%Y', d)` are not read as the `%` operator.
 
 ### Changed
 
@@ -26,11 +34,75 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   longer up to five entry names. A line that only reports what would go points to
   `python .act/scripts/act_local_tidy.py`, which still lists every entry. Entries that could not be removed are
   still named, since they need your attention.
+- The board's recent activity orders journal entries of one day by time, not by title.
+- `board.py --chat-language` refuses to overwrite an unreadable `identity.json` and says so; `identity.json` is
+  written in one step.
+- A worker never writes a file outside its `Write scope:` - with any tool, interpreter or detour, whether or not a
+  check refused it - and names the file and the change in its result.
 
 ### Fixed
 
 - The `act-compact` skill said uncommitted archive changes "stay as they are"; `entries.py compact` actually stops
   until they are committed. The skill now says so.
+- An anchor and heading pair inside a code block no longer counts as a section of an archive collection.
+- The status line hook no longer leaves `__pycache__` folders under `.act/`.
+- Removing a throwaway folder never follows a junction out of it.
+- `update` and the session-start rule sync keep the line endings (CRLF or LF) of `docs/project/coding_rules.md` and
+  `docs/ai/rules.md` when they add or move entries.
+- The session-start update check now reports a newer template when the recorded source is a plain folder without
+  git.
+- A rule that moved to another rule file now takes its wrapped reason along; a stale duplicate line under the old
+  file is dropped with a note, and a move that only reports ("does not load") is no longer summarised as
+  "followed".
+- secret-scan now checks text behind a form feed, vertical tab, NEL, U+2028/U+2029 or a lone carriage return inside
+  an added line (it was read as a context line and skipped); diffs are read as bytes, so a lone CR no longer splits
+  a line.
+- secret-scan: a git file name with trailing blanks is no longer stripped when read from a diff header.
+- Dependency scan: a tool that exits with its findings code but whose report parses to no finding (null, changed
+  schema, npm 6 `advisories`) now counts as an unreadable report instead of clean (osv-scanner, npm, pnpm,
+  composer). A pnpm report whose own counts say zero stays clean.
+- `git-metadata-guard` no longer reads a shell redirection behind `cp`/`mv`/`Copy-Item` (`2>/dev/null`, `&>`,
+  `*> $null`) as the copy destination.
+- `git-metadata-guard` no longer reads the body of a quoted heredoc as commands when the whole command is one text
+  reader that only stores it: `cat` (also into a file), `tee [-a] <file>`, `git commit -F -`, `git tag -F -`, with
+  nothing before or after it. Any other command, an unquoted heredoc, and a reader that writes to a protected path
+  are checked as before.
+- `outside-root` no longer reads a word made only of slashes (`//`, `///`) as a path where it is only a fragment of
+  text: a string literal or an operator in the `-c`/`-e` code of an interpreter, also under PowerShell, or a text
+  option. A word of its own (`ls //`, `cp x //`) is still the file system root and still refused.
+- A read-only command with an arithmetic expansion (`sed -n "1,$((n+3))p" file`, `echo $((n+3))`) is no longer
+  refused as a write by the worker write scope; a redirection next to it or a command inside the expansion is
+  still found.
+- The overlap check for parallel workers no longer reports sibling patterns such as `src/lib/alpha/**` and
+  `src/lib/beta*`, or `tests/probes/a-*/**` and `tests/probes/b-*/**`, as overlapping; patterns that can match a
+  common path still do.
+- `worker-write-scope`: a `$(...)` in the quoted command of an `ssh <host> '...'` call to another machine no longer
+  makes the whole text count as a local command; only the `$(...)` the local shell expands are read. This holds for
+  a call of a plain, known form only - `ssh` (or the system's own), in front of it at most the bare name of `sudo`,
+  `env`, `command`, `exec`, `nohup`, `nice`, `timeout`, `stdbuf` or `setsid`, options from
+  `-4 -6 -a -C -n -q -T -t -v -x`, `-p <port>`, `-l <name>`, `-i <file>`, a literal `[user@]host` that is not this
+  machine, a first command word starting with a plain character. Every other form (`-o ...`, `-F`, `-E`, `-J`,
+  `-W`, `-L`, `-R`, `-D`, `parallel` or `xargs` in front, a variable, glob, brace or backtick up to the host or at
+  the start of the command, `localhost`, `127.x`, `0`, `::1`, `ip6-*`, this computer's name, a `PATH=`,
+  `BASH_ENV`, an alias, `source` or a function `ssh` in the same command, a `$(...)` bash may end later than its
+  first `)`) is still read as before. Local redirections behind the call are still checked.
+- `worker-write-scope`: a switch of a Windows tool (`icacls /deny`, `robocopy /MIR`, `cmd /c`) in inline Python or
+  Node code is no longer read as a path outside the scope - only where the tool is the first element of the
+  argument list of the call that starts it (`subprocess.run`, `Popen`, `os.exec*`/`os.spawn*`, Node
+  `spawn`/`execFile`), or in a command line of one command that is the first argument of such a call, of
+  `os.system` or of Node `exec`. For `cmd` only the switches up to `/c` or `/k` count. The same literal anywhere
+  else (`shutil.copytree('cmd', '/c')`, `print('cmd')`) stays a path.
+
+### Security
+
+- `git-metadata-guard` reads a copy source of any size within a time budget (the 2,000-file limit is gone); a source
+  that cannot be read in time is refused with a clear message. Links and junctions inside the source are followed the
+  way a recursive copy follows them, each directory once.
+- `git branch -D @{-1}` is judged by the branch it names; a branch name that exists in two spellings on a
+  case-insensitive file system is never released as cherry-picked.
+- `exec -a NAME cmd` and a cluster of wrapper options ending in one that takes a value (`exec -la NAME cmd`,
+  `sudo -nu NAME cmd`) no longer hide `cmd` from the write checks.
+
 
 ## [2.4.0] - 2026-10-30
 

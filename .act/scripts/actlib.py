@@ -87,14 +87,42 @@ def remove_tree(path: "str | os.PathLike[str]") -> None:
         shutil.rmtree(path, ignore_errors=True)
         if not os.path.isdir(path):
             return
-        for folder, _dirs, files in os.walk(path):
-            for name in files:
-                try:
-                    os.chmod(os.path.join(folder, name), stat.S_IWRITE | stat.S_IREAD)
-                except OSError:
-                    pass
+        _make_writable(path)
         if attempt < 7:
             time.sleep(0.25)
+
+
+def _is_link_or_junction(info: os.stat_result) -> bool:
+    """True for a symbolic link and, on Windows, any reparse point (a junction too: before Python 3.12
+    `os.walk` and `os.path.islink` take a junction for a plain folder and enter it)."""
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
+def _make_writable(path: "str | os.PathLike[str]") -> None:
+    """Clears the read-only bit of every file below `path`, never entering or touching a link or junction
+    (`chmod` would follow it to a target that may lie outside the folder)."""
+    stack = [os.fspath(path)]
+    while stack:
+        folder = stack.pop()
+        try:
+            with os.scandir(folder) as entries:
+                children = list(entries)
+        except OSError:
+            continue
+        for child in children:
+            try:
+                info = child.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if _is_link_or_junction(info):
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                stack.append(child.path)
+                continue
+            try:
+                os.chmod(child.path, stat.S_IWRITE | stat.S_IREAD)
+            except OSError:
+                pass
 
 
 _JS_SUFFIXES = (".js", ".mjs", ".cjs")
@@ -198,10 +226,11 @@ def _read_json(path: Path) -> Optional[dict]:
     return data if isinstance(data, dict) else None
 
 
-def _write_json_merged(path: Path, data: dict) -> dict:
+def _write_json_merged(path: Path, data: dict, atomic: bool = False) -> dict:
     """Write `data` to `path` as JSON, merging onto whatever is already there so unknown top-level
-    keys already present on disk survive the write. Creates the parent directory if needed.
-    Returns the merged dict actually written."""
+    keys already present on disk survive the write. Creates the parent directory if needed. With
+    `atomic` the file is replaced in one step (write_text_atomic()), so a reader or a second writer
+    never sees it half written. Returns the merged dict actually written."""
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = _read_json(path)
     merged = dict(existing or {})
@@ -209,7 +238,11 @@ def _write_json_merged(path: Path, data: dict) -> dict:
     if existing is not None and merged == existing:
         return merged  # nothing changed: leave the file (and a versioned one's git status) alone
     # LF on every platform: .act-lock.json is versioned in that form.
-    write_text_lf(path, json.dumps(merged, indent=2, ensure_ascii=False) + "\n")
+    text = json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+    if atomic:
+        write_text_atomic(path, text)
+    else:
+        write_text_lf(path, text)
     return merged
 
 
@@ -441,8 +474,15 @@ def recipient_slug(text: str) -> str:
 
 def write_identity(data: dict) -> dict:
     """Merge `data` (expected keys: identity, workspace, created) onto .act-local/identity.json,
-    creating the .act-local/ directory if needed. Returns the merged dict actually written."""
-    return _write_json_merged(_identity_path(), data)
+    creating the .act-local/ directory if needed; the file is replaced in one step. Returns the merged
+    dict actually written. Raises ValueError if the file exists but is no JSON object: a merge onto it
+    would drop the identity, chat language and workspace id it held (set_identity() is the explicit
+    way to replace it)."""
+    path = _identity_path()
+    if path.is_file() and _read_json(path) is None:
+        raise ValueError(f"{path} exists but is not a JSON object; fix or delete it by hand "
+                         f"(`board.py --identity <name>` replaces it)")
+    return _write_json_merged(path, data, atomic=True)
 
 
 # Git user names that stand for "nobody set this" (init.py shows the same ones as placeholders).
@@ -472,7 +512,7 @@ def _identity_fill(root: Path, slug: str, existing: Optional[dict]) -> dict:
         data["workspace"] = uuid.uuid4().hex[:12]
     if not str((existing or {}).get("created") or "").strip():
         data["created"] = datetime.now().date().isoformat()
-    return _write_json_merged(_identity_path(root), data)
+    return _write_json_merged(_identity_path(root), data, atomic=True)
 
 
 def ensure_identity(root: Path, owner: Optional[str] = None, plan: bool = False) -> tuple[str, Optional[dict]]:
@@ -1672,20 +1712,19 @@ def is_collection(text: str) -> bool:
 def collection_sections(text: str) -> list[tuple[str, int]]:
     """(canonical id, 1-based line of the anchor) for every entry section of a collection: a line
     `<a id="<id>"></a>` directly followed by a heading `## <id> — <title>` naming the same id. A pair
-    inside a fenced code block is an example and does not count, except that a section boundary always
-    resets the fence state, so a fence an earlier section left unclosed cannot hide the sections after
-    it; a section without an id (its anchor is not an id) is not listed."""
+    inside a fenced code block is an example and does not count (`entries.py` closes a fence an entry
+    left open before it writes the next section, so an unclosed fence never hides a later section); a
+    section without an id (its anchor is not an id) is not listed."""
     lines = text.removeprefix("﻿").split("\n")
     found: list[tuple[str, int]] = []
     fence: FenceState = None
     for index, line in enumerate(lines):
         line = line.rstrip("\r")
         anchor = _SECTION_ANCHOR_RE.match(line)
-        if anchor and _ID_PARTS_RE.match(anchor.group(1)) and index + 1 < len(lines):
+        if fence is None and anchor and _ID_PARTS_RE.match(anchor.group(1)) and index + 1 < len(lines):
             heading = lines[index + 1].rstrip("\r")
             if heading == f"## {anchor.group(1)}" or heading.startswith(f"## {anchor.group(1)} — "):
                 found.append((canonical_id(anchor.group(1)), index + 1))
-                fence = None
                 continue
         fence = fence_step(fence, line)
     return found
@@ -1728,6 +1767,24 @@ def overwrite_text(path: Path, text: str, newline: Optional[str] = None) -> None
             raise PermissionError(
                 exc.errno, f"{exc.strerror}: {path} — if the file is read-only or hidden, clear the "
                 f"attribute first with: attrib -R -H \"{path}\"") from exc
+        raise
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    """Write `text` to `path` as UTF-8 with `\\n` line endings in one step: into a temporary file in the
+    same folder, then replace_file() over the target, so a crash or a second writer leaves the old or
+    the new content, never a cut-off one. The temporary file is removed again if the write fails."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(temp, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        replace_file(temp, path)
+    except BaseException:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
         raise
 
 

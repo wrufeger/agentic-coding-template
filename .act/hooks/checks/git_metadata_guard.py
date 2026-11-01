@@ -26,9 +26,14 @@
 #             A shell copy/move into a directory is judged on the file it creates there
 #             (`_copy_effective_targets`: `cp payload/.envrc .` writes `./.envrc`), for these files and
 #             for `.claude/`. A directory source that exists is expanded to the files below it, each mapped
-#             to `<dest>/<dir name>/<rel>` and `<dest>/<rel>`, and a glob source to its matches (at most
-#             2000 files; a larger tree is checked only up to that many). When a target cannot be placed (dynamic, unknown base, scanner failure) the
-#             raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
+#             to `<dest>/<dir name>/<rel>` and `<dest>/<rel>`, and a glob source to its matches, whatever
+#             the size of the tree: links and junctions are not entered; below a destination that is no
+#             protected place only the files that can land on one are mapped (`_LandingFilter`); a source
+#             that cannot be read within the time budget is refused (`_CopySourceTooLarge`). The body of a
+#             quoted heredoc is left out of this reading only when the whole command is one text reader
+#             (`_without_text_reader_heredoc`: `cat > notes.md <<'EOF'`, `tee`, `git commit -F -`); any
+#             other body is read as commands, since what runs it cannot be told. When a target cannot be
+#             placed (dynamic, unknown base, scanner failure) the raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
 #             Limit: a shell write of a `*.code-workspace` with a folderOpen task is not seen.
 #
 # Decisions:
@@ -90,6 +95,7 @@ import os
 import re
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -571,12 +577,56 @@ def _claude_dirs(root: Optional[Path]) -> list[Path]:
     return dirs
 
 
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+# The tail of a Windows 8.3 short name (`VSCODE~1`, `CLAUDE~1`): such a name may resolve to a protected one.
+_SHORT_NAME_RE = re.compile(r"~\d")
+
+
+def _entry_kind(path: Path) -> str:
+    """What sits at `path`: "missing", "link" (a symbolic link or, on Windows, any reparse point -- a
+    junction, a mount point) or "plain"; a path that cannot be examined counts as a link, since a
+    write through it may land elsewhere."""
+    try:
+        if not os.path.lexists(path):
+            return "missing"
+        if os.path.islink(path) or (
+            sys.platform == "win32" and os.lstat(path).st_file_attributes & _FILE_ATTRIBUTE_REPARSE_POINT
+        ):
+            return "link"
+    except (OSError, ValueError):
+        return "link"
+    return "plain"
+
+
+def _resolve_below_parent(raw: str, base: str, parents: dict) -> Optional[Path]:
+    """`_resolve_path(raw, base)` for one of many files of a copy: the directory part is resolved once
+    (kept in `parents`) and the name is put below it, which costs a few file system calls less per
+    file. A name that exists as a link (`_entry_kind`) is resolved in full, since a write through it
+    lands elsewhere."""
+    cut = max(raw.rfind("/"), raw.rfind("\\"))
+    name = raw[cut + 1:]
+    if cut <= 0 or not name or name in (".", ".."):
+        return _resolve_path(raw, base)
+    parent_text = raw[:cut]
+    if parent_text not in parents:
+        parents[parent_text] = _resolve_path(parent_text, base)
+    parent = parents[parent_text]
+    if parent is None:
+        return _resolve_path(raw, base)
+    landing = parent / name
+    if _entry_kind(landing) == "link":
+        return _resolve_path(raw, base)
+    return landing
+
+
 def _target_reason(
     raw: str, base: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
-    literal: bool = False, shell: bool = False,
+    literal: bool = False, shell: bool = False, parents: Optional[dict] = None,
 ) -> Optional[str]:
     """Why a write to the (possibly relative or dynamic) target `raw` is refused, or None. A file
-    tool's path is `literal`: `$` and `~` in it are ordinary characters, not shell syntax."""
+    tool's path is `literal`: `$` and `~` in it are ordinary characters, not shell syntax. With
+    `parents` (a dict kept for one call) the directory part of `raw` is resolved once for all the
+    files of a copy (`_resolve_below_parent`)."""
     if base is None or (not literal and _is_dynamic_target(raw)):
         if _RAW_GIT_RE.search(raw):
             return "a git hook or the repository config"
@@ -587,7 +637,7 @@ def _target_reason(
         if shell and _RAW_TASKS_RE.search(raw):
             return _TASKS_REASON
         return None
-    resolved = _resolve_path(raw, base)
+    resolved = _resolve_below_parent(raw, base, parents) if parents is not None else _resolve_path(raw, base)
     if resolved is None:
         return "a target that cannot be placed" if (
             _RAW_GIT_RE.search(raw) or (worker and (_RAW_CLAUDE_RE.search(raw) or _RAW_LAUNCH_RE.search(raw)))
@@ -677,6 +727,27 @@ _POWERSHELL_VALUE_PARAMS = frozenset({
 _SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;|\n]")
 
 
+_REDIRECT_WORD_RE = re.compile(r"^(?:\d*|&|\*)(?:>>?|>&|<)(.*)$")
+
+
+def _drop_redirections(words: list[str]) -> list[str]:
+    """The words without shell redirections (`2>/dev/null`, `2> /dev/null`, `>&2`, `&> f`, `< f`): a
+    redirection is not an operand of the command, so it must not become the copy destination. The
+    redirection's own file is a write target the other scanners already judge."""
+    kept: list[str] = []
+    skip_next = False
+    for word in words:
+        if skip_next:
+            skip_next = False
+            continue
+        match = _REDIRECT_WORD_RE.match(word)
+        if match is None:
+            kept.append(word)
+        elif not match.group(1):
+            skip_next = True
+    return kept
+
+
 def _copy_operands(segment: str, powershell: bool) -> Optional[tuple[list[str], list[str]]]:
     """(sources, destinations) of a `cp`/`mv`/`Copy-Item`/`Move-Item` command segment, or None if the
     segment is none of these. Best effort on the words: options are skipped, `-t DIR` /
@@ -685,7 +756,7 @@ def _copy_operands(segment: str, powershell: bool) -> Optional[tuple[list[str], 
         words = shlex.split(segment, posix=not powershell)
     except ValueError:
         words = segment.split()
-    words = [word.strip("'\"") if powershell else word for word in words]
+    words = _drop_redirections([word.strip("'\"") if powershell else word for word in words])
     index = 0
     while index < len(words) and (
         "=" in words[index].split("/")[0] or words[index].lower() in ("sudo", "command", "env", "builtin")
@@ -733,15 +804,182 @@ def _copy_operands(segment: str, powershell: bool) -> Optional[tuple[list[str], 
     return flat, destinations
 
 
-_MAX_COPY_FILES = 2000
 _GLOB_CHARS_RE = re.compile(r"[*?\[]")
 
 
-def _copy_source_files(source: str, base: Optional[str]) -> Optional[list[tuple[str, str]]]:
+class _CopySourceTooLarge(Exception):
+    """The time for reading a copy source ran out: it is not known what the copy would write."""
+
+
+# Seconds this check may spend reading copy sources, and the hook-wide cap: dispatch.py's own start
+# (payload["_act_hook_started"]) plus this many seconds at the latest, because the harness ends a
+# PreToolUse hook after about 10 s and lets the command through then -- the refusal must come first.
+_COPY_TIME_BUDGET = 4.0
+_HOOK_BUDGET = 8.0
+
+
+def _copy_deadline(payload: dict) -> float:
+    """The monotonic instant by which the copy sources of a command must have been read: now plus
+    `_COPY_TIME_BUDGET`, at the latest dispatch.py's own start plus `_HOOK_BUDGET` (a call without
+    `_act_hook_started`, from a probe, has the full budget). Unlike the deadline the secret scan hands
+    out, which only ends an incomplete scan, running past this one REFUSES the call
+    (`_CopySourceTooLarge`): a copy whose landing places are not known is not let through."""
+    deadline = time.monotonic() + _COPY_TIME_BUDGET
+    started = payload.get("_act_hook_started")
+    if isinstance(started, (int, float)) and not isinstance(started, bool):
+        deadline = min(deadline, float(started) + _HOOK_BUDGET)
+    return deadline
+
+
+class _LandingFilter:
+    """Which files of a copy into `dest` (resolved; itself no protected place, see `_landing_filter`)
+    are mapped to their landing place at all: those that can land on a path `_path_reason` refuses.
+    Derived from what that function and the raw-text fallback of `_target_reason` look at, so that it
+    keeps a superset: a `.git` segment (`_GIT_NAMES`), a file that starts code when the folder is
+    opened (`_launch_reason`), the raw spellings `_RAW_GIT_RE`/`_RAW_CLAUDE_RE`/`_RAW_LAUNCH_RE`,
+    anything landing inside a git or Claude directory that lies below the destination (`prefixes`,
+    from `_under`), and anything whose landing path passes through a link that already exists below
+    the destination (a junction `x` -> `.git/hooks` makes `x/pre-commit` a hook): every directory on
+    the way and the file itself are examined once (`kinds`). A name with a Windows short-name tail
+    (`~1`, `_SHORT_NAME_RE`) is always kept: the names here are judged as written, while the full
+    mapping resolves the landing path, and a short name can resolve to `.vscode` or `.claude`. Every
+    other file is dropped unread, which
+    keeps the mapping of a large tree fast. Each file is judged in both places it can land,
+    `<dest>/<rel>` and `<dest>/<top>/<rel>`."""
+
+    def __init__(self, dest: Path, special_dirs: list[Path]) -> None:
+        self.dest = dest
+        self.prefixes: list[tuple[str, ...]] = [
+            below for below in (_under(place, dest) for place in special_dirs) if below
+        ]
+        self.kinds: dict[tuple[str, ...], str] = {}
+        self.dest_exists = _entry_kind(dest) != "missing"
+
+    def keep(self, top: str, inside: tuple[str, ...], name: str) -> bool:
+        rel = (*inside, name)
+        if any(_SHORT_NAME_RE.search(part) for part in (top, *rel)):
+            return True
+        for parts in ((top, *rel), rel) if top else (rel,):
+            normalized = tuple(_norm_part(part) for part in parts)
+            if any(part in _GIT_NAMES for part in normalized) or _launch_reason(normalized, True, True):
+                return True
+            text = "/".join(parts)
+            if _RAW_GIT_RE.search(text) or _RAW_CLAUDE_RE.search(text) or _RAW_LAUNCH_RE.search(text):
+                return True
+            if any(normalized[:len(prefix)] == prefix for prefix in self.prefixes):
+                return True
+            if self.dest_exists and self._through_link(parts):
+                return True
+        return False
+
+    def _through_link(self, parts: tuple[str, ...]) -> bool:
+        """True when a prefix of `parts` exists below the destination as a link; the first prefix that
+        is missing ends the search (nothing below it exists yet)."""
+        for depth in range(1, len(parts) + 1):
+            prefix = parts[:depth]
+            kind = self.kinds.get(prefix)
+            if kind is None:
+                kind = _entry_kind(self.dest.joinpath(*prefix))
+                self.kinds[prefix] = kind
+            if kind != "plain":
+                return kind == "link"
+        return False
+
+
+def _landing_filter(destination: str, base: Optional[str], special_dirs: list[Path]) -> Optional[_LandingFilter]:
+    """The filter for the files copied into `destination`, or None when every file must be mapped:
+    the destination cannot be placed (no known working directory, a variable, a resolution failure)
+    or is itself a protected place or inside one -- a `.git` segment, a folder that starts code
+    (`_launch_reason`), a git or Claude directory (`_under`) -- so that anything landing there may be
+    refused whatever its name. Judged on the resolved path: a destination that is a link into
+    `.git/hooks` is such a place."""
+    if base is None or re.search(r"[$`]", destination):
+        return None
+    resolved = _resolve_path(destination, base)
+    if resolved is None:
+        return None
+    parts = tuple(_norm_part(part) for part in resolved.parts)
+    if any(part in _GIT_NAMES for part in parts) or _launch_reason(parts, True, True):
+        return None
+    if any(_under(resolved, place) is not None for place in special_dirs):
+        return None
+    return _LandingFilter(resolved, special_dirs)
+
+
+def _is_link_entry(entry: "os.DirEntry[str]") -> bool:
+    """True for a directory entry that is a link: a symbolic link or, on Windows, any reparse point
+    (a junction, a mount point). A case that cannot be told counts as a link."""
+    try:
+        if entry.is_symlink():
+            return True
+        if sys.platform == "win32":
+            return bool(entry.stat(follow_symlinks=False).st_file_attributes & _FILE_ATTRIBUTE_REPARSE_POINT)
+    except OSError:
+        return True
+    return False
+
+
+def _dir_key(path: str) -> Optional[object]:
+    """What identifies a directory however it is reached (through a link or not): device and file
+    number, or the fully resolved path where the file system reports no file number. None when it
+    cannot be read."""
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    if info.st_ino:
+        return (info.st_dev, info.st_ino)
+    return os.path.realpath(path)
+
+
+def _walk_files(top: Path, deadline: Optional[float]) -> list[tuple[tuple[str, ...], str]]:
+    """Every entry below `top` that is not a plain directory, as (directory parts relative to `top`,
+    name), sorted by directory. A link to a directory (see `_is_link_entry`) is listed under its own
+    name -- a copy that keeps links lands the link itself -- and is entered as well, since a recursive
+    copy that follows links (`cp -r` in Git Bash, `Copy-Item -Recurse`) lands its content as a real
+    folder. A directory already walked (the same one reached again through a link, or a link back up)
+    is not entered twice. Past `deadline` (a monotonic instant) the walk gives up with
+    `_CopySourceTooLarge`, which the caller turns into a refusal."""
+    found: list[tuple[tuple[str, ...], str]] = []
+    pending: list[tuple[Path, tuple[str, ...]]] = [(top, ())]
+    walked = {_dir_key(str(top))}
+    seen = 0
+    while pending:
+        current, inside = pending.pop()
+        try:
+            with os.scandir(current) as entries:
+                listing = sorted(entries, key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in reversed(listing):
+            seen += 1
+            if deadline is not None and seen % 256 == 0 and time.monotonic() > deadline:
+                raise _CopySourceTooLarge(str(top))
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                is_dir = False
+            is_link = _is_link_entry(entry)
+            if is_link or not is_dir:
+                found.append((inside, entry.name))
+            if is_dir or (is_link and os.path.isdir(entry.path)):
+                key = _dir_key(entry.path)
+                if key is not None and key not in walked:
+                    walked.add(key)
+                    pending.append((Path(entry.path), (*inside, entry.name)))
+    return found
+
+
+def _copy_source_files(
+    source: str, base: Optional[str], keep: Optional[_LandingFilter] = None, deadline: Optional[float] = None,
+) -> Optional[list[tuple[str, str]]]:
     """The files a copy source stands for on disk, as (directory name, path relative to that
-    directory) pairs: a directory gives its files (at most `_MAX_COPY_FILES` in all, symlinks not
-    followed), a glob its matches. None if nothing can be read (no known working directory, a
-    variable in the source): the caller then has only the source's own name."""
+    directory) pairs: a directory gives its files, a glob its matches; a link to a directory is
+    listed under its own name and walked as well (see `_walk_files`). With `keep` (a `_LandingFilter`) only the files it keeps are
+    listed: the tree is walked whole, however large, but only those files are mapped to their landing
+    place. The walk stops at `deadline` (a monotonic instant) with `_CopySourceTooLarge`. None if
+    nothing can be read (no known working directory, a variable in the source): the caller then has
+    only the source's own name."""
     if base is None or re.search(r"[$`]", source):
         return None
     expanded = os.path.expanduser(source) if source.startswith("~") else source
@@ -749,7 +987,7 @@ def _copy_source_files(source: str, base: Optional[str]) -> Optional[list[tuple[
     candidates: list[Path]
     if _GLOB_CHARS_RE.search(expanded):
         try:
-            candidates = [Path(hit) for hit in globlib.glob(pattern)][:_MAX_COPY_FILES]
+            candidates = [Path(hit) for hit in globlib.glob(pattern)]
         except (OSError, ValueError, re.error):
             return None
     else:
@@ -759,32 +997,95 @@ def _copy_source_files(source: str, base: Optional[str]) -> Optional[list[tuple[
         try:
             if candidate.is_dir():
                 top = "" if candidate.name in ("", ".", "..") else candidate.name
-                for current, dirs, files in os.walk(candidate):
-                    dirs.sort()
-                    for name in sorted(files):
-                        if len(found) >= _MAX_COPY_FILES:
-                            return found
-                        found.append((top, (Path(current) / name).relative_to(candidate).as_posix()))
+                for count, (inside, name) in enumerate(_walk_files(candidate, deadline), 1):
+                    if deadline is not None and count % 256 == 0 and time.monotonic() > deadline:
+                        raise _CopySourceTooLarge(source)
+                    if keep is not None and not keep.keep(top, inside, name):
+                        continue
+                    found.append((top, "/".join((*inside, name))))
             elif candidate.name and _GLOB_CHARS_RE.search(expanded):
                 found.append(("", candidate.name))
         except (OSError, ValueError):
             continue
-        if len(found) >= _MAX_COPY_FILES:
-            break
     return found
 
 
-def _copy_effective_targets(command: str, powershell: bool, base: Optional[str] = None) -> list[str]:
+# The first line of a command that is one quoted heredoc: `before` and `after` hold the command text
+# around the operator, `w1`/`w2`/`w3` the delimiter in its three quoted spellings (`'EOF'`, `"EOF"`,
+# `\EOF`), `dash` marks `<<-` (leading tabs of the body and of the end word are stripped).
+_QUOTED_HEREDOC_LINE_RE = re.compile(
+    r"\A\s*(?P<before>[^<\n]*?)[ \t]*<<(?P<dash>-?)[ \t]*"
+    r"(?:'(?P<w1>[^'\s]+)'|\"(?P<w2>[^\"\s]+)\"|\\(?P<w3>[^\s'\"\\]+))"
+    r"(?P<after>[^\n]*)\n"
+)
+# A file operand of a text reader: a plain or quoted word without anything the shell expands or that
+# would join a second command.
+_PLAIN_FILE_WORD = r"(?:'[^'$`\n]+'|\"[^\"$`\\\n]+\"|[^\s<>|&;$`'\"\\(){}]+)"
+# The text readers whose heredoc body is only stored: `cat` (alone, `cat -`, or into a file), `tee [-a]
+# <file>` (its echo may go to /dev/null), `git commit`/`git tag` with plain options -- for these two the
+# message must come from standard input (`_MESSAGE_FROM_STDIN_RE`), else the body is not theirs.
+_TEXT_READER_RE = re.compile(
+    r"\A(?:cat(?:[ \t]+-)?(?:[ \t]*>>?[ \t]*" + _PLAIN_FILE_WORD + r")?"
+    r"|tee(?:[ \t]+(?:-a|--append))?[ \t]+" + _PLAIN_FILE_WORD + r"(?:[ \t]*>[ \t]*/dev/null)?"
+    r"|git[ \t]+(?:commit|tag)(?P<gitargs>(?:[ \t]+[^\s<>|&;$`'\"\\(){}]+)*)"
+    r")\Z"
+)
+_MESSAGE_FROM_STDIN_RE = re.compile(r"[ \t](?:-F[ \t]*-|--file(?:=|[ \t]+)-)(?=[ \t]|\Z)")
+
+
+def _without_text_reader_heredoc(command: str) -> str:
+    """`command` without the body of its quoted heredoc when that body is text nobody runs; otherwise
+    `command` as it is. The body is text only when the whole command is ONE simple command that
+    merely stores what it reads -- `cat` (alone or into a file with `>`/`>>`), `tee [-a] <file>`,
+    `git commit -F -`/`--file=-`, `git tag ... -F -` -- and nothing else: no second command (`;`,
+    `&&`, `||`, `|`, `&`, a line after the end word), no substitution (`$(`, a backtick), no wrapper
+    in front (`sudo`, `env`, `exec`, ...), one heredoc, its delimiter quoted (`'EOF'`, `"EOF"`,
+    `\\EOF` -- an unquoted body is expanded and may run a substitution). Such a body is text: a note
+    holding `cp x .git/hooks/p` as a line is not a copy. Every other body stays and is read as
+    commands, as before, since what reads it cannot be told -- a shell, an interpreter, `make`, a file
+    run afterwards (`cat > x.sh <<'EOF' ... EOF` and then `./x.sh`). Hence an allow-list of the few
+    readers that only store text, not a list of the runners, which has no end."""
+    match = _QUOTED_HEREDOC_LINE_RE.match(command)
+    if match is None:
+        return command
+    reader = re.sub(r"\s+", " ", f"{match.group('before')} {match.group('after')}").strip()
+    reader_match = _TEXT_READER_RE.match(reader)
+    if reader_match is None:
+        return command
+    git_args = reader_match.group("gitargs")
+    if git_args is not None and not _MESSAGE_FROM_STDIN_RE.search(git_args):
+        return command
+    word = match.group("w1") or match.group("w2") or match.group("w3")
+    lines = command[match.end():].split("\n")
+    for index, line in enumerate(lines):
+        line = line.rstrip("\r")
+        if (line.lstrip("\t") if match.group("dash") else line) == word:
+            if any(rest.strip() for rest in lines[index + 1:]):
+                return command  # a second command after the end word
+            return command[:match.end()] + line
+    return command  # no end word: the body runs to the end of the input and stays as it is
+
+
+def _copy_effective_targets(
+    command: str, powershell: bool, base: Optional[str] = None, deadline: Optional[float] = None,
+    special_dirs: Optional[list[Path]] = None,
+) -> list[str]:
     """The files a shell copy/move writes when its destination is a directory: for each source the
     destination followed by the source's own name (`cp payload/.envrc .` writes `./.envrc`,
     `cp -r payload/.claude .` writes `./.claude`). Whether the destination really is a directory is
     not asked -- the extra path only matters when it names a protected file. When the source is a
     directory on disk (or a glob that matches some) and `base` is the known working directory, the
     files below it are mapped to both places they can land, `<dest>/<dir name>/<rel>` and
-    `<dest>/<rel>` (`cp -r payload/. .`, `cp hooks/* .git/hooks/`), for at most `_MAX_COPY_FILES`
-    files: a larger tree is only checked up to that many. A source with a variable (`$D/x`) gives
-    no usable name and is not followed."""
+    `<dest>/<rel>` (`cp -r payload/. .`, `cp hooks/* .git/hooks/`), however many there are; below a
+    destination that is no protected place of its own (`_landing_filter`, with `special_dirs` the
+    git and Claude directories) only the files that can land on a protected path are mapped, which
+    keeps a large tree fast. A source with a variable (`$D/x`) gives no usable name and is not
+    followed. A source that cannot be read before `deadline` (a monotonic instant) raises
+    `_CopySourceTooLarge`. The body of a quoted heredoc that only a text reader stores is left out
+    (`_without_text_reader_heredoc`); any other body is read like the rest of the command."""
     found: list[str] = []
+    if not powershell:
+        command = _without_text_reader_heredoc(command)
     for segment in _SEGMENT_SPLIT_RE.split(command):
         operands = _copy_operands(segment, powershell)
         if operands is None:
@@ -792,11 +1093,12 @@ def _copy_effective_targets(command: str, powershell: bool, base: Optional[str] 
         sources, destinations = operands
         for destination in destinations:
             head = destination.rstrip("\\/") + "/" if destination.rstrip("\\/") else "/"
+            keep = _landing_filter(destination, base, special_dirs or [])
             for source in sources:
                 name = re.split(r"[\\/]+", source.rstrip("\\/"))[-1]
                 if name and name not in (".", "..") and not re.search(r"[*?\[$`]", name):
                     found.append(head + name)
-                for top, rel in _copy_source_files(source, base) or []:
+                for top, rel in _copy_source_files(source, base, keep, deadline) or []:
                     found.append(head + rel)
                     if top:
                         found.append(f"{head}{top}/{rel}")
@@ -844,16 +1146,31 @@ def _violation(payload: dict) -> Optional[str]:
                 raise ValueError("PowerShell command not evaluable")
             targets = [(raw, base_cwd) for raw in found]
         copy_base, copy_known = _resolve_cwd_after_leading_cd(command, base_cwd)
-        targets += [
+        deadline = _copy_deadline(payload)
+        copy_targets = [
             (raw, copy_base if copy_known else None)
             for raw in _copy_effective_targets(
-                command, tool_name == "PowerShell", copy_base if copy_known else None,
+                command, tool_name == "PowerShell", copy_base if copy_known else None, deadline,
+                gitdirs + claude_dirs,
             )
         ]
         for raw, base in targets:
             reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)
             if reason:
                 return f"writes {reason}"
+        parents: dict = {}
+        for count, (raw, base) in enumerate(copy_targets, 1):
+            reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True, parents=parents)
+            if reason:
+                return f"writes {reason}"
+            if count % 256 == 0 and time.monotonic() > deadline:
+                raise _CopySourceTooLarge(raw)
+    except _CopySourceTooLarge:
+        return (
+            "copies a source that is too large to check in time, so it cannot be told whether it writes "
+            "a git hook, the repository config or another protected file (copy it in smaller parts, or "
+            "ask the human to run it)"
+        )
     except Exception:  # noqa: BLE001 — never a silent allow: fall back to the raw text
         if _RAW_GIT_RE.search(command):
             return "mentions a git hook or the repository config in a command that cannot be analysed"

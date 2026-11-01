@@ -23,6 +23,8 @@
 #              own, and merging it into HEAD would change nothing (`git merge-tree --write-tree`
 #              gives HEAD's tree; git 2.38 or later, else it stays refused). A move or copy that
 #              overwrites an existing branch (`-M`, `-C`) gets no such release.
+#              `@{-N}` is resolved to the branch it names first. On a case-insensitive file system a
+#              name that exists in two spellings (a loose and a packed ref) gets no such release.
 #
 #          The default branch is read from `git symbolic-ref refs/remotes/origin/HEAD`, else
 #          `init.defaultBranch`, else both `main` and `master`.
@@ -50,6 +52,7 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import subprocess
 import sys
 import time
@@ -491,6 +494,28 @@ def _fully_taken_over(name: str, remote: bool, target: Path, budget: _Budget) ->
     return len(merged_lines) == 1 and merged_lines[0] == head_tree.stdout.strip()
 
 
+_PREVIOUS_BRANCH_RE = re.compile(r"@\{-\d+\}")
+
+
+def _resolve_previous(name: str, target: Path, budget: _Budget) -> str:
+    """`@{-N}` (the branch checked out N switches ago) as the branch name it stands for; the listing
+    of unmerged branches never holds the spelling `@{-N}`. Anything else, or a name git cannot place,
+    is returned as it is."""
+    if not _PREVIOUS_BRANCH_RE.fullmatch(name):
+        return name
+    full = budget.soft(["rev-parse", "--symbolic-full-name", name], target).strip()
+    return full[len("refs/heads/"):] if full.startswith("refs/heads/") else name
+
+
+def _spelled_twice(name: str, remote: bool, target: Path, budget: _Budget) -> bool:
+    """True if two refs differ from `name` only in letter case (a loose and a packed one, possible on
+    a case-insensitive file system). `git branch -D` removes both, while the patch comparison reads
+    only one of them, so such a name is never released as taken over."""
+    prefix = "refs/remotes/" if remote else "refs/heads/"
+    refs = budget.out(["for-each-ref", "--format=%(refname)", prefix], target).split("\n")
+    return sum(1 for ref in refs if ref.strip().lower() == (prefix + name).lower()) > 1
+
+
 def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
     head = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     delete = any(_long_is(a, "delete", 5) for a in head) or _has_letter(head, "d", "")
@@ -507,6 +532,8 @@ def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optio
         return None
     if overwrite and not force_delete:
         names = names[-1:]  # a move or copy overwrites only its destination
+    if not remote:
+        names = [_resolve_previous(name, target, budget) for name in names]
     # lstrip=2, not short: `short` prints `heads/x` when a tag `x` exists too, and the name would
     # no longer match
     listing_args = ["branch", "--format=%(refname:lstrip=2)", "--no-merged", "HEAD"]
@@ -518,7 +545,11 @@ def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optio
     if force_delete:
         # Work taken over by cherry-pick leaves the branch "not merged" by ancestry; release only a
         # branch whose content is in HEAD already (see _fully_taken_over). Any doubt refuses.
-        blocked = [name for name in blocked if not _fully_taken_over(name, remote, target, budget)]
+        blocked = [
+            name for name in blocked
+            if (fold and _spelled_twice(name, remote, target, budget))
+            or not _fully_taken_over(name, remote, target, budget)
+        ]
     if blocked:
         return "not merged into HEAD: " + ", ".join(f"`{n}`" for n in blocked)
     return None

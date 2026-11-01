@@ -44,9 +44,27 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
+
+# Compiled caches go to <project>/.act-local/pyc, as dispatch.py does for the other hooks (this one is run
+# straight from the settings, not through dispatch.py), instead of __pycache__/ folders under .act/. Same
+# path budget: past it no cache is written at all. Must run before the imports below.
+_PYC_PATH_BUDGET = 240  # keep equal to dispatch.py
+_PYC_LONGEST_TAIL = 70  # keep equal to dispatch.py
+try:
+    _project_root = Path(__file__).resolve().parents[2]
+    _pyc_prefix = _project_root / ".act-local" / "pyc"
+    _sources = (str(_project_root / ".act"), os.path.dirname(os.__file__))
+    _longest_source = max(len(s) - 2 if s[1:2] == ":" else len(s) for s in _sources)
+    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET:
+        sys.dont_write_bytecode = True
+    else:
+        sys.pycache_prefix = str(_pyc_prefix)
+except (IndexError, OSError, ValueError, RuntimeError):
+    sys.dont_write_bytecode = True
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 try:

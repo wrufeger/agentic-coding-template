@@ -104,6 +104,10 @@ FILENAME_ID_RE = re.compile(r"^([A-Za-z]\d+[a-z]?)-")
 # task-wait-hours); a missing, malformed or non-positive value counts as this default.
 DEFAULT_TASK_WAIT_HOURS = 12.0
 CREATED_RE = re.compile(r"(?im)^created:\s*(\S+)\s*$")
+# The label a question ends with (`**Answer:**`, `**Antwort:**`), also with a note before the colon; as
+# in entries.py, case-sensitive and not indented by four spaces (that is an indented code line).
+ANSWER_LABEL_RE = re.compile(r"^ {0,3}\*\*(?:Answer|Antwort)\b[^*\n]*:\*\*(.*)$")
+ANSWER_IN_FILE_NOTE = "answer in file, status still open"
 _CREATED_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # A team-mode filename carries its timestamp as "-YYYYMMDD-HHMM-" (actlib.entry_stamp(), between
 # the identity slug and the title slug); an older or hand-adopted entry instead carries a leading
@@ -211,14 +215,32 @@ def _first_heading(path: Path) -> Optional[str]:
     return None
 
 
+def _ledger_sort_key(path: Path) -> tuple:
+    """Ascending key for a ledger file (the caller sorts in reverse, newest first): the date prefix,
+    then the time of day of the "created:" header field when it names that same day, else of the
+    file's modification time when that falls on the day, else none (an untimed entry sorts last
+    within its day), and last the filename, so the order stays deterministic."""
+    day = LEDGER_FILENAME_RE.match(path.name).group(1)  # type: ignore[union-attr]
+    when = _parse_created(_read_created(path))
+    if when is None or when.date().isoformat() != day:
+        try:
+            when = datetime.fromtimestamp(path.stat().st_mtime)
+        except OSError:
+            when = None
+        if when is not None and when.date().isoformat() != day:
+            when = None
+    seconds = -1 if when is None else when.hour * 3600 + when.minute * 60 + when.second
+    return (day, seconds, path.name)
+
+
 def read_ledger_entries(root: Path, limit: int = LEDGER_LIMIT) -> Optional[list[str]]:
     """
     Return up to `limit` "<date> — <title>" strings, newest first, or None if neither ledger
     source exists.
 
     Primary source: one file per entry under docs/ai/work/ledger/, named YYYY-MM-DD-<slug>.md.
-    Sorting filenames in reverse gives newest-first, since the date prefix sorts lexically. The
-    title is the file's first Markdown heading, or the slug with hyphens turned into spaces if
+    The date prefix orders the days; within a day the entries go by the time of their "created:"
+    field (_ledger_sort_key()), not by slug. The title is the file's first Markdown heading, or the slug with hyphens turned into spaces if
     the file has none.
 
     Fallback: if docs/ai/work/ledger/ does not exist but docs/ai/work/ledger.md does, its first
@@ -228,7 +250,7 @@ def read_ledger_entries(root: Path, limit: int = LEDGER_LIMIT) -> Optional[list[
     if ledger_dir.is_dir():
         files = sorted(
             (p for p in ledger_dir.glob("*.md") if LEDGER_FILENAME_RE.match(p.name)),
-            key=lambda p: p.name,
+            key=_ledger_sort_key,
             reverse=True,
         )
         entries = []
@@ -504,6 +526,25 @@ def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list
 # The one inbox (docs/ai/inbox/)
 # ---------------------------------------------------------------------------
 
+def answer_in_file(body: str) -> bool:
+    """True when text stands under the last answer label (`**Answer:**`, `**Antwort:**`) outside a fenced
+    code block: on the label's own line after it, or on a later line. Blank lines and spaces are no answer."""
+    fence: actlib.FenceState = None
+    found = False
+    last = ""
+    for line in body.split("\n"):
+        line = line.rstrip("\r")
+        if fence is None:
+            match = ANSWER_LABEL_RE.match(line)
+            if match:
+                found, last = True, match.group(1).strip()
+                continue
+            if found and line.strip():
+                last += line.strip()
+        fence = actlib.fence_step(fence, line)
+    return found and bool(last)
+
+
 def read_inbox_entries(root: Path) -> Optional[list[dict]]:
     """
     Return every open or answered entry in actlib.INBOX_DIR as a dict, or None if that directory
@@ -518,6 +559,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
       - "created": the "created:" header value, or None if missing (sort fallback: the caller
         uses the filename instead — entries are named so that sorts chronologically too)
       - "title": the file's first Markdown heading, or its filename stem
+      - "answer_in_file": True for an open entry with text under its last answer label (answer_in_file())
       - "body": the file's text with the leading header (plain or frontmatter, and the blank line
         separating it from the rest) stripped, kept verbatim otherwise — used only by the generated inbox view
     """
@@ -558,6 +600,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
             "path": path, "kind": kind, "label": label, "for": recipient,
             "status": status, "created": created, "title": title, "body": body,
             "triage": bool(TRIAGE_RE.search(header)),
+            "answer_in_file": kind == "question" and status == "open" and answer_in_file(body),
         })
     return entries
 
@@ -565,7 +608,7 @@ def read_inbox_entries(root: Path) -> Optional[list[dict]]:
 def for_assistant(entry: dict) -> bool:
     """True when the entry is the assistant's to process: it carries `triage: open` (any kind, any
     status), or it is answered and not a note. An answered note waits for the human instead."""
-    if entry.get("triage"):
+    if entry.get("triage") or entry.get("answer_in_file"):
         return True
     return entry["status"] == "answered" and entry["kind"] != "note"
 
@@ -653,7 +696,8 @@ def _group_by_recipient(entries: list[dict], identity: Optional[str]) -> tuple[l
 
 
 def _format_entry(entry: dict) -> str:
-    return f"{entry['label']} — {entry['title']}"
+    note = f" ({ANSWER_IN_FILE_NOTE})" if entry.get("answer_in_file") else ""
+    return f"{entry['label']} — {entry['title']}{note}"
 
 
 # ---------------------------------------------------------------------------
@@ -962,7 +1006,11 @@ def main(argv: list[str]) -> int:
         if code is None:
             print(f"board: {args.chat_language!r} is no language code (e.g. de, en, pt-br)", file=sys.stderr)
             return 2
-        actlib.write_identity({"chat_language": code})
+        try:
+            actlib.write_identity({"chat_language": code})
+        except (ValueError, OSError) as exc:
+            print(f"board: chat language not remembered: {exc}", file=sys.stderr)
+            return 2
         chat = actlib.language_settings(actlib.read_config())[0]
         suffix = "" if chat == "auto" else f" (inactive while config.md fixes language-chat {chat!r})"
         print(f"board: chat language {code!r} remembered for this checkout in .act-local/identity.json{suffix}")

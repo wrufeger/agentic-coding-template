@@ -99,7 +99,9 @@ import actlib
 from .brace_expand import expand_braces
 from .command_words import _command_word_lists_new, _strip_command_prefix, _stripped_word_lists
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
-from .powershell_targets import _powershell_write_targets, _ps_raw_redirect_targets
+from .powershell_targets import (
+    _extract_ps_command_flag, _powershell_write_targets, _ps_raw_redirect_targets,
+)
 from .secret_read import (
     _GREP_FAMILY,
     _HOME_TOKEN_RE,
@@ -141,6 +143,11 @@ _PS_ASSIGN_RE = re.compile(r"^\$\w+$")
 _DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 _UNC_RE = re.compile(r"^(?:\\\\|//)[^\\/\s]+[\\/]+[^\\/\s]")
 _URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+://")
+# Two or more forward slashes and nothing else (`//`, `///`). As a word of its own that is the file
+# system root, as on a POSIX system (`ls //`), and is read like `/`; as a fragment of text (a string
+# literal of inline code, a floor division, a separator in a pattern) it is never a place. Only
+# `//host/share` with a segment is a UNC path (`_UNC_RE`).
+_ONLY_SLASHES_RE = re.compile(r"^/{2,}$")
 _FILE_URL_RE = re.compile(r"^file:/{2,3}(?=[A-Za-z]:|/|[^/])", re.IGNORECASE)
 _DYNAMIC_RE = re.compile(r"[$`{]|%[A-Za-z_][A-Za-z0-9_]*%")
 # (`//ve` is how Git Bash spells the Windows switch `/ve`, so that it is not turned into a path.)
@@ -341,6 +348,8 @@ def _resolve_text(raw: str, base: Optional[str], bash: bool, mode: str = "shell"
     text = raw.strip().strip("'\"")
     if not text or "\0" in text:
         return None
+    if _ONLY_SLASHES_RE.match(text):
+        text = "/"  # a word of its own, not a fragment of text: the root, as `/` is
     if mode == "file":
         if text == "~" or text.startswith(("~/", "~\\")):
             home = _home()
@@ -404,7 +413,7 @@ def _looks_like_path(candidate: str, strict: bool = False) -> bool:
     text = candidate.strip().strip("'\"")
     if text == "~":
         return True
-    if len(text) < 2 or _URL_RE.match(text):
+    if len(text) < 2 or _URL_RE.match(text) or (strict and _ONLY_SLASHES_RE.match(text)):
         return False
     if _HOME_TOKEN_RE.match(text) or _DRIVE_RE.match(text) or _UNC_RE.match(text):
         return True
@@ -1094,6 +1103,29 @@ def _shell_word_lists(command: str) -> list[list[str]]:
             return _coarse_word_lists(command)
 
 
+# Programs whose `-c` text is code of a language, not a command line.
+_CODE_INTERPRETERS = _INTERPRETERS - {"pwsh", "powershell"}
+
+
+def _ps_lists(command: str, depth: int = 0) -> list[list[str]]:
+    """`_ps_word_lists` with one change: in the `-c` text of a language interpreter (`python -c "print(7
+    // 2)"`) a word of only slashes is an operator or a comment of that language, not a path, so it is
+    left out. The text of a nested shell or PowerShell (`pwsh -c "ls //"`) is a command line and keeps
+    every word."""
+    lists: list[list[str]] = []
+    for words in _ps_word_lists(command, 2):  # 2: the nested text is read here, not there
+        lists.append(words)
+        inner = _extract_ps_command_flag(words[1:]) if depth < 2 else None
+        if not inner:
+            continue
+        nested = _ps_lists(inner, depth + 1)
+        if _command_name(words[0]) in _CODE_INTERPRETERS:
+            trimmed = ([word for word in item if not _ONLY_SLASHES_RE.match(word)] for item in nested)
+            nested = [item for item in trimmed if item]
+        lists.extend(nested)
+    return lists
+
+
 def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     powershell = tool == "PowerShell"
     # The text of a quoted heredoc is never run; cut out first, so that a line of the command that
@@ -1128,7 +1160,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     groups: list[list[list[str]]] = []
     if powershell:
         try:
-            groups.append(_ps_word_lists(command))
+            groups.append(_ps_lists(command))
         except Exception:  # noqa: BLE001
             pass
     try:

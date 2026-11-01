@@ -688,6 +688,17 @@ def _tool_error(returncode: Optional[int], message: str, findings_codes: "frozen
     return message
 
 
+def _silent_findings_error(
+    returncode: Optional[int], findings_codes: "frozenset[int]", detail: str,
+) -> Optional[str]:
+    """An `UnreadableReport` for a report that parsed but yielded no finding although the tool exited with
+    its "found something" code -- `null`, a changed schema, npm 6's `advisories` form: the findings are
+    there, nobody has read them. None when the exit code is not one of `findings_codes` (a clean run)."""
+    if returncode in findings_codes:
+        return UnreadableReport(f"{detail} -- the exit code means findings, none could be read from the report")
+    return None
+
+
 def _empty_output_error(returncode: Optional[int], stderr: Optional[str], findings_codes: "frozenset[int]") -> str:
     detail = (stderr or "").strip().splitlines()[:1]
     return _tool_error(
@@ -789,6 +800,8 @@ def _run_osv_scanner_chunk(
                     lock_file=lock_file,
                     summary=str(vuln.get("summary") or "")[:200],
                 ))
+    if not findings:
+        return [], _silent_findings_error(returncode, _FINDINGS_EXIT_1, "osv-scanner JSON holds no vulnerability")
     return findings, None
 
 
@@ -836,6 +849,8 @@ def _run_npm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[F
                     advisory_id=advisory_id, severity=severity, fixed_version=fixed_version,
                     lock_file=_relative(lock_path, root),
                 ))
+    if not findings:
+        return [], _silent_findings_error(returncode, _FINDINGS_EXIT_1, "npm audit JSON holds no advisory")
     return findings, None
 
 
@@ -917,14 +932,23 @@ def _run_pnpm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[
                     ))
     if not isinstance(data, dict) or not (isinstance(advisories, dict) or isinstance(vulnerabilities, dict)):
         keys = sorted(str(k) for k in data) if isinstance(data, dict) else type(data).__name__
-        return [], f"unexpected pnpm audit JSON (keys: {keys})"
+        return [], _tool_error(returncode, f"unexpected pnpm audit JSON (keys: {keys})", _FINDINGS_EXIT_1)
     if not findings:
         metadata = data.get("metadata")
         counts = metadata.get("vulnerabilities") if isinstance(metadata, dict) else None
         if isinstance(counts, dict):
             total = sum(v for v in counts.values() if isinstance(v, int) and not isinstance(v, bool))
             if total > 0:
-                return [], f"pnpm audit reports {total} vulnerabilities but none could be read from its JSON"
+                return [], _tool_error(
+                    returncode, f"pnpm audit reports {total} vulnerabilities but none could be read from its JSON",
+                    _FINDINGS_EXIT_1,
+                )
+            if any(isinstance(v, int) and not isinstance(v, bool) for v in counts.values()):
+                # The report itself counts zero: clean, whatever the exit code (pnpm also exits with 1 when
+                # every advisory it found is ignored by the project's audit settings).
+                return [], None
+    if not findings:
+        return [], _silent_findings_error(returncode, _FINDINGS_EXIT_1, "pnpm audit JSON holds no advisory")
     return findings, None
 
 
@@ -963,6 +987,8 @@ def _run_composer_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[l
                     lock_file=_relative(lock_path, root),
                     summary=str(entry.get("title") or "")[:200],
                 ))
+    if not findings:
+        return [], _silent_findings_error(returncode, _COMPOSER_FINDINGS_EXIT, "composer audit JSON holds no advisory")
     return findings, None
 
 

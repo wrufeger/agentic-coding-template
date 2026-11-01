@@ -83,15 +83,15 @@ class Section:
 
 def split_sections(lines: list[str]) -> list[Section]:
     """The sections of a collection: an anchor line directly followed by a `## ` heading starts one. A pair
-    inside a fenced code block is an example, and a section boundary resets the fence state, as
-    `actlib.collection_sections` does; that function lists only sections whose anchor is an id, while a
+    inside a fenced code block is an example and does not count, as in
+    `actlib.collection_sections`; that function lists only sections whose anchor is an id, while a
     journal or free-name section has none, so the scan is repeated here for every anchor."""
     starts: list[int] = []
     fence: actlib.FenceState = None
     for i, line in enumerate(lines):
-        if i + 1 < len(lines) and _ANCHOR_RE.match(line.rstrip("\r")) and lines[i + 1].startswith("## "):
+        if (fence is None and i + 1 < len(lines) and _ANCHOR_RE.match(line.rstrip("\r"))
+                and lines[i + 1].startswith("## ")):
             starts.append(i)
-            fence = None
             continue
         fence = actlib.fence_step(fence, line)
     sections: list[Section] = []

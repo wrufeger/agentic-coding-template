@@ -741,6 +741,21 @@ def coding_set_line(line: str, root: Optional[Path] = None) -> str:
     return line[:start] + wanted + line[end:]
 
 
+def _read_text_eol(path: Path) -> tuple[str, str]:
+    """(text with LF line ends, the file's own line ending): "\r\n" when most of its line ends are
+    CRLF, else "\n". Read from the bytes, so the ending survives an edit written back with it."""
+    raw = path.read_bytes().decode("utf-8")
+    crlf = raw.count("\r\n")
+    eol = "\r\n" if crlf and crlf >= raw.count("\n") - crlf else "\n"
+    return raw.replace("\r\n", "\n"), eol
+
+
+def _write_text_eol(path: Path, text: str, eol: str) -> None:
+    """Write `text` (LF line ends) to `path` with the line ending `eol`."""
+    with open(path, "w", encoding="utf-8", newline=eol) as handle:
+        handle.write(text)
+
+
 def sync_coding_imports(root: Path, write: bool = True) -> int:
     """Bring every set line of docs/project/coding_rules.md into its canonical form
     (coding_set_line), so the checkboxes decide what Claude Code loads. Returns how many lines
@@ -748,13 +763,12 @@ def sync_coding_imports(root: Path, write: bool = True) -> int:
     path = root / AREAS["coding"].project_file
     if not path.is_file():
         return 0
-    text = path.read_text(encoding="utf-8")
+    text, eol = _read_text_eol(path)
     lines = text.splitlines()
     fixed = [coding_set_line(line, root) for line in lines]
     changed = sum(1 for old, new in zip(lines, fixed) if old != new)
     if changed and write:
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("\n".join(fixed) + ("\n" if text.endswith("\n") else ""))
+        _write_text_eol(path, "\n".join(fixed) + ("\n" if text.endswith("\n") else ""), eol)
     return changed
 
 
@@ -799,14 +813,13 @@ def add_new_coding_entries(root: Path, write: bool = True) -> list[str]:
         messages.extend(f".act/coding/{name}: added as a rule set (off)" for name in new_sets)
 
     if inserts and write:
-        text = path.read_text(encoding="utf-8")
+        text, eol = _read_text_eol(path)
         lines = text.splitlines()
         # bottom-up, so an insertion never shifts the index of one still to do; at the same index
         # the groups of the last set go in before the new sets' lines
         for index, new_lines in sorted(inserts, key=lambda item: (item[0], item[1][0].startswith("- ")), reverse=True):
             lines[index:index] = new_lines
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("\n".join(lines) + ("\n" if text.endswith("\n") else ""))
+        _write_text_eol(path, "\n".join(lines) + ("\n" if text.endswith("\n") else ""), eol)
     return messages
 
 
@@ -834,6 +847,21 @@ def _holding_in(root: Path, base: Path, gid: str) -> list[str]:
     return found
 
 
+def _line_block(lines: list[str], index: int) -> list[int]:
+    """Indexes of the rule line `index` plus the indented continuation lines under it (a reason the
+    owner wrapped), so a move or a drop takes the whole entry."""
+    indent = len(lines[index]) - len(lines[index].lstrip())
+    block = [index]
+    for follow in range(index + 1, len(lines)):
+        line = lines[follow]
+        stripped = line.strip()
+        if (not stripped or len(line) - len(line.lstrip()) <= indent
+                or stripped.startswith(("- ", "* ", "+ ", "@", "#", "<!--", "```", "~~~"))):
+            break
+        block.append(follow)
+    return block
+
+
 def move_core_entries(root: Path, write: bool = True) -> list[str]:
     """Follow a rule that the template moved from one rule file to another in docs/ai/rules.md. The
     file lists each rule as a checkbox line under the import of the file that holds it; after a
@@ -853,7 +881,7 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
     project = parse_project_file(path, area)
     templates = [resolve_template_set(pset) for pset in project.sets]
     messages: list[str] = []
-    text = path.read_text(encoding="utf-8")
+    text, eol = _read_text_eol(path)
     lines = text.splitlines()
     removed: set[int] = set()
     # anchor line index -> [(position in the target file, line)], written right after that line
@@ -861,6 +889,7 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
     # per target block: (position in its file, anchor line index) of every line listed or moved there
     placed: dict[int, list[tuple[int, int]]] = {}
     moves: list[tuple[int, int, int, str, int]] = []  # (target, position, source, id, line index)
+    stale = 0
 
     for si, (pset, template) in enumerate(zip(project.sets, templates)):
         if template is None:
@@ -874,8 +903,26 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
             if len(holders) == 1:
                 ti = holders[0]
                 moves.append((ti, list(templates[ti].groups).index(gid), si, gid, group.line - 1))
-            elif not holders and not any(gid in project.sets[ti].groups for ti, other in enumerate(templates)
-                                         if other is not None and gid in other.groups):
+            elif not holders and any(gid in project.sets[ti].groups for ti, other in enumerate(templates)
+                                     if other is not None and gid in other.groups):
+                # listed under the file that holds it now and still under this one. The stale line goes
+                # only when it says nothing the line under the new file does not: same box, no reason,
+                # nothing wrapped below it. Otherwise the owner's words stay and the case is reported.
+                current = next(project.sets[ti] for ti, other in enumerate(templates)
+                               if other is not None and gid in other.groups and gid in project.sets[ti].groups)
+                block = _line_block(lines, group.line - 1)
+                if group.enabled == current.groups[gid].enabled and not group.reason and len(block) == 1:
+                    removed.update(block)
+                    stale += 1
+                    messages.append(f"{gid}: listed under {pset.path} and under the file that holds it now, "
+                                    "the line under the old file was dropped")
+                else:
+                    old_mark = "checked" if group.enabled else "unchecked"
+                    new_mark = "checked" if current.groups[gid].enabled else "unchecked"
+                    messages.append(f"{gid}: listed under {pset.path} ({old_mark}) and under {current.path} "
+                                    f"({new_mark}), which holds it now — the line under the old file has no "
+                                    f"effect")
+            elif not holders:
                 imported = {strip_template_prefix(p.path) for p in project.sets}
                 elsewhere = [f for f in _rule_files_holding(root, gid)
                              if strip_template_prefix(f) not in imported and f not in imported]
@@ -892,19 +939,19 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
         before = [item for item in candidates if item[0] < position]
         anchor = max(before)[1] if before else target.line - 1
         placed.setdefault(ti, []).append((position, anchor))
-        inserts.setdefault(anchor, []).append((position, lines[index]))
-        removed.add(index)
+        block = _line_block(lines, index)
+        inserts.setdefault(anchor, []).append((position, "\n".join(lines[i] for i in block)))
+        removed.update(block)
         mark = "checked" if project.sets[si].groups[gid].enabled else "unchecked"
         messages.append(f"{gid}: moved from {project.sets[si].path} to {target.path} ({mark})")
 
-    if moves and write:
+    if (moves or stale) and write:
         out: list[str] = []
         for number, line in enumerate(lines):
             if number not in removed:
                 out.append(line)
             out.extend(new for _pos, new in sorted(inserts.get(number, [])))
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("\n".join(out) + ("\n" if text.endswith("\n") else ""))
+        _write_text_eol(path, "\n".join(out) + ("\n" if text.endswith("\n") else ""), eol)
     return messages
 
 

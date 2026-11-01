@@ -22,7 +22,9 @@
 #          checkboxes decide once, in one place). A pattern is matched against the whole added line
 #          regardless of which file it is in (same stance secret_scan.py takes: cheap and language-
 #          agnostic rather than tied to a file extension) — enabling a coding set is what turns a
-#          pattern group on, not the file being edited.
+#          pattern group on, not the file being edited. The one exception is a pattern that names
+#          file extensions of its own (`extensions`, the PHP SQL patterns): it runs only on those
+#          files, since its form means something else in other languages.
 #
 #          Verbatim from the concept's decided behaviour ("the same form as the encoding
 #          hint"): a hit stops the first commit once, with the finding's location and reason: the
@@ -45,11 +47,12 @@
 #
 # Known limits:
 #   - the SQL-string-concatenation patterns are a rough heuristic (an SQL keyword near a quote-and-
-#     `+` or an f-string/template-literal placeholder) - a real query builder's `.format()`/`%`-
-#     style call is not covered, nor PHP's `.` concatenation, a `"... $var"` interpolation or a
-#     `+` continued on the next line; for SELECT and UPDATE the quote-and-`+` must sit within 200
-#     characters of the statement with no `;` in between (INSERT INTO and DELETE FROM: anywhere
-#     on the line), and a false positive on ordinary string handling near the word
+#     `+`, a PHP dot or `"... $var"` interpolation (PHP files only), Python `%` or `.format()`
+#     after the literal, or an f-string/template-literal placeholder) - an operator or `+` continued
+#     on the next line is not covered; the operator must sit within 200
+#     characters of the statement with no `;` in between (INSERT INTO and DELETE FROM with `+`:
+#     anywhere on the line), a LIKE operand is ignored by the `%` pattern, and a false positive on
+#     ordinary string handling near the word
 #     "select" is possible; documented as an open point for the concept rather than tuned further
 #     here (2026-09-25, review). A query builder's tagged template literal (sql`...`) is the safe
 #     form and is blanked out first (see _SQL_TAGGED_TEMPLATE); only its first line is recognized
@@ -89,6 +92,7 @@ from .secret_scan import (
     _git_commit_invocations,
     _repo_toplevel,
     _run_git,
+    _text_lines,
     _GIT_TIMEOUT,
     _MAX_DIFF_BYTES,
     _TIME_BUDGET,
@@ -131,6 +135,7 @@ class DangerPattern(NamedTuple):
     regex: "re.Pattern[str]"
     safe_regex: Optional["re.Pattern[str]"] = None  # a match on the same line exempts the hit
     prepare: Optional[Callable[[str], str]] = None  # the line as this pattern sees it
+    extensions: Optional[tuple[str, ...]] = None  # only files with one of these suffixes (None: any file)
 
 
 # SQL needs its structure, not just a keyword: "Update-Snapshot", a URL path ".../update-now" or the log
@@ -185,6 +190,39 @@ def _without_tagged_sql(line: str) -> str:
     if _SQL_RAW_HELPER.search(line):
         return line
     return _SQL_TAGGED_TEMPLATE.sub(" ", line)
+
+
+# A LIKE operand (`LIKE '%foo%'`) holds a `%` right after a quote, which the `%`-formatting pattern would read
+# as the operator of `"..." % value`; the operand is blanked for that pattern.
+_SQL_LIKE_OPERAND = re.compile(r"""(?i)\b(?:i?like|similar\s+to)\s+(?:'[^'\n]*'|"[^"\n]*")""")
+
+
+def _without_like_operands(line: str) -> str:
+    return _SQL_LIKE_OPERAND.sub(" ", _without_tagged_sql(line))
+
+
+_PHP_EXTENSIONS = (".php", ".phtml", ".inc", ".module")
+# PHP: a quote, the concatenation dot and a `$variable` (`"SELECT ... WHERE id = " . $id`), the variable
+# first (`$cols . " FROM t"`), or the statement's two words in different literals of one dotted chain.
+_SQL_PHP_CONCAT = (
+    r"(?ix)" + _SQL_START + _SQL_STRUCT + r"""[^\n;]{0,200} ["']\s*\.\s*\$"""
+    r"""| \$[\w\[\]>'"-]{1,60}\s*\.\s*["'] [^\n;]{0,200}""" + _SQL_START + _SQL_STRUCT
+    + r"""| """ + _SQL_START + _sql_struct(r"""[^\n;]{0,200}?["']\s*\.[^\n;]{0,200}?""", spanning=True)
+)
+# PHP: a `$variable` or `{$expr}` inside a double-quoted string that holds the statement (single quotes do
+# not interpolate in PHP, a `\$` is a literal dollar sign, `$1` is a positional parameter, not a variable).
+_SQL_PHP_INTERPOLATION = (
+    r"""(?ix) (?<![\w\\])"(?=[^"\n]{0,400}(?<!\\)(?:\$[A-Za-z_]|\{\$))[^"\n]{0,200}?"""
+    + _SQL_START + _sql_struct(r"""[^"\n;]{0,200}?""")
+)
+# Python (and Ruby) formatting after the literal: `"... id = %s" % value`, `"... id = {}".format(value)`.
+# The literal and the operator sit within 200 characters of the statement, no `;` in between. A `%` that
+# opens a short literal of its own (`strftime('%Y', d)`, `DATE_FORMAT(d, '%Y-%m')`) is a date format, not
+# the operator: no quote may close the run of non-blank characters right after it.
+_SQL_FORMAT = (
+    r"""(?ix)""" + _SQL_START + _SQL_STRUCT
+    + r"""[^\n;]{0,200} ["']\s*(?:%(?![^'"\s]*['"])\s*[\w(\[{]|\.format\s*\()"""
+)
 
 
 # Grouped by the coding rule set (docs/project/coding_rules.md path) they belong to - see the
@@ -249,6 +287,18 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
             ),
             prepare=_without_tagged_sql,
         ),
+        DangerPattern(
+            "sql-php-concat", "SQL statement built by PHP string concatenation",
+            re.compile(_SQL_PHP_CONCAT), extensions=_PHP_EXTENSIONS,
+        ),
+        DangerPattern(
+            "sql-php-interpolation", "SQL statement with a PHP variable interpolated into the string",
+            re.compile(_SQL_PHP_INTERPOLATION), extensions=_PHP_EXTENSIONS,
+        ),
+        DangerPattern(
+            "sql-format", "SQL statement built with % or .format()",
+            re.compile(_SQL_FORMAT), prepare=_without_like_operands,
+        ),
     ),
 }
 # Nuxt templates are Vue templates - reuse the Vue group rather than a near-duplicate list.
@@ -291,11 +341,16 @@ def _active_patterns(enabled_sets: set[str]) -> tuple[DangerPattern, ...]:
     return tuple(active)
 
 
-def _match_line(line: str, patterns: tuple[DangerPattern, ...]) -> Optional[DangerPattern]:
+def _match_line(
+    line: str, patterns: tuple[DangerPattern, ...], path: Optional[str] = None,
+) -> Optional[DangerPattern]:
     """The first pattern in `patterns` that hits `line`, or None. The caller is responsible for the
     `act:allow-danger` exemption, checked once per line before this is even called (same split of
     responsibility as secret_scan._match_secret)."""
+    suffix = Path(path.replace("\\", "/")).suffix.lower() if path else None
     for pattern in patterns:
+        if pattern.extensions is not None and suffix not in pattern.extensions:
+            continue
         text = pattern.prepare(line) if pattern.prepare else line
         if pattern.regex.search(text) and not (pattern.safe_regex and pattern.safe_regex.search(text)):
             return pattern
@@ -321,7 +376,7 @@ def _scan_diff_text(
                     return
                 if _ALLOW_MARK in content:
                     continue
-                hit = _match_line(content, patterns)
+                hit = _match_line(content, patterns, file)
                 if hit is not None:
                     findings.append({"file": file, "line": line_no, "pattern": hit})
 
@@ -335,12 +390,12 @@ def _scan_new_file(path: Path, rel: str, patterns: tuple[DangerPattern, ...], fi
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    for line_no, content in enumerate(text.splitlines(), start=1):
+    for line_no, content in enumerate(_text_lines(text), start=1):
         if len(findings) >= _MAX_FINDINGS:
             return
         if _ALLOW_MARK in content:
             continue
-        hit = _match_line(content, patterns)
+        hit = _match_line(content, patterns, rel)
         if hit is not None:
             findings.append({"file": rel, "line": line_no, "pattern": hit})
 

@@ -57,7 +57,7 @@ __all__ = [
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
     "_ls_remote_output", "_update_channel", "_version_tuple", "_remote_release_available", "_update_channel_is_default",
-    "_update_channel_follows_tip_without_tags",
+    "_update_channel_follows_tip_without_tags", "_folder_source_result",
     "_remote_update_available", "_update_check_result_path", "_pending_update_note",
     "_commit_day", "_remote_commit_label", "_locked_commit",
     "_run_update_check_worker", "_spawn_update_check_worker", "_check_update_awareness",
@@ -784,6 +784,28 @@ def _remote_release_available(root: Path) -> Optional[dict]:
     return {"release": best[1], "release_commit": best[2]}
 
 
+def _folder_source_result(root: Path) -> Optional[dict]:
+    """The update-check result for a recorded source that is a plain folder without git: {} when the
+    folder's manifest is the one the project last applied (nothing pending, the caller drops an old
+    result), a tip-style result keyed by the manifest fingerprint when it differs, None when the
+    folder cannot be judged (not a folder, git after all, no manifest, nothing applied yet)."""
+    template = actlib.read_lock().get("template") or {}
+    source = str(template.get("source") or "")
+    applied = str(template.get("manifest_sha256") or "")
+    if not source or not applied:
+        return None
+    folder = Path(root, source)
+    if not folder.is_dir() or (folder / ".git").exists() or not (folder / ".act" / "MANIFEST.json").is_file():
+        return None
+    offered = _manifest_fingerprint(folder / ".act")
+    if not offered:
+        return None
+    if offered == applied:
+        return {}
+    return {"channel": "latest", "remote_commit": offered, "tip_fallback": True, "label": offered[:7],
+            "installed_commit": _locked_commit(root), "folder_source": True}
+
+
 def _remote_update_available(root: Path) -> Optional[str]:
     """None if the check could not be made at all (no source/commit recorded, no network, the
     source is not a git remote/repo, or it took too long) -- always silent in that case, never a
@@ -923,6 +945,13 @@ def _run_update_lookup(root: Path) -> None:
                            "label": _remote_commit_label(root, remote_commit),
                            "installed_commit": _locked_commit(root)}
                           if remote_commit else None)
+            elif found is None and _update_channel_follows_tip_without_tags(root):
+                # a source folder without git has no tags and no tip commit: compare its manifest
+                # with the one the project last applied (update.py takes such a folder as it is)
+                result = _folder_source_result(root)
+                if result == {}:
+                    actlib.record_update_result(root, None)
+                    return
         else:
             remote_commit = _remote_update_available(root)
             result = ({"channel": "latest", "remote_commit": remote_commit,

@@ -38,6 +38,24 @@
 # `${...}`) is judged by its static prefix up to the last separator before the first interpolation;
 # without a separator there it is no path.
 #
+# Windows tools with `/` switches: a literal that is only a switch (`/deny`, `/c`, `/grant:r`, `/MIR`,
+# `/R:3`: one segment, at most 16 letters or digits, an optional `:value`) is no path in exactly one
+# place - among the arguments of a call that starts a program, when the tool that knows the switch (the
+# table per tool is _TOOL_SWITCHES; `icacls`, `cmd`, ... also as a `System32` path) is the literal in
+# the tool's position of that very call: the first element of the list `subprocess.run`, `call`,
+# `check_call`, `check_output` or `Popen` gets, the first argument of Node `spawn`, `spawnSync`,
+# `execFile` or `execFileSync` with the list as the second, the program argument of `os.exec*` /
+# `os.spawn*`. The tool's name is no path there either. A literal in that position that is a whole
+# command line starting with the tool (`os.system('icacls d /deny x')`, `subprocess.run('...')`, Node
+# `exec`/`execSync`) is cut into words, the tool and its switches dropped and every other word judged
+# on its own - but only a line of one command: a `;`, `&`, `|`, `<`, `>`, `(`, `)`, `^`, `%`, `$`, backtick
+# or line break in it keeps the literal whole. For `cmd` only the switches up to `/c` or `/k` drop: what
+# follows is another program's command line and is judged as usual. Nothing else makes a switch: not a `'cmd'` elsewhere in the program (`print('cmd')`,
+# `t = 'cmd'`), not the enclosing statement, block or any other call (`shutil.copytree('cmd', '/c')`),
+# not a list built from parts; a switch the tool does not know and one that names a file
+# (`/LOG:out.txt`) stay paths. The cost: a switch-like literal in the tool's own list is never judged
+# as a file in the root of a drive.
+#
 # Known limits (a path missed here is simply not checked): a path built at run time (`Path(a) / b`,
 # `os.path.join('out', name)` whose parts carry no separator, `os.environ[...]`, a variable holding
 # the path); a bare name without an extension (`open('out', 'w')`), which includes a dotfile such as
@@ -573,14 +591,215 @@ def path_literals(language: str, code: str) -> list[str]:
     return list(found)
 
 
+# Windows command-line tools whose switches start with a slash (`icacls d /deny x`, `robocopy a b /MIR`,
+# `cmd /c ...`), and the switches of each that this reads as switches - only in a call that starts the
+# tool (see the header and _without_switches). A switch that names a file (`/LOG:out.txt`,
+# `/EXCLUDE:list`) is left out of the table on purpose: it is judged like any path.
+_TOOL_SWITCHES = {
+    "icacls": "deny grant remove inheritance t c q l reset save restore setowner findsid verify substitute "
+              "setintegritylevel",
+    "cacls": "t m s e c g r p d",
+    "robocopy": "mir e s purge r w mt copy copyall dcopy xd xf xo xc xn xx nfl ndl njh njs np ns nc l z b zb "
+                "mov move lev create fft dst tee v ts fp bytes eta sec secfix timfix sl sj j",
+    "xcopy": "e s i y -y q h r k c d f l t v w z o x p u n g b j",
+    "takeown": "f r a d s u p skipsl",
+    "attrib": "s d l",
+    "cmd": "c k s q d a u t e f v x y r",
+}
+_SWITCH_NAMES = {tool: frozenset(("? " + names).split()) for tool, names in _TOOL_SWITCHES.items()}
+_SWITCH_TOOLS = "(" + "|".join(_TOOL_SWITCHES) + r")(?:\.exe)?"
+_SYSTEM32 = r"(?:[A-Za-z]:[\\/]Windows[\\/]System32[\\/])?"
+_SWITCH_TOOL_RE = re.compile(_SYSTEM32 + _SWITCH_TOOLS, re.IGNORECASE)
+_SWITCH_RE = re.compile(r"/(-?[A-Za-z?][A-Za-z0-9?]{0,15})(?::[^\s/\\]*)?")
+_COMMAND_LINE_RE = re.compile(r'\s*"?' + _SYSTEM32 + _SWITCH_TOOLS + r'"?\s', re.IGNORECASE)
+# A command line that holds more than one command or anything a shell expands or redirects is not cut into
+# words: its later parts are another program's arguments, so its literal stays whole.
+_LINE_OPERATOR_RE = re.compile(r"[;&|<>()^%$`\n\r]")
+_COMMAND_WORD_RE = re.compile(r'"[^"]*"|\S+')
+# The calls that start a program - the only place a literal counts as a switch. The group name says
+# where the tool stands: `argv` - the tool and its arguments are one list, the call's first argument
+# (`subprocess.run(['icacls', d, '/deny'])`; a string there is a whole command line), or the tool is the
+# first argument and the list of its arguments the second (Node `spawnSync('icacls', [d, '/deny'])`);
+# `line` - the first argument is a whole command line; `exec` / `spawn` - the tool is the first (for
+# `spawn` the second) argument, its arguments the list behind it (`execv`, `spawnv`) or the call's own
+# further arguments (`execl`, `spawnl`), the first of them its name once more.
+_PY_START_CALL_RE = re.compile(
+    r"(?<![\w.])(?:subprocess\s*\.\s*(?P<argv>run|call|check_call|check_output|Popen)"
+    r"|os\s*\.\s*(?:(?P<line>system)|(?P<exec>exec[lv]p?e?)|(?P<spawn>spawn[lv]p?e?)))\s*\("
+)
+_JS_START_CALL_RE = re.compile(
+    r"(?<![\w$])(?:(?P<argv>spawn|spawnSync|execFile|execFileSync)|(?P<line>exec|execSync))\s*\("
+)
+_QUOTE_CHARS = {PYTHON: "'\"", NODE: "'\"`"}
+
+
+def _tool_of(text: str) -> Optional[str]:
+    """The tool (a key of _TOOL_SWITCHES) that `text` names on its own (`icacls`, `icacls.exe`, a System32
+    path to it), else None."""
+    match = _SWITCH_TOOL_RE.fullmatch(text.strip())
+    return match.group(1).lower() if match else None
+
+
+def _is_switch_of(tool: str, text: str) -> bool:
+    """True if `text` is one switch that `tool` knows (`/deny`, `/grant:r`, `/R:3`)."""
+    match = _SWITCH_RE.fullmatch(text)
+    return match is not None and match.group(1).lower() in _SWITCH_NAMES[tool]
+
+
+def _literal_spans(language: str, skeleton: str) -> list[tuple[int, int]]:
+    """(start, end) of every quote pair of the skeleton, in order: the n-th pair is the n-th literal of
+    the program, as _python_scan / _javascript_scan keep every literal as one pair."""
+    quotes = _QUOTE_CHARS[language]
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(skeleton):
+        char = skeleton[index]
+        if char in quotes:
+            end = skeleton.find(char, index + 1)
+            end = len(skeleton) if end < 0 else end + 1
+            spans.append((index, end))
+            index = end
+        else:
+            index += 1
+    return spans
+
+
+def _argument_spans(skeleton: str, start: int) -> list[tuple[int, int]]:
+    """(start, end) of each top-level argument of the call - or element of the list - whose opening
+    bracket stands just before `skeleton[start]`: split at commas outside any bracket, up to the closing
+    bracket or _ARG_SCAN_LIMIT characters. The last span ends where the reading stopped: at the closing
+    bracket, or earlier when the limit cut the call (a literal beyond it is judged like any other)."""
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    begin = start
+    index = start
+    stop = min(len(skeleton), start + _ARG_SCAN_LIMIT)
+    while index < stop:
+        char = skeleton[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+        elif char == "," and depth == 0:
+            spans.append((begin, index))
+            begin = index + 1
+        index += 1
+    spans.append((begin, index))
+    return spans
+
+
+def _without_switches(language: str, literals: list[_Literal], skeleton: str) -> list[_Literal]:
+    """`literals` without what a call that starts a program makes of them (see the header): where the
+    literal in the tool's position of such a call names a tool of _TOOL_SWITCHES, that literal and every
+    argument literal of the call that is a switch the tool knows drop out (`subprocess.run(['icacls', d,
+    '/deny', 'x'])`, `spawnSync('icacls', [d, '/deny'])`, `os.execlp('icacls', 'icacls', d, '/deny')`);
+    a literal in that position that is a whole command line (`os.system('icacls d /deny x')`) is replaced
+    by its words without the tool and its switches. Every other literal stays, and so does everything
+    when the literals cannot be matched to the skeleton."""
+    spans = _literal_spans(language, skeleton)
+    if len(spans) != len(literals):
+        return literals
+    by_span = {span: index for index, span in enumerate(spans)}
+
+    def trimmed(span: tuple[int, int]) -> tuple[int, int]:
+        start, end = span
+        while start < end and skeleton[start].isspace():
+            start += 1
+        while end > start and skeleton[end - 1].isspace():
+            end -= 1
+        return start, end
+
+    def literal_in(span: tuple[int, int]) -> Optional[int]:
+        """The index of the literal that is all of `span` but whitespace, else None."""
+        index = by_span.get(trimmed(span))
+        return None if index is None or literals[index].interpolated else index
+
+    def elements_in(span: tuple[int, int]) -> list[tuple[int, int]]:
+        """The element spans of the list or tuple that is all of `span` but whitespace, else []."""
+        start, end = trimmed(span)
+        if end - start < 2 or skeleton[start] not in "[(" or skeleton[end - 1] not in "])":
+            return []
+        elements = _argument_spans(skeleton, start + 1)
+        return elements if elements[-1][1] == end - 1 else []
+
+    dropped: set[int] = set()
+    replaced: dict[int, list[_Literal]] = {}
+    pattern = _PY_START_CALL_RE if language == PYTHON else _JS_START_CALL_RE
+    for match in pattern.finditer(skeleton):
+        arguments = _argument_spans(skeleton, match.end())
+        kind = match.lastgroup
+        tool_at = 1 if kind == "spawn" else 0
+        if kind is None or tool_at >= len(arguments):
+            continue
+        line_form = kind == "line"
+        words: list[tuple[int, int]] = []
+        if kind == "argv" and language == PYTHON:
+            words = elements_in(arguments[0])
+            tool_index = literal_in(words[0]) if words else literal_in(arguments[0])
+            line_form = not words
+            words = words[1:]
+        else:
+            tool_index = literal_in(arguments[tool_at])
+            if kind == "argv" and len(arguments) > 1:
+                words = elements_in(arguments[1])
+            elif kind in ("exec", "spawn"):
+                if match.group(kind)[len(kind)] == "l":
+                    words = arguments[tool_at + 1:]
+                elif len(arguments) > tool_at + 1:
+                    words = elements_in(arguments[tool_at + 1])
+        if tool_index is None:
+            continue
+        value = literals[tool_index].value
+        if line_form:
+            line = _COMMAND_LINE_RE.match(value)
+            if line is not None and _LINE_OPERATOR_RE.search(value) is None:
+                tool = line.group(1).lower()
+                kept: list[_Literal] = []
+                own_words = True
+                for part in _COMMAND_WORD_RE.findall(value):
+                    word = part.strip('"')
+                    if not word:
+                        continue
+                    if own_words and (_tool_of(word) == tool or _is_switch_of(tool, word)):
+                        if tool == "cmd" and word.lower().split(":")[0] in ("/c", "/k"):
+                            own_words = False
+                        continue
+                    kept.append(_Literal(word, False))
+                replaced[tool_index] = kept
+            continue
+        tool = _tool_of(value)
+        if tool is None:
+            continue
+        dropped.add(tool_index)
+        for position, span in enumerate(words):
+            index = literal_in(span)
+            if index is None:
+                if tool == "cmd":
+                    break
+                continue
+            word = literals[index].value
+            if _is_switch_of(tool, word) or (position == 0 and kind != "argv" and _tool_of(word) == tool):
+                dropped.add(index)
+                if tool == "cmd" and word.lower().split(":")[0] in ("/c", "/k"):
+                    break
+            elif tool == "cmd":
+                break
+    result: list[_Literal] = []
+    for index, literal in enumerate(literals):
+        if index not in dropped:
+            result.extend(replaced.get(index, [literal]))
+    return result
+
 def write_paths(language: str, code: str) -> list[str]:
     """The path literals of `code` when it contains a write call, else []: the paths a check judges as
-    possible write targets."""
+    possible write targets. The switches of a Windows tool the code starts are not paths (_without_switches)."""
     literals, skeleton = _scan(language, code)
     if not _skeleton_has_write_call(language, skeleton):
         return []
     found: dict[str, None] = {}
-    for literal in literals:
+    for literal in _without_switches(language, literals, skeleton):
         candidate = _path_candidate(literal)
         if candidate is not None:
             found[candidate] = None

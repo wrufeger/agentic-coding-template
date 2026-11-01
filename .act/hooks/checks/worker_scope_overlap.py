@@ -11,11 +11,16 @@
 #
 # Rules: `Write scope: none` never overlaps anything (read-only). A start without the line counts
 # as "everything" — it overlaps every scope except none. Two pattern lists overlap when one pair of
-# patterns may match the same path. This is a cautious estimate, not a proof: exact paths are
-# compared by matching, glob patterns by their fixed leading directory (the part before the first
-# "*", "?" or "[") — one a path-prefix of the other counts as an overlap, a pattern that starts
-# with a wildcard overlaps everything. Patterns are normalized by write_scope._parse_write_scope
-# (a trailing "/" means "/**", absolute paths and `../sibling/...` resolve the same way).
+# patterns may match the same path. An exact path is compared with the other pattern by matching it
+# (write_scope._matches_scope). Two glob patterns are compared as the matching reads them — `*` any run
+# of characters, `/` included, `?` any one character, every other character (a `[` too) itself — and
+# overlap when one string can match both: `src/lib/alpha/**` and `src/lib/beta*` do not (the literal
+# `alpha` and `beta` part them), `src/lib/**` and `src/lib/beta*` do, and so do a pattern that starts
+# with a wildcard and any other that it can reach (`*.md` and `docs/**`). `dir/**` also counts as the
+# directory `dir`, which a worker with that scope may create. Patterns longer than _TABLE_LIMIT
+# (as a product of their lengths) count as overlapping. Patterns are normalized by
+# write_scope._parse_write_scope (a trailing "/" means "/**", absolute paths and `../sibling/...`
+# resolve the same way).
 #
 # "Still running" = an entry exists, the observer has not removed it at SubagentStop, and it is
 # younger than _OVERLAP_ENTRY_TTL. The harness reports a stop only with an agent_id; the entry is
@@ -61,15 +66,42 @@ __all__ = [
 # entry that would otherwise lock its area for a day. Longer than a normal assignment.
 _OVERLAP_ENTRY_TTL = timedelta(hours=3)
 _FUTURE_SLACK = timedelta(minutes=5)  # a timestamp further ahead is invalid, not "running"
+_TABLE_LIMIT = 250_000  # pattern length product up to which two globs are compared exactly
 
 
-def _segments(path: str) -> list[str]:
-    return [part for part in path.split("/") if part]
+def _glob_forms(pattern: str) -> list[str]:
+    """What a pattern matches as write_scope._matches_scope reads it: the pattern itself and, for
+    `dir/**`, the directory `dir` as well (a worker with that scope may create it)."""
+    root = pattern[:-3] if pattern.endswith("/**") and len(pattern) > 3 else None
+    if root is not None and not any(char in root for char in "*?"):
+        return [pattern, root]
+    return [pattern]
 
 
-def _is_path_prefix(shorter: str, longer: str) -> bool:
-    a, b = _segments(shorter), _segments(longer)
-    return len(a) <= len(b) and b[: len(a)] == a
+def _globs_intersect(first: str, second: str) -> bool:
+    """True if some path matches both patterns, read the way write_scope._matches_scope matches
+    (fnmatch): `*` is any run of characters, `/` included, `?` is any one character, everything else —
+    `[` too — stands for itself. Two such patterns are compared character by character, so a literal
+    part that cannot match (`t194-*` against `t195-*`) keeps them apart wherever the glob sits. Patterns
+    too long to tabulate count as meeting (the cautious answer)."""
+    rows, cols = len(first), len(second)
+    if rows * cols > _TABLE_LIMIT:
+        return True
+    # meet[i][j]: the tails first[i:] and second[j:] have a common match. A `*` matches nothing or
+    # eats one character of the other pattern's tail (a `*` of its own included, which is the same as
+    # skipping it); any other pair of characters must agree, `?` agreeing with every one.
+    meet = [[False] * (cols + 1) for _ in range(rows + 1)]
+    for i in range(rows, -1, -1):
+        for j in range(cols, -1, -1):
+            if i == rows and j == cols:
+                meet[i][j] = True
+            elif i < rows and first[i] == "*":
+                meet[i][j] = meet[i + 1][j] or (j < cols and meet[i][j + 1])
+            elif j < cols and second[j] == "*":
+                meet[i][j] = meet[i][j + 1] or (i < rows and meet[i + 1][j])
+            elif i < rows and j < cols:
+                meet[i][j] = (first[i] == "?" or second[j] == "?" or first[i] == second[j]) and meet[i + 1][j + 1]
+    return meet[0][0]
 
 
 def _patterns_overlap(first: str, second: str) -> bool:
@@ -87,7 +119,11 @@ def _patterns_overlap(first: str, second: str) -> bool:
         return _matches_scope(first, [second])
     if not second_glob:
         return _matches_scope(second, [first])
-    return _is_path_prefix(first_prefix, second_prefix) or _is_path_prefix(second_prefix, first_prefix)
+    return any(
+        _globs_intersect(one, other)
+        for one in _glob_forms(first)
+        for other in _glob_forms(second)
+    )
 
 
 def _describe(scope: dict) -> str:

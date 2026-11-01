@@ -6,6 +6,8 @@
 #          goes and removes it. Rules:
 #            - `.act-local/tmp/`: every entry older than 7 days that belongs to no open task;
 #            - `.act-local/backup/`: all but the newest 5 backups;
+#            - `.act-local/pyc/`: a folder of the compiled-module cache whose source folder no longer exists
+#              (a moved project, a replaced Python install), when nothing in it is newer than 7 days;
 #            - every other entry directly under `.act-local/` that no template script creates
 #              (KNOWN_ENTRIES below): same conditions as a `tmp/` entry. Known entries are never
 #              removed by this rule.
@@ -107,7 +109,7 @@ _STATUS_LINE_RE = re.compile(r"^status:\s*(\S+)", re.IGNORECASE | re.MULTILINE)
 @dataclass(frozen=True)
 class TidyItem:
     path: Path      # absolute, inside .act-local/
-    kind: str       # "tmp" | "backup" | "unknown"
+    kind: str       # "tmp" | "backup" | "pyc" | "unknown"
     files: int
     size: int       # bytes
     newest: float   # newest mtime inside, epoch seconds
@@ -223,6 +225,75 @@ def _remove_tree(path: str) -> None:
     except PermissionError:
         _clear_readonly(path)
         os.rmdir(path)
+
+
+def _pyc_sources(root: Path) -> list[str]:
+    """Absolute paths of the sources whose compiled cache lives under `.act-local/pyc/`: the project and
+    the running Python."""
+    return [os.path.abspath(source) for source in (str(root), sys.prefix, sys.executable, os.__file__)]
+
+
+def _source_roots(root: Path) -> list[str]:
+    """The roots a compiled-cache path is resolved against: on Windows the drives of the project and of
+    the running Python (the cache drops the drive letter, so a folder is looked up on each), plus `\\\\`
+    when one of them is a UNC share (the cache keeps `server/share` and drops only the leading
+    separators), else `/`. Only these drives are asked: a disconnected network drive can stall a lookup
+    for seconds."""
+    if sys.platform != "win32":
+        return ["/"]
+    roots: list[str] = []
+    for source in _pyc_sources(root):
+        drive = os.path.splitdrive(source)[0].upper()
+        if not drive:
+            continue
+        candidate = "\\\\" if drive.startswith("\\\\") else drive + "\\"
+        if candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def _live_pyc_prefixes(root: Path) -> set[str]:
+    """Every leading part, as a path relative to `pyc/` (lower case, `/`), of the sources in
+    _pyc_sources(): such a folder is never stale, even where the part alone is no folder (a UNC server
+    name `\\\\server` without its share)."""
+    prefixes: set[str] = set()
+    for source in _pyc_sources(root):
+        drive, tail = os.path.splitdrive(source)
+        if sys.platform == "win32" and drive.startswith("\\\\"):
+            tail = drive + tail
+        parts = [part for part in tail.replace("\\", "/").split("/") if part]
+        for end in range(1, len(parts) + 1):
+            prefixes.add("/".join(parts[:end]).lower())
+    return prefixes
+
+
+def _stale_pyc_dirs(root: Path) -> list[tuple[Path, str]]:
+    """(folder, path relative to pyc/) of the topmost folders under `.act-local/pyc/` whose source folder
+    (the same path below a root of _source_roots()) does not exist. Links are not entered."""
+    base = root / ".act-local" / "pyc"
+    roots = _source_roots(root)
+    live = _live_pyc_prefixes(root)
+    stale: list[tuple[Path, str]] = []
+    stack: list[tuple[Path, str]] = [(base, "")]
+    while stack:
+        folder, rel = stack.pop()
+        try:
+            children = sorted(os.scandir(_fs(folder)), key=lambda e: e.name)
+        except OSError:
+            continue
+        for child in children:
+            try:
+                st = child.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+                continue
+            child_rel = f"{rel}/{child.name}" if rel else child.name
+            if child_rel.lower() in live or any(os.path.isdir(os.path.join(r, child_rel)) for r in roots):
+                stack.append((folder / child.name, child_rel))
+            else:
+                stale.append((folder / child.name, child_rel))
+    return stale
 
 
 def base_is_link(root: Path) -> bool:
@@ -383,6 +454,19 @@ def plan(root: Path, now: Optional[float] = None) -> list[TidyItem]:
                     continue
                 files, size, newest = _scan(path / child_name)
                 items.append(TidyItem(path / child_name, "backup", files, size, newest))
+        elif lowered == "pyc":
+            try:
+                st = os.lstat(_fs(path))
+                if _is_link_stat(st) or not stat.S_ISDIR(st.st_mode):
+                    continue
+            except OSError:
+                continue
+            for folder, rel in _stale_pyc_dirs(root):
+                if _kept(f"pyc/{rel}", patterns):
+                    continue
+                files, size, newest = _scan(folder, limit)
+                if newest <= limit:
+                    items.append(TidyItem(folder, "pyc", files, size, newest))
         elif not _is_known(name):
             item = old_enough(path, name, name)
             if item is not None:

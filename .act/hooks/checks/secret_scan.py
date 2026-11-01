@@ -216,11 +216,12 @@ __all__ = [
     "_SOURCE_EXTENSIONS", "_MEMBER_ACCESS_RE", "_IDENTIFIER_RE", "_CALL_RE", "_is_source_file", "_incomplete_note",
     "_GIT_TIMEOUT", "_ALIAS_TIMEOUT", "_MAX_NESTED_DEPTH", "_NOTES_DIRNAME",
     "_SAFE_SESSION_ID_RE", "_KNOWN_PATTERNS", "_KEY_VALUE_RE", "_PLACEHOLDER_RE", "_HUNK_RE",
-    "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_ENV_KEY_RE", "_ENV_DEFAULT_RE", "_ARROW_RE", "_RULE_LIST_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
+    "_URL_QUERY_RE", "_ENV_FALLBACK_RE", "_ENV_BLOCK_RE", "_ENV_KEY_RE", "_ENV_DEFAULT_RE", "_ARROW_RE", "_RULE_LIST_RE", "_DIFF_GIT_HEADER_RE", "_HEX_ONLY_RE", "_KNOWN_SUBCOMMANDS", "_CONTINUE_SUBCOMMANDS",
     "_COMMIT_VALUE_FLAGS", "_ADD_ALL_FLAGS", "_ADD_FORCE_FLAGS", "_GIT_COMMIT_FALLBACK_RE",
     "_entropy_threshold", "_shannon_entropy", "_looks_like_placeholder", "_normalized_key",
     "_LOCK_FILE_REL", "_LOCK_OVERRIDE_RE", "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
-    "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries",
+    "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries", "_text_lines", "_match_secret_line",
+    "_joined_line_hit",
     "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
     "_git_call", "_nested_command", "_simple_commands", "_with_span_commands", "_tokenize_chain",
     "_invocation_key", "_git_commit_invocations", "_git_commit_invocations_pass", "_scan_commit", "_pending_file", "_queue_note",
@@ -287,7 +288,8 @@ _KEY_VALUE_RE = re.compile(
     r"""(?:"(?P<qkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})"|'(?P<sqkey>[A-Za-z][A-Za-z0-9_.\-]{0,60})'|(?P<key>[A-Za-z][A-Za-z0-9_.\-]{0,60}))
         \s*[:=]\s*
         (?:
-            (?P<dpre>[rRbBfFuU]{0,2})"(?P<dq>[^"]{20,})"
+            (?P<tpre>[rRbBfFuU]{0,2})(?:\"\"\"(?P<tdq>[^"]{20,})\"\"\"|'''(?P<tsq>[^']{20,})''')
+          | (?P<dpre>[rRbBfFuU]{0,2})"(?P<dq>[^"]{20,})"
           | (?P<spre>[rRbBfFuU]{0,2})'(?P<sq>[^']{20,})'
           | (?P<bare>[^\s'"#,;]{20,})
         )""",
@@ -359,6 +361,11 @@ _DEFAULT_FUNC = (
 _DEFAULT_HEAD = r"(?:os\s{0,20}\.\s{0,20})?" + _DEFAULT_FUNC + r"\s{0,20}\(\s{0,20}(?:key\s{0,20}=\s{0,20})?" + _ENV_NAME + r"\s{0,20},\s{0,20}"
 _ENV_DEFAULT_RE = re.compile(
     r"(?P<head>(?:" + _DEFAULT_HEAD + r"){1,6})(?:default\s{0,20}=\s{0,20})?" + _QUOTED_LITERAL
+)
+# Ruby's default as a block: `ENV.fetch('API_TOKEN') { '<v>' }` / `ENV.fetch('API_TOKEN') do '<v>' end`.
+_ENV_BLOCK_RE = re.compile(
+    r"(?P<head>\bENV\s{0,20}\.\s{0,20}fetch\s{0,20}\(\s{0,20}" + _ENV_NAME + r"\s{0,20}\)\s{0,20}(?:\{|\bdo\b)\s{0,20})"
+    + _QUOTED_LITERAL
 )
 _QUOTED_NAME_RE = re.compile(r"""["']([A-Za-z][A-Za-z0-9_.\-]{0,60})["']""")
 # A PHP-style array entry (`'token' => '<value>'`), the key quoted or bare, the value quoted and
@@ -576,8 +583,11 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
     def pair_hit(pos: int, endpos: int, inner: bool) -> Optional[str]:
         for match in _KEY_VALUE_RE.finditer(line, pos, endpos):
             key = match.group("qkey") or match.group("sqkey") or match.group("key")
-            quoted = match.group("dq") or match.group("sq")
-            prefix = match.group("dpre") if match.group("dq") else match.group("spre")
+            quoted = match.group("tdq") or match.group("tsq") or match.group("dq") or match.group("sq")
+            prefix = (
+                match.group("tpre") if match.group("tdq") or match.group("tsq")
+                else match.group("dpre") if match.group("dq") else match.group("spre")
+            )
             if quoted and prefix and "f" in prefix.lower() and "{" in quoted:
                 continue  # an f-string with interpolation is an expression, not a literal
             value = quoted or match.group("bare")
@@ -586,7 +596,7 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
             if quoted and not inner:
                 # a credential pair inside the quoted text (`'cmd': 'run --opt token=<v> now'`):
                 # one level only, over a range of its own, so the whole scan stays linear
-                group = "dq" if match.group("dq") else "sq"
+                group = next(name for name in ("tdq", "tsq", "dq", "sq") if match.group(name))
                 found = pair_hit(match.start(group), match.end(group), True) or url_hit(
                     match.start(group), match.end(group))
                 if found:
@@ -605,7 +615,7 @@ def _match_secret(line: str, path: Optional[str] = None) -> Optional[tuple[str, 
             key = next(name for name in key_match.groups() if name)
             if counts(key, value, True, match.start()):
                 return "high-entropy assignment", value
-    for match in _ENV_DEFAULT_RE.finditer(line):
+    for match in (*_ENV_DEFAULT_RE.finditer(line), *_ENV_BLOCK_RE.finditer(line)):
         value = _literal_of(match)
         for key in _QUOTED_NAME_RE.findall(match.group("head")):
             if counts(key, value, True, match.start()):
@@ -783,6 +793,53 @@ def _section_file_name(section: str) -> Optional[str]:
     return match.group(2) or match.group(1)
 
 
+# Characters `str.splitlines()` also breaks at, besides a line feed: a lone CR, vertical tab, form feed, the
+# file separators, NEL, LS and PS. Git counts a line only by its line feed, so a diff or file is split there
+# alone and one of these inside a line stays part of it (_match_secret_line then also looks at each piece).
+_ODD_BREAK_RE = re.compile("[\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
+
+
+def _text_lines(text: str) -> list[str]:
+    """`text` split at the line feed only, one trailing CR of a CRLF line cut off -- the line view git
+    itself has (so the numbers match), never `splitlines()`, which would turn the text behind a lone CR,
+    form feed, NEL or U+2028 into a line of its own that a diff then reads as context (and skips)."""
+    return [raw[:-1] if raw.endswith("\r") else raw for raw in text.split("\n")]
+
+
+def _match_secret_line(line: str, path: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """_match_secret for the whole line, then -- when it holds one of the _ODD_BREAK_RE characters -- for
+    each piece between them: an interpreter may read such a character as a line end (a lone CR is
+    one for Python), so a secret behind it is as real as one on a line of its own."""
+    hit = _match_secret(line, path)
+    if hit is None and _ODD_BREAK_RE.search(line):
+        for piece in line.splitlines():
+            hit = _match_secret(piece, path)
+            if hit is not None:
+                break
+    return hit
+
+
+# The break between two lines of one expression: the first ends in an operator that joins an environment
+# lookup to its literal fallback, or the second starts with one (`process.env.API_TOKEN ||` / `"<literal>"`).
+_TRAILING_OPERATOR_RE = re.compile(r"(?:\|\||\?\?|\?\s{0,20}:|\bor)\s*$")
+_LEADING_OPERATOR_RE = re.compile(r"^\s*(?:\|\||\?\?|\?\s{0,20}:|or\b)")
+
+
+def _joined_line_hit(previous: str, line: str, path: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """A hit for two neighbouring added lines read as one, when an operator sits at the break between them
+    (`const t = process.env.API_TOKEN ||` then `  "<literal>";`): the lookup and its literal fallback are
+    one expression that the line-by-line scan cannot see. Only a match that reaches into the second line
+    counts -- whatever lies in the first alone was scanned on its own."""
+    if not (_TRAILING_OPERATOR_RE.search(previous) or _LEADING_OPERATOR_RE.match(line)):
+        return None
+    first = previous.rstrip()
+    joined = first + " " + line.lstrip()
+    for match in _ENV_FALLBACK_RE.finditer(joined):
+        if match.end() > len(first):
+            return _match_secret(joined, path)
+    return None
+
+
 def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]:
     """A single `diff --git` section (see _diff_sections) as (path, is_new_file, [(line_no,
     added_text), ...]). Only '+' lines are collected (a removed secret never holds up a commit).
@@ -805,7 +862,7 @@ def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]
         if file is not None:
             entries.append((file, is_new, lines))
 
-    for raw in section.splitlines():
+    for raw in _text_lines(section):
         if raw.startswith("diff --git "):
             flush()
             file, is_new, line_no, lines, seen_hunk = None, False, None, [], False
@@ -814,7 +871,9 @@ def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]
             is_new = True
             continue
         if not seen_hunk and raw.startswith("+++ "):
-            path = raw[4:].strip()
+            path = raw[4:]
+            if path.endswith("\t"):
+                path = path[:-1]  # git appends a tab to a name with a blank; the blank itself stays
             file = None if path == "/dev/null" else _strip_ab_prefix(path)
             continue
         if not seen_hunk and (raw.startswith("--- ") or raw.startswith("index ")):
@@ -855,12 +914,19 @@ def _scan_diff_text(
                 return
             if is_new and _is_env_filename(file):
                 findings.append({"file": file, "line": None, "kind": "new .env file", "value": None})
+            previous: Optional[tuple[int, str]] = None
             for line_no, content in lines:
                 if len(findings) >= _MAX_COLLECTED:
                     return
+                before, previous = previous, (line_no, content)
                 if _ALLOW_MARK in content:
                     continue
-                hit = _match_secret(content, file)
+                hit = _match_secret_line(content, file)
+                if (
+                    hit is None and before is not None and before[0] + 1 == line_no
+                    and _ALLOW_MARK not in before[1]
+                ):
+                    hit = _joined_line_hit(before[1], content, file)
                 if hit is not None:
                     digest = _line_hash(content)
                     if (_normalized_rel(file), digest) in accepted:
@@ -886,15 +952,19 @@ def _scan_new_file(
         oversized.append(rel)
         return
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_bytes().decode("utf-8", "replace")  # a lone CR stays, as in the diff path
     except OSError:
         return
-    for line_no, content in enumerate(text.splitlines(), start=1):
+    previous_line = ""
+    for line_no, content in enumerate(_text_lines(text), start=1):
         if len(findings) >= _MAX_COLLECTED:
             return
+        before, previous_line = previous_line, content
         if _ALLOW_MARK in content:
             continue
-        hit = _match_secret(content, rel)
+        hit = _match_secret_line(content, rel)
+        if hit is None and before and _ALLOW_MARK not in before:
+            hit = _joined_line_hit(before, content, rel)
         if hit is not None:
             digest = _line_hash(content)
             if (_normalized_rel(rel), digest) in accepted:
@@ -907,13 +977,14 @@ def _run_git(args: list[str], cwd: str, timeout: float) -> Optional[str]:
     if timeout <= 0:
         return None
     try:
+        # bytes, decoded here: text mode would turn a lone CR in the output into a line feed and so
+        # move the text behind it onto a line of its own (a diff reads that as context and skips it)
         result = subprocess.run(
-            ["git", "-c", "core.quotePath=false", *args], cwd=cwd, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
+            ["git", "-c", "core.quotePath=false", *args], cwd=cwd, capture_output=True, timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):
         return None
-    return result.stdout if result.returncode == 0 else None
+    return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
 
 
 def _repo_toplevel(cwd: str, timeout: float) -> Optional[str]:

@@ -93,8 +93,30 @@
 #     `$(...)` is still handled by the operator mechanism (`$` a word character, the parentheses
 #     operators) and a word that contains `$(` after dequoting is scanned again as text, so a `$(`
 #     inside single quotes outside double quotes is still recursed into as if bash ran it (a false
-#     block, never a miss). An `$((...))` is treated like a `$(...)` command substitution for
-#     scanning (over-scanning its arithmetic as if it were a command — the safe side). A line
+#     block, never a miss). The body of an `$((...))` is scanned as if it were a command (over-
+#     scanning its arithmetic — the safe side: a `>` in it counts as a redirection), but the
+#     expansion itself is no target and no command text (_rescan_word). A word of an `ssh [options]
+#     <host> <command>` call that holds `$(` is not read as a local command either, when the call has
+#     exactly a known, harmless form (_ssh_remote_start, an allow list: anything else is read as
+#     before) - the program is `ssh` or the one of a system directory, a word in front is only a
+#     reserved word or the bare name of a wrapper that runs its argument list itself (_SSH_ARGV_WRAPPERS,
+#     a duration after `timeout`; never `parallel`, `xargs` or a wrapper's option), every word up to the destination is plain text (no `$`, backtick, `{`, `*`, `?`, `[`,
+#     `~`), every option is one of `-4 -6 -a -C -n -q -T -t -v -x` (also combined) or `-p <port>`,
+#     `-l <name>`, `-i <file>` (so never `-o`, `-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`), the
+#     destination is `[user@]host` and not this machine (`localhost` and its variants, `127/8` and
+#     `0/8` in any spelling, the IPv6 loopback, `ip6-*`, this computer's own name: _is_local_ssh_host),
+#     the first word after it begins with a plain character other than `-` (ssh reads options after
+#     the destination too, and an expansion there can become one), and nothing in the command sets
+#     `PATH` or `BASH_ENV`, defines a function `ssh`, an alias, reads a file with `source` or `.`, uses
+#     `enable` or `command_not_found_handle` or changes bash's command hash (_SSH_SHADOWED_RE). Only the
+#     `$(...)` that are easy to cut out of such a word are scanned, one in single quotes included (it
+#     cannot be told from one in double quotes, which runs here); a `$(...)` that is not easy to cut
+#     out makes the whole word count as before - also one that ends later than its first `)` can (a
+#     `case` pattern, a comment, a here-document: any `#`, `<<`, line break or `case` inside it, or a
+#     `)` left over in the rest of the word that closes nothing). Such a word is read whole and
+#     nothing of it is taken out of the legacy half. The command text of an ssh call without a `$(`
+#     was never read. An alias in an ssh configuration that points at this machine cannot be seen.
+#     A line
 #     tokenized on its own that ends inside an unquoted span does not tokenize at all (bash ends the
 #     span in a later line, which only the whole-command fallback sees); in whole-command mode a span
 #     with no closing backtick runs to the end of the command and is scanned as a command. The word
@@ -132,6 +154,7 @@ from __future__ import annotations
 
 import bisect
 import functools
+import ipaddress
 import os
 import re
 import socket
@@ -507,9 +530,12 @@ _WRAPPER_ARG_RE = re.compile(r"^(?:-.*|\d+(?:\.\d+)?[smhd]?)$")
 # not start with "-" and is not a bare number/duration) nor an assignment, so the skip loop in
 # _simple_command_targets used to stop right there and read the option's value as if it were the
 # command name, hiding the real one (and its write targets) after it. `--flag=value` needs no entry
-# here — it is already one word, already matched by _WRAPPER_ARG_RE.
+# here — it is already one word, already matched by _WRAPPER_ARG_RE. A cluster of short options whose
+# last letter is one of these (`exec -la name`, `sudo -Hu name`) takes the next word too
+# (_wrapper_value_follows).
 _WRAPPER_VALUE_FLAGS = {
     "env": frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"}),
+    "exec": frozenset({"-a"}),
     "timeout": frozenset({"-s", "--signal", "-k", "--kill-after"}),
     "sudo": frozenset({"-u", "--user", "-g", "--group", "-p", "--prompt", "-h", "--host",
                         "-r", "--role", "-t", "--type"}),
@@ -1121,6 +1147,24 @@ def _heredoc_operand_positions(tokens: list[_Token]) -> list[int]:
     ]
 
 
+_SHORT_OPTION_CLUSTER_RE = re.compile(r"-[A-Za-z]{2,}")
+
+
+def _wrapper_value_follows(arg: str, value_flags: frozenset) -> bool:
+    """True when the wrapper option `arg` takes the next word as its value: the option itself (`-u`,
+    `--unset`) or a cluster of short options whose last letter takes one (`exec -la name`, `sudo -Hu
+    name`, `xargs -tI {}`). A value letter earlier in a cluster takes the rest of the word instead
+    (`env -uVAR`, `nice -n5`), so the next word is then the command."""
+    if arg in value_flags:
+        return True
+    if _SHORT_OPTION_CLUSTER_RE.fullmatch(arg) is None:
+        return False
+    for position, letter in enumerate(arg[1:], start=1):
+        if "-" + letter in value_flags:
+            return position == len(arg) - 1
+    return False
+
+
 def _command_prefix_end(words: list[str]) -> int:
     """Index of the command name in a simple command's words: assignments, `if`/`{`-style prefixes,
     backtick-span words and wrappers (`env`, `sudo`, `time` ... with their options) skipped, as
@@ -1135,7 +1179,7 @@ def _command_prefix_end(words: list[str]) -> int:
             index += 1
             while index < len(words):
                 arg = words[index]
-                if arg in value_flags:
+                if _wrapper_value_follows(arg, value_flags):
                     index += 2 if index + 1 < len(words) else 1
                 elif _WRAPPER_ARG_RE.match(arg) or _ASSIGNMENT_RE.match(arg) or _is_span_word(arg):
                     index += 1
@@ -1574,7 +1618,7 @@ def _simple_command_targets(
                     # module already cannot resolve (review, 2026-09-25).
                     bases_unknown = True
                     index += 1 if arg.startswith("--chdir=") else (2 if index + 1 < len(words) else 1)
-                elif arg in wrapper_value_flags:
+                elif _wrapper_value_follows(arg, wrapper_value_flags):
                     # `env -u VAR`, `timeout -s KILL`, `sudo -u name` — the value is its own
                     # word, matching neither _WRAPPER_ARG_RE nor an assignment, so it must be
                     # skipped explicitly too or it gets read as the wrapped command's own name.
@@ -1803,6 +1847,262 @@ def _joined_group_output(parts: list[Optional[str]]) -> Optional[str]:
     return "".join(part for part in parts if part is not None)
 
 
+def _arithmetic_parts(text: str) -> Optional[tuple[list[str], str]]:
+    """The bodies of the `$((...))` constructs in `text`, and `text` with each of them replaced by `0`
+    — or None when there is none, or one cannot be delimited (then the caller reads `text` whole, as
+    before). The tokenizer keeps such a construct in its word verbatim, so a re-scan of the word as
+    command text meets the same construct again; the bodies are what a re-scan has to read."""
+    bodies: list[str] = []
+    rest: list[str] = []
+    index = 0
+    while True:
+        at = text.find("$((", index)
+        if at < 0:
+            break
+        try:
+            end = _collect_dq_expansion(text, at + 1, [])
+        except ValueError:
+            return None
+        if end < at + 5 or text[end - 2:end] != "))":
+            return None
+        rest.append(text[index:at] + "0")
+        bodies.append(text[at + 3:end - 2])
+        index = end
+    if not bodies:
+        return None
+    rest.append(text[index:])
+    return bodies, "".join(rest)
+
+
+def _rescan_word(word: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
+    """Read a word that holds `$(` as command text once more (a command substitution runs commands).
+    An arithmetic expansion `$((...))` in it is not a command: its body is read as command text instead
+    (a `$(...)` inside it still runs, `$(( a[$(cmd > f)] ))`; a `>` in it counts as a redirection, the
+    safe side), and what is left of the word only when that still holds `$(`. Without this the
+    expansion itself, `$((n+3))`, came back as a write target of its own."""
+    parts = _arithmetic_parts(word)
+    if parts is None:
+        return _scan_command(word, bases, git_writes, depth + 1)
+    bodies, rest = parts
+    found: list[_Target] = []
+    for body in bodies:
+        found.extend(_scan_command(body, bases, git_writes, depth + 1))
+    if "$(" in rest:
+        found.extend(_scan_command(rest, bases, git_writes, depth + 1))
+    return found
+
+
+# What a `$(...)` that is easy to delimit looks like: no quote, backslash, backtick, `$` or parenthesis
+# inside. Anything else is not cut apart (the caller then reads the whole word, the safe side).
+_SIMPLE_SUBSTITUTION_RE = re.compile(r"\$\(([^()'\"`\\$]*)\)")
+
+
+# Inside a `$(...)` these make bash end the substitution somewhere else than at the first `)`: a `case`
+# pattern ends in `)`, a comment may hold one, a here-document body runs over lines.
+_SUBSTITUTION_HAZARD_RE = re.compile(r"#|<<|[\r\n]|\bcase\b")
+
+
+def _simple_substitutions(word: str) -> Optional[list[str]]:
+    """The text inside every `$(...)` of `word`, or None when one of them is not easy to delimit — or when
+    the word is not what it seems once they are cut out: a `)` left over that closes nothing in the rest
+    of the word means a substitution ended later than its first `)` (`$(case a in a) cmd;; esac)`), and a
+    `#`, `<<`, line break or `case` inside one means the same may be true (`$(true #)`, a line, `cmd)`).
+    The caller then reads the whole word. Balanced parentheses in the rest (`python3 -c 'f("x")' $(date)`)
+    are ordinary text."""
+    inner: list[str] = []
+    outside: list[str] = []
+    index = 0
+    while True:
+        at = word.find("$(", index)
+        if at < 0:
+            outside.append(word[index:])
+            break
+        outside.append(word[index:at])
+        match = _SIMPLE_SUBSTITUTION_RE.match(word, at)
+        if match is None or _SUBSTITUTION_HAZARD_RE.search(match.group(1)):
+            return None
+        inner.append(match.group(1))
+        index = match.end()
+    depth = 0
+    for char in "".join(outside):
+        depth += (char == "(") - (char == ")")
+        if depth < 0:
+            return None
+    return inner
+
+
+# Set while _bash_write_targets / _bash_inline_code_targets walk a command a second time with the
+# command text of a remote `ssh` call left out (see _ssh_remote_start). _REMOTE_SINK, when a list, then
+# receives the targets that text used to produce (read whole as a local command, as before).
+_SSH_REMOTE_IS_REMOTE = False
+_REMOTE_SINK: Optional[list] = None
+_SSH_WORD_RE = re.compile(r"(?<![\w-])ssh(?:\.exe)?(?![\w-])", re.IGNORECASE)
+# A command in which the word `ssh` may not run the real program: a `PATH` set somewhere in it, a function
+# of that name defined in it, or bash's command hash changed. No ssh call in such a command is read as a
+# remote one (_ssh_may_run_remote).
+_SSH_SHADOWED_RE = re.compile(
+    r"(?<![\w])PATH\+?=|(?<![\w-])function\s+ssh(?![\w-])|(?<![\w-])ssh\s*\(\s*\)|(?<![\w-])hash(?![\w-])"
+    r"|(?<![\w-])(?:alias|source|enable|command_not_found_handle)(?![\w-])|(?<![\w])BASH_ENV(?![\w])"
+    r"|(?<![^\s;&|(){}])\.(?=\s)",
+    re.IGNORECASE,
+)
+# The wrappers that may stand in front of an ssh call whose text counts as remote: each runs its command
+# from its own argument list, not through a shell. Only their names, and a plain duration after `timeout`,
+# are accepted there - no option of theirs (`sudo -s`, `env -S` would hand the words to a shell).
+_SSH_ARGV_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "nice", "timeout", "stdbuf", "setsid"})
+_SSH_DURATION_RE = re.compile(r"\d+(?:\.\d+)?[smhd]?")
+# The allow list of _ssh_remote_start - what an ssh call must look like, word by word, for its command
+# text to count as remote. The program: `ssh` itself, or the one of a system directory. A word up to and
+# including the destination is plain when the shell expands nothing in it: no `$`, backtick, brace, glob
+# character or tilde. The options: flags that change nothing about where the text runs (`-4`, `-6`, `-a`,
+# `-C`, `-n`, `-q`, `-T`, `-t`, `-v`, `-x`, also combined, `-tt`, `-vvv`) and three that take a value
+# (`-p` a port of digits, `-l` a login name, `-i` an identity file - glued or as the next word). Any other
+# option (`-o`, `-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`, ...) can change the destination, run a program
+# here or write a file here and is left off the list on purpose. The destination: `[user@]host`, a name
+# or an address.
+_SSH_PROGRAM_RE = re.compile(
+    r"(?:/usr/bin/|/bin/|/usr/local/bin/|/opt/homebrew/bin/|[A-Za-z]:[\\/]Windows[\\/]System32[\\/]OpenSSH[\\/])?"
+    r"ssh(?:\.exe)?",
+    re.IGNORECASE,
+)
+_SSH_PLAIN_WORD_RE = re.compile(r"[^$`{*?\[~]+")
+_SSH_OPTION_RE = re.compile(r"-([46aCnqTtvx]*)(?:([pli])(.*))?")
+_SSH_PORT_RE = re.compile(r"[0-9]{1,5}")
+_SSH_DESTINATION_RE = re.compile(r"(?:[\w.-]+@)?(?:[A-Za-z0-9][\w.-]*|[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*)")
+_NUMERIC_HOST_LABEL_RE = re.compile(r"(?:0x[0-9a-f]+|[0-9]+)", re.IGNORECASE)
+
+
+def _numeric_host_is_local(name: str) -> Optional[bool]:
+    """For a destination written as an IPv4 address in any of the forms a resolver accepts (`2130706433`,
+    `0x7f000001`, `127.1`, `0177.0.0.1`, `0`): whether it lies in `127/8` or `0/8`; True also when the
+    digits do not make an address. None when the name is not numeric."""
+    labels = name.split(".")
+    if not all(_NUMERIC_HOST_LABEL_RE.fullmatch(label) for label in labels) or len(labels) > 4:
+        return None
+    values: list[int] = []
+    for label in labels:
+        try:
+            if label.lower().startswith("0x"):
+                values.append(int(label, 16))
+            elif len(label) > 1 and label.startswith("0"):
+                values.append(int(label, 8))
+            else:
+                values.append(int(label))
+        except ValueError:
+            return True
+    last_bits = 8 * (5 - len(values))
+    if any(value > 255 for value in values[:-1]) or values[-1] >= 1 << last_bits:
+        return True
+    address = 0
+    for value in values[:-1]:
+        address = (address << 8) | value
+    address = (address << last_bits) | values[-1]
+    return (address >> 24) in (0, 127)
+
+
+def _ipv6_host_is_local(name: str) -> bool:
+    """True for an IPv6 destination that is the loopback or the unspecified address (also as an IPv4-mapped
+    one) and for text that is no address at all."""
+    try:
+        address = ipaddress.ip_address(name.split("%", 1)[0])
+    except ValueError:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or address.is_unspecified or (mapped is not None and (mapped.is_loopback or mapped.is_unspecified))
+
+
+def _is_local_ssh_host(host: str) -> bool:
+    """True for a destination that is this machine — or whose address cannot be told: `localhost` and its
+    variants (`localhost6`, `ip6-localhost`), any `127.x` and `0.x` address in whatever spelling
+    (`127.1`, `0`, a whole number), the IPv6 loopback and unspecified address, this computer's own name
+    (also as the first label of a longer name), and a destination the shell still expands. An alias in an
+    ssh configuration that points at this machine cannot be seen from here."""
+    text = host
+    if text.lower().startswith("ssh://"):
+        text = text[6:].split("/", 1)[0]
+    text = text.rsplit("@", 1)[-1]
+    if text.startswith("["):
+        text = text[1:].split("]", 1)[0]
+    elif text.count(":") == 1:
+        text = text.split(":", 1)[0]
+    name = text.lower().rstrip(".")
+    if not name or _DYNAMIC_TARGET_RE.search(name) or "(" in name or ")" in name:
+        return True
+    if ":" in name:
+        return _ipv6_host_is_local(name)
+    numeric = _numeric_host_is_local(name)
+    if numeric is not None:
+        return numeric
+    names = _local_host_names()
+    return (
+        name in names or name.split(".")[0] in names or name.startswith(("localhost", "ip6-"))
+        or name.endswith(".localhost")
+    )
+
+
+def _ssh_may_run_remote(command: str) -> bool:
+    """True when `command` names ssh and nothing in it can make that word run something else
+    (_SSH_SHADOWED_RE): only then is the command text of an ssh call left out of the local reading."""
+    return _SSH_WORD_RE.search(command) is not None and _SSH_SHADOWED_RE.search(command) is None
+
+
+def _ssh_remote_start(words: list[str]) -> Optional[int]:
+    """The index in `words` of the first word of the command an `ssh [options] <host> <command...>` call
+    hands to the other machine - or None when the call is not exactly of the known, harmless form (an
+    allow list: anything new or odd is read as before). None, then, for: a program word that is not `ssh`
+    or the ssh of a system directory (_SSH_PROGRAM_RE); a word in front of it that assigns a variable
+    (`PATH=`) or that is neither a reserved word (`if`, `{`, ...) nor a wrapper of _SSH_ARGV_WRAPPERS
+    (`parallel`, `xargs`, an option of a wrapper: the words may reach a shell); a word from the first up
+    to the destination that the shell still expands
+    (_SSH_PLAIN_WORD_RE; the reserved words `if`, `{`, ... in front are plain); an option not in
+    _SSH_OPTION_RE, or a port that is not digits; a destination that is not `[user@]host`
+    (_SSH_DESTINATION_RE) or is this machine (_is_local_ssh_host); no command; a first command word that
+    is empty or begins with `-` or with something the shell expands - ssh reads options after the
+    destination too (a `--` in front of it ends them, which changes nothing here), and an expansion
+    there can become one. Everything from the index on runs on the other machine."""
+    at = _command_prefix_end(words)
+    if at >= len(words) or _SSH_PROGRAM_RE.fullmatch(str(words[at])) is None:
+        return None
+    index = at + 1
+    while index < len(words):
+        arg = str(words[index])
+        if arg == "--":
+            index += 1
+            break
+        if not arg.startswith("-"):
+            break
+        option = _SSH_OPTION_RE.fullmatch(arg)
+        if option is None or len(arg) < 2:
+            return None
+        letter, value = option.group(2), option.group(3)
+        if letter is not None and not value:
+            index += 1
+            value = str(words[index]) if index < len(words) else ""
+        if letter == "p" and _SSH_PORT_RE.fullmatch(value) is None:
+            return None
+        index += 1
+    if index + 1 >= len(words):
+        return None
+    for position, word in enumerate(words[:index + 1]):
+        plain = str(word)
+        if position < at:
+            after_timeout = position > 0 and str(words[position - 1]) == "timeout"
+            if plain in _RESERVED_PREFIXES or plain in _SSH_ARGV_WRAPPERS:
+                continue
+            if after_timeout and _SSH_DURATION_RE.fullmatch(plain):
+                continue
+            return None
+        if _SSH_PLAIN_WORD_RE.fullmatch(plain) is None or _ASSIGNMENT_RE.match(plain):
+            return None
+    host = str(words[index])
+    if _SSH_DESTINATION_RE.fullmatch(host) is None or _is_local_ssh_host(host):
+        return None
+    first = str(words[index + 1])
+    if not first or first[0] == "-" or _SSH_PLAIN_WORD_RE.fullmatch(first[0]) is None:
+        return None
+    return index + 1
+
+
 def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """Walk a token stream command by command (step 4 of the section comment). Directory tracking,
     as a set of possible directories (None = unknown):
@@ -1861,9 +2161,27 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         produced: Optional[str] = None
         if words or redirect_targets or other_redirect_words:
             found.extend(_pairs(redirect_targets, bases))
-            for word in words + redirect_targets:
-                if "$(" in word:
-                    found.extend(_scan_command(word, bases, git_writes, depth + 1))
+            remote_start = _ssh_remote_start(words) if _SSH_REMOTE_IS_REMOTE else None
+            for position, word in enumerate(words + redirect_targets):
+                if "$(" not in word:
+                    continue
+                if remote_start is not None and remote_start <= position < len(words):
+                    # The command text of an ssh call runs on the other machine: only a `$(...)` the
+                    # local shell expands before the call (inside double quotes or unquoted) runs here,
+                    # so those are read, not the rest of the text as if it were a local command.
+                    inner = _simple_substitutions(word)
+                    if inner is not None:
+                        if _REMOTE_SINK is not None:
+                            _REMOTE_SINK.extend(_scan_command(word, bases, git_writes, depth + 1))
+                        for text in inner:
+                            found.extend(_scan_command(text, bases, git_writes, depth + 1))
+                        continue
+                    if _REMOTE_SINK is not None and _arithmetic_parts(word) is not None:
+                        # Not easy to cut apart, but _rescan_word reads only the body of an arithmetic
+                        # expansion, never the text around it: that text is the remote one. Any other
+                        # word is read whole below, and nothing of it is taken out of the legacy half.
+                        _REMOTE_SINK.extend(_scan_command(word, bases, git_writes, depth + 1))
+                found.extend(_rescan_word(word, bases, git_writes, depth))
             # Backtick spans the tokenizer found in these words (quote context already applied).
             for word in words + redirect_targets + other_redirect_words:
                 for span in getattr(word, "subs", ()):
@@ -2018,6 +2336,30 @@ def _pair_key(pair: _Target) -> tuple:
     return (str(pair[0]), pair[1], getattr(pair[0], "live", None))
 
 
+def _without_remote_targets(
+    command: str, base_cwd: str, git_writes: frozenset, current: list[_Target], legacy: list[_Target]
+) -> tuple[list[_Target], list[_Target]]:
+    """Both halves of _bash_write_targets without the targets that only the command text of a remote
+    `ssh` call produced (see _ssh_remote_start). The lexer is walked a second time with that text left
+    out, and the targets that text used to produce are collected (_REMOTE_SINK). The legacy half cannot
+    be told to skip it, so its pairs of such a text and directory are dropped — unless the second walk
+    found the same target elsewhere in the command (a local one), which then stays. `current` comes back
+    as the second walk's result."""
+    global _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK
+    remote: list[_Target] = []
+    _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK = True, remote
+    try:
+        local = _bash_write_targets_new(command, base_cwd, git_writes)
+    finally:
+        _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK = False, None
+    if not remote:
+        return current, legacy
+    local_places = {(str(pair[0]), pair[1]) for pair in local}
+    remote_only = {(str(pair[0]), pair[1]) for pair in remote} - local_places
+    kept = [pair for pair in legacy if (str(pair[0]), pair[1]) not in remote_only]
+    return local, kept
+
+
 def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
     """The paths a Bash command writes to, each paired with the directory a relative one resolves
     against (`base_cwd`, the Bash tool's own cwd, moved by any `cd` the scanner can follow) or None
@@ -2038,6 +2380,11 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
         current = _bash_write_targets_new(command, base_cwd, git_writes)
     except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
         return legacy
+    if _ssh_may_run_remote(command):
+        try:
+            current, legacy = _without_remote_targets(command, base_cwd, git_writes, current, legacy)
+        except Exception:  # noqa: BLE001 — both halves stay as they are, the over-blocking side
+            pass
     # A target both scanners report appears once, as the lexer's word: only that one knows which of its
     # characters were quoted (`_Word.live`). The legacy half still adds everything the lexer missed,
     # as plain text with no such knowledge.
@@ -2069,12 +2416,14 @@ def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget
     as every write target. A literal path is not a shell word: the caller must not map `/tmp` or
     expand braces or `~` in it. Best effort: a command that does not mention an interpreter, or whose
     scan fails, yields what was found so far (see inline_code.py for the reading and its limits)."""
-    global _INLINE_SINK
+    global _INLINE_SINK, _SSH_REMOTE_IS_REMOTE
     if not _inline_code.mentions_interpreter(command):
         return []
     found: list[_InlineTarget] = []
     previous = _INLINE_SINK
+    previous_remote = _SSH_REMOTE_IS_REMOTE
     _INLINE_SINK = found
+    _SSH_REMOTE_IS_REMOTE = _ssh_may_run_remote(command)
     try:
         _scan_command(command, frozenset({base_cwd}), frozenset(), depth=0)
     except (ValueError, RecursionError) as error:
@@ -2084,4 +2433,5 @@ def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget
         _inline_code.report_skipped("command scan", error)
     finally:
         _INLINE_SINK = previous
+        _SSH_REMOTE_IS_REMOTE = previous_remote
     return list(dict.fromkeys(found))

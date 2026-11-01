@@ -28,7 +28,12 @@ as a placeholder, is not reported; for a file that cannot carry a comment (JSON)
 `docs/ai/local/secret-accepted.md` as `- <path> <hash>: <reason>` (the hold message prints the
 finished entry). The one exemption by shape: a line of `.act-lock.json` at the project root that holds
 only a rule ID and a 64-digit lowercase hex digest (an override hash). Switch: `secret-scan` in
-`docs/ai/config.md` § Checks (`block`, `warn` or `off`).
+`docs/ai/config.md` § Checks (`block`, `warn` or `off`). Limits: each added line is checked on its own,
+so a SQL string built with `+`, `.` or `%` that continues on the next line is not seen by danger-scan;
+secret-scan joins only an environment lookup and its literal fallback split at an operator. A `%` that
+opens a short literal of its own (`strftime('%Y', d)`) is a date format, not the operator. The PHP
+patterns (`sql-php-concat`, `sql-php-interpolation`) run only on `.php`, `.phtml`, `.inc` and `.module`
+files.
 
 ## `R-safe-outside-root` — Stay inside the project
 
@@ -49,7 +54,10 @@ the target folder for 24 hours or until `--abort` (also past `--finish`) through
 valid marker for the same target. Checked mechanically by `outside-root` (`docs/ai/config.md` §
 Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in
 the environment. Limits: the shell check is best effort, a program that opens files itself (`python
-script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked.
+script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked. A word
+of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a
+heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused; reads of a
+single `/` are not judged.
 
 ## `R-safe-git-reset` — Check before `git reset --hard`
 
@@ -70,8 +78,10 @@ it on the remote (`git push origin :main`, `--delete`); `git branch -D` of a bra
 --no-merged` lists, and `git branch -M`/`-C` over one. `git branch -D` is let through for a branch
 taken over by cherry-pick: `git cherry HEAD <branch>` shows only `-` lines, the branch has no merge
 and no empty commit of its own, and merging it into HEAD would change nothing (`git merge-tree
---write-tree`, git 2.38 or later). A branch HEAD has edited further after the pick stays refused. A
-call too long to check in time, or a check that fails, is refused — run smaller calls.
+--write-tree`, git 2.38 or later). A branch HEAD has edited further after the pick stays refused.
+`@{-N}` is resolved to its branch before the unmerged check; a name with two case-different refs is not
+released as taken over. A call too long to check in time, or a check that fails, is refused — run
+smaller calls.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
@@ -90,6 +100,14 @@ directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds
 `folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool (judged on the text
 the edit produces); the human writes such a file themselves. Limit: what a program or script writes
 itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
+
+Redirections behind a copy command are not operands. A copy source is read whole: there is no
+file-count limit, links and junctions inside it are followed once each, and a source that cannot be
+read within the time budget (about 4 s) is refused. Below a copy destination that is no protected
+place, only source files that can land on a protected path are mapped: a protected name, a path
+through a link already below the destination, a Windows short name (`~1`). The body of a quoted
+heredoc is not scanned as commands only when the whole command is one text reader that stores it
+(`cat`, `tee [-a] <file>`, `git commit -F -`, `git tag -F -`) with nothing before or after it.
 
 ## `R-work-throwaway` — Throwaway material under `.act-local/tmp/`
 
@@ -110,8 +128,10 @@ the probe needs, such as `(RD)`, and run `icacls <path> /reset` in the `finally`
 
 Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
 detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
-older than 7 days that belong to no open task; all but the newest 5 folders in `.act-local/backup/`; every
-other entry directly under `.act-local/` that no template script creates. Age is the newest change of
+older than 7 days that belong to no open task; all but the newest 5 folders in `.act-local/backup/`;
+folders of the compiled cache in `.act-local/pyc/` whose source folder no longer exists (a moved project, a
+replaced Python) and that hold nothing newer than 7 days; every other entry directly under `.act-local/`
+that no template script creates. Age is the newest change of
 anything inside an entry, so an entry still written to stays. An entry belongs to an open task when its
 name equals the task's id or starts with it followed by a non-digit (`<id>-x` belongs to the task,
 `<id>0-x` does not). Links are removed as links, never followed; if `.act-local` itself is a link, nothing is touched.
@@ -174,6 +194,21 @@ outside the project root is refused, unless it lies in a directory listed in
 best-effort (it catches redirection and the common write commands, not a full shell parse): writes
 made from inside a script file stay invisible to it.
 
+The command text of an `ssh [options] <host> <command>` call counts as remote - only the `$(...)` the
+local shell expands (easy to cut out: no `#`, `<<`, line break or `case` inside, no stray `)` around) are
+read - exactly when the call has a plain, known form: `ssh` or the ssh of a system directory, in front of
+it only a reserved word or the bare name of `sudo`, `env`, `command`, `exec`, `nohup`, `nice`, `timeout`
+(with a plain duration), `stdbuf` or `setsid`, no `$`, backtick, `{`, `*`, `?`, `[` or `~` in any word up
+to the host, options only from `-4 -6 -a -C -n -q -T -t -v -x` (also combined) and `-p <digits>`,
+`-l <name>`, `-i <file>`, a `[user@]host` that is not this machine (`localhost` and its variants, any
+`127/8` or `0/8` address in any spelling, the IPv6 loopback, `ip6-*`, this computer's own name), and a
+first command word that begins with a plain character other than `-`. Every other form - every `-o`,
+`-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`, a wrapper's option, `parallel` or `xargs` in front, an
+expansion up to the host or at the start of the command, a `PATH=`, `BASH_ENV`, an alias, a function
+`ssh`, `source` or `.`, `enable`, `command_not_found_handle` or the word `hash` in the same command - is
+read as a local command, as before. An alias in an ssh configuration that points here cannot be seen;
+local redirections behind the call are always checked.
+
 Inline interpreter code is read too, for a worker with a restricted scope (`none` or patterns; a worker
 without a `Write scope:` line and the orchestrator are not affected). A Bash or PowerShell call that runs
 `python`, `python3`, `python3.N`, `pythonw`, `py` (also `py -3`) or `node` (an `.exe` suffix and a
@@ -202,6 +237,20 @@ not drive D. A literal holding `$` or a backtick counts as unknown and is refuse
 Write/Edit; code that only reads - no write call - may name any path, so read outside the scope in a call
 of its own.
 
+A literal that is only a switch of a Windows tool (`icacls`, `cacls`, `robocopy`, `xcopy`, `takeown`,
+`attrib`, `cmd`; `/deny`, `/grant:r`, `/MIR`, `/R:3`, `/c`) is no path in one place only: among the
+arguments of the call that starts the tool, when the tool's name is the literal in the tool's position of
+that call - the first element of the list `subprocess.run`, `call`, `check_call`, `check_output` or
+`Popen` gets, the first argument of Node `spawn`, `spawnSync`, `execFile` or `execFileSync` with the list
+as the second, the program of `os.exec*`/`os.spawn*` - and the tool knows the switch; for `cmd` only the
+switches up to `/c` or `/k`, as what follows is another program's command line. A command line that is the
+first argument of such a call, of `os.system` or of Node `exec`/`execSync` (`'icacls d /deny x'`) is cut
+into words when it is one command (no `;`, `&`, `|`, `<`, `>`, `(`, `)`, `^`, `%`, `$`, backtick or line
+break in it); the tool and its switches drop out, every other word is judged. Anywhere else - another
+call, the same statement, a list built from parts, `args=` - a `/c` or `/deny` stays a path, and so does
+a switch that names a file (`/LOG:out.txt`). Limits: a file in the root of a drive named like a switch is
+not judged in that list; `from subprocess import run` used bare is not seen as a start.
+
 Limits of that reading (what stays unseen; it catches the common form, not every form):
 - the program is not in the command: a script file run by path (`python /tmp/x.py`), code held in a
   shell variable or read from a file (`cat x.py | python`);
@@ -229,7 +278,9 @@ before.
 
 `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope overlaps that of a
 worker still running: `none` overlaps nothing, a missing `Write scope:` line counts as everything,
-and the overlap is estimated cautiously from the fixed leading directory of the patterns.
+and two patterns overlap when some path can match both, compared as the matching reads them (`*`
+crosses `/`, `?` is one character, `[` is literal, `dir/**` also names `dir`): `src/lib/alpha/**` and
+`src/lib/beta*` do not overlap, `src/lib/**` and `src/lib/beta*` do.
 
 A finished worker or a failed start frees its scope; a crashed worker does so after three hours, or
 when its file under `.act-local/worker-scopes/` is deleted.

@@ -844,6 +844,12 @@ def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
         return f"rule moves not checked ({exc.__class__.__name__}: {exc})", []
     if not messages:
         return "", []
+    # a message that only reports (the rule does not load; a line kept under its old file has no
+    # effect) changes nothing: say so, name no file
+    changes = [m for m in messages
+               if "the rule does not load" not in m and "the line under the old file has no effect" not in m]
+    if not changes:
+        return f"{rel} needs a look: {'; '.join(messages)}", []
     verb = "would follow" if plan else "followed"
     return f"{verb} in {rel}: {'; '.join(messages)}", ([] if plan else [path])
 
