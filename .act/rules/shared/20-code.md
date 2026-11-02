@@ -1,6 +1,6 @@
 # Code rules
 
-summary: English identifiers, encoding preservation, installed tools, installed versions, checks left intact
+summary: English identifiers, encoding preservation, installed tools, installed versions, checks left intact, project docs order
 
 Shared code rules, loaded by every role.
 
@@ -46,3 +46,17 @@ assertion, expected value, tolerance or timeout, no suppression (`# noqa`, `# ty
 configuration — unless the assignment asks for exactly that. A check that is itself wrong is
 named in the report with the reason and changed as its own step, never inside the fix that needed
 it green.
+
+## `R-docs-order` — Project docs stay findable
+
+summary: a folder under docs/project/ with five or more entries has a README.md with one line each; one topic per file, split past ~300 lines; numbers only for a series; a concept dies once decided or built; mechanically checked
+
+Every folder under `docs/project/` with five or more entries has a `README.md` naming each of its files
+and subfolders in one line with its state; a smaller folder needs none, the `README.md` above it lists the
+folder. `docs/README.md` names folders and top-level files only. Whoever adds, moves or finishes a document changes that line in the same
+step. One topic per file; past about 300 lines it becomes a folder with a `README.md` and parts. Numbers in
+file names only for a series with a reading order, in a folder of its own. A concept lives only while it is
+open: once decided, what the build needs goes into its backlog item or task and the reason into an ADR; once
+built, the result is in the code, the journal, the project docs or a learning. Then the concept file is
+deleted — under version control nothing is kept just in case. Checked mechanically by `act-doctor`
+(`docs-order` in `docs/ai/config.md` § Checks). Details: `topics/docs-order.md`.

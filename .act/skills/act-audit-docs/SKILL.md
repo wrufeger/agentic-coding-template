@@ -22,10 +22,20 @@ by `act-doctor`.
    actually exists and that its command isn't interactive (no unattended install prompt), same
    check as before any test run (`.act/agents/builder.md`). Also check `glossary.md`: add terms the wave
    introduced, drop or correct entries the code no longer matches.
-4. `doc-writer` updates `docs/README.md` (index, data-as-of dates).
+4. **Structure** (`R-docs-order`, details `.act/rules/topics/docs-order.md`). Run `python .act/scripts/doctor.py`
+   and read the `docs-*` findings: a folder or file without its index line, an index line without a file,
+   a dead link, a decided concept still lying around. Fix them in this order: a file that sits in the wrong
+   place is moved with `python .act/scripts/move_doc.py <from> <to>` (plan first, then again
+   with `--apply`) - never by hand, the script pulls links, paths and the index line along and lists what it
+   cannot know (a bare file name, a README.md that is missing); then `doc-writer` writes the missing index
+   lines and `README.md` files (one line per file with its state), and a decided concept is deleted after
+   its build and reason stand in the backlog item, the task or a decision record. A file past about 300
+   lines is split into a folder with a `README.md`. Run `doctor.py` again and stage the old and the new
+   path of every move.
+5. `doc-writer` updates `docs/README.md` (folders and top-level files only, data-as-of dates).
 
-In Claude Code, steps 2–4 can also run as the workflow script `workflow.js.txt` beside this file — only
-when the human asks for that variant explicitly. Read `references/workflow.md` before starting it.
+In Claude Code, steps 2, 3 and 5 can also run as the workflow script `workflow.js.txt` beside this file — only
+when the human asks for that variant explicitly; it has no Structure step, so run step 4 by hand first. Read `references/workflow.md` before starting it.
 
 A full pass across all doc areas logs a journal entry whose title starts with `act-audit-docs`
 (`entries.py new ledger "act-audit-docs: ..."`); a spot check of one area skips the entry — this is

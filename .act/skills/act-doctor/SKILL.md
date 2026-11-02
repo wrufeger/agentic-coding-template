@@ -22,7 +22,10 @@ all), broken `act:ref` references and bridge targets, and a script/agent/skill u
 `docs/ai/local/` or `.claude/` that no generated copy or bridge explains, and the frontmatter of
 every skill and role: a value strict YAML rejects (an unquoted `: `), a missing `name` or
 `description`, a `name` that differs from its folder or file, an invalid `tier`, `reasoning`,
-`tools`, `model` or `effort`, and — as a hint only — a field no known tool reads. `update.py`
+`tools`, `model` or `effort`, and — as a hint only — a field no known tool reads, and the order of the
+project docs (`R-docs-order`, switch `docs-order` in `docs/ai/config.md` § Checks): a folder under
+`docs/project/` of five or more entries without `README.md`, a file its `README.md` does not name, an index
+line without a file, a dead relative link, a concept whose questions are all answered. `update.py`
 calls this itself as its step 8 — running it again by hand afterward is redundant unless something
 was fixed in between.
 

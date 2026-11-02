@@ -33,6 +33,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
+| `move_doc.py` | Moves a document (a file, or a folder with everything in it) below docs/ to a new place and pulls the references along, so a reorganisation… | skill `act-audit-docs` |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
@@ -874,6 +875,25 @@ Call: direct
 
 ```text
 usage: manifest.py --write | --check
+```
+
+## `move_doc.py`
+
+Call: skill `act-audit-docs`
+
+```text
+usage: move_doc.py [-h] [--apply] [--root ROOT] source dest
+
+Move a document below docs/ and pull its references along.
+
+positional arguments:
+  source       file or folder to move (project-relative)
+  dest         new path (project-relative); must not exist
+
+options:
+  -h, --help   show this help message and exit
+  --apply      do it; without it only the plan is printed
+  --root ROOT  project root (default: current folder)
 ```
 
 ## `rules.py`

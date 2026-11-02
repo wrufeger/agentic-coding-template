@@ -1149,6 +1149,7 @@ _MD_LINK_RE = re.compile(
     r"(<[^>\n]*>|(?:[^()\n]|\([^()\n]*\))+?)"
     r"""((?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\))""")
 _CODE_SPAN_RE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")
+_CODE_MASK = ""  # stands in for a character of an inline code span while links are found
 _HTML_SRC_RE = re.compile(r"""(<img\b[^>]*?\bsrc\s*=\s*)(["'])(.*?)\2""", re.IGNORECASE)
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:|^[A-Za-z]:[\\/]")  # a URL or a drive path
 # Names an IDE or screenshot tool hands out again and again; two entries would both own an "img.png".
@@ -1225,7 +1226,30 @@ def _rewrite_links(text: str, base: Path, mapper: LinkMapper) -> str:
     """Apply `mapper(target path, resolved path)` to every local link outside a fenced code block
     and inline code; it returns the new link path (relative, "/" separators) or None to keep the
     link. The resolved path is `base` + the link target, normalised (symlinks untouched)."""
-    return _map_segments(text, lambda segment: _rewrite_segment(segment, base, mapper))
+    if _CODE_MASK in text:  # the mask character is in use: split at the code spans instead
+        return _map_segments(text, lambda segment: _rewrite_segment(segment, base, mapper))
+
+    def guarded(target: str, resolved: Path) -> Union[None, str, tuple[str, str]]:
+        return None if _CODE_MASK in target else mapper(target, resolved)  # a code span inside a target
+
+    out: list[str] = []
+    fence: actlib.FenceState = None
+    for line in text.split("\n"):
+        was_fenced, fence = fence is not None, actlib.fence_step(fence, line)
+        if was_fenced or fence is not None:
+            out.append(line)
+            continue
+        spans = [code.group(0) for code in _CODE_SPAN_RE.finditer(line)]
+        if not spans:
+            out.append(_rewrite_segment(line, base, guarded))
+            continue
+        # a code span inside a link text must not cut the link: mask it with as many mask characters
+        # as it has, rewrite the whole line, then put the spans back in order
+        masked = _CODE_SPAN_RE.sub(lambda code: _CODE_MASK * len(code.group(0)), line)
+        rewritten = _rewrite_segment(masked, base, guarded)
+        chars = iter("".join(spans))
+        out.append("".join(next(chars) if char == _CODE_MASK else char for char in rewritten))
+    return "\n".join(out)
 
 
 def _map_segments(text: str, convert: Callable[[str], str]) -> str:

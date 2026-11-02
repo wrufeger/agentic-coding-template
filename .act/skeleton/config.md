@@ -240,6 +240,7 @@ refuses") treats `block` as `warn`.
 | `encoding-hint` | block | writing to a file that is not UTF-8 — the first write per session and file is stopped once with a note, the repeat goes through; `warn` only notes after the write (`R-code-encoding`) |
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
 | `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — checked at most once a day — a note that the template has moved on, repeated at every start and shown on the board and in the status line until the update is installed; never refuses, `off` skips both |
+| `docs-order` | warn | `act-doctor` only, never refuses: a folder under `docs/project/` with five or more entries and no `README.md`, a file its `README.md` does not name, an index line without a file, a dead relative link, a concept whose questions are all answered; `block` counts as `warn`, `off` skips it (`R-docs-order`) |
 
 ## Logging
 

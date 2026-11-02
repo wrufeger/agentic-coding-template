@@ -76,6 +76,14 @@
 #          21. worker rules that need more parts than there are SubagentStart hook entries
 #               (rules.py worker_overflow_warning): the parts beyond the last entry never reach a
 #               worker, so the named rule files need shortening. Nothing without the overflow.
+#          22. the order of the project docs (R-docs-order, switch `docs-order` in docs/ai/config.md
+#               § Checks: warn (default) | block (= warn) | off): a folder under docs/project/ with
+#               five or more entries and no README.md, a file or subfolder its README.md does not
+#               name (docs-index-missing); an index line of such a README.md whose path names
+#               nothing (docs-index-stale); a dead relative link or `docs/project/...md` path in
+#               docs/README.md and docs/project/ (docs-link-dead); a concept under
+#               docs/project/concepts/ whose questions are all answered or gone, with no open one
+#               (docs-concept-decided). Nothing with the switch off.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -191,6 +199,10 @@ KIND_LABELS: dict[str, str] = {
     "revisit-due": "Decisions whose `revisit:` date has passed",
     "revisit-invalid": "Decisions with a `revisit:` line that is not a YYYY-MM-DD date",
     "worker-rules": "Worker rules that do not fit into the SubagentStart hook entries",
+    "docs-index-missing": "Project docs without an index line (or a folder without README.md)",
+    "docs-index-stale": "Index lines of a project docs README.md that name nothing",
+    "docs-link-dead": "Dead relative links and paths in the project docs",
+    "docs-concept-decided": "Concepts whose questions are all answered (delete once built)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -228,6 +240,10 @@ KIND_LABELS_DE: dict[str, str] = {
     "revisit-due": "Entscheidungen, deren `revisit:`-Datum verstrichen ist",
     "revisit-invalid": "Entscheidungen mit einer `revisit:`-Zeile, die kein Datum JJJJ-MM-TT ist",
     "worker-rules": "Worker-Regeln, die nicht in die SubagentStart-Hook-Einträge passen",
+    "docs-index-missing": "Projektdoku ohne Indexzeile (oder Ordner ohne README.md)",
+    "docs-index-stale": "Indexzeilen eines README.md der Projektdoku, die nichts benennen",
+    "docs-link-dead": "Tote relative Verweise und Pfade in der Projektdoku",
+    "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (löschen, sobald gebaut)",
 }
 
 
@@ -1281,6 +1297,264 @@ def check_revisit_dates(root: Path, today: Optional[date] = None) -> list[Findin
 
 
 # ---------------------------------------------------------------------------
+# 8b. Order of the project docs (R-docs-order) — the layout under docs/project/ stays findable:
+#     a README.md with one line per entry in every folder of five or more entries, no index line
+#     without its file, no dead relative link, no concept that is decided but still lying around.
+# ---------------------------------------------------------------------------
+
+DOCS_ORDER_MIN_ENTRIES = 5
+_DOCS_PATH_TOKEN_RE = re.compile(r"^[\w.\-/]+$")
+_DOCS_TICK_RE = re.compile(r"`([^`\n]+)`")
+_DOCS_LINK_TARGET_RE = re.compile(r"\]\(<?([^)<>\s]+)")
+_DOCS_PROJECT_PATH_RE = re.compile(r"^docs/project/[\w.\-/]+\.md$")
+_DOCS_PLACEHOLDER_RE = re.compile(r"YYYY|MM-DD|NNN|[<>*{}]")  # a pattern such as YYYY-MM-DD_title.md, not a path
+_QUESTION_ID_RE = re.compile(r"`Q(\d+)`")  # only an identifier in backticks is a question, not "Q4 launch"
+_STATUS_LINE_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
+
+
+def docs_order_enabled(root: Path) -> bool:
+    """False only for `docs-order` set to `off`; a missing row, `warn` and `block` all report."""
+    return actlib.read_config(root).get("docs-order", "").strip().strip("`").strip().lower() != "off"
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return None  # reported by check_unreadable_entries() where it is an entry
+
+
+def _unfenced(text: str) -> list[tuple[int, str]]:
+    """(line number, line) of every line outside a fenced code block, fence lines left out."""
+    out: list[tuple[int, str]] = []
+    fence = None
+    for number, line in enumerate(text.split("\n"), start=1):
+        was_fenced, fence = fence is not None, actlib.fence_step(fence, line)
+        if not was_fenced and fence is None:
+            out.append((number, line))
+    return out
+
+
+def _git_ignored(root: Path) -> list[Path]:
+    """What Git ignores below docs/ (a folder that is wholly ignored once, as the folder); empty
+    without Git or outside a repository, so then nothing is skipped."""
+    try:
+        result = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "-o", "-i", "--exclude-standard",
+                                 "--directory", "--", "docs"], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [root / item.rstrip("/") for item in result.stdout.split("\0") if item]
+
+
+def _is_ignored(path: Path, ignored: list[Path]) -> bool:
+    return any(path == item or item in path.parents for item in ignored)
+
+
+def _docs_folders(project: Path, ignored: list[Path]) -> list[Path]:
+    """docs/project and every visible folder below it that Git does not ignore, in path order."""
+    folders = [project]
+    for path in sorted(project.rglob("*")):
+        if (path.is_dir() and not any(part.startswith(".") for part in path.relative_to(project).parts)
+                and not _is_ignored(path, ignored)):
+            folders.append(path)
+    return folders
+
+
+def _folder_entries(folder: Path, ignored: list[Path]) -> list[Path]:
+    """The Markdown files and the folders with content directly in `folder`, README.md left out;
+    what Git ignores is not an entry."""
+    out: list[Path] = []
+    for path in sorted(folder.iterdir()):
+        if path.name.startswith(".") or _is_ignored(path, ignored):
+            continue
+        if path.is_file() and path.suffix.lower() == ".md" and path.name.lower() != "readme.md":
+            out.append(path)
+        elif path.is_dir() and any(not child.name.startswith(".") and not _is_ignored(child, ignored)
+                                   for child in path.rglob("*") if child.is_file()):
+            out.append(path)
+    return out
+
+
+def _names_in(text: str, name: str, folder: bool = False) -> bool:
+    """`name` appears in `text` outside a fenced block. A folder counts only as `name/` or in
+    backticks: the plain word ("data as of ...") is not the folder."""
+    quoted = re.escape(name)
+    if folder:
+        pattern = r"(?<![\w.\-])" + quoted + r"/|`" + quoted + r"`"
+    else:
+        pattern = r"(?<![\w.\-])" + quoted + r"(?![\w\-])"
+    return any(re.search(pattern, line) for _number, line in _unfenced(text))
+
+
+def _index_path(line: str) -> Optional[str]:
+    """The first path token (link target or backticks) of a table row or list item that looks like a
+    Markdown file or a folder, else None."""
+    stripped = line.strip()
+    if not (stripped.startswith("|") or re.match(r"[-*+]\s", stripped)):
+        return None
+    first: Optional[tuple[int, str]] = None
+    for regex in (_DOCS_TICK_RE, _DOCS_LINK_TARGET_RE):
+        match = regex.search(stripped)
+        if match and (first is None or match.start() < first[0]):
+            first = (match.start(), match.group(1).strip())
+    if first is None:
+        return None
+    token = first[1]
+    if (not _DOCS_PATH_TOKEN_RE.match(token) or _DOCS_PLACEHOLDER_RE.search(token)
+            or not (token.endswith(".md") or token.endswith("/"))):
+        return None
+    return token
+
+
+def _check_docs_indexes(root: Path, project: Path, ignored: list[Path]) -> list[Finding]:
+    findings: list[Finding] = []
+    for folder in _docs_folders(project, ignored):
+        entries_here = _folder_entries(folder, ignored)
+        readme = folder / "README.md"
+        if not readme.is_file():
+            if len(entries_here) >= DOCS_ORDER_MIN_ENTRIES:
+                findings.append(Finding(
+                    path=_rel(folder, root), line=None, kind="docs-index-missing",
+                    message=(f"{len(entries_here)} entries but no README.md — add one with a line per "
+                             "file and subfolder (R-docs-order)"),
+                ))
+            continue
+        text = _read_text(readme)
+        if text is None:
+            continue
+        for entry in entries_here:
+            name = entry.name
+            if not _names_in(text, name, entry.is_dir()):
+                findings.append(Finding(
+                    path=_rel(entry, root), line=None, kind="docs-index-missing",
+                    message=f"{_rel(readme, root)} has no line for {name}{'/' if entry.is_dir() else ''}",
+                ))
+        for number, line in _unfenced(text):
+            token = _index_path(line)
+            if token is None:
+                continue
+            base = root if token.startswith("docs/") else folder
+            if not (base / token).exists():
+                findings.append(Finding(
+                    path=_rel(readme, root), line=number, kind="docs-index-stale",
+                    message=f"index line names {token}, which does not exist",
+                ))
+    return findings
+
+
+def _check_docs_links(root: Path, docs: Path, ignored: list[Path]) -> list[Finding]:
+    """Dead relative Markdown links and `docs/project/...md` paths in docs/README.md and docs/project/
+    (decisions.md: links only, its records name files that were deleted later; ignored files skipped)."""
+    files = [docs / "README.md"] if (docs / "README.md").is_file() else []
+    project = docs / "project"
+    if project.is_dir():
+        files += [item for item in sorted(project.rglob("*.md")) if not _is_ignored(item, ignored)]
+    findings: list[Finding] = []
+    for path in files:
+        text = _read_text(path)
+        if text is None:
+            continue
+        dead: list[str] = []
+
+        def note(target: str, resolved: Path) -> None:
+            if not resolved.exists() and target not in dead:
+                dead.append(target)
+
+        entries._rewrite_links(text, path.parent, lambda target, resolved: note(target, resolved))
+        lines = text.split("\n")
+        for target in dead:
+            at = next((i for i, line in enumerate(lines, start=1) if target in line), None)
+            findings.append(Finding(
+                path=_rel(path, root), line=at, kind="docs-link-dead",
+                message=f"link target {target} does not exist",
+            ))
+        seen: set[str] = set()
+        for number, line in ([] if path == project / "decisions.md" else _unfenced(text)):
+            for match in _DOCS_TICK_RE.finditer(line):
+                token = match.group(1).strip()
+                if (_DOCS_PROJECT_PATH_RE.match(token) and not _DOCS_PLACEHOLDER_RE.search(token)
+                        and token not in seen and not (root / token).exists()):
+                    seen.add(token)
+                    findings.append(Finding(
+                        path=_rel(path, root), line=number, kind="docs-link-dead",
+                        message=f"path {token} does not exist",
+                    ))
+    return findings
+
+
+def _question_states(root: Path) -> dict[str, str]:
+    """canonical question id -> status ("open", "answered", "done" or "") for every entry file."""
+    states: dict[str, str] = {}
+    for path in entries._entry_files(root):
+        text = entries._safe_read(path)
+        if text is None:
+            continue
+        match = _STATUS_LINE_RE.search(actlib.header_block(text))
+        for entry_id in actlib.entry_ids(text):
+            states.setdefault(entry_id, match.group(1).lower() if match else "")
+    return states
+
+
+def _check_decided_concepts(root: Path, project: Path) -> list[Finding]:
+    concepts = project / "concepts"
+    if not concepts.is_dir():
+        return []
+    states: Optional[dict[str, str]] = None
+    reserved: set[str] = set()
+    findings: list[Finding] = []
+    for path in sorted(concepts.rglob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        text = _read_text(path)
+        if text is None:
+            continue
+        numbers = sorted({int(m.group(1)) for _n, line in _unfenced(text) for m in _QUESTION_ID_RE.finditer(line)})
+        if not numbers:
+            continue
+        if states is None:
+            states = _question_states(root)
+            reserved = {i for i in entries.reserved_ids(root).get("Q", set())}
+        open_ids: list[str] = []
+        resolved = 0
+        for number in numbers:
+            status = states.get(f"Q{number}")
+            if status is None:
+                resolved += 1 if f"Q{number}" in reserved else 0  # gone but once assigned; else not ours
+            elif status == "open" or status not in actlib.STATUS_VALUES:
+                open_ids.append(f"Q{number}")
+            else:
+                resolved += 1
+        if open_ids or not resolved:
+            continue
+        findings.append(Finding(
+            path=_rel(path, root), line=None, kind="docs-concept-decided",
+            message=("every question it names is answered or gone — once decided, move what the build "
+                     "needs into its backlog item or task and the reason into a decision record, then "
+                     "delete the concept (R-docs-order)"),
+        ))
+    return findings
+
+
+def check_docs_order(root: Path) -> list[Finding]:
+    """The four kinds of R-docs-order; nothing while `docs-order` is off or docs/ is missing."""
+    docs = root / "docs"
+    if not docs.is_dir() or not docs_order_enabled(root):
+        return []
+    findings: list[Finding] = []
+    project = docs / "project"
+    ignored = _git_ignored(root)
+    if project.is_dir():
+        findings += _check_docs_indexes(root, project, ignored)
+    findings += _check_docs_links(root, docs, ignored)
+    if project.is_dir():
+        findings += _check_decided_concepts(root, project)
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
 #    committing (the template ships its own MANIFEST.json now, so this same comparison
@@ -2027,6 +2301,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_worker_rules(root)
     findings += check_status_values(root)
     findings += check_revisit_dates(root)
+    findings += check_docs_order(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_skill_lint(root)

@@ -8,6 +8,10 @@ Maintains `docs/project/` — project documentation, not the collaboration works
 - Work findings (from a review, an audit, or handed over directly) into the matching file under
   `docs/project/`, kept short and in that file's existing style.
 - Keep a changed file's own freshness/status marker current, where the project's docs use one.
+- Write the index line with the document: a file under `docs/project/` gets one line (name, contents, state)
+  in the `README.md` of its folder, in the same step (`R-docs-order`). A folder of five or more entries
+  without a `README.md` gets one: purpose, format, one line per entry. Move a document with
+  `python .act/scripts/move_doc.py`, never by hand.
 - Check cross-references — do the named paths and sections actually exist? Attribute a
   contradiction between files to one source instead of leaving both standing.
 

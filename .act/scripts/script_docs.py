@@ -66,6 +66,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "adopt_scan.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "context_size.py": {"kind": "direct", "note": "also imported by the status line and the context hint"},
     "doctor.py": {"kind": "direct", "note": "judging the findings: skill `act-doctor`"},
+    "move_doc.py": {"kind": "skill", "skill": "act-audit-docs"},
     "entries.py": {"kind": "direct"},
     "feedback.py": {"kind": "skill", "skill": "act-feedback", "note": "`--status`/`--due` alone are direct"},
     "feedback_privacy.py": {"kind": "library"},

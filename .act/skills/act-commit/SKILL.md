@@ -51,8 +51,11 @@ secures the result.
    isn't recorded yet, older entries left as they are otherwise. Journal entries stay single files
    only until they are old: `act-compact` later folds them into one file per month
    (`archive/ledger-<YYYY-MM>.md`), and with `done-entries: keep` the archived entries too.
-5. **Docs index.** New files go into `docs/README.md`; check the data-as-of note on files that
-   changed.
+5. **Docs index.** A new file under `docs/project/` gets its line (name, contents, state) in the `README.md` of
+   its folder, a moved or deleted one loses or changes it (`R-docs-order`); a folder with fewer than five
+   entries and no `README.md` of its own is listed by the line in the `README.md` above it; a new top-level folder or file
+   under `docs/` goes into `docs/README.md`. Check the data-as-of note on files that changed. A concept
+   whose questions are answered and whose build is done is deleted in this step.
 6. **Learning check.** Did the task need at least two rework rounds (a worker result rejected
    twice, or two repair rounds after review or test)? Count them yourself. If so, run step 8 of
    `act-bug` and put the note into this commit.

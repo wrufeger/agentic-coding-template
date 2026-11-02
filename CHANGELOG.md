@@ -11,6 +11,16 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Rule `R-docs-order` (details in `.act/rules/topics/docs-order.md`): the project docs stay ordered. `docs/README.md`
+  lists folders and top-level files only; every folder under `docs/project/` with five or more entries has a
+  `README.md` with one line per entry and its state; one topic per file; a concept is deleted once decided or built.
+  `doctor.py` reports `docs-index-missing`, `docs-index-stale`, `docs-link-dead` and `docs-concept-decided`, skips
+  Git-ignored paths and the backtick paths of `decisions.md`, and is switched with `docs-order` in `docs/ai/config.md`
+  § Checks (`warn`, `off`). New `.act/scripts/move_doc.py` moves a document and pulls links, paths and the index line
+  along, keeping BOM and line endings (plan without `--apply`); `act-audit-docs` gained a step "Structure",
+  `act-commit` and `doc-writer` keep the index lines. New scaffold `docs/project/README.md`, brought to existing
+  projects once by migration 006 (never overwritten, not recreated once deleted). An edited `docs/ai/rules.md` gets the
+  new rule through the update.
 - Script `seo_crawl.py` (a building block for a fuller `act-seo`, not yet called by the skill): crawls a running site
   from a base URL, same origin only, no cookies, no server started; a start page that redirects to the same host with
   another scheme, port or `www.` continues there, any other target is refused. It reports status codes, redirect
