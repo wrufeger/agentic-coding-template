@@ -33,6 +33,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   Content-Security-Policy, X-Content-Type-Options, Referrer-Policy), compression and caching of the start page and a
   sample of assets, and whether plain http ends on https (same-host steps such as apex to `www` followed); TTFB is then
   a real measurement. `--delay` sets the pause between requests for any crawl.
+  It also takes `hreflang` alternates and sitemap entries as start points, mapping the production address
+  (the `canonical` host) to the crawled origin, so translated pages behind a language `<select>` are reached, and
+  reports sitemap URLs it could not reach (`sitemap-not-reached`); URLs that differ only in the trailing slash and
+  return the same page are one `trailing-slash-variant` note instead of duplicate and orphan findings.
 - `seo_check.py` (`act-seo`) also checks `hreflang` sets, JSON-LD blocks, duplicate content between pages (main
   content only, without header, nav, footer and sidebars; threshold via `--dup-threshold`, one finding per page against
   the first original, large groups of near copies included), images without `width`/`height`, a missing viewport meta
@@ -53,6 +57,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   accepted (every address a name resolves to must be global). The API key is read only from `PAGESPEED_API_KEY`, never
   from an argument, and never printed; without a key Google currently grants no quota, which the script reports on
   HTTP 429.
+  Each failed audit shows its first entries (selector, address, text) in the report and all of them in `--json`.
 - `act-integrations` can allow the read-only tools of a catalog MCP server in one step, while setting it up or later.
   Each entry in `.act/mcp-catalog.md` has a `read-tools` field with exact tool names (filled for `github`); after a
   "yes", `python .act/scripts/integrations.py read-tools <id>` merges them as `mcp__<server>__<tool>` into
@@ -92,7 +97,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `references/live-run.md`, the server stopped by PID after checking port and command line), or checks the public URL
   (crawl with header checks, PageSpeed Insights; the skill says first that the URL goes to Google, the key comes from
   `PAGESPEED_API_KEY` only). The report separates Lighthouse points from real defects; fixes follow approval and a
-  re-measure, until 100 or every deviation is justified. `seo_crawl.py` and `seo_lighthouse.py` are now listed under
+  re-measure, until 100 or every deviation is justified. The live-run guide stops the test server by the root
+  process ID recorded at start and its whole process tree, then checks the port is free. `seo_crawl.py` and `seo_lighthouse.py` are now listed under
   `act-seo` in the script reference.
 - `R-cost-delegate` says how work is cut for workers: work expected to run longer than about five minutes is first
   checked for independent parts and, where it splits, runs in parallel with separate write scopes, the saving measured

@@ -25,6 +25,9 @@
 #          A run that exceeds `--timeout` is ended with its whole process tree (by PID), then cleaned up.
 #          Lighthouse's error reporting is switched off and npm's update notice is silenced.
 #
+# Where it failed: a failed audit lists its first three entries (selector or snippet, address, text; each
+#          shortened to 200 characters) under the finding; `--json` carries all entries (`entries`, up to 200).
+#
 # Severity (a finding's kind says whether it is a defect or only points):
 #   error   defect  a failed axe audit of the accessibility category (in at least half of the runs)
 #   warning defect  a failed Best Practices or SEO audit; LCP over 2500 ms, CLS over 0.1 or TBT over 200 ms
@@ -114,6 +117,9 @@ METRICS = (
     ("cumulative-layout-shift", "CLS", "", 0.1),
     ("total-blocking-time", "TBT", "ms", 200.0),
 )
+SHOWN_ENTRIES = 3  # entries of a failed audit shown in the text report, each shortened to SHOWN_ENTRY_CHARS
+SHOWN_ENTRY_CHARS = 200
+MAX_ENTRIES = 200  # entries of one audit kept for the JSON
 FAIL_BELOW = 0.9  # Lighthouse calls an audit "failed" under this score
 SCORING_MODES = ("binary", "numeric", "metricSavings")
 SPREAD_NOISY_SCORE = 10.0  # a category score whose range exceeds this many points is called unstable
@@ -179,8 +185,9 @@ class AuditFailure:
     title: str
     category: str
     score: Optional[float]
-    nodes: List[str] = field(default_factory=list)
+    nodes: List[str] = field(default_factory=list)  # the first entries, shortened
     count: int = 0  # number of affected elements/items in the first run that showed it
+    entries: List[str] = field(default_factory=list)  # all entries (capped), not shortened
 
 
 @dataclass
@@ -201,7 +208,8 @@ class Finding:
     category: str
     audit_id: str
     message: str
-    nodes: List[str] = field(default_factory=list)
+    nodes: List[str] = field(default_factory=list)  # where it is: the first entries, shortened (text report)
+    entries: List[str] = field(default_factory=list)  # all entries of the audit, not shortened (JSON)
 
 
 @dataclass
@@ -291,22 +299,57 @@ def _parse_report(data: Mapping[str, object], source: str) -> Run:
 
 
 def _failure(cat_id: str, audit_id: str, audit: Mapping[str, object]) -> AuditFailure:
-    nodes: List[str] = []
+    entries: List[str] = []
     count = 0
     details = audit.get("details")
     if isinstance(details, dict):
         items = details.get("items", [])
         if isinstance(items, list):
             count = len(items)
-            for item in items:
-                node = item.get("node") if isinstance(item, dict) else None
-                if isinstance(node, dict):
-                    text = str(node.get("selector") or node.get("snippet") or "").strip()
-                    if text and len(nodes) < 3:
-                        nodes.append(text[:160])
+            for item in items[:MAX_ENTRIES]:
+                text = describe_item(item)
+                if text:
+                    entries.append(text)
     return AuditFailure(audit_id=audit_id, title=str(audit.get("title", audit_id)), category=cat_id,
                         score=audit.get("score") if isinstance(audit.get("score"), (int, float)) else None,
-                        nodes=nodes, count=count)
+                        nodes=[e[:SHOWN_ENTRY_CHARS] for e in entries[:SHOWN_ENTRIES]], count=count,
+                        entries=entries)
+
+
+def _scalar(value: object) -> str:
+    """Text of an item field: a string as it is, a typed value (`{"type": "link", "url": ...}`) by its url,
+    value or text, anything else empty."""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, dict):
+        for key in ("url", "value", "text", "selector", "snippet"):
+            if isinstance(value.get(key), str) and value[key].strip():
+                return " ".join(value[key].split())
+    return ""
+
+
+def describe_item(item: object) -> str:
+    """Where an audit failed: the element (selector, else snippet), then address and text of the item. An item
+    that is only an element gives just the selector. Pure."""
+    if not isinstance(item, dict):
+        return ""
+    parts: List[str] = []
+    node = item.get("node")
+    label = ""
+    if isinstance(node, dict):
+        parts.append(_scalar(node.get("selector")) or _scalar(node.get("snippet")))
+        label = _scalar(node.get("nodeLabel"))
+    for key in ("url", "href", "source"):
+        parts.append(_scalar(item.get(key)))
+    for key in ("text", "label", "name"):
+        parts.append(_scalar(item.get(key)))
+    if label:
+        parts.append(f'"{label}"' if label not in parts else "")
+    seen: List[str] = []
+    for part in parts:
+        if part and part not in seen:
+            seen.append(part)
+    return "  |  ".join(seen)
 
 
 def parse_field_data(payload: object) -> Dict[str, object]:
@@ -356,7 +399,7 @@ def summarize(url: str, runs: Sequence[Run], planned: int, run_errors: Sequence[
     for (cat_id, audit_id), hits in sorted(seen.items()):
         if len(hits) * 2 < n:
             continue
-        first = max(hits, key=lambda f: len(f.nodes))
+        first = max(hits, key=lambda f: (len(f.nodes), len(f.entries)))
         of = f" (in {len(hits)} of {n} runs)" if len(hits) < n else ""
         if cat_id == "accessibility":
             sev, kind = "error", "defect"
@@ -368,7 +411,8 @@ def summarize(url: str, runs: Sequence[Run], planned: int, run_errors: Sequence[
             perf_audit_budget -= 1
             sev, kind = "info", "points"
         count = f", {first.count} item(s)" if first.count else ""
-        findings.append(Finding(sev, kind, cat_id, audit_id, f"{first.title}{count}{of}", list(first.nodes)))
+        findings.append(Finding(sev, kind, cat_id, audit_id, f"{first.title}{count}{of}", list(first.nodes),
+                                list(first.entries)))
 
     bad_metric = False
     for metric_id, label, unit, limit in METRICS:
@@ -467,6 +511,8 @@ def render_text(results: Sequence[UrlResult], meta: Mapping[str, str]) -> str:
                 lines.append(f"    [{f.severity}/{f.kind}] {f.category} {f.audit_id}: {f.message}")
                 for node in f.nodes:
                     lines.append(f"        {node}")
+                if len(f.entries) > len(f.nodes):
+                    lines.append(f"        ... {len(f.entries) - len(f.nodes)} more (use --json)")
         else:
             lines.append("  Findings: none")
     lines.append("")

@@ -41,6 +41,17 @@
 #   are left out).
 #   A start page that leads to another site is not followed: exit 4.
 #
+# More start points: the `hreflang` alternates of every page and the entries of the site's sitemap are followed
+#          too, so translated pages that no link leads to (a language switch built as a <select>) are reached. The
+#          sitemap is read from `<link rel="sitemap">`, else from `sitemap-index.xml` or `sitemap.xml` in the folder
+#          of the start URL (an index and its files up to a limit), and only when a page hints at one: a sitemap
+#          link, hreflang links or an absolute canonical link on another host. An alternate or sitemap entry on
+#          the production address (the host of the page's absolute canonical link) with a path under the start
+#          URL's folder is mapped to the crawl origin; anything else on another host is not followed.
+#   warning  sitemap-not-reached (some sitemap URLs were not reached: count and examples)
+#   info     trailing-slash-variant (`/de` and `/de/` return the same page: reported once with the linking page
+#            instead of as duplicate title, duplicate description or orphan page; the checks run on one form)
+#
 # Public site (--public): the same crawl against a domain on the internet, read-only and throttled: at least
 #          --delay seconds (default 1) between two requests to the site, internal ones included, and a
 #          default of 100 pages. On top of the page findings it checks the HTTP headers: HSTS, Content-Security-
@@ -69,6 +80,7 @@
 from __future__ import annotations
 
 import argparse
+import html as html_module
 import http.client
 import ipaddress
 import json
@@ -105,6 +117,8 @@ PUBLIC_MAX_PAGES = 100
 HTTPS_HOPS = 3  # same-host steps over http followed when checking the redirect to https
 SHORT_CACHE_SECONDS = 86400  # an asset cached for less than a day is reported
 HSTS_MIN_SECONDS = 15552000  # 180 days
+MAX_SITEMAP_FILES = 20  # sitemap files read (an index counts as one)
+MAX_SITEMAP_URLS = 5000
 COMPRESS_MIN_BYTES = 1400  # below roughly one packet compression gains nothing
 COMPRESSIBLE_TYPES = ("text/", "application/javascript", "application/json", "application/xml",
                       "image/svg+xml", "application/xhtml+xml", "application/manifest+json")
@@ -123,6 +137,7 @@ CRAWL_SEVERITY: Dict[str, str] = {
     "asset-not-cached": "warning", "no-https-redirect": "warning",
     "missing-csp": "info", "missing-referrer-policy": "info", "weak-hsts": "info",
     "asset-short-cache": "info", "html-no-cache-header": "info", "asset-blocked": "info",
+    "sitemap-not-reached": "warning", "trailing-slash-variant": "info",
 }
 SEVERITY: Dict[str, str] = {**CRAWL_SEVERITY, **seo_check.SEVERITY}
 SEVERITY_ORDER = ("error", "warning", "info")
@@ -331,6 +346,7 @@ class CrawlParser(seo_check.PageParser):
         super().__init__()
         self.base_href = ""
         self.assets: List[str] = []  # script src and stylesheet href, as written
+        self.sitemap_hrefs: List[str] = []  # <link rel="sitemap"> targets, as written
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         super().handle_starttag(tag, attrs)
@@ -341,6 +357,16 @@ class CrawlParser(seo_check.PageParser):
             self.assets.append(values["src"].strip())
         elif tag == "link" and "stylesheet" in values.get("rel", "").lower().split() and values.get("href", "").strip():
             self.assets.append(values["href"].strip())
+        elif tag == "link" and "sitemap" in values.get("rel", "").lower().split() and values.get("href", "").strip():
+            self.sitemap_hrefs.append(values["href"].strip())
+
+
+def sitemap_locs(text: str) -> Tuple[bool, List[str]]:
+    """(is a sitemap index, the `<loc>` entries) of a sitemap file. Regular expressions, no XML parser: a sitemap
+    comes from the network and must not be able to expand entities."""
+    is_index = bool(re.search(r"<(?:\w+:)?sitemapindex[\s>]", text, re.I))
+    locs = [html_module.unescape(m.strip()) for m in re.findall(r"<(?:\w+:)?loc\s*>(.*?)</(?:\w+:)?loc\s*>", text, re.I | re.S)]
+    return is_index, [loc for loc in locs if loc]
 
 
 def decode_body(resp: Response) -> str:
@@ -408,69 +434,183 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
             note_edge(external, target, source)
 
     timed_out = False
-    while queue:
-        if len(results) >= options.max_pages:
-            break
-        if clock() > deadline:
-            timed_out = True
-            break
-        url, depth = queue.popleft()
-        if options.delay > 0:
-            site_throttle.wait(origin_of(url)[1])
-        resp = fetcher.fetch(url, "GET", True, options.max_bytes)
-        result = PageResult(url, depth, resp.status, resp.content_type, round(resp.ttfb * 1000, 1),
-                            len(resp.body), error=resp.error, headers=resp.headers)
-        results[url] = result
-        if resp.error:
-            continue  # reported once by check_status, with the page that links here
-        if 300 <= resp.status < 400:
-            location = resp.headers.get("location", "")
-            target = normalize(url, location) if location else None
-            if target is None:
-                add_finding(findings, "fetch-failed", url,
-                            f"status {resp.status} without a usable Location header")
+    base_path = urlsplit(start).path or "/"
+    base_path = base_path[:base_path.rfind("/") + 1]  # the directory the crawl starts in, e.g. /docs/
+    prod_origins: set = set()  # origins named by absolute canonical links that are not the crawl origin
+    page_prod: Dict[str, tuple] = {}  # page -> origin of its own canonical, when that is not the crawl origin
+    alt_pending: List[Tuple[str, List[Tuple[str, str]]]] = []  # (page, hreflang entries) not yet followed
+    rel_sitemaps: List[str] = []  # <link rel="sitemap"> targets, as written
+    alt_pages: set = set()  # pages that carry hreflang links
+    alt_reached: set = set()  # pages first found through an hreflang link (no anchor leads there)
+    seeded = {"sitemap": False}
+
+    def to_site(target: str, prods: set) -> Optional[str]:
+        """`target` on the crawl origin: itself when already there; when its origin is one of `prods` (the
+        production address) and its path lies under the base, the same path on the crawl origin."""
+        origin = origin_of(target)
+        if origin == site:
+            return target
+        parts = urlsplit(target)
+        if origin not in prods or not parts.path.startswith(base_path):
+            return None
+        return rebuild(SplitResult(site[0], site_netloc(), parts.path, parts.query, ""))
+
+    def site_netloc() -> str:
+        host = f"[{site[1]}]" if ":" in site[1] else site[1]
+        return host if site[2] == DEFAULT_PORTS.get(site[0]) else f"{host}:{site[2]}"
+
+    def drain() -> None:
+        nonlocal timed_out, start_error, site
+        while queue:
+            if len(results) >= options.max_pages:
+                return
+            if clock() > deadline:
+                timed_out = True
+                return
+            url, depth = queue.popleft()
+            if options.delay > 0:
+                site_throttle.wait(origin_of(url)[1])
+            resp = fetcher.fetch(url, "GET", True, options.max_bytes)
+            result = PageResult(url, depth, resp.status, resp.content_type, round(resp.ttfb * 1000, 1),
+                                len(resp.body), error=resp.error, headers=resp.headers)
+            results[url] = result
+            if resp.error:
+                continue  # reported once by check_status, with the page that links here
+            if 300 <= resp.status < 400:
+                location = resp.headers.get("location", "")
+                target = normalize(url, location) if location else None
+                if target is None:
+                    add_finding(findings, "fetch-failed", url,
+                                f"status {resp.status} without a usable Location header")
+                    continue
+                result.redirect_to = target
+                if url in start_chain and origin_of(target) != site:
+                    if same_site_host(origin_of(target)[1], site[1]):
+                        add_finding(findings, "origin-changed", url, f"the start page leads to {target}; "
+                                    "the crawl continues there (same host, other scheme, port or www)")
+                        site = origin_of(target)
+                    else:
+                        start_error = f"the start page redirects to another site ({target}); nothing was crawled there"
+                        return
+                if url in start_chain:
+                    start_chain.add(target)
+                enqueue(target, url, depth)
                 continue
-            result.redirect_to = target
-            if url in start_chain and origin_of(target) != site:
-                if same_site_host(origin_of(target)[1], site[1]):
-                    add_finding(findings, "origin-changed", url, f"the start page leads to {target}; "
-                                "the crawl continues there (same host, other scheme, port or www)")
-                    site = origin_of(target)
-                else:
-                    start_error = f"the start page redirects to another site ({target}); nothing was crawled there"
-                    break
-            if url in start_chain:
-                start_chain.add(target)
-            enqueue(target, url, depth)
-            continue
-        if resp.status >= 400 or resp.content_type != "text/html":
-            continue
-        if resp.truncated:
-            add_finding(findings, "response-too-large", url,
-                        f"more than {options.max_bytes} bytes; not parsed, its links are not followed")
-            continue
-        if resp.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
-            add_finding(findings, "unparsed-encoding", url, f"Content-Encoding {resp.headers['content-encoding']!r} "
-                        "although identity was requested; not parsed")
-            continue
-        parser = CrawlParser()
-        try:
-            parser.feed(decode_body(resp))
-            parser.close()
-        except (AssertionError, ValueError, RecursionError):
-            pass
-        parser.info.file = url
-        parser.info.kind = "document"
-        html[url] = decode_body(resp)
-        links_base = normalize(url, parser.base_href) if parser.base_href else None
-        for src in parser.assets:
-            asset = normalize(links_base or url, src)
-            if asset and origin_of(asset) == site:
-                note_edge(page_assets, asset, url)
-        for href in parser.info.links:
-            target = normalize(links_base or url, href)
-            if target:
-                enqueue(target, url, depth + 1, follow=depth < options.max_depth)
+            if resp.status >= 400 or resp.content_type != "text/html":
+                continue
+            if resp.truncated:
+                add_finding(findings, "response-too-large", url,
+                            f"more than {options.max_bytes} bytes; not parsed, its links are not followed")
+                continue
+            if resp.headers.get("content-encoding", "identity").strip().lower() not in ("", "identity"):
+                add_finding(findings, "unparsed-encoding", url, f"Content-Encoding {resp.headers['content-encoding']!r} "
+                            "although identity was requested; not parsed")
+                continue
+            parser = CrawlParser()
+            try:
+                parser.feed(decode_body(resp))
+                parser.close()
+            except (AssertionError, ValueError, RecursionError):
+                pass
+            parser.info.file = url
+            parser.info.kind = "document"
+            html[url] = decode_body(resp)
+            links_base = normalize(url, parser.base_href) if parser.base_href else None
+            for src in parser.assets:
+                asset = normalize(links_base or url, src)
+                if asset and origin_of(asset) == site:
+                    note_edge(page_assets, asset, url)
+            for href in parser.info.links:
+                target = normalize(links_base or url, href)
+                if target:
+                    enqueue(target, url, depth + 1, follow=depth < options.max_depth)
+            canonical = normalize(links_base or url, parser.info.canonical_href) if parser.info.canonical_href else None
+            if canonical and origin_of(canonical) != site:
+                prod_origins.add(origin_of(canonical))
+                page_prod[url] = origin_of(canonical)
+            if parser.info.hreflangs:
+                alt_pages.add(url)
+                alt_pending.append((url, [(code, normalize(links_base or url, href) or "")
+                                          for code, href in parser.info.hreflangs]))
+            for href in parser.sitemap_hrefs:
+                target = normalize(links_base or url, href)
+                if target and target not in rel_sitemaps:
+                    rel_sitemaps.append(target)
+
+    def seed_from_alternates() -> None:
+        """hreflang alternates are start points; one on the page's production address is mapped to the crawl origin."""
+        while alt_pending:
+            page_url, entries = alt_pending.pop(0)
+            own_prod = {page_prod[page_url]} if page_url in page_prod else set()
+            for _code, target in entries:
+                mapped = to_site(target, own_prod) if target else None
+                if mapped and mapped not in queued and mapped not in results:
+                    alt_reached.add(mapped)
+                if mapped:
+                    enqueue(mapped, page_url, 1)
+
+    sitemap_entries: List[Tuple[str, Optional[str]]] = []  # (loc as written, URL on the crawl origin or None)
+    sitemap_used = ""
+
+    def seed_from_sitemap() -> None:
+        """Entries of the sitemap (or sitemap index) under the base are start points, mapped like hreflang."""
+        nonlocal sitemap_used
+        seeded["sitemap"] = True
+        if not (rel_sitemaps or alt_pages or prod_origins):
+            return  # nothing hints at a sitemap or a production address: no extra request
+        candidates = [m for m in (to_site(r, prod_origins) for r in rel_sitemaps) if m]
+        for name in ("sitemap-index.xml", "sitemap.xml"):
+            default = rebuild(SplitResult(site[0], site_netloc(), base_path + name, "", ""))
+            if default not in candidates:
+                candidates.append(default)
+        todo = deque(candidates)
+        seen_maps: set = set()
+        fetched_maps = 0
+        while todo and fetched_maps < MAX_SITEMAP_FILES and len(sitemap_entries) < MAX_SITEMAP_URLS:
+            if clock() > deadline:
+                notes.append("stopped at --max-time: the sitemap was not read completely")
+                break
+            map_url = todo.popleft()
+            if map_url in seen_maps:
+                continue
+            seen_maps.add(map_url)
+            if sitemap_used and map_url in candidates:
+                continue  # a sitemap was found: the other default names are not tried
+            if options.delay > 0:
+                site_throttle.wait(origin_of(map_url)[1])
+            resp = fetcher.fetch(map_url, "GET", True, options.max_bytes)
+            if resp.error or resp.status != 200:
+                continue
+            is_index, locs = sitemap_locs(decode_body(resp))
+            if not locs and not is_index:
+                continue
+            fetched_maps += 1
+            sitemap_used = sitemap_used or map_url
+            for loc in locs:
+                target = normalize(map_url, loc)
+                if not target:
+                    continue
+                mapped = to_site(target, prod_origins)
+                if is_index:
+                    if mapped:
+                        todo.append(mapped)
+                    continue
+                if len(sitemap_entries) < MAX_SITEMAP_URLS:
+                    sitemap_entries.append((target, mapped))
+                if mapped:
+                    enqueue(mapped, sitemap_used, 1)
+        if sitemap_used:
+            notes.append(f"sitemap read from {sitemap_used}: {len(sitemap_entries)} URLs")
+
+    drain()
+    while not start_error and not timed_out and len(results) < options.max_pages:
+        before = len(queue)
+        seed_from_alternates()
+        if not seeded["sitemap"]:
+            seed_from_sitemap()
+        if len(queue) == before:
+            break
+        drain()
     unfetched = [u for u, _ in queue] if not start_error else []
     if unfetched:
         why = "the time limit --max-time" if timed_out else f"--max-pages {options.max_pages}"
@@ -483,6 +623,8 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
 
     check_status(results, sources, findings, options, start)
     check_redirects(results, site, findings)
+    merge_slash_variants(html, sources, findings)
+    check_sitemap(sitemap_entries, sitemap_used, results, findings)
 
     ttfbs = [r.ttfb_ms for r in results.values() if r.status and not r.error]
     if is_loopback(site[1]):
@@ -496,7 +638,8 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
 
     # the page checks, including duplicate content against the canonical rule, run in seo_check
     seo_report = seo_check.check_documents(html, seo_check.Options(options.dup_threshold, options.dup_min_words))
-    findings.extend(seo_report["findings"])
+    findings.extend(f for f in seo_report["findings"]
+                    if not (f["type"] == "orphan-page" and f["file"] in alt_reached))  # linked by hreflang
     notes.extend(seo_report["notes"])
 
     if start_error:
@@ -550,6 +693,48 @@ def check_status(results: Mapping[str, PageResult], sources: Mapping[str, Sequen
         elif r.status and not r.redirect_to and r.ttfb_ms > options.slow_ttfb_ms:
             add_finding(findings, "slow-ttfb", url, f"{r.ttfb_ms:.0f} ms to the first byte "
                         f"(limit {options.slow_ttfb_ms:.0f} ms)")
+
+
+def merge_slash_variants(html: Dict[str, str], sources: Mapping[str, Sequence[str]], findings: List[dict]) -> None:
+    """URLs that differ only in the trailing slash and return the same HTML are one page: the variant with fewer
+    links (the one with a slash on a tie) is dropped from `html`, so the page checks see the page once, and one
+    info finding names the page that links to it. Different content under the two forms stays as it is."""
+    groups: Dict[tuple, List[str]] = {}
+    for url in html:
+        parts = urlsplit(url)
+        groups.setdefault((parts.netloc, parts.path.rstrip("/") or "/", parts.query), []).append(url)
+    for urls in groups.values():
+        if len(urls) < 2:
+            continue
+        keep = max(urls, key=lambda u: (len(sources.get(u, ())), u.endswith("/")))
+        for url in urls:
+            if url == keep or html[url] != html[keep]:
+                continue
+            del html[url]
+            linkers = [s for s in sources.get(url, ()) if s != url]
+            more = f" (and {len(linkers) - 1} more pages)" if len(linkers) > 1 else ""
+            add_finding(findings, "trailing-slash-variant", linkers[0] if linkers else url,
+                        f"{'links to' if linkers else 'lists'} {url}{more}, which returns the same page as {keep}; "
+                        "this server answers both, most hosts redirect one to the other. Link to one form only; "
+                        "the page checks ran on one of them")
+
+
+def check_sitemap(entries: Sequence[Tuple[str, Optional[str]]], sitemap: str, results: Mapping[str, PageResult],
+                  findings: List[dict]) -> None:
+    """How many sitemap URLs the crawl did not reach: not on the crawl origin or the production address, not
+    fetched (limits), or answering an error."""
+    missed: List[str] = []
+    for loc, mapped in entries:
+        result = results.get(mapped) if mapped else None
+        if mapped is None or result is None or result.error or result.status >= 400 or not result.status:
+            missed.append(loc)
+    if missed:
+        shown = ", ".join(missed[:3]) + (f" (+{len(missed) - 3})" if len(missed) > 3 else "")
+        add_finding(findings, "sitemap-not-reached", sitemap,
+                    f"{len(missed)} of {len(entries)} sitemap URLs were not reached by the crawl, e.g. {shown}. "
+                    "Their host may differ from the one crawled and from the canonical address of the pages, "
+                    "or the path may lie outside the start URL's folder; start at the site's base path, crawl "
+                    "each language start page, or raise --max-pages")
 
 
 def check_redirects(results: Mapping[str, PageResult], site: tuple, findings: List[dict]) -> None:
