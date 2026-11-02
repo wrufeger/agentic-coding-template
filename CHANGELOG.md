@@ -11,6 +11,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Script `seo_crawl.py` (a building block for a fuller `act-seo`, not yet called by the skill): crawls a running site
+  from a base URL, same origin only, no cookies, no server started; a start page that redirects to the same host with
+  another scheme, port or `www.` continues there, any other target is refused. It reports status codes, redirect
+  chains and loops, TTFB (with the note that a local TTFB says nothing about the hosting), broken internal links with
+  the linking page and `<base href>` honoured, then runs the `seo_check.py` page checks on the rendered HTML in one
+  report by severity (`--json`). External links get throttled `HEAD` requests only (`--no-external` switches them
+  off). Limits: `--max-pages`, `--max-depth`, `--timeout`, `--max-bytes`, `--max-time`. User info in URLs is removed
+  and never printed.
 - `seo_check.py` (`act-seo`) also checks `hreflang` sets, JSON-LD blocks, duplicate content between pages (main
   content only, without header, nav, footer and sidebars; threshold via `--dup-threshold`, one finding per page against
   the first original, large groups of near copies included), images without `width`/`height`, a missing viewport meta

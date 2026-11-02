@@ -38,6 +38,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
 | `security_scan.py` | Security check Art B: a live library-vulnerability lookup against the lock files an ecosystem actually has, run either as a manual command… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
 | `seo_check.py` | Code-only SEO checks over a project's HTML, templates, Markdown pages and framework config — the mechanical half of skill `act-seo`. Reads… | skill `act-seo` |
+| `seo_crawl.py` | Crawl of a running site — the crawl half of skill `act-seo`. Starts at one base URL, follows the internal links of the same origin (scheme… | direct (crawl of a running site (same origin), then the seo_check page checks; only HEAD requests to external links; the server is started by the caller, on a test port) |
 | `seo_lighthouse.py` | Lighthouse measurement for the URLs of a running site — the lab-measurement half of skill `act-seo`. Runs a pinned Lighthouse version… | direct (Lighthouse report for given URLs; the server is started by the caller, on a test port) |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
@@ -972,6 +973,50 @@ options:
                         1 (default 0.9)
   --dup-min-words DUP_MIN_WORDS
                         pages with fewer words are not compared (default 25)
+```
+
+## `seo_crawl.py`
+
+Call: direct (crawl of a running site (same origin), then the seo_check page checks; only HEAD requests to external links; the server is started by the caller, on a test port)
+
+```text
+usage: seo_crawl.py [-h] [--max-pages MAX_PAGES] [--max-depth MAX_DEPTH] [--timeout TIMEOUT]
+                    [--max-bytes MAX_BYTES] [--no-external] [--external-delay EXTERNAL_DELAY]
+                    [--max-external MAX_EXTERNAL] [--max-time MAX_TIME] [--slow-ttfb SLOW_TTFB]
+                    [--dup-threshold DUP_THRESHOLD] [--dup-min-words DUP_MIN_WORDS] [--json]
+                    base_url
+
+Crawl a running site from one base URL (same origin only): status codes, redirects, TTFB, broken
+internal and external links, duplicate pages, then the seo_check.py page checks on the rendered
+HTML. Starts no server and writes no file. Outgoing traffic: GET requests to the site itself and,
+unless --no-external, one HEAD request per external link (throttled per host; GET only after a
+405, headers only). No cookie, no page content leaves the machine.
+
+positional arguments:
+  base_url              http(s) URL of the running site, e.g. http://127.0.0.1:3100/
+
+options:
+  -h, --help            show this help message and exit
+  --max-pages MAX_PAGES
+                        internal URLs fetched at most (default 500)
+  --max-depth MAX_DEPTH
+                        link hops from the start page (default 10)
+  --timeout TIMEOUT     seconds per request (default 10.0)
+  --max-bytes MAX_BYTES
+                        largest response read; a larger page is not parsed (default 5000000)
+  --no-external         do not check external links (nothing leaves the site)
+  --external-delay EXTERNAL_DELAY
+                        seconds between two requests to one external host (default 1.0)
+  --max-external MAX_EXTERNAL
+                        external links checked at most (default 200)
+  --max-time MAX_TIME   seconds for the whole crawl, external links included (default 1800.0)
+  --slow-ttfb SLOW_TTFB
+                        TTFB in ms from which a page is reported (default 600.0)
+  --dup-threshold DUP_THRESHOLD
+                        share of identical text for the near-copy check of seo_check (default 0.9)
+  --dup-min-words DUP_MIN_WORDS
+                        pages with fewer words are not compared (default 25)
+  --json                machine-readable output
 ```
 
 ## `seo_lighthouse.py`
