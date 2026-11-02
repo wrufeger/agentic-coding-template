@@ -41,14 +41,27 @@
 #   are left out).
 #   A start page that leads to another site is not followed: exit 4.
 #
+# Public site (--public): the same crawl against a domain on the internet, read-only and throttled: at least
+#          --delay seconds (default 1) between two requests to the site, internal ones included, and a
+#          default of 100 pages. On top of the page findings it checks the HTTP headers: HSTS, Content-Security-
+#          Policy, X-Content-Type-Options and Referrer-Policy on the HTML pages (one finding per header, with the
+#          number of pages it is missing on), compression of the start page and of up to --max-assets scripts and
+#          stylesheets (one extra GET each, body never read), caching of those assets and of the HTML, and
+#          whether plain `http://` leads to `https://`. TTFB is then a real measurement from this machine (one
+#          request per page, not a series; it includes network and TLS time). Findings added by this mode:
+#   warning  missing-hsts, missing-nosniff, no-compression, asset-not-cached, no-https-redirect
+#   info     missing-csp, missing-referrer-policy, weak-hsts, asset-short-cache, html-no-cache-header,
+#            asset-blocked (an asset answered 401/403/429 to the check)
+#          Nothing is written, nothing is sent but the requests above; no page content leaves the machine.
+#
 # Library use: `crawl(base_url, CrawlOptions(...))` returns the report dict; `Fetcher.fetch` is the one place
-#   that talks to the network and is replaceable (a later mode against a public URL reads `Response.headers`
-#   and `Response.ttfb` from there).
+#   that talks to the network and is replaceable.
 #
 # Usage:
 #   python .act/scripts/seo_crawl.py BASE_URL [--max-pages N] [--max-depth N] [--timeout SEC] [--max-bytes N]
 #                                    [--no-external] [--external-delay SEC] [--max-external N]
 #                                    [--slow-ttfb MS] [--dup-threshold X] [--dup-min-words N] [--json]
+#                                    [--public] [--delay SEC] [--max-assets N]
 #
 # Exit code: 0 no warning or error, 1 at least one warning or error, 2 usage problem (bad URL or option),
 #            4 the start page gave no response or leads to another site (nothing is crawled there).
@@ -86,6 +99,15 @@ DEFAULT_PORTS = {"http": 80, "https": 443}
 SKIP_SCHEMES = ("mailto:", "tel:", "javascript:", "data:", "sms:", "ftp:", "file:", "blob:", "about:")
 BLOCKED_STATUS = {401, 403, 407, 429, 999}
 DEFAULT_MAX_TIME = 1800.0
+DEFAULT_MAX_ASSETS = 10
+PUBLIC_DELAY = 1.0
+PUBLIC_MAX_PAGES = 100
+HTTPS_HOPS = 3  # same-host steps over http followed when checking the redirect to https
+SHORT_CACHE_SECONDS = 86400  # an asset cached for less than a day is reported
+HSTS_MIN_SECONDS = 15552000  # 180 days
+COMPRESS_MIN_BYTES = 1400  # below roughly one packet compression gains nothing
+COMPRESSIBLE_TYPES = ("text/", "application/javascript", "application/json", "application/xml",
+                      "image/svg+xml", "application/xhtml+xml", "application/manifest+json")
 
 EXIT_FINDINGS = 1
 EXIT_USAGE = 2
@@ -97,6 +119,10 @@ CRAWL_SEVERITY: Dict[str, str] = {
     "external-link-unreachable": "warning", "response-too-large": "warning",
     "redirect": "info", "redirect-external": "info", "slow-ttfb": "info", "external-link-blocked": "info",
     "crawl-limit": "info", "origin-changed": "info", "unparsed-encoding": "info",
+    "missing-hsts": "warning", "missing-nosniff": "warning", "no-compression": "warning",
+    "asset-not-cached": "warning", "no-https-redirect": "warning",
+    "missing-csp": "info", "missing-referrer-policy": "info", "weak-hsts": "info",
+    "asset-short-cache": "info", "html-no-cache-header": "info", "asset-blocked": "info",
 }
 SEVERITY: Dict[str, str] = {**CRAWL_SEVERITY, **seo_check.SEVERITY}
 SEVERITY_ORDER = ("error", "warning", "info")
@@ -119,6 +145,13 @@ class CrawlOptions:
     slow_ttfb_ms: float = DEFAULT_SLOW_TTFB_MS
     dup_threshold: float = seo_check.Options.dup_threshold
     dup_min_words: int = seo_check.Options.dup_min_words
+    public: bool = False  # header checks, assets, http -> https; throttled
+    delay: Optional[float] = None  # seconds between two requests to the site itself; None = 0, with public 1
+    max_assets: int = DEFAULT_MAX_ASSETS
+
+    def __post_init__(self) -> None:
+        if self.delay is None:
+            self.delay = PUBLIC_DELAY if self.public else 0.0
 
 
 @dataclass
@@ -160,7 +193,7 @@ class Fetcher:
         self.clock = clock
 
     def fetch(self, url: str, method: str = "GET", read_body: bool = True,
-              max_bytes: int = DEFAULT_MAX_BYTES) -> Response:
+              max_bytes: int = DEFAULT_MAX_BYTES, accept_encoding: str = "identity") -> Response:
         parts = urlsplit(url)
         path = quote(parts.path or "/", safe="/%:@!$&'()*+,;=~-._")
         if parts.query:
@@ -172,7 +205,7 @@ class Fetcher:
             conn = cls(parts.hostname or "", parts.port, timeout=self.timeout)
             started = self.clock()
             conn.request(method, path, headers={"User-Agent": self.user_agent, "Accept": "text/html,*/*;q=0.5",
-                                                "Accept-Encoding": "identity", "Connection": "close"})
+                                                "Accept-Encoding": accept_encoding, "Connection": "close"})
             raw = conn.getresponse()
             resp.ttfb = self.clock() - started
             resp.status = raw.status
@@ -297,11 +330,17 @@ class CrawlParser(seo_check.PageParser):
     def __init__(self) -> None:
         super().__init__()
         self.base_href = ""
+        self.assets: List[str] = []  # script src and stylesheet href, as written
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         super().handle_starttag(tag, attrs)
+        values = {k.lower(): (v or "") for k, v in attrs}
         if tag == "base" and not self.base_href:
-            self.base_href = dict(attrs).get("href") or ""
+            self.base_href = values.get("href", "")
+        elif tag == "script" and values.get("src", "").strip():
+            self.assets.append(values["src"].strip())
+        elif tag == "link" and "stylesheet" in values.get("rel", "").lower().split() and values.get("href", "").strip():
+            self.assets.append(values["href"].strip())
 
 
 def decode_body(resp: Response) -> str:
@@ -330,12 +369,14 @@ def add_finding(findings: List[dict], kind: str, file: str, detail: str) -> None
 
 
 def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Optional[Fetcher] = None,
-          throttle: Optional[Throttle] = None, clock: Callable[[], float] = time.monotonic) -> dict:
+          throttle: Optional[Throttle] = None, clock: Callable[[], float] = time.monotonic,
+          site_throttle: Optional[Throttle] = None) -> dict:
     """Crawl the site of `base_url` and return the report dict (see render_text for the shape).
     `start_error` in the report is set when the start page gave no usable answer or leads to a foreign site."""
     options = options or CrawlOptions()
     fetcher = fetcher or Fetcher(options.timeout)
     throttle = throttle or Throttle(options.external_delay)
+    site_throttle = site_throttle or Throttle(options.delay)
     start = validate_base(base_url)
     site = origin_of(start)
     began = clock()
@@ -345,6 +386,7 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
     start_error = ""
     results: Dict[str, PageResult] = {}
     html: Dict[str, str] = {}
+    page_assets: Dict[str, List[str]] = {}  # asset URL -> pages that load it (public mode)
     sources: Dict[str, List[str]] = {}  # internal target -> pages (or redirecting URLs) that lead to it
     external: Dict[str, List[str]] = {}  # external link -> pages that carry it
     queue: Deque[Tuple[str, int]] = deque([(start, 0)])
@@ -373,6 +415,8 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
             timed_out = True
             break
         url, depth = queue.popleft()
+        if options.delay > 0:
+            site_throttle.wait(origin_of(url)[1])
         resp = fetcher.fetch(url, "GET", True, options.max_bytes)
         result = PageResult(url, depth, resp.status, resp.content_type, round(resp.ttfb * 1000, 1),
                             len(resp.body), error=resp.error, headers=resp.headers)
@@ -419,6 +463,10 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
         parser.info.kind = "document"
         html[url] = decode_body(resp)
         links_base = normalize(url, parser.base_href) if parser.base_href else None
+        for src in parser.assets:
+            asset = normalize(links_base or url, src)
+            if asset and origin_of(asset) == site:
+                note_edge(page_assets, asset, url)
         for href in parser.info.links:
             target = normalize(links_base or url, href)
             if target:
@@ -442,6 +490,9 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
     else:
         notes.append("TTFB includes network and TLS time of this machine, not the visitors'; "
                      "a single request is not a measurement series")
+    if options.public and not start_error:
+        check_public(results, html, page_assets, start, site, fetcher, site_throttle, options, findings, notes,
+                     deadline, clock)
 
     # the page checks, including duplicate content against the canonical rule, run in seo_check
     seo_report = seo_check.check_documents(html, seo_check.Options(options.dup_threshold, options.dup_min_words))
@@ -451,7 +502,8 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
     if start_error:
         notes.append(start_error)
     elif options.external:
-        check_external(external, fetcher, throttle, options, findings, notes, deadline, clock)
+        check_external(external, fetcher, throttle, options, findings, notes, deadline, clock,
+                       site_throttle, site[1])
     else:
         notes.append(f"external links were not checked (--no-external): {len(external)} found")
 
@@ -465,7 +517,7 @@ def crawl(base_url: str, options: Optional[CrawlOptions] = None, fetcher: Option
     if not start_error and (first is None or (first.error and not first.status)):
         start_error = f"no response from the start page {start}"
     return {
-        "base_url": start, "crawl_origin": f"{site[0]}://{site[1]}:{site[2]}", "start_error": start_error,
+        "base_url": start, "public": options.public, "crawl_origin": f"{site[0]}://{site[1]}:{site[2]}", "start_error": start_error,
         "pages_fetched": len(results), "pages_parsed": len(html),
         "external_links": len(external), "statuses": statuses,
         "ttfb_ms": {"median": round(statistics.median(ttfbs), 1), "max": round(max(ttfbs), 1)} if ttfbs else {},
@@ -536,9 +588,137 @@ def check_redirects(results: Mapping[str, PageResult], site: tuple, findings: Li
             add_finding(findings, "redirect-external", url, f"the chain ends outside the site: {chain[-1]}")
 
 
+def header_issue_kinds(headers: Mapping[str, str], https: bool) -> List[Tuple[str, str]]:
+    """(finding type, header description) for the security headers a response lacks or sets weakly. Pure."""
+    issues: List[Tuple[str, str]] = []
+    if https:
+        hsts = headers.get("strict-transport-security", "")
+        match = re.search(r"max-age\s*=\s*\"?(\d+)", hsts, re.I)
+        if not hsts:
+            issues.append(("missing-hsts", "Strict-Transport-Security"))
+        elif not match or int(match.group(1)) < HSTS_MIN_SECONDS:
+            issues.append(("weak-hsts", f"Strict-Transport-Security {hsts!r}: max-age missing or under 180 days"))
+    if "content-security-policy" not in headers:
+        issues.append(("missing-csp", "Content-Security-Policy"))
+    if "nosniff" not in re.split(r"[,;\s]+", headers.get("x-content-type-options", "").lower()):
+        issues.append(("missing-nosniff", "X-Content-Type-Options: nosniff"))
+    if "referrer-policy" not in headers:
+        issues.append(("missing-referrer-policy", "Referrer-Policy"))
+    return issues
+
+
+def max_age_of(cache_control: str) -> Optional[int]:
+    match = re.search(r"(?:^|[\s,])max-age\s*=\s*\"?(\d+)", cache_control, re.I)
+    return int(match.group(1)) if match else None
+
+
+def is_compressible(content_type: str) -> bool:
+    return content_type.startswith(COMPRESSIBLE_TYPES)
+
+
+def check_public(results: Mapping[str, PageResult], html: Mapping[str, str],
+                 page_assets: Mapping[str, Sequence[str]], start: str, site: tuple, fetcher: Fetcher,
+                 site_throttle: Throttle, options: CrawlOptions, findings: List[dict], notes: List[str],
+                 deadline: float, clock: Callable[[], float]) -> None:
+    """HTTP header checks for a public site: security headers on the HTML pages, compression and caching of the
+    start page and a sample of assets, and the http -> https redirect. Every extra request goes through the
+    same throttle as the crawl."""
+    https = site[0] == "https"
+    pages = [u for u in html if u in results]
+    if not https:
+        notes.append("the site is served over http: Strict-Transport-Security and the http -> https redirect "
+                     "were not checked")
+    # security headers: one finding per header, with the number of pages it is missing on
+    missing: Dict[str, Tuple[str, List[str]]] = {}
+    for url in pages:
+        for kind, reason in header_issue_kinds(results[url].headers, https):
+            missing.setdefault(kind, (reason, []))[1].append(url)
+    for kind, (reason, urls) in missing.items():
+        shown = ", ".join(urls[:2]) + (f" (+{len(urls) - 2})" if len(urls) > 2 else "")
+        if kind == "weak-hsts":
+            add_finding(findings, kind, urls[0], f"{reason}; on {len(urls)} of {len(pages)} HTML pages")
+        else:
+            add_finding(findings, kind, urls[0], f"response header {reason} is missing on {len(urls)} of "
+                        f"{len(pages)} HTML pages, e.g. {shown}")
+    # caching of the HTML pages: some way to revalidate or expire
+    no_cache = [u for u in pages if not any(h in results[u].headers for h in
+                                            ("cache-control", "etag", "last-modified", "expires"))]
+    if no_cache:
+        add_finding(findings, "html-no-cache-header", no_cache[0],
+                    f"no Cache-Control, ETag, Last-Modified or Expires on {len(no_cache)} of {len(pages)} HTML pages")
+    # compression and caching of the start page and a sample of assets, with compression requested
+    entry = start if start in html else next(iter(html), "")  # a start page that redirects: its target
+    sample: List[Tuple[str, List[str]]] = [(entry, [])] if entry else []
+    sample += [(a, list(p)) for a, p in list(page_assets.items())[:options.max_assets]]
+    if len(page_assets) > options.max_assets:
+        notes.append(f"only the first {options.max_assets} of {len(page_assets)} assets were checked (--max-assets)")
+    for url, loaded_by in sample:
+        if clock() > deadline:
+            notes.append("stopped at --max-time: remaining assets not checked")
+            break
+        if options.delay > 0:
+            site_throttle.wait(origin_of(url)[1])
+        resp = fetcher.fetch(url, "GET", False, options.max_bytes, accept_encoding="gzip, br")
+        is_asset = bool(loaded_by)
+        where = loaded_by[0] if loaded_by else url
+        if resp.status in BLOCKED_STATUS:
+            if is_asset:
+                add_finding(findings, "asset-blocked", url,
+                            f"status {resp.status} for this check, loaded by {where}; open it by hand")
+            continue
+        if resp.error or resp.status >= 400:
+            if is_asset:
+                add_finding(findings, "broken-link", where,
+                            f"-> {url}  ({resp.error or 'status ' + str(resp.status)})")
+            continue
+        if not 200 <= resp.status < 300:
+            continue
+        ctype = resp.content_type
+        length = resp.headers.get("content-length", "")
+        encoded = resp.headers.get("content-encoding", "").strip().lower() not in ("", "identity")
+        if is_compressible(ctype) and not encoded and length.isdigit() and int(length) >= COMPRESS_MIN_BYTES:
+            add_finding(findings, "no-compression", url, f"{ctype}, {length} bytes sent without Content-Encoding "
+                        "although gzip and br were accepted")
+        if is_asset:
+            cache = resp.headers.get("cache-control", "")
+            age = max_age_of(cache)
+            if not cache and "expires" not in resp.headers:
+                add_finding(findings, "asset-not-cached", url, f"no Cache-Control or Expires (loaded by {where})")
+            elif re.search(r"no-store|no-cache", cache, re.I) or (age is not None and age < SHORT_CACHE_SECONDS):
+                add_finding(findings, "asset-short-cache", url,
+                            f"Cache-Control {cache!r}: under a day (a fingerprinted file can be cached for a year)")
+    if https and site[2] == 443:
+        parts = urlsplit(start)
+        plain = f"http://{site[1]}{parts.path or '/'}" + (f"?{parts.query}" if parts.query else "")
+        chain = [plain]
+        while True:  # a step on the same host over http (apex -> www) is followed, up to HTTPS_HOPS times
+            if options.delay > 0:
+                site_throttle.wait(site[1])
+            resp = fetcher.fetch(chain[-1], "GET", False, options.max_bytes)
+            target = normalize(chain[-1], resp.headers.get("location", "")) if 300 <= resp.status < 400 else None
+            if (target and not target.startswith("https://") and len(chain) <= HTTPS_HOPS
+                    and same_site_host(urlsplit(target).hostname or "", site[1]) and target not in chain):
+                chain.append(target)
+                continue
+            break
+        shown = "  ->  ".join(chain)
+        if resp.error and not resp.status:
+            notes.append(f"{shown} gave no answer ({resp.error}); the http -> https redirect was not verified")
+        elif target and target.startswith("https://"):
+            notes.append(f"{shown} redirects to {target} ({resp.status})")
+        else:
+            what = f"redirects to {target}" if target else f"answers {resp.status} instead of redirecting"
+            add_finding(findings, "no-https-redirect", plain, f"{shown} {what}; plain http should lead to https")
+    elif https:
+        notes.append("the site runs on a non-default port: the http -> https redirect was not checked")
+
+
 def check_external(external: Mapping[str, Sequence[str]], fetcher: Fetcher, throttle: Throttle,
                    options: CrawlOptions, findings: List[dict], notes: List[str], deadline: float,
-                   clock: Callable[[], float]) -> None:
+                   clock: Callable[[], float], site_throttle: Optional[Throttle] = None,
+                   site_host: str = "") -> None:
+    """External links are asked by HEAD. A link to the site's own host (another scheme or port counts as
+    external) also waits on the site's throttle, so the pace set for the site holds for it too."""
     targets = list(external)
     if len(targets) > options.max_external:
         notes.append(f"only the first {options.max_external} of {len(targets)} external links were checked "
@@ -551,10 +731,17 @@ def check_external(external: Mapping[str, Sequence[str]], fetcher: Fetcher, thro
             notes.append(f"stopped at --max-time: {len(targets) - done} external links not checked")
             break
         host = (urlsplit(url).hostname or "").lower()
-        throttle.wait(host)
+        own_host = site_throttle is not None and options.delay and same_site_host(host, site_host)
+
+        def pace() -> None:
+            throttle.wait(host)
+            if own_host:
+                site_throttle.wait(site_host)  # type: ignore[union-attr]
+
+        pace()
         resp = fetcher.fetch(url, "HEAD", False, options.max_bytes)
         if resp.status == 405 and not resp.error:
-            throttle.wait(host)
+            pace()
             resp = fetcher.fetch(url, "GET", False, options.max_bytes)  # headers only, body never read
         where = ", ".join(external[url][:3]) + (f" (+{len(external[url]) - 3})" if len(external[url]) > 3 else "")
         if resp.error and not resp.status:
@@ -573,7 +760,7 @@ def check_external(external: Mapping[str, Sequence[str]], fetcher: Fetcher, thro
 # --------------------------------------------------------------------------------------------------------
 
 def render_text(report: dict) -> str:
-    lines = [f"crawl of {report['base_url']}: {report['pages_fetched']} URLs fetched, "
+    lines = [f"crawl of {report['base_url']}{' (public mode)' if report.get('public') else ''}: {report['pages_fetched']} URLs fetched, "
              f"{report['pages_parsed']} HTML pages checked, {report['external_links']} external links found",
              "status codes: " + ", ".join(f"{k}: {v}" for k, v in sorted(report["statuses"].items()))]
     if report["ttfb_ms"]:
@@ -615,8 +802,8 @@ def build_parser() -> argparse.ArgumentParser:
                     "per host; GET only after a 405, headers only). No cookie, no page content leaves the "
                     "machine.")
     p.add_argument("base_url", help="http(s) URL of the running site, e.g. http://127.0.0.1:3100/")
-    p.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES,
-                   help="internal URLs fetched at most (default %(default)s)")
+    p.add_argument("--max-pages", type=int, default=None,
+                   help=f"internal URLs fetched at most (default {DEFAULT_MAX_PAGES}, with --public {PUBLIC_MAX_PAGES})")
     p.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH,
                    help="link hops from the start page (default %(default)s)")
     p.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="seconds per request (default %(default)s)")
@@ -635,6 +822,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="share of identical text for the near-copy check of seo_check (default %(default)s)")
     p.add_argument("--dup-min-words", type=int, default=seo_check.Options.dup_min_words,
                    help="pages with fewer words are not compared (default %(default)s)")
+    p.add_argument("--public", action="store_true",
+                   help="the site is on the internet: read-only and throttled (--delay, default 1 s between "
+                        "requests, 100 pages unless --max-pages), plus HTTP header checks (HSTS, CSP, "
+                        "X-Content-Type-Options, Referrer-Policy), compression and caching of HTML and assets, "
+                        "the http -> https redirect, and a real TTFB. Extra requests: one GET for http:// and "
+                        "one per sampled asset, headers only")
+    p.add_argument("--delay", type=float, default=None,
+                   help="seconds between two requests to the site itself (default 0, with --public 1)")
+    p.add_argument("--max-assets", type=int, default=DEFAULT_MAX_ASSETS,
+                   help="scripts and stylesheets sampled for compression and caching with --public "
+                        "(default %(default)s)")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     return p
 
@@ -644,6 +842,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
     problems = []
+    if args.max_pages is None:
+        args.max_pages = PUBLIC_MAX_PAGES if args.public else DEFAULT_MAX_PAGES
+    if args.delay is None:
+        args.delay = PUBLIC_DELAY if args.public else 0.0
+    if args.delay < 0 or args.max_assets < 0:
+        problems.append("--delay and --max-assets must not be negative")
     if args.max_pages < 1:
         problems.append("--max-pages must be at least 1")
     if args.max_depth < 0:
@@ -661,7 +865,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_USAGE
     options = CrawlOptions(args.max_pages, args.max_depth, args.timeout, args.max_bytes, not args.no_external,
                            args.external_delay, args.max_external, args.max_time, args.slow_ttfb,
-                           args.dup_threshold, args.dup_min_words)
+                           args.dup_threshold, args.dup_min_words, args.public, args.delay, args.max_assets)
     try:
         report = crawl(args.base_url, options)
     except UsageError as exc:

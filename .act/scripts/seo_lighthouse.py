@@ -32,9 +32,24 @@
 #   info    points  Performance below 100 while all three metrics are good; single performance audits
 #                   below 0.9; a value whose spread is large (one run alone proves nothing)
 #
+# PageSpeed Insights (--pagespeed): for a public URL, Google runs Lighthouse and returns the result in the same
+#          format; the evaluation above is reused unchanged. Needs no Node and no Chrome. The URL is SENT TO
+#          GOOGLE (the request goes to googleapis.com and Google's servers fetch the page); nothing else leaves
+#          the machine. Field data (CrUX: real visitors, `loadingExperience`) is added when Google has it for the
+#          page or its origin; a field value rated SLOW is a warning, AVERAGE is info. Only public URLs work:
+#          localhost and private addresses are refused. One run per URL by default (--runs), one second between
+#          calls. An API key is optional in the code, but Google's quota without a key is 0 per day at the time
+#          of writing, so a key is needed in practice: put it in the environment variable PAGESPEED_API_KEY
+#          (create it in a Google Cloud project with the PageSpeed Insights API enabled). It is never accepted as
+#          an argument and never printed. 429 (quota used up or none without a key) and 400/403 on the key are
+#          reported with what to do. PAGESPEED_ENDPOINT (environment only) replaces the endpoint for tests; the
+#          key is sent only to the real endpoint or to a loopback address.
+#
 # Usage:
 #   python .act/scripts/seo_lighthouse.py URL [URL ...] [--runs 3] [--form-factor mobile|desktop]
 #                                          [--workdir DIR] [--root DIR] [--keep-raw] [--timeout SEC] [--json]
+#   python .act/scripts/seo_lighthouse.py --pagespeed URL [URL ...] [--runs 1] [--form-factor mobile|desktop]
+#                                          [--timeout SEC] [--json]       (the URL goes to Google)
 #   python .act/scripts/seo_lighthouse.py --from-json REPORT.json [REPORT.json ...] [--json]
 #   (--from-json evaluates Lighthouse JSON files that already exist, runs nothing, needs no Node or Chrome;
 #    files are grouped by the URL they measured)
@@ -42,29 +57,50 @@
 # A change in a value counts only if it is larger than that value's spread across the runs.
 #
 # Exit code: 0 no warning or error, 1 at least one warning or error, 2 usage problem or unreadable input,
-#            3 Node, npx or Chrome missing, 4 no run produced a usable report.
+#            3 Node, npx or Chrome missing, 4 no run produced a usable report (with --pagespeed also: quota used up).
 
 from __future__ import annotations
 
 import argparse
+import http.client
+import ipaddress
 import json
 import os
 import shutil
+import re
 import signal
+import socket
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 LIGHTHOUSE_VERSION = "13.6.0"
 DEFAULT_RUNS = 3
 DEFAULT_TIMEOUT = 240
 DEFAULT_WORKDIR = Path(".act-local") / "tmp" / "seo-lighthouse"
+PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+PSI_KEY_ENV = "PAGESPEED_API_KEY"
+PSI_ENDPOINT_ENV = "PAGESPEED_ENDPOINT"
+PSI_DELAY = 1.0  # seconds between two calls
+PSI_DEFAULT_RUNS = 1
+PSI_MAX_BYTES = 30_000_000
+# CrUX metric in the API -> (label, unit, factor to the shown value; CLS comes as hundredths)
+FIELD_METRICS = (
+    ("LARGEST_CONTENTFUL_PAINT_MS", "LCP", "ms", 1.0),
+    ("CUMULATIVE_LAYOUT_SHIFT_SCORE", "CLS", "", 0.01),
+    ("INTERACTION_TO_NEXT_PAINT", "INP", "ms", 1.0),
+    ("FIRST_CONTENTFUL_PAINT_MS", "FCP", "ms", 1.0),
+    ("EXPERIMENTAL_TIME_TO_FIRST_BYTE", "TTFB", "ms", 1.0),
+)
+FIELD_JUDGED = ("LCP", "CLS", "INP")  # the Core Web Vitals; their SLOW / AVERAGE rating becomes a finding
 
 CATEGORIES = (
     ("performance", "Performance"),
@@ -110,6 +146,14 @@ class ReportError(Exception):
 
 class UsageError(Exception):
     """An argument the script refuses to run with."""
+
+
+class PagespeedError(Exception):
+    """A PageSpeed Insights call failed. `stop` means further calls would fail the same way (quota, key)."""
+
+    def __init__(self, message: str, stop: bool = False) -> None:
+        super().__init__(message)
+        self.stop = stop
 
 
 class MalformedReport(ReportError):
@@ -170,6 +214,8 @@ class UrlResult:
     metrics: Dict[str, Value]
     findings: List[Finding]
     deviations: List[str]
+    field_data: Dict[str, object] = field(default_factory=dict)  # CrUX field data (PageSpeed Insights only)
+    source: str = "local"  # local | pagespeed
 
 
 def fmt(value: float) -> str:
@@ -263,7 +309,30 @@ def _failure(cat_id: str, audit_id: str, audit: Mapping[str, object]) -> AuditFa
                         nodes=nodes, count=count)
 
 
-def summarize(url: str, runs: Sequence[Run], planned: int, run_errors: Sequence[str]) -> UrlResult:
+def parse_field_data(payload: object) -> Dict[str, object]:
+    """Field data (CrUX) of a PageSpeed Insights answer: the page's own `loadingExperience` if it has metrics,
+    else the origin's. Empty when Google has none (too little traffic). Pure."""
+    if not isinstance(payload, dict):
+        return {}
+    for key, scope in (("loadingExperience", "page"), ("originLoadingExperience", "origin")):
+        exp = payload.get(key)
+        metrics = exp.get("metrics") if isinstance(exp, dict) else None
+        if not isinstance(metrics, dict):
+            continue
+        out: Dict[str, object] = {}
+        for api_name, label, unit, factor in FIELD_METRICS:
+            m = metrics.get(api_name)
+            percentile = m.get("percentile") if isinstance(m, dict) else None
+            if isinstance(percentile, (int, float)) and not isinstance(percentile, bool):
+                out[label] = {"p75": round(float(percentile) * factor, 3), "unit": unit,
+                              "category": str(m.get("category", ""))}
+        if out:
+            return {"scope": scope, "overall": str(exp.get("overall_category", "")), "metrics": out}
+    return {}
+
+
+def summarize(url: str, runs: Sequence[Run], planned: int, run_errors: Sequence[str],
+              field_data: Optional[Mapping[str, object]] = None) -> UrlResult:
     """Median and spread per value, findings by severity, deviations from 100."""
     n = len(runs)
     scores: Dict[str, Value] = {}
@@ -326,17 +395,51 @@ def summarize(url: str, runs: Sequence[Run], planned: int, run_errors: Sequence[
                                     f"{label} varies by {fmt(val.spread)} points between runs; "
                                     f"a change smaller than that is noise"))
 
+    field_metrics = (field_data or {}).get("metrics")
+    if isinstance(field_metrics, dict):
+        scope = str(field_data.get("scope", ""))  # type: ignore[union-attr]
+        for label in FIELD_JUDGED:
+            entry = field_metrics.get(label)
+            rating = entry.get("category") if isinstance(entry, dict) else None
+            if rating in ("SLOW", "AVERAGE"):
+                unit = f" {entry['unit']}" if entry.get("unit") else ""
+                findings.append(Finding("warning" if rating == "SLOW" else "info",
+                                        "defect" if rating == "SLOW" else "points", "performance",
+                                        f"field-{label.lower()}",
+                                        f"real visitors ({scope} data): {label} p75 {fmt(entry['p75'])}{unit} "
+                                        f"is rated {rating}"))
     deviations = [f"{label} {fmt(scores[cat_id].median)}" for cat_id, label in CATEGORIES
                   if cat_id in scores and scores[cat_id].median < 100]
     order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (order[f.severity], f.category, f.audit_id))
     return UrlResult(url=url, runs_planned=planned, runs_used=n, run_errors=list(run_errors), scores=scores,
-                     metrics=metrics, findings=findings, deviations=deviations)
+                     metrics=metrics, findings=findings, deviations=deviations,
+                     field_data=dict(field_data or {}), source="pagespeed" if field_data is not None else "local")
+
+
+def render_field_data(data: Mapping[str, object]) -> List[str]:
+    metrics = data.get("metrics")
+    if not isinstance(metrics, dict) or not metrics:
+        return ["  Field data (real visitors, CrUX): none; Google has too little traffic data for this page "
+                "or its origin, so only the lab values above exist"]
+    scope = "this page" if data.get("scope") == "page" else "the whole origin (not enough data for the page)"
+    out = [f"  Field data (real visitors, CrUX, 75th percentile, {scope}):"]
+    for label, entry in metrics.items():
+        if isinstance(entry, dict):
+            unit = f" {entry['unit']}" if entry.get("unit") else ""
+            out.append(f"    {label:<15} {fmt(entry['p75']):>6}{unit}   {entry.get('category', '')}")
+    return out
 
 
 def render_text(results: Sequence[UrlResult], meta: Mapping[str, str]) -> str:
     head = " · ".join(part for part in (f"Lighthouse {meta.get('version', '?')}", meta.get("form_factor", "")) if part)
     lines: List[str] = [f"{head} · median of the runs, range in brackets"]
+    if meta.get("source") == "pagespeed" and meta.get("endpoint_host"):
+        lines.append(f"Measured through the endpoint {meta['endpoint_host']} (PAGESPEED_ENDPOINT override), "
+                     "not through Google; the URL(s) below were sent there.")
+    elif meta.get("source") == "pagespeed":
+        lines.append("Measured by Google PageSpeed Insights: the URL(s) below were sent to Google, whose servers "
+                     "fetched the page. Lab values come from Google's machines, not from this one.")
     for res in results:
         lines.append("")
         lines.append(f"URL {res.url}  ({res.runs_used} of {res.runs_planned} runs usable)")
@@ -356,6 +459,8 @@ def render_text(results: Sequence[UrlResult], meta: Mapping[str, str]) -> str:
                 suffix = f" {unit}" if unit else ""
                 lines.append(f"  {label:<15} {fmt(val.median):>4}{suffix}   ({fmt(val.low)}-{fmt(val.high)}, "
                              f"spread {fmt(val.spread)})")
+        if res.source == "pagespeed":
+            lines += render_field_data(res.field_data)
         if res.findings:
             lines.append("  Findings:")
             for f in res.findings:
@@ -369,6 +474,9 @@ def render_text(results: Sequence[UrlResult], meta: Mapping[str, str]) -> str:
     if deviating:
         lines.append("Target: 100, or every deviation justified. Deviations: "
                      + "; ".join(f"{r.url}: {', '.join(r.deviations)}" for r in deviating) + ".")
+    elif not any(r.scores for r in results):
+        lines.append("No URL gave a usable result, so nothing can be said about the target.")
+        return "\n".join(lines)
     else:
         lines.append("Target 100 reached in all categories on the measured URLs.")
     lines.append("Points are not defects: a Performance score below 100 with good metrics, or an axe-clean "
@@ -591,6 +699,162 @@ def measure(urls: Sequence[str], runs: int, workdir: Path, keep_raw: bool, timeo
     return results
 
 
+LOCAL_SUFFIXES = (".localhost", ".local", ".internal", ".lan", ".home.arpa", ".localdomain", ".intranet",
+                  ".corp", ".home", ".arpa")
+
+
+def resolve_host(host: str) -> List[str]:
+    """Addresses a name resolves to (empty when it does not resolve). Replaceable in tests."""
+    try:
+        return sorted({str(info[4][0]).split("%")[0] for info in socket.getaddrinfo(host, None)})
+    except (OSError, UnicodeError):
+        return []
+
+
+def _global(address: str) -> bool:
+    ip = ipaddress.ip_address(address)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    ip = mapped or ip
+    return bool(ip.is_global and not ip.is_multicast)
+
+
+def is_public_host(host: str, resolver: Callable[[str], List[str]] = resolve_host) -> bool:
+    """True only if Google can reach the host from the internet: every address it stands for is global.
+    Rejected: empty and single-label names, local suffixes (.local, .internal, .home.arpa ...), address literals
+    that are not global (including the short forms inet_aton reads, such as 127.1 or 2130706433), and names
+    that do not resolve or resolve to any non-global address (10.x, 100.64.x, loopback, multicast ...)."""
+    host = host.strip().lower().rstrip(".")
+    if not host or "%" in host or host == "localhost" or "." not in host and ":" not in host and not host.isdigit():
+        return False
+    if host.endswith(LOCAL_SUFFIXES):
+        return False
+    try:
+        return _global(host)
+    except ValueError:
+        pass
+    if host[0].isdigit() and re.fullmatch(r"[0-9a-fx.]+", host):
+        try:
+            return _global(socket.inet_ntoa(socket.inet_aton(host)))
+        except (OSError, ValueError):
+            pass
+    addresses = resolver(host)
+    if not addresses:
+        return False
+    try:
+        return all(_global(a) for a in addresses)
+    except ValueError:
+        return False
+
+
+def key_may_go_to(endpoint: str) -> bool:
+    """The API key is sent only to the real endpoint or to a loopback address (tests)."""
+    parts = urlparse(endpoint)
+    host = (parts.hostname or "").lower()
+    if endpoint == PSI_ENDPOINT:
+        return True
+    try:
+        return host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def scrub(text: str, key: str) -> str:
+    return text.replace(key, "***") if key else text
+
+
+def request_pagespeed(url: str, strategy: str, key: str, timeout: float, endpoint: str = PSI_ENDPOINT) -> dict:
+    """One PageSpeed Insights call; returns the parsed JSON answer. Raises PagespeedError with a message that
+    never holds the key."""
+    query = [("url", url), ("strategy", strategy)] + [("category", c) for c, _label in CATEGORIES]
+    if key and key_may_go_to(endpoint):
+        query.append(("key", key))
+    try:
+        request = urllib.request.Request(f"{endpoint}?{urlencode(query)}",
+                                         headers={"User-Agent": "act-seo-lighthouse/1.0", "Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read(PSI_MAX_BYTES + 1)
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read(65536).decode("utf-8", errors="replace")
+        except OSError:
+            pass
+        message = ""
+        try:
+            message = str(json.loads(body).get("error", {}).get("message", ""))
+        except (ValueError, AttributeError):
+            pass
+        message = scrub(" ".join(message.split())[:300], key)
+        if exc.code == 429:
+            if key:
+                raise PagespeedError(f"PageSpeed Insights quota exceeded (HTTP 429) for your API key "
+                                     f"({PSI_KEY_ENV}); wait for the quota to reset or raise it in the Google "
+                                     f"Cloud console. Google said: {message}", stop=True)
+            raise PagespeedError(f"PageSpeed Insights quota exceeded (HTTP 429) and no API key is set. Without "
+                                 f"a key Google's quota is 0 per day; create a key (Google Cloud project, "
+                                 f"PageSpeed Insights API enabled) and put it in the environment variable "
+                                 f"{PSI_KEY_ENV}, never on the command line. Google said: {message}", stop=True)
+        if exc.code in (400, 403) and "key" in (message + body[:400]).lower():
+            raise PagespeedError(f"PageSpeed Insights refused the API key in {PSI_KEY_ENV} (HTTP {exc.code}): "
+                                 f"check that the key is valid and the PageSpeed Insights API is enabled for it. "
+                                 f"Google said: {message}", stop=True)
+        raise PagespeedError(f"PageSpeed Insights answered HTTP {exc.code}: {message or 'no message'}",
+                             stop=exc.code in (401, 403))
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        raise PagespeedError(f"no answer from PageSpeed Insights ({scrub(type(exc).__name__ + ': ' + str(exc), key)})")
+    if len(raw) > PSI_MAX_BYTES:
+        raise PagespeedError(f"the PageSpeed Insights answer is larger than {PSI_MAX_BYTES} bytes; not read")
+    try:
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+    except ValueError as exc:
+        raise PagespeedError(f"the PageSpeed Insights answer is not JSON ({exc})")
+    if not isinstance(data, dict) or not isinstance(data.get("lighthouseResult"), dict):
+        raise PagespeedError("the PageSpeed Insights answer has no lighthouseResult")
+    return data
+
+
+def measure_pagespeed(urls: Sequence[str], runs: int, form_factor: str, env: Mapping[str, str],
+                      timeout: float, sleep: Callable[[float], None] = time.sleep,
+                      requester: Optional[Callable[..., dict]] = None) -> Tuple[List[UrlResult], str]:
+    """Measure each URL `runs` times through PageSpeed Insights. After a quota or key error no further call
+    is made (it would fail the same way); the remaining URLs get that error. Returns (results, Lighthouse version)."""
+    key = env.get(PSI_KEY_ENV, "").strip()
+    endpoint = env.get(PSI_ENDPOINT_ENV, "").strip() or PSI_ENDPOINT
+    call = requester or request_pagespeed
+    results: List[UrlResult] = []
+    version = ""
+    stopped = ""
+    first_call = True
+    for url in urls:
+        good: List[Run] = []
+        errors: List[str] = []
+        field_data: Dict[str, object] = {}
+        for r_index in range(runs):
+            if stopped:
+                errors.append(f"run {r_index + 1}: not tried ({stopped})")
+                continue
+            if not first_call:
+                sleep(PSI_DELAY)
+            first_call = False
+            try:
+                data = call(url, form_factor, key, timeout, endpoint)
+                run = parse_report(data["lighthouseResult"], f"run {r_index + 1}")
+            except PagespeedError as exc:
+                errors.append(f"run {r_index + 1}: {exc}")
+                if exc.stop:
+                    stopped = str(exc)
+                continue
+            except ReportError as exc:
+                errors.append(str(exc))
+                continue
+            good.append(run)
+            version = version or run.lighthouse_version
+            field_data = field_data or parse_field_data(data)
+        results.append(summarize(url, good, runs, errors, field_data) if good
+                       else UrlResult(url, runs, 0, errors, {}, {}, [], [], source="pagespeed"))
+    return results, version
+
+
 def load_reports(files: Sequence[str]) -> List[UrlResult]:
     """Evaluate existing Lighthouse JSON files, grouped by the URL they measured.
     Unreadable or wrongly shaped files raise ReportError (naming the file); a report of a failed run
@@ -627,7 +891,8 @@ def build_parser() -> argparse.ArgumentParser:
         description="Lighthouse median over several runs per URL, spread per value, axe findings, report by "
                     "severity. Takes URLs of an already running site; starts no server and fixes nothing.")
     p.add_argument("urls", nargs="*", help="http(s) URLs to measure")
-    p.add_argument("--runs", type=int, default=DEFAULT_RUNS, help=f"runs per URL (default {DEFAULT_RUNS})")
+    p.add_argument("--runs", type=int, default=None,
+                   help=f"runs per URL (default {DEFAULT_RUNS}, with --pagespeed {PSI_DEFAULT_RUNS})")
     p.add_argument("--form-factor", choices=("mobile", "desktop"), default="mobile",
                    help="Lighthouse emulation (default mobile)")
     p.add_argument("--workdir", help="folder for Chrome profile, raw data and temp files "
@@ -637,15 +902,38 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds per run (default %(default)s)")
     p.add_argument("--from-json", nargs="+", metavar="FILE",
                    help="evaluate existing Lighthouse JSON files instead of measuring")
+    p.add_argument("--pagespeed", action="store_true",
+                   help="measure a PUBLIC url with Google PageSpeed Insights instead of local Chrome: THE URL IS "
+                        "SENT TO GOOGLE, whose servers fetch the page. Same evaluation, plus field data (CrUX) when "
+                        f"Google has it. The API key is read from the environment variable {PSI_KEY_ENV} only, "
+                        "never from an argument; Google's quota without a key is 0 per day, so a key is needed. "
+                        "No Node or Chrome needed")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     return p
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Run; any unexpected exception ends as one line with the key removed, never as a traceback (a request
+    URL inside an exception text carries the API key)."""
+    try:
+        return run_cli(argv)
+    except Exception as exc:  # noqa: BLE001 - last line of defence, the message is filtered
+        key = os.environ.get(PSI_KEY_ENV, "").strip()
+        print(f"seo_lighthouse: unexpected error ({type(exc).__name__}: {scrub(str(exc), key)})", file=sys.stderr)
+        return EXIT_NO_DATA
+
+
+def run_cli(argv: Optional[Sequence[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
     meta = {"version": LIGHTHOUSE_VERSION, "form_factor": args.form_factor}
+    if args.pagespeed and (args.from_json or args.keep_raw or args.workdir):
+        print("seo_lighthouse: --pagespeed does not combine with --from-json, --keep-raw or --workdir",
+              file=sys.stderr)
+        return EXIT_USAGE
+    if args.runs is None:
+        args.runs = PSI_DEFAULT_RUNS if args.pagespeed else DEFAULT_RUNS
     if args.from_json:
         if args.urls:
             print("seo_lighthouse: give URLs or --from-json, not both", file=sys.stderr)
@@ -668,6 +956,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if parsed.scheme not in ("http", "https") or not parsed.netloc:
                 print(f"seo_lighthouse: not an http(s) URL: {url}", file=sys.stderr)
                 return EXIT_USAGE
+        if args.pagespeed:
+            for url in args.urls:
+                host = urlparse(url).hostname or ""
+                if not is_public_host(host):
+                    print(f"seo_lighthouse: {host!r} is not a public host (a local or private name or address, "
+                          "or it does not resolve); Google's servers cannot reach it "
+                          "(use the local mode without --pagespeed)", file=sys.stderr)
+                    return EXIT_USAGE
+            endpoint = os.environ.get(PSI_ENDPOINT_ENV, "").strip() or PSI_ENDPOINT
+            override_host = "" if endpoint == PSI_ENDPOINT else (urlparse(endpoint).netloc or endpoint)
+            target = f"the endpoint {override_host} ({PSI_ENDPOINT_ENV} override)" if override_host \
+                else "Google PageSpeed Insights"
+            print(f"seo_lighthouse: sending {len(args.urls)} URL(s) to {target} "
+                  f"({PSI_KEY_ENV} {'set' if os.environ.get(PSI_KEY_ENV) else 'not set'})", file=sys.stderr)
+            results, version = measure_pagespeed(args.urls, args.runs, args.form_factor, os.environ, args.timeout)
+            meta = {"version": version or "(PageSpeed Insights)", "form_factor": args.form_factor,
+                    "source": "pagespeed", "endpoint_host": override_host}
+            return finish(args, results, meta)
         if not args.workdir and not Path(args.root).is_dir():
             print(f"seo_lighthouse: --root {args.root} is not an existing folder", file=sys.stderr)
             return EXIT_USAGE
@@ -681,9 +987,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except UsageError as exc:
             print(f"seo_lighthouse: {exc}", file=sys.stderr)
             return EXIT_USAGE
+    return finish(args, results, meta)
+
+
+def finish(args: argparse.Namespace, results: Sequence[UrlResult], meta: Mapping[str, str]) -> int:
     if args.json:
-        payload = {"lighthouse_version": LIGHTHOUSE_VERSION, "target": "100, or every deviation justified",
+        payload = {"lighthouse_version": meta.get("version") if meta.get("source") == "pagespeed" else LIGHTHOUSE_VERSION,
+                   "source": meta.get("source", "local"), "target": "100, or every deviation justified",
                    "results": [asdict(r) for r in results]}
+        if meta.get("source") == "pagespeed":
+            payload["note"] = (f"measured through the endpoint {meta['endpoint_host']} (override), not Google"
+                               if meta.get("endpoint_host")
+                               else "measured by Google PageSpeed Insights; the URLs were sent to Google")
         print(json.dumps(payload, indent=2, ensure_ascii=False))
     else:
         print(render_text(results, meta))

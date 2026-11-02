@@ -18,7 +18,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   the linking page and `<base href>` honoured, then runs the `seo_check.py` page checks on the rendered HTML in one
   report by severity (`--json`). External links get throttled `HEAD` requests only (`--no-external` switches them
   off). Limits: `--max-pages`, `--max-depth`, `--timeout`, `--max-bytes`, `--max-time`. User info in URLs is removed
-  and never printed.
+  and never printed. `--public` crawls a site on the internet read-only and throttled (default one request per second
+  to the site, also for links to its own host over another scheme, 100 pages) and also checks the HTTP headers (HSTS,
+  Content-Security-Policy, X-Content-Type-Options, Referrer-Policy), compression and caching of the start page and a
+  sample of assets, and whether plain http ends on https (same-host steps such as apex to `www` followed); TTFB is then
+  a real measurement. `--delay` sets the pause between requests for any crawl.
 - `seo_check.py` (`act-seo`) also checks `hreflang` sets, JSON-LD blocks, duplicate content between pages (main
   content only, without header, nav, footer and sidebars; threshold via `--dup-threshold`, one finding per page against
   the first original, large groups of near copies included), images without `width`/`height`, a missing viewport meta
@@ -33,7 +37,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `--from-json` evaluates existing Lighthouse reports. On Windows it starts npx through Node, never through cmd.exe, so
   URLs with `&` or `%` are safe; a run past `--timeout` is ended with its whole process tree. Chrome profile, raw data
   and temp files stay in a fresh subfolder of one work folder that is removed afterwards. It starts no server, fixes
-  nothing and exits with a clear message if Node, npx or Chrome is missing.
+  nothing and exits with a clear message if Node, npx or Chrome is missing. `--pagespeed` measures a public URL with
+  Google PageSpeed Insights instead (no Node or Chrome needed) and evaluates it the same way, plus field data (CrUX)
+  where Google has it; the URL is sent to Google, and the script says so before the call. Only public hosts are
+  accepted (every address a name resolves to must be global). The API key is read only from `PAGESPEED_API_KEY`, never
+  from an argument, and never printed; without a key Google currently grants no quota, which the script reports on
+  HTTP 429.
 - `act-integrations` can allow the read-only tools of a catalog MCP server in one step, while setting it up or later.
   Each entry in `.act/mcp-catalog.md` has a `read-tools` field with exact tool names (filled for `github`); after a
   "yes", `python .act/scripts/integrations.py read-tools <id>` merges them as `mcp__<server>__<tool>` into

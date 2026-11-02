@@ -983,7 +983,8 @@ Call: direct (crawl of a running site (same origin), then the seo_check page che
 usage: seo_crawl.py [-h] [--max-pages MAX_PAGES] [--max-depth MAX_DEPTH] [--timeout TIMEOUT]
                     [--max-bytes MAX_BYTES] [--no-external] [--external-delay EXTERNAL_DELAY]
                     [--max-external MAX_EXTERNAL] [--max-time MAX_TIME] [--slow-ttfb SLOW_TTFB]
-                    [--dup-threshold DUP_THRESHOLD] [--dup-min-words DUP_MIN_WORDS] [--json]
+                    [--dup-threshold DUP_THRESHOLD] [--dup-min-words DUP_MIN_WORDS] [--public]
+                    [--delay DELAY] [--max-assets MAX_ASSETS] [--json]
                     base_url
 
 Crawl a running site from one base URL (same origin only): status codes, redirects, TTFB, broken
@@ -998,7 +999,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --max-pages MAX_PAGES
-                        internal URLs fetched at most (default 500)
+                        internal URLs fetched at most (default 500, with --public 100)
   --max-depth MAX_DEPTH
                         link hops from the start page (default 10)
   --timeout TIMEOUT     seconds per request (default 10.0)
@@ -1016,6 +1017,17 @@ options:
                         share of identical text for the near-copy check of seo_check (default 0.9)
   --dup-min-words DUP_MIN_WORDS
                         pages with fewer words are not compared (default 25)
+  --public              the site is on the internet: read-only and throttled (--delay, default 1 s
+                        between requests, 100 pages unless --max-pages), plus HTTP header checks
+                        (HSTS, CSP, X-Content-Type-Options, Referrer-Policy), compression and
+                        caching of HTML and assets, the http -> https redirect, and a real TTFB.
+                        Extra requests: one GET for http:// and one per sampled asset, headers
+                        only
+  --delay DELAY         seconds between two requests to the site itself (default 0, with --public
+                        1)
+  --max-assets MAX_ASSETS
+                        scripts and stylesheets sampled for compression and caching with --public
+                        (default 10)
   --json                machine-readable output
 ```
 
@@ -1026,7 +1038,7 @@ Call: direct (Lighthouse report for given URLs; the server is started by the cal
 ```text
 usage: seo_lighthouse.py [-h] [--runs RUNS] [--form-factor {mobile,desktop}] [--workdir WORKDIR]
                          [--root ROOT] [--keep-raw] [--timeout TIMEOUT]
-                         [--from-json FILE [FILE ...]] [--json]
+                         [--from-json FILE [FILE ...]] [--pagespeed] [--json]
                          [urls ...]
 
 Lighthouse median over several runs per URL, spread per value, axe findings, report by severity.
@@ -1037,7 +1049,7 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --runs RUNS           runs per URL (default 3)
+  --runs RUNS           runs per URL (default 3, with --pagespeed 1)
   --form-factor {mobile,desktop}
                         Lighthouse emulation (default mobile)
   --workdir WORKDIR     folder for Chrome profile, raw data and temp files (default <root>/.act-
@@ -1047,6 +1059,12 @@ options:
   --timeout TIMEOUT     seconds per run (default 240)
   --from-json FILE [FILE ...]
                         evaluate existing Lighthouse JSON files instead of measuring
+  --pagespeed           measure a PUBLIC url with Google PageSpeed Insights instead of local
+                        Chrome: THE URL IS SENT TO GOOGLE, whose servers fetch the page. Same
+                        evaluation, plus field data (CrUX) when Google has it. The API key is read
+                        from the environment variable PAGESPEED_API_KEY only, never from an
+                        argument; Google's quota without a key is 0 per day, so a key is needed.
+                        No Node or Chrome needed
   --json                machine-readable output
 ```
 
