@@ -4,7 +4,7 @@ summary: when to delegate, delegation tiers and caps, waiting on workers, amendi
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: delegate where a handover pays off, template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments
+summary: delegate where a handover pays off, template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments, long work split into parallel parts, overlapping tasks joined
 
 A handover costs a worker's fresh start and loses context, so delegate only where it pays off:
 independent parts that run in parallel, a check that should not share the implementation's
@@ -33,6 +33,14 @@ system temp directory and its scratchpad included, so an assignment that needs t
 
 Workers running at the same time get separate write scopes, otherwise they run one after the other
 (`worker-scope-overlap`, `docs/ai/config.md` § Checks).
+
+Work expected to run longer than about five minutes is first checked for independent parts. If it
+splits, the parts run in parallel with separate write scopes, and the saving is measured before and
+after. It is not split when the parts write the same file, build on one another (`Depends on:`) or
+would each reread the same large material. Tasks that touch the same files are first checked for one
+joint assignment instead: one write scope, a higher cap, one review, commits per task by path where
+the files allow it. They run one after the other only when the joint scope would overload one context,
+and the reason is stated.
 
 An assignment that reads another worker's result names it as its own line, `Depends on: <whose
 result>`, and starts only after that worker has ended. When several workers are to read the same

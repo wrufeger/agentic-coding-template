@@ -217,10 +217,10 @@ def check_worker_scope_overlap(payload: dict) -> int:
             continue
         message = (
             f"[act] write scope overlaps a running worker's: {clash[0]} vs. {clash[1]} "
-            f"(worker {path.stem}) — parallel workers need separate write scopes, otherwise start "
-            "this one after the other has ended (R-cost-delegate): give each assignment its own line "
-            "`Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: src/api/**` (syntax: "
-            ".act/rules/topics/checks.md). If that worker is gone "
+            f"(worker {path.stem}) — parallel workers need separate write scopes (R-cost-delegate): give "
+            "each assignment its own line `Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: "
+            "src/api/**` (syntax: .act/rules/topics/checks.md); or merge both tasks into one assignment "
+            "with one write scope; or start this one after the other has ended. If that worker is gone "
             f"(crashed), delete .act-local/worker-scopes/{path.name} or wait {_OVERLAP_ENTRY_TTL}."
         )
         if mode == "warn":

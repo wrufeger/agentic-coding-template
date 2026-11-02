@@ -53,6 +53,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `R-cost-delegate` says how work is cut for workers: work expected to run longer than about five minutes is first
+  checked for independent parts and, where it splits, runs in parallel with separate write scopes, the saving measured
+  before and after; tasks that touch the same files are first checked for one joint assignment (one write scope, a
+  higher cap, one review, commits per task by path) and run one after the other only with a stated reason. The
+  `worker-scope-overlap` refusal names that joint assignment as a third way, next to separate scopes and waiting.
 - The `act-audit-docs` workflow script is now `workflow.js.txt` (it was `workflow.js`). It needs a top-level `return`
   that no module parser accepts, so `eslint .` failed on it in projects that do not exclude `.act/` and `.claude/`
   from lint. `act-update` removes the old file from `.act/skills/` and from `.claude/skills/act-audit-docs/`. If your
