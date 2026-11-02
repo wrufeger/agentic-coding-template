@@ -1051,6 +1051,7 @@ _CONFIG_VALUES = {
     "artifacts": ("on", "off"),
     "update-channel": ("release", "latest"),
     "advisory-check": ("on", "off"),
+    "done-entries": ("delete", "keep"),
 }
 
 

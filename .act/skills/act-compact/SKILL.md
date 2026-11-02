@@ -9,6 +9,12 @@ Keeps `docs/ai/work/archive/` and `docs/ai/work/ledger/` small: a thousand singl
 unreadable in the IDE and cut off on the web. Applies `R-code-commit`. Every step is a script; no worker
 takes part and no section is shortened.
 
+With `done-entries: delete` (`docs/ai/config.md` § Archive, the default in a Git project) finished entries are
+deleted instead of archived, so only the journal is folded: `entries.py compact` leaves the archive's own
+files alone and writes `archive/ledger-<YYYY-MM>.md` only; the monthly overviews and the Q, T, B and U
+collections below belong to `done-entries: keep`. What an older archive still holds is removed with
+`entries.py purge` (`act-commit` step 3), not by this skill.
+
 ## When
 
 Controlled by `archive-compact: <days>d <files>` in `docs/ai/config.md` § Archive (default `30d 300`;

@@ -423,13 +423,13 @@ options:
 Call: direct
 
 ```text
-usage: entries.py [-h] {new,assign,state,start,list,check,archive,compact} ...
+usage: entries.py [-h] {new,assign,state,start,list,check,archive,compact,purge} ...
 
 Create and account for docs/ai/'s per-entry task/backlog/ledger/inbox files (inbox: question |
 todo | report | note).
 
 positional arguments:
-  {new,assign,state,start,list,check,archive,compact}
+  {new,assign,state,start,list,check,archive,compact,purge}
     new                 create a new entry file
     assign              hand out ids still missing ('team' mode: only on the default branch)
     state               append a working-state line for an open task to .act-local/state/ — needs
@@ -453,6 +453,12 @@ positional arguments:
                         names the commit that holds the full text; each month's overview <YYYY-
                         MM>.md gets one line per Q, T, B and U entry; needs the entries committed;
                         running it twice changes nothing
+    purge               with `done-entries: delete`: delete what is left in docs/ai/work/archive/
+                        (finished entries, their pasted files, collections, monthly overviews) as
+                        far as Git holds it unchanged, keeping the README and the journal
+                        collections ledger-<YYYY-MM>.md; the ids stay reserved, references to a
+                        deleted entry become its bare id; a file Git does not hold yet stays until
+                        a commit does
 
 options:
   -h, --help            show this help message and exit
@@ -582,6 +588,21 @@ options:
   -h, --help          show this help message and exit
   --plan              show what would be merged, write nothing
   --today YYYY-MM-DD  count the keep window from this day (tests)
+```
+
+### `entries.py purge`
+
+```text
+usage: entries.py purge [-h] [--plan]
+
+with `done-entries: delete`: delete what is left in docs/ai/work/archive/ (finished entries, their
+pasted files, collections, monthly overviews) as far as Git holds it unchanged, keeping the README
+and the journal collections ledger-<YYYY-MM>.md; the ids stay reserved, references to a deleted
+entry become its bare id; a file Git does not hold yet stays until a commit does
+
+options:
+  -h, --help  show this help message and exit
+  --plan      show what would be deleted, write nothing
 ```
 
 ## `feedback.py`

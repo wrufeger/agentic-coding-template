@@ -49,6 +49,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   written in one step.
 - A worker never writes a file outside its `Write scope:` - with any tool, interpreter or detour, whether or not a
   check refused it - and names the file and the change in its result.
+- Finished backlog items and inbox entries are deleted instead of archived when the project is under Git: new key
+  `done-entries: delete | keep` in `docs/ai/config.md` § Archive, default `delete` with Git and `keep` without (an
+  explicit `delete` without a repository counts as `keep`). `entries.py archive` deletes only an entry Git holds
+  unchanged (compared with the last commit by blob hash, so `assume-unchanged` and `skip-worktree` files count as
+  changed); anything else moves to the archive as before. An accepted task always moves to the archive with its
+  `finished:` stamp and goes with the next `entries.py purge` once a commit holds it; `act-commit` runs `purge`. Ids
+  stay taken through `docs/ai/work/reserved-ids.json`, so `new` never hands one out twice. Links to a deleted entry
+  become its bare id; written-out paths do too, except inside fenced code blocks and in `git show <commit>:<path>`.
+  `act-compact` merges only the journal under `delete`. An existing archive stays: the first session start after the
+  update names its file count once, `entries.py purge --plan` shows what would go, and journal files, `ledger-*.md`,
+  `legacy/` and `proposals/` always stay. `done-entries: keep` restores the old behaviour.
 
 ### Fixed
 

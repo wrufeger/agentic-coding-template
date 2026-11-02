@@ -69,6 +69,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "learn",                    # act-teach skill: learning record per topic
     "usage",                    # hooks/checks/usage.py: event files
     "update-channel-hint",      # update.py: marker for the release-channel hint
+    "done-entries-hint",        # hooks/checks/session.py: marker for the one-time note about a leftover archive
     "*.template.md",            # init.py: rescue copies of root entry files (<stem>.template.md)
     "outside-allow",            # adopt scripts: marker read by the outside-root check
     "status-poll",              # hooks/checks/status_poll.py

@@ -18,4 +18,7 @@ legacy archive, `archive/legacy/`, and every `README.md` stay as they are).
 - `backlog/` — ideas and change requests not yet built, one per file.
 - `ledger/` — journal entries, one per step, named `YYYY-MM-DD-<slug>.md`; read by `board.py` for
   the board's recent history.
-- `archive/` — finished business moved out of the three folders above; see its own `README.md`.
+- `archive/` — finished business moved out of the three folders above or, with `done-entries: delete`
+  (the default under Git), only the folded journal, `legacy/` and `proposals/`; see its own `README.md`.
+- `reserved-ids.json` — written by `entries.py` before it deletes a finished entry: the highest id of each
+  kind, so `entries.py new` never hands an id out twice. Versioned; not edited by hand.

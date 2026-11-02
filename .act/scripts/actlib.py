@@ -678,6 +678,26 @@ def _is_separator_cell(cell: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# done-entries — what happens to a finished task, backlog item or inbox entry
+# ---------------------------------------------------------------------------
+
+DONE_ENTRIES_VALUES = ("delete", "keep")
+
+
+def done_entries_mode(root: Optional[Path] = None) -> str:
+    """The effective `done-entries` mode of the project at `root`: "delete" or "keep".
+
+    `delete` removes a finished entry once Git holds it unchanged, `keep` moves it to the archive for
+    good. A missing, empty or unknown value is the default: `delete` when the project has its own Git
+    repository (a `.git` entry at the root), else `keep`. An explicit `delete` without a repository
+    counts as `keep` as well: nothing would hold the deleted text."""
+    root = root or repo_root()
+    raw = read_config(root).get("done-entries", "").strip().strip("`").strip().lower()
+    wanted = raw if raw in DONE_ENTRIES_VALUES else "delete"
+    return "delete" if wanted == "delete" and (root / ".git").exists() else "keep"
+
+
+# ---------------------------------------------------------------------------
 # Languages — chat and docs language from docs/ai/config.md, and the `act:default` mark on
 # docs scaffold files still in the template's English. The mechanism reads marks, never words:
 # a scaffold file translated by hand keeps working as long as its marks and header fields stay.

@@ -50,8 +50,10 @@ by the same `assign`.
 questions included. Archive with `python .act/scripts/entries.py archive <id|file>`: it sets
 `status: done`, moves the entry, and takes along the files it links beside itself (an image pasted
 into the entry lands next to it as `img.png`). A generic or already taken name gets the id in front
-(`Q<n>-img.png`) and the links are rewritten. `doctor` reports a file here that no Markdown file
-under `docs/` links.
+(`Q<n>-img.png`) and the links are rewritten. With `done-entries: delete` (the default under Git,
+`docs/ai/config.md` § Archive) an entry Git holds unchanged is deleted instead, together with those files; the
+id stays taken and a link to it elsewhere becomes the bare id. `doctor` reports a file here that no
+Markdown file under `docs/` links.
 
 ## `question` entries
 

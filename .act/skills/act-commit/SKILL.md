@@ -29,17 +29,28 @@ secures the result.
    filename until a commit on the default branch runs it. It renames each file and reports
    `<old> -> <new>`; stage both paths (the old one as a deletion) — otherwise a clone that already
    has the pre-rename file keeps it lying around, unassigned, once this commit is pulled.
-3. **Archive.** Move every finished file — a task, a backlog item, and **every** inbox entry
+3. **Archive.** Finish every finished file — a task, a backlog item, and **every** inbox entry
    marked `status: done`, whatever its `kind` (questions included) and whether or not it belongs
-   to this task — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` to
-   `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`) with `python .act/scripts/entries.py
-   archive <id|file>` — it also takes along the images and files the entry links beside itself
-   (renamed with the id in front where the name is generic) and prints every path it moved, copied
-   or changed: stage all of them. Short IDs already assigned stay valid; the file keeps its name.
+   to this task — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` with `python
+   .act/scripts/entries.py archive <id|file>`; it also takes along the images and files the entry
+   links beside itself and prints every path it moved, copied, deleted or changed: stage all of
+   them (a deleted path too, so the deletion is part of the commit). Short IDs already assigned
+   stay valid. What happens to the entry depends on `done-entries` in `docs/ai/config.md` § Archive:
+   - `keep` (or no Git repository): it moves to `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`)
+     and keeps its name; a generic image name gets the id in front.
+   - `delete` (the default in a Git project): an entry Git holds unchanged is deleted — Git keeps the
+     text, the id stays reserved in `docs/ai/work/reserved-ids.json` (stage it when the script prints
+     `reserved`), and links to the entry in other files become the bare id (stage every file the
+     script prints as `rewrote`). An entry Git does not hold yet (a fresh answer, a state change) moves
+     to the archive as under `keep`, and so does every task, with its `finished:` stamp: the accepted
+     task stays visible until the commit that holds it. Then run `python .act/scripts/entries.py purge`: it deletes what
+     earlier commits left in the archive and Git now holds unchanged; stage `docs/ai/work/archive`,
+     `docs/ai/work/reserved-ids.json` and every path it prints as `rewrote`. What this run moved in is
+     committed first and removed by the next run.
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step
    isn't recorded yet, older entries left as they are otherwise. Journal entries stay single files
-   only until they are old: `act-compact` later folds them, like archived entries, into one file per
-   month (`archive/ledger-<YYYY-MM>.md`).
+   only until they are old: `act-compact` later folds them into one file per month
+   (`archive/ledger-<YYYY-MM>.md`), and with `done-entries: keep` the archived entries too.
 5. **Docs index.** New files go into `docs/README.md`; check the data-as-of note on files that
    changed.
 6. **Learning check.** Did the task need at least two rework rounds (a worker result rejected
