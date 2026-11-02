@@ -32,6 +32,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - danger-scan: `sql-php-concat` and `sql-php-interpolation` (PHP files) and `sql-format` (`"..." % x`,
   `"...".format(...)`) report SQL built from values; `LIKE '%…%'` operands and date formats such as
   `strftime('%Y', d)` are not read as the `%` operator.
+- `docs/ai/local/resources.md`: the project's own reading list ("Own sources", "Private links"), pointing to the
+  maintained "Further reading" page of the documentation site. `init` creates it; existing projects get it once on
+  the next `act-update` (migration `005-resources-file`). A file that is already there is never touched, and one you
+  delete does not come back. The file is committed with the project like everything under `docs/`.
 
 ### Changed
 

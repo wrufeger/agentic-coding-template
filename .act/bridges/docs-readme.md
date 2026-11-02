@@ -22,6 +22,7 @@ this file directly for anything those two miss — it stays a plain table, not a
 | `docs/ai/work/archive/` | Journal collections (`ledger-*.md`), `legacy/` and `proposals/`; finished tasks, backlog items and inbox entries too where `done-entries` is `keep` (under `delete` Git history keeps them) | <today> | rarely — history, not current state |
 | `docs/project/learnings/` | One short note per lesson the code doesn't carry (failed attempts, cause, prevention), created on first use | <today> | when planning or localizing a bug in the same area; grep the `area:`/`tags:` headers |
 | `docs/ai/local/` | This project's own overrides of template files | <today> | whenever the matching template file changes |
+| `docs/ai/local/resources.md` | Your own reading list: own sources and private links; the template's maintained list is on the documentation site under "Further reading" | <today> | when looking for background reading, and to add a source |
 
 A file created later under `docs/project/` (`architecture.md`, `features.md`, `testing.md`,
 `decisions.md`, `incidents/`) gets its own row here once it exists — nothing here creates those

@@ -3,6 +3,12 @@ The project's own or overriding files, mirrored after `.act/` — same relative 
 wins over the template version (`docs/ai/local/<path>` is looked up before `.act/<path>`). The
 user owns this folder; the assistant writes here only on explicit instruction.
 
+## `resources.md`
+
+Your project's own reading list (own sources, private links), created by `init` and offered to older
+projects by `update`. It is never overwritten once it exists. The template's maintained list is on the
+documentation site under "Further reading".
+
 ## `reminders.md` (optional)
 
 Your own "remind me to ..." lines, one per line, shown in the same SessionStart slot as
