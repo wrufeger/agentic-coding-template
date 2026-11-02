@@ -86,6 +86,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "security_deep.py": {"kind": "direct", "note": "used by skill `act-release` with `security-check: full`"},
     "security_scan.py": {"kind": "direct", "note": "also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`"},
     "seo_check.py": {"kind": "skill", "skill": "act-seo"},
+    "seo_lighthouse.py": {"kind": "direct", "note": "Lighthouse report for given URLs; the server is started by the caller, on a test port"},
     "settings_export.py": {"kind": "skill", "skill": "act-export-settings"},
     "settings_format.py": {"kind": "library"},
     "settings_load.py": {"kind": "skill", "skill": "act-load-settings"},

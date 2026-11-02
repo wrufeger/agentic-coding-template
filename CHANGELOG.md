@@ -11,6 +11,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Script `seo_lighthouse.py` (a first building block for a fuller `act-seo`, not yet called by the skill): measures
+  given URLs with a pinned Lighthouse version through `npx`, reports the median of several runs per category
+  (Performance, Accessibility, Best Practices, SEO) and for LCP, CLS and TBT with the spread of every value, lists
+  failed axe audits as findings and sorts the report by severity, keeping score points apart from real defects.
+  `--from-json` evaluates existing Lighthouse reports. On Windows it starts npx through Node, never through cmd.exe, so
+  URLs with `&` or `%` are safe; a run past `--timeout` is ended with its whole process tree. Chrome profile, raw data
+  and temp files stay in a fresh subfolder of one work folder that is removed afterwards. It starts no server, fixes
+  nothing and exits with a clear message if Node, npx or Chrome is missing.
 - `act-integrations` can allow the read-only tools of a catalog MCP server in one step, while setting it up or later.
   Each entry in `.act/mcp-catalog.md` has a `read-tools` field with exact tool names (filled for `github`); after a
   "yes", `python .act/scripts/integrations.py read-tools <id>` merges them as `mcp__<server>__<tool>` into

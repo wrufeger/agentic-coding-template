@@ -38,6 +38,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
 | `security_scan.py` | Security check Art B: a live library-vulnerability lookup against the lock files an ecosystem actually has, run either as a manual command… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
 | `seo_check.py` | Code-only SEO checks over a project's HTML, templates, Markdown pages and framework config — the mechanical half of skill `act-seo`. Reads… | skill `act-seo` |
+| `seo_lighthouse.py` | Lighthouse measurement for the URLs of a running site — the lab-measurement half of skill `act-seo`. Runs a pinned Lighthouse version… | direct (Lighthouse report for given URLs; the server is started by the caller, on a test port) |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
@@ -962,6 +963,37 @@ options:
   -h, --help   show this help message and exit
   --root ROOT  project root (default: current directory)
   --json       print the report as JSON
+```
+
+## `seo_lighthouse.py`
+
+Call: direct (Lighthouse report for given URLs; the server is started by the caller, on a test port)
+
+```text
+usage: seo_lighthouse.py [-h] [--runs RUNS] [--form-factor {mobile,desktop}] [--workdir WORKDIR]
+                         [--root ROOT] [--keep-raw] [--timeout TIMEOUT]
+                         [--from-json FILE [FILE ...]] [--json]
+                         [urls ...]
+
+Lighthouse median over several runs per URL, spread per value, axe findings, report by severity.
+Takes URLs of an already running site; starts no server and fixes nothing.
+
+positional arguments:
+  urls                  http(s) URLs to measure
+
+options:
+  -h, --help            show this help message and exit
+  --runs RUNS           runs per URL (default 3)
+  --form-factor {mobile,desktop}
+                        Lighthouse emulation (default mobile)
+  --workdir WORKDIR     folder for Chrome profile, raw data and temp files (default <root>/.act-
+                        local/tmp/seo-lighthouse)
+  --root ROOT           project root for the default workdir (default: current directory)
+  --keep-raw            keep the raw Lighthouse JSON under <workdir>/raw
+  --timeout TIMEOUT     seconds per run (default 240)
+  --from-json FILE [FILE ...]
+                        evaluate existing Lighthouse JSON files instead of measuring
+  --json                machine-readable output
 ```
 
 ## `settings_export.py`
