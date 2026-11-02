@@ -62,7 +62,7 @@
   "hooks/checks/common.py": "a6f88188360c1e8a62cc26d0a4766be3dd67392c4665efad85ebd73404334872",
   "hooks/checks/context_hint.py": "9ef5493eb8c83074d94dcff68c5b2cd42d0dc46ff5b30a58f945843fb19bb189",
   "hooks/checks/danger_scan.py": "586d958a89e1943e0b3db47c1e1e970656610a0d703603a3e49ea23cd4c3a17e",
-  "hooks/checks/deps_scan.py": "fceebbf1b3a8b636c9c15d70cf6d61da094cea126f78a6cf95a03bdbe14564ab",
+  "hooks/checks/deps_scan.py": "4ca308e17726af6e2c4ba85373b58428dff14bf28b83819482ed37dfa5b98bef",
   "hooks/checks/encoding_hint.py": "acae10da35a6bc6e4510154dc00c8774583a9eae0aed95c9ca19302a4f574dd8",
   "hooks/checks/event_log.py": "d55142eee0e8bdce20589f89e63fcafbf31f3c324e4ba34f67306cf34ba307b5",
   "hooks/checks/git_discard.py": "31bf748cb28691241c9e1150bac7da1ae777c1abfd6dd54f8d4c10a335accb14",

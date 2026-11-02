@@ -133,6 +133,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- After `git merge`, `git pull` or `git cherry-pick`, the dependency scan of the lock files the command brought in is
+  no longer skipped silently when the hook runs out of time listing them with git (a busy machine, or a merge with
+  hundreds of lock files). The hook now hands the listing to the detached background worker, which lists, scans and
+  reports the lock files within a time limit of its own.
 - `act-update` and the session start now enter rules and rule files the template added into a locally edited
   `docs/ai/rules.md`: a checkbox line per new rule, a new rule file as an import block at the end of its section. Your
   own text, unchecked boxes and imports you removed stay untouched, byte for byte including line endings; a layer you
@@ -193,6 +197,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- The detached dependency-scan worker no longer trusts its list file: it ignores merge, pull and cherry-pick calls
+  aimed at another repository and accepts only full commit ids as recorded heads, and its `git diff` stops option
+  parsing before the revision (`--end-of-options`). The same commit-id check now applies to the heads the merge hook
+  records itself.
 - `git-metadata-guard` reads a copy source of any size within a time budget (the 2,000-file limit is gone); a source
   that cannot be read in time is refused with a clear message. Links and junctions inside the source are followed the
   way a recursive copy follows them, each directory once.

@@ -88,6 +88,18 @@
 #          the merge is checked by the commit check). The scan itself reuses the cache and the
 #          detached worker, which files the report when it is done, so the hook stays fast.
 #
+#          Listing the lock files with git is the only slow part of that, and it runs inside a short
+#          time budget (`_NOTE_TIME_BUDGET`). On a busy machine, or after a merge that brings in
+#          hundreds of lock files, the budget can run out before git has answered. The hook then
+#          does not drop the scan silently: it throws the half-read listing away and hands the whole
+#          listing to a detached worker (the same list-file mechanism, a "discover" request instead
+#          of a path list). The worker lists the lock files without the short budget but within a
+#          limit of its own (`_DISCOVER_TIME_LIMIT`), then scans and reports them like the hook
+#          would have. Past that limit the worker's list stays empty and leaves no trace. If even
+#          the worker cannot be started, nothing more can be done from inside a hook; the commit
+#          check and the daily scan still cover those lock files. The worker trusts nothing in its
+#          list file: it keeps only calls aimed at this project and only full commit ids as heads.
+#
 #          The worker gets its lock-file list through a file under `.act-local/security-scan-lists/`
 #          (unique per run, removed afterwards), never through argv: a few hundred absolute paths
 #          overrun the Windows command-line limit (WinError 206).
@@ -107,6 +119,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import re
@@ -115,7 +128,7 @@ import time
 import uuid
 from datetime import date
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 
 import actlib
 import security_scan
@@ -148,7 +161,7 @@ __all__ = [
     "check_deps_scan", "note_deps_scan",
     "_LISTS_DIRNAME", "_write_list_file", "_read_list_file", "_remove_list_file", "_spawn_scan_worker",
     "run_list_worker", "_IntegrationCall", "_integration_calls", "_integration_lock_files", "_report_result",
-    "note_deps_merge_scan",
+    "note_deps_merge_scan", "_NOTE_TIME_BUDGET", "_DISCOVER_TIME_LIMIT", "_read_discovery",
 ]
 
 _NOTES_DIRNAME = "deps-scan-notes"
@@ -339,11 +352,33 @@ def _resolve_scan(root: Path, paths: "list[Path]", payload: dict) -> _Outcome:
 # ---------------------------------------------------------------------------
 # The worker gets its lock-file list through a file, never through argv: on Windows a command line
 # is capped at 32,767 characters (WinError 206), and a few hundred absolute lock-file paths pass
-# that. The file lives under .act-local/security-scan-lists/, is named after the state hash plus a
+# that. The file lives under .act-local/security-scan-lists/, is named after the state hash (for a
+# "discover" request: a random request id standing in for it) plus a
 # random suffix (unique per run), is read by dispatch.py's "_security-scan-worker" event and
 # removed when the run is over; a leftover from a killed worker is pruned the next time one is
 # written.
 # ---------------------------------------------------------------------------
+
+class _DiscoverCall(TypedDict):
+    subcommand: str
+    args: "list[str]"
+    target: str
+
+
+class _Discover(TypedDict):
+    """The "discover" request of a list file: the calls to list the lock files of, and the heads
+    recorded before them."""
+    calls: "list[_DiscoverCall]"
+    recorded: "dict[str, str]"
+
+
+_HEAD_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+
+
+def _valid_head(value: object) -> bool:
+    """True for a full commit id (SHA-1 or SHA-256) -- the only form that reaches a git call."""
+    return isinstance(value, str) and _HEAD_RE.fullmatch(value) is not None
+
 
 _LISTS_DIRNAME = "security-scan-lists"
 _LIST_FILE_RE = re.compile(r"^[0-9a-f]{64}-[0-9a-f]{32}\.json$")
@@ -368,18 +403,22 @@ def _prune_list_files(directory: Path) -> None:
             continue
 
 
-def _write_list_file(root: Path, state_hash: str, paths: "list[Path]", report: bool) -> Optional[Path]:
+def _write_list_file(
+    root: Path, state_hash: str, paths: "list[Path]", report: bool, discover: Optional[_Discover] = None,
+) -> Optional[Path]:
     """Writes the worker's input (`paths`, and whether the run reports its findings to the inbox)
-    and returns the file, or None when it cannot be written."""
+    and returns the file, or None when it cannot be written. `discover` (see
+    `_hand_off_discovery`) asks the worker to list the lock files itself instead of being given
+    them."""
     directory = _lists_dir(root)
     try:
         directory.mkdir(parents=True, exist_ok=True)
         _prune_list_files(directory)
         path = directory / f"{state_hash}-{uuid.uuid4().hex}.json"
-        path.write_text(
-            json.dumps({"paths": [str(item) for item in paths], "report": report}, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        content: dict = {"paths": [str(item) for item in paths], "report": report}
+        if discover is not None:
+            content["discover"] = discover
+        path.write_text(json.dumps(content, ensure_ascii=False) + "\n", encoding="utf-8")
     except OSError:
         return None
     return path
@@ -407,6 +446,29 @@ def _read_list_file(root: Path, state_hash: str, list_file: Path) -> "Optional[t
     return [Path(str(item)) for item in data["paths"]], bool(data.get("report"))
 
 
+def _read_discovery(
+    root: Path, state_hash: str, list_file: Path,
+) -> "Optional[tuple[list[_IntegrationCall], dict[str, str]]]":
+    """The integration calls and recorded heads of a "discover" list file, or None for an ordinary
+    list file (or one that cannot be read). The file is not trusted: a call stays only when its
+    target lies in this project (as for the hook), a recorded head only when it is a full commit id,
+    so a forged file never makes the worker run git in another repository or with an option."""
+    if not _own_list_file(root, state_hash, list_file):
+        return None
+    try:
+        data = json.loads(list_file.read_text(encoding="utf-8"))
+        discover = data["discover"]
+        calls = [
+            _IntegrationCall(str(item["subcommand"]), [str(arg) for arg in item["args"]], Path(str(item["target"])))
+            for item in discover["calls"]
+            if str(item["subcommand"]) in _INTEGRATION_SUBCOMMANDS
+        ]
+        recorded = {str(key): value for key, value in discover["recorded"].items() if _valid_head(value)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return [call for call in calls if call.target is not None and _targets_own_project(call.target, root)], recorded
+
+
 def _remove_list_file(root: Path, state_hash: str, list_file: Path) -> None:
     if _own_list_file(root, state_hash, list_file):
         try:
@@ -415,12 +477,14 @@ def _remove_list_file(root: Path, state_hash: str, list_file: Path) -> None:
             pass
 
 
-def _spawn_scan_worker(root: Path, state_hash: str, paths: "list[Path]", report: bool) -> bool:
+def _spawn_scan_worker(
+    root: Path, state_hash: str, paths: "list[Path]", report: bool, discover: Optional[_Discover] = None,
+) -> bool:
     """Starts the detached scan worker for `paths` with the list in a file. The launcher
     (`session._spawn_security_scan_worker`) appends its lock-path arguments to the command line as
     they are, so one argument `@<list file>` stands in for the whole list; dispatch.py reads that
     form. False (and no file left behind) when nothing could be started."""
-    list_file = _write_list_file(root, state_hash, paths, report)
+    list_file = _write_list_file(root, state_hash, paths, report, discover)
     if list_file is None:
         return False
     if session._spawn_security_scan_worker(root, state_hash, [Path("@" + str(list_file))]):
@@ -432,13 +496,22 @@ def _spawn_scan_worker(root: Path, state_hash: str, paths: "list[Path]", report:
 def run_list_worker(root: Path, state_hash: str, list_file: Path) -> int:
     """Body of the worker started with `@<list file>` (dispatch.py): reads the list, runs the same
     scan as the argv form (`session._run_security_scan_worker`), reports to the inbox when the list
-    says so, and always removes the list file and the running marker afterwards. Always exits 0
+    says so, and always removes the list file and the running marker afterwards. A "discover" list
+    (see `_hand_off_discovery`) holds merge/pull/cherry-pick calls instead of paths: the worker lists
+    the lock files itself (within `_DISCOVER_TIME_LIMIT`), scans and reports them. Always exits 0
     -- nothing observes this process's own exit code."""
     if not security_scan.is_state_hash(state_hash):
         return 0
     try:
         loaded = _read_list_file(root, state_hash, list_file)
-        if loaded is not None:
+        discovery = _read_discovery(root, state_hash, list_file) if loaded is not None else None
+        if discovery is not None:
+            calls, recorded = discovery
+            deadline = time.monotonic() + _DISCOVER_TIME_LIMIT
+            touched = _list_integration_touched(calls, deadline, recorded)
+            found, _unreadable = _readable_lock_files(root, sorted(touched), deadline)
+            _scan_touched(root, found, inline=True)
+        elif loaded is not None:
             paths, report = loaded
             if not (report and _current_cache(root, state_hash, date.today().isoformat()) is not None):
                 session._run_security_scan_worker(root, state_hash, paths)  # no answer cached yet
@@ -693,6 +766,8 @@ _RECORD_TIME_BUDGET = 2.0
 _STATE_HEADS = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REBASE_HEAD")
 _MERGE_SUBJECT_PREFIXES = ("merge", "pull", "rebase", "commit (merge)")
 _NOTE_TIME_BUDGET = 4.0
+# The detached worker that took over the listing (see the module docstring) has no user waiting.
+_DISCOVER_TIME_LIMIT = 120.0
 _CD_NAMES = frozenset({"cd", "pushd", "chdir"})
 _SEVERITY_ORDER = {name: index for index, name in enumerate(security_scan.SEVERITY_LEVELS)}
 
@@ -737,7 +812,9 @@ def _integration_calls(command: str, base_cwd: str) -> "list[_IntegrationCall]":
 
 
 def _git_names(args: "list[str]", toplevel: str, budget: float) -> "list[str]":
-    output = _run_git([*args, "-z"], toplevel, budget)
+    # -z goes before `--end-of-options` (git takes options only ahead of it)
+    split = args.index("--end-of-options") if "--end-of-options" in args else len(args)
+    output = _run_git([*args[:split], "-z", *args[split:]], toplevel, budget)
     return [name for name in output.split("\0") if name] if output else []
 
 
@@ -822,7 +899,7 @@ def _take_recorded_heads(root: Path, tool_use_id: object) -> "dict[str, str]":
     heads = data.get("heads") if data else None
     if not isinstance(heads, dict):
         return {}
-    return {str(key): str(value) for key, value in heads.items() if isinstance(value, str)}
+    return {str(key): value for key, value in heads.items() if _valid_head(value)}
 
 
 def _git_dir_has_state_head(toplevel: str, budget: float) -> bool:
@@ -847,7 +924,9 @@ def _integration_lock_files(
     unmerged is left out: it holds conflict markers, no tool can read it, and the commit that
     concludes the merge is checked by the commit check."""
     def budget() -> float:
-        return min(_GIT_TIMEOUT, deadline - time.monotonic())
+        # no per-call cap below the deadline: a git call that returns nothing then means either a
+        # real failure or the deadline, and the caller tells the deadline apart by the clock
+        return deadline - time.monotonic()
 
     names: "set[str]" = set()
     base: Optional[str] = None
@@ -870,7 +949,7 @@ def _integration_lock_files(
                 origin = _run_git(["rev-parse", "-q", "--verify", "ORIG_HEAD"], toplevel, budget())
                 base = origin.strip() if origin and origin.strip() else (entries[1][0] if len(entries) > 1 else None)
     if base is not None:
-        names.update(_git_names(["diff", "--name-only", base, "HEAD"], toplevel, budget()))
+        names.update(_git_names(["diff", "--name-only", "--end-of-options", base, "HEAD"], toplevel, budget()))
 
     state_open = _git_dir_has_state_head(toplevel, budget())
     in_progress = state_open or bool(_INTEGRATION_NO_COMMIT_FLAGS[call.subcommand] & set(call.args))
@@ -974,6 +1053,78 @@ def _report_result(root: Path, state_hash: str, result: security_scan.ScanResult
     return True
 
 
+def _list_integration_touched(
+    calls: "list[_IntegrationCall]", deadline: float, recorded: "dict[str, str]",
+) -> "set[str]":
+    """The lock files `calls` brought into their repositories. Past `deadline` git is not asked any
+    more and the answer is incomplete -- the caller reads the clock to know."""
+    touched: "set[str]" = set()
+    for call in calls:
+        if call.target is None:
+            continue
+        toplevel = _repo_toplevel(str(call.target), deadline - time.monotonic())
+        if toplevel is None:
+            continue
+        touched.update(_integration_lock_files(call, toplevel, deadline, recorded.get(toplevel)))
+    return touched
+
+
+def _hand_off_discovery(root: Path, calls: "list[_IntegrationCall]", recorded: "dict[str, str]") -> bool:
+    """The listing did not finish inside the hook's budget: the detached worker redoes it from the
+    calls, with no short budget, and goes on to scan and report. The request id stands in for the
+    state hash the worker normally gets (the real one is not known before the listing). False when
+    no worker could be started."""
+    request_id = hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+    discover: _Discover = {
+        "calls": [
+            {"subcommand": call.subcommand, "args": call.args, "target": str(call.target)} for call in calls
+        ],
+        "recorded": recorded,
+    }
+    return _spawn_scan_worker(root, request_id, [], report=True, discover=discover)
+
+
+def _scan_touched(root: Path, paths: "list[Path]", inline: bool) -> None:
+    """Scans `paths` (cache first, then a running marker, then a scan) and reports an unaccepted
+    finding. `inline` runs the scan in this process -- for the detached worker; the hook hands the
+    scan and the report to a further worker instead."""
+    if not paths:
+        return
+    state_hash = security_scan.lock_set_digest(paths)
+    if state_hash is None or _reported_marker(root, state_hash).exists():
+        return
+
+    cached = _current_cache(root, state_hash, date.today().isoformat())
+    if cached is not None:
+        if _unaccepted_findings(root, cached) or cached.unreadable_reports:
+            if inline:
+                _report_result(root, state_hash, cached, paths)
+            else:
+                # the inbox write can wait on the entries lock: the detached worker does it, not this hook
+                _spawn_scan_worker(root, state_hash, paths, report=True)
+        return
+    now = time.time()
+    marker = security_scan.read_running_marker(root, state_hash)
+    if marker is not None:
+        if now > marker["stale_after"]:
+            security_scan.clear_running_marker(root, state_hash)
+        return  # a scan of exactly this state is in flight (or was dead -- the next call spawns afresh)
+    lock_files = security_scan.lock_files_from_paths(paths)
+    stale_after = now + security_scan.scan_time_limit(lock_files) + _WORKER_MARGIN_SECONDS
+    if not security_scan.write_running_marker(root, state_hash, stale_after):
+        return
+    if inline:
+        try:
+            session._run_security_scan_worker(root, state_hash, paths)
+            result = _current_cache(root, state_hash, date.today().isoformat())
+            if result is not None:
+                _report_result(root, state_hash, result, paths)
+        finally:
+            security_scan.clear_running_marker(root, state_hash)
+    elif not _spawn_scan_worker(root, state_hash, paths, report=True):
+        security_scan.clear_running_marker(root, state_hash)
+
+
 def _scan_after_integration(payload: dict) -> None:
     if _is_worker(payload):
         return  # a worker's git access is read-only; it never brings anything in
@@ -993,41 +1144,18 @@ def _scan_after_integration(payload: dict) -> None:
     calls = _integration_calls(command, _base_cwd(payload))
     if not calls or not security_scan.available_tools():
         return
+    own = [call for call in calls if call.target is not None and _targets_own_project(call.target, root)]
+    if not own:
+        return
 
     deadline = time.monotonic() + _NOTE_TIME_BUDGET
-    touched: "set[str]" = set()
-    for call in calls:
-        if call.target is None or not _targets_own_project(call.target, root):
-            continue
-        toplevel = _repo_toplevel(str(call.target), min(_GIT_TIMEOUT, deadline - time.monotonic()))
-        if toplevel is None:
-            continue
-        touched.update(_integration_lock_files(call, toplevel, deadline, recorded.get(toplevel)))
+    touched = _list_integration_touched(own, deadline, recorded)
     paths, _unreadable = _readable_lock_files(root, sorted(touched), deadline)
-    if not paths or time.monotonic() >= deadline:
+    if time.monotonic() >= deadline:
+        # git may not have answered in time: the listing above can be incomplete, so it is not used
+        _hand_off_discovery(root, own, recorded)
         return
-    state_hash = security_scan.lock_set_digest(paths)
-    if state_hash is None or _reported_marker(root, state_hash).exists():
-        return
-
-    cached = _current_cache(root, state_hash, date.today().isoformat())
-    if cached is not None:
-        if _unaccepted_findings(root, cached) or cached.unreadable_reports:
-            # the inbox write can wait on the entries lock: the detached worker does it, not this hook
-            _spawn_scan_worker(root, state_hash, paths, report=True)
-        return
-    now = time.time()
-    marker = security_scan.read_running_marker(root, state_hash)
-    if marker is not None:
-        if now > marker["stale_after"]:
-            security_scan.clear_running_marker(root, state_hash)
-        return  # a scan of exactly this state is in flight (or was dead -- the next call spawns afresh)
-    lock_files = security_scan.lock_files_from_paths(paths)
-    stale_after = now + security_scan.scan_time_limit(lock_files) + _WORKER_MARGIN_SECONDS
-    if not security_scan.write_running_marker(root, state_hash, stale_after):
-        return
-    if not _spawn_scan_worker(root, state_hash, paths, report=True):
-        security_scan.clear_running_marker(root, state_hash)
+    _scan_touched(root, paths, inline=False)
 
 
 def note_deps_merge_scan(payload: dict) -> Optional[str]:
