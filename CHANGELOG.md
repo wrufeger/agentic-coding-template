@@ -86,6 +86,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `act-update` and the session start now enter rules and rule files the template added into a locally edited
+  `docs/ai/rules.md`: a checkbox line per new rule, a new rule file as an import block at the end of its section. Your
+  own text, unchecked boxes and imports you removed stay untouched, byte for byte including line endings; a layer you
+  import nothing from is left alone. `.act-lock.json` records what was offered (`rules_offered`), so a removed line or
+  import does not come back; a project without that record takes the state committed before the update as offered.
+  What cannot be entered safely is named with `python .act/scripts/rules.py --add-missing`; `rules.py --validate` and
+  `doctor` report rule files not yet imported and rules the template no longer has.
 - The `act-compact` skill said uncommitted archive changes "stay as they are"; `entries.py compact` actually stops
   until they are committed. The skill now says so.
 - An anchor and heading pair inside a code block no longer counts as a section of an archive collection.

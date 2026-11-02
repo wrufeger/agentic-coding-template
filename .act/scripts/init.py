@@ -2917,6 +2917,7 @@ def step_lock_and_cache(
     generated_hashes: Optional[dict[str, str]] = None,
     lock_existed_before: bool = True,
     settings_booking: Optional[dict] = None,
+    rules_md_existed_before: bool = True,
 ) -> str:
     """`lock_existed_before`: whether .act-lock.json was already there when this run started
     (captured by main() before any step could write it); only a project without one is fresh and
@@ -2978,6 +2979,14 @@ def step_lock_and_cache(
             shipped = {p.stem for p in (root / ".act" / "migrations").glob("[0-9][0-9][0-9]-*.py")}
             lock_update["migrations_applied"] = sorted(shipped)
         actlib.write_lock(lock_update)
+        # A docs/ai/rules.md this run made (a copy of the template's, or one carried over from a source
+        # project) has been offered every rule and rule file of this .act/: the first update must not
+        # enter again what the file leaves out on purpose. One that was there before and stays (docking
+        # onto a project) has not been offered what it does not list. Union with an earlier record.
+        try:
+            rules.record_offered(root, everything=not rules_md_existed_before, start=True)
+        except (OSError, UnicodeDecodeError):
+            pass
         # .claude/settings.json is written by now (step 6); the `artifacts` booking follows it here.
         actlib.write_settings_booking(root, settings_booking)
         # .act-lock.json § applied: the values the files just materialized hang on, so the
@@ -3450,6 +3459,8 @@ def main(argv: list[str]) -> int:
     notes: list[str] = []
     # Before any step can write the lock: only a project without one is fresh (step 9).
     lock_existed_before = (root / ".act-lock.json").exists()
+    # Whether docs/ai/rules.md is this run's own work (step 9 records what it was offered).
+    rules_md_existed_before = (root / rules.AREAS["core"].project_file).is_file()
 
     cfg = step_config(root, interactive, notes,
                       {"language-docs": args.language_docs, "language-chat": args.language_chat},
@@ -3601,6 +3612,7 @@ def main(argv: list[str]) -> int:
 
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,
                                         lock_existed_before=lock_existed_before,
+                                        rules_md_existed_before=rules_md_existed_before,
                                         settings_booking=pending_booking.get("booking")))
 
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)

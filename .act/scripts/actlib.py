@@ -283,6 +283,30 @@ def read_lock() -> dict:
     return result
 
 
+def read_rules_offered(root: Path) -> Optional[dict]:
+    """The lock's `rules_offered` record at `root`: per rule file of the template (root-relative,
+    e.g. ".act/rules/shared/00-core.md"), the rule IDs docs/ai/rules.md has been offered so far. A file
+    named here that docs/ai/rules.md does not import, or an ID it does not list, was taken out on
+    purpose and is not offered again. None when the lock or the field does not exist (a project from
+    before this record). Takes `root` explicitly, so it never depends on the working directory."""
+    data = _read_json(root / ".act-lock.json")
+    offered = data.get("rules_offered") if data else None
+    if not isinstance(offered, dict):
+        return None
+    return {str(key): [str(item) for item in value] for key, value in offered.items()
+            if isinstance(value, list)}
+
+
+def write_rules_offered(root: Path, offered: dict) -> bool:
+    """Record `offered` as the lock's `rules_offered` (see read_rules_offered). Only an existing lock is
+    written: a project without one is not set up by this. Returns whether the lock holds the record."""
+    path = root / ".act-lock.json"
+    if not path.is_file() or _read_json(path) is None:
+        return False  # none, or one that cannot be read (conflict marks...): writing would drop its other keys
+    _write_json_merged(path, {"rules_offered": offered})
+    return True
+
+
 def write_lock(data: dict) -> dict:
     """Merge `data` onto .act-lock.json at the repo root and write it back. Any field already in
     the file that is not part of `data` (including fields unknown to this template version) is

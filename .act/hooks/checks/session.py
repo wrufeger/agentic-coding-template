@@ -546,6 +546,37 @@ def _apply_artifact_setting(root: Path, config: dict[str, str], write: bool) -> 
     return [n for n in notes if n not in pending], would
 
 
+def _follow_rules_md(root: Path, write: bool) -> list[str]:
+    """Notes on what a locally edited docs/ai/rules.md lacks of the template and what was entered into
+    it (rules.add_missing_core_entries; with write=False only said, nothing written). Never raises."""
+    try:
+        import rules  # deferred like the other rules.py uses here: a broken rules.py must not end the session
+        result = rules.add_missing_core_entries(root, write=write)
+    except Exception:  # noqa: BLE001 - a failed look is no reason to stop the session
+        return []
+    notes: list[str] = []
+    if result.messages:
+        verb = "entered" if write else "would be entered (warn mode, not applied)"
+        notes.append(f"[act] note: docs/ai/rules.md {verb}: {'; '.join(result.messages)}")
+    notes.extend(f"[act] note: docs/ai/rules.md: {problem}" for problem in result.problems)
+    # No record of what was offered yet: files it does not import are named, once (the cache keeps the
+    # wording shown last), never entered here — the first update starts the record from git.
+    unlisted_note = ""
+    if result.unlisted:
+        unlisted_note = (f"[act] note: docs/ai/rules.md does not import {', '.join(result.unlisted)}; nothing "
+                         f"tells whether you left them out on purpose. To enter them: {rules.ADD_MISSING_COMMAND}")
+    try:
+        if actlib.read_cache().get("rules_unlisted_note", "") != unlisted_note:
+            if write:
+                actlib.write_cache({"rules_unlisted_note": unlisted_note})
+            if unlisted_note:
+                notes.append(unlisted_note)
+    except Exception:  # noqa: BLE001 - a broken cache must not hide the note
+        if unlisted_note:
+            notes.append(unlisted_note)
+    return notes
+
+
 def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tuple[list[str], list[str], list[str]]:
     """
     Re-derive every generated bridge that is still exactly as it was last generated (current
@@ -2446,6 +2477,15 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                 print(own_note)
 
     for dest_rel in changed_bridges:
+        if dest_rel == "docs/ai/rules.md":
+            # Edited locally, so not re-derived: enter what the template has and the file does not know
+            # (the same function update.py uses), leave everything the owner wrote as it is.
+            entry_notes = _follow_rules_md(root, write=(mode == "block"))
+            if mode == "block":
+                for entry_note in entry_notes:
+                    print(entry_note)
+            else:
+                warn_notes.extend(entry_notes)
         if dest_rel == "docs/ai/rules.md" and _old_rules_imports(root)[0]:
             continue  # the more specific import note below replaces this one
         note = _changed_bridge_note(root, dest_rel)

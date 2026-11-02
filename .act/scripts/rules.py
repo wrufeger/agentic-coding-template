@@ -18,6 +18,7 @@
 #   python .act/scripts/rules.py --list                  # human overview, one line per set/group
 #   python .act/scripts/rules.py CR-nuxt-basics           # one group in full, with its origin
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
+#   python .act/scripts/rules.py --add-missing           # enter rules/rule files of the template that docs/ai/rules.md lacks
 #   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
 #   python .act/scripts/rules.py --worker                 # the parts a worker is handed instead of CLAUDE.md
 #
@@ -51,6 +52,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -687,6 +689,7 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
 
     override_by_id = {o.id: o for o in project.overrides}
     known_ids: set[str] = set()
+    offered = actlib.read_rules_offered(root) if area.name == "core" else None
 
     for pset in project.sets:
         if area.name == "coding" and not pset.enabled:
@@ -699,6 +702,14 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
 
         for gid, tgroup in template.groups.items():
             if gid not in pset.groups:
+                if area.name == "core":
+                    if gid in (offered or {}).get(normalize_set_path(pset.path), []):
+                        continue  # offered before and taken out on purpose; it loads all the same
+                    findings.append(
+                        f"{rel}:{pset.line}: group `{gid}` of {pset.path} is missing here "
+                        f"(counts as switched on) — run {ADD_MISSING_COMMAND} to enter it"
+                    )
+                    continue
                 findings.append(
                     f"{rel}:{pset.line}: group `{gid}` of {pset.path} is missing here "
                     "(counts as switched on)"
@@ -707,7 +718,18 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
             if gid not in template.groups:
                 findings.append(
                     f"{rel}:{pset.groups[gid].line}: `{gid}` is not a group of {pset.path}"
+                    + (" (orphan: the rule was removed or renamed in the template; the line stays until "
+                       "you delete it)" if area.name == "core" else "")
                 )
+
+    if area.name == "core" and offered is not None:
+        named = {_core_key(pset.path) for pset in project.sets}
+        for rule_file in core_rule_files(root):
+            if (strip_template_prefix(rule_file) not in named and rule_file not in offered
+                    and _layer_imported(project, rule_file.split("/")[2])):
+                findings.append(
+                    f"{rel}:1: rule file {rule_file} is new in the template and not imported here, so its "
+                    f"rules never load — run {ADD_MISSING_COMMAND} to enter it")
 
     for override in project.overrides:
         if override.id not in known_ids:
@@ -953,6 +975,226 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
             out.extend(new for _pos, new in sorted(inserts.get(number, [])))
         _write_text_eol(path, "\n".join(out) + ("\n" if text.endswith("\n") else ""), eol)
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Entering what the template has and an edited docs/ai/rules.md does not know — a rule as a checkbox
+# line under its file's import, a rule file as an import block at the end of its section. The lock's
+# `rules_offered` remembers what was offered, so a line or an import the owner took out stays out.
+# ---------------------------------------------------------------------------
+
+CORE_RULE_LAYERS = ("shared", "orchestrator")
+ADD_MISSING_COMMAND = "python .act/scripts/rules.py --add-missing"
+
+
+def core_rule_files(root: Path) -> dict[str, TemplateSet]:
+    """The template's rule files docs/ai/rules.md can import, by root-relative path: every *.md directly
+    under .act/rules/shared/ and .act/rules/orchestrator/ (topics/ holds detail pages, not rules)."""
+    found: dict[str, TemplateSet] = {}
+    for layer in CORE_RULE_LAYERS:
+        base = root / ".act" / "rules" / layer
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("*.md")):
+            try:
+                found[path.relative_to(root).as_posix()] = parse_template_set(path, "template")
+            except (OSError, UnicodeDecodeError):
+                continue
+    return found
+
+
+def _core_key(path: str) -> str:
+    """A set path of docs/ai/rules.md as the key shared with the template file: ".act/rules/x.md" and
+    its local override "docs/ai/local/rules/x.md" both give "rules/x.md"."""
+    return strip_template_prefix(normalize_set_path(path))
+
+
+def _git_offered(root: Path) -> Optional[dict[str, list[str]]]:
+    """The offered record of a project that has none yet, read from git: the rule files committed in
+    HEAD under .act/rules/shared and .act/rules/orchestrator are what the project has been offered so
+    far (an update commits only at its end, so while it runs HEAD is the state before it). None when
+    there is no git, no HEAD or no rule file in it."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(root), "ls-tree", "-r", "--name-only", "HEAD", "--",
+             ".act/rules/shared", ".act/rules/orchestrator"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0:
+        return None
+    names = [line.strip() for line in res.stdout.splitlines() if line.strip().endswith(".md")]
+    return {name: [] for name in names} if names else None
+
+
+def _layer_imported(project: ProjectFile, layer: str) -> bool:
+    return any(_core_key(pset.path).startswith(f"rules/{layer}/") for pset in project.sets)
+
+
+@dataclass
+class CoreAdd:
+    messages: list[str] = field(default_factory=list)  # one per entry added (or to be added)
+    problems: list[str] = field(default_factory=list)  # what could not be entered safely, with the way out
+    offered: dict[str, list[str]] = field(default_factory=dict)  # the record after this run
+    # rule files not imported here that could not be told apart from ones left out on purpose (no record
+    # in the lock and no git state to compare with): named, never entered
+    unlisted: list[str] = field(default_factory=list)
+
+
+def _block_end(lines: list[str], index: int) -> int:
+    return _line_block(lines, index)[-1]
+
+
+def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "name") -> CoreAdd:
+    """Enter into an edited docs/ai/rules.md every rule and every rule file of the template that the
+    file does not know. A rule of an imported file gets `  - [x] `ID`` after the nearest listed rule
+    that precedes it in the template file (else right below the import); a rule file gets its import
+    line and a checkbox line per rule, after the last import of the same layer (shared or
+    orchestrator), i.e. at the end of its section. Nothing else in the file is touched, byte for byte.
+    Left alone: a rule listed under any file, a rule the record says was offered (the owner took the
+    line out: it counts as switched on all the same), a file the record says was offered and the file
+    does not import (switched off on purpose), a file of a layer (shared or orchestrator) of which the
+    file imports nothing (the layer is switched off; the file is recorded as offered, silently). What
+    cannot be entered safely (an unclosed code fence) comes back in `problems` with the way out.
+    Line ends and every other byte of the file stay as they are; an entered line takes the line end of
+    the line it follows. With write=False nothing is written, also not the record. A second run adds
+    nothing. The result's `offered` is the record to keep: the old one plus everything now listed.
+
+    `no_record` says what happens in a project whose lock has no record yet: "git" takes the rule files
+    committed in HEAD as offered (so only a file new since then is entered) and falls back to "name"
+    without git; "name" enters no file and lists the not imported ones in `unlisted` (no record is
+    written); "git-or-all" is "git", and without git every file counts as new."""
+    area = AREAS["core"]
+    result = CoreAdd()
+    path = root / area.project_file
+    if not path.is_file():
+        return result
+    files = core_rule_files(root)
+    project = parse_project_file(path, area)
+    recorded = actlib.read_rules_offered(root)
+    tracking = True  # whether a record is kept (False: none in the lock and nothing to start one from)
+    if recorded is not None:
+        offered = recorded
+    else:
+        baseline = _git_offered(root) if no_record in ("git", "git-or-all") else None
+        if baseline is not None:
+            offered = baseline
+        elif no_record == "git-or-all":
+            offered = {}
+        else:
+            offered, tracking = {}, False
+    result.offered = {rel: list(ids) for rel, ids in offered.items()}
+    if any("unclosed code fence" in message for _line, message in project.findings):
+        result.problems.append(
+            f"{area.project_file} has an unclosed code fence, nothing could be entered safely — close it, "
+            f"then run {ADD_MISSING_COMMAND}")
+        return result
+
+    # raw.splitlines() cuts at the same places as the parser's lines (it reads the file the same way),
+    # so a line number of `project` is an index here; keepends=True keeps every byte for writing back
+    raw = path.read_bytes().decode("utf-8")
+    lines = raw.splitlines()
+    raw_lines = raw.splitlines(keepends=True)
+    crlf = raw.count("\r\n")
+    default_eol = "\r\n" if crlf > raw.count("\n") - crlf else "\n"
+    by_key = {_core_key(pset.path): pset for pset in project.sets}
+    listed = {gid for pset in project.sets for gid in pset.groups}
+    inserts: dict[int, list[tuple[int, list[str]]]] = {}  # anchor line index -> [(order, lines)], written after it
+    inserted: set[str] = set()
+    entered_files: set[str] = set()
+
+    for number, (rel, template) in enumerate(files.items()):
+        key = strip_template_prefix(rel)
+        pset = by_key.get(key)
+        known = set(offered.get(rel, []))
+        if pset is None:
+            if rel in offered:
+                continue  # offered before and not imported now: taken out on purpose
+            layer = rel.split("/")[2]
+            siblings = [p for p in project.sets if _core_key(p.path).startswith(f"rules/{layer}/")]
+            if not siblings:
+                # the whole layer is switched off (the orchestrator rules then reach the session through
+                # the orchestrator-rules hook): the file is recorded as offered, nothing is entered or said
+                if tracking:
+                    result.offered[rel] = []
+                continue
+            if not tracking:
+                result.unlisted.append(rel)
+                continue
+            block = [f"{import_path(rel, area.project_file)}"] + [f"  - [x] `{gid}`" for gid in template.groups]
+            last = max(siblings, key=lambda p: p.line)
+            anchor = _block_end(lines, max([last.line, *(g.line for g in last.groups.values())]) - 1)
+            inserts.setdefault(anchor, []).append((1000 + number, ["", *block]))
+            inserted.update(template.groups)
+            entered_files.add(rel)
+            result.messages.append(f"{rel}: added as an import with {len(template.groups)} rule(s)")
+            continue
+        order = list(template.groups)
+        placed = [(order.index(gid), _block_end(lines, group.line - 1))
+                  for gid, group in pset.groups.items() if gid in order]
+        for gid in order:
+            if gid in listed or gid in known:
+                continue
+            position = order.index(gid)
+            before = [item for item in placed if item[0] < position]
+            anchor = max(before)[1] if before else pset.line - 1
+            placed.append((position, anchor))
+            inserts.setdefault(anchor, []).append((position, [f"  - [x] `{gid}`"]))
+            inserted.add(gid)
+            result.messages.append(f"{gid}: added to {pset.path}")
+
+    if tracking:
+        for rel, template in files.items():
+            if strip_template_prefix(rel) not in by_key and rel not in entered_files:
+                continue  # not imported and not entered: nothing to remember, the old record stays
+            ids = set(result.offered.get(rel, [])) | {gid for gid in template.groups if gid in listed or gid in inserted}
+            result.offered[rel] = [gid for gid in template.groups if gid in ids] + sorted(ids - set(template.groups))
+
+    if inserts and write:
+        out: list[str] = []
+        for number, raw_line in enumerate(raw_lines):
+            new_lines = [text for _order, block in sorted(inserts.get(number, [])) for text in block]
+            if not new_lines:
+                out.append(raw_line)
+                continue
+            end = raw_line[len(lines[number]):]
+            use = end if end in ("\n", "\r\n", "\r") else default_eol
+            out.append(raw_line if end else raw_line + use)
+            for position, text in enumerate(new_lines):
+                out.append(text + (use if end or position < len(new_lines) - 1 else ""))
+        path.write_bytes("".join(out).encode("utf-8"))
+    if write and tracking and result.offered != recorded:
+        actlib.write_rules_offered(root, result.offered)
+    return result
+
+
+def record_offered(root: Path, everything: bool = False, start: bool = False) -> bool:
+    """Record in the lock which rule files and rules docs/ai/rules.md has now, as offered. With
+    `everything`, the whole template tree counts (init: it just materialized all of it). Never removes
+    an entry. Without a record in the lock, none is started unless `everything` or `start` says so
+    (init: the file is new to the lock, what it lists is what it has been offered). Returns whether
+    the lock holds the record."""
+    path = root / AREAS["core"].project_file
+    if not path.is_file():
+        return False
+    try:
+        files = core_rule_files(root)
+        project = parse_project_file(path, AREAS["core"])
+    except (OSError, UnicodeDecodeError):
+        return False
+    offered = actlib.read_rules_offered(root)
+    if offered is None:
+        if not (everything or start):
+            return False  # no record to add to, and none to start from: the first update starts it
+        offered = {}
+    named = {_core_key(pset.path) for pset in project.sets}
+    listed = {gid for pset in project.sets for gid in pset.groups}
+    for rel, template in files.items():
+        if not everything and strip_template_prefix(rel) not in named:
+            continue
+        ids = set(offered.get(rel, [])) | {gid for gid in template.groups if everything or gid in listed}
+        offered[rel] = [gid for gid in template.groups if gid in ids] + sorted(ids - set(template.groups))
+    return actlib.write_rules_offered(root, offered)
 
 
 # ---------------------------------------------------------------------------
@@ -1567,6 +1809,9 @@ def build_parser() -> argparse.ArgumentParser:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--list", action="store_true", help="human overview, one line per set/group")
     mode.add_argument("--validate", action="store_true", help="schema + cross-checks, exit 1 on findings")
+    mode.add_argument("--add-missing", action="store_true",
+                      help="enter the rules and rule files of the template that docs/ai/rules.md does not "
+                           "know (--area core is implied); exit 1 if something could not be entered")
     mode.add_argument("--imports", action="store_true",
                       help="files Claude Code loads through @-imports with their size in characters and totals, "
                            "exit 1 on any it cannot follow")
@@ -1594,18 +1839,35 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    if args.id is not None and (args.list or args.validate or args.imports or args.worker):
-        print("rules.py: an id argument cannot be combined with --list, --validate, --imports or --worker",
-              file=sys.stderr)
+    if args.id is not None and (args.list or args.validate or args.imports or args.worker or args.add_missing):
+        print("rules.py: an id argument cannot be combined with --list, --validate, --imports, --worker "
+              "or --add-missing", file=sys.stderr)
         return 2
 
-    area = AREAS[args.area]
+    area = AREAS["core"] if args.add_missing else AREAS[args.area]
 
     try:
         root = actlib.repo_root()
     except RuntimeError as exc:
         print(f"rules.py: {exc}", file=sys.stderr)
         return 1
+
+    if args.add_missing:
+        if not (root / area.project_file).is_file():
+            print(f"rules.py: {area.project_file} not found — nothing to enter into", file=sys.stderr)
+            return 1
+        try:
+            added = add_missing_core_entries(root, no_record="git-or-all")
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"rules.py: could not enter into {area.project_file}: {exc}", file=sys.stderr)
+            return 1
+        for message in added.messages:
+            print(f"{area.project_file}: {message}")
+        for problem in added.problems:
+            print(f"{area.project_file}: not entered: {problem}")
+        if not added.messages and not added.problems:
+            print(f"{area.project_file} knows every rule and rule file of the template")
+        return 1 if added.problems else 0
 
     if args.worker:
         sys.stdout.write(cmd_worker(root))

@@ -854,6 +854,48 @@ def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
     return f"{verb} in {rel}: {'; '.join(messages)}", ([] if plan else [path])
 
 
+def step_add_missing_core_entries(root: Path, plan: bool) -> tuple[str, list[Path], list[str]]:
+    """Enter into docs/ai/rules.md what the replaced .act/rules/ added and the file does not know: a rule
+    as a checkbox line, a rule file as an import block (rules.add_missing_core_entries). A copy that is
+    still exactly its generated one is skipped here (the bridge refresh re-derives it; step_doctor then
+    records what it holds as offered). Returns (summary, touched, notes): `notes` name what could not
+    be entered safely, each with the command. Nothing is written under plan."""
+    rel = rules.AREAS["core"].project_file
+    path = root / rel
+    if not path.is_file():
+        return "", [], []
+    try:
+        if actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rel, "")):
+            return "", [], []
+        result = rules.add_missing_core_entries(root, write=not plan, no_record="git")
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"rules not checked ({exc.__class__.__name__}: {exc})", [], []
+    notes = [f"{rel}: {problem}" for problem in result.problems]
+    if result.unlisted:
+        notes.append(
+            f"{rel} does not import {', '.join(result.unlisted)}; this project has no record of what it was "
+            f"offered and no git state to compare with, so nothing was entered. If you want them, run "
+            f"{rules.ADD_MISSING_COMMAND} (it also enters any you left out on purpose)")
+    if not result.messages:
+        return "", [], notes
+    verb = "would enter" if plan else "entered"
+    return f"{verb} in {rel}: {'; '.join(result.messages)}", ([] if plan else [path]), notes
+
+
+def _record_rules_offered(root: Path) -> None:
+    """After the bridge refresh: a docs/ai/rules.md that is still its generated copy and imports every
+    rule file of the template has been offered all of them; otherwise what it lists is added to a
+    record that already exists (a project without one gets it from the first run that enters rules)."""
+    rel = rules.AREAS["core"].project_file
+    path = root / rel
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    complete = all(rules.import_path(name, rel) in text for name in rules.core_rule_files(root))
+    unchanged = actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rel, ""))
+    rules.record_offered(root, everything=unchanged and complete)
+
+
 def _print_content_diff(old_path: Path, new_path: Path, limit: int = 20) -> None:
     """Best-effort, capped unified diff for a changed non-rule file — rule/coding .md files keep
     the ID view instead (see the caller). Silently skipped for anything not decodable as UTF-8
@@ -2348,6 +2390,11 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
     the bridge files _refresh_generated_bridges rewrote, so the caller can add them to the commit
     alongside the inbox files."""
     bridge_summary, bridge_touched = _refresh_generated_bridges(root, plan)
+    if not plan:
+        try:
+            _record_rules_offered(root)
+        except (OSError, UnicodeDecodeError):
+            pass
     doctor_path = root / ".act" / "scripts" / "doctor.py"
     if not doctor_path.is_file():
         return f"{bridge_summary}; doctor not available", [], bridge_touched
@@ -2649,9 +2696,12 @@ def _finish_update(
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
     coding_summary, coding_touched = step_list_new_coding_entries(root, False)
     moved_summary, moved_touched = step_move_core_entries(root, False)
-    sync_touched = [*sync_touched, *coding_touched, *moved_touched]
+    entered_summary, entered_touched, entered_notes = step_add_missing_core_entries(root, False)
+    notes.extend(entered_notes)
+    sync_touched = [*sync_touched, *coding_touched, *moved_touched, *entered_touched]
     _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}; coding rules: {coding_summary}"
-                   + (f"; rule moves: {moved_summary}" if moved_summary else ""))
+                   + (f"; rule moves: {moved_summary}" if moved_summary else "")
+                   + (f"; rules entered: {entered_summary}" if entered_summary else ""))
 
     hooks_gitfiles_summary, hooks_gitfiles_touched = step_hooks_and_gitfiles(root, False)
     _print_step(7, hooks_gitfiles_summary)

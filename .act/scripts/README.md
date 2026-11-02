@@ -880,8 +880,8 @@ usage: manifest.py --write | --check
 Call: direct
 
 ```text
-usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --imports | --worker]
-                [--from FILE]
+usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --add-missing | --imports |
+                --worker] [--from FILE]
                 [id]
 
 Read the effective coding/core rules after the project's checkboxes and replacements are applied.
@@ -894,6 +894,9 @@ options:
   --area {coding,core}  which rule area to read (default: coding)
   --list                human overview, one line per set/group
   --validate            schema + cross-checks, exit 1 on findings
+  --add-missing         enter the rules and rule files of the template that docs/ai/rules.md does
+                        not know (--area core is implied); exit 1 if something could not be
+                        entered
   --imports             files Claude Code loads through @-imports with their size in characters
                         and totals, exit 1 on any it cannot follow
   --worker              the parts a worker is handed instead of CLAUDE.md: size and sources per
