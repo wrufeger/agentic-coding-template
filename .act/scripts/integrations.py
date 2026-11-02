@@ -32,8 +32,19 @@
 #       (one line, "run act-integrations") if it is missing, has no check date or is too old.
 #       act-pr and act-issue rely on exactly this contract.
 #
+#   python .act/scripts/integrations.py read-tools CATALOG_ID [--name SERVER] [--remove] [--root DIR]
+#       Allow the read-only tools of a catalog server (field `read-tools` of .act/mcp-catalog.md, exact
+#       names) as `mcp__<server>__<tool>` in .claude/settings.local.json > permissions.allow. The server
+#       name comes from .mcp.json (--name when it differs from the catalog id) and is written as Claude
+#       Code writes it into tool names (`my.server` -> `my_server`); a name with `__` or a trailing `_`
+#       is refused. Other entries and keys stay, no duplicates; the old file is copied to
+#       .act-local/backup/<time>/ first; invalid JSON stops the command with file and place, nothing
+#       written. --remove takes out only the entries this server's list would add. Plugin servers
+#       (`mcp__plugin_<plugin>_<server>__...`) are not covered. Exit 0 ok, 2 refused.
+#
 #   Examples:
 #     python .act/scripts/integrations.py check
+#     python .act/scripts/integrations.py read-tools github
 #     python .act/scripts/integrations.py check --write --mcp read-issues=mcp__github__list_issues
 #     python .act/scripts/integrations.py status --max-age-days 30
 #
@@ -437,6 +448,158 @@ def catalog_hints(kind: str, mcp: McpInfo) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Read-only tools of a catalog server -> permissions.allow
+# ---------------------------------------------------------------------------
+
+SETTINGS_RELATIVE = Path(".claude") / "settings.local.json"
+BACKUP_BASE = Path(".act-local") / "backup"  # a known entry of act_local_tidy.py (newest copies kept)
+_READ_TOOLS_FIELD = re.compile(r"^-\s+read-tools:\s*(.*?)\s*$")
+_TOOL_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+class ReadToolsError(Exception):
+    """A reason the read-tools command stops without writing; the message names file, place or value."""
+
+
+def catalog_read_tools(entry_id: str, path: Optional[Path] = None) -> list[str]:
+    """The exact tool names in the `read-tools` field of catalog entry `entry_id`. ReadToolsError when the
+    entry is missing, a name is not an exact tool name (a pattern, a space), or the field is empty."""
+    if path is None:
+        override = os.environ.get("ACT_MCP_CATALOG", "").strip()
+        path = Path(override) if override else CATALOG_PATH
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReadToolsError(f"cannot read the catalog {path}: {exc}") from exc
+    found_entry = False
+    raw = ""
+    current = ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = ""
+            continue
+        match = _CATALOG_FIELD.match(line)
+        if match and match.group(1) == "id" and not current:
+            current = match.group(2).replace("`", "").strip()
+            found_entry = found_entry or current == entry_id
+            continue
+        if current == entry_id:
+            field_match = _READ_TOOLS_FIELD.match(line)
+            if field_match:
+                raw = field_match.group(1)
+    if not found_entry:
+        raise ReadToolsError(f"no catalog entry {entry_id!r} in {path}")
+    names = [n.replace("`", "").strip() for n in raw.split(",") if n.replace("`", "").strip()]
+    for name in names:
+        if not _TOOL_NAME.match(name):
+            raise ReadToolsError(f"catalog entry {entry_id!r}: read-tools holds {name!r}, "
+                                 "which is not an exact tool name (letters, digits, _ and - only; no patterns)")
+    if not names:
+        raise ReadToolsError(f"catalog entry {entry_id!r} lists no read-tools (the names are not known for "
+                             "sure); nothing to allow")
+    return names
+
+
+def permission_server_name(name: str) -> str:
+    """The server name as Claude Code writes it into tool names: every character other than letters, digits,
+    `_` and `-` becomes `_` (`my.server` -> `my_server`). ReadToolsError for a name that cannot be written
+    as a single-tool rule: a `__` in it, or an ending `_`, would be read as the end of the server name."""
+    normalized = _NAME_UNSAFE.sub("_", name)
+    if not normalized:
+        raise ReadToolsError("empty server name")
+    if "__" in normalized or normalized.endswith("_"):
+        raise ReadToolsError(f"server name {name!r} becomes {normalized!r} in tool names, which contains `__` or "
+                             "ends with `_`: Claude Code would read it as another server, so no single-tool rule "
+                             "can be written for it. Nothing was written; rename the server in .mcp.json")
+    return normalized
+
+
+def _load_settings(path: Path) -> dict[str, Any]:
+    """The settings file as a dict ({} if it does not exist). ReadToolsError with file and place for
+    invalid JSON or an unexpected shape - the caller then writes nothing."""
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReadToolsError(f"cannot read {path}: {exc}") from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ReadToolsError(f"{path} is not valid JSON (line {exc.lineno}, column {exc.colno}: {exc.msg}); "
+                             "nothing was written - fix the file and run again") from exc
+    if not isinstance(data, dict):
+        raise ReadToolsError(f"{path}: the top level is not a JSON object; nothing was written")
+    permissions = data.get("permissions")
+    if permissions is not None and not isinstance(permissions, dict):
+        raise ReadToolsError(f"{path}: `permissions` is not an object; nothing was written")
+    if isinstance(permissions, dict) and not isinstance(permissions.get("allow", []), list):
+        raise ReadToolsError(f"{path}: `permissions.allow` is not a list; nothing was written")
+    return data
+
+
+def _backup_settings(root: Path, path: Path) -> Path:
+    """Copy the settings file to .act-local/backup/<YYYYmmdd-HHMMSS>[-n]/.claude/settings.local.json."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    folder, n = root / BACKUP_BASE / stamp, 1
+    while folder.exists():
+        n += 1
+        folder = root / BACKUP_BASE / f"{stamp}-{n}"
+    target = folder / SETTINGS_RELATIVE
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    except OSError as exc:
+        raise ReadToolsError(f"cannot back up {path} to {target}: {exc}; nothing was written") from exc
+    return target
+
+
+def apply_read_tools(root: Path, entry_id: str, server: str, remove: bool) -> list[str]:
+    """Merge the catalog entry's read-tools as `mcp__<server>__<tool>` into .claude/settings.local.json >
+    permissions.allow, or (remove) take exactly those entries out again. Other entries and keys stay, no
+    duplicates, a backup first. Returns report lines; ReadToolsError means nothing was written."""
+    names = catalog_read_tools(entry_id)
+    configured, note = read_mcp_json(root)
+    if server not in configured:
+        raise ReadToolsError(f"no server {server!r} in {root / '.mcp.json'} ({note or 'known: ' + (', '.join(configured) or 'none')}); "
+                             "set it up first, or pass its name with --name")
+    prefix = f"mcp__{permission_server_name(server)}__"
+    wanted = [prefix + n for n in names]
+    path = root / SETTINGS_RELATIVE
+    data = _load_settings(path)
+    permissions = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+    allow = list(permissions.get("allow", []))
+    if remove:
+        kept = [e for e in allow if not (isinstance(e, str) and e in wanted)]
+        changed = [e for e in wanted if e in allow]
+        if not changed:
+            return [f"nothing to remove: none of the {len(wanted)} read tools of {server} is in {SETTINGS_RELATIVE.as_posix()}"]
+        new_allow = kept
+    else:
+        present = {e for e in allow if isinstance(e, str)}
+        changed = [e for e in wanted if e not in present]
+        if not changed:
+            return [f"already allowed: all {len(wanted)} read tools of {server} are in {SETTINGS_RELATIVE.as_posix()}"]
+        new_allow = allow + changed
+    lines: list[str] = []
+    if path.is_file():
+        lines.append(f"backup: {_backup_settings(root, path).relative_to(root).as_posix()}")
+    permissions = dict(permissions)
+    permissions["allow"] = new_allow
+    data["permissions"] = permissions
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        actlib.write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    except OSError as exc:
+        raise ReadToolsError(f"cannot write {path}: {exc}") from exc
+    verb = "removed" if remove else "added"
+    lines.append(f"{verb} {len(changed)} of {len(wanted)} read tools of {server} in {SETTINGS_RELATIVE.as_posix()}:")
+    lines += [f"  {entry}" for entry in changed]
+    return lines
+
+
+# ---------------------------------------------------------------------------
 # Result, report, file
 # ---------------------------------------------------------------------------
 
@@ -683,6 +846,16 @@ def cmd_status(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_read_tools(root: Path, args: argparse.Namespace) -> int:
+    try:
+        lines = apply_read_tools(root, args.entry, args.name or args.entry, args.remove)
+    except ReadToolsError as exc:
+        print(f"integrations: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(lines))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Find and probe (read-only) the ways to the repo host and issue tracker, and keep "
@@ -698,6 +871,14 @@ def build_parser() -> argparse.ArgumentParser:
                        help="an MCP tool the assistant sees for a capability (repeatable)")
     status = sub.add_parser("status", parents=[common], help="exit 0 if the file exists and is fresh, else 3")
     status.add_argument("--max-age-days", type=int, default=DEFAULT_MAX_AGE_DAYS)
+    read_tools = sub.add_parser(
+        "read-tools", parents=[common],
+        help="allow the read-only tools of a catalog server in .claude/settings.local.json (--remove undoes it)")
+    read_tools.add_argument("entry", metavar="CATALOG_ID", help="id of the entry in .act/mcp-catalog.md")
+    read_tools.add_argument("--name", default="",
+                            help="the server's name in .mcp.json when it differs from the catalog id")
+    read_tools.add_argument("--remove", action="store_true",
+                            help="take out exactly the entries of this server's read-tools list")
     return parser
 
 
@@ -708,6 +889,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         os.chdir(root)  # actlib.read_identity() looks from the working directory
         if args.command == "check":
             return cmd_check(root, args)
+        if args.command == "read-tools":
+            return cmd_read_tools(root, args)
         return cmd_status(root, args)
     except (forge.ForgeError, RuntimeError) as exc:
         print(f"integrations: {exc}", file=sys.stderr)

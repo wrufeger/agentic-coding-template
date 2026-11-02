@@ -26,6 +26,9 @@ is at the top of the file.
    - Run the entry's `claude-command` with the placeholders filled in (a write to the project's
      `.mcp.json`), or write the `claude-json` block into `.mcp.json` yourself if the command does not
      work on this shell. Then `claude mcp list`, and run `check --write` again.
+   - If the entry's `read-tools` field is not empty, ask once whether those read-only tools may run
+     without asking each time (SKILL.md § Allow the read tools of a server); only after a "yes" run
+     `integrations.py read-tools <id>`. Writing tools are never part of it.
    - An entry that can write to a live system (`github`, `gitlab`, `atlassian`, `linear`, `youtrack`,
      `duckdb` with `--read-write`, `idea`) is used read-only until the human approves a write for this
      exact case (`R-safe-approval`).

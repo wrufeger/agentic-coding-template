@@ -830,11 +830,13 @@ docs/project/integrations.md. Never writes to a live system.
 
 positional arguments:
   <command>
-    check     detect, probe read-only, optionally write the file
-    status    exit 0 if the file exists and is fresh, else 3
+    check       detect, probe read-only, optionally write the file
+    status      exit 0 if the file exists and is fresh, else 3
+    read-tools  allow the read-only tools of a catalog server in .claude/settings.local.json
+                (--remove undoes it)
 
 options:
-  -h, --help  show this help message and exit
+  -h, --help    show this help message and exit
 ```
 
 ## `log.py`

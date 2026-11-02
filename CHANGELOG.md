@@ -11,6 +11,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `act-integrations` can allow the read-only tools of a catalog MCP server in one step, while setting it up or later.
+  Each entry in `.act/mcp-catalog.md` has a `read-tools` field with exact tool names (filled for `github`); after a
+  "yes", `python .act/scripts/integrations.py read-tools <id>` merges them as `mcp__<server>__<tool>` into
+  `.claude/settings.local.json` › `permissions.allow`, with the server name from `.mcp.json`. It saves a backup under
+  `.act-local/backup/`, refuses invalid JSON and server names that cannot form a single-tool rule, and
+  `--remove` takes out only those names again. Writing tools keep asking.
 - Entry ids such as `T12` are clickable in Markdown files of VS Code and IntelliJ: a link, go to definition and a hover
   with title and status, for every id that has an entry file in the inbox, tasks, backlog or archive under `docs/ai/`.
   Optional, set up once per machine with

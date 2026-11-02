@@ -48,6 +48,20 @@ Only when the human asks ("which MCP servers fit?", "is there an MCP for Jira?")
 is no request. Read `references/catalog.md` for the catalog format, picking entries, the age check and the
 set-up steps; a server is set up only after a clear "yes" for that entry.
 
+## Allow the read tools of a server (one question)
+
+When a catalog server is set up, and on request also for a server that is already set up ("allow the
+read tools of github"), ask once: "May the tools of `<id>` that only read (`read-tools` in
+`.act/mcp-catalog.md`) run without asking each time? Writing tools keep asking." Only after a "yes" run
+`python .act/scripts/integrations.py read-tools <id> [--name <server name in .mcp.json>]`; it adds the exact names
+as `mcp__<server>__<tool>` to `permissions.allow` in `.claude/settings.local.json`, keeps every other entry
+and key, saves the old file under `.act-local/backup/` and stops with a message on invalid JSON. Show its
+output. `--remove` takes them out again. An entry with an empty `read-tools` field offers nothing: say
+so, do not guess names. A server name with `__` or a trailing `_` cannot be written as a single-tool rule: the
+command refuses it, report that. Plugin servers (`mcp__plugin_...`) are not in the catalog and not handled.
+A tool that writes (create, update, comment, merge, request a review ...) stays out of the list and
+keeps asking (`R-safe-approval`). No config key switches this on: it is a question each time.
+
 ## Limits
 
 No write call, not even a harmless-looking one. No token value in chat, journal, file or feedback.
