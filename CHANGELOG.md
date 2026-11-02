@@ -77,6 +77,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `act-seo` is now a full page check. The code check stays the default; on request it also builds the production
+  version, starts it on a test port, crawls it and measures it with Lighthouse (`--live`, steps in
+  `references/live-run.md`, the server stopped by PID after checking port and command line), or checks the public URL
+  (crawl with header checks, PageSpeed Insights; the skill says first that the URL goes to Google, the key comes from
+  `PAGESPEED_API_KEY` only). The report separates Lighthouse points from real defects; fixes follow approval and a
+  re-measure, until 100 or every deviation is justified. `seo_crawl.py` and `seo_lighthouse.py` are now listed under
+  `act-seo` in the script reference.
 - `R-cost-delegate` says how work is cut for workers: work expected to run longer than about five minutes is first
   checked for independent parts and, where it splits, runs in parallel with separate write scopes, the saving measured
   before and after; tasks that touch the same files are first checked for one joint assignment (one write scope, a

@@ -38,8 +38,8 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
 | `security_scan.py` | Security check Art B: a live library-vulnerability lookup against the lock files an ecosystem actually has, run either as a manual command… | direct (also run before a commit that touches a lock file and daily at session start, with `security-check: deps`/`full`) |
 | `seo_check.py` | Code-only SEO checks over a project's HTML, templates, Markdown pages and framework config — the mechanical half of skill `act-seo`. Reads… | skill `act-seo` |
-| `seo_crawl.py` | Crawl of a running site — the crawl half of skill `act-seo`. Starts at one base URL, follows the internal links of the same origin (scheme… | direct (crawl of a running site (same origin), then the seo_check page checks; only HEAD requests to external links; the server is started by the caller, on a test port) |
-| `seo_lighthouse.py` | Lighthouse measurement for the URLs of a running site — the lab-measurement half of skill `act-seo`. Runs a pinned Lighthouse version… | direct (Lighthouse report for given URLs; the server is started by the caller, on a test port) |
+| `seo_crawl.py` | Crawl of a running site — the crawl half of skill `act-seo`. Starts at one base URL, follows the internal links of the same origin (scheme… | skill `act-seo` |
+| `seo_lighthouse.py` | Lighthouse measurement for the URLs of a running site — the lab-measurement half of skill `act-seo`. Runs a pinned Lighthouse version… | skill `act-seo` |
 | `settings_export.py` | `act-export-settings` — write the project's own rule deviations (and, with a switch, local scripts/checklists) to a portable settings file… | skill `act-export-settings` |
 | `settings_format.py` | Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in… | library |
 | `settings_load.py` | `act-load-settings` — import a portable settings file (or several) into this project: the counterpart to settings_export.py. Runs the same… | skill `act-load-settings` |
@@ -977,7 +977,7 @@ options:
 
 ## `seo_crawl.py`
 
-Call: direct (crawl of a running site (same origin), then the seo_check page checks; only HEAD requests to external links; the server is started by the caller, on a test port)
+Call: skill `act-seo`
 
 ```text
 usage: seo_crawl.py [-h] [--max-pages MAX_PAGES] [--max-depth MAX_DEPTH] [--timeout TIMEOUT]
@@ -1033,7 +1033,7 @@ options:
 
 ## `seo_lighthouse.py`
 
-Call: direct (Lighthouse report for given URLs; the server is started by the caller, on a test port)
+Call: skill `act-seo`
 
 ```text
 usage: seo_lighthouse.py [-h] [--runs RUNS] [--form-factor {mobile,desktop}] [--workdir WORKDIR]
