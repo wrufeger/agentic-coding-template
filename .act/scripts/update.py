@@ -71,7 +71,7 @@ import tiers
 # ---------------------------------------------------------------------------
 
 CATEGORY_DIRS = (
-    "rules", "coding", "skills", "agents", "scripts", "bridges", "hooks", "skeleton", "migrations",
+    "rules", "coding", "skills", "agents", "scripts", "bridges", "hooks", "skeleton", "migrations", "ide",
 )
 
 

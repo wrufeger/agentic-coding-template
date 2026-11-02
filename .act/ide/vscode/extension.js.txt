@@ -1,0 +1,305 @@
+'use strict';
+// Makes entry ids such as T12 clickable in Markdown files: document links, go to definition, hover.
+// Plain JavaScript (CommonJS), no npm, no build step, no server, no other process.
+// Read-only: it lists folders and reads entry files under docs/ai; it never writes and never uses the network.
+// The search rules are the same as those of the Python language server of this template; keep both in step.
+const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
+
+const ID_PATTERN = '\\b[BQTU]\\d+[a-z]?\\b';
+const COLLECTION_MARK = '<!-- act:archive-collection -->';
+const ENTRY_FILE_RE = /^([BQTU]\d+[a-z]?)(?:-.*)?\.md$/;
+const HEADING_RE = /^# +(\S.*?)\s*$/;
+const MARKDOWN_SPECIAL_RE = /[\\`*_\[\]()<>!|~&]/g;
+const ID_PARTS_RE = /^([A-Za-z]+)0*(\d+)([A-Za-z]?)$/;
+const SECTION_ANCHOR_RE = /^<a id="([^"\n]+)"><\/a>\s*$/;
+const FENCE_OPEN_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})\s*$/;
+const HEADER_FIELD_RE = /^[A-Za-z][A-Za-z-]*:\s/;
+
+// Places in order; the first hit wins. The last one is also searched for collection files.
+const OPEN_DIRS = ['docs/ai/inbox', 'docs/ai/work/tasks', 'docs/ai/work/backlog'];
+const ARCHIVE_DIR = 'docs/ai/work/archive';
+
+// Backslash-escapes every Markdown-significant character, so a title shows as plain text (no image, link,
+// emphasis or HTML out of an entry title). The Python server escapes the same set.
+function escapeMarkdown(text) {
+  return text.replace(MARKDOWN_SPECIAL_RE, '\\$&');
+}
+
+// The fence state after `line`, as CommonMark has it: null or [character, length].
+function fenceStep(state, line) {
+  line = line.replace(/\r$/, '');
+  if (state === null) {
+    const opened = FENCE_OPEN_RE.exec(line);
+    if (opened && !(opened[1][0] === '`' && opened[2].includes('`'))) return [opened[1][0], opened[1].length];
+    return null;
+  }
+  const closed = FENCE_CLOSE_RE.exec(line);
+  if (closed && closed[1][0] === state[0] && closed[1].length >= state[1]) return null;
+  return state;
+}
+
+// A zero-padded number and the plain one compare equal; a sub-letter is lower case. Same as the Python server.
+function canonicalId(raw) {
+  const m = ID_PARTS_RE.exec(raw.trim());
+  return m ? m[1].toUpperCase() + String(parseInt(m[2], 10)) + m[3].toLowerCase() : raw.trim().toUpperCase();
+}
+
+function stripBom(text) {
+  return text.startsWith('﻿') ? text.slice(1) : text;
+}
+
+function isCollection(text) {
+  return stripBom(text).startsWith(COLLECTION_MARK);
+}
+
+// [{id, line, title}] for every entry section of a collection; line is 1-based (the anchor line).
+// A pair inside a fenced code block is an example and does not count.
+function collectionSections(text) {
+  const lines = stripBom(text).split('\n');
+  const found = [];
+  let fence = null;
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index].replace(/\r$/, '');
+    const anchor = SECTION_ANCHOR_RE.exec(line);
+    if (fence === null && anchor && ID_PARTS_RE.test(anchor[1]) && index + 1 < lines.length) {
+      const heading = lines[index + 1].replace(/\r$/, '');
+      const own = '## ' + anchor[1];
+      if (heading === own || heading.startsWith(own + ' — ')) {
+        found.push({ id: anchor[1], line: index + 1, title: heading.slice(own.length + 3).trim() });
+        continue;
+      }
+    }
+    fence = fenceStep(fence, line);
+  }
+  return found;
+}
+
+// The header fields of an entry file as a map. Only the header block is read, never the body.
+function headerFields(text) {
+  const lines = stripBom(text).split('\n').map((line) => line.replace(/\r$/, ''));
+  const fields = {};
+  const take = (line) => {
+    const m = /^([A-Za-z][A-Za-z-]*):\s*(.*)$/.exec(line);
+    if (m && !(m[1] in fields)) fields[m[1]] = m[2].trim();
+  };
+  if (lines[0].trimEnd() === '---') {
+    for (let index = 1; index < lines.length; index++) {
+      if (lines[index].trimEnd() === '---') {
+        lines.slice(1, index).forEach(take);
+        return fields;
+      }
+      if (lines[index] !== '' && !HEADER_FIELD_RE.test(lines[index])) return {};
+    }
+    return {};
+  }
+  for (const line of lines) {
+    if (!HEADER_FIELD_RE.test(line)) break;
+    take(line);
+  }
+  return fields;
+}
+
+// The first `# ` heading outside a fenced code block, after the header.
+function firstHeading(text) {
+  let fence = null;
+  for (const raw of stripBom(text).split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const heading = fence === null ? HEADING_RE.exec(line) : null;
+    if (heading) return heading[1];
+    fence = fenceStep(fence, line);
+  }
+  return '';
+}
+
+function readText(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (e) {
+    return null;
+  }
+}
+
+// Names of the files (not folders) in a folder, sorted; [] if it cannot be read.
+function listDir(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() || (entry.isSymbolicLink() && isFile(path.join(dir, entry.name))))
+      .map((entry) => entry.name)
+      .sort();
+  } catch (e) {
+    return [];
+  }
+}
+
+function isFile(file) {
+  try {
+    return fs.statSync(file).isFile();
+  } catch (e) {
+    return false;
+  }
+}
+
+// The project root: the workspace folder that holds docs/ai, else the first folder above the document that does.
+function findRoot(document) {
+  const hasDocs = (dir) => {
+    try {
+      return fs.statSync(path.join(dir, 'docs', 'ai')).isDirectory();
+    } catch (e) {
+      return false;
+    }
+  };
+  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+  if (folder && hasDocs(folder.uri.fsPath)) return folder.uri.fsPath;
+  let dir = path.dirname(document.uri.fsPath);
+  for (;;) {
+    if (hasDocs(dir)) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// A lookup session for one project root, made per request: each folder is listed once, each file read once,
+// and the collection files are indexed once (canonical id -> section), however many ids the request asks about.
+// find(id) gives {file, line, title, status} or null when there is no file for the id.
+function createFinder(root) {
+  const names = new Map();
+  const listing = new Map();
+  const texts = new Map();
+  let sections = null;
+
+  const namesOf = (rel) => {
+    if (!names.has(rel)) names.set(rel, listDir(path.join(root, rel)));
+    return names.get(rel);
+  };
+  // Entry files of one folder, keyed by the id written in the file name.
+  const filesOf = (rel) => {
+    if (!listing.has(rel)) {
+      const found = new Map();
+      for (const name of namesOf(rel)) {
+        const m = ENTRY_FILE_RE.exec(name);
+        if (!m) continue;
+        if (!found.has(m[1])) found.set(m[1], []);
+        found.get(m[1]).push(name);
+      }
+      listing.set(rel, found);
+    }
+    return listing.get(rel);
+  };
+  const textOf = (file) => {
+    if (!texts.has(file)) texts.set(file, readText(file) || '');
+    return texts.get(file);
+  };
+
+  const single = (rel, id, where) => {
+    for (const name of filesOf(rel).get(id) || []) {
+      const file = path.join(root, rel, name);
+      const text = textOf(file);
+      if (rel === ARCHIVE_DIR && isCollection(text)) continue; // a collection, whatever its name
+      const status = headerFields(text).status || where;
+      return { file, line: 1, title: firstHeading(text), status };
+    }
+    return null;
+  };
+
+  // A file counts by content: the collection mark in its first line makes it a collection, even if it is named
+  // like an entry. Newest name first; the first file to carry an id wins.
+  const sectionIndex = () => {
+    if (sections === null) {
+      sections = new Map();
+      const files = namesOf(ARCHIVE_DIR).filter((name) => name.endsWith('.md')).reverse();
+      for (const name of files) {
+        const file = path.join(root, ARCHIVE_DIR, name);
+        const text = textOf(file);
+        if (!isCollection(text)) continue;
+        for (const section of collectionSections(text)) {
+          const key = canonicalId(section.id);
+          if (!sections.has(key)) sections.set(key, { file, line: section.line, title: section.title, status: 'archived' });
+        }
+      }
+    }
+    return sections;
+  };
+
+  return {
+    find(id) {
+      for (const rel of OPEN_DIRS) {
+        const hit = single(rel, id, 'open');
+        if (hit) return hit;
+      }
+      return single(ARCHIVE_DIR, id, 'archived') || sectionIndex().get(canonicalId(id)) || null;
+    },
+  };
+}
+
+function targetUri(hit) {
+  const uri = vscode.Uri.file(hit.file);
+  return hit.line > 1 ? uri.with({ fragment: 'L' + hit.line }) : uri;
+}
+
+function activate(context) {
+  const selector = { language: 'markdown', scheme: 'file' };
+
+  const links = {
+    provideDocumentLinks(document) {
+      const root = findRoot(document);
+      if (!root) return [];
+      const finder = createFinder(root);
+      const cache = new Map();
+      const result = [];
+      const re = new RegExp(ID_PATTERN, 'g');
+      const text = document.getText();
+      let m;
+      while ((m = re.exec(text)) !== null) {
+        if (!cache.has(m[0])) cache.set(m[0], finder.find(m[0]));
+        const hit = cache.get(m[0]);
+        if (!hit) continue;
+        const range = new vscode.Range(document.positionAt(m.index), document.positionAt(m.index + m[0].length));
+        const link = new vscode.DocumentLink(range, targetUri(hit));
+        link.tooltip = path.relative(root, hit.file).split(path.sep).join('/');
+        result.push(link);
+      }
+      return result;
+    },
+  };
+
+  const idAt = (document, position) => {
+    const range = document.getWordRangeAtPosition(position, new RegExp(ID_PATTERN));
+    return range ? { range, id: document.getText(range) } : null;
+  };
+
+  const definition = {
+    provideDefinition(document, position) {
+      const hit = idAt(document, position);
+      const root = hit && findRoot(document);
+      const found = root && createFinder(root).find(hit.id);
+      if (!found) return null;
+      return new vscode.Location(vscode.Uri.file(found.file), new vscode.Position(found.line - 1, 0));
+    },
+  };
+
+  const hover = {
+    provideHover(document, position) {
+      const hit = idAt(document, position);
+      const root = hit && findRoot(document);
+      const found = root && createFinder(root).find(hit.id);
+      if (!found) return null;
+      const title = found.title ? ' — ' + escapeMarkdown(found.title) : '';
+      const md = new vscode.MarkdownString('**' + hit.id + '**' + title + '\n\nStatus: ' + escapeMarkdown(found.status));
+      return new vscode.Hover(md, hit.range);
+    },
+  };
+
+  context.subscriptions.push(
+    vscode.languages.registerDocumentLinkProvider(selector, links),
+    vscode.languages.registerDefinitionProvider(selector, definition),
+    vscode.languages.registerHoverProvider(selector, hover),
+  );
+}
+
+function deactivate() {}
+
+module.exports = { activate, deactivate };

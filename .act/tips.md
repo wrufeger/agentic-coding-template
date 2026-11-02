@@ -95,3 +95,8 @@ when: always
 The optional `agnix` linter (a local run, never installed for you) gives a second opinion on
 skills, roles and rule files; `.act/skills/act-doctor/SKILL.md` names the four rules to switch
 off for this template.
+
+### TIP-id-links
+when: always
+Entry ids such as `T12` can be clickable in Markdown files in VS Code and IntelliJ (link, go to definition,
+hover): run `python .act/scripts/id_links_install.py` once per machine; details in `.act/rules/topics/id-links.md`.

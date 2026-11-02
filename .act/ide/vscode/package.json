@@ -1,0 +1,18 @@
+{
+  "name": "act-id-links",
+  "displayName": "ACT ID Links",
+  "description": "Makes entry ids such as T12 clickable in Markdown files: link, go to definition, hover.",
+  "version": "0.1.0",
+  "publisher": "act",
+  "license": "MIT",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:markdown"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Reads entry files of the workspace; only for trusted folders."
+    }
+  }
+}

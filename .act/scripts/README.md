@@ -25,6 +25,8 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `frontmatter.py` | One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's… | library |
 | `handover.py` | Answer "can this session be left now?" mechanically, read-only: uncommitted changes, started tasks without a working-state line, inbox… | skill `act-handover` |
 | `i18n_check.py` | Check a project's translation files for completeness and consistency — the mechanical half of skill `act-check-translations`. Code-only… | skill `act-check-translations` |
+| `id_links_install.py` | One-time, per-machine setup of the clickable entry ids (editor support). Copies the language server and its helper to a per-user folder… | direct (optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`) |
+| `id_links_lsp.py` | Language server that makes entry ids such as T12, B7, Q3 or U5 clickable in Markdown files opened in an editor (VS Code, IntelliJ with an… | direct (language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand) |
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `info.py` | Show, in a compact block, which project this session works in and its state: project name, folder and host, the session name the project… | skill `act-info` |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
@@ -691,6 +693,39 @@ options:
   --base BASE  base locale (default: en, else the largest)
   --json       print the report as JSON
   --no-code    skip the used/unused key check against source code
+```
+
+## `id_links_install.py`
+
+Call: direct (optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`)
+
+```text
+usage: id_links_install.py [-h] [--home HOME]
+
+Set up clickable entry ids for the editors: copies the language server to <home>/.act/id-links/,
+packs the VS Code extension as a .vsix there and writes an import template for IntelliJ (LSP4IJ).
+Installs nothing into an editor; prints the next steps and the way back. Safe to run again
+(overwrites the same files).
+
+options:
+  -h, --help   show this help message and exit
+  --home HOME  folder that takes the place of your home folder (default: your home folder)
+```
+
+## `id_links_lsp.py`
+
+Call: direct (language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand)
+
+```text
+usage: id_links_lsp.py [-h]
+
+Language server (stdio) that turns entry ids such as T12 in Markdown files into links, go-to-
+definition targets and hover cards for the matching entry under docs/ai/. Read-only, no network.
+Started by an editor integration; without arguments it serves the Language Server Protocol on
+stdin/stdout.
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## `ideas.py`

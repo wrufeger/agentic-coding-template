@@ -72,6 +72,8 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "forge.py": {"kind": "skill", "skill": "act-pr, act-issue, act-integrations", "note": "reads are direct; every write shows a preview and needs `--apply` after the human's \"yes\" (`topics/live-systems.md`)"},
     "frontmatter.py": {"kind": "library"},
     "i18n_check.py": {"kind": "skill", "skill": "act-check-translations"},
+    "id_links_install.py": {"kind": "direct", "note": "optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`"},
+    "id_links_lsp.py": {"kind": "direct", "note": "language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand"},
     "ideas.py": {"kind": "direct", "note": "session start and init call it; run by hand to record entries as processed"},
     "handover.py": {"kind": "skill", "skill": "act-handover"},
     "info.py": {"kind": "skill", "skill": "act-info"},

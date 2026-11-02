@@ -11,6 +11,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Entry ids such as `T12` are clickable in Markdown files of VS Code and IntelliJ: a link, go to definition and a hover
+  with title and status, for every id that has an entry file in the inbox, tasks, backlog or archive under `docs/ai/`.
+  Optional, set up once per machine with
+  `python .act/scripts/id_links_install.py` (details: `.act/rules/topics/id-links.md`). It copies a language server to
+  `~/.act/id-links/` and packs a VS Code extension (`.vsix`) and an IntelliJ template (plugin LSP4IJ) next to it; you
+  add them to the editor yourself with the command it prints. Both read only and use no network, and the editors start
+  only that copy, never a file inside the repository; after `act-update`, run the installer again.
 - `entries.py archive` writes `finished: <timestamp>` into an archived task's header, below `started:` (else below
   `created:`), so a task records when it was created, started and finished. An existing `finished:` stays; backlog
   items and inbox entries get no such field.
