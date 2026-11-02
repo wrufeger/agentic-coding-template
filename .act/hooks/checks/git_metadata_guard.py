@@ -31,10 +31,35 @@
 #             protected place only the files that can land on one are mapped (`_LandingFilter`); a source
 #             that cannot be read within the time budget is refused (`_CopySourceTooLarge`). The body of a
 #             quoted heredoc is left out of this reading only when the whole command is one text reader
-#             (`_without_text_reader_heredoc`: `cat > notes.md <<'EOF'`, `tee`, `git commit -F -`); any
-#             other body is read as commands, since what runs it cannot be told. When a target cannot be
-#             placed (dynamic, unknown base, scanner failure) the raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
+#             (`_without_text_reader_heredoc`: `cat > notes.md <<'EOF'`, `tee`, `git commit -F -`) or an
+#             inline Python program read in full (below); any other body is read as commands, since what
+#             runs it cannot be told. When a target cannot be placed (dynamic, unknown base, scanner
+#             failure) the raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
 #             Limit: a shell write of a `*.code-workspace` with a folderOpen task is not seen.
+#          4. Inline Python read as Python (`_python_program_reason`, reader: inline_code.py). A Bash
+#             command that hands a program to `python` - a heredoc body (`python - <<'EOF'`), the text
+#             behind `-c`, a here-string, a literal piped in - has that program parsed, and every call
+#             that runs a command or writes a file is judged: a literal command line (`os.system`,
+#             `subprocess.run`, `os.exec*`, ...) with this module's own shell reading, a literal path
+#             (`open(..., 'w')`, `shutil.copy`, `Path(...).write_text`, ...) like a shell write target, a
+#             literal `exec`/`eval` text as Python again. A call whose value is not written out (a
+#             variable, a path built with `os.path.join`, `/` or an f-string, a glob, a non-literal
+#             receiver) is not judged: nothing follows a name, and nothing refuses what it cannot read -
+#             the same limit as a script file. A program is then
+#             taken out of the shell reading of the command (`_without_freed_programs`) only when it is
+#             harmless by inline_code.py's allow-list - every call a plain builtin such as `print`, a
+#             method on a literal, `sys.exit`; nothing that binds such a name, decorates, or stores on
+#             an attribute - and only at the place the scanner found it, by the span it hands over with
+#             the program: the one word behind `-c` (quoted so that bash leaves it as written) or the
+#             body of a quoted heredoc, both on the top level of the command. So a string such as
+#             "cd .git && cp x hooks" in a list the program only prints is no copy, while the same text
+#             behind `git -c` or `bash -c` next to it stays a git key or a shell command. Everything
+#             else stays in the shell reading and is read as before: a program that calls anything off
+#             the allow-list (`open`, `subprocess`, a function of its own, `exec`: judged, not freed), a
+#             program that does not parse, a here-string or a pipe (judged, not freed: no span), an
+#             unquoted heredoc (bash expands it first), a program inside `sh -c`, `eval`, a wsl line or
+#             a heredoc a shell runs, PowerShell. A program inside a command line of inline Python is
+#             read the same way, `_MAX_PROGRAM_DEPTH` deep; a script file is not read (limit, as before).
 #
 # Decisions:
 #   - Read stays free: `git config --get`, `--list`, a Read of `.git/config`, `git config --global`
@@ -74,8 +99,10 @@
 # The list is not exhaustive (git adds keys); it names the ones whose purpose is to start a program.
 #
 # Known limits:
-#   - What a program or script writes itself (`pre-commit install`, `python -c "open(...)"`, a script
-#     file) is invisible to every write check — same limit as the scanners this module uses.
+#   - What a program or script writes itself (`pre-commit install`, a script file `python x.py`, code
+#     built at run time) is invisible to every write check — same limit as the scanners this module
+#     uses; inline Python is read for literal targets and literal command lines only (part 4 above):
+#     a write through a variable is not seen there either.
 #   - The one-shot environment variables GIT_SSH_COMMAND, GIT_EXTERNAL_DIFF, GIT_PAGER, GIT_EDITOR,
 #     GIT_ASKPASS are not refused (common, visible on the command line); `GIT_CONFIG_KEY_<n>` and
 #     `GIT_CONFIG_PARAMETERS` are, as they are `-c` in another spelling. A separate `export` is not
@@ -101,12 +128,13 @@ from typing import Optional
 
 import actlib
 
+from . import inline_code as _inline_code
 from .command_words import _git_invocations_with_prefix
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
 from .git_reset_hard import _resolve_cwd_after_leading_cd, _resolve_target_dir
 from .powershell_targets import _powershell_write_targets
 from .shell_targets import (
-    _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_dynamic_target, _resolve_path,
+    _GIT_WRITES_TEMPLATE_GUARD, _bash_inline_code, _bash_write_targets, _is_dynamic_target, _resolve_path,
 )
 from .worker_git_write import _parse_git_invocation
 from .write_guard import _guard_root
@@ -114,7 +142,7 @@ from .write_guard import _guard_root
 __all__ = [
     "_RAW_GIT_RE", "_RAW_CLAUDE_RE", "_dangerous_reason", "_path_reason", "_config_issue",
     "_invocation_reason", "check_git_metadata_guard", "_RAW_LAUNCH_RE", "_RAW_TASKS_RE", "_launch_reason",
-    "_folder_open_reason", "_copy_effective_targets",
+    "_folder_open_reason", "_copy_effective_targets", "_python_program_reason", "_without_freed_programs",
 ]
 
 _RULE = "R-safe-git-metadata"
@@ -1105,6 +1133,165 @@ def _copy_effective_targets(
     return found
 
 
+# --- Inline Python read as Python (part 4 of the module header) --------------------------------------
+
+# How deep a program inside a command line of inline Python is read as a program again: the program a
+# Bash command hands to `python` is depth 0, a `python -c` inside its `os.system(...)` depth 1; at
+# _MAX_PROGRAM_DEPTH a command line is read as shell text only, and an `exec` of a literal is not read again.
+_MAX_PROGRAM_DEPTH = 2
+_FREED_TEXT = "__act_inline_python__"
+
+
+def _without_freed_programs(text: str, freed: list[tuple[tuple[int, int], str]]) -> str:
+    """`text` (the command as the scanner read it, line continuations joined) with each freed program
+    taken out at the span the scanner gave for it and nowhere else - `freed` holds ((start, end), the
+    program's source): the one word that is the code behind `-c` becomes the quoted neutral word
+    `_FREED_TEXT` (one word for one word, so the shell structure stays), the body of a quoted heredoc
+    becomes nothing (its opener line and its end word stay). Spans are applied from the end of the
+    text, each once; a span outside the text or overlapping another is left as it is (not freed).
+    Bound to the place, never to the wording: the same text behind `git -c` or `bash -c` elsewhere in
+    the command is untouched."""
+    last = len(text)
+    for (start, end), source in sorted(set(freed), reverse=True):
+        if start < 0 or start > end or end > last:
+            continue
+        replacement = f"'{_FREED_TEXT}'" if source == _inline_code.SOURCE_CODE else ""
+        text = text[:start] + replacement + text[end:]
+        last = start
+    return text
+
+
+def _python_program_reason(
+    code: str, base: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
+    deadline: float, depth: int = 0,
+) -> tuple[Optional[str], bool, bool]:
+    """(why the inline Python program `code`, running in the directory `base` (None = unknown), is
+    refused, or None; whether the text was read as Python at all; whether the program is harmless by
+    inline_code.py's allow-list, so that the caller may take it out of the shell reading). Read by
+    inline_code.read_python_program: a literal command line is judged with this module's shell reading
+    in the directory the call names (`cwd=`) or runs in; a literal path like a shell write target; a
+    literal `exec`/`eval` text as a program again, `_MAX_PROGRAM_DEPTH` deep. A value that is no literal
+    is not judged (the reader does not report it). A program that does not parse as Python is not read
+    (None, False, False): the caller keeps the shell reading."""
+    program = _inline_code.read_python_program(code)
+    if program is None:
+        return None, False, False
+    for call in program.calls:
+        where = f"inline Python, line {call.line}, `{call.name}`"
+        if not call.directory_known:
+            directory: Optional[str] = None
+        elif call.directory is None:
+            directory = base
+        else:
+            resolved = _resolve_path(call.directory, base)
+            directory = str(resolved) if resolved is not None else None
+        if call.kind == _inline_code.CALL_WRITE:
+            for path in call.values:
+                reason = _target_reason(path, directory, gitdirs, claude_dirs, worker, literal=True, shell=True)
+                if reason:
+                    return f"writes {reason} (from {where})", True, False
+        elif call.kind == _inline_code.CALL_RUN:
+            for text in call.values:
+                reason = _command_line_reason(text, directory, gitdirs, claude_dirs, worker, deadline, depth + 1)
+                if reason:
+                    return f"{reason} (from {where})", True, False
+        elif depth + 1 < _MAX_PROGRAM_DEPTH:
+            for text in call.values:
+                reason, _parsed, _harmless = _python_program_reason(
+                    text, base, gitdirs, claude_dirs, worker, deadline, depth + 1,
+                )
+                if reason:
+                    return reason, True, False
+    return None, True, program.harmless
+
+
+def _python_programs_reason(
+    command: str, base_cwd: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
+    deadline: float, depth: int,
+) -> tuple[Optional[str], str]:
+    """(why an inline Python program of the Bash `command` is refused, or None; the command for the
+    shell reading: with every harmless program taken out at its own span - _without_freed_programs - or
+    `command` as it is when nothing is freed). Programs are found by the shared scanner
+    (shell_targets._bash_inline_code), once per directory the call may run in, and judged in each; the
+    scanner hands over a span only for a program on the top level of the command - the quoted word
+    behind `-c`, the body of a quoted heredoc - so a program without one is judged but never freed."""
+    if depth >= _MAX_PROGRAM_DEPTH or not _inline_code.mentions_interpreter(command):
+        return None, command
+    programs, text = _bash_inline_code(command, base_cwd)
+    freed: list[tuple[tuple[int, int], str]] = []
+    for language, code, base, source, span in programs:
+        if language != _inline_code.PYTHON:
+            continue
+        reason, _parsed, harmless = _python_program_reason(code, base, gitdirs, claude_dirs, worker, deadline, depth)
+        if reason:
+            return reason, command
+        if harmless and span is not None:
+            freed.append((span, source))
+    if not freed:
+        return None, command
+    return None, _without_freed_programs(text, freed)
+
+
+def _shell_command_reason(
+    command: str, base_cwd: Optional[str], powershell: bool, gitdirs: list[Path], claude_dirs: list[Path],
+    worker: bool, deadline: float, depth: int,
+) -> tuple[Optional[str], str]:
+    """(why the shell `command` is refused for what it writes, or None; the command as the shell
+    reading saw it - without the inline Python programs read in full): the inline Python programs
+    (Bash only, _python_programs_reason), the write targets the shared scanners find, the files a copy
+    lands on. `base_cwd` None: the directory the command runs in is unknown. Raises _CopySourceTooLarge
+    for a copy source that cannot be read in time, and lets any other error through to the caller's
+    raw-text fallback."""
+    shell_command = command
+    if not powershell:
+        reason, shell_command = _python_programs_reason(
+            command, base_cwd, gitdirs, claude_dirs, worker, deadline, depth,
+        )
+        if reason:
+            return reason, shell_command
+    if powershell:
+        found = _powershell_write_targets(command, base_cwd or os.getcwd(), _GIT_WRITES_TEMPLATE_GUARD, broad=True)
+        if found is None:
+            raise ValueError("PowerShell command not evaluable")
+        targets = [(raw, base_cwd) for raw in found]
+    else:
+        targets = list(_bash_write_targets(shell_command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD))
+    copy_base, copy_known = _resolve_cwd_after_leading_cd(shell_command, base_cwd)
+    copy_targets = [
+        (raw, copy_base if copy_known else None)
+        for raw in _copy_effective_targets(
+            shell_command, powershell, copy_base if copy_known else None, deadline, gitdirs + claude_dirs,
+        )
+    ]
+    for raw, base in targets:
+        reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)
+        if reason:
+            return f"writes {reason}", shell_command
+    parents: dict = {}
+    for count, (raw, base) in enumerate(copy_targets, 1):
+        reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True, parents=parents)
+        if reason:
+            return f"writes {reason}", shell_command
+        if count % 256 == 0 and time.monotonic() > deadline:
+            raise _CopySourceTooLarge(raw)
+    return None, shell_command
+
+
+def _command_line_reason(
+    command: str, base_cwd: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
+    deadline: float, depth: int,
+) -> Optional[str]:
+    """Why a command line that inline Python hands to a shell or a program is refused, or None: the
+    whole reading of a Bash command (_shell_command_reason, then _invocation_reason), in the directory
+    `base_cwd` (None = unknown)."""
+    reason, shell_command = _shell_command_reason(
+        command, base_cwd, False, gitdirs, claude_dirs, worker, deadline, depth,
+    )
+    if reason:
+        return reason
+    return _invocation_reason(shell_command, base_cwd)
+
+
 def _violation(payload: dict) -> Optional[str]:
     tool_name = payload.get("tool_name")
     tool_input = payload.get("tool_input")
@@ -1136,35 +1323,13 @@ def _violation(payload: dict) -> Optional[str]:
     if not isinstance(command, str) or not command.strip():
         return None
 
+    shell_command = command
     try:
-        if tool_name == "Bash":
-            targets = [(raw, base) for raw, base in
-                       _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD)]
-        else:
-            found = _powershell_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
-            if found is None:
-                raise ValueError("PowerShell command not evaluable")
-            targets = [(raw, base_cwd) for raw in found]
-        copy_base, copy_known = _resolve_cwd_after_leading_cd(command, base_cwd)
-        deadline = _copy_deadline(payload)
-        copy_targets = [
-            (raw, copy_base if copy_known else None)
-            for raw in _copy_effective_targets(
-                command, tool_name == "PowerShell", copy_base if copy_known else None, deadline,
-                gitdirs + claude_dirs,
-            )
-        ]
-        for raw, base in targets:
-            reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)
-            if reason:
-                return f"writes {reason}"
-        parents: dict = {}
-        for count, (raw, base) in enumerate(copy_targets, 1):
-            reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True, parents=parents)
-            if reason:
-                return f"writes {reason}"
-            if count % 256 == 0 and time.monotonic() > deadline:
-                raise _CopySourceTooLarge(raw)
+        reason, shell_command = _shell_command_reason(
+            command, base_cwd, tool_name == "PowerShell", gitdirs, claude_dirs, worker, _copy_deadline(payload), 0,
+        )
+        if reason:
+            return reason
     except _CopySourceTooLarge:
         return (
             "copies a source that is too large to check in time, so it cannot be told whether it writes "
@@ -1182,7 +1347,7 @@ def _violation(payload: dict) -> Optional[str]:
             return "mentions the VS Code tasks file (it can start code when the folder is opened) in a command that cannot be analysed"
 
     try:
-        return _invocation_reason(command, base_cwd)
+        return _invocation_reason(shell_command, base_cwd)
     except Exception:  # noqa: BLE001 — see above
         if re.search(r"\bgit\b", command) and re.search(r"\bconfig\b|\s-c\s", command) and re.search(
             r"hookspath|fsmonitor|sshcommand|alias\.|include|core\.(?:editor|pager)", command, re.IGNORECASE,

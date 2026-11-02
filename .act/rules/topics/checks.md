@@ -99,7 +99,40 @@ opened are covered too: a worker never writes `.vscode/tasks.json`, `.devcontain
 directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds a task that runs on
 `folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool (judged on the text
 the edit produces); the human writes such a file themselves. Limit: what a program or script writes
-itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check.
+itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check. Inline Python
+narrows that limit: a Python program a Bash command hands to `python` behind `-c`, as a heredoc, a
+here-string or a literal piped in is also read as Python, so that very `python -c "open(...)"` is
+judged, while a script file (`python script.py`) stays invisible. A call that runs a command or writes
+a file (`os.system`, `subprocess`, `os.exec*`, `open(..., 'w')`, `shutil.copy`, `Path(...).write_text` …)
+is judged by its literal value — the command line like a shell command, the path (a string, or
+`Path(...)` of strings) like a write target —, and `exec`/`eval` of a literal is read again, one level
+deep (a literal `exec` inside that one is not followed). An `open` of a literal path counts as a write
+also when its mode is no literal. A value that is no literal is not seen: a variable, a name bound
+earlier, `os.path.join`, `Path(...) / x`, an f-string, a glob result, a loop over a list. That is the
+same limit as for a script file: the reading catches a literal path typed by mistake, it does not work
+out what a program computes. On top of that, a program is taken out of the shell reading of the command
+only when it is harmless — every call a plain builtin that computes or prints (`print`, `len`, `sorted`,
+`str` …), a method on a literal, `sys.exit`; no `key=`, no decorator, no class, no dunder name but
+`__name__` and `__file__`, no attribute read beyond those calls and `sys.argv`/`sys.stdout`/`sys.stderr`,
+no store on an attribute or an item, no rebinding of such a name — and only at the place
+it stands: the one word behind `-c` or the body of a quoted heredoc, on the top level of the command.
+So a string such as `"cp x .git/hooks/y"` in a list the program only prints is free, while the same
+text behind `git -c` or `bash -c` next to it still counts. Everything else is read as before, its text
+as shell commands: a program that calls anything off that list (`open`, `subprocess`, a function of
+its own), a program that does not parse as Python, a here-string, a pipe, an unquoted heredoc, a
+program inside `sh -c`, `eval` or a wsl line, and PowerShell. Not read: a callee reached through
+`getattr` or a subscript, a function bound to a variable, `str.replace` and `Path.replace`, a name
+without an import the reading knows, writing calls outside the families it knows (`io.FileIO`,
+`urllib.request.urlretrieve`, `extractall` of a zip or tar archive), other interpreters.
+
+Two boundaries hold for every shell check that reads write targets from the command text (write-guard,
+worker-write-scope, git-metadata-guard, outside-root), since the checks read the text and run nothing:
+**runtime code** — code that becomes a script only when the command runs (`bash <<< '…'`, `source
+/dev/stdin`, `$CMD <<'EOF'`, `eval "$(cat <<'EOF' …)"`, `[scriptblock]::Create`, `Start-Process`) is
+not followed into; and **state** — a target that depends on an earlier command or on an alternative
+(`ln -s <project>/src l && echo x > l/f`, `cd a || cd b` many times over) is judged on what the text
+says, not on what the file system will hold. The checks are a guard rail against mistakes, not a wall
+against intent: whoever routes a write around them already acts against their own assignment.
 
 Redirections behind a copy command are not operands. A copy source is read whole: there is no
 file-count limit, links and junctions inside it are followed once each, and a source that cannot be

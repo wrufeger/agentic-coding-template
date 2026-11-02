@@ -18,7 +18,10 @@
 #          `echo`/`printf` that is piped into `xargs`, the string after `cmd /c`), every write
 #          target the shared write-target scanners find (`>`, `tee`, `mv`, `Set-Content`, ...) as a
 #          write. A command that runs in a directory outside the allowed places (the session itself
-#          started there) reads that directory. MCP tools are not looked at.
+#          started there) reads that directory. The command line of `wsl`/`wsl.exe` is read as the
+#          commands it runs inside WSL, where `/mnt/<x>/...` is the Windows drive <X>: (_scan_wsl,
+#          the same mapping the shared write-target scanners apply there, and only there: a file
+#          tool's `/mnt/d/x` is no drive on Windows). MCP tools are not looked at.
 #
 #          Two readings of a path word. The file tools expand nothing, so their path is taken
 #          literally (`$x`, `{a,b}` and `%X%` are plain characters) and `x/..` is cut out as text, as
@@ -118,6 +121,8 @@ from .shell_targets import (
     _heredoc_may_feed_shell,
     _resolve_path,
     _to_native_path,
+    _wsl_command_line,
+    _wsl_native_word,
 )
 from .write_scope import _external_directories, _read_json_object, _system_temp_roots
 
@@ -985,12 +990,49 @@ def _scan_word_lists(judge: _Judge, word_lists: list[list[str]], cwd: str) -> No
     _scan_from(judge, word_lists, [cwd], 0)
 
 
+def _scan_wsl(judge: _Judge, args: list[str], bases: list[Optional[str]], depth: int) -> bool:
+    """The command line of a `wsl`/`wsl.exe` call read as the commands it runs inside WSL: its words with
+    `/mnt/<x>/...` as drive <X>: (shell_targets._wsl_native_word, the mapping the write-target scanners
+    apply to the same line), split by the shell lexer where wsl hands the text to the distribution's
+    shell, taken as they stand under `--exec`. A `--cd` directory in Windows or `/mnt` form is a read and
+    the base of what follows; a Linux one (`~`, `/home/...`) leaves the base unknown. False when the call
+    runs no command line (`wsl --list`, `--export`, ...): the caller then reads the words as before."""
+    parsed = _wsl_command_line(args)
+    if parsed is None:
+        return False
+    rest, cd_dir, exec_mode = parsed
+    if cd_dir is not None:
+        moved = str(_wsl_native_word(cd_dir))
+        if _DRIVE_RE.match(moved) or _UNC_RE.match(moved):
+            judge.judge(moved, False, bases)
+            texts = [
+                text for base in bases[:_MAX_BASES]
+                for text in [_resolve_text(moved, base, judge.bash)]
+                if text and not text.startswith(_POSIX_PREFIX)
+            ]
+            bases = list(dict.fromkeys(texts))[:_MAX_BASES] if texts else [None]
+        else:
+            bases = [None]
+    lists: list[list[str]] = []
+    if exec_mode:
+        lists.append(_Words(str(_wsl_native_word(word)) for word in rest))
+    else:
+        for words in _shell_word_lists(" ".join(str(word) for word in rest)):
+            item = _Words(str(_wsl_native_word(word)) for word in words)
+            item.feeds_xargs = bool(getattr(words, "feeds_xargs", False))
+            lists.append(item)
+    _scan_from(judge, lists, bases, depth + 1)
+    return True
+
+
 def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[str]], depth: int) -> None:
     for words in word_lists:
         split = _command_split(words)
         if split is None:
             continue
         name, args = split
+        if name == "wsl" and depth < 2 and _scan_wsl(judge, args, bases, depth):
+            continue  # the words of the wsl call itself are its options and the line read above
         feeds = bool(getattr(words, "feeds_xargs", False))
         for text, _strict in _read_candidates(name, args, feeds):
             judge.judge(text, False, bases)

@@ -92,6 +92,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `git-metadata-guard` reads Python code handed to `python` behind `-c`, in a heredoc, a here-string or a pipe as
+  Python instead of as shell text. A literal target (a string or `Path(...)` of strings) in a writing call and a
+  literal command line in an executing call are judged as before; `exec`/`eval` of a literal is read one level deep.
+  A program that only computes or prints is no longer refused for strings that merely look like commands (a list of
+  test commands it prints). A value that is no literal (a variable, `os.path.join`, an f-string, a glob) is not seen,
+  the same documented limit as for a script file.
+- `topics/checks.md` names two limits of every shell check that reads write targets from the command text: code that
+  becomes a script only at run time, and targets that depend on an earlier command or an alternative. The checks are
+  a guard rail against mistakes, not a wall against intent.
 - `act-seo` is now a full page check. The code check stays the default; on request it also builds the production
   version, starts it on a test port, crawls it and measures it with Lighthouse (`--live`, steps in
   `references/live-run.md`, the server stopped by PID after checking port and command line), or checks the public URL
@@ -133,6 +142,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- A WSL path `/mnt/<x>/…` in a `wsl` command line (also after `--exec` or `--distribution-id`) is now the Windows
+  drive `<X>:` for write-guard, worker-write-scope and outside-root alike, read in the shared scanner. `cmd /c <line>`
+  is read like an `eval` of its words.
+- `worker-write-scope` no longer refuses `mkdir -p 'server/api/[id]'` while a sibling folder matches the brackets as a
+  glob: the quoting of each word travels to the check, so a quoted or escaped bracket names the literal folder.
 - After `git merge`, `git pull` or `git cherry-pick`, the dependency scan of the lock files the command brought in is
   no longer skipped silently when the hook runs out of time listing them with git (a busy machine, or a merge with
   hundreds of lock files). The hook now hands the listing to the detached background worker, which lists, scans and

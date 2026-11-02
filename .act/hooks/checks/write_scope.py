@@ -40,6 +40,12 @@
 # powershell_targets.py find the call, its code and its directory, inline_code.py finds a write call and
 # the path literals, and _inline_target_offends judges each literal like a write target (but not as a
 # shell word). No other check sees these targets.
+#
+# A Bash target's quoting travels with it up to the judgment (shell_targets._Word.live): a glob
+# character bash takes literally - quoted or escaped - expands nothing, so `mkdir -p 'server/api/[id]'`
+# is the folder `[id]` and is not refused for a neighbour the unquoted word would hit; the unquoted
+# word, and a word whose quoting is not known (a nested shell, `eval`, `$(...)`, the legacy scanner,
+# PowerShell), is expanded as before (_live_glob_pattern, _shell_expansion_escapes).
 
 from __future__ import annotations
 
@@ -65,6 +71,7 @@ from .powershell_targets import (
 )
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
+    _Word,
     _bash_inline_code_targets,
     _bash_write_targets,
     _is_absolute_target,
@@ -82,7 +89,7 @@ __all__ = [
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
     "_agent_assignment_text",
-    "_normalize_candidate_path", "_within_scratchpad", "_names_throwaway_place", "_throwaway_way_out", "_offending_hint", "_matches_scope", "_shell_expansion_escapes",
+    "_normalize_candidate_path", "_within_scratchpad", "_names_throwaway_place", "_throwaway_way_out", "_offending_hint", "_matches_scope", "_live_glob_pattern", "_shell_expansion_escapes",
     "_write_scope_message", "_INLINE_DYNAMIC_RE", "_inline_target_offends", "_inline_hint",
     "check_worker_write_scope",
 ]
@@ -640,18 +647,32 @@ def _target_forms(tool_name: str, raw: str) -> list[_TargetForm]:
     if tool_name != "Bash":
         return [(raw, False)]
     text = str(raw)
-    variants = literal_brace_variants(text, getattr(raw, "live", None))
+    live = getattr(raw, "live", None)
+    variants = literal_brace_variants(text, live)
+    # The word itself stays the lexer's `_Word`: what it knew about the quoting of each character
+    # (`live`) travels with it up to the judgment (_shell_expansion_escapes). A brace variant is a
+    # rebuilt text and carries no such knowledge.
     forms: list[_TargetForm] = (
-        [(text, False)] if variants is None else [(variant, False) for variant in variants] + [(text, True)]
+        [(raw, False)] if variants is None else [(variant, False) for variant in variants] + [(raw, True)]
     )
     if sys.platform == "win32":
         roots = _system_temp_roots()
         if roots:
-            forms = [
-                (str(roots[0]) + path[4:] if path == "/tmp" or path.startswith("/tmp/") else path, literal)
-                for path, literal in forms
-            ]
+            forms = [(_with_temp_root(path, str(roots[0])), literal) for path, literal in forms]
     return forms
+
+
+def _with_temp_root(path: str, temp_root: str) -> str:
+    """`path` with a leading `/tmp` replaced by the system temp directory (Git Bash on Windows maps it
+    there); any other path comes back as it is. A lexer word keeps its `live` marks for the unchanged
+    tail, the inserted directory counting as quoted text."""
+    if path != "/tmp" and not path.startswith("/tmp/"):
+        return path
+    text = temp_root + path[4:]
+    live = getattr(path, "live", None)
+    if live is None:
+        return text
+    return _Word(text, getattr(path, "subs", ()), None, "." * len(temp_root) + live[4:])
 
 
 def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
@@ -689,17 +710,45 @@ def _matches_scope(rel_posix: str, patterns: list[str]) -> bool:
     return False
 
 
+def _live_glob_pattern(raw: str) -> Optional[str]:
+    """`raw` as the pattern the shell expands it to: a glob character the lexer saw quoted or escaped
+    (`shell_targets._Word.live` "."), which bash takes literally, is bracketed so that glob reads it
+    literally too (`'server/api/[id]'` -> `server/api/[[]id]`); None when nothing is left for the shell
+    to expand - no glob character at all, or every one of them quoted (`mkdir -p 'server/api/[id]'`
+    creates the folder `[id]`, whatever neighbours exist). A word without `live` (one from a nested
+    shell, `eval` or `$(...)`, the legacy scanner's, a PowerShell target) keeps every glob character
+    live, as before."""
+    text = str(raw)
+    if not any(char in text for char in "*?["):
+        return None
+    live = getattr(raw, "live", None)
+    if live is None:
+        return text
+    pattern: list[str] = []
+    expands = False
+    for index, char in enumerate(text):
+        if char in "*?[" and live[index] != "L":
+            pattern.append(f"[{char}]")
+        else:
+            expands = expands or char in "*?["
+            pattern.append(char)
+    return "".join(pattern) if expands else None
+
+
 def _shell_expansion_escapes(raw: str, base: Optional[str], root: Path, patterns: list[str]) -> bool:
     """True if a shell (Bash, PowerShell) target holding "[", "*" or "?" expands, at run time, to an
     existing path outside `patterns`. The shell reads `[id]` as a wildcard class even where the scope
     reads it literally, so `echo x > server/api/[id]/f` writes `server/api/d/f` when that folder
-    exists. Python's glob understands the same classes as bash; PowerShell's `-Path` wildcards
-    are approximated the same way. No existing match leaves the literal reading standing (bash
-    without nullglob keeps the word as typed). Limit: only paths existing when the hook runs are
-    seen; a match created earlier in the same command is not."""
-    if not any(ch in raw for ch in "*?["):
+    exists - but only where the word is unquoted: a quoted or escaped glob character is literal to
+    bash and expands nothing (_live_glob_pattern). Python's glob understands the same classes as bash;
+    PowerShell's `-Path` wildcards are approximated the same way (quoted or not, as `-Path` reads
+    them). No existing match leaves the literal reading standing (bash without nullglob keeps the word
+    as typed). Limit: only paths existing when the hook runs are seen; a match created earlier in the
+    same command is not."""
+    pattern = _live_glob_pattern(raw)
+    if pattern is None:
         return False
-    resolved = _resolve_path(raw, base) if (base is not None or _is_absolute_target(raw)) else None
+    resolved = _resolve_path(pattern, base) if (base is not None or _is_absolute_target(raw)) else None
     if resolved is None:
         return False
     try:
@@ -991,9 +1040,14 @@ def check_worker_write_scope(payload: dict) -> int:
     # it expands to and as its literal name (what bash writes with brace expansion off). Every variable
     # keeps the target dynamic, a temp-directory variable (`$TEMP`, `$env:TEMP`) too.
     checked_targets: list[tuple[str, Optional[str], bool]] = []
+    seen_forms: set[tuple] = set()
     for raw_target, base in write_targets:
         for path, literal_brace in _target_forms(tool_name, raw_target):
-            if (path, base, literal_brace) not in checked_targets:
+            # Two words of the same text are two targets when their quoting differs (`'[id]'` next to
+            # `[id]`): only the unquoted one expands, so each is judged on its own.
+            key = (str(path), base, literal_brace, getattr(path, "live", None))
+            if key not in seen_forms:
+                seen_forms.add(key)
                 checked_targets.append((path, base, literal_brace))
     for raw_target, base, literal_brace in checked_targets:
         dynamic = _is_dynamic_target(raw_target) and not literal_brace

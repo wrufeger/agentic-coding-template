@@ -64,6 +64,8 @@
 #     redirect syntax is close enough to Bash's for `>`/`>>`/`2>`, not identical);
 #   - `pwsh`/`powershell`(.exe) `-c`/`-Command "..."`, scanned recursively with *this* module
 #     (still PowerShell syntax), up to _PS_MAX_SCAN_DEPTH deep;
+#   - `wsl`/`wsl.exe [options] [--] <command line>`, scanned with shell_targets._wsl_targets: the line
+#     runs inside WSL, where `/mnt/<x>/...` is drive <X>: (nowhere else in the command);
 #   - Set-Location/cd/sl/Push-Location updates the tracked current directory for what follows;
 #     an unresolvable target (a variable, or nothing findable) makes it unknown from there on.
 #   - check 1 only (`broad=True`, see _broad_guard_candidates): additionally, every word of a
@@ -113,6 +115,7 @@ from .shell_targets import (
     _is_absolute_target,
     _is_dynamic_target,
     _resolve_path,
+    _wsl_targets,
 )
 
 __all__ = [
@@ -667,6 +670,14 @@ def _flush_ps_statement(
                 )
                 if inner_targets:
                     result.update(inner_targets)
+        elif name == "wsl":
+            # `wsl [options] [--] <command line>`: the line runs inside WSL and is read by the Bash
+            # scanner (shell_targets._wsl_targets), where `/mnt/<x>/...` is drive <X>:; the words are
+            # PowerShell's, their quoting already applied.
+            for raw, base in _wsl_targets([str(arg) for arg in args], frozenset({cwd}), git_writes, depth):
+                resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
+                if resolved:
+                    result.add(resolved)
         else:
             for raw in _cmdlet_targets(name, args):
                 resolved = _resolve_ps_target(raw, cwd)

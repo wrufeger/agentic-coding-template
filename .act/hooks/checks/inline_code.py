@@ -71,15 +71,19 @@
 
 from __future__ import annotations
 
+import ast
+import os
 import re
+import shlex
 import sys
 import unicodedata
 from typing import NamedTuple, Optional
 
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
-    "interpreter_language", "code_source", "write_paths", "path_literals", "has_write_call",
+    "interpreter_language", "code_source", "code_source_at", "write_paths", "path_literals", "has_write_call",
     "mentions_interpreter", "report_skipped",
+    "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
 
 PYTHON = "python"
@@ -148,7 +152,7 @@ def _stdin_or_none(args: list[str], index: int) -> tuple[str, Optional[str]]:
     return SOURCE_STDIN, None
 
 
-def _python_source(args: list[str]) -> tuple[str, Optional[str]]:
+def _python_source(args: list[str]) -> tuple[str, Optional[str], Optional[int]]:
     index = 0
     while index < len(args):
         arg = args[index]
@@ -156,12 +160,12 @@ def _python_source(args: list[str]) -> tuple[str, Optional[str]]:
             index += 1
             break
         if arg == "-":
-            return SOURCE_STDIN, None
+            return SOURCE_STDIN, None, None
         if not arg.startswith("-"):
-            return SOURCE_NONE, None
+            return SOURCE_NONE, None, None
         if arg.startswith("--"):
             if arg in ("--version", "--help"):
-                return SOURCE_NONE, None
+                return SOURCE_NONE, None, None
             index += 2 if arg in _PY_LONG_VALUE_OPTIONS else 1
             continue
         if _PY_LAUNCHER_RE.match(arg):
@@ -173,20 +177,20 @@ def _python_source(args: list[str]) -> tuple[str, Optional[str]]:
             if char == "c":
                 rest = arg[position + 1:]
                 if rest:
-                    return SOURCE_CODE, rest
+                    return SOURCE_CODE, rest, None
                 if index + 1 < len(args):
-                    return SOURCE_CODE, args[index + 1]
-                return SOURCE_NONE, None
+                    return SOURCE_CODE, args[index + 1], index + 1
+                return SOURCE_NONE, None, None
             if char in "mVh?":
-                return SOURCE_NONE, None
+                return SOURCE_NONE, None, None
             if char in "WXQ":  # -W/-X take a value, glued or as the next word
                 takes_next = position + 1 == len(arg)
                 break
         index += 2 if takes_next else 1
-    return _stdin_or_none(args, index)
+    return (*_stdin_or_none(args, index), None)
 
 
-def _node_source(args: list[str]) -> tuple[str, Optional[str]]:
+def _node_source(args: list[str]) -> tuple[str, Optional[str], Optional[int]]:
     index = 0
     while index < len(args):
         arg = args[index]
@@ -194,19 +198,19 @@ def _node_source(args: list[str]) -> tuple[str, Optional[str]]:
             index += 1
             break
         if arg == "-":
-            return SOURCE_STDIN, None
+            return SOURCE_STDIN, None, None
         if not arg.startswith("-"):
-            return SOURCE_NONE, None
+            return SOURCE_NONE, None, None
         if arg.startswith(("--eval=", "--print=")):
-            return SOURCE_CODE, arg.split("=", 1)[1]
+            return SOURCE_CODE, arg.split("=", 1)[1], None
         if arg in _NODE_EVAL_OPTIONS:
             if index + 1 < len(args):
-                return SOURCE_CODE, args[index + 1]
-            return SOURCE_NONE, None
+                return SOURCE_CODE, args[index + 1], index + 1
+            return SOURCE_NONE, None, None
         if arg in _NODE_NO_CODE_OPTIONS:
-            return SOURCE_NONE, None
+            return SOURCE_NONE, None, None
         index += 2 if arg in _NODE_VALUE_OPTIONS else 1
-    return _stdin_or_none(args, index)
+    return (*_stdin_or_none(args, index), None)
 
 
 def code_source(language: str, args: list[str]) -> tuple[str, Optional[str]]:
@@ -215,6 +219,15 @@ def code_source(language: str, args: list[str]) -> tuple[str, Optional[str]]:
     lone `-` or no script argument at all, (SOURCE_NONE, None) for a script file, a module (`-m`) or a
     query that runs nothing. Options before the code are skipped (`-X utf8 -I -c`, `py -3.12 -c`,
     `--input-type=module -e`); a cluster ending in `c` (`-Ic`) counts."""
+    kind, code, _index = code_source_at(language, args)
+    return kind, code
+
+
+def code_source_at(language: str, args: list[str]) -> tuple[str, Optional[str], Optional[int]]:
+    """code_source plus the index in `args` of the word that IS the code - the word after `-c`/`-e`/
+    `--eval`/`-p` - or None when the code is only part of a word (`-cprint(1)`, `--eval=...`) or comes
+    from standard input: a caller that wants to take the program out of the command text needs the
+    whole word and nothing else."""
     return _python_source(args) if language == PYTHON else _node_source(args)
 
 
@@ -804,3 +817,549 @@ def write_paths(language: str, code: str) -> list[str]:
         if candidate is not None:
             found[candidate] = None
     return list(found)
+
+
+# --- A Python program read as Python: the calls that run a command or write a file -------------------
+#
+# For a check that must know what a program DOES with a string rather than which strings it holds (the
+# git-metadata guard reads a program handed to `python` this way): the program is parsed with `ast`,
+# nothing of it runs, and every call of the families below is reported with the LITERAL values that go
+# into it. A value the reading cannot see - a variable, an expression, a call, a starred argument, a
+# non-literal receiver - is simply not reported: nothing follows a name, joins a path or expands a glob,
+# and a call whose value is not written out is not judged (a static reading of Python is a guard rail
+# against slips, not a wall). A program that does not parse as Python, is larger than _PROGRAM_SIZE_LIMIT
+# or nests deeper than the interpreter can walk is not read at all (None back).
+#
+# Families (the callee is looked up through the program's own imports: `import subprocess as sp`,
+# `from os import system as run`, `from os import *`; a dotted chain whose root is not a plain name -
+# `importlib.import_module("os").system(...)` - counts as the family its last name belongs to):
+#   - CALL_RUN, a command line: `os.system`, `os.popen`, `os.startfile`, `subprocess.run`, `call`,
+#     `check_call`, `check_output`, `Popen`, `getoutput`, `getstatusoutput`, `os.exec*`, `os.spawn*`,
+#     `os.posix_spawn[p]`, `asyncio.create_subprocess_shell` / `_exec`, `pty.spawn`. A list of literals
+#     is reported as one command line with each word quoted (shlex.join); a literal `cwd=` is reported as
+#     the directory the command runs in, a non-literal one as an unknown directory. The specific names
+#     (`system`, `Popen`, `check_output`, ...) count on any receiver; the generic `run`, `call` and
+#     `spawn` only on one of these modules or on a receiver that is no plain name.
+#   - CALL_WRITE, a path: builtin / `io.` / `codecs.` `open` with a mode that writes (`w`, `a`, `x`, `+`;
+#     a mode the reading cannot see counts as writing), `os.remove`, `unlink`, `rmdir`, `removedirs`,
+#     `mkdir`, `makedirs`, `truncate`, `chmod`, `chown`, `utime`, `open`, `symlink`, `link`, `rename`,
+#     `replace`, `shutil.copy`, `copy2`, `copyfile`, `copymode`, `copystat`, `copytree`, `move`, `rmtree`,
+#     `chown`, and on any receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`,
+#     `rmdir`, `chmod`, `lchmod`, `rename`, `symlink_to`, `hardlink_to`, `link_to`, `open` (writing mode):
+#     the receiver is the path when it is `Path(...)` of string literals, anything else is not reported.
+#     For a copy the destination is the path, for a move, rename or link both operands are.
+#   - CALL_CODE, Python text: builtin `exec` and `eval` with a literal; the caller reads that text again.
+# A literal is a string constant, bytes (decoded), several of them joined with `+`, an f-string without
+# fields, or a list/tuple of those. Not seen (a limit, the same as the string-literal reading above): a
+# value that comes from a name, `os.path.join(...)`, `Path(...) / x`, an f-string with fields or a glob
+# (writing through a variable is the limit the rules name for script files too), a callee reached through
+# `getattr`, a subscript or a lambda, `.write(` on a stream, `str.replace` and `Path.replace` (left out on
+# purpose), `runpy`, `importlib` loading a file, code built at run time.
+
+CALL_RUN = "run"      # a command line the program hands to a shell or a program
+CALL_WRITE = "write"  # a path the program writes, creates, moves, links or deletes
+CALL_CODE = "code"    # Python text the program runs itself (`exec`, `eval`)
+
+_PROGRAM_SIZE_LIMIT = 200_000  # characters of one program read as Python; a larger one is not read
+_LITERAL_FOLD_DEPTH = 64       # `"a" + "b" + ...` chains folded this deep; deeper is not a literal
+
+# (module, function) -> how the arguments are read: "line" (the first argument is a command line),
+# "args" (the first argument is a command line or an argv list), "words" (every positional literal is a
+# word of the command line, an int such as a spawn mode is skipped).
+_RUN_FUNCTIONS: dict[tuple[str, str], str] = {
+    ("os", "system"): "line", ("os", "popen"): "line", ("os", "startfile"): "line",
+    ("subprocess", "getoutput"): "line", ("subprocess", "getstatusoutput"): "line",
+    ("asyncio", "create_subprocess_shell"): "line",
+    ("subprocess", "run"): "args", ("subprocess", "call"): "args", ("subprocess", "check_call"): "args",
+    ("subprocess", "check_output"): "args", ("subprocess", "Popen"): "args", ("pty", "spawn"): "args",
+    ("asyncio", "create_subprocess_exec"): "words",
+}
+for _name in ("execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe", "spawnl", "spawnle",
+              "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp", "spawnvpe", "posix_spawn", "posix_spawnp"):
+    _RUN_FUNCTIONS[("os", _name)] = "words"
+_RUN_ANY_RECEIVER = frozenset(
+    name for module, name in _RUN_FUNCTIONS if name not in ("run", "call", "spawn")
+)
+_RUN_GENERIC = frozenset({"run", "call", "spawn"})
+
+# (module, function) -> the positions of the path arguments ((0,) the first, (1,) the second, (0, 1) both);
+# "mode" marks an open-like call whose first argument is the path only when its mode writes.
+_WRITE_FUNCTIONS: dict[tuple[str, str], tuple] = {
+    ("builtins", "open"): ("mode",), ("io", "open"): ("mode",), ("codecs", "open"): ("mode",),
+    ("os", "open"): (0,), ("os", "remove"): (0,), ("os", "unlink"): (0,), ("os", "rmdir"): (0,),
+    ("os", "removedirs"): (0,), ("os", "mkdir"): (0,), ("os", "makedirs"): (0,), ("os", "truncate"): (0,),
+    ("os", "chmod"): (0,), ("os", "chown"): (0,), ("os", "utime"): (0,), ("os", "symlink"): (1,),
+    ("os", "link"): (1,), ("os", "rename"): (0, 1), ("os", "replace"): (0, 1),
+    ("shutil", "copy"): (1,), ("shutil", "copy2"): (1,), ("shutil", "copyfile"): (1,), ("shutil", "copymode"): (1,),
+    ("shutil", "copystat"): (1,), ("shutil", "copytree"): (1,), ("shutil", "move"): (0, 1),
+    ("shutil", "rmtree"): (0,), ("shutil", "chown"): (0,),
+}
+# method -> whether the first argument is a path too (a rename target, a link target)
+_WRITE_METHODS: dict[str, bool] = {
+    "write_text": False, "write_bytes": False, "touch": False, "mkdir": False, "unlink": False, "rmdir": False,
+    "chmod": False, "lchmod": False, "rename": True, "symlink_to": True, "hardlink_to": True, "link_to": True,
+}
+_CODE_FUNCTIONS = frozenset({("builtins", "exec"), ("builtins", "eval")})
+_BUILTIN_NAMES = frozenset({"open", "exec", "eval"})
+
+
+class ProgramCall(NamedTuple):
+    """One call of a program that runs a command, writes a file or runs Python text (see above)."""
+
+    name: str                  # the callee as written: `os.system`, `subprocess.run`, `open`, `.write_text`
+    kind: str                  # CALL_RUN, CALL_WRITE or CALL_CODE
+    values: tuple[str, ...]    # the literal command lines, paths or code texts that go into the call; a value
+                               # that is no literal is not here and is not judged by anyone
+    directory: Optional[str]   # a literal `cwd=` of the call, else None
+    directory_known: bool      # False when `cwd=` is given but is no literal: the directory is unknown
+    line: int
+
+
+class _Aliases(NamedTuple):
+    modules: dict           # local name -> module it stands for (`sp` -> "subprocess", `os` -> "os")
+    functions: dict         # local name -> (module, function) from `from os import system [as s]`
+    star: frozenset         # modules imported with `*`
+
+
+def _module_aliases(tree: ast.AST) -> _Aliases:
+    modules: dict[str, str] = {}
+    functions: dict[str, tuple[str, str]] = {}
+    star: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                modules[alias.asname or root] = root if alias.asname is None else alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            for alias in node.names:
+                if alias.name == "*":
+                    star.add(node.module)
+                else:
+                    functions[alias.asname or alias.name] = (node.module, alias.name)
+    return _Aliases(modules, functions, frozenset(star))
+
+
+def _fold_string(node: ast.expr, depth: int = 0) -> Optional[str]:
+    """The text of a string literal: a constant (bytes decoded), constants joined with `+`, an f-string
+    without replacement fields; None for anything else."""
+    if depth > _LITERAL_FOLD_DEPTH:
+        return None
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return node.value
+        if isinstance(node.value, bytes):
+            return node.value.decode("utf-8", errors="replace")
+        return None
+    if isinstance(node, ast.JoinedStr):
+        parts = [_fold_string(value, depth + 1) for value in node.values]
+        return None if any(part is None for part in parts) else "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _fold_string(node.left, depth + 1), _fold_string(node.right, depth + 1)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def _fold_strings(node: ast.expr) -> Optional[list[str]]:
+    """The texts of a list or tuple of string literals; None when it is no such list or holds a value
+    the reading cannot see (a starred element included)."""
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return None
+    found: list[str] = []
+    for element in node.elts:
+        text = _fold_string(element)
+        if text is None:
+            return None
+        found.append(text)
+    return found
+
+
+def _dotted_root(node: ast.expr) -> tuple[Optional[str], list[str]]:
+    """(the root name of an attribute chain, or None when the chain starts at something that is no
+    plain name; the attribute names below the root, outermost last)."""
+    names: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        names.insert(0, current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        return current.id, names
+    return None, names
+
+
+def _callee(func: ast.expr, aliases: _Aliases) -> Optional[tuple[str, str, Optional[ast.expr]]]:
+    """(module, function, receiver) for a callee of one of the families: module "" with a receiver for
+    a method on an object (`p.write_text`), module "?" for a family name on a chain whose root is no
+    plain name; None for any other callee."""
+    if isinstance(func, ast.Name):
+        if func.id in aliases.functions:
+            module, function = aliases.functions[func.id]
+            if ((module, function) in _RUN_FUNCTIONS or (module, function) in _WRITE_FUNCTIONS
+                    or (module, function) in _CODE_FUNCTIONS):
+                return module, function, None
+            if function in _BUILTIN_NAMES:
+                # `from gzip import open` (also bz2, lzma, …): the imported `open`/`exec`/`eval` opens a
+                # file or runs code like the builtin, so it is judged like the builtin, not freed as an
+                # unknown import.
+                return "builtins", function, None
+            return None  # a from-import of something else (`from pathlib import Path`): no family
+        for module in aliases.star:
+            if (module, func.id) in _RUN_FUNCTIONS or (module, func.id) in _WRITE_FUNCTIONS:
+                return module, func.id, None
+        if func.id in _BUILTIN_NAMES and func.id not in aliases.modules:
+            return "builtins", func.id, None
+        return None
+    if not isinstance(func, ast.Attribute):
+        return None
+    root, names = _dotted_root(func)
+    attr = func.attr
+    if root is not None and len(names) == 1:
+        module = aliases.modules.get(root)
+        if module is None and root in ("builtins", "os", "subprocess", "shutil", "io", "codecs", "asyncio", "pty"):
+            module = root  # named without an import: the reading stays on the safe side
+        if module is not None and ((module, attr) in _RUN_FUNCTIONS or (module, attr) in _WRITE_FUNCTIONS
+                                   or (module, attr) in _CODE_FUNCTIONS):
+            return module, attr, None
+    if attr in _RUN_ANY_RECEIVER or (root is None and attr in _RUN_GENERIC):
+        return "?", attr, func.value
+    if attr in _WRITE_METHODS or attr == "open":
+        return "", attr, func.value
+    return None
+
+
+def _argument(call: ast.Call, position: int, keyword: Optional[str]) -> Optional[ast.expr]:
+    if position < len(call.args):
+        return call.args[position]
+    if keyword is not None:
+        for item in call.keywords:
+            if item.arg == keyword:
+                return item.value
+    return None
+
+
+def _mode_writes(call: ast.Call, position: int) -> bool:
+    """True if the `mode` of an open-like call (positional `position` or `mode=`) writes: a mode-shaped
+    literal (`rwaxbt+U` only) holding `w`, `a`, `x` or `+`, or a mode the reading cannot see (a variable).
+    No mode at all is the default `r`; a literal that is no mode (`webbrowser.open(url)`, `tarfile.open(name)`)
+    makes the call no open-for-writing."""
+    node = _argument(call, position, "mode")
+    if node is None:
+        return False
+    mode = _fold_string(node)
+    if mode is None:
+        return True
+    return _PY_MODE_RE.match(f"'{mode}'") is not None and any(char in "wax+" for char in mode)
+
+
+def _command_values(call: ast.Call, how: str) -> tuple[str, ...]:
+    """The command line a run-family call hands over, when it is written out as a literal; nothing
+    when any part of it is a value the reading cannot see (it is then not judged at all)."""
+    if how == "words":
+        words: list[str] = []
+        for argument in call.args:
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, (int, float)) and not isinstance(argument.value, bool):
+                continue  # a spawn mode
+            text = _fold_string(argument)
+            if text is not None:
+                words.append(text)
+                continue
+            items = _fold_strings(argument)
+            if items is None:
+                return ()
+            words.extend(items)
+        return (shlex.join(words),) if words else ()
+    node = _argument(call, 0, "args" if how == "args" else "command")
+    if node is None:
+        node = _argument(call, 0, "cmd")
+    if node is None:
+        return ()
+    text = _fold_string(node)
+    if text is not None:
+        return (text,)
+    if how == "args":
+        items = _fold_strings(node)
+        if items is not None:
+            return (shlex.join(items),)
+    return ()
+
+
+def _directory_of(call: ast.Call) -> tuple[Optional[str], bool]:
+    """(a literal `cwd=` of the call or None, whether the directory is known: no `cwd=` or a literal one)."""
+    for item in call.keywords:
+        if item.arg == "cwd":
+            if isinstance(item.value, ast.Constant) and item.value.value is None:
+                return None, True
+            text = _fold_string(item.value)
+            return (text, True) if text is not None else (None, False)
+    return None, True
+
+
+_PATH_CLASSES = frozenset({"Path", "PurePath", "PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath"})
+
+
+def _path_literal(node: Optional[ast.expr], aliases: _Aliases) -> Optional[str]:
+    """The path a path argument or receiver names when it is written out: a string literal as
+    _fold_string reads it, or `Path(...)` of such literals (joined as `os.path.join` joins them). None
+    for anything else - a variable, an f-string with fields, `os.path.join(...)`, `Path(...) / x` -, which
+    is not judged."""
+    if node is None:
+        return None
+    text = _fold_string(node)
+    if text is not None:
+        return text
+    if isinstance(node, ast.Call) and node.args and not node.keywords:
+        func = node.func
+        if isinstance(func, ast.Name):
+            name = aliases.functions.get(func.id, ("", func.id))[1]
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        else:
+            return None
+        parts = [_fold_string(argument) for argument in node.args]
+        if name in _PATH_CLASSES and None not in parts:
+            return os.path.join(*parts)
+    return None
+
+
+def _read_call(call: ast.Call, aliases: _Aliases) -> Optional[ProgramCall]:
+    found = _callee(call.func, aliases)
+    if found is None:
+        return None
+    module, function, receiver = found
+    name = f".{function}" if module in ("", "?") else (function if module == "builtins" else f"{module}.{function}")
+    line = getattr(call, "lineno", 0)
+    if (module, function) in _CODE_FUNCTIONS:
+        node = _argument(call, 0, "source")
+        text = _fold_string(node) if node is not None else None
+        return ProgramCall(name, CALL_CODE, (text,) if text is not None else (), None, True, line)
+    if (module, function) in _RUN_FUNCTIONS or module == "?":
+        values = _command_values(call, _RUN_FUNCTIONS.get((module, function), "args"))
+        directory, known = _directory_of(call)
+        return ProgramCall(name, CALL_RUN, values, directory, known, line)
+    if module == "":
+        if function == "open" and not _mode_writes(call, 0):
+            return None
+        nodes = [receiver]
+        if _WRITE_METHODS.get(function, False):
+            nodes.append(_argument(call, 0, "target"))
+    else:
+        positions = _WRITE_FUNCTIONS[(module, function)]
+        if positions == ("mode",):
+            if not _mode_writes(call, 1):
+                return None
+            positions = (0,)
+        nodes = []
+        for position in positions:
+            node = _argument(call, position, ("src", "dst")[position] if position < 2 else None)
+            if node is None and position == 0:
+                node = _argument(call, 0, "file") or _argument(call, 0, "path")
+            nodes.append(node)
+    paths = (_path_literal(node, aliases) for node in nodes)
+    return ProgramCall(name, CALL_WRITE, tuple(path for path in paths if path is not None), None, True, line)
+
+
+# --- A harmless program: the allow-list -------------------------------------------------------------
+#
+# A program is HARMLESS - and a check may then take its text out of the shell reading of the command
+# that hands it to python - only when everything it calls is on this allow-list and nothing in it can
+# turn a value into a call later. The list is positive and short on purpose: a program it does not
+# cover is read as before (its text as shell commands), which costs a false refusal at most, never a
+# pass. The families above are judged by the caller whether or not the program is harmless.
+#   - A builtin that computes, converts, inspects, iterates or prints a value and takes no callable:
+#     _HARMLESS_BUILTINS (`type` with one argument only, `iter` without a sentinel) and the builtin
+#     exception classes. Left out on purpose: `map`, `filter`, `iter(callable, sentinel)`,
+#     `type(name, bases, dict)`, `getattr`/`setattr`/`delattr`/`vars`/`globals`/`locals`/`dir`,
+#     `__import__`, `compile`, `exec`, `eval`, `open`, `input`, `breakpoint`, `help`, `super`,
+#     `classmethod`/`staticmethod`/`property` - each runs or reaches a callable, reads a file or
+#     builds code.
+#   - A method on a literal receiver - a string, bytes, f-string, list, tuple, dict or set written
+#     out - whose name is no dunder: whatever the method, it works on that value in memory.
+#   - `sys.exit`, `sys.stdout.write`/`.flush`, `sys.stderr.write`/`.flush`, with `sys` bound by
+#     `import sys` and by nothing else in the program; reading `sys.argv`, `sys.stdout`, `sys.stderr`.
+# Not harmless, whatever else the program does: a keyword named `key` (a callable for `sorted`, `min`,
+# `max`, `list.sort`) or a `**` unpacking (which can hide one); a call of an allow-listed name the
+# program binds itself (`print = os.system`, `from os import system as len`, `def len`); a
+# `from x import *`; a decorator; any class (its dunder slots run implicitly: `raise`, `e[...]`, a format
+# spec); any dunder name but `__name__` and `__file__` (`__builtins__`); any attribute read other than
+# the method of an allowed call and the `sys` attributes above (`os.system` as a value, a frame, a
+# `__dict__`); a store or delete on
+# an attribute or on any item (`os.system = ...`, `d['len'] = ...`), which could rebind what a later
+# call reaches; a call of anything else - a name the program defines, a variable, a lambda, a call's
+# result, a subscript, a module function.
+
+_HARMLESS_BUILTINS = frozenset({
+    "print", "len", "range", "enumerate", "zip", "reversed", "sorted", "sum", "min", "max", "abs",
+    "round", "divmod", "pow", "any", "all", "bin", "hex", "oct", "chr", "ord", "repr", "ascii", "format",
+    "hash", "id", "isinstance", "issubclass", "callable", "str", "int", "float", "complex", "bool",
+    "bytes", "bytearray", "list", "tuple", "dict", "set", "frozenset", "slice", "object", "type", "iter",
+    "next",
+    "BaseException", "Exception", "SystemExit", "KeyboardInterrupt", "ValueError", "TypeError",
+    "RuntimeError", "KeyError", "IndexError", "AssertionError", "NotImplementedError", "OSError",
+    "FileNotFoundError", "AttributeError", "NameError", "StopIteration", "LookupError", "ArithmeticError",
+    "ZeroDivisionError",
+})
+_HARMLESS_SYS_CALLS = frozenset({"exit", "stdout.write", "stdout.flush", "stderr.write", "stderr.flush"})
+_HARMLESS_SYS_READS = frozenset({"argv", "stdout", "stderr"})
+_HARMLESS_DUNDER_NAMES = frozenset({"__name__", "__file__"})  # plain strings, so `if __name__ == ...` stays
+_LITERAL_RECEIVERS = (ast.Constant, ast.JoinedStr, ast.List, ast.Tuple, ast.Dict, ast.Set)
+
+
+class PythonProgram(NamedTuple):
+    """A program read as Python (read_python_program)."""
+
+    calls: list                # ProgramCall: every call of the families, in source order
+    harmless: bool             # every call on the allow-list above, nothing that can turn a value into a call
+    blocker: Optional[str]     # what keeps it from being harmless, in words; None when it is
+
+
+def _bindings(tree: ast.AST) -> tuple[dict[str, list[str]], bool]:
+    """(every name the program binds, mapped to how - "import" for a plain `import name`, "other" for
+    anything else: an assignment, a `def`/`class`, a parameter, `as`, `global`, a `from` import -;
+    whether the program has a `from x import *`, which can bind any name)."""
+    bound: dict[str, list[str]] = {}
+    star = False
+
+    def bind(name: str, how: str = "other") -> None:
+        bound.setdefault(name, []).append(how)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bind(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bind(node.name)
+        elif isinstance(node, ast.arg):
+            bind(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bind(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                plain = alias.asname is None and "." not in alias.name
+                bind(alias.asname or alias.name.split(".")[0], "import" if plain else "other")
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == "*":
+                    star = True
+                else:
+                    bind(alias.asname or alias.name)
+        elif type(node).__name__ in ("MatchAs", "MatchStar") and getattr(node, "name", None):
+            bind(node.name)  # a capture of a `match` statement (Python 3.10+)
+        elif type(node).__name__ == "MatchMapping" and getattr(node, "rest", None):
+            bind(node.rest)
+    return bound, star
+
+
+def _callee_text(func: ast.expr) -> str:
+    root, names = _dotted_root(func)
+    return ".".join([root or "<expression>", *names])
+
+
+def _call_blocker(call: ast.Call, bound: dict[str, list[str]]) -> Optional[str]:
+    """What keeps one call off the allow-list above, in words; None when it is on it."""
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            return "a `**` unpacking in a call"
+        if keyword.arg == "key":
+            return "a `key=` argument"
+    func = call.func
+    if isinstance(func, ast.Name):
+        if func.id in bound:
+            return f"a call of `{func.id}`, which the program binds"
+        if func.id not in _HARMLESS_BUILTINS:
+            return f"a call of `{func.id}`"
+        if func.id == "type" and (len(call.args) != 1 or call.keywords):
+            return "`type` with more than one argument"
+        if func.id == "iter" and len(call.args) != 1:
+            return "`iter` with a sentinel"
+        return None
+    if isinstance(func, ast.Attribute):
+        if func.attr.startswith("__"):
+            return f"a call of `.{func.attr}`"
+        if isinstance(func.value, _LITERAL_RECEIVERS):
+            return None
+        if _sys_only_imported(bound) and _is_sys_chain(func, _HARMLESS_SYS_CALLS):
+            return None
+        return f"a call of `{_callee_text(func)}`"
+    return "a call of something that is no name"
+
+
+def _sys_only_imported(bound: dict[str, list[str]]) -> bool:
+    """`sys` is bound by a plain `import sys` and by nothing else in the program."""
+    return bool(bound.get("sys")) and all(how == "import" for how in bound["sys"])
+
+
+def _is_sys_chain(node: ast.expr, allowed: frozenset) -> bool:
+    """`node` is `sys.<chain>` with the chain in `allowed`."""
+    root, names = _dotted_root(node)
+    return root == "sys" and ".".join(names) in allowed
+
+
+def _allowed_attribute_reads(tree: ast.AST, bound: dict[str, list[str]]) -> set[int]:
+    """The ids of the attribute nodes a harmless program may read: the method of a call on a literal
+    receiver, the chain of an allowed `sys` call, and `sys.argv`/`sys.stdout`/`sys.stderr`."""
+    allowed: set[int] = set()
+    sys_ok = _sys_only_imported(bound)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, _LITERAL_RECEIVERS):
+                allowed.add(id(node.func))
+            elif sys_ok and _is_sys_chain(node.func, _HARMLESS_SYS_CALLS):
+                current: ast.expr = node.func
+                while isinstance(current, ast.Attribute):
+                    allowed.add(id(current))
+                    current = current.value
+        elif isinstance(node, ast.Attribute) and sys_ok and _is_sys_chain(node, _HARMLESS_SYS_READS):
+            allowed.add(id(node))
+    return allowed
+
+
+def _harmless_blocker(tree: ast.AST) -> Optional[str]:
+    """The first construct that keeps the program from being harmless (see the allow-list above), in
+    words; None when there is none."""
+    bound, star = _bindings(tree)
+    if star:
+        return "a `from ... import *`"
+    readable = _allowed_attribute_reads(tree, bound)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.decorator_list:
+            return f"a decorator on `{node.name}`"
+        if isinstance(node, ast.ClassDef):
+            return f"a class `{node.name}`"
+        if (isinstance(node, ast.Name) and node.id.startswith("__") and node.id.endswith("__")
+                and node.id not in _HARMLESS_DUNDER_NAMES):
+            return f"the name `{node.id}`"
+        if isinstance(node, ast.Attribute):
+            if not isinstance(node.ctx, ast.Load):
+                return f"a store on attribute `{node.attr}`"
+            if id(node) not in readable:
+                return f"a read of attribute `{node.attr}`"
+        if isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load):
+            return "a store or delete on an item"
+        if isinstance(node, ast.Call):
+            blocker = _call_blocker(node, bound)
+            if blocker is not None:
+                return blocker
+    return None
+
+
+def read_python_program(code: str) -> Optional[PythonProgram]:
+    """`code` read as Python: every call that runs a command, writes a file or runs Python text (the
+    families in the section comment above), in source order, and whether the program is harmless by the
+    allow-list above. None when the text is not read as Python: it does not parse (a syntax error, a
+    null byte), is larger than _PROGRAM_SIZE_LIMIT, or nests deeper than can be walked."""
+    if len(code) > _PROGRAM_SIZE_LIMIT:
+        return None
+    try:
+        tree = ast.parse(code)
+        aliases = _module_aliases(tree)
+        found: list[ProgramCall] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                call = _read_call(node, aliases)
+                if call is not None:
+                    found.append(call)
+        blocker = _harmless_blocker(tree)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
+    return PythonProgram(sorted(found, key=lambda call: call.line), blocker is None, blocker)
