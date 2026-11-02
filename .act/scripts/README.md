@@ -957,15 +957,21 @@ options:
 Call: skill `act-seo`
 
 ```text
-usage: seo_check.py [-h] [--root ROOT] [--json]
+usage: seo_check.py [-h] [--root ROOT] [--json] [--dup-threshold DUP_THRESHOLD]
+                    [--dup-min-words DUP_MIN_WORDS]
 
 Code-only SEO checks: title, description, headings, lang, canonical, Open Graph, image alt,
 internal links, robots.txt and sitemap.
 
 options:
-  -h, --help   show this help message and exit
-  --root ROOT  project root (default: current directory)
-  --json       print the report as JSON
+  -h, --help            show this help message and exit
+  --root ROOT           project root (default: current directory)
+  --json                print the report as JSON
+  --dup-threshold DUP_THRESHOLD
+                        share of identical text from which two pages count as duplicates, 0 < x <=
+                        1 (default 0.9)
+  --dup-min-words DUP_MIN_WORDS
+                        pages with fewer words are not compared (default 25)
 ```
 
 ## `seo_lighthouse.py`

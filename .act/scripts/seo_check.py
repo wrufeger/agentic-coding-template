@@ -24,14 +24,27 @@
 #   missing-robots / robots-blocks-all / robots-no-sitemap, missing-sitemap / sitemap-url-missing-page /
 #   page-not-in-sitemap (warning, warning, info, warning, warning, info)
 #
+# Further findings (hreflang, JSON-LD, duplicate content, image size, viewport, orphans, translations):
+#   hreflang-missing / hreflang-invalid / hreflang-no-self / hreflang-no-return / hreflang-lang-mismatch (warning)
+#   jsonld-invalid / jsonld-incomplete (warning: bad JSON, no @context or @type)
+#   duplicate-content (warning: same text in `main`, else in the body without header/nav/footer; pages whose
+#   canonical points at each other or at the same page are fine)   img-size-missing (warning: no width/height)
+#   missing-viewport (warning)   orphan-page (warning: no other page links to it)
+#   translation-* (the findings of i18n_check.py, same severity there)
+#
+# Library use: `check_documents({path_or_url: html, ...}, Options())` runs the page checks on rendered
+#   documents without touching the disk and returns the same report dict as `run`.
+#
 # Usage:
-#   python .act/scripts/seo_check.py [--root DIR] [--json]
+#   python .act/scripts/seo_check.py [--root DIR] [--json] [--dup-threshold X] [--dup-min-words N]
 #
 # Exit code: 0 no finding above info, 1 at least one warning or error, 2 usage problem.
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import heapq
 import json
 import os
 import re
@@ -40,8 +53,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Iterator, Optional
-from urllib.parse import urlparse
+from typing import Callable, Iterator, Mapping, Optional
+from urllib.parse import urljoin, urlparse
 
 SKIP_DIRS = {
     ".git", "node_modules", "vendor", "dist", "build", ".venv", "venv", "__pycache__", ".act", ".act-local",
@@ -63,8 +76,36 @@ SEVERITY = {
     "robots-blocks-all": "warning", "missing-sitemap": "warning", "sitemap-url-missing-page": "warning",
     "title-length": "info", "description-length": "info", "missing-canonical": "info", "missing-og": "info",
     "noindex": "info", "client-rendered": "info", "robots-no-sitemap": "info", "page-not-in-sitemap": "info",
+    # hreflang, JSON-LD, duplicate content, image size, viewport, orphans
+    "hreflang-missing": "warning", "hreflang-invalid": "warning", "hreflang-no-self": "warning",
+    "hreflang-no-return": "warning", "hreflang-lang-mismatch": "warning",
+    "jsonld-invalid": "warning", "jsonld-incomplete": "warning", "duplicate-content": "warning",
+    "img-size-missing": "warning", "missing-viewport": "warning", "orphan-page": "warning",
+    # translation findings of i18n_check.py, same severity as there
+    "translation-parse-error": "error", "translation-placeholder-mismatch": "error",
+    "translation-used-undefined": "error", "translation-missing": "warning", "translation-extra": "warning",
+    "translation-empty": "warning", "translation-unused": "info",
 }
 GENERATORS = ("sitemap", "robots")  # package/config names that generate these files at build time
+HREFLANG_CODE = re.compile(r"^(?:x-default|[a-z]{2,3}(?:-[a-z0-9]{2,8})*)$", re.I)
+ERROR_PAGE_NAMES = {"401", "403", "404", "410", "500", "503", "error", "not-found", "_error"}
+VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+CHROME_TAGS = {"header", "nav", "footer", "aside"}
+CHROME_ROLES = {"navigation", "banner", "contentinfo", "complementary"}
+HEAD_FROM_FRAMEWORK = {".vue", ".jsx", ".tsx", ".astro", ".svelte"}  # <Head>/<Html> components set the head
+DUP_MAX_POSTING = 50  # a word group on more pages than this is boilerplate, not evidence of a near copy
+DUP_SHINGLE = 4  # words per shingle for the duplicate-content comparison
+DUP_SKETCH = 8  # smallest word-group hashes kept per page to find pages built from the same boilerplate
+DUP_BAND = 2  # sketch entries per band: two pages share a band when these entries are equal
+DUP_MAX_COMPARE = 20  # originals one page is compared against at most
+DUP_EXACT_ONLY_ABOVE = 800  # more different pages than this: only identical texts are compared
+
+
+@dataclass
+class Options:
+    """Settings of the extended checks."""
+    dup_threshold: float = 0.9  # share of shared word groups (0..1] from which two pages count as duplicates
+    dup_min_words: int = 25  # pages with fewer words are not compared
 
 
 @dataclass
@@ -93,6 +134,25 @@ class PageInfo:
     links: list[str] = field(default_factory=list)
     shell: bool = False
     body_text: int = 0
+    canonical_href: str = ""
+    hreflangs: list[tuple[str, str]] = field(default_factory=list)  # (language code, href) of rel=alternate links
+    html_lang: str = ""
+    jsonld: list[str] = field(default_factory=list)  # raw text of each application/ld+json block
+    viewport: Optional[str] = None
+    images_without_size: int = 0
+    has_main: bool = False
+    has_head: bool = False
+    text_main: list[str] = field(default_factory=list)  # text inside <main>, outside header/nav/footer
+    text_body: list[str] = field(default_factory=list)  # all text outside header/nav/footer
+
+
+def _norm_attr(name: str) -> str:
+    """`:width`, `v-bind:width`, `[width]`, `[attr.width]` -> `width` (template bindings still set the attribute)."""
+    name = name.lower()
+    for prefix in ("v-bind:", "[attr.", "[", ":", "@"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+    return name.rstrip("]")
 
 
 class PageParser(HTMLParser):
@@ -103,14 +163,31 @@ class PageParser(HTMLParser):
         self._title_parts: list[str] = []
         self._skip = 0  # inside script/style
         self._heading_open = False
+        self._chrome = 0  # inside header/nav/footer/aside or a navigation/banner/contentinfo role
+        self._main = 0  # inside main
+        self._stack: list[tuple[str, bool, bool]] = []  # open (tag, chrome, main)
+        self._ld: Optional[list[str]] = None  # open application/ld+json block
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
         a = {k.lower(): (v or "") for k, v in attrs}
         info = self.info
         if tag in ("script", "style"):
             self._skip += 1
+        if tag == "script" and a.get("type", "").strip().lower() == "application/ld+json":
+            self._ld = []
+        if tag == "head":
+            info.has_head = True
+        if tag not in VOID_TAGS:
+            is_chrome = tag in CHROME_TAGS or a.get("role", "").strip().lower() in CHROME_ROLES
+            is_main = tag == "main"
+            self._stack.append((tag, is_chrome, is_main))
+            self._chrome += is_chrome
+            self._main += is_main
+            if is_main:
+                info.has_main = True
         if tag == "html" and "lang" in a:
             info.lang_seen = True
+            info.html_lang = a["lang"].strip()
         elif tag == "title":
             self._in_title = True
         elif tag == "meta":
@@ -118,35 +195,62 @@ class PageParser(HTMLParser):
             content = a.get("content", "")
             if name == "description":
                 info.description = content
+            elif name == "viewport":
+                info.viewport = content
             elif name.startswith("og:") and content.strip():
                 info.og.add(name)
             elif name == "robots" and "noindex" in content.lower():
                 info.noindex = True
-        elif tag == "link" and "canonical" in a.get("rel", "").lower().split():
-            info.canonical = True
+        elif tag == "link":
+            rel = a.get("rel", "").lower().split()
+            if "canonical" in rel:
+                info.canonical = True
+                info.canonical_href = a.get("href", "").strip()
+            elif "alternate" in rel and "hreflang" in a:
+                info.hreflangs.append((a["hreflang"].strip(), a.get("href", "").strip()))
         elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
             info.headings.append(int(tag[1]))
         elif tag == "img":
             raw = self.get_starttag_text() or ""
             if not re.search(r"\balt\b", raw, re.I) and not TEMPLATE_SYNTAX.search(raw):
                 info.images_without_alt += 1
+            names = {_norm_attr(k) for k in a}
+            if not {"width", "height"} <= names and "aspect-ratio" not in a.get("style", "").lower() \
+                    and not re.search(r"\{\{|\{%|<\?|<%|v-bind", raw):
+                info.images_without_size += 1
         elif tag == "a" and a.get("href"):
             info.links.append(a["href"])
         elif tag == "div" and a.get("id") in ("app", "root", "__nuxt", "__next"):
             info.shell = True
 
     def handle_endtag(self, tag: str) -> None:
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index][0] == tag:
+                for _, was_chrome, was_main in self._stack[index:]:
+                    self._chrome -= was_chrome
+                    self._main -= was_main
+                del self._stack[index:]
+                break
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+            if tag == "script" and self._ld is not None:
+                self.info.jsonld.append("".join(self._ld))
+                self._ld = None
         elif tag == "title":
             self._in_title = False
             self.info.title = "".join(self._title_parts).strip()
 
     def handle_data(self, data: str) -> None:
+        if self._ld is not None:
+            self._ld.append(data)
         if self._in_title:
             self._title_parts.append(data)
         elif not self._skip:
             self.info.body_text += len(data.strip())
+            if not self._chrome and data.strip():
+                self.info.text_body.append(data)
+                if self._main:
+                    self.info.text_main.append(data)
 
 
 def walk(root: Path) -> Iterator[tuple[Path, list[str]]]:
@@ -421,7 +525,341 @@ def check_page(page: PageInfo, findings: list[Finding], root: Path,
             findings.append(Finding("broken-internal-link", where, f"{href} points to no file or route in the project"))
 
 
-def run(root: Path) -> dict:
+def check_duplicate_meta(documents: list[PageInfo], findings: list[Finding]) -> None:
+    for attr, kind in (("title", "duplicate-title"), ("description", "duplicate-description")):
+        seen: dict[str, list[str]] = {}
+        for page in documents:
+            value = getattr(page, attr)
+            if value and value.strip() and not TEMPLATE_SYNTAX.search(value):
+                seen.setdefault(value.strip().lower(), []).append(page.file)
+        for value, files in seen.items():
+            if len(files) > 1:
+                findings.append(Finding(kind, files[0], f"same {attr} on {len(files)} pages: {', '.join(files)}"))
+
+
+# ---- extended checks: what a rendered page set needs ---------------------------------------------------------
+
+def framework_head(path: str) -> bool:
+    """A framework component or document file: its head and image sizes come from the framework."""
+    name = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    return os.path.splitext(name)[1] in HEAD_FROM_FRAMEWORK or name.startswith("_document.")
+
+
+def is_template_file(path: str) -> bool:
+    name = path.rstrip("/").rsplit("/", 1)[-1].lower()
+    return os.path.splitext(name)[1] in TEMPLATE_SUFFIXES or name.endswith(".blade.php")
+
+
+def check_page_extended(page: PageInfo, findings: list[Finding]) -> None:
+    """Checks on one page: viewport, image size, JSON-LD. Fragments are not judged (a component is not a page)."""
+    if page.kind not in ("document", "page"):
+        return
+    where = page.file
+    # Only a full HTML document with its own <head> is judged: in a component or layout template the head and the
+    # image sizes come from the framework (head config, image component).
+    judged = page.kind == "document" and page.has_head and not framework_head(page.file)
+    if judged:
+        if page.viewport is None:
+            findings.append(Finding("missing-viewport", where, "no <meta name=\"viewport\"> (mobile layout and the "
+                                    "mobile-friendly test need it)"))
+        elif "width=device-width" not in page.viewport.replace(" ", "").lower() \
+                and not TEMPLATE_SYNTAX.search(page.viewport):
+            findings.append(Finding("missing-viewport", where, f"viewport `{page.viewport}` has no width=device-width"))
+    if page.images_without_size and judged:
+        findings.append(Finding("img-size-missing", where, f"{page.images_without_size} image(s) without width and "
+                                "height (the layout shifts when they load)"))
+    template_file = is_template_file(page.file)
+    for raw in page.jsonld:
+        text = raw.strip()
+        if not text or TEMPLATE_SYNTAX.search(raw):
+            continue  # empty: the content is set by the framework (v-html, set:html, dangerouslySetInnerHTML)
+        if template_file and not re.match(r'[\[{]\s*["\]}]', text):
+            continue  # an expression such as {JSON.stringify(data)}, not JSON text
+        try:
+            data = json.loads(raw)
+        except (ValueError, RecursionError) as exc:
+            findings.append(Finding("jsonld-invalid", where, f"JSON-LD is not valid JSON: {exc}"))
+            continue
+        blocks = data if isinstance(data, list) else [data]
+        problems: list[str] = []
+        if not blocks or not all(isinstance(b, dict) for b in blocks):
+            findings.append(Finding("jsonld-invalid", where, "JSON-LD must be an object or a list of objects"))
+            continue
+        for block in blocks:
+            if "@context" not in block:
+                problems.append("missing @context")
+            graph = block.get("@graph")
+            if isinstance(graph, list):
+                if any(not isinstance(n, dict) or "@type" not in n for n in graph):
+                    problems.append("a node in @graph has no @type")
+            elif "@type" not in block:
+                problems.append("missing @type")
+        if problems:
+            findings.append(Finding("jsonld-incomplete", where, "JSON-LD: " + ", ".join(dict.fromkeys(problems))))
+
+
+def key_routes(key: str) -> list[str]:
+    """Candidate URL paths of a document key: a file path (`about/index.html`) or a URL."""
+    parsed = urlparse(key)
+    if parsed.scheme in ("http", "https"):
+        path = parsed.path or "/"
+        routes = [path]
+        if path.endswith(".html"):
+            routes.append(path[:-5])
+            if path.endswith("/index.html"):
+                routes.append(path[: -len("/index.html")] or "/")
+        else:
+            routes.append(path.rstrip("/") + ".html")
+        return [r.rstrip("/") or "/" for r in routes]
+    return doc_routes(key)
+
+
+def base_url(key: str) -> str:
+    if urlparse(key).scheme in ("http", "https"):
+        return key
+    parts = key.split("/")
+    if parts[0] in ("public", "static", "dist", "build", "web", "www", "src") and len(parts) > 1:
+        parts = parts[1:]
+    return "http://local.invalid/" + "/".join(parts)
+
+
+def href_route(key: str, href: str, own_hosts: set[str], any_host: bool) -> Optional[str]:
+    """URL path an href of document `key` leads to; None for another site or a non-page scheme.
+    `any_host` ignores the host of an absolute href (hreflang and canonical name the live address of a file)."""
+    if not href or TEMPLATE_SYNTAX.search(href):
+        return None
+    base = base_url(key)
+    parsed = urlparse(urljoin(base, href.strip()))
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not any_host and parsed.netloc != urlparse(base).netloc and parsed.netloc not in own_hosts:
+        return None
+    return parsed.path.rstrip("/") or "/"
+
+
+def page_words(page: PageInfo) -> list[str]:
+    """Words of the page content: `main` if there is one, otherwise the body without header, nav and footer."""
+    parts = page.text_main if page.has_main and page.text_main else page.text_body
+    return re.findall(r"\w+", " ".join(parts).lower())
+
+
+def _near_copies_of_boilerplate(reps: list[PageInfo], sets: list[set[int]], postings: dict[int, list[int]],
+                                threshold: float, reported: set[str], canonical_ok: Callable[[PageInfo, PageInfo], bool],
+                                findings: list[Finding]) -> None:
+    """Near copies among pages whose text is mostly word groups that occur on many pages (pages built from one
+    template with little text of their own). Such groups are no evidence for a single pair, so they are skipped
+    in the pairwise search; here a page whose text is at least `threshold` made of them is looked up by a small
+    sketch of those groups (the smallest hashes, in bands), and the candidates are confirmed by the full
+    similarity. A page is compared only against earlier originals, at most DUP_MAX_COMPARE of them."""
+    frequent = {h for h, posting in postings.items() if len(posting) > DUP_MAX_POSTING}
+    if not frequent:
+        return
+    buckets: dict[tuple[int, tuple[int, ...]], list[int]] = {}
+    for index, group_set in enumerate(sets):
+        common = group_set & frequent
+        if not group_set or len(common) < threshold * len(group_set):
+            continue  # mostly the page's own text: the pairwise search covers it
+        sketch = heapq.nsmallest(DUP_SKETCH, common)
+        bands = [(n, tuple(sketch[n * DUP_BAND:(n + 1) * DUP_BAND])) for n in range(max(1, len(sketch) // DUP_BAND))]
+        if reps[index].file not in reported:
+            candidates: list[int] = []
+            for band in bands:
+                for other in buckets.get(band, ()):
+                    if other not in candidates:
+                        candidates.append(other)
+            for other in sorted(candidates)[:DUP_MAX_COMPARE]:
+                shared = len(group_set & sets[other])
+                ratio = shared / (len(sets[other]) + len(group_set) - shared)
+                if ratio >= threshold and not canonical_ok(reps[other], reps[index]):
+                    findings.append(Finding("duplicate-content", reps[index].file, f"{round(ratio * 100)}% same text as "
+                                            f"{reps[other].file} (main content; set a canonical link or merge the pages)"))
+                    reported.add(reps[index].file)
+                    break
+        if reps[index].file not in reported:
+            for band in bands:
+                buckets.setdefault(band, []).append(index)
+
+
+def check_page_set(documents: list[PageInfo], findings: list[Finding], notes: list[str], options: Options,
+                   orphans: bool = True, orphan_suffixes: Optional[tuple[str, ...]] = None) -> None:
+    """Checks across a set of documents: hreflang, duplicate content, orphan pages."""
+    routes_of = {d.file: set(key_routes(d.file)) for d in documents}
+    by_route: dict[str, str] = {}
+    for d in documents:
+        for r in sorted(routes_of[d.file]):
+            by_route.setdefault(r, d.file)
+    own_hosts = {urlparse(d.canonical_href).netloc for d in documents if d.canonical_href}
+    own_hosts |= {urlparse(d.file).netloc for d in documents if urlparse(d.file).scheme in ("http", "https")}
+    own_hosts.discard("")
+    by_file = {d.file: d for d in documents}
+
+    # hreflang
+    def templated(d: PageInfo) -> bool:  # codes or URLs built by a template loop: not judged, not counted
+        return any(TEMPLATE_SYNTAX.search(c) or TEMPLATE_SYNTAX.search(h) for c, h in d.hreflangs)
+
+    with_hreflang = [d for d in documents if d.hreflangs and not templated(d)]
+    for d in documents:
+        if d.hreflangs and templated(d):
+            continue
+        if not d.hreflangs:
+            if with_hreflang and d.kind == "document":
+                findings.append(Finding("hreflang-missing", d.file, "other pages carry hreflang links, this one has none"))
+            continue
+        seen: dict[str, str] = {}
+        own_entry: Optional[str] = None
+        for code, href in d.hreflangs:
+            if not HREFLANG_CODE.match(code):
+                findings.append(Finding("hreflang-invalid", d.file, f"`{code}` is not a language code (like en, de-AT, x-default)"))
+                continue
+            if not urlparse(href).netloc:
+                findings.append(Finding("hreflang-invalid", d.file, f"hreflang `{code}`: href `{href}` is not an absolute URL"))
+                continue
+            target = href_route(d.file, href, own_hosts, True)
+            if code.lower() in seen and seen[code.lower()] != target:
+                findings.append(Finding("hreflang-invalid", d.file, f"`{code}` is given twice with different URLs"))
+            seen[code.lower()] = target or ""
+            if target in routes_of[d.file] and (own_entry is None or own_entry.lower() == "x-default"):
+                own_entry = code
+        if own_entry is None:
+            findings.append(Finding("hreflang-no-self", d.file, "the hreflang set has no entry for the page itself"))
+        elif d.html_lang and own_entry.lower() != "x-default" \
+                and own_entry.lower().split("-")[0] != d.html_lang.lower().split("-")[0]:
+            findings.append(Finding("hreflang-lang-mismatch", d.file, f"hreflang says `{own_entry}`, <html lang> says "
+                                    f"`{d.html_lang}`"))
+        for code, href in d.hreflangs:
+            target = href_route(d.file, href, own_hosts, True)
+            other_file = by_route.get(target) if target else None
+            if not other_file or other_file == d.file:
+                continue
+            back = {href_route(other_file, h, own_hosts, True) for _, h in by_file[other_file].hreflangs}
+            if not back & routes_of[d.file]:
+                findings.append(Finding("hreflang-no-return", d.file,
+                                        f"`{code}` points to {other_file}, which has no hreflang link back"))
+
+    # duplicate content: identical texts are grouped by hash, near copies are found through shared word groups
+    def canonical_ok(a: PageInfo, b: PageInfo) -> bool:
+        ca = href_route(a.file, a.canonical_href, own_hosts, True) if a.canonical_href else None
+        cb = href_route(b.file, b.canonical_href, own_hosts, True) if b.canonical_href else None
+        if ca and ca in routes_of[b.file] or cb and cb in routes_of[a.file]:
+            return True
+        return bool(ca and ca == cb)
+
+    groups: dict[bytes, list[PageInfo]] = {}
+    for d in documents:
+        if d.kind != "document" or d.noindex:
+            continue
+        words = page_words(d)
+        if len(words) >= options.dup_min_words:
+            digest = hashlib.blake2b(" ".join(words).encode("utf-8"), digest_size=16).digest()
+            groups.setdefault(digest, []).append(d)
+    reported: set[str] = set()  # at most one finding per page, against the first original
+    for members in groups.values():
+        for position, b in enumerate(members[1:], 1):
+            original = next((a for a in members[:position] if not canonical_ok(a, b)), None)
+            if original is not None:
+                findings.append(Finding("duplicate-content", b.file, f"100% same text as {original.file} "
+                                        "(main content; set a canonical link or merge the pages)"))
+                reported.add(b.file)
+    reps = [members[0] for members in groups.values()]
+    if len(reps) > DUP_EXACT_ONLY_ABOVE:
+        notes.append(f"duplicate content: {len(reps)} different pages, only identical texts compared")
+    elif options.dup_threshold < 1:
+        sets: list[set[int]] = []
+        for d in reps:
+            words = page_words(d)
+            n = min(DUP_SHINGLE, len(words))
+            sets.append({hash(tuple(words[i:i + n])) for i in range(len(words) - n + 1)})
+        postings: dict[int, list[int]] = {}
+        for index, group_set in enumerate(sets):
+            for h in group_set:
+                postings.setdefault(h, []).append(index)
+        for index, group_set in enumerate(sets):
+            counts: dict[int, int] = {}
+            for h in group_set:
+                posting = postings[h]
+                if len(posting) > DUP_MAX_POSTING:
+                    continue  # boilerplate shared by many pages
+                for other in posting:
+                    if other < index:
+                        counts[other] = counts.get(other, 0) + 1
+            for other, shared in sorted(counts.items()):
+                ratio = shared / (len(sets[other]) + len(group_set) - shared)
+                if ratio >= options.dup_threshold and not canonical_ok(reps[other], reps[index])                         and reps[index].file not in reported:
+                    findings.append(Finding("duplicate-content", reps[index].file, f"{round(ratio * 100)}% same text as "
+                                            f"{reps[other].file} (main content; set a canonical link or merge the pages)"))
+                    reported.add(reps[index].file)
+                    break
+        _near_copies_of_boilerplate(reps, sets, postings, options.dup_threshold, reported, canonical_ok, findings)
+
+    # orphan pages
+    if orphans and len(documents) > 1:
+        linked: set[str] = set()
+        for d in documents:
+            for href in d.links:
+                target = href_route(d.file, href, own_hosts, False)
+                other = by_route.get(target) if target else None
+                if other and other != d.file:
+                    linked.add(other)
+        for d in documents:
+            if orphan_suffixes and not d.file.lower().endswith(orphan_suffixes):
+                continue  # a template is reached through the pages built from it: only a crawl can tell
+            stem = d.file.rstrip("/").rsplit("/", 1)[-1].split(".", 1)[0].lower()
+            if d.kind != "document" or d.file in linked or "/" in routes_of[d.file] or stem in ERROR_PAGE_NAMES:
+                continue
+            findings.append(Finding("orphan-page", d.file, "no other page links to it (crawlers find it only via the sitemap)"))
+
+
+def check_translations(root: Path, findings: list[Finding], notes: list[str]) -> None:
+    """Translation findings from i18n_check.py (called, not copied)."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import i18n_check
+    except ImportError as exc:
+        notes.append(f"translations not checked: i18n_check.py could not be imported ({exc})")
+        return
+    report = i18n_check.run(root, None, True)
+    if report["groups"]:
+        notes.append("translations: " + "; ".join(f"{g['directory']} ({', '.join(g['locales'])})" for g in report["groups"]))
+    for item in report["findings"]:
+        kind = f"translation-{item['type']}"
+        if kind not in SEVERITY:
+            continue
+        label = f"[{item['locale']}] " if item["locale"] else ""
+        findings.append(Finding(kind, item["file"] or "translations", f"{label}{item['key']}  {item['detail']}".strip()))
+
+
+def check_documents(documents: Mapping[str, str], options: Optional[Options] = None) -> dict:
+    """All page checks on rendered documents given as {path or URL: HTML}, nothing read from disk.
+
+    Per page: the usual title/description/heading/lang/canonical/og/alt checks plus viewport, image size and JSON-LD;
+    across the set: duplicate title and description, hreflang, duplicate content, orphan pages (a link counts when it
+    resolves to another key of the set). Links to files are not judged. Returns the same report dict as `run`."""
+    options = options or Options()
+    findings: list[Finding] = []
+    notes: list[str] = []
+    pages: list[PageInfo] = []
+    for key, html in documents.items():
+        parser = PageParser()
+        try:
+            parser.feed(html)
+            parser.close()
+        except (AssertionError, ValueError, RecursionError):
+            pass
+        parser.info.file = key
+        parser.info.kind = "document"
+        pages.append(parser.info)
+    for page in pages:
+        check_page(page, findings, Path("."), [], False)
+        check_page_extended(page, findings)
+    check_duplicate_meta(pages, findings)
+    check_page_set(pages, findings, notes, options)
+    return {"root": "", "stack": [], "pages": len(pages), "notes": notes, "findings": [asdict(f) for f in findings]}
+
+
+def run(root: Path, options: Optional[Options] = None) -> dict:
+    options = options or Options()
     findings: list[Finding] = []
     stack, generated = detect_stack(root)
     pages: list[PageInfo] = []
@@ -464,17 +902,14 @@ def run(root: Path) -> dict:
     documents = [p for p in pages if p.kind in ("document", "markdown")]
     for page in pages:
         check_page(page, findings, root, routes, link_check)
-    for attr, kind in (("title", "duplicate-title"), ("description", "duplicate-description")):
-        seen: dict[str, list[str]] = {}
-        for page in documents:
-            value = getattr(page, attr)
-            if value and value.strip() and not TEMPLATE_SYNTAX.search(value):
-                seen.setdefault(value.strip().lower(), []).append(page.file)
-        for value, files in seen.items():
-            if len(files) > 1:
-                findings.append(Finding(kind, files[0], f"same {attr} on {len(files)} pages: {', '.join(files)}"))
+    check_duplicate_meta(documents, findings)
     check_site(root, [p for p in pages if p.kind == "page"], generated, findings,
                [p for p in documents if p.kind == "document"])
+    for page in pages:
+        check_page_extended(page, findings)
+    check_page_set([p for p in documents if p.kind == "document"], findings, notes, options,
+                   orphans=not has_markdown, orphan_suffixes=(".html", ".htm"))
+    check_translations(root, findings, notes)
     if not pages:
         notes.append("No HTML, template or Markdown pages found")
     return {"root": str(root), "stack": stack, "pages": len(pages), "notes": notes,
@@ -506,12 +941,20 @@ def main(argv: Optional[list[str]] = None) -> int:
                                      "canonical, Open Graph, image alt, internal links, robots.txt and sitemap.")
     parser.add_argument("--root", default=".", help="project root (default: current directory)")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
+    parser.add_argument("--dup-threshold", type=float, default=Options.dup_threshold,
+                        help="share of identical text from which two pages count as duplicates, 0 < x <= 1 "
+                        f"(default {Options.dup_threshold})")
+    parser.add_argument("--dup-min-words", type=int, default=Options.dup_min_words,
+                        help=f"pages with fewer words are not compared (default {Options.dup_min_words})")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     if not root.is_dir():
         print(f"Not a directory: {root}", file=sys.stderr)
         return 2
-    report = run(root)
+    if not 0 < args.dup_threshold <= 1 or args.dup_min_words < 1:
+        print("--dup-threshold must be above 0 and at most 1, --dup-min-words at least 1", file=sys.stderr)
+        return 2
+    report = run(root, Options(args.dup_threshold, args.dup_min_words))
     print(json.dumps(report, indent=2, ensure_ascii=False) if args.json else render(report))
     return 1 if any(f["severity"] in ("error", "warning") for f in report["findings"]) else 0
 

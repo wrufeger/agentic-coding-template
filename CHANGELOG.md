@@ -11,6 +11,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `seo_check.py` (`act-seo`) also checks `hreflang` sets, JSON-LD blocks, duplicate content between pages (main
+  content only, without header, nav, footer and sidebars; threshold via `--dup-threshold`, one finding per page against
+  the first original, large groups of near copies included), images without `width`/`height`, a missing viewport meta
+  tag, orphan pages (plain HTML only) and translation files through `i18n_check.py`. Viewport and image size are judged
+  on full HTML documents only, never on framework components, layouts or `_document` files; JSON-LD built by template
+  code and `hreflang` built in a template loop are not judged. Other scripts can call `check_documents({path_or_url:
+  html})` to run the page checks on rendered documents without reading files.
 - Script `seo_lighthouse.py` (a first building block for a fuller `act-seo`, not yet called by the skill): measures
   given URLs with a pinned Lighthouse version through `npx`, reports the median of several runs per category
   (Performance, Accessibility, Best Practices, SEO) and for LCP, CLS and TBT with the spread of every value, lists
