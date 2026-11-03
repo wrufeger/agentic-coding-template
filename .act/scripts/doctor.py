@@ -1054,33 +1054,22 @@ def check_legacy_config_keys(root: Path) -> list[Finding]:
     )]
 
 
-# Allowed values of config keys the mechanism and skills read; an empty value means the default.
-# Keys that take free text (`session-name`: project | auto | any title) are not listed: every
-# value is valid, and an empty one simply means the default.
-_CONFIG_VALUES = {
-    "board": ("docs", "shared", "local"),
-    "board-others": ("on", "off"),
-    "inbox-decisions": ("immediate", "at-start"),
-    "output-depth": ("verbose", "normal", "sparse"),
-    "board-at-start": ("on", "off"),
-    "teach-lessons": ("local", "docs"),
-    "artifacts": ("on", "off"),
-    "update-channel": ("release", "latest"),
-    "advisory-check": ("on", "off"),
-    "done-entries": ("delete", "keep"),
-}
-
-
 def check_config_values(root: Path) -> list[Finding]:
-    """One finding per config.md key in _CONFIG_VALUES whose value is none of the allowed ones."""
+    """One finding per config.md key of actlib.CONFIG_SCHEMA with a list of values or a pattern whose
+    value fits neither. An empty value means the default; free-text keys accept everything."""
     config = actlib.read_config(root)
     findings: list[Finding] = []
-    for key, allowed in _CONFIG_VALUES.items():
-        value = config.get(key, "").strip()
-        if value and value.lower() not in allowed:
+    for key, entry in actlib.CONFIG_SCHEMA.items():
+        if entry.values is None and entry.pattern is None:
+            continue
+        value = config.get(key, "").strip().strip("`").strip()
+        if value and not actlib.config_value_ok(entry, value):
+            allowed = " | ".join(entry.values) if entry.values else ""
+            if entry.pattern:
+                allowed = f"{allowed} | format {entry.pattern}" if allowed else f"format {entry.pattern}"
             findings.append(Finding(
                 path="docs/ai/config.md", line=None, kind="config-value",
-                message=f"`{key}` is {value!r} — use {' | '.join(allowed)}",
+                message=f"`{key}` is {value!r} — use {allowed}",
             ))
     return findings
 

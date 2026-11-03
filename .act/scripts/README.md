@@ -16,6 +16,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `advisory.py` | Warnings from the template author to projects running an affected template version ("advisories"). The template source carries an orphan… | direct (session start fetches daily in the background; `--ack` also by the chat sentences) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
 | `compact_check.py` | Check the sections of the archive collection files (`entries.py compact`) against their full text, and the monthly overview against the ids… | skill `act-compact` |
+| `config.py` | Show and set the settings in docs/ai/config.md without a model: the overview of every setting, one setting with its allowed values… | direct (also answers `/act-config` through dispatch.py) |
 | `context_size.py` | Context size of the running Claude Code session, for the status line ("ctx 127k") and for the one-time /clear hint… | direct (also imported by the status line and the context hint) |
 | `doctor.py` | Mechanical half of the reconcile skill `act-doctor` — the cheap checks that run after every update and on demand, without a model in the… | direct (judging the findings: skill `act-doctor`) |
 | `entries.py` | Create and account for the project's short-lived entry files — tasks, backlog items, journal entries, and docs/ai/inbox/ entries (question… | direct |
@@ -383,6 +384,25 @@ options:
   --month YYYY-MM  check only the collections of this month
   --restore        write the full body back into every section that lost something
   --no-overview    skip the check of the monthly overview
+```
+
+## `config.py`
+
+Call: direct (also answers `/act-config` through dispatch.py)
+
+```text
+usage: config.py [-h] [--root PATH] [KEY [VALUE ...] ...]
+
+Show or set the settings in docs/ai/config.md. No arguments: every setting. One key: its value,
+allowed values, default, effect and notes. A key and a value: write the value into that row
+(nothing is committed).
+
+positional arguments:
+  KEY [VALUE ...]  the key, then the value (words are joined with one space)
+
+options:
+  -h, --help       show this help message and exit
+  --root PATH      project root (default: the project this script belongs to)
 ```
 
 ## `context_size.py`

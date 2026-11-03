@@ -11,6 +11,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Command `/act-config`: shows and sets the settings in `docs/ai/config.md` without a model turn. `/act-config`
+  lists every setting, `/act-config <key>` shows one with its allowed values, default, when a change takes effect
+  and the notes from your own `config.md`, `/act-config <key> <value>` writes the value into that one table cell
+  (every key, also the Checks and free text; the rest of the file stays byte for byte, nothing is committed). In
+  Claude Code the `UserPromptSubmit` hook answers it; elsewhere run `python .act/scripts/config.py [<key> [<value>]]`.
+  The Roles table is shown but edited by hand. The accepted values of every key are declared once in `actlib.py`.
+
 - Rule `R-docs-order` (details in `.act/rules/topics/docs-order.md`): the project docs stay ordered. `docs/README.md`
   lists folders and top-level files only; every folder under `docs/project/` with five or more entries has a
   `README.md` with one line per entry and its state; one topic per file; a concept is deleted once decided or built.
@@ -91,6 +98,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   delete does not come back. The file is committed with the project like everything under `docs/`.
 
 ### Changed
+
+- `docs/ai/config.md` values may contain `\|` for a literal pipe: the settings reader (`actlib.read_config`) now
+  splits cells only at an unescaped `|`. A value that ends in a backslash right before the next `|`, with no space
+  in between, now reads differently; put a space before the `|`. `doctor.py` checks the value of every setting
+  that has a fixed list or format (not only the few it checked before), from the same declaration `/act-config`
+  uses, so it may report a value it passed over before.
 
 - `git-metadata-guard` reads Python code handed to `python` behind `-c`, in a heredoc, a here-string or a pipe as
   Python instead of as shell text. A literal target (a string or `Path(...)` of strings) in a writing call and a

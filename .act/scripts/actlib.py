@@ -35,7 +35,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, NamedTuple, Optional
 
 
 # Pauses between the replace attempts below, in seconds: about 0.35 s in all, so a hook stays fast.
@@ -646,6 +646,7 @@ def read_config(root: Optional[Path] = None) -> dict[str, str]:
     row are taken as (key, value), so a third column such as "Guards" in the Checks table is
     ignored; backticks around the key are dropped. The header row and the "---" separator row are
     skipped.
+    A `|` inside a cell is written `\\|` and read back as `|`.
     Robust against a missing file and against lines that are not a two-cell table row — those are
     silently ignored rather than raising.
 
@@ -667,7 +668,7 @@ def read_config(root: Optional[Path] = None) -> dict[str, str]:
         if not stripped.startswith("|") or not stripped.endswith("|"):
             continue
         inner = stripped[1:-1]
-        cells = [cell.strip() for cell in inner.split("|")]
+        cells = split_table_row(inner)
         if len(cells) < 2:
             continue
         key, value = cells[0].strip("`").strip(), cells[1]
@@ -681,6 +682,15 @@ def read_config(root: Optional[Path] = None) -> dict[str, str]:
     return config
 
 
+_UNESCAPED_PIPE_RE = re.compile(r"(?<!\\)\|")
+
+
+def split_table_row(inner: str) -> list[str]:
+    """The cells of a Markdown table row without its outer pipes: split only at a `|` that is not
+    preceded by a backslash, then read `\\|` inside a cell as a literal `|`. Cells are stripped."""
+    return [cell.replace("\\|", "|").strip() for cell in _UNESCAPED_PIPE_RE.split(inner)]
+
+
 def _is_header_row(lines: list[str], index: int) -> bool:
     """True if the table row at `index` is a header row: the next non-empty line is a
     separator row. Word-free on purpose — the header may be written in any language."""
@@ -690,7 +700,7 @@ def _is_header_row(lines: list[str], index: int) -> bool:
             continue
         if not (stripped.startswith("|") and stripped.endswith("|")):
             return False
-        cells = [cell.strip() for cell in stripped[1:-1].split("|")]
+        cells = split_table_row(stripped[1:-1])
         return bool(cells) and all(_is_separator_cell(cell) for cell in cells)
     return False
 
@@ -699,6 +709,120 @@ def _is_separator_cell(cell: str) -> bool:
     """True for a Markdown table separator cell such as ":---", "---", "---:", ":---:"."""
     body = cell.strip(":")
     return bool(body) and set(body) == {"-"}
+
+
+# ---------------------------------------------------------------------------
+# Schema of the config.md keys — what each key accepts, its default and when a change takes
+# effect. One source for `config.py` (show and set) and for the doctor's value check.
+# ---------------------------------------------------------------------------
+
+class ConfigKey(NamedTuple):
+    """A NamedTuple, not a dataclass: a dataclass looks its string annotations up in sys.modules, so
+    actlib loaded by path under another name (a probe, a tool) would fail at import.
+    One row of docs/ai/config.md. `values` lists the allowed values in their canonical spelling
+    (None: no enumeration); `pattern` is a regular expression a value may match instead
+    (`re.fullmatch`, case-insensitive); both None means free text. `default` is the default as the
+    scaffold's prose states it ("" where it names none). `effect` is "now" (read at every hook or
+    script call) or "next-session" (read only at session start or from the loaded rules)."""
+    key: str
+    section: str
+    values: Optional[tuple[str, ...]]
+    pattern: Optional[str]
+    default: str
+    effect: str
+
+
+_MODE3 = ("block", "warn", "off")
+_ON_OFF = ("on", "off")
+
+
+def _language_pattern(allow_auto: bool) -> str:
+    """What normalize_language() accepts: a code ("de", "pt-BR"), a name from LANGUAGE_NAMES and, where
+    `allow_auto` permits it, "auto" and its spellings. Called when the schema is built, after both are
+    defined."""
+    words = [re.escape(name) for name in LANGUAGE_NAMES]
+    if allow_auto:
+        words = ["auto", "automatic", "automatisch"] + words
+    return "|".join(words + [_LANGUAGE_CODE_RE.pattern.strip("^$")])
+
+
+def _build_config_schema() -> dict[str, ConfigKey]:
+    """The schema, in the order of the scaffold's tables (Roles is not a key table). A `pattern` accepts
+    at least every form the code that reads the key accepts (take that code's own regex, its splitting
+    and stripping): a stricter one makes the doctor report a value that works."""
+    entries: list[ConfigKey] = []
+
+    def add(key: str, section: str, values: Optional[tuple[str, ...]] = None,
+            pattern: Optional[str] = None, default: str = "", effect: str = "now") -> None:
+        entries.append(ConfigKey(key, section, values, pattern, default, effect))
+
+    nxt = "next-session"
+    add("name", "Project", effect=nxt)
+    add("owner", "Project", effect=nxt)
+    add("language-chat", "Project", pattern=_language_pattern(True), default="auto", effect=nxt)
+    add("language-docs", "Project", pattern=_language_pattern(False), default="en", effect=nxt)
+    add("stack", "Project", effect=nxt)
+    add("commands", "Project", effect=nxt)
+    add("tools", "Project")
+    add("mode", "Project", values=("solo", "team"), default="solo")
+    add("run", "Project", default="(not set)", effect=nxt)
+    add("board", "Board", values=("docs", "shared", "local"), default="docs")
+    add("board-others", "Board", values=_ON_OFF, default="")  # empty: on with mode team, else off
+    add("inbox-decisions", "Inbox", values=("immediate", "at-start"), default="immediate", effect=nxt)
+    add("quick-capture", "Inbox", values=_ON_OFF, default="on")
+    add("output-depth", "Output depth", values=("verbose", "normal", "sparse"), default="normal", effect=nxt)
+    add("context-hint", "Session length", values=("off",), pattern=r"\d+", default="180000")
+    add("task-wait-hours", "Session length", pattern=r"`?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?`?", default="12")
+    add("board-at-start", "Session length", values=_ON_OFF, default="on", effect=nxt)
+    add("session-name", "Session length", default="project", effect=nxt)
+    add("artifacts", "Session length", values=_ON_OFF, default="off", effect=nxt)
+    add("teach-lessons", "Teaching", values=("local", "docs"), default="local")
+    add("dependency-check", "Dependencies", values=("never", "once", "regularly"), default="regularly",
+        effect=nxt)
+    add("docs-audit-due", "Docs audit", values=("off",), pattern=r"\d+\s*d\s*/\s*\d+\s*c", default="30d/100c",
+        effect=nxt)
+    add("target-branch", "Git hosting", default="auto")
+    add("forge", "Git hosting", values=("auto", "github", "gitlab"), pattern=r"\(not set\)", default="auto")
+    add("forge-host", "Git hosting", default="auto")
+    for check in ("template-write-guard", "session-start-refresh", "orchestrator-rules",
+                  "worker-nesting-guard", "worker-write-scope", "worker-scope-overlap",
+                  "commit-pathspec", "git-reset-hard", "git-discard", "git-metadata-guard",
+                  "recursive-delete", "secret-scan", "secret-read", "outside-root"):
+        add(check, "Checks", values=_MODE3,
+            default="warn" if check == "outside-root" else "block",
+            effect=nxt if check in ("session-start-refresh", "orchestrator-rules") else "now")
+    add("outside-root-allow", "Checks", default="none")
+    add("act-local-tidy", "Checks", values=_MODE3, default="block", effect=nxt)
+    add("act-local-keep", "Checks", default="none", effect=nxt)
+    add("security-check", "Checks", values=("off", "local", "deps", "full"), default="local")
+    for check in ("worker-docs-ai", "worker-git-write", "ide-mcp", "worker-cap", "status-poll",
+                  "encoding-hint"):
+        add(check, "Checks", values=_MODE3, default="block")
+    add("update-branch-hint", "Checks", values=_MODE3, default="warn")
+    add("update-check", "Checks", values=_MODE3, default="block", effect=nxt)
+    add("docs-order", "Checks", values=_MODE3, default="warn")
+    add("logging", "Logging", values=_ON_OFF, default="off")
+    add("log-level", "Logging", values=("DEBUG", "INFO", "WARN", "ERROR"), default="INFO")
+    add("feedback", "Feedback", values=("off", "confirm", "automatic", "manual"), default="off")
+    add("feedback-cadence", "Feedback",
+        values=("manual", "immediate", "hourly", "daily", "weekly", "adaptive"), default="weekly")
+    add("feedback-scope", "Feedback", pattern=r"\s*[abc]\s*(?:,\s*[abc]\s*)*", default="a,b,c")
+    add("update-channel", "Update", values=("release", "latest"), default="release")
+    add("advisory-check", "Update", values=_ON_OFF, default="on")
+    add("done-entries", "Archive", values=("delete", "keep"), default="delete")
+    add("archive-compact", "Archive", values=("off",), pattern=r"\d+\s*d\s+\d+", default="30d 300", effect=nxt)
+    add("tips", "Tips", values=("never", "occasionally", "regularly"), default="occasionally")
+    return {entry.key: entry for entry in entries}
+
+
+def config_value_ok(entry: ConfigKey, value: str) -> bool:
+    """True if `value` is one of the entry's allowed values or matches its pattern (case-insensitive);
+    always True for a free-text entry."""
+    if entry.values is None and entry.pattern is None:
+        return True
+    if entry.values is not None and value.lower() in (item.lower() for item in entry.values):
+        return True
+    return entry.pattern is not None and re.fullmatch(entry.pattern, value, re.IGNORECASE) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -747,6 +871,10 @@ def normalize_language(value: str, allow_auto: bool = False) -> Optional[str]:
         return "auto" if allow_auto else None
     code = LANGUAGE_NAMES.get(word, word)
     return code if _LANGUAGE_CODE_RE.match(code) else None
+
+
+# Built here, below LANGUAGE_NAMES and _LANGUAGE_CODE_RE, which the language patterns are made from.
+CONFIG_SCHEMA: dict[str, ConfigKey] = _build_config_schema()
 
 
 def language_settings(config: dict[str, str]) -> tuple[str, str]:

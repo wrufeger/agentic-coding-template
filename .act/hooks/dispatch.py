@@ -284,6 +284,26 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
     _match2 = _re.fullmatch(r"\s*/act(?:\s+(\S+))?\s*", _prompt2) if isinstance(_prompt2, str) else None
     if _payload2.get("agent_id"):
         sys.exit(0)  # a worker's own payload — nothing to do here
+    # `/act-config ...`: answered by .act/scripts/config.py without a model turn. The cheap start
+    # test decides before config is imported; `/act-configure` and every other prompt do not match.
+    _config_match = (_re.match(r"\s*/act-config(?=\s|$)", _prompt2) if isinstance(_prompt2, str) else None)
+    if _config_match is not None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+        try:
+            import config as _config  # noqa: E402
+            _config_code, _config_out = _config.handle(Path(__file__).resolve().parents[2],
+                                                       _prompt2[_config_match.end():])
+        except Exception as _exc5:  # noqa: BLE001 -- a bug here must never eat the user's prompt
+            print(f"[act] act-config: failed, message passed through ({_exc5!r})", file=sys.stderr)
+            sys.exit(0)
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
+        print(json.dumps({"decision": "block", "reason": _config_out,
+                          "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                 "suppressOriginalPrompt": True}}, ensure_ascii=False))
+        sys.exit(0)
     if _match2 is None:
         # Advisory acknowledgement: the whole prompt is a sentence like "Warnung quittiert" (optionally
         # with advisory ids). The cheap start test decides before checks.advisory_ack is imported; the
