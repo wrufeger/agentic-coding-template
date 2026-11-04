@@ -1852,8 +1852,9 @@ _TOPIC_SWITCHES: tuple[tuple[str, str, Callable[[str], bool]], ...] = (
 # files, the same sources Claude Code itself reads its MCP server list from. A name or command
 # containing one of these (case-insensitive) counts as "IDE-shaped" -- best-effort, JetBrains'
 # `idea` MCP plugin is the only one confirmed as of this writing; a project using a different IDE
-# MCP server under an unrecognized name sees "ide" inactive until this list is extended (project
-# override: docs/ai/local/.act/hooks/checks/session.py per R-work-override).
+# MCP server under an unrecognized name sees "ide" inactive until this list is extended. Only the
+# template can extend it -- dispatch.py loads check modules from .act/hooks/ alone and has no project
+# override for them -- so a project reports a missing name as feedback (topics/feedback.md).
 _IDE_SERVER_NAME_HINTS = ("idea", "jetbrains", "intellij", "pycharm", "webstorm", "rider", "clion")
 # Server names that count as an IDE server only when they match *exactly* (case-insensitive), never
 # as a substring: Claude Code's own IDE integration (the VS Code and JetBrains extensions) registers

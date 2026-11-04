@@ -329,13 +329,15 @@ def _worker_scope_file(root: Path, tool_use_id: str) -> Optional[Path]:
 def _read_json_object(path: Path) -> Optional[dict]:
     """Local, minimal twin of actlib._read_json — kept in this module rather than imported since
     that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object.
+    A file that is not valid UTF-8 (UnicodeDecodeError, and only that error from decoding) counts
+    as malformed JSON: None. Any other exception is not caught here.
     The read is retried briefly on Windows (actlib.read_text_retrying): a scanner holding a
     just-renamed entry open must not make a worker's own scope or cap entry look absent."""
     if not path.is_file():
         return None
     try:
         data = json.loads(actlib.read_text_retrying(path))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -353,7 +355,8 @@ def _entry_is_fresh(entry: dict) -> bool:
 
 def _scope_file_is_prunable(path: Path) -> bool:
     """True if a file in the shared scope/cap storage may be deleted by a prune pass: it is older
-    than _SCOPE_ENTRY_TTL, or its content is not a JSON object. A file that cannot be *read* (on
+    than _SCOPE_ENTRY_TTL, or its content is not a JSON object (this includes bytes that are not valid
+    UTF-8, treated exactly like text that is not JSON). A file that cannot be *read* (on
     Windows a scanner or indexer holds a just-renamed file open for a moment, and the read fails with
     PermissionError) says nothing about its content, so it is judged by its modification time alone —
     it stays unless it is old. Taking it for damaged deleted the fresh entry of a parallel start. A
@@ -362,6 +365,8 @@ def _scope_file_is_prunable(path: Path) -> bool:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
+    except UnicodeDecodeError:
+        return True  # not valid UTF-8: damaged like text that is not JSON
     except OSError:
         try:
             modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
@@ -376,7 +381,7 @@ def _scope_file_is_prunable(path: Path) -> bool:
 
 
 def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
-    """Delete every scope file older than _SCOPE_ENTRY_TTL, or malformed (not a JSON object) — a file that
+    """Delete every scope file older than _SCOPE_ENTRY_TTL, or malformed (not a JSON object, or not valid UTF-8) — a file that
     cannot be read stays until it is that old (_scope_file_is_prunable) — run
     opportunistically on each write rather than on a schedule, so no separate cleanup process is
     needed. `skip` is the file just written in this same call, left alone unconditionally (it
@@ -452,9 +457,9 @@ def _recent_restricted_scope_registered(root: Path) -> bool:
     a binding failure is only treated as suspicious when scoping is demonstrably in active use
     nearby.
 
-    A damaged file (unreadable, not JSON, no usable "mode") does not count as "restricted" — so if
+    A damaged file (unreadable, not JSON, not valid UTF-8, no usable "mode") does not count as "restricted" — so if
     such files are all there is, an unbound worker is allowed. Deliberate: a broken bookkeeping file
-    must not lock every worker out; a file that is not JSON is pruned on the orchestrator's next Agent/Task
+    must not lock every worker out; a file that is not JSON or not valid UTF-8 is pruned on the orchestrator's next Agent/Task
     start (_prune_worker_scope_files), one that cannot be read stays until it is older than
     _SCOPE_ENTRY_TTL, and a bound worker is unaffected either way."""
     try:

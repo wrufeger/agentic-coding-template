@@ -170,6 +170,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   just-written entry open on Windows at the moment the check reads it. `worker-write-scope`, `worker-cap` and the
   other checks that read these entries retry a denied read a few times within about a third of a second, like the
   rename does; an entry that stays unreadable is treated as before.
+- A file that is not valid UTF-8 no longer refuses every worker start until it is deleted by hand when it lies in
+  `.act-local/worker-scopes/`, and no longer switches `worker-cap` off when it lies in `.act-local/worker-caps/`. It is
+  treated like a file that is not JSON: the next start deletes it, and until then it counts as no entry. A bound
+  worker, and an unbound one next to a fresh entry that names a `Write scope:`, stay restricted as before.
 - A WSL path `/mnt/<x>/…` in a `wsl` command line (also after `--exec` or `--distribution-id`) is now the Windows
   drive `<X>:` for write-guard, worker-write-scope and outside-root alike, read in the shared scanner. `cmd /c <line>`
   is read like an `eval` of its words.
