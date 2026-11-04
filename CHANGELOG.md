@@ -166,6 +166,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   damaged file and deleted it, so the worker then ran without its scope or with the tier's default cap. A file that
   cannot be read is now judged by its age alone and stays unless it is older than 24 hours; the same holds for the
   per-session state of `status-poll`.
+- A worker no longer runs one call without its `Write scope:` or with the tier's default cap when a scanner holds its
+  just-written entry open on Windows at the moment the check reads it. `worker-write-scope`, `worker-cap` and the
+  other checks that read these entries retry a denied read a few times within about a third of a second, like the
+  rename does; an entry that stays unreadable is treated as before.
 - A WSL path `/mnt/<x>/…` in a `wsl` command line (also after `--exec` or `--distribution-id`) is now the Windows
   drive `<X>:` for write-guard, worker-write-scope and outside-root alike, read in the shared scanner. `cmd /c <line>`
   is read like an `eval` of its words.

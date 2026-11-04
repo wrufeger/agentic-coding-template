@@ -59,6 +59,21 @@ def replace_file(src: "str | os.PathLike[str]", dst: "str | os.PathLike[str]") -
     os.replace(src, dst)
 
 
+def read_text_retrying(path: "str | os.PathLike[str]", encoding: str = "utf-8") -> str:
+    """Path(path).read_text(encoding), with the same short retries as replace_file, on Windows only.
+    There a scanner or indexer can hold a just-renamed file open without read sharing, and the read
+    then fails with PermissionError for a moment. If the fifth attempt fails too, its PermissionError
+    is raised unchanged; every other error is raised at once. Elsewhere this is a plain read."""
+    if sys.platform != "win32":
+        return Path(path).read_text(encoding=encoding)
+    for pause in _REPLACE_RETRY_PAUSES:
+        try:
+            return Path(path).read_text(encoding=encoding)
+        except PermissionError:
+            time.sleep(pause)
+    return Path(path).read_text(encoding=encoding)
+
+
 # ---------------------------------------------------------------------------
 # Short-lived folders: <project>/.act-local/tmp/, else the system temp directory
 # ---------------------------------------------------------------------------

@@ -328,11 +328,13 @@ def _worker_scope_file(root: Path, tool_use_id: str) -> Optional[Path]:
 
 def _read_json_object(path: Path) -> Optional[dict]:
     """Local, minimal twin of actlib._read_json — kept in this module rather than imported since
-    that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object."""
+    that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object.
+    The read is retried briefly on Windows (actlib.read_text_retrying): a scanner holding a
+    just-renamed entry open must not make a worker's own scope or cap entry look absent."""
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(actlib.read_text_retrying(path))
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
