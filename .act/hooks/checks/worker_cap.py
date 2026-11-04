@@ -106,7 +106,9 @@ from typing import Optional
 import actlib
 
 from .common import _WORKER_TOOL_NAMES, _check_mode, _is_worker
-from .write_scope import _SAFE_ID_RE, _agent_assignment_text, _entry_is_fresh, _read_json_object
+from .write_scope import (
+    _SAFE_ID_RE, _agent_assignment_text, _entry_is_fresh, _read_json_object, _scope_file_is_prunable,
+)
 
 __all__ = [
     "_WORKER_CAPS_DIRNAME", "_TIER_DEFAULT_CAPS", "_DEFAULT_TIER", "_DEFAULT_CAP",
@@ -234,7 +236,7 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
 
 def _prune_stale_entries(dir_path: Path, skip: Path) -> None:
     """Delete every worker-caps file (either kind) older than write_scope's 24h freshness window
-    (_entry_is_fresh, reused rather than redefined), or unreadable/malformed — run opportunistically
+    (_scope_file_is_prunable, reused rather than redefined), or malformed — run opportunistically
     on each write, mirroring write_scope._prune_worker_scope_files. `skip` is the file just written
     in this same call. Also clears any orphaned "*.lock" directory left behind under the same dir
     (see _clear_if_orphaned) — a second, independent chance to clean one up beyond the self-healing
@@ -247,8 +249,7 @@ def _prune_stale_entries(dir_path: Path, skip: Path) -> None:
     for path in candidates:
         if path == skip:
             continue
-        entry = _read_json_object(path)
-        if entry is None or not _entry_is_fresh(entry):
+        if _scope_file_is_prunable(path):
             try:
                 path.unlink()
             except OSError:

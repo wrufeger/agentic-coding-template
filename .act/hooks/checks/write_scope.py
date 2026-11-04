@@ -84,7 +84,8 @@ __all__ = [
     "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE",
     "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_external_directories",
     "_external_pattern", "_scope_pattern", "_parse_write_scope", "_worker_scopes_dir",
-    "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_prune_worker_scope_files",
+    "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_scope_file_is_prunable",
+    "_prune_worker_scope_files",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
@@ -348,8 +349,33 @@ def _entry_is_fresh(entry: dict) -> bool:
         return False
 
 
+def _scope_file_is_prunable(path: Path) -> bool:
+    """True if a file in the shared scope/cap storage may be deleted by a prune pass: it is older
+    than _SCOPE_ENTRY_TTL, or its content is not a JSON object. A file that cannot be *read* (on
+    Windows a scanner or indexer holds a just-renamed file open for a moment, and the read fails with
+    PermissionError) says nothing about its content, so it is judged by its modification time alone —
+    it stays unless it is old. Taking it for damaged deleted the fresh entry of a parallel start. A
+    file that is already gone is nothing to delete."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    except OSError:
+        try:
+            modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return False  # no usable time either: it stays
+        return modified < datetime.now(timezone.utc) - _SCOPE_ENTRY_TTL
+    try:
+        entry = json.loads(text)
+    except json.JSONDecodeError:
+        return True
+    return not isinstance(entry, dict) or not _entry_is_fresh(entry)
+
+
 def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
-    """Delete every scope file older than _SCOPE_ENTRY_TTL, or unreadable/malformed — run
+    """Delete every scope file older than _SCOPE_ENTRY_TTL, or malformed (not a JSON object) — a file that
+    cannot be read stays until it is that old (_scope_file_is_prunable) — run
     opportunistically on each write rather than on a schedule, so no separate cleanup process is
     needed. `skip` is the file just written in this same call, left alone unconditionally (it
     cannot be stale — it was just stamped with the current time)."""
@@ -360,8 +386,7 @@ def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
     for path in candidates:
         if path == skip:
             continue
-        entry = _read_json_object(path)
-        if entry is None or not _entry_is_fresh(entry):
+        if _scope_file_is_prunable(path):
             try:
                 path.unlink()
             except OSError:
@@ -427,8 +452,9 @@ def _recent_restricted_scope_registered(root: Path) -> bool:
 
     A damaged file (unreadable, not JSON, no usable "mode") does not count as "restricted" — so if
     such files are all there is, an unbound worker is allowed. Deliberate: a broken bookkeeping file
-    must not lock every worker out; it is pruned on the orchestrator's next Agent/Task start
-    (_prune_worker_scope_files), and a bound worker is unaffected either way."""
+    must not lock every worker out; a file that is not JSON is pruned on the orchestrator's next Agent/Task
+    start (_prune_worker_scope_files), one that cannot be read stays until it is older than
+    _SCOPE_ENTRY_TTL, and a bound worker is unaffected either way."""
     try:
         candidates = list(_worker_scopes_dir(root).glob("*.json"))
     except OSError:

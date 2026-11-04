@@ -161,6 +161,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- Parallel worker starts no longer lose each other's recorded `Write scope:` or `Cap:`. On Windows a scanner or
+  indexer can hold a just-written bookkeeping file open for a moment; the cleanup pass of another start read that as a
+  damaged file and deleted it, so the worker then ran without its scope or with the tier's default cap. A file that
+  cannot be read is now judged by its age alone and stays unless it is older than 24 hours; the same holds for the
+  per-session state of `status-poll`.
 - A WSL path `/mnt/<x>/…` in a `wsl` command line (also after `--exec` or `--distribution-id`) is now the Windows
   drive `<X>:` for write-guard, worker-write-scope and outside-root alike, read in the shared scanner. `cmd /c <line>`
   is read like an `eval` of its words.
@@ -230,6 +235,16 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `worker-write-scope` now resolves the write targets of inline Python (a heredoc or `python -c`) that are built
+  from string literals and checks them against the `Write scope:`: `os.path.join`, `Path(...)` chains and `/`,
+  f-strings, names bound once (also as a `for` loop variable) and the patterns of `glob.glob` and
+  `Path(...).glob`. A worker limited to `docs/**` that loops over `glob.glob('i18n/*.json')` and rewrites the files
+  is now stopped. A tightening only: the path literals stay checked as before, and the step runs only where a write
+  call is already seen in the literals. A value that cannot be resolved, or lies beyond the resolver's limits (a
+  program over 32,768 characters, an expression standing for more than 256 strings, a string over 1,024 characters,
+  a work budget and an output budget set by the program's length), stays unchecked as before; see
+  `.act/rules/topics/checks.md`. For the resolved targets, a link target (`Path.symlink_to`, `hardlink_to`), a
+  read-only `os.open` and a mode name bound to `'r'` are not counted as writes.
 - The detached dependency-scan worker no longer trusts its list file: it ignores merge, pull and cherry-pick calls
   aimed at another repository and accepts only full commit ids as recorded heads, and its `git diff` stops option
   parsing before the revision (`--end-of-options`). The same commit-id check now applies to the heads the merge hook

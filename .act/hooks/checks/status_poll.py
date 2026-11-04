@@ -54,8 +54,8 @@
 #
 # State storage mirrors worker_cap.py's small conventions (imported from there rather than
 # duplicated a third time): _atomic_write_json for the same temp-file+os.replace, write_scope's
-# _SAFE_ID_RE to validate session_id as a filename, _read_json_object/_entry_is_fresh for the
-# opportunistic 24h file-hygiene prune (_prune_stale_state — disk cleanup, not the streak logic
+# _SAFE_ID_RE to validate session_id as a filename, _read_json_object for reading it and
+# _scope_file_is_prunable for the opportunistic 24h file-hygiene prune (_prune_stale_state — disk cleanup, not the streak logic
 # itself). No locking here (unlike worker_cap's per-agent counter): the orchestrator is a single
 # session issuing one tool call at a time, so its own state file never sees concurrent writers the
 # way a worker's shared count file can.
@@ -93,7 +93,7 @@ import actlib
 
 from .common import _check_mode, _is_harness_message, _is_worker
 from .worker_cap import _atomic_write_json
-from .write_scope import _SAFE_ID_RE, _entry_is_fresh, _read_json_object
+from .write_scope import _SAFE_ID_RE, _read_json_object, _scope_file_is_prunable
 
 __all__ = [
     "_STATUS_POLL_DIRNAME", "_STATUS_POLL_TOOL_NAMES", "_STATUS_POLL_MESSAGE",
@@ -123,9 +123,10 @@ def _state_file(root: Path, session_id: object) -> Optional[Path]:
 
 
 def _prune_stale_state(dir_path: Path, skip: Path) -> None:
-    """Same opportunistic 24h prune as worker_cap._prune_stale_entries, kept as its own tiny copy
-    here rather than a third shared home for it — one session's own state file is the only thing
-    ever written here, so there is nothing to race against."""
+    """Same opportunistic 24h prune as worker_cap._prune_stale_entries, kept as its own tiny loop
+    here. Each session writes only its own state file, but every session's prune pass reads all of
+    them, so a file another session just wrote can fail to open for a moment (on Windows a scanner
+    or indexer holds it); _scope_file_is_prunable keeps such a file unless it is old."""
     try:
         candidates = list(dir_path.glob("*.json"))
     except OSError:
@@ -133,8 +134,7 @@ def _prune_stale_state(dir_path: Path, skip: Path) -> None:
     for path in candidates:
         if path == skip:
             continue
-        entry = _read_json_object(path)
-        if entry is None or not _entry_is_fresh(entry):
+        if _scope_file_is_prunable(path):
             try:
                 path.unlink()
             except OSError:
