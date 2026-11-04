@@ -10,6 +10,10 @@ so it acts on the adopted project, not on this checkout:
 - `off`: nothing is asked, nothing is kept — `python .act/scripts/feedback.py --target
   <dir> --discard-harvest` removes the file; mention once, in the closing summary, that candidates
   for the template were found but discarded (feedback is off).
+- `local`: nothing is sent, nothing is lost — turn every harvest line into a backlog entry of the
+  adopted project (`python .act/scripts/entries.py new backlog "<one line>"`, run in `<dir>`, the
+  2-6 sentences as the entry's body), then `python .act/scripts/feedback.py --target <dir>
+  --discard-harvest`. `feedback.py --add` refuses under `local`.
 - `manual`: turn every harvest line into an entry (`python .act/scripts/feedback.py --target <dir>
   --add --kind <rule|script|skill|workflow|docs|bug|mcp|link> --title "<one line>" --text
   "<2-6 sentences>"`, one call per line) — they wait in the outbox, nothing is sent; the owner

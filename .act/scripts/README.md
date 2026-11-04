@@ -638,7 +638,7 @@ usage: feedback.py [-h] [--status | --enable | --disable | --add | --plan | --se
                    [--contact EMAIL] [--target DIR]
                    [--kind {rule,script,skill,workflow,docs,bug,mcp,link}] [--title TITLE]
                    [--text TEXT] [--url URL] [--repo-url REPO_URL]
-                   [--mode {off,confirm,automatic,manual}] [--force] [--yes]
+                   [--mode {off,confirm,automatic,manual,local}] [--force] [--yes]
 
 Voluntary feedback to the template author - never without consent, never unseen.
 
@@ -648,10 +648,12 @@ options:
   --enable              set consent
   --disable             revoke consent
   --add                 store a finding in the outbox; sends it at once with mode 'automatic' and
-                        cadence 'immediate', or with --kind bug (consent and mode still apply)
+                        cadence 'immediate', or with --kind bug (consent and mode still apply);
+                        refused with mode 'local'
   --plan                show the payload, send nothing (default)
   --send                send if consent, the privacy check and the cadence gate all allow it
-  --direct TEXT         send a hand-written message at once - works even with feedback off
+  --direct TEXT         send a hand-written message at once - works even with feedback off, never
+                        with local
   --due                 report whether a reminder is due under the current cadence
   --postpone DAYS       pause the due reminder for this many days and count it as a postponement
   --clear               discard every waiting entry, send nothing
@@ -664,8 +666,9 @@ options:
   --text TEXT           with --add: two to six sentences
   --url URL             with --add --kind link: the public address
   --repo-url REPO_URL   with --enable: public repo URL (optional)
-  --mode {off,confirm,automatic,manual}
-                        with --enable: off, confirm, automatic (default), manual
+  --mode {off,confirm,automatic,manual,local}
+                        with --enable: off, confirm, automatic (default), manual, local (never
+                        sends anything)
   --force               with --send: lift the cadence gate (not the consent gate)
   --yes                 with --send and mode 'confirm': actually send after showing the payload
 ```

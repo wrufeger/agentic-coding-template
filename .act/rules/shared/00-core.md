@@ -24,7 +24,7 @@ A rule or file the project has changed always wins over the template's version. 
 edit anything under `.act/` directly; a project-specific version goes into
 `docs/ai/local/<same path>` instead. A bug IN the template itself — a script, skill or rule under
 `.act/` that fails, contradicts another, or provably never fires — is reported at once via
-`feedback.py --add --kind bug`. A worker does not file it itself: it hands such a bug back with its
+`feedback.py --add --kind bug` (with `feedback: local`, as a backlog entry instead). A worker does not file it itself: it hands such a bug back with its
 result, and the orchestrator files it. Details in `topics/feedback.md`.
 
 ## `R-work-language` — One docs language, `.act/` in English

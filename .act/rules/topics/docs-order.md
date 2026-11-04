@@ -41,7 +41,7 @@ All four kinds are findings like any other (exit 1); none rewrites a file.
   two lines, a path without a folder in front of it (a bare file name) and an anchor inside a file are not
   seen.
 - `docs-concept-decided` — a file under `docs/project/concepts/` that names questions (as `Q<number>` in
-  backticks; a bare Q4 in running text is not a question) when none of them is still open: each is answered or
+  backticks; a bare quarter name in running text is not a question) when none of them is still open: each is answered or
   done, or its entry is gone and its number is reserved. A concept
   that names no question is not reported, and neither is one that names an open one. The report is a
   prompt to apply the lifecycle above, not a judgement that the concept is finished.

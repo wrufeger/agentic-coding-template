@@ -69,7 +69,7 @@
 #       actlib.repo_root() (walking upward from the current working directory).
 #   python .act/scripts/feedback.py --status
 #       Consent, target URL, how many entries are waiting, when last sent. Writes nothing.
-#   python .act/scripts/feedback.py --enable [--mode confirm|automatic|manual] [--repo-url <url>]
+#   python .act/scripts/feedback.py --enable [--mode confirm|automatic|manual|local] [--repo-url <url>]
 #       Sets `feedback` in docs/ai/config.md (default: automatic). --repo-url is only sent if it
 #       is public (https://); without it, a message carries no repo URL (the project id is separate).
 #   python .act/scripts/feedback.py --disable
@@ -80,12 +80,12 @@
 #       `feedback` is `automatic` and `feedback-cadence` is `immediate` (same send as --send), or
 #       --kind is `bug` (a template bug bypasses the cadence gate entirely, never the consent
 #       gate — see .act/rules/topics/feedback.md § "Immediate trigger"). Written for a stranger:
-#       pattern, not project — no names, no paths, no code.
+#       pattern, not project — no names, no paths, no code. Refused with `feedback: local`.
 #   python .act/scripts/feedback.py --plan        (default)
 #       Shows the full payload that would be sent. Writes and sends nothing.
 #   python .act/scripts/feedback.py --send [--force] [--yes]
 #       Sends if consent, the privacy check and the cadence gate all allow it. --force lifts the
-#       cadence gate (not the consent gate — `feedback: off` still refuses). --yes confirms an
+#       cadence gate (not the consent gate — `feedback: off` and `local` still refuse). --yes confirms an
 #       actual send when `feedback` is `confirm` (without it, that mode only shows the payload).
 #       With cadence `immediate` and an empty outbox nothing goes out unless --force: --add has
 #       sent each entry already, a send now would carry only the numbers a second time.
@@ -99,7 +99,8 @@
 #       --contact <email> (only with --direct) adds a reply address as the field `contact`, for
 #       this one message: kept only in its local protocol copy, never reused, never filled in
 #       by itself, shape-checked narrowly. A mail
-#       address inside the text is still rejected. The privacy check still runs. Refuses outright with no
+#       address inside the text is still rejected. The privacy check still runs. Refused with
+#       `feedback: local`. Refuses outright with no
 #       .act-lock.json on disk (the template checkout's own state, not a derived project's).
 #   python .act/scripts/feedback.py --due
 #       Reports whether a reminder is due under the current cadence (fixed interval, or the
@@ -119,7 +120,8 @@
 #   python .act/scripts/feedback.py --target <dir> --discard-harvest
 #       Removes <dir>/.act-local/adopt/harvest.md (act-adopt step 6's local list of candidates for
 #       the template) without adding anything to the outbox — the path for
-#       docs/ai/config.md's `feedback: off`. No-op (exit 0) if the file is not there.
+#       docs/ai/config.md's `feedback: off`, and for `local` once every line is a backlog entry.
+#       No-op (exit 0) if the file is not there.
 #
 # Output format: plain text; a payload is shown as an indented JSON block. Exit 0 = ok, 1 =
 #   payload rejected (not sent), 2 = aborted (no consent, missing argument, transport error).
@@ -176,7 +178,9 @@ ENTRIES_DIR_REL = ".act-local/feedback/entries"
 # _write_journal_entry() adds to docs/ai/work/ledger/, not this file.
 PROTOCOL_DIR_REL = ".act-local/feedback/sent"
 
-MODE_VALUES = ("off", "confirm", "automatic", "manual")
+MODE_VALUES = ("off", "confirm", "automatic", "manual", "local")
+LOCAL_REFUSAL = ("feedback is 'local' (docs/ai/config.md): nothing is sent from this project, ever. "
+                 "Record it as a backlog entry instead: python .act/scripts/entries.py new backlog <title>")
 # Minimum gap per cadence, in hours (None: no fixed interval — needs --force). Same table as
 # docs/ai/config.md § Feedback documents; "adaptive" has no fixed interval, its own threshold is
 # computed in _adaptive_threshold().
@@ -855,6 +859,12 @@ def cmd_status(root: Path) -> int:
     if mode == "off":
         print("")
         print("Nothing is sent. Enable with: feedback.py --enable [--mode confirm|automatic|manual]")
+    elif mode == "local":
+        print("")
+        print("'local': this project never sends anything to the template author - not even a hand-written "
+              "message. Findings become backlog entries here (python .act/scripts/entries.py new backlog <title>).")
+        if _read_entries(root):
+            print("The waiting entries above never go out under 'local'; remove them with: feedback.py --clear")
     return 0
 
 
@@ -868,7 +878,7 @@ def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str]) -> int:
               file=sys.stderr)
         return 2
     state = _read_state(root)
-    if mode != "off" and not state.get("project_id"):
+    if mode not in ("off", "local") and not state.get("project_id"):
         # A random id generated here — no name, no path, no hash derived from project data. It
         # makes several messages from the same project traceable to each other without naming
         # the project. Deleting .act-local/feedback/state.json gets rid of it; the next --enable
@@ -887,7 +897,10 @@ def cmd_enable(root: Path, repo_url: Optional[str], mode: Optional[str]) -> int:
         state["repo_url"] = repo_url
     _write_state(root, state)
     print(f"docs/ai/config.md: feedback = {mode}   (cadence: {_cadence(_read_config_at(root))})")
-    if mode != "off":
+    if mode == "local":
+        print("'local': nothing is ever sent; findings go to the backlog "
+              "(python .act/scripts/entries.py new backlog <title>).")
+    elif mode != "off":
         print(f"target: {_endpoint()} - protocol of every send under "
               f"{_protocol_dir(root).relative_to(root).as_posix()}/ (local, kept out of git)")
     return 0
@@ -904,6 +917,9 @@ def cmd_disable(root: Path) -> int:
 
 def cmd_add(root: Path, kind: Optional[str], title: Optional[str], text: Optional[str],
             url: Optional[str], yes: bool = False) -> int:
+    if _mode(_read_config_at(root)) == "local":
+        print(f"not stored - {LOCAL_REFUSAL}", file=sys.stderr)
+        return 2
     kind = (kind or "").strip().lower()
     if kind not in KINDS:
         print(f"error: --kind must be one of {', '.join(KINDS)}.", file=sys.stderr)
@@ -961,6 +977,9 @@ def cmd_add(root: Path, kind: Optional[str], title: Optional[str], text: Optiona
 
 def cmd_plan(root: Path) -> int:
     config = _read_config_at(root)
+    if _mode(config) == "local":
+        print(f"nothing to preview - {LOCAL_REFUSAL}")
+        return 0
     payload = _build_payload(root, config)
     endpoint = _endpoint()
     _show(payload, endpoint)
@@ -1019,6 +1038,9 @@ def _shrink_chunk(chunk: list, envelope: dict) -> list[list]:
 def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -> int:
     config = _read_config_at(root)
     mode, cadence = _mode(config), _cadence(config)
+    if mode == "local":
+        print(f"aborted: {LOCAL_REFUSAL}", file=sys.stderr)
+        return 2
     if mode == "off":
         print("aborted: feedback is off (docs/ai/config.md).", file=sys.stderr)
         return 2
@@ -1109,6 +1131,9 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool, contact: Optional[str
     """Sends a hand-written message at once. See the header comment for why this is deliberately
     not gated by consent or cadence."""
     del yes  # accepted for CLI symmetry with --send; a hand-written message never needs 'confirm'
+    if _mode(_read_config_at(root)) == "local":
+        print(f"aborted: {LOCAL_REFUSAL}", file=sys.stderr)
+        return 2
     text = (text or "").strip()
     if not text:
         print("aborted: no text given.", file=sys.stderr)
@@ -1258,7 +1283,8 @@ HARVEST_FILE_REL = ".act-local/adopt/harvest.md"
 
 
 def cmd_discard_harvest(root: Path) -> int:
-    """With docs/ai/config.md's `feedback: off`, act-adopt's harvest.md (step 6's
+    """With docs/ai/config.md's `feedback: off` (or `local`, after each line became a backlog
+    entry), act-adopt's harvest.md (step 6's
     local list of candidates for the template, written while reading the old project) is deleted
     rather than turned into outbox entries — nothing of it survives. A no-op, not an error, when
     there is nothing to discard (an adoption that found no candidates, or a rerun)."""
@@ -1271,7 +1297,10 @@ def cmd_discard_harvest(root: Path) -> int:
     except OSError as exc:
         print(f"error: could not remove {HARVEST_FILE_REL}: {exc}", file=sys.stderr)
         return 2
-    print(f"discarded: {HARVEST_FILE_REL} (feedback is off — nothing of it is kept or sent).")
+    if _mode(_read_config_at(root)) == "local":
+        print(f"discarded: {HARVEST_FILE_REL} (feedback is local — nothing of it is sent).")
+    else:
+        print(f"discarded: {HARVEST_FILE_REL} (feedback is off — nothing of it is kept or sent).")
     return 0
 
 
@@ -1287,7 +1316,7 @@ def due_status(root: Path) -> "tuple[bool, str]":
     state = _read_state(root)
     last_sent = state.get("last_sent") or ""
     since_label = "last send"
-    if not last_sent and mode not in ("off", "manual"):
+    if not last_sent and mode not in ("off", "manual", "local"):
         # Never sent: the cadence runs from the first check with sending on, not from "ever" --
         # otherwise a new project would be reminded from its very first session on.
         since_label = "first check"
@@ -1306,7 +1335,7 @@ def due_status(root: Path) -> "tuple[bool, str]":
 
     due, reason = False, ""
     work_days, threshold = 0, ADAPTIVE_BASE_DAYS
-    if mode in ("off", "manual"):
+    if mode in ("off", "manual", "local"):
         reason = f"mode '{mode}' never reminds"
     elif paused:
         reason = f"paused until {paused}"
@@ -1356,12 +1385,13 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--disable", action="store_true", help="revoke consent")
     group.add_argument("--add", action="store_true",
                        help="store a finding in the outbox; sends it at once with mode 'automatic' and "
-                            "cadence 'immediate', or with --kind bug (consent and mode still apply)")
+                            "cadence 'immediate', or with --kind bug (consent and mode still apply); "
+                            "refused with mode 'local'")
     group.add_argument("--plan", action="store_true", help="show the payload, send nothing (default)")
     group.add_argument("--send", action="store_true",
                         help="send if consent, the privacy check and the cadence gate all allow it")
     group.add_argument("--direct", metavar="TEXT", default=None,
-                        help="send a hand-written message at once - works even with feedback off")
+                        help="send a hand-written message at once - works even with feedback off, never with local")
     group.add_argument("--due", action="store_true",
                         help="report whether a reminder is due under the current cadence")
     group.add_argument("--postpone", metavar="DAYS", type=int, default=None,
@@ -1379,7 +1409,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default=None, help="with --add --kind link: the public address")
     parser.add_argument("--repo-url", default=None, help="with --enable: public repo URL (optional)")
     parser.add_argument("--mode", choices=MODE_VALUES, default=None,
-                         help="with --enable: off, confirm, automatic (default), manual")
+                         help="with --enable: off, confirm, automatic (default), manual, local (never sends anything)")
     parser.add_argument("--force", action="store_true",
                          help="with --send: lift the cadence gate (not the consent gate)")
     parser.add_argument("--yes", action="store_true",

@@ -263,12 +263,13 @@ project root (not versioned) — to follow along live, e.g. in a second terminal
 | `feedback-scope` | a,b,c |
 
 Voluntary feedback to the template author about the working method, never about the project.
-`feedback`: `off` \| `confirm` \| `automatic` \| `manual`. `feedback-cadence` is an upper limit:
+`feedback`: `off` \| `confirm` \| `automatic` \| `manual` \| `local` (this project never sends anything to
+the template author; findings become backlog entries here instead). `feedback-cadence` is an upper limit:
 `manual` \| `immediate` \| `hourly` \| `daily` \| `weekly` \| `adaptive`. `feedback-scope`: `a`
 metrics, `b` rule and structure changes, `c` tool usage (counts of template skills/scripts used since the last send; your own only as one `own` count). Every sent payload's full copy stays
 local (`.act-local/feedback/sent/`, gitignored) — each send also gets one line in the journal
 (date, kind, entry count, schema version, never content). A message you write yourself
-(`feedback: <text>`) always goes out, even with `off`, together with the template commit and the
+(`feedback: <text>`) always goes out, even with `off` (but never with `local`), together with the template commit and the
 random project id (a reply address only if you name one). Details: `.act/rules/topics/feedback.md`.
 
 ## Update

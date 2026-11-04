@@ -803,7 +803,7 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("docs-order", "Checks", values=_MODE3, default="warn")
     add("logging", "Logging", values=_ON_OFF, default="off")
     add("log-level", "Logging", values=("DEBUG", "INFO", "WARN", "ERROR"), default="INFO")
-    add("feedback", "Feedback", values=("off", "confirm", "automatic", "manual"), default="off")
+    add("feedback", "Feedback", values=("off", "confirm", "automatic", "manual", "local"), default="off")
     add("feedback-cadence", "Feedback",
         values=("manual", "immediate", "hourly", "daily", "weekly", "adaptive"), default="weekly")
     add("feedback-scope", "Feedback", pattern=r"\s*[abc]\s*(?:,\s*[abc]\s*)*", default="a,b,c")

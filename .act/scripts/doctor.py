@@ -1297,7 +1297,7 @@ _DOCS_TICK_RE = re.compile(r"`([^`\n]+)`")
 _DOCS_LINK_TARGET_RE = re.compile(r"\]\(<?([^)<>\s]+)")
 _DOCS_PROJECT_PATH_RE = re.compile(r"^docs/project/[\w.\-/]+\.md$")
 _DOCS_PLACEHOLDER_RE = re.compile(r"YYYY|MM-DD|NNN|[<>*{}]")  # a pattern such as YYYY-MM-DD_title.md, not a path
-_QUESTION_ID_RE = re.compile(r"`Q(\d+)`")  # only an identifier in backticks is a question, not "Q4 launch"
+_QUESTION_ID_RE = re.compile(r"`Q(\d+)`")  # only an identifier in backticks is a question, not a quarter in prose
 _STATUS_LINE_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
 
 

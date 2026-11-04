@@ -14,12 +14,17 @@ Mechanism: `.act/scripts/feedback.py` (`--status`, `--enable`/`--disable`, `--ad
 `feedback`/`feedback-cadence`/`feedback-scope` keys and the immediate-trigger rule for a template
 bug: `.act/rules/topics/feedback.md`.
 
+**With `feedback: local` in `docs/ai/config.md` nothing is sent, ever:** `--send`, `--direct` and `--add`
+refuse. Instead create a backlog entry for each finding, a template bug and a `feedback: <text>` (the
+human's words unchanged) alike: `python .act/scripts/entries.py new backlog <title>`. Details:
+`.act/rules/topics/feedback.md` § `feedback: local`.
+
 ## Two paths — do not conflate them
 
 1. **A sentence right after the trigger** (`feedback: <text>`, "send feedback: <text>", "report to
    the template: <text>") **is the message itself.** Run `feedback.py --direct "<text>"` — it goes
    out exactly as written, no rewording, no addition — regardless of the feedback switch in
-   `docs/ai/config.md`. With feedback off, only this text, the template's own commit hash
+   `docs/ai/config.md` (except `local`, which sends nothing: see above). With feedback off, only this text, the template's own commit hash
    (`.act-lock.json` § `template.commit`) and the project id leave the project; the id goes with
    every direct message. Add `--contact <email>` only if the human explicitly names a reply address
    in this request — never take one from `git config` or anywhere else, and do not ask whether they

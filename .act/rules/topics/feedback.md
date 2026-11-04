@@ -2,7 +2,8 @@
 
 Detail page for a rule that references it as `topics/feedback.md`. Read this when
 `docs/ai/config.md` § Feedback has `feedback` set to anything other than `off`, or when a
-template bug needs reporting regardless of that switch (see "Immediate trigger" below).
+template bug needs reporting regardless of that switch (see "Immediate trigger" below; with
+`local`, see "`feedback: local`").
 Mechanism: `.act/scripts/feedback.py` (privacy checks in `feedback_privacy.py`), skill
 `act-feedback`.
 
@@ -20,7 +21,8 @@ Three keys in `docs/ai/config.md` § Feedback control this, and none of them is 
 either — they only say how the template was configured:
 
 - `feedback`: `off` · `confirm` (show the payload, ask) · `automatic` (send without
-  asking) · `manual` (collect, never send on its own — only `--send --force`, i.e. the skill).
+  asking) · `manual` (collect, never send on its own — only `--send --force`, i.e. the skill) ·
+  `local` (this project never sends anything; see "`feedback: local`" below).
   `init` writes `confirm` unless the owner chose otherwise; a config.md with no `feedback` row
   (a project set up earlier) counts as `off`.
 - `feedback-cadence`: an upper limit, never an obligation — `manual` · `immediate` · `hourly` ·
@@ -35,7 +37,7 @@ either — they only say how the template was configured:
 
 1. **A sentence right after the trigger** (`feedback: <text>`, "send feedback: <text>") **is the
    message itself** — sent via `feedback.py --direct`, unchanged, regardless of the `feedback`
-   switch. With `feedback: off`, only this text, the template's own commit hash
+   switch (except `local`, which sends nothing: see below). With `feedback: off`, only this text, the template's own commit hash
    (`.act-lock.json` § `template.commit`) and the project id leave the project — no further
    context. The project id goes with every direct message, whatever the setting (never the repo
    URL — a direct message stays minimal on purpose, unlike the assembled payload below), so
@@ -63,6 +65,23 @@ rule or a file format turned out to be impractical in real use, a workflow the t
 had no matching command or skill, a workaround was needed because the intended path did not work.
 Each is worth its own entry the moment it happens, not batched for later. With `feedback: automatic`
 the assistant files these itself.
+
+## `feedback: local` — nothing leaves the project
+
+A project whose `feedback` is `local` never sends anything to the template author: `feedback.py --send`
+(also with `--force` and `--yes`), `--direct` and `--add` refuse and say so, with no network call,
+no protocol and no journal line; `--plan` shows nothing, `--due` and every reminder behave as with
+`off`. What would otherwise go out becomes a backlog entry in this project (`python .act/scripts/entries.py new backlog
+<title>`):
+
+- a bug in the template itself, instead of `feedback.py --add --kind bug` — right away, with the evidence
+  and where it was found; urgent ones as a task;
+- a `feedback: <text>` from the human, in their words unchanged;
+- the recurring shapes above (impractical rule or format, missing workflow, needed workaround) — the
+  assistant files them itself, without asking, as it does under `automatic`.
+
+An entry still names the pattern and the template file concerned, so it can be reported later by
+someone who chooses to.
 
 ## What a good entry looks like
 

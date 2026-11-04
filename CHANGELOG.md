@@ -11,6 +11,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `feedback: local` in `docs/ai/config.md`: the project never sends anything to the template author.
+  `feedback.py --send` (also with `--force`), `--direct` and `--add` refuse and point to the backlog, and reminders
+  never fall due. A template bug, a hand-written `feedback: <text>` and the recurring findings become backlog entries
+  in the project instead (`entries.py new backlog`). `/act-config feedback local` and `feedback.py --enable --mode
+  local` accept the value.
+
 - Command `/act-config`: shows and sets the settings in `docs/ai/config.md` without a model turn. `/act-config`
   lists every setting, `/act-config <key>` shows one with its allowed values, default, when a change takes effect
   and the notes from your own `config.md`, `/act-config <key> <value>` writes the value into that one table cell
