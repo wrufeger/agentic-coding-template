@@ -120,6 +120,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `R-cost-delegate` names when a handover pays off: research across more than three files or in code whose spot
+  is not yet known, the evaluation of transcripts, logs or feedback and material past about 20k tokens that is not
+  needed afterwards go to `explorer`, which hands back only findings and numbers; a run of the test suite, a probe
+  or a smoke test named in the assignment goes to `quick-check`, which hands back the exit code, the failures and
+  the numbers. A known spot, an entry under `docs/ai/`, a commit or `git status` stay with the main session. Long work is checked for split points such as test and probe runs, case
+  catalogs, assignments over separate files and a review per checked spot.
+
+- `R-human-ask` and the inbox README give the form of a question: the question itself as the heading, a hint of
+  at most three sentences with no list, 2–5 options `- **a)** …` with effort and the recommendation at its own
+  option, a blank line before, between and after them; a question without sensible options stays free text. An
+  existing project's `docs/ai/inbox/README.md` is not replaced by an update; the rule carries the form either way.
+
 - `docs/ai/config.md` values may contain `\|` for a literal pipe: the settings reader (`actlib.read_config`) now
   splits cells only at an unescaped `|`. A value that ends in a backslash right before the next `|`, with no space
   in between, now reads differently; put a space before the `|`. `doctor.py` checks the value of every setting

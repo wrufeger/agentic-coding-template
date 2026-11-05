@@ -11,7 +11,7 @@ marked `triage: open` comes right after them (`R-human-capture`).
 
 ## `R-human-ask` — Bundle questions; never decide one yourself
 
-summary: bundled questions upfront, stated assumptions, no silent decisions, inbox-decisions
+summary: bundled questions upfront, stated assumptions, no silent decisions, inbox-decisions, the form of a question
 
 Questions are bundled at the start of a block, not dropped in one at a time as they occur.
 Mid-task, ask only if continuing without an answer would mean discarding the work already done —
@@ -26,6 +26,13 @@ every step only the human can take and can take now, goes into the inbox in the 
 or todo, `R-human-chat`), and the booked entry names its id. With `at-start`, a backlog entry may
 keep its open decisions (details in `docs/ai/config.md`); a task's open decisions are always in the
 inbox.
+
+A question in the inbox has the question itself as its heading, ending in a question mark. Below it
+comes a hint of at most three sentences and no list; background and reasons stay in the concept or
+backlog entry it names. Then 2–5 options as lines `- **a)** …`, never a numbered list, one or two
+lines each with the effort, the recommendation at its own option, and a blank line before, between
+and after them. A question without sensible options stays free text. Form:
+`docs/ai/inbox/README.md`.
 
 ## `R-human-capture` — Chat prefixes `todo:`, `note:`, `idea:` capture
 

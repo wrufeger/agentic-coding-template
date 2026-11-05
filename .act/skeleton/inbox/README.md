@@ -63,16 +63,25 @@ answer label, `**Answer:**` (`**Antwort:**` when `language-docs` is `de`). The q
 the heading and that label, which stays the last line:
 
 ```text
-# TITLE
+# THE QUESTION ITSELF, ENDING IN A QUESTION MARK?
 
-WHAT IS TO BE DECIDED, AND WHY NOW
+A HINT OF AT MOST THREE SENTENCES, NO LIST: WHAT IS TO BE DECIDED, WHY NOW, WHERE THE BACKGROUND IS
 
-- **a)** OPTION — CONSEQUENCE
-- **b)** OPTION — CONSEQUENCE. **Recommended:** REASON
-- **c)** OPTION — CONSEQUENCE
+- **a)** OPTION — CONSEQUENCE, EFFORT
+
+- **b)** OPTION — CONSEQUENCE, EFFORT. **Recommended:** REASON
+
+- **c)** OPTION — CONSEQUENCE, EFFORT
 
 **Answer:**
 ```
+
+The heading is the question itself, so the title alone says what is asked. The hint below it stays
+short — at most three sentences, no list; background and reasons go into the concept or backlog entry
+the hint names, not into the question. Two to five options, one or two lines each with the effort,
+the recommendation at its own option. A blank line before, between and after the options keeps the
+file readable in an editor and a Markdown preview, not only in a tool that renders it as a form. A
+question without sensible options stays free text: the hint, then the answer label.
 
 Options are always lines `- **a)** …`, never a numbered list: the answer then reads `Q<n> a`, and a
 tool that shows the question elsewhere (a web form, say) can offer the letters as choices. Other

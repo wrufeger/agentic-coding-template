@@ -4,15 +4,20 @@ summary: when to delegate, delegation tiers and caps, waiting on workers, amendi
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: delegate where a handover pays off, template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments, long work split into parallel parts, overlapping tasks joined
+summary: delegate where a handover pays off (more than three files or an unknown spot, test runs, material past ~20k tokens), template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments, long work split into parallel parts, overlapping tasks joined
 
 A handover costs a worker's fresh start and loses context, so delegate only where it pays off:
 independent parts that run in parallel, a check that should not share the implementation's
 context (the review), output of unknown or large length not needed afterwards, long reading or
-runs that a cheaper tier does just as well. A known file or spot, a few tool calls or a small
-change you do yourself; its review still follows `R-code-commit`. The template's roles come before
-the tool's own agents (in Claude Code `Explore`, `general-purpose`, `Plan`; its `claude-code-guide`
-stays for questions about the tool itself).
+runs that a cheaper tier does just as well. In practice: research across more than three files, or
+in code whose spot is not yet known, goes to `explorer` (`light`), and so do the evaluation of
+transcripts, logs or feedback and material past about 20k tokens that is not needed afterwards; it
+hands back only findings and numbers. A run of the test suite, a probe or a smoke test named in the
+assignment goes to `quick-check`, which hands back the exit code, the failures and the numbers. A
+known file or spot, a few tool calls, a small change, an entry under `docs/ai/`, a commit or
+`git status` you do yourself; its review still follows `R-code-commit`. The template's roles come
+before the tool's own agents (in Claude Code `Explore`, `general-purpose`, `Plan`; its
+`claude-code-guide` stays for questions about the tool itself).
 
 Every assignment to a worker states its tier explicitly — `light` for reads/counts, `standard` for
 implementation, `elevated` for review/security judgment, `expert` only for an escalation after two
@@ -34,7 +39,8 @@ system temp directory and its scratchpad included, so an assignment that needs t
 Workers running at the same time get separate write scopes, otherwise they run one after the other
 (`worker-scope-overlap`, `docs/ai/config.md` § Checks).
 
-Work expected to run longer than about five minutes is first checked for independent parts. If it
+Work expected to run longer than about five minutes is first checked for independent parts — test
+and probe runs, case catalogs, assignments over separate files, a review per checked spot. If it
 splits, the parts run in parallel with separate write scopes, and the saving is measured before and
 after. It is not split when the parts write the same file, build on one another (`Depends on:`) or
 would each reread the same large material. Tasks that touch the same files are first checked for one
