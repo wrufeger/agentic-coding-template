@@ -46,7 +46,7 @@
 #   python .act/scripts/entries.py check                    # report a duplicate or unreadable entry
 #   python .act/scripts/entries.py archive <id|file>        # move a finished entry (and its pasted images) to the archive
 #   python .act/scripts/entries.py compact [--plan]          # merge old archived entries into one file per kind and month
-#   python .act/scripts/entries.py purge [--plan]            # done-entries: delete - remove what the archive still holds, as far as Git holds it
+#   python .act/scripts/entries.py purge [--all] [--plan]    # done-entries: delete - remove archived files marked `purge: after-commit` once Git holds them (--all: the older archive too)
 #
 # Output format:
 #   "new": one line, "entries: created <path> [<id or explanation>]", exit 0 (2 on a bad kind, an
@@ -110,10 +110,11 @@
 #     the files are deleted, and a link to the entry in any other Markdown file, or its written-out path,
 #     becomes the bare id. Prints "entries: reserved ...", "entries: deleted ...", "entries: kept ..." and
 #     "entries: rewrote references ..." lines: stage every path. An entry Git does not hold yet (never
-#     committed, or changed since) is moved to the archive as with `keep`, with a line saying so; `purge`
-#     removes it once a commit holds it. A task is always moved, never deleted at once, and gets its
-#     `finished:` stamp as under `keep`: the accepted task stays visible in the archive until the commit
-#     that holds the stamp, and the next `purge` deletes it.
+#     committed, or changed since) is moved to the archive as with `keep`, with a line saying so, and gets the
+#     header field `purge: after-commit` right below `archived:` (never under `keep`; nothing else writes it);
+#     `purge` removes it once a commit holds it. A task is always moved, never deleted at once, and gets its
+#     `finished:` stamp as under `keep` and the same field: the accepted task stays visible in the archive
+#     until the commit that holds the stamp, and the next `purge` deletes it.
 #   "compact": folds the single files in docs/ai/work/archive/ (and the journal files in
 #     docs/ai/work/ledger/) that were archived more than 7 days ago into collection files in the archive
 #     folder, one per kind and calendar month of the archive date: Q-2026-09.md, T-, B-, U- by id prefix,
@@ -140,10 +141,15 @@
 #     "entries: relinked ..." line per rewritten file and a closing "entries: wrote ..." line. With
 #     `done-entries: delete` only the journal folder is folded (into archive/ledger-<YYYY-MM>.md): the
 #     archive's finished entries are left alone and no monthly overview is written.
-#   "purge": only with `done-entries: delete` (exit 2 otherwise). Deletes the files directly in
-#     docs/ai/work/archive/ that Git holds unchanged - finished entries, pasted files, collections,
-#     monthly overviews - and keeps README.md, the journal collections ledger-<YYYY-MM>.md, the
-#     subfolders (legacy/, proposals/) and any pasted file a remaining Markdown file still shows. Raises
+#   "purge": only with `done-entries: delete` and a Git repository (exit 2 otherwise, also with --all).
+#     Deletes the Markdown files directly in docs/ai/work/archive/ that carry the header field
+#     `purge: after-commit` (set by `archive`) and that Git holds unchanged, and the pasted files they link
+#     - unless a remaining Markdown file shows them too. An archive from before `delete` (no such field)
+#     stays until the owner decides: `purge --all` (the owner's command, never run by an assistant on its
+#     own) deletes it as well - finished entries, pasted files, collections, monthly overviews. Both keep
+#     README.md, the journal collections ledger-<YYYY-MM>.md, the subfolders (legacy/, proposals/) and any
+#     pasted file a remaining Markdown file still shows. When files without the field stay, the output
+#     says how many. Raises
 #     docs/ai/work/reserved-ids.json first, turns references to a deleted file into the bare id, and prints
 #     one "entries: deleted|kept|rewrote ..." line per file (the first 20 by name, then a count) and a
 #     closing summary; stage docs/ai/work/archive, the reserved-ids file and every rewritten path. A file
@@ -1313,6 +1319,34 @@ def _set_header_field(text: str, key: str, value: str) -> str:
     return "\n".join(lines) + body
 
 
+def _drop_header_field(text: str, key: str) -> str:
+    """`text` without any `<key>:` line in its header; the body and every other line stay as they are."""
+    head, body = actlib.split_header(text)
+    if not head.strip():
+        return text
+    lines = head.split("\n")
+    end = len(lines)
+    if actlib.is_frontmatter(head):
+        end = max(i for i, line in enumerate(lines) if line.rstrip() == actlib.FRONTMATTER_DELIMITER)
+    kept = [line for index, line in enumerate(lines)
+            if index >= end or not re.match(rf"(?i){re.escape(key)}:", line)]
+    return "\n".join(kept) + body
+
+
+PURGE_FIELD = "purge"
+PURGE_VALUE = "after-commit"
+_PURGE_MARK_RE = re.compile(rf"(?im)^{PURGE_FIELD}:[ \t]*{PURGE_VALUE}[ \t]*\r?$")
+
+
+def _mark_purgeable(text: str) -> str:
+    """`text` with the header field `purge: after-commit` right below `archived:` (an existing `purge:` field
+    is replaced). It tells `purge` that this archived file is new work it may delete once Git holds it.
+    Only `archive` under `done-entries: delete` (which needs a Git repository) writes it."""
+    if re.search(rf"(?im)^{PURGE_FIELD}:", actlib.header_block(text)):
+        return _set_header_field(text, PURGE_FIELD, PURGE_VALUE)
+    return _insert_header_field(text, PURGE_FIELD, PURGE_VALUE, ("archived",))
+
+
 def _find_archivable(root: Path, ref: str) -> Path:
     """The entry file for an id ("Q<n>") or a path, which must sit directly in the tasks, backlog or
     inbox folder."""
@@ -1456,6 +1490,8 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None, check_de
         plan.text = _insert_header_field(plan.text, "finished", datetime.now().isoformat(timespec="seconds"),
                                          ("started", "created"))
     plan.text = _set_header_field(plan.text, "archived", (today or date.today()).isoformat())
+    # a purge mark from an earlier archiving never travels on: only `cmd_archive` under `delete` sets it anew
+    plan.text = _drop_header_field(plan.text, PURGE_FIELD)
     return plan
 
 
@@ -1478,6 +1514,8 @@ def cmd_archive(root: Path, ref: str) -> int:
         return 2
     if deleting and not unheld:
         return _delete_entry(root, entry, plan)
+    if deleting:  # what `done-entries: delete` archives is the new work: `purge` may remove it once a commit holds it
+        plan.text = _mark_purgeable(plan.text)
     archive = root / ARCHIVE_DIR
     dest = plan.dest
     created: list[Path] = []
@@ -1769,7 +1807,13 @@ def _identity_of(path: Path) -> Optional[str]:
     return ids[0] if ids else None
 
 
-def cmd_purge(root: Path, plan_only: bool) -> int:
+def _has_purge_mark(path: Path) -> bool:
+    """Whether the archived Markdown file carries the header field `purge: after-commit`."""
+    text = _safe_read(path) if path.suffix.lower() == ".md" else None
+    return text is not None and bool(_PURGE_MARK_RE.search(actlib.header_block(text)))
+
+
+def cmd_purge(root: Path, plan_only: bool, everything: bool = False) -> int:
     if actlib.done_entries_mode(root) != "delete":
         value = actlib.read_config(root).get("done-entries", "").strip() or "(not set)"
         print("entries: purge needs `done-entries: delete` in docs/ai/config.md § Archive and a Git repository "
@@ -1780,6 +1824,19 @@ def cmd_purge(root: Path, plan_only: bool) -> int:
     candidates = purgeable_archive_files(root)
     unheld = _git_unheld(root, candidates, [ARCHIVE_DIR.as_posix()])
     deletable = [path for path in candidates if path not in unheld]
+    unmarked: list[Path] = []  # held by Git, but not marked for deletion: the archive from before `delete`
+    if not everything:
+        # only a file the archive step marked, and a pasted file that only such files link
+        marked = [path for path in deletable if _has_purge_mark(path)]
+        shown: set[Path] = set()
+        for path in marked:
+            text = _safe_read(path)
+            if text is not None:
+                shown |= {Path(os.path.normpath(p)) for p in linked_local_files(text, path.parent)}
+        keep_back = [path for path in deletable if path not in marked
+                     and not (path.suffix.lower() != ".md" and Path(os.path.normpath(path)) in shown)]
+        unmarked = keep_back
+        deletable = [path for path in deletable if path not in keep_back]
     identities = {path: _identity_of(path) for path in deletable}
     loose = [path for path in deletable if path.suffix.lower() != ".md"]
     if loose:  # a pasted file that a Markdown file staying behind (the journal) still shows is kept
@@ -1792,8 +1849,13 @@ def cmd_purge(root: Path, plan_only: bool) -> int:
             if Path(os.path.normpath(path)) in staying:
                 unheld[path] = "still linked by a Markdown file that stays"
                 deletable.remove(path)
+    left_note = (f"{len(unmarked)} file(s) without the purge mark stay until the owner decides "
+                 "(`entries.py purge --all` is the owner's command; never run it on your own)"
+                 if unmarked else "")
     if not deletable:
-        print("entries: nothing in the archive to purge" + (f" ({len(unheld)} not held by Git yet)" if unheld else ""))
+        notes = [f"{len(unheld)} not held by Git yet"] if unheld else []
+        notes += [left_note] if left_note else []
+        print("entries: nothing in the archive to purge" + (f" ({'; '.join(notes)})" if notes else ""))
         for path, reason in list(unheld.items())[:_LISTED_AT_MOST]:
             print(f"entries: kept {_rel(path, root)} — {reason}")
         return 0
@@ -1842,7 +1904,8 @@ def cmd_purge(root: Path, plan_only: bool) -> int:
         print(f"entries: kept {len(unheld) - _LISTED_AT_MOST} more file(s) that Git does not hold yet")
     print(f"entries: {'plan' if plan_only else 'purged'} — {len(removed)} file(s) "
           f"{'would go' if plan_only else 'deleted'}, {len(unheld)} kept until a commit holds them, "
-          f"{len(rewritten)} file(s) with references to them" + ("; nothing written" if plan_only else ""))
+          f"{len(rewritten)} file(s) with references to them" + (f"; {left_note}" if left_note else "")
+          + ("; nothing written" if plan_only else ""))
     return status
 
 
@@ -1986,7 +2049,7 @@ def _build_section(path: Path, text: str, entry_id: Optional[str], day: date) ->
     inline-code line (with `archived:` and the original `file:`), then the body."""
     title, body = _heading_split(text)
     fields = [line for line in actlib.header_block(text).split("\n")
-              if line.strip() and not re.match(r"(?i)id:", line)]
+              if line.strip() and not re.match(rf"(?i)(id|{PURGE_FIELD}):", line)]
     if not any(re.match(r"(?i)archived:", line) for line in fields):
         fields.append(f"archived: {day.isoformat()}")
     fields.append(f"file: {path.name}")
@@ -2399,12 +2462,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_compact.add_argument("--plan", action="store_true", help="show what would be merged, write nothing")
     p_compact.add_argument("--today", metavar="YYYY-MM-DD", help="count the keep window from this day (tests)")
 
-    purge_help = ("with `done-entries: delete`: delete what is left in docs/ai/work/archive/ (finished entries, their "
-                  "pasted files, collections, monthly overviews) as far as Git holds it unchanged, keeping the README "
-                  "and the journal collections ledger-<YYYY-MM>.md; the ids stay reserved, references to a deleted "
+    purge_help = ("with `done-entries: delete`: delete the archived files marked `purge: after-commit` (and the "
+                  "pasted files only they link) in docs/ai/work/archive/ as far as Git holds them unchanged; "
+                  "`--all` also deletes the older archive without the mark; the README and the journal "
+                  "collections ledger-<YYYY-MM>.md stay; the ids stay reserved, references to a deleted "
                   "entry become its bare id; a file Git does not hold yet stays until a commit does")
     p_purge = sub.add_parser("purge", help=purge_help, description=purge_help)
     p_purge.add_argument("--plan", action="store_true", help="show what would be deleted, write nothing")
+    p_purge.add_argument("--all", action="store_true", dest="everything",
+                         help="also delete the archive from before `done-entries: delete` (files without the "
+                              "`purge: after-commit` header field), as far as Git holds it; the owner's decision, "
+                              "never run by an assistant on its own")
 
     return parser
 
@@ -2437,7 +2505,7 @@ def main(argv: list[str]) -> int:
     if args.command == "archive":
         return cmd_archive(root.resolve(), args.entry)
     if args.command == "purge":
-        return cmd_purge(root.resolve(), args.plan)
+        return cmd_purge(root.resolve(), args.plan, args.everything)
     if args.command == "compact":
         try:
             return cmd_compact(root.resolve(), args.plan, date.fromisoformat(args.today) if args.today else None)

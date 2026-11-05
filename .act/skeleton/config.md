@@ -335,7 +335,7 @@ shows nothing. The lookup runs with the `update-check` background run, so `updat
 `done-entries`: `delete` \| `keep`. What happens to a finished task, backlog item or inbox entry. `delete`: once
 Git holds the entry unchanged, `entries.py archive` deletes it (with the pasted files that travel with it) instead of
 moving it to `docs/ai/work/archive/`; Git keeps the text (`git log --follow`, `git show <commit>:<path>`). An entry
-Git does not hold yet (never committed, or changed since) still goes to the archive and is removed by the next
+Git does not hold yet (never committed, or changed since) still goes to the archive, marked `purge: after-commit`, and is removed by the next
 `entries.py purge`, which `act-commit` runs; so does every task, with its `finished:` stamp, so a finished task
 stays visible until the commit that holds it. An id stays taken: the highest id of each kind is kept in
 `docs/ai/work/reserved-ids.json` and the next `new` hands out one above it. A link to a deleted entry in other
@@ -343,8 +343,9 @@ Markdown files becomes its bare id, so an id in text stays valid. `act-compact` 
 finished entries go to the archive for good, as before. A missing, empty or unknown value is `delete` in a project
 with its own Git repository and `keep` without one; `delete` without a repository counts as `keep`, since nothing would
 hold the text. An archive that exists when a project moves to `delete` stays as it is until you decide: the session
-start names the number of files once, `python .act/scripts/entries.py purge --plan` lists what would go and
-`entries.py purge` deletes what Git holds unchanged.
+start names the number of files once, `python .act/scripts/entries.py purge --all --plan` lists what would go and
+`entries.py purge --all` deletes what Git holds unchanged. Plain `purge` touches only files marked
+`purge: after-commit`, and the assistant never runs `--all` on its own.
 
 `archive-compact`: `<n>d <n>` \| `off`. `entries.py compact` is due for the archive or the journal folder once its
 oldest single entry is older than this many days, or the folder holds more than this many single files; the session

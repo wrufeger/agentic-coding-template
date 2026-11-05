@@ -12,8 +12,9 @@ takes part and no section is shortened.
 With `done-entries: delete` (`docs/ai/config.md` § Archive, the default in a Git project) finished entries are
 deleted instead of archived, so only the journal is folded: `entries.py compact` leaves the archive's own
 files alone and writes `archive/ledger-<YYYY-MM>.md` only; the monthly overviews and the Q, T, B and U
-collections below belong to `done-entries: keep`. What an older archive still holds is removed with
-`entries.py purge` (`act-commit` step 3), not by this skill.
+collections below belong to `done-entries: keep`. What the archive step moved in under `delete` is removed with
+`entries.py purge` (`act-commit` step 3), not by this skill; an older archive stays until the owner runs
+`entries.py purge --all`.
 
 ## When
 

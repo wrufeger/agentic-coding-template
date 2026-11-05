@@ -452,10 +452,11 @@ def _archive_leftover_note(root: Path) -> Optional[str]:
     if not files:
         return None
     return (f"[act] note: done-entries is `delete`, and docs/ai/work/archive/ still holds {len(files)} file(s) of finished "
-            "entries from before (the journal files, ledger-*.md and YYYY-MM-DD-*.md, not counted). They stay until you decide: "
-            "`python .act/scripts/entries.py purge --plan` lists what would go, `python .act/scripts/entries.py purge` "
+            "entries from before (the journal files, ledger-*.md and YYYY-MM-DD-*.md, not counted). They stay until the owner "
+            "decides; tell the owner, and never run `--all` on your own: "
+            "`python .act/scripts/entries.py purge --all --plan` lists what would go, `python .act/scripts/entries.py purge --all` "
             "deletes what Git holds unchanged (the ids stay reserved); `done-entries: keep` in docs/ai/config.md "
-            "keeps the archive instead. Said once.")
+            "keeps the archive instead. Plain `purge` only removes what is archived from now on. Said once.")
 
 
 def _refresh_board(root: Path) -> None:

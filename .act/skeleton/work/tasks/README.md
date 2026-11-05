@@ -7,8 +7,8 @@ an issue into tasks, read by `act-pr` for the reference in the description. Once
 file is named `T<n>-<slug>.md`; in team mode, before that, `T-<identity>-<YYYYMMDD-HHMM>-<slug>.md`,
 renamed by `entries.py assign`. Read by `.act/scripts/board.py` for the board; moved to
 `docs/ai/work/archive/` once accepted (`docs/ai/work/archive/README.md`); with `done-entries: delete`
-(`docs/ai/config.md` § Archive) it is deleted from there by the first `entries.py purge` after a commit
-holds it. The current working
+(`docs/ai/config.md` § Archive) it is deleted from there (it carries `purge: after-commit`) by the
+first `entries.py purge` after a commit holds it. The current working
 state ("Stand ...") never goes into this file — it goes to the gitignored
 `.act-local/state/<this file's name>` via `python .act/scripts/entries.py state <T-id> <text>`,
 which the board then shows next to the task title. The first `state` also writes

@@ -478,12 +478,13 @@ positional arguments:
                         names the commit that holds the full text; each month's overview <YYYY-
                         MM>.md gets one line per Q, T, B and U entry; needs the entries committed;
                         running it twice changes nothing
-    purge               with `done-entries: delete`: delete what is left in docs/ai/work/archive/
-                        (finished entries, their pasted files, collections, monthly overviews) as
-                        far as Git holds it unchanged, keeping the README and the journal
-                        collections ledger-<YYYY-MM>.md; the ids stay reserved, references to a
-                        deleted entry become its bare id; a file Git does not hold yet stays until
-                        a commit does
+    purge               with `done-entries: delete`: delete the archived files marked `purge:
+                        after-commit` (and the pasted files only they link) in
+                        docs/ai/work/archive/ as far as Git holds them unchanged; `--all` also
+                        deletes the older archive without the mark; the README and the journal
+                        collections ledger-<YYYY-MM>.md stay; the ids stay reserved, references to
+                        a deleted entry become its bare id; a file Git does not hold yet stays
+                        until a commit does
 
 options:
   -h, --help            show this help message and exit
@@ -618,16 +619,20 @@ options:
 ### `entries.py purge`
 
 ```text
-usage: entries.py purge [-h] [--plan]
+usage: entries.py purge [-h] [--plan] [--all]
 
-with `done-entries: delete`: delete what is left in docs/ai/work/archive/ (finished entries, their
-pasted files, collections, monthly overviews) as far as Git holds it unchanged, keeping the README
-and the journal collections ledger-<YYYY-MM>.md; the ids stay reserved, references to a deleted
-entry become its bare id; a file Git does not hold yet stays until a commit does
+with `done-entries: delete`: delete the archived files marked `purge: after-commit` (and the
+pasted files only they link) in docs/ai/work/archive/ as far as Git holds them unchanged; `--all`
+also deletes the older archive without the mark; the README and the journal collections
+ledger-<YYYY-MM>.md stay; the ids stay reserved, references to a deleted entry become its bare id;
+a file Git does not hold yet stays until a commit does
 
 options:
   -h, --help  show this help message and exit
   --plan      show what would be deleted, write nothing
+  --all       also delete the archive from before `done-entries: delete` (files without the
+              `purge: after-commit` header field), as far as Git holds it; the owner's decision,
+              never run by an assistant on its own
 ```
 
 ## `feedback.py`

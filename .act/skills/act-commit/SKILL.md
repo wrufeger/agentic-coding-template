@@ -43,10 +43,12 @@ secures the result.
      `reserved`), and links to the entry in other files become the bare id (stage every file the
      script prints as `rewrote`). An entry Git does not hold yet (a fresh answer, a state change) moves
      to the archive as under `keep`, and so does every task, with its `finished:` stamp: the accepted
-     task stays visible until the commit that holds it. Then run `python .act/scripts/entries.py purge`: it deletes what
-     earlier commits left in the archive and Git now holds unchanged; stage `docs/ai/work/archive`,
+     task stays visible until the commit that holds it. The archive step marks what it moves in with the header field
+     `purge: after-commit`. Then run `python .act/scripts/entries.py purge`: it deletes the marked files
+     that earlier commits left in the archive and Git now holds unchanged; stage `docs/ai/work/archive`,
      `docs/ai/work/reserved-ids.json` and every path it prints as `rewrote`. What this run moved in is
-     committed first and removed by the next run.
+     committed first and removed by the next run. An archive from before `delete` (files without the mark) stays: never
+     run `purge --all` on your own; it is the owner's decision, only on their explicit word.
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step
    isn't recorded yet, older entries left as they are otherwise. Journal entries stay single files
    only until they are old: `act-compact` later folds them into one file per month

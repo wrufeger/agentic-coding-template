@@ -9,6 +9,45 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-05
+
+Settings are shown and changed with `/act-config`, a project trims the template to what it uses with `profile` and
+`exclude`, finished entries are deleted under Git instead of archived, the new rule `R-docs-order` keeps the project
+docs ordered, `act-seo` becomes a full page check with crawl and Lighthouse, entry ids become clickable in VS Code and
+IntelliJ, an update enters new rules into an edited `docs/ai/rules.md`, and the worker write scope also checks the
+write targets that inline Python builds from literals. Projects on v2.4.0 update with `act-update`.
+
+### Upgrading from v2.4.0
+
+- Run `act-update` (or `python .act/scripts/update.py`), then start a new session. Two migrations run once:
+  `005-resources-file` adds `docs/ai/local/resources.md` and `006-docs-project-readme` adds `docs/project/README.md`;
+  neither overwrites a file that is there or brings back one you deleted. An edited `docs/ai/rules.md` gets the new
+  rule `R-docs-order` as a checkbox line; your own text stays.
+- The update adds no rows to an existing `docs/ai/config.md`. The new keys `done-entries`, `profile`, `exclude`,
+  `docs-order` and `own-rules-budget` take their default until you add the row under its section, copied from
+  `.act/skeleton/config.md`; `/act-config` changes only rows that exist. `feedback: local` is a new value of the
+  existing `feedback` row (`/act-config feedback local`).
+- Finished backlog items and inbox entries are now deleted when the project is under Git (`done-entries` defaults to
+  `delete` there); Git keeps their text and the ids stay reserved. The archive you already have stays: only what is
+  archived from now on is removed after its commit. The first session start names the old archive's file count;
+  `python .act/scripts/entries.py purge --all --plan` lists it and `purge --all` deletes it, if you want that. To
+  keep the old behaviour, add `done-entries: keep` under § Archive.
+- Without `profile` and `exclude` every skill, role and rule file stays as before (`full`).
+- `act-doctor` now checks the order of `docs/project/` (`docs-order` in § Checks, default `warn`, never blocking).
+  Right after the update it names every file and folder the new `docs/project/README.md` has no line for, and every
+  folder of five or more entries without a `README.md` of its own. Add the lines (`.act/scripts/move_doc.py` and the
+  step "Structure" of `act-audit-docs` help), or add `docs-order: off`.
+- An existing `docs/ai/inbox/README.md` is not replaced; the rule `R-human-ask` carries the new form of a question
+  either way, and `.act/skeleton/inbox/README.md` has the new text if you want it.
+- `act-doctor` now warns, never blocks, when the "Own rules" sections of `docs/ai/rules.md` and
+  `docs/project/coding_rules.md` together exceed 6000 characters; set `own-rules-budget` in § Checks to raise the
+  limit or switch it off. It also checks every setting that has a fixed list or format and may report a value it
+  passed over before. A value that ends in a backslash right before the next `|` needs a space before the `|`.
+- If the project overrides the `act-audit-docs` workflow script at
+  `docs/ai/local/skills/act-audit-docs/workflow.js`, rename that file to `workflow.js.txt`.
+- Optional: clickable entry ids are set up once per machine with `python .act/scripts/id_links_install.py`, and again
+  after each `act-update`.
+
 ### Added
 
 - `feedback: local` in `docs/ai/config.md`: the project never sends anything to the template author.
@@ -34,7 +73,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `act-commit` and `doc-writer` keep the index lines. New scaffold `docs/project/README.md`, brought to existing
   projects once by migration 006 (never overwritten, not recreated once deleted). An edited `docs/ai/rules.md` gets the
   new rule through the update.
-- Script `seo_crawl.py` (a building block for a fuller `act-seo`, not yet called by the skill): crawls a running site
+- Script `seo_crawl.py` (used by `act-seo`): crawls a running site
   from a base URL, same origin only, no cookies, no server started; a start page that redirects to the same host with
   another scheme, port or `www.` continues there, any other target is refused. It reports status codes, redirect
   chains and loops, TTFB (with the note that a local TTFB says nothing about the hosting), broken internal links with
@@ -57,7 +96,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   on full HTML documents only, never on framework components, layouts or `_document` files; JSON-LD built by template
   code and `hreflang` built in a template loop are not judged. Other scripts can call `check_documents({path_or_url:
   html})` to run the page checks on rendered documents without reading files.
-- Script `seo_lighthouse.py` (a first building block for a fuller `act-seo`, not yet called by the skill): measures
+- Script `seo_lighthouse.py` (used by `act-seo`): measures
   given URLs with a pinned Lighthouse version through `npx`, reports the median of several runs per category
   (Performance, Accessibility, Best Practices, SEO) and for LCP, CLS and TBT with the spread of every value, lists
   failed axe audits as findings and sorts the report by severity, keeping score points apart from real defects.
@@ -87,9 +126,6 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `entries.py archive` writes `finished: <timestamp>` into an archived task's header, below `started:` (else below
   `created:`), so a task records when it was created, started and finished. An existing `finished:` stays; backlog
   items and inbox entries get no such field.
-- `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
-  `.claude/skills/act-*/**`) whenever the template ships a `*.js`, `*.mjs` or `*.cjs` file under `.act/`. The current
-  template ships none, so the note does not appear.
 - Open questions with an answer written under the `**Answer:**` line now show as answered in the board ("answer in
   file, status still open").
 - `act-local-tidy` removes compiled-cache folders under `.act-local/pyc/` whose source folder no longer exists.
@@ -106,8 +142,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `docs/ai/config.md` trim the template per project. The profile cuts skills and roles: `standard` leaves out the web,
   design and teaching skills, `minimal` keeps only the core skills and roles. `exclude` names single skills, roles,
   rule files (such as `orchestrator/30-cost.md`) and topics. The session start removes the copies, switches the
-  import line of an excluded rule file to a bare path in `docs/ai/rules.md` and names the cut in one line; a change
-  takes effect from the next session. `shared/10-safety.md` cannot be excluded, and the checks stay on whatever is
+  import line of an excluded rule file to a bare path in `docs/ai/rules.md` and names the cut in one line; `init` and
+  `act-update` do not write the skill copies and role bridges that are cut. A change takes effect from the next
+  session. `shared/10-safety.md` cannot be excluded, and the checks stay on whatever is
   cut. A missing key means `full`, so nothing changes until you set one; back to `full` restores everything, except
   a role bridge you deleted yourself. An unreadable `docs/ai/config.md` leaves the recorded cut as it is.
 - `act-doctor` warns when the always-loaded "Own rules" sections of `docs/ai/rules.md` and
@@ -124,8 +161,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   is not yet known, the evaluation of transcripts, logs or feedback and material past about 20k tokens that is not
   needed afterwards go to `explorer`, which hands back only findings and numbers; a run of the test suite, a probe
   or a smoke test named in the assignment goes to `quick-check`, which hands back the exit code, the failures and
-  the numbers. A known spot, an entry under `docs/ai/`, a commit or `git status` stay with the main session. Long work is checked for split points such as test and probe runs, case
-  catalogs, assignments over separate files and a review per checked spot.
+  the numbers. A known spot, an entry under `docs/ai/`, a commit or `git status` stay with the main session. Work
+  expected to run longer than about five minutes is first checked for independent parts (test and probe runs, case
+  catalogs, assignments over separate files, a review per checked spot) and, where it splits, runs in parallel with
+  separate write scopes, the saving measured before and after. Tasks that touch the same files are first checked for
+  one joint assignment (one write scope, a higher cap, one review, commits per task by path) and run one after the
+  other only with a stated reason. The `worker-scope-overlap` refusal names that joint assignment as a third way, next
+  to separate scopes and waiting.
 
 - `R-human-ask` and the inbox README give the form of a question: the question itself as the heading, a hint of
   at most three sentences with no list, 2–5 options `- **a)** …` with effort and the recommendation at its own
@@ -153,18 +195,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   (crawl with header checks, PageSpeed Insights; the skill says first that the URL goes to Google, the key comes from
   `PAGESPEED_API_KEY` only). The report separates Lighthouse points from real defects; fixes follow approval and a
   re-measure, until 100 or every deviation is justified. The live-run guide stops the test server by the root
-  process ID recorded at start and its whole process tree, then checks the port is free. `seo_crawl.py` and `seo_lighthouse.py` are now listed under
-  `act-seo` in the script reference.
-- `R-cost-delegate` says how work is cut for workers: work expected to run longer than about five minutes is first
-  checked for independent parts and, where it splits, runs in parallel with separate write scopes, the saving measured
-  before and after; tasks that touch the same files are first checked for one joint assignment (one write scope, a
-  higher cap, one review, commits per task by path) and run one after the other only with a stated reason. The
-  `worker-scope-overlap` refusal names that joint assignment as a third way, next to separate scopes and waiting.
+  process ID recorded at start and its whole process tree, then checks the port is free. `seo_crawl.py` and
+  `seo_lighthouse.py` are now listed under `act-seo` in the script reference.
 - The `act-audit-docs` workflow script is now `workflow.js.txt` (it was `workflow.js`). It needs a top-level `return`
   that no module parser accepts, so `eslint .` failed on it in projects that do not exclude `.act/` and `.claude/`
   from lint. `act-update` removes the old file from `.act/skills/` and from `.claude/skills/act-audit-docs/`. If your
   project overrides the script at `docs/ai/local/skills/act-audit-docs/workflow.js`, rename that file to
-  `workflow.js.txt` too, or the override no longer applies.
+  `workflow.js.txt` too, or the override no longer applies. Should the template ship a `*.js`, `*.mjs` or `*.cjs` file
+  under `.act/` again, `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
+  `.claude/skills/act-*/**`).
 - The `act-local-tidy` line at session start and in the `update` summary gives count, size and kinds only, no
   longer up to five entry names. A line that only reports what would go points to
   `python .act/scripts/act_local_tidy.py`, which still lists every entry. Entries that could not be removed are
@@ -178,15 +217,16 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `done-entries: delete | keep` in `docs/ai/config.md` § Archive, default `delete` with Git and `keep` without (an
   explicit `delete` without a repository counts as `keep`). `entries.py archive` deletes only an entry Git holds
   unchanged (compared with the last commit by blob hash, so `assume-unchanged` and `skip-worktree` files count as
-  changed); anything else moves to the archive as before. An accepted task always moves to the archive with its
-  `finished:` stamp and goes with the next `entries.py purge` once a commit holds it; `act-commit` runs `purge`. Ids
-  stay taken through `docs/ai/work/reserved-ids.json`, so `new` never hands one out twice. Links to a deleted entry
-  become its bare id; written-out paths do too, except inside fenced code blocks and in `git show <commit>:<path>`.
-  `act-compact` merges only the journal under `delete`. An existing archive stays: the first session start after the
-  update names its file count once, `entries.py purge --plan` shows what would go, and journal files, `ledger-*.md`,
-  `legacy/` and `proposals/` always stay. `done-entries: keep` restores the old behaviour.
-- `init` and `update` no longer write skill copies or role bridges that the project's `profile` or `exclude` leaves
-  out.
+  changed); anything else moves to the archive as before and gets the header field `purge: after-commit`. An
+  accepted task always moves to the archive with its `finished:` stamp and that field. `entries.py purge`, which
+  `act-commit` runs, deletes only files carrying the field once a commit holds them unchanged, plus a pasted file
+  that only they link to. Ids stay taken through `docs/ai/work/reserved-ids.json`, so `new` never hands one out twice.
+  Links to a deleted entry become its bare id; written-out paths do too, except inside fenced code blocks and in
+  `git show <commit>:<path>`. `act-compact` merges only the journal under `delete`. An existing archive stays until
+  you decide: the first session start under `delete` names its file count once, `entries.py purge --all --plan`
+  shows what would go, and `entries.py purge --all` deletes what Git holds unchanged; the assistant runs `--all`
+  only on your word. Journal files, `ledger-*.md`, `legacy/` and `proposals/` always stay. `done-entries: keep`
+  restores the old behaviour.
 - `act-bug`, `act-commit` and `act-adopt` keep "Own rules" to one-line rules: incident, evidence and identifiers go
   to the project docs, and `act-adopt` proposes the parts of an existing guideline file by where they belong instead
   of copying it whole.
@@ -196,13 +236,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
-- The overview table of `.act/scripts/README.md` no longer cuts a row short at a `|` in a script's purpose (the row
-  of `act_profile.py` ended after "(minimal"): `script_docs.py` writes a pipe in a table cell as `\|`.
+- The overview table of `.act/scripts/README.md` no longer cuts a row short at a `|` in a script's purpose:
+  `script_docs.py` writes a pipe in a table cell as `\|`.
 - Parallel worker starts no longer lose each other's recorded `Write scope:` or `Cap:`. On Windows a scanner or
   indexer can hold a just-written bookkeeping file open for a moment; the cleanup pass of another start read that as a
   damaged file and deleted it, so the worker then ran without its scope or with the tier's default cap. A file that
-  cannot be read is now judged by its age alone and stays unless it is older than 24 hours; the same holds for the
-  per-session state of `status-poll`.
+  cannot be opened at that moment (held by another process) is now judged by its age alone and stays unless it is
+  older than 24 hours; the same holds for the per-session state of `status-poll`.
 - A worker no longer runs one call without its `Write scope:` or with the tier's default cap when a scanner holds its
   just-written entry open on Windows at the moment the check reads it. `worker-write-scope`, `worker-cap` and the
   other checks that read these entries retry a denied read a few times within about a third of a second, like the
@@ -277,7 +317,6 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `spawn`/`execFile`), or in a command line of one command that is the first argument of such a call, of
   `os.system` or of Node `exec`. For `cmd` only the switches up to `/c` or `/k` count. The same literal anywhere
   else (`shutil.copytree('cmd', '/c')`, `print('cmd')`) stays a path.
-- The journal note for a feedback send said "1 entries"; it now reads "1 entry".
 
 ### Security
 
@@ -1155,7 +1194,8 @@ First public pre-release of the previous generation (today the branch `v1`), doc
   coding rule modules for 10 languages and stacks; `AI-CONFIG.md` steers the collaboration.
 - Optional live log `ai.log` through hooks.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.1.0...v2.2.0
