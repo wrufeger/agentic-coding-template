@@ -196,6 +196,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- The overview table of `.act/scripts/README.md` no longer cuts a row short at a `|` in a script's purpose (the row
+  of `act_profile.py` ended after "(minimal"): `script_docs.py` writes a pipe in a table cell as `\|`.
 - Parallel worker starts no longer lose each other's recorded `Write scope:` or `Cap:`. On Windows a scanner or
   indexer can hold a just-written bookkeeping file open for a moment; the cleanup pass of another start read that as a
   damaged file and deleted it, so the worker then ran without its scope or with the tier's default cap. A file that

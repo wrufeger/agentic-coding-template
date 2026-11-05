@@ -245,6 +245,12 @@ def _skill_names(skill: Optional[str]) -> list[str]:
     return [part.strip() for part in (skill or "").split(",") if part.strip()]
 
 
+def _table_cell(text: str) -> str:
+    """Text for one cell of the overview table: a literal `|` would end the cell there (GFM splits a
+    row at every unescaped pipe, inside code spans too), so it is written as `\\|`."""
+    return text.replace("|", "\\|")
+
+
 def _call_cell(entry: dict) -> str:
     if entry["kind"] == "library":
         return "library"
@@ -273,7 +279,7 @@ def _render(entries: list[dict]) -> str:
         "| :--- | :--- | :--- |",
     ]
     for entry in entries:
-        lines.append(f"| `{entry['name']}` | {entry['purpose']} | {_call_cell(entry)} |")
+        lines.append(f"| `{entry['name']}` | {_table_cell(entry['purpose'])} | {_table_cell(_call_cell(entry))} |")
     lines.append("")
 
     libraries = [e for e in entries if e["kind"] == "library"]
