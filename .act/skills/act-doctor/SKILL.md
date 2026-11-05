@@ -25,7 +25,9 @@ every skill and role: a value strict YAML rejects (an unquoted `: `), a missing 
 `tools`, `model` or `effort`, and — as a hint only — a field no known tool reads, and the order of the
 project docs (`R-docs-order`, switch `docs-order` in `docs/ai/config.md` § Checks): a folder under
 `docs/project/` of five or more entries without `README.md`, a file its `README.md` does not name, an index
-line without a file, a dead relative link, a concept whose questions are all answered. `update.py`
+line without a file, a dead relative link, a concept whose questions are all answered, and the size
+of the always-loaded own rules (`own-rules-budget` in `docs/ai/config.md`, default 6000 characters; a warning, with
+the lines that read like history). `update.py`
 calls this itself as its step 8 — running it again by hand afterward is redundant unless something
 was fixed in between.
 

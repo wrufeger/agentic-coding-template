@@ -59,6 +59,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import act_profile
 import actlib
 import entries
 import manifest
@@ -990,8 +991,8 @@ def step_replace(root: Path, new_act_dir: Path, plan: bool) -> str:
 # functions the new init.py calls — and, being cached, board's older copy under it. "unit_copies"
 # imports init the same way, so a cached copy of it would keep the older init bound. "advisory" is
 # imported by board (and entries, through board), so the same holds for it.
-_PROBE_MODULE_NAMES = ("actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board", "unit_copies",
-                       "advisory")
+_PROBE_MODULE_NAMES = ("act_profile", "actlib", "rules", "init", "tiers", "frontmatter", "ideas", "entries", "board",
+                       "unit_copies", "advisory")
 
 
 def _project_tools(root: Path) -> list[str]:
@@ -1202,6 +1203,11 @@ def step_refresh_copies(
     become, reset_edited lists the edited copies this run backed up and reset (see
     `restore_paths` below), removed the files it deleted (for the caller's commit).
 
+    A skill the project's scope leaves out (docs/ai/config.md § Scope: `profile`, `exclude`;
+    init.copy_targets() names none of its files) falls under the "no longer shipped" case, reported as
+    "left out by profile/exclude": unedited copies are removed, edited ones kept; when the scope ends, the
+    copies are new again and are created.
+
     A sixth case sits outside that list: a project's *own* skill (settings_load.py's
     write_unit_bridges() recorded its copies in the lock the same way, but init.py's
     copy_targets() deliberately never enumerates them — see that function's docstring). Such a
@@ -1246,6 +1252,11 @@ def step_refresh_copies(
         print(f"note: tiers/role rows unreadable ({type(exc).__name__}: {exc}); skill copies written without reasoning")
         tiers_data, role_rows = {}, {}
 
+    # A template skill the scope leaves out gets no copy, whatever the project's own override under
+    # docs/ai/local/skills/<name>/ says: that folder only changes the skill's text, it does not bring
+    # the skill back (init.copy_targets() leaves it out the same way).
+    cut_skills = act_profile.read_cut(root).skills
+
     # A project's own skill gets a copy in every active skill folder, like a template skill.
     local_skills = (root / "docs" / "ai" / "local" / "skills").resolve()
     active_dirs = [d for d, _ in getattr(new_init, "SKILL_TARGET_DIRS", ()) if _skill_dir_active(new_init, d, tools)]
@@ -1255,6 +1266,8 @@ def step_refresh_copies(
         if own is None or local_skills not in own.parents:
             continue
         rel = own.relative_to(local_skills).as_posix()
+        if rel.split("/")[0] in cut_skills:
+            continue
         for dest_root in active_dirs:
             dest = f"{dest_root}/{rel}"
             if dest not in new_specs:
@@ -1265,6 +1278,7 @@ def step_refresh_copies(
     new_copies: dict[str, dict] = {}
     replaced, kept, left_deleted, created, adopted, failed = [], [], [], [], [], []
     no_longer_shipped_removed, no_longer_shipped_kept = [], []
+    cut_removed, cut_kept = [], []  # copies of a skill the scope leaves out (§ Scope), apart from the rest
     present_not_taken_over = []
     restored, restored_edited, backup_failed = [], [], []
     removed_paths: list[Path] = []
@@ -1276,7 +1290,8 @@ def step_refresh_copies(
         source_path = new_specs.pop(dest_rel, None)
         dest_path = root / dest_rel
         if source_path is None:
-            own = _own_copy_source(root, old_entry)
+            by_scope = len(dest_rel.split("/")) > 2 and dest_rel.split("/")[2] in cut_skills
+            own = None if by_scope else _own_copy_source(root, old_entry)
             dest_root = _dest_skill_dir(new_init, dest_rel)
             if own is not None and (dest_root is None or _skill_dir_active(new_init, dest_root, tools)):
                 source_path = own  # an own copy outside the usual layout: refreshed as before
@@ -1295,11 +1310,11 @@ def step_refresh_copies(
                     continue
                 if unedited:
                     _prune_empty_copy_dirs(dest_path, copy_bases, root)
-                    no_longer_shipped_removed.append(dest_rel)
+                    (cut_removed if by_scope else no_longer_shipped_removed).append(dest_rel)
                     removed_paths.append(dest_path)
                 else:
                     new_copies[dest_rel] = old_entry
-                    no_longer_shipped_kept.append(dest_rel)
+                    (cut_kept if by_scope else no_longer_shipped_kept).append(dest_rel)
                 continue
         try:
             data = _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
@@ -1395,6 +1410,8 @@ def step_refresh_copies(
         ("kept (backup failed)", backup_failed),
         ("no longer shipped, removed", no_longer_shipped_removed),
         ("no longer shipped, kept (edited)", no_longer_shipped_kept),
+        ("left out by profile/exclude, removed", cut_removed),
+        ("left out by profile/exclude, kept (edited)", cut_kept),
         ("created", created),
         ("taken over (identical)", adopted),
         ("present, not taken over", present_not_taken_over),
@@ -1494,6 +1511,7 @@ def step_new_role_bridges(
     changed_roles: frozenset[str] = frozenset(), force_all: bool = False,
     old_overrides: Optional[dict[str, dict[str, str]]] = None,
     known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
+    returning_roles: frozenset[str] = frozenset(),
 ) -> tuple[str, list[Path], list[str], bool]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
     applicable role — new or already existing — that does not have one yet.
@@ -1516,6 +1534,12 @@ def step_new_role_bridges(
     the same way — as is one whose role's bridge no longer declares a variant at all (`high-variant:`
     in .act/bridges/agents/<role>.md), changed or not; a project's own "...-high" role without that
     field is never touched.
+
+    A role in `returning_roles` (the scope that cut it ended, docs/ai/config.md § Scope) gets its missing
+    bridges back: the scope removed them, so being absent says nothing about the project — the `known`
+    snapshot and the git history, which read a missing bridge as "deleted by the project", are not asked.
+    A bridge the project deleted *before* the cut is in removed_by_user (_remove_cut_role_bridges
+    records it when the cut starts) and stays deleted; an existing bridge is not touched.
 
     `notes`, if given, collects messages the same way step_fetch() above does. Returns (summary,
     touched_paths, reset_or_removed_edited, had_failure) — the last one true when a bridge that
@@ -1559,7 +1583,7 @@ def step_new_role_bridges(
     _needs_git_check = [
         dest_rel for dest_rel in sorted(targets)
         if not (root / dest_rel).is_file()
-        and not (force_all or _role_of(dest_rel) in changed_roles)
+        and not (force_all or _role_of(dest_rel) in changed_roles or _role_of(dest_rel) in returning_roles)
         and dest_rel not in removed_by_user and dest_rel not in known
     ]
     _history_hits = _paths_in_git_history(root, _needs_git_check)
@@ -1577,7 +1601,8 @@ def step_new_role_bridges(
             continue
         elif follows_value:
             bucket = restored
-        elif dest_rel in removed_by_user or dest_rel in known or dest_rel in _history_hits:
+        elif dest_rel in removed_by_user or (
+                role not in returning_roles and (dest_rel in known or dest_rel in _history_hits)):
             if dest_rel not in removed_by_user:
                 removed_by_user.append(dest_rel)
             left_deleted.append(dest_rel)
@@ -1705,6 +1730,55 @@ def _remove_role_bridges(
     return ("; ".join(parts) or None), removed_paths
 
 
+def _remove_cut_role_bridges(
+    new_init, root: Path, tools: list[str], roles: frozenset[str], old_roles: dict, brief: bool,
+    known: frozenset[str] = frozenset(),
+) -> tuple[Optional[str], list[Path]]:
+    """The scope (§ Scope: `profile`, `exclude`) now cuts these template roles: their bridges and
+    "-high" variants under .claude/agents/ are removed if unedited (_bridge_edited against the Roles
+    table they were generated from), left in place and reported if edited. A project's own role is
+    never in `roles`. A bridge of these roles that is already missing was deleted by the project (it is in
+    `known`, the snapshot's list of bridges that existed, or was committed once): it is entered in
+    removed_by_user, so it stays deleted when the scope ends and the role returns. Returns (summary
+    part or None, removed paths)."""
+    base_targets = dict(new_init.agent_bridge_targets(root, tools, False))
+    variant_targets = dict(new_init.agent_bridge_variant_targets(root, tools, False))
+    tiers_data = new_init.tiers.load_tiers(root)
+    removed, kept, absent = [], [], []
+    removed_paths: list[Path] = []
+    for dest_rel, source_path in sorted({**base_targets, **variant_targets}.items()):
+        variant = dest_rel in variant_targets
+        role = Path(dest_rel).stem[: -len("-high")] if variant else Path(dest_rel).stem
+        dest_path = root / dest_rel
+        if role not in roles:
+            continue
+        if not dest_path.is_file():
+            absent.append(dest_rel)
+            continue
+        if _bridge_edited(new_init, root, dest_path, role, source_path, variant, tiers_data, old_roles):
+            kept.append(dest_rel)
+            continue
+        try:
+            dest_path.unlink()
+        except OSError:
+            kept.append(dest_rel)
+            continue
+        removed.append(dest_rel)
+        removed_paths.append(dest_path)
+    if absent:
+        deleted = [rel for rel in absent if rel in known]
+        deleted += _paths_in_git_history(root, [rel for rel in absent if rel not in known])
+        recorded = list(actlib.read_lock().get("removed_by_user", []))
+        if deleted and not set(deleted) <= set(recorded):
+            actlib.write_lock({"removed_by_user": sorted(set(recorded) | set(deleted))})
+    parts = []
+    if removed:
+        parts.append(_list_part("left out by profile/exclude, removed", removed, brief))
+    if kept:
+        parts.append(_list_part("left out by profile/exclude, kept (edited)", kept, brief))
+    return ("; ".join(parts) or None), removed_paths
+
+
 def _render_tool_bridge(new_init, root: Path, key: str, spec: dict) -> Optional[str]:
     """The text init.py would write for a tool-gated BRIDGES entry into an empty project — the
     reference a removal compares against. None if it cannot be rendered."""
@@ -1808,9 +1882,11 @@ def _read_tools(root: Path) -> tuple[Optional[list[str]], Optional[str]]:
 
 def _dependent_values(root: Path) -> tuple[Optional[dict], Optional[str]]:
     """The docs/ai/config.md values the dependent files hang on, for the snapshot comparison:
-    `tools` and every role's complete Roles-table entry (tier/reasoning/model — each of them decides
+    `tools`, every role's complete Roles-table entry (tier/reasoning/model — each of them decides
     whether a "-high" variant exists and what the bridge's frontmatter says, init.py's
-    agent_bridge_variant_targets()). (None, problem) when `tools` cannot be used (_read_tools)."""
+    agent_bridge_variant_targets()) and `cut`, the template skills and roles the scope
+    (§ Scope: `profile`, `exclude`) leaves out. (None, problem) when `tools` cannot be used
+    (_read_tools)."""
     tools, problem = _read_tools(root)
     if tools is None:
         return None, problem
@@ -1818,7 +1894,7 @@ def _dependent_values(root: Path) -> tuple[Optional[dict], Optional[str]]:
         roles = tiers.read_role_overrides(root)
     except Exception:
         roles = {}
-    return {"tools": tools, "roles": roles}, None
+    return {"tools": tools, "roles": roles, "cut": act_profile.snapshot_value(act_profile.read_cut(root))}, None
 
 
 def _valid_snapshot(last: Optional[dict]) -> bool:
@@ -1885,9 +1961,14 @@ def _compare_snapshot(root: Path) -> dict:
     old_roles: dict = last["roles"] if has_snapshot else current["roles"]
     bridges = actlib.read_cache().get("known_bridges")
     known = frozenset(b for b in bridges if isinstance(b, str)) if isinstance(bridges, list) else frozenset()
+    # a snapshot from before the scope existed cut nothing
+    old_cut = act_profile.recorded_cut(last) if has_snapshot else current["cut"]
     return {
         "problem": None, "current": current, "has_snapshot": has_snapshot,
         "old_tools": old_tools, "old_roles": old_roles, "known": known,
+        "cut_moved": old_cut != current["cut"],
+        "cut_roles_out": frozenset(set(current["cut"]["roles"]) - set(old_cut["roles"])),
+        "cut_roles_back": frozenset(set(old_cut["roles"]) - set(current["cut"]["roles"])),
         "tools_moved": old_tools != current["tools"],
         "changed_roles": frozenset(
             role for role in set(old_roles) | set(current["roles"])
@@ -1912,6 +1993,8 @@ def pending_dependent_changes(root: Path) -> Optional[str]:
         moved.append(f"tools ({', '.join(change)})")
     if state["changed_roles"]:
         moved.append(f"roles ({', '.join(sorted(state['changed_roles']))})")
+    if state["cut_moved"]:
+        moved.append("scope (profile/exclude)")
     return "; ".join(moved) or None
 
 
@@ -1971,11 +2054,12 @@ def sync_dependent_files(
     current = state["current"]
     old_tools, old_roles = state["old_tools"], state["old_roles"]
     tools_moved, changed_roles = state["tools_moved"], state["changed_roles"]
+    cut_moved = state["cut_moved"]
     claude_joined = "claude-code" in current["tools"] and "claude-code" not in old_tools
     claude_left = "claude-code" in old_tools and "claude-code" not in current["tools"]
     brief = not always_run
 
-    if not always_run and (not state["has_snapshot"] or (not tools_moved and not changed_roles)):
+    if not always_run and (not state["has_snapshot"] or (not tools_moved and not changed_roles and not cut_moved)):
         return None, lock_copies(), []
 
     new_init = _import_fresh_init(root / ".act" / "scripts")
@@ -1985,7 +2069,7 @@ def sync_dependent_files(
     reset_edited: list[str] = []
 
     new_copies = lock_copies()
-    if always_run or tools_moved or _skill_rows_moved(root, changed_roles):
+    if always_run or tools_moved or cut_moved or _skill_rows_moved(root, changed_roles):
         restore: frozenset[str] = frozenset()
         restore_dirs: frozenset[str] = frozenset()
         if tools_moved and new_init is not None:
@@ -2018,11 +2102,24 @@ def sync_dependent_files(
                 parts.append(f"roles: {removed_summary}")
             touched.extend(removed_paths)
 
+    # Roles the scope cuts lose their bridges; roles it gives back get them again — a bridge that was
+    # committed once is otherwise read as "deleted by the project" (step_new_role_bridges, returning_roles),
+    # while one the project really deleted stays deleted (removed_by_user).
+    cut_roles = frozenset(current["cut"]["roles"])
+    if new_init is not None and "claude-code" in current["tools"]:
+        gone = state["cut_roles_out"] | (cut_roles if always_run and not state["has_snapshot"] else frozenset())
+        if gone:
+            cut_summary, cut_removed = _remove_cut_role_bridges(
+                new_init, root, current["tools"], frozenset(gone), old_roles, brief, state["known"])
+            if cut_summary:
+                parts.append(f"roles: {cut_summary}")
+            touched.extend(cut_removed)
     role_bridges_failed = False
-    if always_run or changed_roles or claude_joined:
+    if always_run or changed_roles or state["cut_roles_back"] or claude_joined:
         role_summary, role_touched, roles_reset, role_bridges_failed = step_new_role_bridges(
             root, False, notes, changed_roles=changed_roles, force_all=claude_joined,
             old_overrides=old_roles, known=state["known"], backup_dir=backup_dir, brief=brief,
+            returning_roles=state["cut_roles_back"],
         )
         if not (brief and role_summary == "no new roles or variants"):
             parts.append(f"roles: {role_summary}")
@@ -2597,7 +2694,7 @@ _SELF_RELAUNCH_FETCHED_COMMIT_ENV = "ACT_UPDATE_FETCHED_COMMIT"
 _SELF_RELAUNCH_RESCUE_ENV = "ACT_UPDATE_RESCUE"
 _SELF_RELAUNCH_NOTES_ENV = "ACT_UPDATE_NOTES"
 _SELF_RELAUNCH_REF_ENV = "ACT_UPDATE_REF"
-_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py", "rules.py")
+_SELF_RELAUNCH_FILES = ("update.py", "init.py", "actlib.py", "entries.py", "board.py", "rules.py", "act_profile.py")
 
 
 def _scripts_fingerprint(root: Path) -> dict[str, str]:

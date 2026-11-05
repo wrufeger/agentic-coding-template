@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+import act_profile
 import actlib
 
 
@@ -1099,6 +1100,7 @@ def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "n
     default_eol = "\r\n" if crlf > raw.count("\n") - crlf else "\n"
     by_key = {_core_key(pset.path): pset for pset in project.sets}
     listed = {gid for pset in project.sets for gid in pset.groups}
+    cut_files = act_profile.read_cut(root).rules  # excluded in docs/ai/config.md § Scope: never switched on here
     inserts: dict[int, list[tuple[int, list[str]]]] = {}  # anchor line index -> [(order, lines)], written after it
     inserted: set[str] = set()
     entered_files: set[str] = set()
@@ -1110,6 +1112,8 @@ def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "n
         if pset is None:
             if rel in offered:
                 continue  # offered before and not imported now: taken out on purpose
+            if rel in cut_files:
+                continue  # excluded by the scope: not entered, and not recorded, so it is entered when the cut ends
             layer = rel.split("/")[2]
             siblings = [p for p in project.sets if _core_key(p.path).startswith(f"rules/{layer}/")]
             if not siblings:
@@ -1165,6 +1169,143 @@ def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "n
         path.write_bytes("".join(out).encode("utf-8"))
     if write and tracking and result.offered != recorded:
         actlib.write_rules_offered(root, result.offered)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# The scope (docs/ai/config.md § Scope, act_profile.py) in docs/ai/rules.md — the import line of a rule
+# file the project excluded goes from "@../../.act/rules/<layer>/<file>.md" to the bare path (the form
+# Claude Code never loads, like an unchecked coding set); the lock's `rules_cut` remembers which lines
+# the scope switched off, so only those come back when the exclusion ends. Boxes, overrides and
+# every other line stay as they are.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CoreCut:
+    switched_off: list[str] = field(default_factory=list)  # "orchestrator/30-cost.md", import line made bare
+    restored: list[str] = field(default_factory=list)      # import line made an import again
+    problem: str = ""                                      # why nothing was changed although something is due
+
+
+def _core_import_lines(lines: list[str]) -> list[tuple[int, str, bool]]:
+    """(line index, root-relative rule file, imported) for every top-level line of docs/ai/rules.md that
+    names a file under .act/rules/ — as an import ("@../../.act/rules/...") or as the bare path. Fenced
+    code, HTML comments and indented lines (a rule's checkbox list) are skipped."""
+    found: list[tuple[int, str, bool]] = []
+    fence: Optional[str] = None
+    in_comment = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if in_comment:
+            in_comment = "-->" not in stripped
+            continue
+        if fence is None and stripped.startswith("<!--"):
+            in_comment = "-->" not in stripped
+            continue
+        fence_match = RE_FENCE.match(line)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            continue
+        if line[:1] in (" ", "\t"):
+            continue
+        core_set = RE_CORE_SET.match(stripped)
+        if not core_set:
+            continue
+        rel = normalize_set_path(core_set.group("path"))
+        if rel.startswith(".act/rules/"):
+            found.append((index, rel, stripped.startswith("@")))
+    return found
+
+
+def apply_core_cut(text: str, cut_files) -> tuple[str, list[str]]:
+    """Pure: `text` of a docs/ai/rules.md with the import line of every rule file in `cut_files`
+    (root-relative paths, act_profile.Cut.rules) made the bare path. Returns (new text, the rule files
+    switched off by it); everything else, line endings included, stays byte for byte. Used where the
+    file is derived from the template's bridge (the session start's refresh, update.py through it), so
+    a generated copy is written already cut and never flips back and forth."""
+    lines = text.split("\n")
+    switched: list[str] = []
+    for index, rel, imported in _core_import_lines(lines):
+        if imported and rel in cut_files:
+            lines[index] = rel + ("\r" if lines[index].endswith("\r") else "")
+            switched.append(rel)
+    return "\n".join(lines), switched
+
+
+def sync_core_cut(root: Path, write: bool = True) -> CoreCut:
+    """Bring the import lines of docs/ai/rules.md in line with the scope: a rule file the config
+    excludes (act_profile.read_cut) loses its "@" (shared/10-safety.md never does), and a line this
+    function switched off earlier (the lock's `rules_cut`) whose file is no longer excluded gets its
+    import back. A bare line the project wrote itself is never touched, and a file that is not
+    listed is not added (add_missing_core_entries enters it once the cut ends). Fenced code and HTML
+    comments are skipped. With write=False nothing is written, the result says what would change; a
+    second run finds nothing. A project without an .act-lock.json is left alone, and so is one whose
+    lock cannot be read (`problem` says so): a line switched off without its record would never come
+    back, so the record is written first and a failed record write changes nothing in the file. A file
+    docs/ai/rules.md that still equals what the session start generated stays "generated" (the
+    recorded hash follows), so a later template update still re-derives it, and the cut is applied
+    again."""
+    result = CoreCut()
+    area = AREAS["core"]
+    path = root / area.project_file
+    if not path.is_file() or not (root / ".act-lock.json").is_file():
+        return result
+    cut_files = act_profile.read_cut(root).rules
+    recorded = set(actlib.read_rules_cut(root))
+    if not cut_files and not recorded:
+        return result
+    text, eol = _read_text_eol(path)
+    lines = text.split("\n")
+    fixed = list(lines)
+    seen: set[str] = set()
+    add_record: set[str] = set()
+    drop_record: set[str] = set()
+    for index, rel, imported in _core_import_lines(lines):
+        seen.add(rel)
+        if rel in cut_files:
+            if imported:
+                fixed[index] = rel
+                result.switched_off.append(act_profile.rule_dest(rel))
+                add_record.add(rel)
+        elif rel in recorded:
+            if not imported:
+                fixed[index] = import_path(rel, area.project_file)
+                result.restored.append(act_profile.rule_dest(rel))
+            drop_record.add(rel)  # imported again (here, or by the bridge refresh, or by hand): record is obsolete
+    drop_record |= {rel for rel in recorded if rel not in cut_files and rel not in seen}
+    lock_readable = actlib.read_lock_at(root) is not None
+    if add_record and not lock_readable:
+        return CoreCut(problem=".act-lock.json is not readable, so the scope cannot be recorded; "
+                               "docs/ai/rules.md left as it is")
+    if not write:
+        return result
+    # Order matters: a line switched off needs its record first (a crash in between leaves an import
+    # whose record is harmless); a record is dropped only after its line is an import again.
+    if add_record - recorded and not actlib.write_rules_cut(root, sorted(recorded | add_record)):
+        return CoreCut(problem="the scope could not be recorded in .act-lock.json; docs/ai/rules.md left as it is")
+    if fixed != lines:
+        rules_md = area.project_file
+        was_generated = False
+        try:
+            if Path(actlib.repo_root()).resolve() == root.resolve():
+                was_generated = actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rules_md, ""))
+        except (OSError, RuntimeError):
+            was_generated = False
+        _write_text_eol(path, "\n".join(fixed), eol)
+        if was_generated:
+            try:
+                generated = dict(actlib.read_cache()["generated"])
+                generated[rules_md] = actlib.generated_hash(path)
+                actlib.write_cache({"generated": generated})
+            except OSError:
+                pass
+    remaining = (recorded | add_record) - drop_record
+    if remaining != recorded:
+        actlib.write_rules_cut(root, sorted(remaining))
     return result
 
 

@@ -15,8 +15,8 @@
 #               `feedback`) — except a hand-written message via --direct, see there.
 #            3. Every send is LOGGED, in two places: the full payload lands under
 #               .act-local/feedback/sent/ (gitignored, never versioned) and, additionally,
-#               a one-line journal entry (date, kind, entry count, schema version — never the
-#               content) is written to docs/ai/work/ledger/ via entries.py.
+#               a line in the day's journal entry (time, kind, entry count, each entry's kind
+#               and title — never the content) in docs/ai/work/ledger/ via entries.py.
 #            4. At most as often as `feedback-cadence` allows; --force lifts that gate for a
 #               manual send (the skill act-feedback does this after showing --plan).
 #
@@ -29,8 +29,8 @@
 #            - Pending entries and small bookkeeping (project id, cadence counters) live under
 #              .act-local/feedback/ (gitignored, per checkout) instead of a versioned entry file
 #              per finding — the finished protocol of an actual send lives there too now (no
-#              versioned copy of a send's full payload at all; a one-line journal entry via
-#              entries.py is the in-repo proof instead, see _write_journal_entry()).
+#              versioned copy of a send's full payload at all; a line in the day's journal entry
+#              via entries.py is the in-repo proof instead, see _write_journal_entry()).
 #              A team therefore gets one project id per checkout, not one per project. The id is
 #              created lazily wherever a payload is actually built (_build_payload for --plan and
 #              --send, cmd_direct for --direct) and persisted right away — not only on --enable,
@@ -174,8 +174,9 @@ STATE_DIR_REL = ".act-local/feedback"
 STATE_FILE_REL = ".act-local/feedback/state.json"
 ENTRIES_DIR_REL = ".act-local/feedback/entries"
 # The full payload of every send stays local (gitignored) — never versioned, no choice to
-# make. The proof for a stranger reading the project's own history is the one-line journal entry
-# _write_journal_entry() adds to docs/ai/work/ledger/, not this file.
+# make. The proof for a stranger reading the project's own history is the line
+# _write_journal_entry() adds to the day's journal entry in docs/ai/work/ledger/, not this file.
+JOURNAL_SLUG = "feedback-sent"  # fixed English slug: every send of a day finds the same file
 PROTOCOL_DIR_REL = ".act-local/feedback/sent"
 
 MODE_VALUES = ("off", "confirm", "automatic", "manual", "local")
@@ -820,19 +821,49 @@ def _write_protocol(root: Path, payload: dict, endpoint: str) -> Path:
     return path
 
 
-def _write_journal_entry(root: Path, title_en: str, title_de: str) -> None:
-    """One journal entry per successful send (docs/ai/work/ledger/, via entries.py's own `new`) —
-    date, kind (batch/direct), entry count and schema version only, in the title; NEVER the sent
-    content or an entry's own title (the local protocol under .act-local/feedback/sent/ is
-    the full record; this is only the project's own note that a send happened). The title follows
-    `language-docs` (R-work-language, actlib.localized()) — `title_en`/`title_de` are the two
-    fixed variants a caller already built, not a template this function fills in itself, since it
-    is a plain sentence rather than a `.format()`-shaped one. A failure here is reported on
-    stderr but never turns an already-successful send into a failure."""
+def _journal_line(language: str, kind: str, entries: list, stamp: str) -> str:
+    """One line of the day's journal entry: time, kind of send, number of entries, and each entry's
+    kind and title — never its text. Wording follows `language-docs` (actlib.localized())."""
+    if kind == "direct":
+        return f"- {stamp} " + actlib.localized(language, "direct message", "Direktnachricht")
+    count = len(entries)
+    if count == 0:
+        amount = actlib.localized(language, "no entries", "keine Einträge")
+    elif count == 1:
+        amount = actlib.localized(language, "1 entry", "1 Eintrag")
+    else:
+        amount = actlib.localized(language, f"{count} entries", f"{count} Einträge")
+    line = f"- {stamp} " + actlib.localized(language, "batch", "Sammelversand") + f", {amount}"
+    parts = []
+    for entry in entries:
+        title = " ".join(str(entry.get("title") or "").split())
+        entry_kind = " ".join(str(entry.get("kind") or "?").split())
+        parts.append(f'{entry_kind} "{title[:TITLE_MAX]}"')
+    return line + (": " + "; ".join(parts) if parts else "")
+
+
+def _write_journal_entry(root: Path, kind: str, sent: Optional[list] = None) -> None:
+    """The project's own, versioned note that a send happened: ONE journal entry per day
+    (docs/ai/work/ledger/<date>-feedback-sent.md, the file name fixed so every send of the day finds
+    it), one line appended per send — time, kind (batch/direct), entry count, and each entry's kind
+    and title; NEVER the sent text (the local protocol under .act-local/feedback/sent/ is the full
+    record). The first send of a day creates the file through entries.py's own creator, later ones
+    append under entries.py's lock. The words follow `language-docs` (R-work-language). A failure
+    here is reported on stderr but never turns an already-successful send into a failure."""
     try:
         import entries
         language = actlib.docs_language(root)
-        entries.cmd_new(root, "ledger", [actlib.localized(language, title_en, title_de)])
+        line = _journal_line(language, kind, sent or [], time.strftime("%H:%M")) + "\n"
+        path = root / entries.KIND_DIR["ledger"] / f"{time.strftime('%Y-%m-%d')}-{JOURNAL_SLUG}.md"
+        if path.is_file():
+            with entries._EntriesLock(root):
+                existing = path.read_bytes().decode("utf-8")
+                newline = "\r\n" if "\r\n" in existing else "\n"  # keep a checked-out CRLF file uniform
+                with open(path, "a", encoding="utf-8", newline=newline) as handle:
+                    handle.write(("" if existing.endswith("\n") else "\n") + line)
+            return
+        entries.create_entry(root, "ledger", actlib.localized(language, "Feedback sent", "Feedback gesendet"),
+                             body=line, slug=JOURNAL_SLUG)
     except Exception as exc:  # noqa: BLE001 - a journal-entry failure must never fail the send
         print(f"feedback: could not write journal entry ({exc})", file=sys.stderr)
 
@@ -1117,10 +1148,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
     state.pop("last_reminder", None)
     _write_state(root, state)
     _clear_outbox(root)
-    _write_journal_entry(
-        root, f"Feedback sent: batch ({len(entries)} entries, schema {SCHEMA_BATCH})",
-        f"Feedback gesendet: Sammelversand ({len(entries)} Einträge, Schema {SCHEMA_BATCH})",
-    )
+    _write_journal_entry(root, "batch", entries)
     protocol_list = ", ".join(p.relative_to(root).as_posix() for p in protocol_paths)
     print(f"feedback sent ({len(entry_chunks)} send(s), {len(entries)} entries). "
           f"Protocol: {protocol_list}.")
@@ -1189,10 +1217,7 @@ def cmd_direct(root: Path, text: Optional[str], yes: bool, contact: Optional[str
         return 2
 
     protocol_path = _write_protocol(root, payload, endpoint)
-    _write_journal_entry(
-        root, f"Feedback sent: direct message (schema {SCHEMA_DIRECT})",
-        f"Feedback gesendet: Direktnachricht (Schema {SCHEMA_DIRECT})",
-    )
+    _write_journal_entry(root, "direct")
     print(f"message sent (HTTP {code}). Protocol: {protocol_path.relative_to(root).as_posix()}.")
     return 0
 

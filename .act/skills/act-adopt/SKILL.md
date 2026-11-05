@@ -153,7 +153,8 @@ While reading every old source, harvest what would help someone who never sees t
 one batch file per worker for `adopt_entries.py` (`--plan` first, one call at a time).
 
 - Harvest, where to read, cutting bodies, titles and batch kinds: `references/content-entries.md`.
-- Passages into `docs/project/coding_rules.md` and `docs/README.md`, rules as overrides or own rules,
+- Passages into `docs/project/coding_rules.md` and `docs/README.md`, rules as overrides or own rules
+  (a guideline file is sorted by place and proposed part by part, never taken whole into "Own rules"),
   moved docs, own skills and agents, and recording `target` and `"done": true` in `table.json`:
   `references/content-files.md`.
 

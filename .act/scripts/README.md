@@ -7,6 +7,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | Script | Purpose | Call |
 | :--- | :--- | :--- |
 | `act_local_tidy.py` | Keeps `.act-local/` small. Throwaway material (probes, scratch projects, old backups, leftovers of earlier versions) piles up there without… | direct (session start runs it daily in the background; `--task` is a step of skill `act-commit`) |
+| `act_profile.py` | The scope of the template inside one project — docs/ai/config.md § Scope: `profile` (minimal | standard | full) and `exclude` (a comma list… | library |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
 | `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout against a project that… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
@@ -53,6 +54,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 
 ## Libraries (no CLI, imported only)
 
+- `act_profile.py` — The scope of the template inside one project — docs/ai/config.md § Scope: `profile` (minimal | standard | full) and `exclude` (a comma list…
 - `actlib.py` — Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project…
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `frontmatter.py` — One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's…

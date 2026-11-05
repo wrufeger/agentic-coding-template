@@ -39,7 +39,9 @@ template text of its rule, checked or not.
   - [x] `R-docs-order`
 
 Imports resolve relative to this file (`docs/ai/`), hence the `../../`. Check what Claude Code
-actually loads with `python .act/scripts/rules.py --imports`.
+actually loads with `python .act/scripts/rules.py --imports`. A rule file whose line is a bare path
+(no `@`) is switched off: `exclude` in `docs/ai/config.md` § Scope does that for you at the session
+start, and puts the `@` back when you drop the entry.
 
 ## Coding — every role that writes or reviews code
 

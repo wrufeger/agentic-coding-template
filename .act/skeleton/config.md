@@ -45,6 +45,40 @@ branch is never checked out locally, nothing assigns IDs, so entries archived on
 without one. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
 (question) and `U<n>` (todo for you); a report or note has none.
 
+## Scope
+
+| Key | Value |
+| :--- | :--- |
+| `profile` | full |
+| `exclude` | none |
+
+`profile`: `minimal` \| `standard` \| `full`. How much of the template's skills and roles this project
+loads; every skill description and every rule file is part of each session start, so fewer of them is a
+smaller start. `full` (default; a missing key counts as `full`) keeps everything. `standard` leaves out the
+web, design and teaching skills: `act-a11y`, `act-check-translations`, `act-design-assets`,
+`act-design-build`, `act-design-ideas`, `act-seo`, `act-slides`, `act-teach`. `minimal` keeps only the core,
+the skills `act`, `act-adopt`, `act-bug`, `act-commit`, `act-compact`, `act-config`, `act-doctor`,
+`act-export-settings`, `act-feedback`, `act-handover`, `act-idea`, `act-info`, `act-load-settings`,
+`act-prepare`, `act-setup`, `act-update`, `act-version` and the roles `builder`, `debugger`, `doc-writer`,
+`explorer`, `quick-check`, `reviewer` (with their `-high` variants), and leaves out every other template
+skill and role. A value that is none of the three counts as `full`, with a warning. A project's own skills
+and roles (under `docs/ai/local/`) are never cut.
+
+`exclude`: `none`, or a comma-separated list of what to leave out on top of the profile — the name of a
+template skill (`act-seo`), of a template role (`test-writer`), of a rule file (`orchestrator/30-cost.md`)
+or of a topic (`logging`, or `topics/logging.md`). Rule files fall only by name, never by profile. A rule
+file stays under `.act/`, but its line in `docs/ai/rules.md` loses the `@` and Claude Code stops loading
+it (so do the sub-agents); an excluded topic is no longer named at the session start. `shared/10-safety.md`
+cannot be excluded (a warning, the entry is ignored), and an unknown name only gives a warning. The checks under
+§ Checks stay in force either way: their blocks do not depend on rule text.
+
+The session start applies a change: it removes the copies of the skills and roles that are left out
+(`.claude/skills/`, `.agents/skills/`, `.claude/agents/`; a copy you edited stays and is reported), switches
+the import lines and says so in one line. Skills, roles and rules load when a session starts, so a change
+takes effect from the **next** session. `init` and `update` respect the scope and never write a copy that
+is left out. To undo it set `profile` to `full` and `exclude` to `none`: the next session start writes the
+copies and import lines back.
+
 ## Status line
 
 Claude Code's status line (`statusLine` in `.claude/settings.json`) shows what is waiting for you
@@ -242,6 +276,7 @@ refuses") treats `block` as `warn`.
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
 | `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — checked at most once a day — a note that the template has moved on, repeated at every start and shown on the board and in the status line until the update is installed; never refuses, `off` skips both |
 | `docs-order` | warn | `act-doctor` only, never refuses: a folder under `docs/project/` with five or more entries and no `README.md`, a file its `README.md` does not name, an index line without a file, a dead relative link, a concept whose questions are all answered; `block` counts as `warn`, `off` skips it (`R-docs-order`) |
+| `own-rules-budget` | 6000 | `act-doctor` only, never refuses: the characters the "Own rules" sections of `docs/ai/rules.md` and `docs/project/coding_rules.md` may have together before one warning names the size and up to five lines that read like history (a date, an entry identifier, "formerly … since …"); `off` or `0` skips it |
 
 ## Logging
 
@@ -267,8 +302,8 @@ Voluntary feedback to the template author about the working method, never about 
 the template author; findings become backlog entries here instead). `feedback-cadence` is an upper limit:
 `manual` \| `immediate` \| `hourly` \| `daily` \| `weekly` \| `adaptive`. `feedback-scope`: `a`
 metrics, `b` rule and structure changes, `c` tool usage (counts of template skills/scripts used since the last send; your own only as one `own` count). Every sent payload's full copy stays
-local (`.act-local/feedback/sent/`, gitignored) — each send also gets one line in the journal
-(date, kind, entry count, schema version, never content). A message you write yourself
+local (`.act-local/feedback/sent/`, gitignored) — the journal gets one entry per day with one line per send
+(time, kind, entry count, each entry's kind and title, never its text). A message you write yourself
 (`feedback: <text>`) always goes out, even with `off` (but never with `local`), together with the template commit and the
 random project id (a reply address only if you name one). Details: `.act/rules/topics/feedback.md`.
 

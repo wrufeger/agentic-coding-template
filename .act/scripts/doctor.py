@@ -84,6 +84,12 @@
 #               docs/README.md and docs/project/ (docs-link-dead); a concept under
 #               docs/project/concepts/ whose questions are all answered or gone, with no open one
 #               (docs-concept-decided). Nothing with the switch off.
+#          23. the size of the always-loaded own rules (the sections marked `act:own-rules` in
+#               docs/ai/rules.md and docs/project/coding_rules.md together): one warning above the
+#               budget `own-rules-budget` in docs/ai/config.md (default 6000 characters, `off` or `0`
+#               skips it), with the characters, the budget, about 0.386 tokens per character and up to
+#               five lines that read like history (a date, an entry identifier, "formerly ... since
+#               ..."). Counted like any finding, never a block.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -203,6 +209,7 @@ KIND_LABELS: dict[str, str] = {
     "docs-index-stale": "Index lines of a project docs README.md that name nothing",
     "docs-link-dead": "Dead relative links and paths in the project docs",
     "docs-concept-decided": "Concepts whose questions are all answered (delete once built)",
+    "own-rules-size": "Always-loaded own rules over the size budget (own-rules-budget)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -244,6 +251,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "docs-index-stale": "Indexzeilen eines README.md der Projektdoku, die nichts benennen",
     "docs-link-dead": "Tote relative Verweise und Pfade in der Projektdoku",
     "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (löschen, sobald gebaut)",
+    "own-rules-size": "Immer geladene eigene Regeln über dem Größenbudget (own-rules-budget)",
 }
 
 
@@ -1544,6 +1552,135 @@ def check_docs_order(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 8c. Size of the always-loaded own rules — the "Own rules" sections of docs/ai/rules.md and
+#     docs/project/coding_rules.md load at every start, so a long one costs in every session. One
+#     warning above a budget (`own-rules-budget` in docs/ai/config.md, default 6000 characters,
+#     `off` or `0` skips the check), never a block; with it up to five lines that read like history.
+# ---------------------------------------------------------------------------
+
+OWN_RULES_BUDGET_DEFAULT = 6000
+OWN_RULES_TOKENS_PER_CHAR = 0.386
+OWN_RULES_FILES = ("docs/ai/rules.md", "docs/project/coding_rules.md")
+OWN_RULES_HISTORY_MAX = 5
+_OWN_HISTORY_PATTERNS = (
+    re.compile(r"\b20\d\d-\d\d-\d\d\b"),  # a date
+    re.compile(r"\b(?:[BQTU]\d{1,5}|ADR-\d+)\b"),  # an entry or decision identifier
+    re.compile(r"(?i)\b(?:früher|formerly|previously)\b.*\b(?:seit|since)\b"),  # "formerly ... since ..."
+)
+
+
+def own_rules_budget(root: Path) -> Optional[int]:
+    """The budget in characters; None while the check is off. A missing, empty or unreadable value
+    means the default."""
+    value = actlib.read_config(root).get("own-rules-budget", "").strip().strip("`").strip().lower()
+    if value == "off" or (re.fullmatch(r"\d+", value) and int(value) == 0):
+        return None
+    return int(value) if re.fullmatch(r"\d+", value) else OWN_RULES_BUDGET_DEFAULT
+
+
+def _own_rules_section(path: Path) -> tuple[int, list[tuple[int, str]]]:
+    """(line of the section's mark, [(line number, text)] of what the section holds after it): from
+    the `<!-- act:own-rules -->` mark to the next `## ` heading or other mark, outside code fences.
+    Found by the mark; only a file without it falls back to a heading named like the English one."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return 0, []
+    start = None
+    for number, raw in enumerate(lines):
+        mark = rules.RE_SECTION_MARK.match(raw.strip())
+        if mark and rules.MARK_TO_SECTION.get(mark.group("name").lower()) == "own-rules":
+            start = number
+            break
+    if start is None:
+        for number, raw in enumerate(lines):
+            heading = rules.RE_TOP_HEADING.match(raw.rstrip())
+            if heading and rules.HEADING_TO_SECTION_FALLBACK.get(heading.group("title").strip().lower()) == "own-rules":
+                start = number
+                break
+    if start is None:
+        return 0, []
+    body: list[tuple[int, str]] = []
+    fence: Optional[str] = None
+    for number in range(start + 1, len(lines)):
+        raw = lines[number]
+        fence_match = RE_FENCE.match(raw.strip())
+        if fence is None and fence_match:
+            fence = fence_match.group(1)[0]
+        elif fence is not None and fence_match and fence_match.group(1)[0] == fence:
+            fence = None
+        elif fence is None and (rules.RE_TOP_HEADING.match(raw.rstrip()) or rules.RE_SECTION_MARK.match(raw.strip())):
+            break
+        body.append((number + 1, raw))
+    return start + 1, body
+
+
+def check_own_rules_size(root: Path) -> list[Finding]:
+    budget = own_rules_budget(root)
+    if budget is None:
+        return []
+    sizes: dict[str, int] = {}
+    history: list[tuple[int, int, str, int, str]] = []  # (-hits, order, file, line, text)
+    for rel in OWN_RULES_FILES:
+        path = root / rel
+        if not path.is_file():
+            continue
+        _, body = _own_rules_section(path)
+        if not body:
+            continue
+        # Claude Code drops block-level comments (on lines of their own) before the text reaches the
+        # model, so they count neither towards the size nor as history lines.
+        loaded: list[tuple[int, str, bool]] = []  # (line, text, inside a code fence)
+        in_fence: Optional[str] = None
+        in_comment = False
+        for number, text in body:
+            stripped = text.strip()
+            fence_match = RE_FENCE.match(stripped)
+            if not in_comment and fence_match:
+                in_fence = None if in_fence else fence_match.group(1)
+                loaded.append((number, text, True))
+                continue
+            if in_fence:
+                loaded.append((number, text, True))
+                continue
+            if in_comment:
+                in_comment = "-->" not in stripped
+                continue
+            if stripped.startswith("<!--"):
+                in_comment = "-->" not in stripped[4:]
+                continue
+            loaded.append((number, text, False))
+        sizes[rel] = len("\n".join(text for _, text, _ in loaded).strip())
+        for number, text, fenced in loaded:
+            if fenced:
+                continue
+            hits = sum(1 for pattern in _OWN_HISTORY_PATTERNS if pattern.search(text))
+            if hits:
+                history.append((-hits, len(history), rel, number, text.strip()))
+    total = sum(sizes.values())
+    if total <= budget:
+        return []
+    parts = ", ".join(f"{rel} {size:,}" for rel, size in sizes.items())
+    findings = [Finding(
+        path=max(sizes, key=lambda rel: sizes[rel]), line=None, kind="own-rules-size",
+        message=(f"the always-loaded own rules are {total:,} characters (about {round(total * OWN_RULES_TOKENS_PER_CHAR):,} "
+                 f"tokens) in every session, over the budget of {budget:,} ({parts}) — keep a one-line rule each, "
+                 "move incident, evidence and identifiers into the project docs (table in the Own rules "
+                 "section of .act/bridges/coding_rules.md); `own-rules-budget` in docs/ai/config.md raises the "
+                 "limit, `off` skips the check"),
+    )]
+    chosen = sorted(history)[:OWN_RULES_HISTORY_MAX]
+    for _, _, rel, number, text in sorted(chosen, key=lambda item: (item[2], item[3])):
+        shown = text if len(text) <= 100 else text[:100] + "…"
+        findings.append(Finding(path=rel, line=number, kind="own-rules-size",
+                                message=f"reads like history (date, identifier or \"formerly … since\"): {shown}"))
+    if len(history) > len(chosen):
+        findings.append(Finding(path=findings[0].path, line=None, kind="own-rules-size",
+                                message=f"{len(history) - len(chosen)} more line(s) like these"))
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
 #    committing (the template ships its own MANIFEST.json now, so this same comparison
@@ -2291,6 +2428,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_status_values(root)
     findings += check_revisit_dates(root)
     findings += check_docs_order(root)
+    findings += check_own_rules_size(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_skill_lint(root)

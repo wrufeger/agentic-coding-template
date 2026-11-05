@@ -13,7 +13,9 @@
 #          best-effort sub-step), template-awareness notes (check 2b), the active-topics
 #          status line, the import check and, only as a fallback, a short form of the
 #          orchestrator-only rules when docs/ai/rules.md does not import them (all gated by
-#          their own docs/ai/config.md row, see _check_mode). refresh_session() is
+#          their own docs/ai/config.md row, see _check_mode), and the scope of docs/ai/config.md
+#          § Scope (`profile`, `exclude`; act_profile.py): the import lines of excluded rule files,
+#          one line naming the cut, topics left out. refresh_session() is
 #          the single SessionStart entry point dispatch.py calls; everything below feeds into it.
 #          Unlike the PreToolUse checks, this is not a list of independent pass/fail gates — every
 #          sub-step is its own best-effort note or side effect, and refresh_session() must never
@@ -52,7 +54,7 @@ __all__ = [
     "_parse_archive_compact", "_compact_due_note", "_archive_leftover_note",
     "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_IDE_SERVER_NAME_HINTS",
     "_IDE_SERVER_EXACT_NAMES", "_is_ide_server_name", "_servers_match_ide_hint", "_user_mcp_servers",
-    "_same_project_path", "_ide_mcp_connected", "_active_topics",
+    "_same_project_path", "_ide_mcp_connected", "_active_topics", "_scope_notes",
     "_bootstrap_marker", "_first_line", "_is_bootstrap_copy",
     "_refresh_bridges", "_manifest_fingerprint", "_pulled_without_update",
     "_update_check_state_path", "_already_checked_today", "_mark_checked_today",
@@ -577,6 +579,33 @@ def _follow_rules_md(root: Path, write: bool) -> list[str]:
     return notes
 
 
+def _scoped_bridge_text(root: Path, dest_rel: str, text: str, record: bool = False) -> str:
+    """`text` of a generated bridge as this project's scope (docs/ai/config.md § Scope; act_profile.py)
+    wants it written: for docs/ai/rules.md the import line of each excluded rule file is the bare path
+    (rules.apply_core_cut), any other bridge is returned as it is. With `record` the lines it switches
+    off are first entered in the lock's `rules_cut`, so the scope can switch them on again when the
+    exclusion ends; when that cannot be written (no lock, a lock that cannot be read), or on any
+    failure, the text is returned uncut — a line cut without its record would never come back."""
+    if dest_rel != "docs/ai/rules.md":
+        return text
+    try:
+        import act_profile  # deferred like rules/update: a broken module must not end the session
+        import rules
+        cut_files = act_profile.read_cut(root).rules
+        if not cut_files or actlib.read_lock_at(root) is None:
+            return text
+        cut_text, switched = rules.apply_core_cut(text, cut_files)
+        if not switched:
+            return text
+        if record:
+            recorded = set(actlib.read_rules_cut(root))
+            if not set(switched) <= recorded and not actlib.write_rules_cut(root, sorted(recorded | set(switched))):
+                return text
+        return cut_text
+    except Exception:  # noqa: BLE001 - the scope is best effort; the uncut bridge is always a valid file
+        return text
+
+
 def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tuple[list[str], list[str], list[str]]:
     """
     Re-derive every generated bridge that is still exactly as it was last generated (current
@@ -646,10 +675,14 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
         # An unedited bridge that already equals its source (line endings aside) has nothing to
         # refresh. Rewriting it with LF would only change the bytes of a CRLF checkout
         # (core.autocrlf=true): git then lists the file as modified although `git diff` is empty.
+        # docs/ai/rules.md is compared and written with the scope's cut applied (docs/ai/config.md §
+        # Scope: an excluded rule file's import line is the bare path), on both sides, so a copy the
+        # cut already reached is "the same" and a copy that was not yet cut is cut once, not flipped
+        # back by this refresh and cut again by the scope step.
         try:
             same = (not is_bootstrap and
-                    source_path.read_text(encoding="utf-8").replace("\r\n", "\n")
-                    == dest_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+                    _scoped_bridge_text(root, dest_rel, source_path.read_text(encoding="utf-8").replace("\r\n", "\n"))
+                    == _scoped_bridge_text(root, dest_rel, dest_path.read_text(encoding="utf-8").replace("\r\n", "\n")))
         except (OSError, UnicodeDecodeError):
             same = False
 
@@ -669,7 +702,7 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
             continue
 
         try:
-            content = source_path.read_text(encoding="utf-8")
+            content = _scoped_bridge_text(root, dest_rel, source_path.read_text(encoding="utf-8"), record=True)
             actlib.write_text_lf(dest_path, content)
             generated[dest_rel] = actlib.generated_hash(dest_path)
         except (OSError, UnicodeDecodeError):
@@ -1625,9 +1658,16 @@ def _deliver_orchestrator_rules(root: Path, config: dict[str, str], compact: boo
         return None
 
     enabled, overrides = _read_rule_states(root)
+    try:
+        import act_profile  # deferred, see _active_topics
+        cut_files = act_profile.read_cut(root).rules
+    except Exception:  # noqa: BLE001
+        cut_files = frozenset()
     total = 0
     blocks: list[str] = []
     for path in sorted(rules_dir.glob("*.md")):
+        if f".act/rules/orchestrator/{path.name}" in cut_files:
+            continue  # excluded by the scope (docs/ai/config.md § Scope)
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
@@ -2019,10 +2059,16 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
     same rule every other override in this template follows, e.g. rules.py/doctor.py/init.py),
     shown relative to the project root; "missing" if neither exists (a switch turned on before
     the topic file was ever added to this template version, or one a project deleted by hand
-    without turning the switch off — reported rather than silently skipped either way)."""
+    without turning the switch off — reported rather than silently skipped either way). A topic
+    the project's scope excludes (docs/ai/config.md § Scope: `exclude`) is not named."""
     active: list[tuple[str, str]] = []
+    try:
+        import act_profile  # deferred like rules/update: a broken module must not end the session
+        cut_topics = act_profile.read_cut(root).topics
+    except Exception:  # noqa: BLE001
+        cut_topics = frozenset()
     for name, config_key, is_active in _TOPIC_SWITCHES:
-        if not is_active(config.get(config_key, "")):
+        if name in cut_topics or not is_active(config.get(config_key, "")):
             continue
         resolved = actlib.resolve(f"rules/topics/{name}.md")
         if resolved is None:
@@ -2032,7 +2078,7 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
             active.append((name, path.relative_to(root).as_posix()))
     # "ide" is not one of _TOPIC_SWITCHES' config-driven entries -- it is detected instead, see
     # _ide_mcp_connected's own docstring.
-    if _ide_mcp_connected(root):
+    if "ide" not in cut_topics and _ide_mcp_connected(root):
         resolved = actlib.resolve("rules/topics/ide.md")
         if resolved is None:
             active.append(("ide", "missing"))
@@ -2041,7 +2087,7 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
             active.append(("ide", path.relative_to(root).as_posix()))
     # "ideas" is data-driven too: active while the owner's own ideas file has entries not yet
     # processed (ideas.py).
-    if _ideas_pending(root)[1]:
+    if "ideas" not in cut_topics and _ideas_pending(root)[1]:
         resolved = actlib.resolve("rules/topics/ideas.md")
         if resolved is None:
             active.append(("ideas", "missing"))
@@ -2049,6 +2095,49 @@ def _active_topics(root: Path, config: dict[str, str]) -> list[tuple[str, str]]:
             path, _origin = resolved
             active.append(("ideas", path.relative_to(root).as_posix()))
     return active
+
+
+# ---------------------------------------------------------------------------
+# The scope (docs/ai/config.md § Scope: `profile`, `exclude`) — what the template's units the
+# project cut means for this start: the import lines of excluded rule files in docs/ai/rules.md
+# (rules.sync_core_cut), the copies of skills and roles (update.sync_dependent_files, which runs
+# earlier and follows the snapshot in the lock), and one line that names the cut. Skills, roles
+# and rules are fixed when a session starts, so a change takes effect from the next one.
+# ---------------------------------------------------------------------------
+
+def _scope_notes(root: Path, write: bool, copies_moved: bool) -> tuple[list[str], list[str]]:
+    """(lines to print, lines for the warn digest) for the scope. `copies_moved` says that the cut
+    skills or roles differed from the lock's snapshot before the copies were synced for this start.
+    Applies the rules.md import lines under `write` (session-start-refresh `block`); under `warn`
+    only names what would change. Silent for a project that never cut anything and has nothing
+    to restore."""
+    import act_profile  # deferred, see _active_topics
+    import rules
+    cut = act_profile.read_cut(root)
+    core = rules.sync_core_cut(root, write=write)
+    printed: list[str] = []
+    pending: list[str] = []
+    if cut.warnings:
+        printed.append("[act] note: scope (docs/ai/config.md § Scope): " + "; ".join(cut.warnings))
+    if core.problem:
+        printed.append(f"[act] note: scope (docs/ai/config.md § Scope): {core.problem}")
+    moved_rules = core.switched_off + core.restored
+    if write:
+        changed = copies_moved or bool(moved_rules)
+    else:
+        changed = False
+        if copies_moved or moved_rules:
+            parts = (["skill/role copies"] if copies_moved else []) + (
+                [f"import lines of {', '.join(moved_rules)}"] if moved_rules else [])
+            pending.append("[act] note: scope (profile/exclude) changed: "
+                           f"{' and '.join(parts)} would be switched (warn mode, not applied)")
+    if cut.empty and not changed:
+        return printed, pending
+    line = f"[act] scope: {act_profile.describe(cut)}"
+    if changed:
+        line += " — changed at this start, takes effect from the next session"
+    printed.append(line)
+    return printed, pending
 
 
 # ---------------------------------------------------------------------------
@@ -2419,6 +2508,16 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
     except Exception:
         pass
 
+    scope_copies_moved = False
+    try:
+        import act_profile
+        snapshot = actlib.read_last_applied()
+        scope_copies_moved = (
+            isinstance(snapshot, dict) and isinstance(snapshot.get("tools"), list)
+            and act_profile.recorded_cut(snapshot) != act_profile.snapshot_value(act_profile.read_cut(root)))
+    except Exception:
+        scope_copies_moved = False
+
     # Files that hang on a docs/ai/config.md value — skill copies, CLAUDE.md and the
     # hook entries on `tools`, a role's bridges on its "## Roles" row (tier/reasoning/model) — are
     # synced here when that value moved since the .act-local/last-applied.json snapshot, not only
@@ -2525,6 +2624,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                 print(coding_note)
             else:
                 warn_notes.append(coding_note)
+        try:
+            scope_lines, scope_pending = _scope_notes(root, mode == "block", scope_copies_moved)
+            for scope_line in scope_lines:
+                print(scope_line)
+            warn_notes.extend(scope_pending)
+        except Exception as exc:  # noqa: BLE001 - the scope is a best-effort step, never a reason to end the session
+            print(f"[act] note: scope not applied ({exc.__class__.__name__})")
         old_note = _old_imports_note(root)
         if old_note:
             state["old_imports"] = True

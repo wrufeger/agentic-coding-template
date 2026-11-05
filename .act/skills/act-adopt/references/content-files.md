@@ -47,9 +47,16 @@ Read from step 6 of `SKILL.md`: passages into `coding_rules.md`/`README.md`, rul
     text** of that rule or group (`rules.py` prints only the override text for it): if the old
     project's rule covers just part of a group, do not replace the group — adopt it as an own rule
     — or the override carries the complete adapted group text.
-  - **It matches none:** it stays an **own rule** under `## Own rules` — through the cut file and
-    `adopt_passages.py --into coding` (lists come out as `- ` bullets), or, for `docs/ai/rules.md`,
-    as a ``- `ID`: text`` line by hand. A bare `- text` bullet counts as an own rule too.
+  - **It matches none:** do not take the whole guideline file into "Own rules" — that part loads in
+    every session. Sort its parts by the table in the Own rules section of `.act/bridges/coding_rules.md`
+    and propose a place for each part; the human decides: needed in every coding session -> own rule,
+    one imperative line; only for some paths -> `.claude/rules/<area>.md` with `paths:`; tied to a
+    framework version -> its own rule set; origin, incident, evidence, identifiers -> project docs,
+    not loaded; derivable from the code or a stack description -> dropped, or `stack` in
+    `docs/ai/config.md`; doubles a template rule -> dropped. Only the parts decided as own rules go
+    through the cut file and `adopt_passages.py --into coding` (lists come out as `- ` bullets), or,
+    for `docs/ai/rules.md`, as a ``- `ID`: text`` line by hand. A bare `- text` bullet counts as an
+    own rule too. `act-doctor` warns when the own rules together pass `own-rules-budget`.
   - Check it afterwards: `python .act/scripts/rules.py --list` and `--area core --list` show
     every override as `[~]` and every own rule as `[+]`; `--validate` (and `--area core
     --validate`) must not stay silent about a heading or prose under "Own rules" that carries a

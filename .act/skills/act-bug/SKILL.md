@@ -30,7 +30,8 @@ cleanup found along the way, and not for a fix nobody could actually trigger.
    Solution, Prevention; at most about 30 lines, in `language-docs`. A note on the same topic
    exists: extend it, don't add a second. Keep it relevant, atomic, evidenced and time-stable; no
    secrets, no personal data; then `act-commit`. `act-perf` and `act-refactor` end with this step
-   too.
+   too. A pitfall every coding session must know also becomes one imperative line under "Own rules" in
+   `docs/project/coding_rules.md`; incident, evidence and identifiers stay in the note, never in that line.
 
 Can't reproduce it: document what was reported, what was tried, and where reproduction failed
 instead of fixing on suspicion; ask the human when something's missing (credentials, test data, a

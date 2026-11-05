@@ -47,6 +47,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional, TypedDict, Union
 
+import act_profile
 import actlib
 import entries
 import ideas
@@ -1347,7 +1348,7 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
 _SKILLS_NOT_COPIED = {"act-adopt"}  # runs only from the template checkout itself (it needs the template's own checkout)
 
 
-def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+def copy_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[str, Path]:
     """Every skill-copy destination -> its source file, for the given tools. Enumerates
     .act/skills/<name>/** dynamically — a subdirectory is a skill, a plain file right under
     .act/skills/ (such as README.md) is not — so adding a skill needs no change here. Each file
@@ -1357,6 +1358,10 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     `_SKILLS_NOT_COPIED` is the one exception: act-adopt only makes sense pointed at the template
     checkout it adopts *into* a project, so a copy landing inside that same project would never
     run correctly -- it stays template-only, never materialized as a project skill.
+
+    A skill the project's scope cuts (docs/ai/config.md § Scope: `profile`, `exclude`; act_profile.py)
+    is left out the same way, so init, update and the session start never write its copy; with
+    `apply_cut=False` the result is the full list (what update.py compares a cut against).
 
     A project override at docs/ai/local/skills/<name>/<file> wins over the template's own copy of
     that file (actlib.resolve(), same rule as everywhere else in this template) — the returned
@@ -1375,8 +1380,9 @@ def copy_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     targets: dict[str, Path] = {}
     if not skills_dir.is_dir():
         return targets
+    cut_skills = act_profile.read_cut(root).skills if apply_cut else frozenset()
     for skill_dir in sorted(p for p in skills_dir.iterdir() if p.is_dir()):
-        if skill_dir.name in _SKILLS_NOT_COPIED:
+        if skill_dir.name in _SKILLS_NOT_COPIED or skill_dir.name in cut_skills:
             continue
         for src in sorted(skill_dir.rglob("*")):
             if not src.is_file():
@@ -1421,7 +1427,7 @@ def skill_copy_bytes(
     return data if new_text == text else new_text.encode("utf-8")
 
 
-def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[str, Path]:
     """Every role-bridge destination -> its .act/bridges/agents/ source, for the given tools.
     Enumerates .act/agents/<name>.md role files dynamically (README.md is documentation, not a
     role) and only includes a role once its bridge under .act/bridges/agents/ exists too — a role
@@ -1446,18 +1452,25 @@ def agent_bridge_targets(root: Path, tools: list[str]) -> dict[str, Path]:
     frontmatter) and is not a bridge source in its own right — and neither is a name matching a
     template role's generated "-high" variant (agent_bridge_variant_targets() below), reserved the
     same way and compared case-insensitively, so an own role can never alias what should be a
-    template variant's bridge target."""
+    template variant's bridge target.
+
+    A template role the project's scope cuts (docs/ai/config.md § Scope; act_profile.py) gets no
+    target — nor its "-high" variant — but its name stays reserved; `apply_cut=False` returns the
+    full list."""
     agents_dir = root / ".act" / "agents"
     bridges_dir = root / ".act" / "bridges" / "agents"
     targets: dict[str, Path] = {}
     if "claude-code" not in tools:
         return targets
+    cut_roles = act_profile.read_cut(root).roles if apply_cut else frozenset()
     template_role_names: set[str] = set()
     if agents_dir.is_dir():
         for role_path in sorted(agents_dir.glob("*.md")):
             if role_path.name.lower() == "readme.md":
                 continue
             template_role_names.add(role_path.stem)
+            if role_path.stem in cut_roles:
+                continue
             bridge_src = bridges_dir / role_path.name
             if bridge_src.is_file():
                 targets[f".claude/agents/{role_path.name}"] = bridge_src
@@ -1514,7 +1527,7 @@ def _without_bridge_only_keys(text: str) -> str:
     return text[:match.start(1)] + "".join(kept) + text[match.end(1):]
 
 
-def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path]:
+def agent_bridge_variant_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[str, Path]:
     """Every applicable role's "-high" variant destination -> the same .act/bridges/agents/
     source agent_bridge_targets() uses for its base file — the runtime choice of "give this one
     assignment more reasoning" without ever writing a real model ID into an assignment
@@ -1524,7 +1537,7 @@ def agent_bridge_variant_targets(root: Path, tools: list[str]) -> dict[str, Path
     `high-variant: true` in its frontmatter (bridge_wants_variant() below; a project's own role needs
     no declaration); skipped outright for `tier: expert` or a
     `reasoning` already at the top of the tool's reasoning scale — one step further does not exist there."""
-    base_targets = agent_bridge_targets(root, tools)
+    base_targets = agent_bridge_targets(root, tools, apply_cut)
     if not base_targets:
         return {}
     tiers_data = tiers.load_tiers(root)
@@ -2986,6 +2999,12 @@ def step_lock_and_cache(
         # onto a project) has not been offered what it does not list. Union with an earlier record.
         try:
             rules.record_offered(root, everything=not rules_md_existed_before, start=True)
+        except (OSError, UnicodeDecodeError):
+            pass
+        # A config.md that already carries a scope (docs/ai/config.md § Scope: a docked-onto project, a
+        # carried-over file) cuts the import lines of the rule files it excludes; a fresh project has none.
+        try:
+            rules.sync_core_cut(root)
         except (OSError, UnicodeDecodeError):
             pass
         # .claude/settings.json is written by now (step 6); the `artifacts` booking follows it here.

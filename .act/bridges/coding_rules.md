@@ -30,6 +30,17 @@ optionally with a reason after " — ".
 
 <!-- one item per rule, no counterpart in the template -->
 
+<!-- Where a rule goes (this part loads in every session, keep it short):
+| Kind | Place |
+| :--- | :--- |
+| needed in every coding session | here, one imperative line |
+| only for some paths | `.claude/rules/<area>.md` with `paths:` (Claude Code only) |
+| tied to a framework version | its own rule set with group IDs |
+| origin, incident, evidence, IDs | project docs, not loaded |
+| derivable from code, stack description | nowhere, or `stack` in `docs/ai/config.md` |
+| duplicates a template rule | delete it |
+`act-doctor` warns above `own-rules-budget` (`docs/ai/config.md`). -->
+
 ## Known deviations
 <!-- act:known-deviations -->
 

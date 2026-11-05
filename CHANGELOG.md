@@ -102,6 +102,21 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   maintained "Further reading" page of the documentation site. `init` creates it; existing projects get it once on
   the next `act-update` (migration `005-resources-file`). A file that is already there is never touched, and one you
   delete does not come back. The file is committed with the project like everything under `docs/`.
+- Config keys `profile` (`minimal` | `standard` | `full`) and `exclude` in the new section Scope of
+  `docs/ai/config.md` trim the template per project. The profile cuts skills and roles: `standard` leaves out the web,
+  design and teaching skills, `minimal` keeps only the core skills and roles. `exclude` names single skills, roles,
+  rule files (such as `orchestrator/30-cost.md`) and topics. The session start removes the copies, switches the
+  import line of an excluded rule file to a bare path in `docs/ai/rules.md` and names the cut in one line; a change
+  takes effect from the next session. `shared/10-safety.md` cannot be excluded, and the checks stay on whatever is
+  cut. A missing key means `full`, so nothing changes until you set one; back to `full` restores everything, except
+  a role bridge you deleted yourself. An unreadable `docs/ai/config.md` leaves the recorded cut as it is.
+- `act-doctor` warns when the always-loaded "Own rules" sections of `docs/ai/rules.md` and
+  `docs/project/coding_rules.md` together exceed `own-rules-budget` in `docs/ai/config.md` § Checks (default 6000
+  characters, `off` or `0` switches it off; comments on lines of their own do not count, as they are not loaded). The
+  warning names the size and up to five lines that look like history (dates, entry identifiers, "formerly … since
+  …"); it never blocks.
+- The "Own rules" section of the `coding_rules.md` scaffold carries a short table of where each kind of rule belongs
+  (own rule, path-bound rule file, own rule set, project docs, nowhere).
 
 ### Changed
 
@@ -158,6 +173,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `act-compact` merges only the journal under `delete`. An existing archive stays: the first session start after the
   update names its file count once, `entries.py purge --plan` shows what would go, and journal files, `ledger-*.md`,
   `legacy/` and `proposals/` always stay. `done-entries: keep` restores the old behaviour.
+- `init` and `update` no longer write skill copies or role bridges that the project's `profile` or `exclude` leaves
+  out.
+- `act-bug`, `act-commit` and `act-adopt` keep "Own rules" to one-line rules: incident, evidence and identifiers go
+  to the project docs, and `act-adopt` proposes the parts of an existing guideline file by where they belong instead
+  of copying it whole.
+- Feedback sends write one journal entry per day (`<date>-feedback-sent.md`) with one line per send instead of one
+  journal file per send. Each line has the time, the kind of send, the entry count and each entry's kind and title;
+  an entry's text and a direct message's text are never recorded.
 
 ### Fixed
 
@@ -240,6 +263,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `spawn`/`execFile`), or in a command line of one command that is the first argument of such a call, of
   `os.system` or of Node `exec`. For `cmd` only the switches up to `/c` or `/k` count. The same literal anywhere
   else (`shutil.copytree('cmd', '/c')`, `print('cmd')`) stays a path.
+- The journal note for a feedback send said "1 entries"; it now reads "1 entry".
 
 ### Security
 

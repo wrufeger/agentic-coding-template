@@ -58,7 +58,8 @@ secures the result.
    whose questions are answered and whose build is done is deleted in this step.
 6. **Learning check.** Did the task need at least two rework rounds (a worker result rejected
    twice, or two repair rounds after review or test)? Count them yourself. If so, run step 8 of
-   `act-bug` and put the note into this commit.
+   `act-bug` and put the note into this commit. A rule recorded for a new pitfall is one imperative
+   line under "Own rules"; its incident, evidence and identifiers go into the project docs.
 7. **Commit by pathspec.** With `board: shared` in `docs/ai/config.md`, first run
    `python .act/scripts/board.py --shared` and add `docs/ai/board-<identity>.md` to the pathspec of
    this same commit (only `--shared` writes that versioned file; a plain run never does).

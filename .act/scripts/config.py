@@ -223,11 +223,14 @@ _FORMAT_TEXT = {
     "language-chat": "a language code such as `de` or `pt-BR`, a language name such as `Deutsch`, or `auto`",
     "language-docs": "a language code such as `de` or `pt-BR`, or a language name such as `Deutsch`",
     "context-hint": "a token count such as `180000`",
+    "own-rules-budget": "a character count such as `6000`",
     "task-wait-hours": "a number of hours such as `12` or `0.5`",
     "docs-audit-due": "`<days>d/<commits>c` such as `30d/100c`",
     "feedback-scope": "a comma list of `a`, `b`, `c` such as `a,b,c`",
     "archive-compact": "`<days>d <files>` such as `30d 300`",
     "forge": "`(not set)`",
+    "exclude": "`none`, or a comma list of template skill, role, rule file and topic names such as "
+               "`act-seo, orchestrator/30-cost.md`",
 }
 
 
