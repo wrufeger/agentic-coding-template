@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Mechanical executor of an approved adoption table (skill `act-adopt`, steps
-#          4 and 7). Runs from a template checkout against a
+#          4 and 7). Runs from a template checkout or from a project (never against that
+#          project itself or a folder inside it) against a
 #          project that was sighted with adopt_scan.py and whose owner approved one action per
 #          sighted source in <target>/.act-local/adopt/table.json. Decides nothing itself: every
 #          row is validated strictly first, and the whole run is refused on the first doubt.
@@ -26,7 +27,7 @@
 #          Never commits (moves and removals are staged by path only). Stdlib only.
 #
 # Usage:
-#   python .act/scripts/adopt.py --target <project> --apply [--plan] [--language-docs <code>] [--language-chat <code|auto>]
+#   python .act/scripts/adopt.py --target <project> --apply [--plan] [--language-docs <code>] [--language-chat <code|auto>] [--carry <list>]
 #   python .act/scripts/adopt.py --target <project> --finish [--plan]
 #   python .act/scripts/adopt.py --target <project> --abort [--plan] [--force]   # the way back
 #   (--plan: validate and print what would happen, change nothing)
@@ -800,7 +801,7 @@ def way_back(root: Path) -> str:
 
 def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
               language_chat: Optional[str] = None, confirm_no_targets: bool = False,
-              update_channel: Optional[str] = None) -> int:
+              update_channel: Optional[str] = None, carry: Optional[str] = None) -> int:
     state_path = root / ADOPT_DIR / "state.json"
     state = _read_json(state_path)
     if state and state.get("state") in ("applied", "finished"):
@@ -889,6 +890,8 @@ def cmd_apply(root: Path, plan: bool, language_docs: Optional[str] = None,
         init_cmd += ["--language-chat", language_chat]
     if update_channel:
         init_cmd += ["--update-channel", update_channel]
+    if carry is not None:
+        init_cmd += ["--carry", carry]
     if no_commit:
         init_cmd.append("--no-commit")
     prefix = "would " if plan else ""
@@ -2272,6 +2275,10 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
+  --carry <list> goes on to init.py: when this runs from a project (not the template checkout), init.py
+  takes over that project's own skills, rules, exceptions, overrides and topics unless --carry names fewer.
+  A target equal to the project this runs from, or inside it (also through a symlink or junction), is
+  refused in every mode.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
   bridge for become that bridge (protected rows stay as they are), other adopted sources and
   delete rows removed (git rm); an adopt target docs/ai/local/skills/<name>/... or
@@ -2350,6 +2357,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-channel", choices=("release", "latest"),
                         help="with --apply: update channel (release or latest), passed on to init.py; "
                              "default release")
+    parser.add_argument("--carry", metavar="LIST",
+                        help="with --apply: what init.py carries over from the project this runs from, "
+                             "comma-separated (skills, rules, exceptions, overrides, topics; all = default, "
+                             "none), passed on to init.py --carry")
     return parser
 
 
@@ -2406,6 +2417,9 @@ def main(argv: list) -> int:
     if args.confirm_no_targets and not args.apply:
         print("adopt.py: --confirm-no-targets only goes with --apply", file=sys.stderr)
         return 2
+    if args.carry is not None and not args.apply:
+        print("adopt.py: --carry only goes with --apply", file=sys.stderr)
+        return 2
     import actlib
     languages: dict[str, Optional[str]] = {}
     for option, value, allow_auto in (("--language-docs", args.language_docs, False),
@@ -2416,11 +2430,18 @@ def main(argv: list) -> int:
                   f"{', or auto' if allow_auto else ''})", file=sys.stderr)
             return 2
         languages[option] = code
+    refusal = _load_init().own_root_refusal(Path(args.target).expanduser(), TEMPLATE_ACT.parent)
+    if refusal:
+        print(f"adopt.py: {refusal}", file=sys.stderr)
+        return 2
+    if args.carry is not None:
+        try:
+            _load_init().parse_carry(args.carry)
+        except ValueError as exc:
+            print(f"adopt.py: {exc}", file=sys.stderr)
+            return 2
     if not root.is_dir():
         print(f"adopt.py: target is not a directory: {root}", file=sys.stderr)
-        return 2
-    if root == TEMPLATE_ACT.parent.resolve():
-        print("adopt.py: the target is this template checkout itself", file=sys.stderr)
         return 2
     try:
         if args.abort:
@@ -2431,7 +2452,7 @@ def main(argv: list) -> int:
             if not args.plan and _marker_is_valid(root):
                 adopt_scan.write_outside_marker(root)  # refresh the 24 h window; never create or revive one
             return cmd_apply(root, args.plan, languages["--language-docs"], languages["--language-chat"],
-                             args.confirm_no_targets, args.update_channel)
+                             args.confirm_no_targets, args.update_channel, args.carry)
         return cmd_finish(root, args.plan)
     except Refused as exc:
         print("refused:", file=sys.stderr)

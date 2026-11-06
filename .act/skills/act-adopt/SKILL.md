@@ -1,6 +1,6 @@
 ---
 name: act-adopt
-description: Use when a project already has its own docs or AI tooling, or when asked to adopt or migrate an existing project's docs or AI tooling (old template, foreign template, homegrown structure). Takes it over in eight steps instead of a plain init.py --target. Not for an empty folder - use act-setup.
+description: Use to start a new project from this one, or to adopt another project's docs or AI tooling (old or foreign template, own structure). Not for setting up the current folder - use act-setup.
 ---
 
 # Adopt an existing project's material
@@ -11,12 +11,47 @@ this **instead of** running `init.py --target <dir>` alone whenever the project 
 or AI tooling of its own: `adopt.py --apply` (step 4) runs `init.py` itself once the table is
 approved, so running it separately first would only mean redoing that step.
 
-**How to start it.** This skill runs from a checkout of this template, against the project at
-`<dir>`. The checkout has no `.claude/skills/` and no root `AGENTS.md`, so the skill cannot be
-called by name there: open the checkout in the assistant and have it follow
-`.act/skills/act-adopt/SKILL.md` for the project path. Every command below runs from the checkout
-root, `--target <dir>` pointing at the project. Nothing changes before the owner has approved a
-table once (step 3); no script commits anything (step 8).
+**How to start it.** The skill runs from two places, against the folder `<dir>`:
+
+- **A project** (it has `docs/ai/config.md` and `.act-lock.json`): called by name, e.g. `/act-adopt`.
+  Every command below runs from the project root; `<dir>` must lie outside this project, never the
+  project itself or a folder inside it (also not through a symlink or junction): `init.py` and
+  `adopt.py` refuse that.
+- **The template checkout** (no `.claude/skills/` and no root `AGENTS.md`, so it cannot be called by
+  name): open the checkout in the assistant and have it follow `.act/skills/act-adopt/SKILL.md` for
+  the project path. Every command runs from the checkout root.
+
+Nothing changes before the owner has approved a table once (step 3); no script commits anything (step 8).
+
+## 0. Which case, and what to carry
+
+1. **Decide by `<dir>`.** It does not exist, or is an empty folder (nothing but `.git`) → **new project**:
+   `python .act/scripts/init.py --target <dir>` (from a project add `--carry <list>` from 2 below; from the
+   template checkout there is nothing to carry; add `--non-interactive` when no terminal;
+   `--plan` first), then skip to "New project: after the run" below. A folder with any other content
+   → **adoption**: steps 1-8 below, on branch `act-adopt`. Say which case it is before running anything.
+2. **Only in a project: what to carry over.** Show the list first, then ask once per category, default
+   yes; the answers become `--carry` (names joined by commas; all yes = leave `--carry` out; all no =
+   `--carry none`; the owner's profile is separate, `--no-profile`). Build the list from this project:
+
+   | Category | Carries | Look at |
+   | :--- | :--- | :--- |
+   | `skills` | own skills | `docs/ai/local/skills/<name>/` that is no template skill |
+   | `rules` | own rules | `## Own rules` in `docs/ai/rules.md`, `docs/project/coding_rules.md` |
+   | `exceptions` | rule groups and rule sets switched off, with their reason (` — <reason>` after the group or the `use:` path); one switched off without a reason is a stack default and stays behind | unchecked boxes in those two files |
+   | `overrides` | `replaces` lines and every other file of `docs/ai/local/` (rules, roles, scripts, checklists, an override of a template skill) | `## Overrides`, `docs/ai/local/` |
+   | `topics` | own topic rules and overrides of template topics | `docs/ai/local/rules/topics/` |
+
+   Only committed content (HEAD) travels, never `.env*`, symlinks or untracked files; what the new
+   project cannot take (a group or rule set it does not list) goes to its inbox. From the template checkout there
+   is nothing to ask: it has no project-specific content.
+3. **The new project gets this project's `.act/`, not the newest template.** Its first
+   `act-update` brings the current one.
+
+**New project: after the run.** Report what `init.py` printed (step 6 names what was carried) and
+suggest `act-update` inside `<dir>`. The folder is the owner's to keep or delete; nothing else was
+touched. When the harness asks to run a command outside the project, the owner starts it themselves
+with the `!` prefix.
 
 **Three rules for every step:**
 
@@ -116,6 +151,8 @@ python .act/scripts/adopt.py --target <dir> --apply --plan --language-docs <code
 python .act/scripts/adopt.py --target <dir> --apply --language-docs <code> --language-chat <code|auto>
 ```
 
+Run from a project, add `--carry <list>` from step 0 to both (left out = everything).
+
 `--plan` first, changes nothing. Pass `--confirm-no-targets` only
 if the owner agreed to it in step 3, never on your own. Both options go straight to `init.py --target` and are recorded in
 `state.json` as fixed by the owner: step 5 never overrides them, whatever the old `AI-CONFIG.md` says
@@ -188,6 +225,43 @@ todo's own instructions (`R-work-language`), and drop that line. Then set the to
 `status: done` and move it to `docs/ai/work/archive/`. Adopted content is never translated here
 (`references/config-adoption.md`).
 
+## 7b. Baseline check — the commit checks, once, before the first commit
+
+The existing code has never been through this template's commit checks, so the first commit would be held for
+patterns that were there long before, and a secret in the code would only show up then. Look once first:
+
+```bash
+python .act/scripts/adopt_baseline.py --target <dir>
+```
+
+Read-only. It prints (1) the secret-file patterns missing from `<dir>/.gitignore` (`.env` variants, private keys,
+keystores; the `.env.example` family stays tracked) as lines to add, (2) the findings of the secret scan and the
+dangerous-pattern scan over the tracked and the untracked-but-not-ignored files, and of files whose name is a secret
+file — file, line and rule, never a value — and (3) the backlog entries it would create. With nothing to report it
+says `baseline: nothing to report`.
+
+Show the owner the three parts, then, on the owner's yes (it appends to `.gitignore` and creates entries):
+
+```bash
+python .act/scripts/adopt_baseline.py --target <dir> --write-gitignore --book
+```
+
+`--write-gitignore` and `--book` can also be given separately. Booking creates one backlog entry per file for a secret
+(rotate, remove) and one per rule for a dangerous pattern (every place listed); running it again creates nothing
+twice. Count `<dir>/.gitignore` to the template layer commit (step 8, group 2) and the new backlog entries to a commit
+of their own (step 8, group 6: "baseline findings of the adopted code").
+
+What the first commit does afterwards: a booked dangerous-pattern finding goes through without a hold (`--book`
+lists its file and rule in `<dir>/.act-local/danger-scan-hints/baseline.json`, which the commit check reads); a
+pattern in a file or of a rule not booked is held once as usual. A **secret finding keeps holding every attempt** until the value is removed
+(and rotated), the line carries `act:allow-secret`, or the line is listed in `docs/ai/local/secret-accepted.md` (the
+hold message prints the finished entry) — booking does not silence it, by design: tell the owner which of the three
+applies per file, and never accept a real secret.
+
+The booking stays in force after the first commit, with no expiry: a new hit of a booked rule in a booked file
+passes from then on. It ends by removing its `<file>|<rule>` key from the list in `<dir>/.act-local/danger-scan-hints/baseline.json`
+(or deleting the file).
+
 ## 8. Commit — the orchestrator, by pathspec, on `act-adopt`
 
 `adopt.py` never commits. Each group below is one `git add -- <paths>` (only paths that exist)
@@ -229,11 +303,16 @@ under `.act-local/`, no `__pycache__/` (`created` lists none). In this order:
    `--finish` only bends links: **a new `docs/project/` target gets no line in the docs index
    `docs/README.md`** — add one per new file by hand, or in `act-commit` step 5 ("Docs index: new
    files go into `docs/README.md`"), before this commit, and count `docs/README.md` here.
+6. **Baseline findings** — only when step 7b booked: the backlog entry files `adopt_baseline.py --book`
+   created (`git -C <dir> status --porcelain -- docs/ai/work/backlog` lists them as untracked; they are
+   nobody's table target). Last in the order, since 7b runs after the others; the booking file under
+   `.act-local/` is git-ignored and not added.
 
 Before the first commit, check the grouping: every line of
 `git status --porcelain --untracked-files=all` (both sides of a rename) falls under exactly one
 group. Afterwards `git status` shows nothing but git-ignored files; the owner reviews
 `act-adopt` and merges it.
+Last, when this ran from a project, suggest `act-update` in the adopted project: it got that project's `.act/`.
 
 ## Abort
 

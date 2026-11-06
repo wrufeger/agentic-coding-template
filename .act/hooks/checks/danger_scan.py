@@ -38,6 +38,15 @@
 #          line carrying the marker `act:allow-danger` is never even matched, the same as
 #          `act:allow-secret` for the secret scan.
 #
+#          Adoption baseline: a project taken over has patterns that were there long before the first
+#          commit. scripts/adopt_baseline.py books them and lists their exact `file|rule-id` keys in
+#          .act-local/danger-scan-hints/baseline.json; a finding with such a key passes without the first
+#          hold (an allow-list: exact keys only, no prefix, glob, case folding or path normalisation). The
+#          list is separate from the per-reader hints - never merged into them, never written by this
+#          check - and counts as empty when it is missing, malformed or reached through a symlink or
+#          junction. Limit: the key has no line number, so a later new occurrence of a booked rule in the
+#          same file passes too. Secrets (checks/secret_scan.py) are not covered and keep holding.
+#
 #          `security-check` in docs/ai/config.md (four values, not the usual block/warn/off):
 #          `off` runs nothing here at all; `local`/`deps`/`full` all run exactly this module (Art
 #          A) — `deps`/`full` do not yet run B/C, so for now they behave like `local`, honestly
@@ -75,7 +84,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import sys
 import time
 from pathlib import Path
@@ -103,12 +114,15 @@ __all__ = [
     "_ALLOW_MARK", "_HINTS_DIRNAME", "_MAX_FINDINGS", "_SECURITY_CHECK_LEVELS", "_DOC_EXTENSIONS",
     "DangerPattern", "DANGER_PATTERNS", "_without_tagged_sql", "_security_check_level", "_enabled_coding_sets",
     "_is_scannable_path", "_active_patterns", "_match_line", "_scan_diff_text", "_scan_new_file", "_scan_commit",
-    "_hints_file", "_load_noted", "_note_findings", "_format_finding", "_build_message",
+    "_hints_file", "_load_noted", "_baseline_file", "_load_baseline", "_note_findings", "_format_finding", "_build_message",
     "check_danger_scan",
 ]
 
 _ALLOW_MARK = "act:allow-danger"
 _HINTS_DIRNAME = "danger-scan-hints"
+_BASELINE_NAME = "baseline.json"
+_MAX_BASELINE_BYTES = 4_000_000
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a Windows junction or symlink in st_file_attributes
 _MAX_FINDINGS = 5
 _SECURITY_CHECK_LEVELS = ("off", "local", "deps", "full")
 # Prose, not code — a doc explaining `shell=True` or `eval()` is not a call to either, and holding
@@ -419,8 +433,16 @@ def _match_line(
     return None
 
 
+def _unbooked(file: str, patterns: tuple[DangerPattern, ...], booked: frozenset) -> tuple[DangerPattern, ...]:
+    """`patterns` without those whose `file|rule-id` key is booked. Filtered before matching, because
+    `_match_line` returns only the first hit: a booked pattern must not hide a later, unbooked one."""
+    if not booked:
+        return patterns
+    return tuple(p for p in patterns if f"{file}|{p.id}" not in booked)
+
+
 def _scan_diff_text(
-    diff_text: str, patterns: tuple[DangerPattern, ...], findings: list[dict],
+    diff_text: str, patterns: tuple[DangerPattern, ...], findings: list[dict], booked: frozenset = frozenset(),
 ) -> None:
     for section in _diff_sections(diff_text):
         if len(findings) >= _MAX_FINDINGS:
@@ -433,17 +455,24 @@ def _scan_diff_text(
                 return
             if not _is_scannable_path(file):
                 continue
+            file_patterns = _unbooked(file, patterns, booked)
+            if not file_patterns:
+                continue
             for line_no, content in lines:
                 if len(findings) >= _MAX_FINDINGS:
                     return
                 if _ALLOW_MARK in content:
                     continue
-                hit = _match_line(content, patterns, file)
+                hit = _match_line(content, file_patterns, file)  # booked rules are not in the list: no count
                 if hit is not None:
                     findings.append({"file": file, "line": line_no, "pattern": hit})
 
 
-def _scan_new_file(path: Path, rel: str, patterns: tuple[DangerPattern, ...], findings: list[dict]) -> None:
+def _scan_new_file(
+    path: Path, rel: str, patterns: tuple[DangerPattern, ...], findings: list[dict],
+    booked: frozenset = frozenset(), limit: Optional[int] = _MAX_FINDINGS,
+) -> None:
+    """`limit` None: no cap (the baseline run must see every finding it books)."""
     if not _is_scannable_path(rel):
         return
     try:
@@ -452,8 +481,11 @@ def _scan_new_file(path: Path, rel: str, patterns: tuple[DangerPattern, ...], fi
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
+    patterns = _unbooked(rel, patterns, booked)
+    if not patterns:
+        return
     for line_no, content in enumerate(_text_lines(text), start=1):
-        if len(findings) >= _MAX_FINDINGS:
+        if limit is not None and len(findings) >= limit:
             return
         if _ALLOW_MARK in content:
             continue
@@ -462,7 +494,9 @@ def _scan_new_file(path: Path, rel: str, patterns: tuple[DangerPattern, ...], fi
             findings.append({"file": rel, "line": line_no, "pattern": hit})
 
 
-def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline: float) -> list[dict]:
+def _scan_commit(
+    invocation: dict, patterns: tuple[DangerPattern, ...], deadline: float, booked: frozenset = frozenset(),
+) -> list[dict]:
     """Findings for one commit-like invocation (see secret_scan._git_commit_invocations for its
     shape) - mirrors secret_scan._scan_commit's own staged/unstaged/add-paths walk, against the
     danger patterns instead of secret patterns. An incomplete scan (timeout, oversized section) is
@@ -485,14 +519,14 @@ def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline
         ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
     )
     if staged is not None:
-        _scan_diff_text(staged, patterns, findings)
+        _scan_diff_text(staged, patterns, findings, booked)
 
     if invocation["all"] and len(findings) < _MAX_FINDINGS:
         unstaged = _run_git(
             ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
         )
         if unstaged is not None:
-            _scan_diff_text(unstaged, patterns, findings)
+            _scan_diff_text(unstaged, patterns, findings, booked)
 
     for entry in invocation["add_paths"]:
         if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
@@ -505,7 +539,7 @@ def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline
                 git_cwd, budget(),
             )
             if path_diff is not None:
-                _scan_diff_text(path_diff, patterns, findings)
+                _scan_diff_text(path_diff, patterns, findings, booked)
         if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
             break
         if toplevel is None:
@@ -522,7 +556,7 @@ def _scan_commit(invocation: dict, patterns: tuple[DangerPattern, ...], deadline
         for rel in filter(None, untracked.split("\0")):
             if len(findings) >= _MAX_FINDINGS:
                 break
-            _scan_new_file(Path(toplevel) / rel, rel, patterns, findings)
+            _scan_new_file(Path(toplevel) / rel, rel, patterns, findings, booked)
     return findings
 
 
@@ -538,6 +572,47 @@ def _load_noted(path: Path) -> set:
     except (OSError, json.JSONDecodeError):
         return set()
     return set(data) if isinstance(data, list) else set()
+
+
+def _baseline_file(root: Path) -> Path:
+    return root / ".act-local" / _HINTS_DIRNAME / _BASELINE_NAME
+
+
+def _is_plain(path: Path, want_file: bool) -> bool:
+    """True for a real directory (or, with want_file, a real file) that is not a symlink or junction."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+        return False
+    return stat.S_ISREG(info.st_mode) if want_file else stat.S_ISDIR(info.st_mode)
+
+
+def _load_baseline(root: Path) -> frozenset:
+    """The `file|rule-id` keys the adoption baseline check booked (see scripts/adopt_baseline.py), read
+    from .act-local/danger-scan-hints/baseline.json: an allow-list of exact keys, one list for the whole
+    project, never merged into the per-reader hints and never written from here. A missing, oversized,
+    unreadable or malformed file, a list holding anything but strings (one non-string item empties the
+    whole list), and a file or folder on the way to
+    it that is a symlink or junction all count as empty (nothing is let through)."""
+    path = _baseline_file(root)
+    for folder in (root / ".act-local", path.parent):
+        if not _is_plain(folder, want_file=False):
+            return frozenset()
+    if not _is_plain(path, want_file=True):
+        return frozenset()
+    try:
+        if path.stat().st_size > _MAX_BASELINE_BYTES:
+            return frozenset()
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(data, list):
+        return frozenset()
+    if not all(isinstance(item, str) for item in data):
+        return frozenset()
+    return frozenset(data)
 
 
 def _note_findings(path: Path, noted: set, keys: "list[str]") -> None:
@@ -572,7 +647,8 @@ def check_danger_scan(payload: dict) -> int:
     while an added line matches a dangerous pattern from a coding rule set the project has
     switched on - see the module docstring for the full contract. Applies to the orchestrator and
     every worker alike (no _is_worker gate, same as secret_scan.py: a dangerous pattern is no less
-    dangerous coming from a worker)."""
+    dangerous coming from a worker). A finding whose exact `file|rule-id` key is listed in
+    .act-local/danger-scan-hints/baseline.json (booked by the adoption baseline check) is not held."""
     config = actlib.read_config()
     level = _security_check_level(config)
     if level == "off":
@@ -602,15 +678,20 @@ def check_danger_scan(payload: dict) -> int:
     if not invocations:
         return 0
 
+    # booked keys are dropped while collecting, so they never count toward the cap and cannot hide a new hit
+    booked = _load_baseline(root)
     all_findings: list[dict] = []
     for invocation in invocations:
         if time.monotonic() >= deadline:
             break
-        all_findings.extend(_scan_commit(invocation, patterns, deadline))
+        all_findings.extend(_scan_commit(invocation, patterns, deadline, booked))
         if len(all_findings) >= _MAX_FINDINGS:
             break
     if not all_findings:
         return 0
+
+    # a finding the adoption baseline booked (exact `file|rule-id` key) was dropped above; a new occurrence
+    # of the same rule in the same file passes too, like the per-reader repeat
 
     reader_key = _reader_key(payload)
     if reader_key is None:

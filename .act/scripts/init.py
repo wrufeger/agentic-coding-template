@@ -24,6 +24,9 @@
 # Usage:
 #   python .act/scripts/init.py                      # set up the current checkout in place
 #   python .act/scripts/init.py --target <path>       # create/dock in another directory instead
+#                                                      # (never the project itself or a folder inside it)
+#   python .act/scripts/init.py --target <path> --carry skills,rules,exceptions,overrides,topics
+#                                                      # what to take over from the source project (default all; none)
 #   python .act/scripts/init.py --plan                # show the ten steps, change nothing
 #   python .act/scripts/init.py --non-interactive      # never prompt; take defaults, log to inbox
 #   python .act/scripts/init.py --language-docs de     # docs language without asking (default en);
@@ -1471,7 +1474,7 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
     return any(actlib.normalize_tool(t) in normalized_tools for t in tool_gate)
 
 
-_SKILLS_NOT_COPIED = {"act-adopt"}  # runs only from the template checkout itself (it needs the template's own checkout)
+_SKILLS_NOT_COPIED: frozenset[str] = frozenset()  # skills the template ships but no project gets (none now: act-adopt runs from any project)
 
 
 def copy_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[str, Path]:
@@ -1481,9 +1484,8 @@ def copy_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[s
     gets one destination per SKILL_TARGET_DIRS entry whose tool gate passes, so a skill lands in
     every configured tool's own skills folder plus the tool-neutral .agents/ mirror.
 
-    `_SKILLS_NOT_COPIED` is the one exception: act-adopt only makes sense pointed at the template
-    checkout it adopts *into* a project, so a copy landing inside that same project would never
-    run correctly -- it stays template-only, never materialized as a project skill.
+    `_SKILLS_NOT_COPIED` names skills that stay template-only, never materialized as a project
+    skill (none at present: act-adopt is copied like every other, it also runs from a project).
 
     A skill the project's scope cuts (docs/ai/config.md § Scope: `profile`, `exclude`; act_profile.py)
     is left out the same way, so init, update and the session start never write its copy; with
@@ -1922,6 +1924,96 @@ def _merge_settings_hooks(
 # inbox, never silently dropped. `--no-local` opts out.
 # ---------------------------------------------------------------------------
 
+CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics")
+# What each category takes along from the source project:
+#   skills      own skills: docs/ai/local/skills/<name>/ where .act/skills/<name> does not exist
+#   rules       the "## Own rules" section of docs/ai/rules.md and docs/project/coding_rules.md
+#   exceptions  rule groups switched off (checkbox unchecked) in those two files, with their reason
+#   overrides   the "## Overrides" `replaces` lines of those two files, and every other file under
+#               docs/ai/local/ (rule, role, script and checklist overrides or own ones, and an override of
+#               a template skill) except own skills and rules/topics/
+#   topics      docs/ai/local/rules/topics/ (own topic rules and overrides of template topics)
+# The names follow `settings_export.py` where they fit (skills, topics); its agents/scripts/checklists
+# fall under "overrides" here, its rules/coding areas split into "rules" and "exceptions".
+
+
+def parse_carry(value: Optional[str], no_local: bool = False) -> frozenset[str]:
+    """The categories a `--target` run takes over from the source project: `--carry` as a comma list
+    (`all` = every category, `none` = nothing; default all), `--no-local` is the same as `none`.
+    ValueError names the unknown category."""
+    if no_local:
+        return frozenset()
+    if value is None:
+        return frozenset(CARRY_CATEGORIES)
+    names = [part.strip().lower() for part in value.split(",") if part.strip()]
+    if not names:
+        raise ValueError("--carry needs at least one category (or all, or none)")
+    chosen: set[str] = set()
+    for name in names:
+        if name == "all":
+            chosen.update(CARRY_CATEGORIES)
+        elif name == "none":
+            pass
+        elif name in CARRY_CATEGORIES:
+            chosen.add(name)
+        else:
+            raise ValueError(f"--carry: unknown category {name!r}; known: {', '.join(CARRY_CATEGORIES)}, all, none")
+    return frozenset(chosen)
+
+
+def _as_carry(carry: "frozenset[str] | bool") -> frozenset[str]:
+    """A plain True/False (the former `take_local` flag) means every category / none."""
+    if isinstance(carry, bool):
+        return frozenset(CARRY_CATEGORIES) if carry else frozenset()
+    return carry
+
+
+def _local_file_category(source_root: Path, rel_to_local: Path) -> str:
+    """The carry category of one file under the source's docs/ai/local/ (see CARRY_CATEGORIES)."""
+    parts = rel_to_local.parts
+    if parts and parts[0] == "skills":
+        if len(parts) > 2 and (source_root / ".act" / "skills" / parts[1]).is_dir():
+            return "overrides"  # an override of a template skill, not an own skill
+        return "skills"
+    if len(parts) > 2 and parts[0] == "rules" and parts[1] == "topics":
+        return "topics"
+    return "overrides"
+
+
+def own_root_refusal(target: Path, own_root: Path) -> Optional[str]:
+    """Why `target` may not be set up or adopted: it is `own_root` (the project or checkout this
+    script runs from) or a folder inside it. Real paths are compared, so a symlink or junction that
+    leads there counts, and on Windows (and any case-insensitive file system) case does not matter.
+    None when the target lies elsewhere."""
+    real_target = os.path.normcase(os.path.realpath(target))
+    real_root = os.path.normcase(os.path.realpath(own_root))
+    inside = False
+    try:
+        inside = os.path.commonpath([real_target, real_root]) == real_root
+    except ValueError:
+        pass  # different drives
+    if not inside:
+        # a case-insensitive file system that normcase does not know (macOS): the nearest existing folder decides
+        probe = Path(real_target)
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        while True:
+            try:
+                if os.path.samefile(probe, real_root):
+                    inside = True
+                    break
+            except OSError:
+                break
+            if probe == probe.parent:
+                break
+            probe = probe.parent
+    if not inside:
+        return None
+    where = "the project root" if real_target == real_root else "inside the project"
+    return (f"target {target} (real path {os.path.realpath(target)}) is {where} {own_root} -- a project cannot "
+            f"be set up or adopted into itself; choose a folder outside {own_root}")
+
+
 def _configured_project_root(path: Path) -> bool:
     """Whether `path` is itself an already set-up project (not a plain template clone) -- same
     signal `_ask_feedback_mode` already uses for "has this project made its own choice yet"."""
@@ -1940,8 +2032,25 @@ def _insert_after_mark(text: str, mark_name: str, new_lines: list[str]) -> tuple
     return text[:insert_at] + "\n\n" + "\n".join(new_lines) + text[insert_at:], True
 
 
+_SET_OFF_WITH_REASON = re.compile(r"^-\s*\[ \]\s*use:\s*(?P<path>\S+)\s+(?:—|–|--)\s*(?P<reason>\S.*?)\s*$")
+
+
+def _sets_switched_off_with_reason(text: str) -> dict[str, str]:
+    """Normalized set path -> reason, for every `- [ ] use: <path> — <reason>` line of a project file's
+    text. Read from the raw lines on purpose: `rules.py` does not record a reason on a set line. A set
+    switched off without a reason is a stack default (every set the stack does not need starts
+    unchecked) and is never carried -- the same rule as for a group."""
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        match = _SET_OFF_WITH_REASON.match(line)
+        if match:
+            found[rules.normalize_set_path(match.group("path"))] = match.group("reason")
+    return found
+
+
 def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bool,
-                      dest_was_preexisting: bool, notes: list[str]) -> Optional[str]:
+                      dest_was_preexisting: bool, notes: list[str],
+                      carry: frozenset[str] = frozenset(CARRY_CATEGORIES)) -> Optional[str]:
     """One area (docs/ai/rules.md or docs/project/coding_rules.md): copy the source project's
     switched-off groups (with their reason) and its '## Overrides'/'## Own rules' sections into
     the target's freshly materialized file of the same area -- only for a group id the target file
@@ -1950,7 +2059,11 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
     overrides/own rules of its own, and never touches one at all if it pre-dates this run
     (`dest_was_preexisting`): docking `--target` onto an already set-up project whose file
     just has no '## Overrides'/'## Own rules' section yet still means a person made those checkbox
-    choices on purpose -- only a file this run itself materialized from the skeleton is fair game."""
+    choices on purpose -- only a file this run itself materialized from the skeleton is fair game.
+    `carry` limits it to the categories asked for: exceptions (switched-off groups), overrides
+    (`replaces` lines), rules (`## Own rules`)."""
+    if not carry & {"exceptions", "overrides", "rules"}:
+        return None
     source_path = source_root / area.project_file
     dest_path = root / area.project_file
     if not source_path.is_file() or not dest_path.is_file():
@@ -1977,8 +2090,12 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
         head_copy = tmp_dir / source_path.name
         head_copy.write_bytes(head_bytes)
         source_project = rules.parse_project_file(head_copy, area)
-    has_deviation = source_project.overrides or source_project.own_rules or any(
-        not group.enabled for pset in source_project.sets for group in pset.groups.values()
+    source_sets_off = _sets_switched_off_with_reason(head_bytes.decode("utf-8", errors="replace"))         if "exceptions" in carry and area.name == "coding" else {}
+    has_deviation = (
+        bool(source_sets_off) or
+        ("overrides" in carry and source_project.overrides) or ("rules" in carry and source_project.own_rules)
+        or ("exceptions" in carry and any(
+            not group.enabled for pset in source_project.sets for group in pset.groups.values()))
     )
     if not has_deviation:
         return None
@@ -1998,7 +2115,7 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
     for pset in target_project.sets:
         for gid, group in pset.groups.items():
             source_group = source_group_state.get(gid)
-            if source_group is None or source_group.enabled:
+            if "exceptions" not in carry or source_group is None or source_group.enabled:
                 continue
             idx = group.line - 1
             lines[idx] = re.sub(r"\[[xX]\]", "[ ]", lines[idx], count=1)
@@ -2006,12 +2123,34 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
                 lines[idx] = lines[idx].rstrip() + f" — {source_group.reason}"
             toggled.append(gid)
 
-    missing = sorted(gid for gid in source_group_state if gid not in target_group_ids)
+    sets_toggled: list[str] = []
+    sets_missing: list[str] = []
+    target_sets = {pset.path: pset for pset in target_project.sets}
+    for set_path, reason in sorted(source_sets_off.items()):
+        tset = target_sets.get(set_path)
+        if tset is None:
+            sets_missing.append(set_path)
+            continue
+        if not tset.enabled:
+            continue  # off in the target already
+        idx = tset.line - 1
+        lines[idx] = rules.coding_set_line(re.sub(r"\[[xX]\]", "[ ]", lines[idx], count=1))  # bare path, no import
+        with_reason = lines[idx].rstrip() + f" — {reason}"
+        # the reason goes on the line only where rules.py reads such a line; else it goes to the note
+        if re.match(r"^-\s*\[ \]\s*(.*)$", with_reason) and rules.RE_USE.match(
+                re.match(r"^-\s*\[ \]\s*(.*)$", with_reason).group(1)):
+            lines[idx] = with_reason
+        else:
+            notes.append(f"Rule set {set_path} is switched off in the source project ({reason}); switched off "
+                         f"here too, the reason has no place on a set line: {_relative_label(dest_path, root)}.")
+        sets_toggled.append(set_path)
 
-    override_lines = [f"- replaces `{o.id}`: {o.text}" for o in source_project.overrides]
+    missing = sorted(gid for gid in source_group_state if gid not in target_group_ids) if "exceptions" in carry else []
+
+    override_lines = [f"- replaces `{o.id}`: {o.text}" for o in source_project.overrides] if "overrides" in carry else []
     own_rule_lines = [
         (f"- `{r.id}`: {r.text}" if r.id else f"- {r.text}") for r in source_project.own_rules
-    ]
+    ] if "rules" in carry else []
 
     text = "\n".join(lines) + "\n"
     inserted: list[str] = []
@@ -2027,6 +2166,14 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
     parts: list[str] = []
     if toggled:
         parts.append(f"{len(toggled)} group(s) switched off ({', '.join(sorted(toggled))})")
+    if sets_toggled:
+        parts.append(f"{len(sets_toggled)} rule set(s) switched off ({', '.join(sets_toggled)})")
+    if sets_missing:
+        notes.append(
+            f"Source project switched off rule set(s) {', '.join(sets_missing)} (with a reason); they could not be "
+            f"carried over into {_relative_label(dest_path, root)} -- the target does not list them."
+        )
+        parts.append(f"{len(sets_missing)} set(s) skipped, see inbox")
     if inserted:
         parts.append(", ".join(inserted))
     if missing:
@@ -2122,6 +2269,7 @@ def _git_head_blob_bytes(repo_root: Path, rel: str) -> Optional[bytes]:
 
 def _carry_over_local_dir(
     root: Path, source_root: Path, plan: bool, notes: list[str],
+    carry: frozenset[str] = frozenset(CARRY_CATEGORIES),
 ) -> tuple[Optional[str], list[Path]]:
     """Copy of the source project's docs/ai/local/ (its own rule/skill/agent/script/checklist
     overrides) into the target. Git-tracked files only: an
@@ -2149,6 +2297,10 @@ def _carry_over_local_dir(
             "nothing was copied from it; review it by hand."
         )
         return "docs/ai/local: source not tracked by git, skipped", []
+    def wanted(path_in_repo: str) -> bool:
+        return _local_file_category(source_root, Path(path_in_repo).relative_to("docs/ai/local")) in carry
+
+    tracked = [p for p in tracked if wanted(p)]  # only the categories asked for (CARRY_CATEGORIES)
     tracked_set = set(tracked)
     # Named separately from `skipped_unsafe` below -- these were never even a candidate (git
     # itself never offered them), so "not copied" is expected, but still worth naming: the source
@@ -2158,6 +2310,7 @@ def _carry_over_local_dir(
         for p in source_dir.rglob("*")
         if (p.is_file() or p.is_symlink()) and "__pycache__" not in p.parts
         and p.relative_to(source_root).as_posix() not in tracked_set
+        and wanted(p.relative_to(source_root).as_posix())
     )
     committed = _git_head_blobs(source_root, "docs/ai/local")
     differing = _git_differs_from_head(source_root, "docs/ai/local") if committed is not None else set()
@@ -2243,7 +2396,7 @@ def _carry_over_local_dir(
 
 
 def step_source_project(
-    root: Path, plan: bool, source_checkout: Path, take_local: bool,
+    root: Path, plan: bool, source_checkout: Path, carry: frozenset[str],
     dest_was_preexisting: dict[str, bool], notes: list[str],
 ) -> tuple[Optional[str], list[Path]]:
     """Weg C entry point, called only in `--target` mode (see main()). `source_checkout` is the
@@ -2253,18 +2406,19 @@ def step_source_project(
     -- passed straight through to `_carry_over_area`. Returns the summary plus the list
     of `docs/ai/local/` dest paths this run actually copied (for the caller's commit
     pathspec, never the whole directory)."""
-    if not take_local:
-        return "source project: --no-local -- skipped", []
+    carry = _as_carry(carry)
+    if not carry:
+        return "source project: --no-local / --carry none -- skipped", []
     if not _configured_project_root(source_checkout):
         return None, []
     summaries: list[str] = []
     for area in (rules.AREAS["core"], rules.AREAS["coding"]):
         summary = _carry_over_area(
-            root, source_checkout, area, plan, dest_was_preexisting.get(area.project_file, False), notes,
+            root, source_checkout, area, plan, dest_was_preexisting.get(area.project_file, False), notes, carry,
         )
         if summary:
             summaries.append(summary)
-    local_summary, copied = _carry_over_local_dir(root, source_checkout, plan, notes)
+    local_summary, copied = _carry_over_local_dir(root, source_checkout, plan, notes, carry)
     if local_summary:
         summaries.append(local_summary)
     if not summaries:
@@ -2435,7 +2589,7 @@ def _resolution_area_files(root: Path, result) -> list[Path]:
 
 def step_source_and_profile(
     root: Path, plan: bool, interactive: bool, source_checkout: Path,
-    take_local: bool, take_profile: bool, auto_apply: bool, dest_was_preexisting: dict[str, bool],
+    carry: frozenset[str], take_profile: bool, auto_apply: bool, dest_was_preexisting: dict[str, bool],
     notes: list[str],
 ) -> tuple[str, list[Path]]:
     """Combined Weg C (source project) + owner profile entry point.
@@ -2445,9 +2599,10 @@ def step_source_and_profile(
     non-interactive, no `--profile`: unchanged split behavior -- Weg C stays applied by default
     (concept 08's own default, `--no-local` opts out of it), the profile stays for the inbox
     instead (`--no-profile` opts out of even that note)."""
+    carry = _as_carry(carry)
     if not interactive and not auto_apply:
         source_summary, source_paths = step_source_project(
-            root, plan, source_checkout, take_local, dest_was_preexisting, notes,
+            root, plan, source_checkout, carry, dest_was_preexisting, notes,
         )
         profile_summary, profile_paths = step_owner_profile(
             root, plan, False, take_profile, False, notes,
@@ -2461,17 +2616,17 @@ def step_source_and_profile(
     import settings_load
 
     combined_lines: list[str] = []
-    has_source = take_local and _configured_project_root(source_checkout)
+    has_source = bool(carry) and _configured_project_root(source_checkout)
     if has_source:
         preview_notes: list[str] = []  # discarded -- a real note only makes sense once actually applied
         for area in (rules.AREAS["core"], rules.AREAS["coding"]):
             summary = _carry_over_area(
                 root, source_checkout, area, True,
-                dest_was_preexisting.get(area.project_file, False), preview_notes,
+                dest_was_preexisting.get(area.project_file, False), preview_notes, carry,
             )
             if summary:
                 combined_lines.append(f"[source project] {summary}")
-        local_summary, _copied = _carry_over_local_dir(root, source_checkout, True, preview_notes)
+        local_summary, _copied = _carry_over_local_dir(root, source_checkout, True, preview_notes, carry)
         if local_summary:
             combined_lines.append(f"[source project] {local_summary}")
 
@@ -2500,8 +2655,8 @@ def step_source_and_profile(
 
     if not combined_lines:
         source_summary = None
-        if not take_local:
-            source_summary = "source project: --no-local -- skipped"
+        if not carry:
+            source_summary = "source project: --no-local / --carry none -- skipped"
         elif has_source:
             source_summary = "source project: nothing to take over"
         profile_summary = None
@@ -2525,7 +2680,7 @@ def step_source_and_profile(
     summaries: list[str] = []
     if has_source:
         source_summary, source_paths = step_source_project(
-            root, False, source_checkout, True, dest_was_preexisting, notes,
+            root, False, source_checkout, carry, dest_was_preexisting, notes,
         )
         if source_summary:
             summaries.append(source_summary)
@@ -3495,9 +3650,8 @@ _ADOPT_HINT_MARKERS = ("docs", "AGENTS.md", "CLAUDE.md", ".claude", "AI-CONFIG.m
 
 
 def _existing_project_hint(root: Path, source_act: Path) -> str | None:
-    """`source_act` is the template checkout this run is executing from (.act/) -- act-adopt is
-    never copied into a project (_SKILLS_NOT_COPIED), so the hint points at the skill file there,
-    not at a path that may not exist under `root`."""
+    """`source_act` is the .act/ this run is executing from (the template checkout or a project):
+    the hint points at the act-adopt skill file there, not at a path that may not exist under `root`."""
     # adopt.py --apply writes its own state file at this fixed path *before* it shells out to
     # init.py --target (its ADOPT_DIR + "state.json") -- if it is already there, this run came from
     # act-adopt itself, and telling act-adopt to see act-adopt would be circular noise (review
@@ -3613,7 +3767,13 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-commit", action="store_true", help="do everything except the final commit")
     parser.add_argument("--no-local", action="store_true",
                         help="--target only: don't carry over the source checkout's own rule/coding-rule "
-                             "deviations and docs/ai/local/ (Weg C, on by default)")
+                             "deviations and docs/ai/local/ (same as --carry none)")
+    parser.add_argument("--carry", metavar="LIST",
+                        help="--target only: what to carry over from the source project, comma-separated "
+                             "(default all): skills (own skills), rules (## Own rules), exceptions (rule "
+                             "groups switched off, with reason), overrides (`replaces` lines and the other "
+                             "docs/ai/local/ files: rule, role, script, checklist overrides), topics "
+                             "(docs/ai/local/rules/topics/); none = nothing")
     parser.add_argument("--no-profile", action="store_true",
                         help="don't offer the owner profile at %%APPDATA%%\\act\\settings.md / "
                              "~/.config/act/settings.md (on by default)")
@@ -3642,6 +3802,14 @@ def main(argv: list[str]) -> int:
                          f"known: {', '.join(_template_methods()) or 'none'}, or none")
     if args.profile and args.no_profile:
         parser.error("--profile and --no-profile contradict each other")
+    if args.no_local and args.carry is not None:
+        parser.error("--no-local and --carry contradict each other (--no-local is --carry none)")
+    if args.carry is not None and args.target is None:
+        parser.error("--carry only goes with --target (it takes over from the project this runs from)")
+    try:
+        carry = parse_carry(args.carry, args.no_local)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     plan = args.plan
     source_act = Path(__file__).resolve().parent.parent  # .act/
@@ -3649,6 +3817,10 @@ def main(argv: list[str]) -> int:
 
     if is_target:
         root = Path(args.target).resolve()
+        refusal = own_root_refusal(Path(args.target), source_act.parent)
+        if refusal:
+            print(f"init.py: {refusal}", file=sys.stderr)
+            sys.exit(1)
         print(f"[act] target mode: {root}")
         if not root.exists():
             print("  creating target directory" + (" (plan)" if plan else ""))
@@ -3834,7 +4006,7 @@ def main(argv: list[str]) -> int:
     imported_paths: list[Path] = []
     if is_target:
         combined_summary, combined_paths = step_source_and_profile(
-            root, plan, interactive, source_act.parent, not args.no_local, not args.no_profile,
+            root, plan, interactive, source_act.parent, carry, not args.no_profile,
             args.profile, dest_was_preexisting, notes,
         )
         if combined_summary:

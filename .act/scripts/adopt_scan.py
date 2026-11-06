@@ -1689,6 +1689,14 @@ def main(argv: list[str]) -> int:
         print(f"adopt_scan.py: target is not a directory: {root}", file=sys.stderr)
         return 2
 
+    if args.target:
+        # the same refusal as init.py/adopt.py: the project this runs from is never a scan target
+        from init import own_root_refusal  # noqa: E402 -- late on purpose, only a --target run needs it
+        refusal = own_root_refusal(Path(args.target).expanduser(), Path(__file__).resolve().parents[2])
+        if refusal:
+            print(f"adopt_scan.py: {refusal}", file=sys.stderr)
+            return 2
+
     write_outside_marker(root)
     rows, hint, info = run(root)
     payload = write_scan_json(root, rows, hint, info)

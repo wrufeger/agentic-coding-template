@@ -64,8 +64,8 @@
 #   --target <dir>
 #       Every command below acts on the project at <dir> instead of the checkout this script is
 #       run from — its outbox, its state, its docs/ai/config.md, its .act-lock.json. Needed for
-#       act-adopt, which runs from the template checkout against a project being adopted at
-#       <dir>; without it, every command below acts on the checkout's own project as found by
+#       act-adopt, which runs from the template checkout or from another project against the
+#       project being adopted at <dir>; without it, every command below acts on the checkout's own project as found by
 #       actlib.repo_root() (walking upward from the current working directory).
 #   python .act/scripts/feedback.py --status
 #       Consent, target URL, how many entries are waiting, when last sent. Writes nothing.

@@ -61,6 +61,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "board.py": {"kind": "direct"},
     "compact_check.py": {"kind": "skill", "skill": "act-compact"},
     "adopt.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
+    "adopt_baseline.py": {"kind": "direct", "note": "used by skill `act-adopt` (step 7b, before the first commit)"},
     "adopt_config.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "adopt_entries.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},
     "adopt_passages.py": {"kind": "direct", "note": "used by skill `act-adopt` (stage 6)"},

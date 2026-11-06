@@ -102,6 +102,20 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   between two stops is read in blocks, so a refusal in the middle is not skipped. A model name from the transcript is
   cut to letters, digits and `._:@/-` (at most 64 characters) before it reaches the message, the note or the state
   file; the state file is not written through a linked `.act-local`, and its temp file is removed when the write fails.
+- `act-adopt` now ships in every project, not only in the template checkout. From a project it starts a new
+  project (empty or new folder, `init.py --target`) or adopts another one (folder with content, `adopt.py`, branch
+  `act-adopt`); it lists what would be carried over and asks once per category, then suggests `act-update` in the new
+  project.
+- `init.py --carry <list>` (and `adopt.py --apply --carry <list>`) chooses what `--target` takes over from the project
+  it runs from: `skills` (own skills), `rules` (`## Own rules`), `exceptions` (rule groups switched off with their
+  reason), `overrides` (`replaces` lines and the other files under `docs/ai/local/`), `topics`
+  (`docs/ai/local/rules/topics/`). Default is all; `none` or `--no-local` carries nothing; `--carry` without `--target`
+  is refused.
+- `adopt_baseline.py` (step 7b of `act-adopt`, before the first commit): checks an adopted project's existing code
+  once. It proposes the secret-file patterns missing from `.gitignore` (`--write-gitignore` appends them), runs the
+  secret scan and the dangerous-pattern scan over the existing tree, and books the findings as backlog entries
+  (`--book`: one per file for a secret, one per rule for a dangerous pattern, nothing twice; without it a dry run).
+  Prints file, line and rule, never a secret value.
 
 ### Changed
 
@@ -169,6 +183,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - The `PostToolUse` hook no longer ends early for every tool call of the orchestrator that cannot produce a note: the
   protected-files watcher and queued notes run first (standard library only, so the common call stays cheap), and a
   `TaskStop` call now reaches the observers instead of being dropped.
+- `init.py --target`, `adopt.py --target` and `adopt_scan.py --target` refuse a target that is the project they run
+  from or a folder inside it, also through a symlink or junction and in another spelling of the path's case on
+  Windows; the message names the target and the project root, and nothing is created or changed.
+- danger-scan: a finding whose exact `file|rule-id` key the adoption baseline booked
+  (`.act-local/danger-scan-hints/baseline.json`) passes without the first hold, so the first commit of an adopted
+  project is not held for patterns that were there before. Exact keys only; booked rules never hide an unbooked
+  finding (they are taken out before matching and do not count toward the limit of five); a malformed or linked list
+  counts as empty. The booking has no expiry: a new hit of a booked rule in a booked file passes too, until the key is
+  removed. Secrets keep holding.
 
 ### Fixed
 

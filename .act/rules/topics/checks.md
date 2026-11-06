@@ -41,6 +41,20 @@ in the diff header are read unquoted. A rename or copy to a `.env` name counts a
 in the commit command that is only text no longer forces the over-inclusive fallback; a live ANSI-C quote
 does.
 
+Adopted project: `adopt_baseline.py --book` (skill `act-adopt`, step 7b) books the dangerous patterns found in the
+existing code as backlog entries and lists their keys `file|rule-id` in `.act-local/danger-scan-hints/baseline.json`.
+A danger-scan finding with exactly such a key passes without the first hold. The list is an allow-list of exact keys
+(no prefix, glob, other case, `./` prefix or path normalisation) for the whole project; the check reads it and never
+writes it or copies it into the per-reader hints. A missing, malformed, oversized or linked (symlink or junction, also
+one of its folders) list, or one holding anything but strings, counts as empty. Booked rules are taken out of a file's
+pattern list before a line is matched, so they never count toward the limit of five findings and cannot hide an
+unbooked rule on the same line. Only an open entry directly in `docs/ai/work/backlog/` that carries the line
+`baseline: <key>` counts as booked. Limit: the key has no line number and no expiry, so after the first commit a new
+hit of a booked rule in a booked file passes too, until the owner removes the key from the list or deletes the file
+(the booked entry says so). A new rule in a booked file, the booked rule in another file and every other new pattern
+hold as before. Secrets are not covered: secret-scan keeps holding until the value is removed, the line carries
+`act:allow-secret` or is listed in `docs/ai/local/secret-accepted.md`.
+
 ## `R-safe-outside-root` — Stay inside the project
 
 Checks: outside-root.

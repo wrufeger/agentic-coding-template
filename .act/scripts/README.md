@@ -9,7 +9,8 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `act_local_tidy.py` | Keeps `.act-local/` small. Throwaway material (probes, scratch projects, old backups, leftovers of earlier versions) piles up there without… | direct (session start runs it daily in the background; `--task` is a step of skill `act-commit`) |
 | `act_profile.py` | The scope of the template inside one project — docs/ai/config.md § Scope: `profile` (minimal \| standard \| full) and `exclude` (a comma list… | library |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
-| `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout against a project that… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout or from a project… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_baseline.py` | Baseline check of an existing project before its first commit with this template (skill `act-adopt`). A project taken over has never been… | direct (used by skill `act-adopt` (step 7b, before the first commit)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
@@ -89,7 +90,7 @@ Call: direct (used by skill `act-adopt` (stage 6))
 ```text
 usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
                 [--confirm-no-targets] [--language-docs CODE] [--language-chat CODE]
-                [--update-channel {release,latest}]
+                [--update-channel {release,latest}] [--carry LIST]
 
 Carry out an approved adoption table: move legacy sources, install the template, then bridge/remove adopted sources. Never commits.
 
@@ -111,6 +112,9 @@ options:
   --update-channel {release,latest}
                         with --apply: update channel (release or latest), passed on to init.py;
                         default release
+  --carry LIST          with --apply: what init.py carries over from the project this runs from,
+                        comma-separated (skills, rules, exceptions, overrides, topics; all =
+                        default, none), passed on to init.py --carry
 
 TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
   path       as in scan.json          class   as in scan.json (must match)
@@ -153,6 +157,10 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   (removed) — a kept file at such a place stays and init leaves it. Then init.py --target
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
+  --carry <list> goes on to init.py: when this runs from a project (not the template checkout), init.py
+  takes over that project's own skills, rules, exceptions, overrides and topics unless --carry names fewer.
+  A target equal to the project this runs from, or inside it (also through a symlink or junction), is
+  refused in every mode.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
   bridge for become that bridge (protected rows stay as they are), other adopted sources and
   delete rows removed (git rm); an adopt target docs/ai/local/skills/<name>/... or
@@ -202,6 +210,24 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   unchanged (or saved), puts moved units back only from a legacy copy that still holds the moved
   content, puts rescued files back, checks out the base branch, restores the settings backup,
   deletes act-adopt and the state. New files it did not create are left in place and listed.
+```
+
+## `adopt_baseline.py`
+
+Call: direct (used by skill `act-adopt` (step 7b, before the first commit))
+
+```text
+usage: adopt_baseline.py [-h] --target TARGET [--write-gitignore] [--book]
+
+Baseline check of an existing project before its first commit: missing secret-file patterns in
+.gitignore, the commit scans run once over the tree, findings booked as backlog entries. Read-only
+unless a switch says otherwise; never prints a secret value.
+
+options:
+  -h, --help         show this help message and exit
+  --target TARGET    the project to check (a Git repository)
+  --write-gitignore  append the missing patterns to .gitignore
+  --book             create the backlog entries (default: list them)
 ```
 
 ## `adopt_config.py`
@@ -822,8 +848,8 @@ Call: direct
 
 ```text
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
-               [--no-profile] [--profile] [--language-docs CODE] [--language-chat CODE]
-               [--update-channel {release,latest}] [--methods LIST]
+               [--carry LIST] [--no-profile] [--profile] [--language-docs CODE]
+               [--language-chat CODE] [--update-channel {release,latest}] [--methods LIST]
 
 Turn a template checkout into a project, or dock onto an existing directory (--target). Inside a
 project that is already set up, only --profile runs (see there); bringing .act/ up to date is
@@ -836,7 +862,12 @@ options:
   --non-interactive     never prompt; take defaults, log open points to the inbox
   --no-commit           do everything except the final commit
   --no-local            --target only: don't carry over the source checkout's own rule/coding-rule
-                        deviations and docs/ai/local/ (Weg C, on by default)
+                        deviations and docs/ai/local/ (same as --carry none)
+  --carry LIST          --target only: what to carry over from the source project, comma-separated
+                        (default all): skills (own skills), rules (## Own rules), exceptions (rule
+                        groups switched off, with reason), overrides (`replaces` lines and the
+                        other docs/ai/local/ files: rule, role, script, checklist overrides),
+                        topics (docs/ai/local/rules/topics/); none = nothing
   --no-profile          don't offer the owner profile at %APPDATA%\act\settings.md /
                         ~/.config/act/settings.md (on by default)
   --profile             apply the owner profile without asking (its entries are shown first).
