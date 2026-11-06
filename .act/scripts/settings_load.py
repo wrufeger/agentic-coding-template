@@ -32,7 +32,9 @@
 #                                               [--resolve FILE=ACTION ...]
 #       Same analysis, then writes: new/identical/judged-non-contradicting rules into
 #       docs/ai/rules.md / docs/project/coding_rules.md, bundled scripts/checklists/topics/agents/
-#       skills into docs/ai/local/<area>/<name> (shown before writing unless --yes) — an
+#       skills into docs/ai/local/<area>/<name> and format files into docs/project/formats/<name>
+#       (shown before writing unless --yes; a format file is accepted only under one of the four names
+#       the template ships under .act/formats/) — an
 #       agent/skill whose name matches a template role/skill is never written, only reported (it
 #       would otherwise start overriding the template unit); a written own agent/skill then gets
 #       the tool bridge the target project needs (.claude/agents/<name>.md, skill copies), via the
@@ -145,7 +147,7 @@ import update
 _MAX_ZIP_ENTRIES = 200
 _MAX_ZIP_ENTRY_BYTES = 5 * 1024 * 1024
 _MAX_ZIP_TOTAL_BYTES = 20 * 1024 * 1024
-_ALLOWED_FILE_AREAS = ("scripts", "checklists", "agents", "skills", "topics")
+_ALLOWED_FILE_AREAS = ("scripts", "checklists", "agents", "skills", "topics", "formats")
 # Where a bundled file area lives below docs/ai/local/ and .act/ — "topics" are the topic rules,
 # docs/ai/local/rules/topics/ (an own topic, or the override of .act/rules/topics/<name>.md).
 _AREA_SUBDIR = {"topics": "rules/topics"}
@@ -153,6 +155,19 @@ _AREA_SUBDIR = {"topics": "rules/topics"}
 
 def _area_subdir(area_name: str) -> str:
     return _AREA_SUBDIR.get(area_name, area_name)
+
+
+# The project's format files are not "local" overrides of a template file but the project's own documents:
+# they live in docs/project/formats/ and only these four names (as under .act/formats/) are accepted.
+FORMAT_FILE_NAMES = ("commit.md", "changelog.md", "release-notes.md", "project-readme.md")
+FORMATS_DIR = "docs/project/formats"
+
+
+def _area_dir(area_name: str) -> str:
+    """The project-relative folder (with "/") a bundled file area is written into."""
+    if area_name == "formats":
+        return FORMATS_DIR
+    return f"docs/ai/local/{_area_subdir(area_name)}"
 _UNSAFE_RELPATH_CHARS = re.compile(r"[:\\]")
 
 
@@ -752,7 +767,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
 
     # Areas this build does not write at all yet.
     for entry in all_entries:
-        if entry.area not in ("rules", "coding", "scripts", "checklists", "agents", "skills", "topics"):
+        if entry.area not in ("rules", "coding", "scripts", "checklists", "agents", "skills", "topics", "formats"):
             result.not_supported.add(entry.area)
 
     # --- cross-file collisions: same (area, id) from >1 file, different symbol or text ---------
@@ -800,7 +815,7 @@ def analyze(root: Path, sources: list[SourceFile]) -> Analysis:
         if entry.symbol == "=":
             continue  # unchanged from the template — nothing to write, not a finding
 
-        if area_name in ("scripts", "checklists", "agents", "skills", "topics"):
+        if area_name in ("scripts", "checklists", "agents", "skills", "topics", "formats"):
             continue  # handled separately, in plan_files()/plan_units()
 
         if area_name not in ("rules", "coding"):
@@ -1160,23 +1175,29 @@ def _topic_fingerprints(source: SourceFile) -> dict[str, Optional[str]]:
 
 
 def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
-    local_root = (root / "docs" / "ai" / "local").resolve()
     for source in sources:
         for area_name, contents in source.payload.items():
             if area_name in ("agents", "skills"):
                 continue  # handled separately, in plan_units() below (different collision rules)
             subdir = _area_subdir(area_name)
-            area_root = local_root / subdir
+            area_dir = _area_dir(area_name)
+            area_root = (root / area_dir).resolve()
             overrides = _topic_fingerprints(source) if area_name == "topics" else {}
             for relpath, text in contents.items():
-                dest = root / "docs" / "ai" / "local" / subdir / relpath
-                dest_label = f"docs/ai/local/{subdir}/{relpath}"
+                if area_name == "formats" and relpath not in FORMAT_FILE_NAMES:
+                    result.findings.append(Finding(
+                        kind="dead-id", area=area_name,
+                        message=f"`{relpath}` is not a format file ({', '.join(FORMAT_FILE_NAMES)}) — not written",
+                    ))
+                    continue
+                dest = root / area_dir / relpath
+                dest_label = f"{area_dir}/{relpath}"
                 # Second, independent check that `dest` cannot land outside docs/ai/local/<subdir>/
                 # — load_source()'s _safe_member_relpath() already refused an unsafe zip member
                 # name; this re-checks the resolved filesystem path itself before anything is
                 # planned to be written there.
                 if dest.resolve() != area_root and area_root not in dest.resolve().parents:
-                    raise ValueError(f"{source.label}: {relpath}: resolves outside docs/ai/local/{subdir}/ — refused")
+                    raise ValueError(f"{source.label}: {relpath}: resolves outside {area_dir}/ — refused")
                 template_file = root / ".act" / subdir / relpath
                 if relpath in overrides and not template_file.is_file():
                     # A "[~]" topic overrides a template topic; this project's template has no
@@ -1209,7 +1230,7 @@ def plan_files(root: Path, sources: list[SourceFile], result: Analysis) -> None:
                             message=f"`{relpath}` — the template topic changed since the export; "
                                     "review the override by hand",
                         ))
-                elif template_file.is_file():
+                elif template_file.is_file() and area_name != "formats":  # a format file replacing the template's is the point
                     result.findings.append(Finding(
                         kind="template-shadowed", area=area_name,
                         message=f"{dest_label} — a template file of the same "

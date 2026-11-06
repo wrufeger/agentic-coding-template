@@ -65,10 +65,20 @@ secures the result.
 7. **Commit by pathspec.** With `board: shared` in `docs/ai/config.md`, first run
    `python .act/scripts/board.py --shared` and add `docs/ai/board-<identity>.md` to the pathspec of
    this same commit (only `--shared` writes that versioned file; a plain run never does).
-   `git add <path …>` — never a catch-all. What gets committed is accepted work, not a time slice; several commits per session are normal. Short message in the repo's own
-   style, attribution as given for the running session; after a `CONDITIONAL`, the message names
+   `git add <path …>` — never a catch-all. What gets committed is accepted work, not a time slice; several commits per session are normal. Short message in the format of the
+   project (see below), attribution as given for the running session; after a `CONDITIONAL`, the message names
    the id of the inbox entry from step 1. Don't silently sweep up another session's
    uncommitted changes — look at them, then decide.
+   - **Message format:** `docs/project/formats/commit.md` when the project has it, else the preset named by
+     `commit-format` in `docs/ai/config.md` § Formats, taken from `.act/formats/commit.md` (no row, empty,
+     `auto` or an unknown name: the repo's own style, as before).
+   - **Changelog entry:** with `changelog: file` (the default; the row is in the same section) and a
+     `CHANGELOG.md` in the project root, read the changelog format the same way (`.act/formats/changelog.md`,
+     `changelog-format`, or `docs/project/formats/changelog.md`). If it says entries are written as you go
+     (preset `keep-a-changelog`), add one line under `## [Unreleased]` in the right group for a commit with a
+     visible effect for someone using the project, and put `CHANGELOG.md` into this commit's pathspec. A purely
+     internal commit gets no line; with `at-release`, `release-notes-only`, `off` or no file, nothing is written
+     here.
 8. **Throwaway folders.** Remove the task's folders under `.act-local/tmp/` with `python .act/scripts/act_local_tidy.py
    --task <id>` (`R-work-throwaway`); it removes `tmp/<id>` and `tmp/<id>-*` and nothing else.
 9. **Anyone waiting?** Is anyone waiting for a reply from this session? Then file or close the todo

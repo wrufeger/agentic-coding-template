@@ -20,6 +20,44 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 - `update.py --plan` now previews the coding rule sets and groups an update would enter into `docs/project/coding_rules.md`, read from the fetched `.act/coding/` (with `--catch-up`, from the installed one); nothing is written.
 - `rules.py --add-new-coding` enters the rule sets and groups of `.act/coding/` that `docs/project/coding_rules.md` does not list yet (the step `update.py` runs itself).
+- Formats for the text the assistant writes: `.act/formats/` ships defaults for the commit message, the changelog,
+  the release notes and the README. A switch per subject in `docs/ai/config.md` § Formats (`commit-format`,
+  `changelog-format`, `release-notes-format`, `readme-format`) picks a preset; a file `docs/project/formats/<name>.md`
+  (`commit.md`, `changelog.md`, `release-notes.md`, `project-readme.md`) replaces the template's format for that
+  subject completely. `act-commit` and `act-pr` read the commit format, `act-release` the changelog and release notes
+  formats, `init`/`act-setup` and `act-audit-docs` the README format. `act-export-settings --with-formats` carries a
+  project's format files to another project, `act-load-settings` writes them back. `/act-config` and `act-doctor`
+  know and check the new keys.
+- `CHANGELOG.md` in the project root: `init` creates it with an empty `## [Unreleased]` section (switch `changelog:
+  file | release-notes-only | off` in § Formats, default `file`). A project from before is offered it at its next
+  `act-update` through the migration `007-changelog-file`. Neither ever writes over an existing file, and a project
+  that already keeps a changelog under another name or letter case (`changelog.md`, `CHANGES.md`, `HISTORY.md`,
+  `NEWS.md`) gets no second one. `act-release` says where the changelog goes and writes it there; with the default
+  format `act-commit` adds a line under `[Unreleased]` for every commit with a visible effect (the format `at-release`
+  leaves that to `act-release`). If your project has no § Formats yet, add the `changelog` row there to change the
+  default.
+- `act-release` publishes the release entry on GitHub or GitLab as its last step, only after an explicit yes and after
+  the tag is pushed; it is skipped when the project's pipeline already creates releases (semantic-release,
+  release-please, a tag workflow, a GitLab `release:` job). New `forge.py` commands: `create-release --tag T --title T
+  --body-file F [--prerelease] [--show-body] [--apply]` (preview without a request; with `--apply` a local `git
+  ls-remote` first checks that the tag is on the remote, without a token, and then exactly one request is sent; a tag
+  like `v1.2.0-rc.1` is a pre-release by itself, GitLab has no such flag and says so) and `releases` to check the
+  result.
+- `init` writes the README of a new project in the layout of the README format (`standard` sections by default;
+  `with-toc` adds a contents list, `minimal` keeps the short text); `act-audit-docs` compares a project's README with
+  its format.
+- A guide to project documents with short scaffolds (decision record, API spec, security checklist, deployment note)
+  under `.act/formats/documents/`; `act-audit-docs` points to it.
+- Working methods: optional rule sets for how the assistant works — `test-first` (a failing test before every behavior
+  change, a test per acceptance criterion), `spec-first` (a story with numbered, checkable criteria in
+  `docs/project/stories/` before the code) and `simple-changes` (the smallest change, only what was assigned,
+  assumptions named). Switch them on with the row `methods` in `docs/ai/config.md` § Scope, a comma-separated list or
+  `none` (the default); `init` asks once (`--methods <names>`; `act-setup` passes the answer). The sets live in
+  `.act/methods/` (a project's own in `docs/ai/local/methods/`) and are written into `docs/project/coding_rules.md` as
+  imports, so the orchestrator and every worker load them; a group can be unchecked there like in any rule set. The
+  session start, `act-update` and `python .act/scripts/rules.py --sync-methods` apply a changed row (`update --plan`
+  previews it); `act-doctor` reports a name without a file, a file it cannot read and a section that does not match the
+  row.
 
 ### Changed
 
@@ -78,6 +116,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   or `--output*`) are left out, every other word still counts. `$x = py .act/scripts/board.py` passes;
   `$x = python -m zipfile -e a.zip .act/`, `$x = git clone <url> .act/y` and `$x = py x.py, '.act/x'` are judged as
   before. A cmdlet, string, expression or call operator on the right side is read as before.
+- A new project now starts with its own `CHANGELOG.md` (the template's own changelog is still removed by `init` as
+  before).
+- `act-commit` and `act-pr` take the message format from the commit format instead of always copying the repo's
+  style; the default `auto` keeps the old behaviour.
+- `topics/live-systems.md` names the release entry on GitHub/GitLab next to pull requests, issues and comments: its own
+  "yes", the way back is deleting it in the web interface, no backup needed.
 
 ### Fixed
 
@@ -118,6 +162,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `Set-Alias`/`New-Alias`/`iex` - and a double-quoted or unquoted `$(...)` are judged as before.
 - Shell write checks: `git log -S'$(('` (a single-quoted `$((`) is text, no command substitution, and no longer
   blocks.
+- `act-doctor` reports a rule set file that is not readable UTF-8 (a coding set, a working method or a rule file) as a
+  finding naming the file, instead of crashing with a `UnicodeDecodeError`; `rules.py --validate` does the same for a
+  `use:` target.
 
 ### Security
 

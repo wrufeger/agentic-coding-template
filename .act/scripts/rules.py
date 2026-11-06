@@ -20,6 +20,7 @@
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
 #   python .act/scripts/rules.py --add-missing           # enter rules/rule files of the template that docs/ai/rules.md lacks
 #   python .act/scripts/rules.py --add-new-coding        # enter coding sets/groups of .act/coding/ that coding_rules.md lacks
+#   python .act/scripts/rules.py --sync-methods         # write the `methods` row of config.md into coding_rules.md
 #   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
 #   python .act/scripts/rules.py --worker                 # the parts a worker is handed instead of CLAUDE.md
 #
@@ -704,7 +705,14 @@ def cmd_validate(project: ProjectFile, area: Area, root: Path) -> list[str]:
     for pset in project.sets:
         if area.name == "coding" and not pset.enabled:
             continue
-        template = resolve_template_set(pset)
+        try:
+            template = resolve_template_set(pset)
+        except (OSError, UnicodeDecodeError) as exc:
+            # the file is there but is no readable UTF-8: name it, and do not call its groups unknown
+            findings.append(f"{rel}:{pset.line}: use: target cannot be read: {pset.path} "
+                            f"({exc.__class__.__name__}: {exc})")
+            known_ids.update(pset.groups.keys())
+            continue
         if template is None:
             findings.append(f"{rel}:{pset.line}: use: target not found: {pset.path}")
             continue
@@ -836,8 +844,14 @@ def add_new_coding_entries(root: Path, write: bool = True, act_dir: Optional[Pat
     listed = {strip_template_prefix(pset.path) for pset in project.sets}
     messages: list[str] = []
     inserts: list[tuple[int, list[str]]] = []  # (index to insert before, lines), file order
+    # The set lines inside the methods block belong to the methods sync (`sync_method_imports`), which
+    # removes any line there that the `methods` row does not name: a coding set must never be put into the
+    # block, and the groups of a method are the sync's business.
+    file_lines = _read_text_eol(path)[0].split("\n")
+    block = _methods_block_span(file_lines)
+    outside = [pset for pset in project.sets if block is None or not block[0] <= pset.line - 1 <= block[2]]
 
-    for pset in project.sets:
+    for pset in outside:
         if not pset.enabled:
             continue
         template = _set_in(root, act_dir, pset) if act_dir else resolve_template_set(pset)
@@ -851,10 +865,15 @@ def add_new_coding_entries(root: Path, write: bool = True, act_dir: Optional[Pat
 
     new_sets = [p.name for p in sorted(coding_dir.glob("*.md")) if f"coding/{p.name}" not in listed]
     if new_sets:
-        last_block_end = max(
-            max([pset.line, *(group.line for group in pset.groups.values())]) for pset in project.sets
-        )
-        inserts.append((last_block_end, [f"- [ ] use: .act/coding/{name}" for name in new_sets]))
+        if outside:
+            last_block_end = max(
+                max([pset.line, *(group.line for group in pset.groups.values())]) for pset in outside
+            )
+            tail: list[str] = []
+        else:  # every set line is in the methods block: above its heading
+            last_block_end = block[0] if block is not None else len(file_lines)
+            tail = [""]
+        inserts.append((last_block_end, [f"- [ ] use: .act/coding/{name}" for name in new_sets] + tail))
         messages.extend(f".act/coding/{name}: added as a rule set (off)" for name in new_sets)
 
     if inserts and write:
@@ -866,6 +885,283 @@ def add_new_coding_entries(root: Path, write: bool = True, act_dir: Optional[Pat
             lines[index:index] = new_lines
         _write_text_eol(path, "\n".join(lines) + ("\n" if text.endswith("\n") else ""), eol)
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Working methods (.act/methods/<name>.md, docs/ai/config.md § Scope `methods`) — optional rule sets in
+# the grammar of the coding sets, switched on by one config row. The row is turned into a section of
+# docs/project/coding_rules.md between the marks below, one checked "use:" set line with its groups per
+# name, so the orchestrator and every worker load them the way they load a coding set (the file is
+# imported from docs/ai/rules.md). The row decides: a set line in the block that the row does not name is
+# removed, a named method gets its block; a group the project unchecked or gave a reason stays that way.
+# ---------------------------------------------------------------------------
+
+METHODS_DIR = "methods"
+METHODS_MARK = "<!-- act:methods -->"
+METHODS_END_MARK = "<!-- /act:methods -->"
+SYNC_METHODS_COMMAND = "python .act/scripts/rules.py --sync-methods"
+RE_METHOD_NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_METHODS_NONE = ("", "none", "(not set)")
+
+
+@dataclass
+class MethodSync:
+    added: list[str] = field(default_factory=list)      # names whose block was written
+    removed: list[str] = field(default_factory=list)    # names whose block was taken out
+    updated: list[str] = field(default_factory=list)    # names whose groups were brought up to date
+    unknown: list[str] = field(default_factory=list)    # named in the row, no file behind them
+    unreadable: list[str] = field(default_factory=list)  # "name (reason)": the file is there but cannot be read; its block stays
+    invalid: list[str] = field(default_factory=list)    # entries of the row that are no method name
+    problem: str = ""                                   # why nothing could be written although something is due
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.added or self.removed or self.updated)
+
+
+def read_method_names(root: Path) -> tuple[list[str], list[str]]:
+    """(names, invalid entries) of the `methods` row of docs/ai/config.md at `root`: a comma-separated
+    list of method names, in the order written, each once; `none`, an empty value and no row mean no
+    method. An entry that is no name (`[a-z0-9-]`) is returned in the second list, never as a name."""
+    value = actlib.read_config(root).get("methods", "").strip().strip("`").strip()
+    if value.lower() in _METHODS_NONE:
+        return [], []
+    names: list[str] = []
+    invalid: list[str] = []
+    for part in value.split(","):
+        entry = part.strip().strip("`").strip()
+        if not entry or entry.lower() == "none":
+            continue
+        if not RE_METHOD_NAME.match(entry.lower()):
+            invalid.append(entry)
+        elif entry.lower() not in names:
+            names.append(entry.lower())
+    return names, invalid
+
+
+def method_file(root: Path, name: str, act_dir: Optional[Path] = None) -> Optional[tuple[Path, str]]:
+    """(file, origin) of the method `name`: the project's own docs/ai/local/methods/<name>.md, else the
+    template's .act/methods/<name>.md (`act_dir`: that .act/ instead of the installed one, to preview
+    an update); None if neither exists."""
+    for base, origin in ((root / LOCAL_PREFIX, "local"), (act_dir or root / ".act", "template")):
+        path = base / METHODS_DIR / f"{name}.md"
+        if path.is_file():
+            return path, origin
+    return None
+
+
+def available_methods(root: Path) -> list[str]:
+    """Names of every method a project can name: the template's and the project's own (not README.md)."""
+    names: set[str] = set()
+    for base in (root / ".act", root / LOCAL_PREFIX):
+        folder = base / METHODS_DIR
+        if folder.is_dir():
+            names.update(p.stem for p in folder.glob("*.md") if p.stem.lower() != "readme")
+    return sorted(names)
+
+
+def _methods_block_span(lines: list[str]) -> Optional[tuple[int, int, int]]:
+    """(heading index, first line after the start mark, index of the end mark or of the line that ends the
+    block) of the methods section in `lines`, or None. The heading is the "## " line directly above the
+    start mark (the mark's own index when there is none); without an end mark the block runs to the next
+    "## " heading (or the end of the file)."""
+    for index, line in enumerate(lines):
+        if line.strip() != METHODS_MARK:
+            continue
+        heading = index - 1 if index > 0 and lines[index - 1].startswith("## ") else index
+        end = index + 1
+        while end < len(lines) and lines[end].strip() != METHODS_END_MARK:
+            if lines[end].startswith("## "):
+                break
+            end += 1
+        return heading, index + 1, end
+    return None
+
+
+def _methods_insert_index(lines: list[str]) -> int:
+    """Where a new methods section goes into docs/project/coding_rules.md: above the overrides section,
+    else above the own rules, else at the end."""
+    for mark in ("<!-- act:overrides -->", "<!-- act:own-rules -->"):
+        for index, line in enumerate(lines):
+            if line.strip() == mark:
+                return index - 1 if index > 0 and lines[index - 1].startswith("## ") else index
+    for index, line in enumerate(lines):
+        if re.match(r"^##\s+(?:overrides|überschreibungen|own rules|eigene regeln)\b", line, re.IGNORECASE):
+            return index
+    return len(lines)
+
+
+def _is_method_path(raw: str) -> bool:
+    return Path(normalize_set_path(raw)).parent.name == METHODS_DIR
+
+
+def _foreign_block_lines(lines: list[str]) -> list[str]:
+    """The set lines (with their group lines) inside the methods block that are no method: a `use:` line
+    whose file is not under methods/. The sync never deletes them; it moves them out above the section."""
+    span = _methods_block_span(lines)
+    kept: list[str] = []
+    if span is None:
+        return kept
+    foreign = False
+    for line in lines[span[1]:span[2]]:
+        checkbox = RE_CHECKBOX.match(line)
+        if not checkbox:
+            continue
+        if checkbox.group("indent") == "":
+            use = RE_USE.match(checkbox.group("rest"))
+            foreign = bool(use) and not _is_method_path(use.group("path"))
+        if foreign:
+            kept.append(line)
+    return kept
+
+
+def _read_method_block(lines: list[str]) -> dict[str, dict[str, str]]:
+    """name -> {group id -> its line} for the method set lines inside the methods block of `lines`
+    (`use:` lines under methods/ only), in file order."""
+    span = _methods_block_span(lines)
+    found: dict[str, dict[str, str]] = {}
+    if span is None:
+        return found
+    current: Optional[dict[str, str]] = None
+    for line in lines[span[1]:span[2]]:
+        checkbox = RE_CHECKBOX.match(line)
+        if not checkbox:
+            continue
+        if checkbox.group("indent") == "":
+            use = RE_USE.match(checkbox.group("rest"))
+            if use and _is_method_path(use.group("path")):
+                current = found.setdefault(Path(normalize_set_path(use.group("path"))).stem, {})
+            else:
+                current = None
+        elif current is not None:
+            group = RE_GROUP_ID.match(checkbox.group("rest"))
+            if group:
+                current[group.group("id")] = line
+    return found
+
+
+def sync_method_imports(root: Path, write: bool = True, act_dir: Optional[Path] = None) -> MethodSync:
+    """Bring the methods section of docs/project/coding_rules.md in line with the `methods` row of
+    docs/ai/config.md (read_method_names): a named method with a file gets a checked set line with a
+    checked line per group, a set line the row no longer names is taken out, and the section goes when
+    no method is left. What the project did to a group line (unchecked, a reason) is kept; a group the file
+    gained is added checked, one it lost is dropped. A name without a file is returned in `unknown` and
+    not written; one whose file cannot be read is returned in `unreadable` and its section is kept as
+    it is. A coding set line found inside the section is moved out above it. With write=False nothing is written, the result says what would change; a second run
+    finds nothing. An absent coding_rules.md changes nothing (`problem` says so when a method is due).
+    With `act_dir` the method files are read from that .act/ (the one an update has fetched)."""
+    names, invalid = read_method_names(root)
+    result = MethodSync(invalid=invalid)
+    wanted: list[tuple[str, TemplateSet]] = []
+    unreadable_names: set[str] = set()
+    for name in names:
+        found = method_file(root, name, act_dir)
+        if found is None:
+            result.unknown.append(name)
+            continue
+        try:
+            wanted.append((name, parse_template_set(found[0], found[1])))
+        except (OSError, UnicodeDecodeError) as exc:
+            result.unreadable.append(f"{name} ({exc.__class__.__name__}: {exc})")
+            unreadable_names.add(name)
+    path = root / AREAS["coding"].project_file
+    if not path.is_file():
+        if wanted:
+            result.problem = f"{AREAS['coding'].project_file} not found, so the methods cannot be entered"
+        return result
+    text, eol = _read_text_eol(path)
+    lines = text.split("\n")
+    before = _read_method_block(lines)
+    new_block: list[str] = []
+    templates = dict(wanted)
+    for name in names:
+        old_groups = before.get(name, {})
+        if name in unreadable_names:
+            # the file cannot be parsed now: the block (with the project's unchecked groups and reasons)
+            # stays exactly as it is, and the problem is reported
+            if name in before:
+                new_block.append(coding_set_line(f"- [x] use: .act/{METHODS_DIR}/{name}.md", root))
+                new_block.extend(old_groups.values())
+            continue
+        if name not in templates:
+            continue
+        template = templates[name]
+        new_block.append(coding_set_line(f"- [x] use: .act/{METHODS_DIR}/{name}.md", root))
+        new_block.extend(old_groups.get(gid, f"  - [x] `{gid}`") for gid in template.groups)
+        if name not in before:
+            result.added.append(name)
+        elif list(old_groups) != list(template.groups):
+            result.updated.append(name)
+    result.removed = [name for name in before if name not in templates and name not in unreadable_names]
+    span = _methods_block_span(lines)
+    if span is None:
+        if not wanted:
+            return result
+        title = actlib.localized(actlib.docs_language(root), "Working methods", "Arbeitsmuster")
+        section = ["## " + title, METHODS_MARK,
+                   "<!-- Switched on by `methods` in docs/ai/config.md § Scope; written by "
+                   f"`{SYNC_METHODS_COMMAND}`, the session start and `init`/`update`. -->",
+                   *new_block, METHODS_END_MARK, ""]
+        index = _methods_insert_index(lines)
+        fixed = lines[:index] + section + lines[index:]
+    else:
+        heading, start, end = span
+        # a coding set line that ended up inside the block is moved out above it, never deleted
+        foreign = _foreign_block_lines(lines)
+        above = heading
+        while foreign and above > 0 and not lines[above - 1].strip():
+            above -= 1
+        head = lines[:above] + foreign + lines[above:heading]
+        old_body = lines[start:end]
+        # keep the explanatory comment line (the first comment inside the block), if any
+        kept = [line for line in old_body[:1] if line.strip().startswith("<!--")]
+        has_end = end < len(lines) and lines[end].strip() == METHODS_END_MARK
+        if not new_block:
+            stop = end + 1 if has_end else end
+            while stop < len(lines) and not lines[stop].strip() and stop > end:
+                stop += 1
+            fixed = head + lines[stop:]
+        else:
+            tail = [] if has_end else [METHODS_END_MARK, ""]
+            fixed = head + lines[heading:start] + kept + new_block + tail + lines[end:]
+    if fixed == lines:
+        return MethodSync(unknown=result.unknown, unreadable=result.unreadable, invalid=result.invalid)
+    if write:
+        _write_text_eol(path, "\n".join(fixed), eol)
+    return result
+
+
+def method_findings(root: Path) -> list[tuple[str, str]]:
+    """(path, message) per problem with the working methods: an entry of the `methods` row that is no
+    name, a name without a file (with the names that exist), and a methods section in
+    docs/project/coding_rules.md that does not match the row (with the command that fixes it). Empty
+    for a project that uses no method and has no section."""
+    config_rel = "docs/ai/config.md"
+    coding_rel = AREAS["coding"].project_file
+    out: list[tuple[str, str]] = []
+    try:
+        result = sync_method_imports(root, write=False)
+    except (OSError, UnicodeDecodeError) as exc:
+        return [(coding_rel, f"methods not checked ({exc.__class__.__name__}: {exc})")]
+    for entry in result.invalid:
+        out.append((config_rel, f"`methods` entry {entry!r} is no method name (lower-case letters, digits, "
+                                "'-'); use a comma-separated list or `none`"))
+    known = ", ".join(available_methods(root)) or "none"
+    for name in result.unknown:
+        out.append((config_rel, f"`methods` names {name!r}, but there is no {METHODS_DIR}/{name}.md under "
+                                f".act/ or docs/ai/local/ — known methods: {known}"))
+    for entry in result.unreadable:
+        out.append((config_rel, f"the method file of `methods` entry {entry} cannot be read; its section in "
+                                f"{coding_rel} is left as it is"))
+    if result.problem:
+        out.append((coding_rel, result.problem))
+    elif result.changed:
+        parts = ([f"missing: {', '.join(result.added)}"] if result.added else []) \
+            + ([f"not named in `methods`: {', '.join(result.removed)}"] if result.removed else []) \
+            + ([f"groups out of date: {', '.join(result.updated)}"] if result.updated else [])
+        out.append((coding_rel, f"the methods section does not match `methods` in {config_rel} "
+                                f"({'; '.join(parts)}) — run {SYNC_METHODS_COMMAND}"))
+    return out
 
 
 def _rule_files_holding(root: Path, gid: str) -> list[str]:
@@ -2006,6 +2302,10 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--add-new-coding", action="store_true",
                       help="list in docs/project/coding_rules.md the rule sets and groups of .act/coding/ it does "
                            "not know yet (--area coding is implied)")
+    mode.add_argument("--sync-methods", action="store_true",
+                      help="bring the methods section of docs/project/coding_rules.md in line with the `methods` "
+                           "row of docs/ai/config.md (--area coding is implied); exit 1 if something could not "
+                           "be entered")
     mode.add_argument("--imports", action="store_true",
                       help="files Claude Code loads through @-imports with their size in characters and totals, "
                            "exit 1 on any it cannot follow")
@@ -2034,9 +2334,9 @@ def main(argv: list[str]) -> int:
         return exc.code if isinstance(exc.code, int) else 2
 
     if args.id is not None and (args.list or args.validate or args.imports or args.worker or args.add_missing
-                                or args.add_new_coding):
+                                or args.add_new_coding or args.sync_methods):
         print("rules.py: an id argument cannot be combined with --list, --validate, --imports, --worker, "
-              "--add-missing or --add-new-coding", file=sys.stderr)
+              "--add-missing, --add-new-coding or --sync-methods", file=sys.stderr)
         return 2
 
     area = AREAS["core"] if args.add_missing else AREAS[args.area]
@@ -2062,6 +2362,25 @@ def main(argv: list[str]) -> int:
         if not added:
             print(f"{coding_file} lists every rule set and group of .act/coding/")
         return 0
+
+    if args.sync_methods:
+        coding_file = AREAS["coding"].project_file
+        try:
+            synced = sync_method_imports(root)
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"rules.py: could not enter into {coding_file}: {exc}", file=sys.stderr)
+            return 1
+        for label, names in (("entered", synced.added), ("taken out", synced.removed),
+                             ("groups brought up to date", synced.updated)):
+            if names:
+                print(f"{coding_file}: methods {label}: {', '.join(names)}")
+        for path_rel, message in method_findings(root):
+            print(f"{path_rel}: {message}")
+        if synced.problem:
+            print(f"rules.py: {synced.problem}", file=sys.stderr)
+        if not (synced.changed or synced.unknown or synced.unreadable or synced.invalid or synced.problem):
+            print(f"{coding_file} matches the `methods` row of docs/ai/config.md")
+        return 1 if (synced.problem or synced.unknown or synced.unreadable or synced.invalid) else 0
 
     if args.add_missing:
         if not (root / area.project_file).is_file():
@@ -2108,6 +2427,7 @@ def main(argv: list[str]) -> int:
         notes = [f"{rel}:{line}: note: {message}" for line, message in project.hints]
         if area.name == "coding":  # the block is not specific to an area; print it once
             notes += validate_path_rules(root)
+            findings += [f"{path_rel}: {message}" for path_rel, message in method_findings(root)]
         if findings or notes:
             print("\n".join(findings + notes))
         return 1 if findings else 0

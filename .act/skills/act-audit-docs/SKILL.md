@@ -20,7 +20,8 @@ by `act-doctor`.
    a newly learned convention into `coding_rules.md`, changed tests into `testing.md`, a severe
    failure into `docs/project/incidents/`. Maintaining `testing.md`: check that the runner it names
    actually exists and that its command isn't interactive (no unattended install prompt), same
-   check as before any test run (`.act/agents/builder.md`). Also check `glossary.md`: add terms the wave
+   check as before any test run (`.act/agents/builder.md`). When the wave produced something that has no document yet
+   (a decision, an interface, a deployment way), `.act/formats/documents/README.md` says which scaffold fits. Also check `glossary.md`: add terms the wave
    introduced, drop or correct entries the code no longer matches.
 4. **Structure** (`R-docs-order`, details `.act/rules/topics/docs-order.md`). Run `python .act/scripts/doctor.py`
    and read the `docs-*` findings: a folder or file without its index line, an index line without a file,
@@ -33,9 +34,15 @@ by `act-doctor`.
    lines is split into a folder with a `README.md`. Run `doctor.py` again and stage the old and the new
    path of every move.
 5. `doc-writer` updates `docs/README.md` (folders and top-level files only, data-as-of dates).
+6. **README against its format.** The project `README.md` is compared with the README format:
+   `docs/project/formats/project-readme.md` when it exists, else the preset `readme-format` names in
+   `docs/ai/config.md` § Formats (`.act/formats/project-readme.md`; no row or an unknown name: `standard`).
+   Report the sections that are missing or out of order, a table of contents the format asks for that is absent
+   or no longer matches the headings, and one it does not ask for. `doc-writer` fixes what is a plain format
+   deviation; what the README says about the project stays the human's text.
 
 In Claude Code, steps 2, 3 and 5 can also run as the workflow script `workflow.js.txt` beside this file — only
-when the human asks for that variant explicitly; it has no Structure step, so run step 4 by hand first. Read `references/workflow.md` before starting it.
+when the human asks for that variant explicitly; it has no Structure and no README step, so run steps 4 and 6 by hand. Read `references/workflow.md` before starting it.
 
 A full pass across all doc areas logs a journal entry whose title starts with `act-audit-docs`
 (`entries.py new ledger "act-audit-docs: ..."`); a spot check of one area skips the entry — this is

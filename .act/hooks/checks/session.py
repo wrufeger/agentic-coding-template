@@ -2639,6 +2639,18 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             else:
                 warn_notes.append(coding_note)
         try:
+            method_sync = rules.sync_method_imports(root, write=(mode == "block"))
+            if method_sync.changed:
+                verb = "brought in line" if mode == "block" else "would be brought in line (warn mode)"
+                method_note = (f"[act] note: docs/project/coding_rules.md: method sets {verb} with the "
+                               "methods row of docs/ai/config.md")
+                if mode == "block":
+                    print(method_note)
+                else:
+                    warn_notes.append(method_note)
+        except Exception as exc:  # noqa: BLE001 - the methods sync is a best-effort step, never a reason to end the session
+            print(f"[act] note: methods not applied ({exc.__class__.__name__})")
+        try:
             scope_lines, scope_pending = _scope_notes(root, mode == "block", scope_copies_moved)
             for scope_line in scope_lines:
                 print(scope_line)

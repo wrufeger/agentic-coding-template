@@ -34,7 +34,9 @@ comes from the environment or `.env` (`R-safe-no-secret-cli`).
 5. **Draft** — `git fetch <remote> <target>` first, so the comparison uses the remote's target
    branch, not a stale local one; then `git log <remote>/<target>..HEAD` and `git diff
    <remote>/<target>...HEAD`, written to a file under `.act-local/` (never into the repo):
-   - **Title** in the commit style of the repo (look at `git log`), one line.
+   - **Title** in the commit message format of the project, one line: `docs/project/formats/commit.md`, else
+     the preset `commit-format` names in `docs/ai/config.md` § Formats (`.act/formats/commit.md`); with the
+     default `auto`, the style of the repo (look at `git log`).
    - **Description:** purpose (why), changes (what, grouped), evidence (tests run, with result),
      reference (`T<n>`; and, when the task file has a header field `issue: <URL>`, the issue —
      `Closes <URL>` only if the human wants it closed on merge).

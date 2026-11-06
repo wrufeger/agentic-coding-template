@@ -75,6 +75,7 @@ class ProjectConfig(TypedDict):
     mode: str
     feedback_mode: str
     update_channel: str
+    methods: str
 
 
 class BridgeSpec(TypedDict):
@@ -381,6 +382,126 @@ def _ask_update_channel(root: Path, interactive: bool, notes: list[str], given: 
     return _UPDATE_CHANNEL_DEFAULT
 
 
+METHODS_DEFAULT = "none"
+_TEMPLATE_METHODS_DIR = Path(__file__).resolve().parent.parent / rules.METHODS_DIR
+
+
+def _template_methods() -> dict[str, str]:
+    """name -> summary line of every working method this template ships (.act/methods/<name>.md)."""
+    found: dict[str, str] = {}
+    if _TEMPLATE_METHODS_DIR.is_dir():
+        for path in sorted(_TEMPLATE_METHODS_DIR.glob("*.md")):
+            if path.stem.lower() == "readme":
+                continue
+            try:
+                found[path.stem] = rules.parse_template_set(path, "template").summary or ""
+            except (OSError, UnicodeDecodeError):
+                continue
+    return found
+
+
+def parse_methods_answer(raw: str, available: Optional[dict[str, str]] = None) -> Optional[str]:
+    """The `methods` row value for an answer or option value: `none` for an empty answer, `none`, `no`
+    or `n`; otherwise the names, lower-cased, each once, as "a, b". None if a name is no method of this
+    template (`available`, default: the shipped ones)."""
+    known = _template_methods() if available is None else available
+    word = raw.strip().strip("`").strip().lower()
+    if word in ("", "none", "no", "n", "(not set)"):
+        return METHODS_DEFAULT
+    names: list[str] = []
+    for part in re.split(r"[,\s]+", word):
+        if not part or part == "none":
+            continue
+        if part not in known:
+            return None
+        if part not in names:
+            names.append(part)
+    return ", ".join(names) or METHODS_DEFAULT
+
+
+def _ask_methods(root: Path, interactive: bool, notes: list[str], given: Optional[str]) -> str:
+    """Which working methods (.act/methods/) are switched on: an option value wins; a project that
+    already has `docs/ai/config.md` keeps its own row (docking onto it asks nothing); otherwise the owner
+    is asked once at a terminal, and `--non-interactive`/`--plan`/`act-setup` take `none`. After three
+    answers that are no method names the default is used and noted."""
+    if given is not None:
+        return given
+    if (root / "docs" / "ai" / "config.md").is_file():
+        return actlib.read_config(root).get("methods", "").strip().strip("`").strip() or METHODS_DEFAULT
+    if not interactive:
+        return METHODS_DEFAULT
+    available = _template_methods()
+    if not available:
+        return METHODS_DEFAULT
+    print()
+    print("Switch on working methods? They add rules for how the assistant works; none is on by default.")
+    for name, summary in available.items():
+        print(f"- {name}: {summary}")
+    print("- Names separated by commas, or none. Change it any time: `methods` in docs/ai/config.md § Scope.")
+    for _attempt in range(_FEEDBACK_MAX_ATTEMPTS):
+        answer = parse_methods_answer(_ask("Methods", METHODS_DEFAULT, True), available)
+        if answer is not None:
+            return answer
+        print(f"Please answer with names from: {', '.join(available)} - or none.")
+    notes.append(
+        f"Methods question left unanswered after {_FEEDBACK_MAX_ATTEMPTS} tries - no method is on. "
+        "Switch one on with `methods` in docs/ai/config.md § Scope."
+    )
+    return METHODS_DEFAULT
+
+
+_METHODS_ROW_RE = re.compile(r"^\|\s*`methods`\s*\|")
+_SCOPE_ROW_RE = re.compile(r"^\|\s*`(?:exclude|profile)`\s*\|")
+
+
+def set_methods_row(config_path: Path, value: str) -> bool:
+    """Make the `methods` row of docs/ai/config.md say `value`: replace the value of a row that is
+    there, else (only for a value other than `none`, which is what a missing row means) add the row
+    below the `exclude` (else `profile`) row of § Scope. True if the file changed. Line endings stay."""
+    raw = config_path.read_bytes().decode("utf-8")
+    eol = "\r\n" if raw.count("\r\n") > raw.count("\n") / 2 else "\n"
+    lines = raw.replace("\r\n", "\n").split("\n")
+    row = f"| `methods` | {value} |"
+    for index, line in enumerate(lines):
+        if _METHODS_ROW_RE.match(line):
+            if line.strip() == row:
+                return False
+            lines[index] = row
+            break
+    else:
+        if value == METHODS_DEFAULT:
+            return False
+        anchors = [i for i, line in enumerate(lines) if _SCOPE_ROW_RE.match(line)]
+        if not anchors:
+            return False
+        lines.insert(max(anchors) + 1, row)
+    config_path.write_bytes(eol.join(lines).encode("utf-8"))
+    return True
+
+
+def step_methods(root: Path, plan: bool, methods: str, explicit: bool) -> str:
+    """Enter the chosen working methods: the `methods` row of docs/ai/config.md (written when the
+    answer is not `none`, or when an option named it), then the methods section of
+    docs/project/coding_rules.md (rules.sync_method_imports), so the orchestrator and the workers load
+    them. A project that docked on with its own row is only synced. Returns one line for the report,
+    "" when there is nothing to say."""
+    config_path = root / "docs" / "ai" / "config.md"
+    if plan:
+        return f"would switch on methods: {methods}" if methods != METHODS_DEFAULT else ""
+    if not config_path.is_file():
+        return ""
+    if explicit or methods != METHODS_DEFAULT:
+        set_methods_row(config_path, methods)
+    result = rules.sync_method_imports(root)
+    if result.problem:
+        return f"methods not entered: {result.problem}"
+    unknown = f"; no file for {', '.join(result.unknown)}" if result.unknown else ""
+    unknown += f"; cannot read {', '.join(result.unreadable)}" if result.unreadable else ""
+    if result.added or result.removed or result.updated:
+        return f"methods in docs/project/coding_rules.md: {', '.join(result.added + result.updated) or 'none'}" + unknown
+    return (f"methods {methods}: already entered" if methods != METHODS_DEFAULT else "") + unknown
+
+
 def _clone_release_note(clone: Path) -> Optional[str]:
     """Inbox note when the template clone this run starts from is ahead of its newest release tag
     (`vX.Y.Z`, no prerelease): with the `release` channel act-update offers nothing until a newer release.
@@ -417,7 +538,7 @@ def _language(key: str, given: Optional[str], prompt_text: str, default: str, in
 
 def step_config(root: Path, interactive: bool, notes: list[str],
                 languages: Optional[dict[str, Optional[str]]] = None,
-                update_channel: Optional[str] = None) -> ProjectConfig:
+                update_channel: Optional[str] = None, methods: Optional[str] = None) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
     if git_name and not _is_placeholder_name(git_name):
@@ -462,6 +583,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
     mode = _suggest_mode(root, notes)
     feedback_mode = _ask_feedback_mode(root, interactive, notes)
     channel = _ask_update_channel(root, interactive, notes, update_channel)
+    chosen_methods = _ask_methods(root, interactive, notes, methods)
 
     return {
         "name": name,
@@ -476,6 +598,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
         "mode": mode,
         "feedback_mode": feedback_mode,
         "update_channel": channel,
+        "methods": chosen_methods,
     }
 
 
@@ -1685,6 +1808,8 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
         # .act/skeleton/config.md § Update's `update-channel` row. .get: a caller that builds the
         # dict itself (adopt) may predate the key.
         "<update-channel>": cfg.get("update_channel", _UPDATE_CHANNEL_DEFAULT),
+        # .act/skeleton/config.md § Scope's `methods` row (rules.sync_method_imports reads it back).
+        "<methods>": cfg.get("methods", METHODS_DEFAULT),
     }
 
 
@@ -2808,6 +2933,111 @@ def _community_files(root: Path) -> list[str]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# Formats (.act/formats/, docs/ai/config.md § Formats): README shape and CHANGELOG.md starter
+# ---------------------------------------------------------------------------
+
+README_FORMATS = ("standard", "with-toc", "minimal")
+CHANGELOG_MODES = ("file", "release-notes-only", "off")
+PROJECT_FORMATS_DIR = Path("docs") / "project" / "formats"
+# What `init` writes when the changelog format (project file or template file) has no usable starter block.
+FALLBACK_CHANGELOG_STARTER = (
+    "# Changelog\n\n"
+    "All notable changes to this project are documented in this file.\n"
+    "The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).\n\n"
+    "## [Unreleased]\n"
+)
+_README_SECTIONS = (
+    "Describe what this project does.\n\n"
+    "## Getting started\n\nRequirements, install and how to run it.\n\n"
+    "## Development\n\nHow to run the tests and the linter, and how to contribute.\n\n"
+    "## Documentation\n\nThe project documentation lives under `docs/`.\n\n"
+    "## License\n\nState the license here.\n"
+)
+_README_PLACEHOLDER = "Describe what this project does, how to run it, and how to develop it here.\n"
+
+
+def _format_switch(root: Path, key: str, allowed: tuple[str, ...], default: str) -> str:
+    """The value of a docs/ai/config.md § Formats row; a missing row, an empty value, `auto`, `(not set)`
+    and an unknown name all mean `default`."""
+    value = actlib.read_config(root).get(key, "").strip().strip("`").lower()
+    return value if value in allowed else default
+
+
+def _readme_with_format(text: str, readme_format: str) -> str:
+    """The skeleton README shaped by the preset: `minimal` keeps it as the bridge has it, `standard` replaces
+    the closing placeholder sentence by the standard sections, `with-toc` adds a Contents list before them."""
+    if readme_format == "minimal" or _README_PLACEHOLDER not in text:
+        return text
+    shaped = text.replace(_README_PLACEHOLDER, _README_SECTIONS)
+    if readme_format == "with-toc":
+        headings = re.findall(r"^## (.+)$", _README_SECTIONS, flags=re.MULTILINE)
+        contents = "## Contents\n\n" + "\n".join(
+            f"- [{h}](#{re.sub(r'[^a-z0-9 -]', '', h.lower()).replace(' ', '-')})" for h in headings) + "\n\n"
+        shaped = shaped.replace("Describe what this project does.\n", contents + "Describe what this project does.\n", 1)
+    return shaped
+
+
+def _starter_block(path: Path) -> str:
+    """The first fenced block below the heading `## Starter file` of a changelog format file, or ""."""
+    try:
+        text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    match = re.search(r"^## Starter file[^\n]*\n.*?^```[^\n]*\n(.*?)^```[ \t]*$", text, flags=re.MULTILINE | re.DOTALL)
+    return match.group(1) if match else ""
+
+
+def changelog_starter(root: Path) -> str:
+    """Text of a new CHANGELOG.md: the starter block of the project's format file, else of the template's,
+    else the built-in one."""
+    for candidate in (root / PROJECT_FORMATS_DIR / "changelog.md", root / ".act" / "formats" / "changelog.md"):
+        block = _starter_block(candidate)
+        if block.strip():
+            return block
+    return FALLBACK_CHANGELOG_STARTER
+
+
+_CHANGELOG_LIKE_RE = re.compile(r"(?:changelog|changes|history|news)(?![A-Za-z])", re.IGNORECASE)
+
+
+def changelog_like_files(root: Path, ignore: str = "") -> list[str]:
+    """Names in the project root that already serve as a changelog, in any letter case: `changelog`,
+    `changes`, `history` or `news`, alone or followed by an extension, a dash, a digit and so on (a
+    name such as `newsletter.md` or `history.py` is none). Files and links only; `ignore` is a name
+    to leave out (the template's own CHANGELOG.md that a plan knows step 8 removes)."""
+    try:
+        listing = sorted(root.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return []
+    return [p.name for p in listing
+            if p.name != ignore and _CHANGELOG_LIKE_RE.match(p.name) and (p.is_symlink() or p.is_file())]
+
+
+def step_project_changelog(root: Path, plan: bool, template_one_goes: bool = False) -> tuple[Optional[Path], str]:
+    """Creates CHANGELOG.md in the project root when the switch `changelog` is `file` (the default) and
+    the project has no changelog -- in place and with --target alike. A file that is there stays as it
+    is, the template's own one included when step 8 left it standing (edited after the marker was
+    written); so does a project with a changelog under another name or letter case (`changelog.md`,
+    `CHANGES.md`, `HISTORY.md`, `NEWS` ...): a second file would only split the history.
+    `template_one_goes`: under --plan, step 8 announced the removal of the template's own CHANGELOG.md.
+    Returns (path written or None, message)."""
+    mode = _format_switch(root, "changelog", CHANGELOG_MODES, "file")
+    target = root / "CHANGELOG.md"
+    if mode != "file":
+        return None, f"CHANGELOG.md not created (changelog: {mode})"
+    goes = plan and template_one_goes
+    if target.exists() and not goes:
+        return None, "CHANGELOG.md already present, left unchanged"
+    found = changelog_like_files(root, ignore="CHANGELOG.md" if goes else "")
+    if found:
+        return None, f"CHANGELOG.md not created: the project already has {found[0]} as its changelog"
+    if plan:
+        return None, "CHANGELOG.md would be created (## [Unreleased])"
+    _write_new_file(target, changelog_starter(root))
+    return target, "CHANGELOG.md created (## [Unreleased])"
+
+
 def _step_own_docs(
     root: Path, plan: bool, cfg: ProjectConfig, template_commit: str, notes: list[str]
 ) -> list[str]:
@@ -2841,8 +3071,14 @@ def _step_own_docs(
             text = text.replace(token, value)
         if cfg["owner"] == "unknown":
             text = text.replace("Maintained by unknown.\n\n", "")
-        _write_new_file(root / "README.md", text)
-        return "README.md replaced with a project skeleton"
+        if (root / PROJECT_FORMATS_DIR / "project-readme.md").is_file():
+            readme_format = "minimal"  # the project's own format file decides; act-audit-docs checks against it
+            used = "project format file"
+        else:
+            readme_format = _format_switch(root, "readme-format", README_FORMATS, "standard")
+            used = f"format {readme_format}"
+        _write_new_file(root / "README.md", _readme_with_format(text, readme_format))
+        return f"README.md replaced with a project skeleton ({used})"
 
     def remove_changelog(plan: bool) -> str:
         if plan:
@@ -3394,7 +3630,16 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--update-channel", choices=UPDATE_CHANNELS, metavar="{release,latest}",
                         help="what act-update follows: release = newest stable release tag (default), "
                              "latest = tip of the template's default branch; instead of asking")
+    parser.add_argument("--methods", metavar="LIST",
+                        help="working methods to switch on (names from .act/methods/, comma-separated, or none) "
+                             "instead of asking; default none")
     args = parser.parse_args(argv)
+    methods_given: Optional[str] = None
+    if args.methods is not None:
+        methods_given = parse_methods_answer(args.methods)
+        if methods_given is None:
+            parser.error(f"--methods {args.methods!r}: not a method of this template; "
+                         f"known: {', '.join(_template_methods()) or 'none'}, or none")
     if args.profile and args.no_profile:
         parser.error("--profile and --no-profile contradict each other")
 
@@ -3500,7 +3745,7 @@ def main(argv: list[str]) -> int:
 
     cfg = step_config(root, interactive, notes,
                       {"language-docs": args.language_docs, "language-chat": args.language_chat},
-                      args.update_channel)
+                      args.update_channel, methods_given)
     if not (root / "docs" / "ai" / "config.md").is_file() and cfg["update_channel"] == "release":
         release_note = _clone_release_note(source_act.parent)
         if release_note:
@@ -3572,8 +3817,9 @@ def main(argv: list[str]) -> int:
     )
     # Fingerprint of every generated bridge exactly as written -- taken now, before this step's
     # carry-over below (Weg C / owner profile) may edit docs/ai/rules.md or coding_rules.md; step 9
-    # records these instead of re-hashing the edited files (see step_lock_and_cache). Nothing else
-    # between here and step 9 touches a generated file: step 7 writes .gitignore/.gitattributes,
+    # records these instead of re-hashing the edited files (see step_lock_and_cache). Besides that
+    # carry-over only the working-methods step (`step_methods`, after step 8) edits a generated file --
+    # the methods section of docs/project/coding_rules.md; step 7 writes .gitignore/.gitattributes,
     # step 8 README.md/CHANGELOG.md/LICENSE only.
     generated_hashes = {rel: actlib.generated_hash(path) for rel, path in generated.items() if path.is_file()}
     translate_path, translate_message = step_translate_note(root, plan, cfg)
@@ -3614,9 +3860,16 @@ def main(argv: list[str]) -> int:
     # step 8).
     own_root_files: list[Path] = []
     if is_target:
-        _print_step(8, "skipped in --target mode (docking onto an existing project, nothing of the template's own to decide)")
+        changelog_path, changelog_message = step_project_changelog(root, plan)
+        _print_step(8, "skipped in --target mode (docking onto an existing project, nothing of the template's own to decide); "
+                    + changelog_message)
+        if changelog_path is not None:
+            own_root_files.append(changelog_path)
     else:
         own_files_message = step_own_files(root, plan, interactive, cfg, verify_commit, notes)
+        changelog_path, changelog_message = step_project_changelog(
+            root, plan, template_one_goes="CHANGELOG.md would be removed" in own_files_message)
+        own_files_message += "; " + changelog_message
         _print_step(8, own_files_message)
         # Under --plan nothing is removed yet: a file step 8 only *would* remove is no commit path,
         # or step 10's preview would list a file step 8 just announced as gone.
@@ -3628,6 +3881,8 @@ def main(argv: list[str]) -> int:
                         *(root / rel for rel in _community_files(root)))
             if p.is_file() and p.relative_to(root).as_posix() not in planned_removals
         ]
+        if plan and changelog_message.startswith("CHANGELOG.md would be created"):
+            own_root_files.append(root / "CHANGELOG.md")  # the template's one goes, the project's new one replaces it
         # An untracked file under .github/ with no template marker is the project's own: init never owned
         # it, so it is not committed here -- but it would otherwise sit there untracked without a word.
         # A file the clone already tracks (detached-HEAD route) is in history anyway, so it is not named.
@@ -3646,6 +3901,13 @@ def main(argv: list[str]) -> int:
                 + ", ".join(unmarked) + ". Add them yourself (`git add`) if they belong to the project."
             )
 
+    try:
+        methods_line = step_methods(root, plan, cfg.get("methods", METHODS_DEFAULT), methods_given is not None)
+        if methods_line:
+            print(f"[act]   {methods_line}")
+    except (OSError, UnicodeDecodeError) as exc:
+        notes.append(f"Working methods were not entered ({exc.__class__.__name__}: {exc}); "
+                     f"run {rules.SYNC_METHODS_COMMAND} after fixing docs/ai/config.md.")
     _print_step(9, step_lock_and_cache(root, plan, template_origin, template_commit, generated, copies, generated_hashes,
                                         lock_existed_before=lock_existed_before,
                                         rules_md_existed_before=rules_md_existed_before,

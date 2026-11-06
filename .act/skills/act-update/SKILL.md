@@ -36,6 +36,15 @@ and an unusable value stop with a hint to use `--ref` or `latest`.
 4. The script itself refreshes template-owned skill copies (unchanged → replaced, project-edited →
    kept and reported), runs any due migrations, and hands off to `doctor.py` — its findings land in
    `docs/ai/inbox/`, never as a silent fix.
+   A project from before the changelog switch is offered `CHANGELOG.md` this way: the migration
+   `007-changelog-file` is listed in the plan (`would run: 007-changelog-file`) and, once the update is agreed,
+   creates the file with an empty `## [Unreleased]` (never over an existing one, never with `changelog: release-notes-only`
+   or `off` in `docs/ai/config.md` § Formats). A project that already keeps its changelog under another name or letter case (`changelog.md`,
+   `CHANGES.md`, `HISTORY.md`, `NEWS` ...) gets no second file; the migration says which one it found. Tell the human
+   before step 3 that adding the row `changelog` with the value `off` under § Formats in `docs/ai/config.md` first
+   declines it (a config from before the switch has no such row, and `config.py` refuses to set a missing row:
+   add the row by hand, `.act/skeleton/config.md` shows its shape); the file can be deleted afterwards and is not
+   offered again.
 5. `.act-lock.json` is rewritten and a commit made automatically, unless `--no-commit` was given —
    then commit by hand after review.
 6. A journal line with the base-commit change and the finding count (`R-work-record-now`).

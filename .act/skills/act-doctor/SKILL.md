@@ -27,7 +27,9 @@ project docs (`R-docs-order`, switch `docs-order` in `docs/ai/config.md` § Chec
 `docs/project/` of five or more entries without `README.md`, a file its `README.md` does not name, an index
 line without a file, a dead relative link, a concept whose questions are all answered, and the size
 of the always-loaded own rules (`own-rules-budget` in `docs/ai/config.md`, default 6000 characters; a warning, with
-the lines that read like history). `update.py`
+the lines that read like history), and the working methods (`methods` in `docs/ai/config.md` § Scope): a name
+no `.act/methods/` or `docs/ai/local/methods/` file backs, and a methods section in `docs/project/coding_rules.md`
+that does not match the row (fixed by `python .act/scripts/rules.py --sync-methods`). `update.py`
 calls this itself as its step 8 — running it again by hand afterward is redundant unless something
 was fixed in between.
 

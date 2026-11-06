@@ -894,6 +894,8 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("profile", "Scope", values=("minimal", "standard", "full"), default="full", effect=nxt)
     add("exclude", "Scope", pattern=r"none|\(not set\)|[\w./-]+(?:\s*,\s*[\w./-]+)*",
         default="none", effect=nxt)
+    add("methods", "Scope", pattern=r"none|\(not set\)|`?[\w-]+`?(?:\s*,\s*`?[\w-]+`?)*", default="none",
+        effect=nxt)
     add("board", "Board", values=("docs", "shared", "local"), default="docs")
     add("board-others", "Board", values=_ON_OFF, default="")  # empty: on with mode team, else off
     add("inbox-decisions", "Inbox", values=("immediate", "at-start"), default="immediate", effect=nxt)
@@ -912,6 +914,11 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("target-branch", "Git hosting", default="auto")
     add("forge", "Git hosting", values=("auto", "github", "gitlab"), pattern=r"\(not set\)", default="auto")
     add("forge-host", "Git hosting", default="auto")
+    add("commit-format", "Formats", values=("auto", "conventional", "plain"), default="auto")
+    add("changelog", "Formats", values=("file", "release-notes-only", "off"), default="file")
+    add("changelog-format", "Formats", values=("keep-a-changelog", "at-release"), default="keep-a-changelog")
+    add("release-notes-format", "Formats", values=("standard", "changelog-copy"), default="standard")
+    add("readme-format", "Formats", values=("standard", "with-toc", "minimal"), default="standard")
     for check in ("template-write-guard", "session-start-refresh", "orchestrator-rules",
                   "worker-nesting-guard", "worker-write-scope", "worker-scope-overlap",
                   "commit-pathspec", "git-reset-hard", "git-discard", "git-metadata-guard",

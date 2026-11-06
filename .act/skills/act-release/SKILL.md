@@ -6,8 +6,17 @@ description: Use when asked to prepare a release, publish a new version, tag a v
 # Prepare a release
 
 Prepares a new version: check preconditions, pick a version number, generate a readable changelog,
-set the version, tag it. An automated release process (CI pipeline, semantic-release) gets
-triggered, not rebuilt — this skill then covers only its preconditions.
+set the version, tag it, and — after an explicit yes — publish the release entry on GitHub or GitLab.
+An automated release process (CI pipeline, semantic-release) gets triggered, not rebuilt — this skill
+then covers only its preconditions.
+
+**Formats.** The layout of the changelog and of the release notes comes from the project's format files:
+`docs/project/formats/changelog.md` and `.../release-notes.md` when they exist, otherwise the preset named by
+`changelog-format` and `release-notes-format` in `docs/ai/config.md` § Formats, taken from
+`.act/formats/changelog.md` and `.act/formats/release-notes.md` (a missing row, an empty value, `auto` or an unknown name is the default
+preset). **Where the changelog goes** is the switch `changelog` there: `file` (default) writes it into
+`CHANGELOG.md` in the project root; `release-notes-only` keeps no file; `off` keeps no changelog at all.
+Say which of the three applies when you start, so the human sees where the text will land.
 
 1. **Check preconditions** — `git status` clean; required checks green (`docs/ai/config.md` §
    commands, plus E2E for UI-relevant changes); `docs/ai/work/backlog/` sighted for open critical
@@ -36,15 +45,51 @@ triggered, not rebuilt — this skill then covers only its preconditions.
    MAJOR, new backward-compatible functionality MINOR, a pure fix PATCH. An unclear break goes to
    the human as a question, not a guess.
 5. **Generate the changelog** from the commits since the last tag (`git log <last-tag>..HEAD`) —
-   readable, what users notice, features/fixes/breaking changes listed separately; append the
-   lower-severity checklist from step 3 (when it ran) under its own heading.
-6. **Set the version in one place** and file the changelog — no other functional change in this
-   commit.
+   readable, what users notice, features/fixes/breaking changes listed separately, in the layout of the
+   changelog format; append the lower-severity checklist from step 3 (when it ran) under its own heading.
+   - `changelog: file` — into `CHANGELOG.md`: with a format that collects entries as you go
+     (`keep-a-changelog`), turn the `[Unreleased]` section into `[X.Y.Z] - <date>`, add what the commits show
+     and the section lacks, open a new empty `[Unreleased]`; with `at-release` write the whole section. No
+     `CHANGELOG.md` yet: create it from the starter of the changelog format first (`act-update` offers the file
+     to older projects too).
+   - `release-notes-only` — no `CHANGELOG.md`; write the notes in the release notes format and keep them in the
+     tag message (step 7) and the release entry (step 9) only.
+   - `off` — no changelog and no notes kept; the tag message is one line. Step 9 still needs a text, so it is
+     written then, from the commits, in the release notes format, and only when the human asks for the entry.
+6. **Set the version in one place** and file the changelog (`CHANGELOG.md` is part of this commit) — no other
+   functional change in this commit.
 7. **Commit and tag** — one commit for the version bump (`R-code-commit`), then the tag
    (`vX.Y.Z`). With a message file use `git tag -a --cleanup=verbatim -F <file>`: the default
    cleanup drops every line starting with `#`, i.e. all Markdown headings. Before any push compare
    `git for-each-ref refs/tags/<tag> --format="%(contents)"` with the file.
 8. **Record it** in `docs/ai/work/ledger/` (version, date, summary), then `act-commit` unless the
    tag commit already covers it.
+9. **Publish the release entry** (GitHub or GitLab; last step, after the tag is made).
+   1. **Skip it** when the project's own pipeline already creates releases — step 2 found one, or one of these
+      exists: a semantic-release or release-please configuration (`.releaserc*`, `release.config.*`, a
+      `release` key or the dependency in `package.json`, `release-please-config.json`), a CI workflow that runs
+      on a pushed tag and creates the release (`gh release create`, `softprops/action-gh-release`,
+      `actions/create-release`, a GitLab job with a `release:` keyword). Name the file that made you skip and
+      stop; publishing twice would fail or duplicate.
+   2. **Access** — `python .act/scripts/integrations.py status`, as in `act-pr` step 1. No token in chat.
+   3. **Push** — the tag must be on the remote before the entry is made, or the host would create it at the
+      head of its default branch. Ask "push the version commit and tag `<tag>` to `<remote>`?" and push only
+      after the human's own "yes" (never a worker).
+   4. **Text** — write the notes to a file under `.act-local/` (never into the repo): with `changelog: file`
+      the changelog section of this version (a `changelog-copy` format) or the notes in the release notes
+      format built from it; title `<project name> X.Y.Z` unless the format says otherwise.
+   5. **Preview** — `python .act/scripts/forge.py create-release --tag <tag> --title "<title>" --body-file
+      <file> --show-body` without `--apply` sends nothing and shows what would be sent. A tag with a
+      pre-release suffix (`-rc.1`, `-beta`) is published as a pre-release by itself (GitLab has no such flag;
+      the preview says so). The preview also names the tag check that `--apply` runs first. Show it and offer:
+      **publish** · **cancel**.
+   6. **Publish** — only after an explicit "yes" for exactly this preview: the same command plus `--apply`
+      (one request, after a local `git ls-remote` for the tag: no token, no API call; a tag that is not on the remote
+      stops the run with exit 2, so push it and run the command again). The way back is deleting the release entry in the host's web interface; the tag stays.
+   7. **Verify** — `python .act/scripts/forge.py releases --limit 5` must list the tag with the right title
+      (`R-work-evidence`); show the link. Record the link, the date and the "yes" in the journal
+      (`R-safe-approval`).
+   A failure of `forge.py` (exit 2, one line) is reported as it is; the release stays unpublished, tag and
+   changelog are not undone.
 
 No release on a red required check, not even "just this once."

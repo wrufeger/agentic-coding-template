@@ -43,6 +43,7 @@
 #     issues [--state open|closed|all] [--mine] [--label L] [--limit 15]   (--mine needs the token)
 #     issue N
 #     prs [--state open|closed|all] [--limit 15]
+#     releases [--limit 15]               published releases: tag, title, pre-release flag (GitLab: no flag)
 #     branch-name N                       bugfix/<n>-<short-title> for a `bug`, else feature/<n>-<...>
 #   Write (without --apply: preview only, nothing is written; --show-body prints the full text):
 #     create-issue --title T --body-file F [--label L ...] [--show-body] [--apply]
@@ -50,6 +51,11 @@
 #     close-issue N [--apply]              (GitHub: refuses a pull request; checked with --apply)
 #     create-pr --source B --target B --title T --body-file F [--draft] [--show-body] [--apply]
 #     close-pr N [--apply]
+#     create-release --tag T --title T --body-file F [--prerelease] [--show-body] [--apply]
+#                                         publishes a release for a tag that already exists on the remote
+#                                         (push it first); a tag with a semantic-version suffix such as
+#                                         -rc.1 or -beta is a pre-release by itself; with --apply a local
+#                                         `git ls-remote` looks for the tag first (none: exit 2), then one request
 #
 #   Examples:
 #     python .act/scripts/forge.py detect
@@ -81,7 +87,7 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -177,6 +183,7 @@ class WriteAction:
     path: str
     payload: dict[str, Any]
     what: str  # e.g. "issue", "comment", "pull request"
+    note: str = ""  # one extra line for the preview, when the host cannot do something that was asked for
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +875,69 @@ def plan_close_pr(forge: Forge, number: int) -> WriteAction:
                        "merge request")
 
 
+_TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+/-]{0,99}")
+_PRERELEASE_TAG_RE = re.compile(r"v?\d+\.\d+\.\d+-[0-9A-Za-z][0-9A-Za-z.-]*")  # semantic version with a pre-release part
+
+
+def is_prerelease_tag(tag: str) -> bool:
+    return _PRERELEASE_TAG_RE.fullmatch(tag) is not None
+
+
+def plan_create_release(forge: Forge, tag: str, title: str, body: str, prerelease: bool) -> WriteAction:
+    """The release entry for a tag that exists on the remote already. GitHub would create a missing tag
+    at the head of the default branch, GitLab needs a ref for it: `require_remote_tag` refuses a missing
+    tag before the request, because the skill pushes the tag first and a release must never invent one."""
+    if _TAG_RE.fullmatch(tag) is None or ".." in tag:
+        raise ForgeError(f"{tag!r} is not a usable tag name (letters, digits and . _ + / -, at most 100 characters)")
+    if not title.strip():
+        raise ForgeError("the release title is empty")
+    flagged = prerelease or is_prerelease_tag(tag)
+    if forge.kind == "github":
+        payload: dict[str, Any] = {"tag_name": tag, "name": title, "body": body, "draft": False, "prerelease": flagged}
+        return WriteAction("POST", f"{_project_ref(forge)}/releases", payload, "release")
+    payload = {"tag_name": tag, "name": title, "description": body}
+    note = "GitLab has no pre-release flag: the release is published as a normal one" if flagged else ""
+    return WriteAction("POST", f"{_project_ref(forge)}/releases", payload, "release", note)
+
+
+def tag_check_note(forge: Forge, tag: str) -> str:
+    return (f"with --apply, `git ls-remote` first looks for refs/tags/{tag} on remote '{forge.remote.name}' "
+            "(a local git call: no request to the host, no token); a missing tag stops the run")
+
+
+def require_remote_tag(root: Path, forge: Forge, tag: str) -> None:
+    """Stop with a ForgeError unless the tag exists on the remote. Only `git ls-remote` runs: no API
+    request and no token, so the check works before the token is even looked at."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"  # a credential prompt would hang the run
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+    ref = f"refs/tags/{tag}"
+    name = forge.remote.name
+    try:
+        proc = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", name, ref], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=60, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ForgeError(f"cannot look for tag {tag!r} on remote '{name}': {exc}") from exc
+    if proc.returncode != 0:
+        reason = (proc.stderr.strip().splitlines() or ["no message"])[-1][:200]
+        raise ForgeError(f"cannot look for tag {tag!r} on remote '{name}' (git ls-remote exit {proc.returncode}): {reason}")
+    found = {line.split()[1].removesuffix("^{}") for line in proc.stdout.splitlines() if len(line.split()) >= 2}
+    if ref not in found:
+        raise ForgeError(f"tag {tag!r} is not on remote '{name}': push it first (git push {name} {tag}); a release "
+                         "request would otherwise create the tag at the head of the default branch")
+
+
+def list_releases(forge: Forge, limit: int) -> list[dict[str, Any]]:
+    rows = _collect(forge, f"{_project_ref(forge)}/releases", {}, min(PER_PAGE_MAX, limit), limit, "releases")
+    found = []
+    for raw in rows:
+        data = require_dict(raw, "a release")
+        found.append({"tag": str(data.get("tag_name", "")), "title": str(data.get("name") or ""),
+                      "prerelease": bool(data.get("prerelease", False)),
+                      "url": str(data.get("html_url") or (data.get("_links") or {}).get("self") or "")})
+    return found
+
+
 def summarize_payload(payload: dict[str, Any]) -> str:
     parts: list[str] = []
     for key, value in payload.items():
@@ -888,7 +958,8 @@ def long_texts(payload: dict[str, Any]) -> list[tuple[str, str]]:
 
 def result_url(forge: Forge, action: WriteAction, answer: Any, number: Optional[int]) -> str:
     data = answer if isinstance(answer, dict) else {}
-    url = data.get("html_url") or data.get("web_url")
+    links = data.get("_links")
+    url = data.get("html_url") or data.get("web_url") or (links.get("self") if isinstance(links, dict) else None)
     if url:
         return str(url)
     if forge.kind == "gitlab" and action.what == "comment" and number is not None:
@@ -974,6 +1045,12 @@ def cmd_issues(forge: Forge, out: Output, args: argparse.Namespace) -> None:
     out.emit([asdict(i) for i in items], "\n".join(item_line(i) for i in items) or "(no issues)")
 
 
+def cmd_releases(forge: Forge, out: Output, args: argparse.Namespace) -> None:
+    rows = list_releases(forge, args.limit)
+    text = "\n".join(f"{r['tag']}  {r['title']}" + ("  [pre-release]" if r["prerelease"] else "") for r in rows)
+    out.emit(rows, text or "(no releases)")
+
+
 def cmd_prs(forge: Forge, out: Output, args: argparse.Namespace) -> None:
     items = list_prs(forge, args.state, args.limit)
     label = "pull requests" if forge.kind == "github" else "merge requests"
@@ -992,6 +1069,8 @@ def run_write(forge: Forge, out: Output, action: WriteAction, apply: bool, numbe
         if forge.kind_reason.startswith("probe"):
             lines.append("the hoster probe of this unknown host did send read-only GET requests, without a token")
         lines += [f"{action.method} {url}", f"payload: {summary}", f"access: {access}"]
+        if action.note:
+            lines.append(f"note: {action.note}")
         data: dict[str, Any] = {"applied": False, "method": action.method, "url": url, "payload": summary, "access": access}
         if show_body:
             data["payload_full"] = action.payload
@@ -1015,8 +1094,8 @@ def dispatch(args: argparse.Namespace, root: Path) -> None:
         return
     forge, notes = build_forge(root, args.remote)
     command = args.command
-    if forge.token and forge.token_block and (command in ("project", "default-branch", "issue", "prs", "branch-name")
-                                              or (command == "issues" and not args.mine)):
+    reads = ("project", "default-branch", "issue", "prs", "branch-name", "releases")
+    if forge.token and forge.token_block and (command in reads or (command == "issues" and not args.mine)):
         # this read runs without the token: say so, or a 401/404 on a private project looks unexplained
         notes.append(f"the access token ({forge.token_source}) is not sent: {forge.token_block}")
     for note in notes:
@@ -1057,6 +1136,15 @@ def dispatch(args: argparse.Namespace, root: Path) -> None:
         run_write(forge, out, action, args.apply, show_body=args.show_body)
     elif command == "close-pr":
         run_write(forge, out, plan_close_pr(forge, args.number), args.apply)
+    elif command == "releases":
+        cmd_releases(forge, out, args)
+    elif command == "create-release":
+        action = plan_create_release(forge, args.tag, args.title, _read_body(args.body_file), args.prerelease)
+        if args.apply:
+            require_remote_tag(root, forge, args.tag)  # before the token is looked at, and before any request
+        else:
+            action = replace(action, note="; ".join(n for n in (action.note, tag_check_note(forge, args.tag)) if n))
+        run_write(forge, out, action, args.apply, show_body=args.show_body)
 
 
 def positive(text: str) -> int:
@@ -1097,6 +1185,8 @@ def build_parser() -> argparse.ArgumentParser:
     prs = sub.add_parser("prs", help="list pull/merge requests")
     prs.add_argument("--state", choices=states, default="open")
     prs.add_argument("--limit", type=positive, default=15)
+    releases = sub.add_parser("releases", help="list published releases")
+    releases.add_argument("--limit", type=positive, default=15)
     sub.add_parser("branch-name", help="branch name for an issue").add_argument("number", type=positive)
 
     create_issue = sub.add_parser("create-issue", help="create an issue (preview without --apply)")
@@ -1116,9 +1206,15 @@ def build_parser() -> argparse.ArgumentParser:
     create_pr.add_argument("--draft", action="store_true")
     close_pr = sub.add_parser("close-pr", help="close a pull/merge request (preview without --apply)")
     close_pr.add_argument("number", type=positive)
-    for name in ("create-issue", "comment", "close-issue", "create-pr", "close-pr"):
+    create_release = sub.add_parser("create-release", help="publish a release for an existing tag (preview without --apply)")
+    create_release.add_argument("--tag", required=True, help="the tag, already pushed to the remote")
+    create_release.add_argument("--title", required=True)
+    create_release.add_argument("--body-file", required=True, help="file with the release notes, '-' for stdin")
+    create_release.add_argument("--prerelease", action="store_true",
+                                help="mark as pre-release (a tag like v1.2.0-rc.1 is one without this)")
+    for name in ("create-issue", "comment", "close-issue", "create-pr", "close-pr", "create-release"):
         sub.choices[name].add_argument("--apply", action="store_true", help="really send the request")
-    for name in ("create-issue", "comment", "create-pr"):
+    for name in ("create-issue", "comment", "create-pr", "create-release"):
         sub.choices[name].add_argument("--show-body", action="store_true",
                                        help="in the preview, print the full text instead of only its size")
     return parser

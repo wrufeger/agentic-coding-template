@@ -23,6 +23,9 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
 - `--with-topics`: also include the topic rules under `docs/ai/local/rules/topics/` — a topic of
   the project's own as `[+] <name>.md`, an override of a template topic as `[~] <name>.md` with a
   fingerprint of the template topic it overrides. Whole files, so it forces a `.zip` as well.
+- `--with-formats`: also include the project's format files from `docs/project/formats/` (`commit.md`,
+  `changelog.md`, `release-notes.md`, `project-readme.md` — whole files, so it forces a `.zip` too). The folder's
+  own `README.md` stays home. The import writes them to the same folder in the other project.
 - `--strict`: abort instead of substituting a placeholder — use this when the file is headed to
   people outside the project, not just another one of the human's own.
 - `--out PATH`: write there instead of the default `.act-local/export/act-settings-<date>.md`/
@@ -41,7 +44,7 @@ against the template (rules/coding: own rules, switched-off groups, `replaces` o
 ## Steps
 
 1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, topics, an own
-   role, or an own skill is a deliberate choice, not a default. Ask separately whether this run
+   role, an own skill or the format files is a deliberate choice, not a default. Ask separately whether this run
    goes to a file/another project (`--out` or the default location) or to the Owner's own profile
    (`--profile`) — the two are mutually exclusive.
 2. Run the script. It scans every value it writes for credentials, mail addresses, IPs, local

@@ -229,6 +229,7 @@ _FORMAT_TEXT = {
     "feedback-scope": "a comma list of `a`, `b`, `c` such as `a,b,c`",
     "archive-compact": "`<days>d <files>` such as `30d 300`",
     "forge": "`(not set)`",
+    "methods": "`none`, or a comma list of method names such as `test-first, spec-first` (list: `.act/methods/README.md`)",
     "exclude": "`none`, or a comma list of template skill, role, rule file and topic names such as "
                "`act-seo, orchestrator/30-cost.md`",
 }

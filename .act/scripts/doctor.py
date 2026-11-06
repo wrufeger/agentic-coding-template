@@ -94,6 +94,10 @@
 #               skips it), with the characters, the budget, about 0.386 tokens per character and up to
 #               five lines that read like history (a date, an entry identifier, "formerly ... since
 #               ..."). Counted like any finding, never a block.
+#          24. the working methods (`methods` in docs/ai/config.md, files in .act/methods/): an entry that
+#               is no method name, a name no file backs (misspelled or removed), and a methods section in
+#               docs/project/coding_rules.md that does not match the row — with the command that enters it
+#               (rules.py --sync-methods).
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -134,7 +138,7 @@ import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -200,6 +204,7 @@ KIND_LABELS: dict[str, str] = {
     "unknown-tool": "Unknown tool id(s) in docs/ai/config.md (`tools`)",
     "config-key": "Outdated keys in docs/ai/config.md",
     "config-value": "Invalid values in docs/ai/config.md",
+    "methods": "Working methods (`methods` in docs/ai/config.md) that are unknown or not entered in the coding rules",
     "status-value": "Unknown `status:` values in entry headers",
     "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
@@ -244,6 +249,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "unknown-tool": "Unbekannte Werkzeugkennung(en) in docs/ai/config.md (`tools`)",
     "config-key": "Veraltete Schlüssel in docs/ai/config.md",
     "config-value": "Ungültige Werte in docs/ai/config.md",
+    "methods": "Arbeitsmuster (`methods` in docs/ai/config.md), die unbekannt oder nicht in den Coding-Regeln eingetragen sind",
     "status-value": "Unbekannte `status:`-Werte in Eintragsköpfen",
     "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit Migration 001-one-inbox)",
     "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
@@ -317,6 +323,7 @@ class TemplateCorpus:
     ids: dict[str, tuple[Path, str]]        # id -> (source file, origin)
     retired: dict[str, list[Path]]          # id -> files whose header lists it as retired
     groups: dict[str, rules.TemplateGroup]  # id -> the group itself, for hashing its body
+    unreadable: list[tuple[Path, str]] = field(default_factory=list)  # (file, reason): present, but not readable UTF-8
 
 
 def _read_retired_ids(path: Path) -> list[str]:
@@ -342,7 +349,8 @@ def _template_files(root: Path, area_name: str) -> list[tuple[Path, str]]:
     default — the same precedence actlib.resolve() uses everywhere else."""
     act_dir = root / ".act"
     template_glob = sorted((act_dir / "rules").rglob("*.md")) if area_name == "core" \
-        else sorted((act_dir / "coding").glob("*.md"))
+        else sorted([*(act_dir / "coding").glob("*.md"),
+                     *(p for p in (act_dir / rules.METHODS_DIR).glob("*.md") if p.stem.lower() != "readme")])
     out: list[tuple[Path, str]] = []
     seen_rel: set[str] = set()
     for path in template_glob:
@@ -360,14 +368,19 @@ def _build_corpus(root: Path, area_name: str) -> TemplateCorpus:
     ids: dict[str, tuple[Path, str]] = {}
     retired: dict[str, list[Path]] = {}
     groups: dict[str, rules.TemplateGroup] = {}
+    unreadable: list[tuple[Path, str]] = []
     for path, origin in _template_files(root, area_name):
-        tset = rules.parse_template_set(path, origin)
+        try:
+            tset = rules.parse_template_set(path, origin)
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append((path, f"{exc.__class__.__name__}: {exc}"))
+            continue
         for gid, group in tset.groups.items():
             ids.setdefault(gid, (path, origin))
             groups.setdefault(gid, group)
         for rid in _read_retired_ids(path):
             retired.setdefault(rid, []).append(path)
-    return TemplateCorpus(ids=ids, retired=retired, groups=groups)
+    return TemplateCorpus(ids=ids, retired=retired, groups=groups, unreadable=unreadable)
 
 
 def _off_and_override_entries(project: rules.ProjectFile) -> list[tuple[str, int, str]]:
@@ -397,6 +410,12 @@ def check_dead_and_stale(
     findings: list[Finding] = []
     effective: list[EffectiveOverride] = []
     candidates: dict[str, str] = {}
+
+    for bad_path, reason in corpus.unreadable:
+        findings.append(Finding(
+            path=_rel(bad_path, root), line=None, kind="validate",
+            message=f"rule set file cannot be read as UTF-8 ({reason}); its rules are not checked",
+        ))
 
     for gid, line, kind in _off_and_override_entries(project):
         if gid in corpus.ids:
@@ -463,7 +482,15 @@ def check_disabled_use_missing(root: Path, project: rules.ProjectFile) -> list[F
     for pset in project.sets:
         if pset.enabled:
             continue  # the enabled case is already covered by rules.py --validate
-        if rules.resolve_template_set(pset) is None:
+        try:
+            found = rules.resolve_template_set(pset)
+        except (OSError, UnicodeDecodeError) as exc:
+            findings.append(Finding(
+                path=project_rel, line=pset.line, kind="use-missing",
+                message=f"switched-off use: target cannot be read: {pset.path} ({exc.__class__.__name__}: {exc})",
+            ))
+            continue
+        if found is None:
             findings.append(Finding(
                 path=project_rel, line=pset.line, kind="use-missing",
                 message=f"switched-off use: target not found: {pset.path}",
@@ -1190,6 +1217,15 @@ def check_config_values(root: Path) -> list[Finding]:
                 message=f"`{key}` is {value!r} — use {allowed}",
             ))
     return findings
+
+
+def check_methods(root: Path) -> list[Finding]:
+    """The working methods (`methods` row of docs/ai/config.md, .act/methods/): an entry that is no
+    method name, a name without a file (dead or misspelled), and a methods section in
+    docs/project/coding_rules.md that does not match the row — each with the command that fixes it
+    (rules.method_findings). Nothing for a project that uses no method."""
+    return [Finding(path=path, line=None, kind="methods", message=message)
+            for path, message in rules.method_findings(root)]
 
 
 _UNRESOLVED_RE = re.compile(r"^(?P<path>.*?):(?P<line>\d+): (?P<message>.*)$")
@@ -2617,6 +2653,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_unknown_tools(root)
     findings += check_legacy_config_keys(root)
     findings += check_config_values(root)
+    findings += check_methods(root)
     findings += check_imports(root)
     findings += check_worker_rules(root)
     findings += check_status_values(root)

@@ -36,7 +36,10 @@ is reported, never silent.
    for `apply --resolve` (step 7) to file it away by hand. Writes what is now clear:
    rules/coding into `docs/ai/rules.md` / `docs/project/coding_rules.md`; bundled scripts,
    checklists, agents and skills into `docs/ai/local/<area>/<name>`, own topic rules and topic
-   overrides into `docs/ai/local/rules/topics/<name>.md` — **show every such file to the
+   overrides into `docs/ai/local/rules/topics/<name>.md`, the project's format files (only `commit.md`,
+   `changelog.md`, `release-notes.md`, `project-readme.md`) into `docs/project/formats/<name>` — a format file
+   replaces the template's format for that subject, so it is meant to be there and is not reported as shadowing; an
+   existing one that differs is a collision and stays — **show every such file to the
    human before writing it** (the script already asks unless `--yes`; never pass `--yes` without
    the human having seen the list first, and never in a non-interactive run without it).
 4. An agent or skill that clashes with a unit this template ships (by file/folder name or frontmatter

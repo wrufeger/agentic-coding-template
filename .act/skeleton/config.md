@@ -51,6 +51,7 @@ without one. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
 | :--- | :--- |
 | `profile` | full |
 | `exclude` | none |
+| `methods` | <methods> |
 
 `profile`: `minimal` \| `standard` \| `full`. How much of the template's skills and roles this project
 loads; every skill description and every rule file is part of each session start, so fewer of them is a
@@ -71,6 +72,13 @@ file stays under `.act/`, but its line in `docs/ai/rules.md` loses the `@` and C
 it (so do the sub-agents); an excluded topic is no longer named at the session start. `shared/10-safety.md`
 cannot be excluded (a warning, the entry is ignored), and an unknown name only gives a warning. The checks under
 § Checks stay in force either way: their blocks do not depend on rule text.
+
+`methods`: `none`, or a comma-separated list of working methods from `.act/methods/` (`test-first`, `spec-first`,
+`simple-changes`; what each asks: `.act/methods/README.md`; a project's own: `docs/ai/local/methods/<name>.md`).
+Each named method is written into `docs/project/coding_rules.md` as an imported rule set (a section marked
+`<!-- act:methods -->`), so the orchestrator and every worker load it; uncheck a single group there to switch it
+off. The row decides: after a change run `python .act/scripts/rules.py --sync-methods`. `act-doctor` reports an
+unknown name and a section that does not match the row. `init` asks once; the default is `none`.
 
 The session start applies a change: it removes the copies of the skills and roles that are left out
 (`.claude/skills/`, `.agents/skills/`, `.claude/agents/`; a copy you edited stays and is reported), switches
@@ -240,6 +248,27 @@ proxies), and never over `http://` except to loopback. Enter a host only after t
 this keeps a global token from going to a foreign host. Without it reads run without a token; `whoami`,
 `issues --mine` and every write stop with a hint before any request. A confirmed host reached over
 `http://` gets the same treatment until its address is `https://`.
+
+## Formats
+
+| Key | Value |
+| :--- | :--- |
+| `commit-format` | auto |
+| `changelog` | file |
+| `changelog-format` | keep-a-changelog |
+| `release-notes-format` | standard |
+| `readme-format` | standard |
+
+How the assistant writes commit messages, the changelog, release notes and the README. Each `*-format` row picks
+a preset from the template's default file in `.act/formats/` (`commit.md`, `changelog.md`, `release-notes.md`,
+`project-readme.md`; an empty value, `auto` and an unknown name mean that file's default). A file of the same name
+under `docs/project/formats/` replaces the template file completely and wins over the row. Values:
+`commit-format`: `auto` (the repo's own style) \| `conventional` \| `plain`. `changelog`: `file` (a `CHANGELOG.md`
+in the project root, created by `init`, offered to older projects by `act-update`) \| `release-notes-only` (no
+file; `act-release` keeps the notes in the tag and the release entry) \| `off`. `changelog-format`:
+`keep-a-changelog` (entries are added under `[Unreleased]` as commits are made) \| `at-release` (written by
+`act-release` only). `release-notes-format`: `standard` \| `changelog-copy`. `readme-format`: `standard` \|
+`with-toc` \| `minimal` (read by `init` when it writes the README, and by `act-audit-docs`).
 
 ## Checks
 

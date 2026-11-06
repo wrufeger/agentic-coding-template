@@ -702,12 +702,14 @@ positional arguments:
     issues          list issues
     issue           show one issue
     prs             list pull/merge requests
+    releases        list published releases
     branch-name     branch name for an issue
     create-issue    create an issue (preview without --apply)
     comment         comment on an issue (preview without --apply)
     close-issue     close an issue (preview without --apply)
     create-pr       create a pull/merge request (preview without --apply)
     close-pr        close a pull/merge request (preview without --apply)
+    create-release  publish a release for an existing tag (preview without --apply)
 
 options:
   -h, --help        show this help message and exit
@@ -821,7 +823,7 @@ Call: direct
 ```text
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
                [--no-profile] [--profile] [--language-docs CODE] [--language-chat CODE]
-               [--update-channel {release,latest}]
+               [--update-channel {release,latest}] [--methods LIST]
 
 Turn a template checkout into a project, or dock onto an existing directory (--target). Inside a
 project that is already set up, only --profile runs (see there); bringing .act/ up to date is
@@ -849,6 +851,8 @@ options:
   --update-channel {release,latest}
                         what act-update follows: release = newest stable release tag (default),
                         latest = tip of the template's default branch; instead of asking
+  --methods LIST        working methods to switch on (names from .act/methods/, comma-separated,
+                        or none) instead of asking; default none
 ```
 
 ## `integrations.py`
@@ -932,7 +936,7 @@ Call: direct
 
 ```text
 usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --add-missing |
-                --add-new-coding | --imports | --worker] [--from FILE]
+                --add-new-coding | --sync-methods | --imports | --worker] [--from FILE]
                 [id]
 
 Read the effective coding/core rules after the project's checkboxes and replacements are applied.
@@ -950,6 +954,9 @@ options:
                         entered
   --add-new-coding      list in docs/project/coding_rules.md the rule sets and groups of
                         .act/coding/ it does not know yet (--area coding is implied)
+  --sync-methods        bring the methods section of docs/project/coding_rules.md in line with the
+                        `methods` row of docs/ai/config.md (--area coding is implied); exit 1 if
+                        something could not be entered
   --imports             files Claude Code loads through @-imports with their size in characters
                         and totals, exit 1 on any it cannot follow
   --worker              the parts a worker is handed instead of CLAUDE.md: size and sources per
@@ -1126,8 +1133,8 @@ Call: skill `act-export-settings`
 
 ```text
 usage: settings_export.py [-h] [--all] [--with-scripts] [--with-checklists] [--with-agents]
-                          [--with-skills] [--with-topics] [--with-files] [--strict] [--out PATH]
-                          [--profile]
+                          [--with-skills] [--with-topics] [--with-formats] [--with-files]
+                          [--strict] [--out PATH] [--profile]
 
 Write the project's rule deviations (and, with a switch, local scripts/checklists) to a portable
 settings file.
@@ -1141,8 +1148,10 @@ options:
   --with-skills      include docs/ai/local/skills/, the project's own skills (forces --with-files)
   --with-topics      include docs/ai/local/rules/topics/, own topic rules and overrides of
                      template topics (forces --with-files)
+  --with-formats     include the project's format files, docs/project/formats/ (forces --with-
+                     files)
   --with-files       write a .zip even without --with-scripts/--with-checklists/--with-
-                     agents/--with-skills/--with-topics
+                     agents/--with-skills/--with-topics/--with-formats
   --strict           abort on any finding instead of substituting a placeholder
   --out PATH         output path (default: .act-local/export/act-settings-<date>.md|.zip)
   --profile          write to the Owner's profile (platform config dir) instead of --out/the

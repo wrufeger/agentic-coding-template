@@ -18,7 +18,7 @@
 #              a settings file is written.
 #
 #          Areas are logical categories, not tool paths (`rules`, `coding`, `agents`, `skills`,
-#          `scripts`, `checklists`, `topics`). Two of them
+#          `scripts`, `checklists`, `topics`, `formats`). Two of them
 #          (`rules`, `coding`) are what this build stage's exporter fills in; the parser reads
 #          every area structurally the same way ("[symbol] id — inline" + an optional indented or
 #          fenced body), so an area this build does not yet *write* (agents, skills, ...) still
@@ -46,7 +46,7 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 SYMBOLS = ("=", "~", "-", "+")  # unchanged, overridden, switched off, own addition
-KNOWN_AREAS = ("rules", "coding", "agents", "skills", "scripts", "checklists", "topics")
+KNOWN_AREAS = ("rules", "coding", "agents", "skills", "scripts", "checklists", "topics", "formats")
 
 
 @dataclass

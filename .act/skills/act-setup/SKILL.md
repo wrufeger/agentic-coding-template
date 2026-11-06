@@ -38,6 +38,9 @@ language as `--language-docs` below):
 2. **A project somewhere else** (a new folder, or one that already has a project in it). Ask for
    the path.
 
+Then ask once whether a working method should be on (`test-first`, `spec-first`, `simple-changes`; none is the
+default) — step 3 says what that does and how the answer is passed on.
+
 ## 3. Run it
 
 **Way 1:**
@@ -52,7 +55,7 @@ stack or tools to pass along either. Show the plan output, get a go-ahead, then 
 real; it takes its defaults and logs every open point (name, owner, stack, tools, and anything else
 it could not decide) to the project's inbox instead of asking. Check
 `python .act/scripts/init.py --help` for the exact flags before running it — `--language-docs`,
-`--language-chat`, `--no-commit` — and pass what step 2 established. Afterward, go through the
+`--language-chat`, `--methods`, `--no-commit` — and pass what step 2 established. Afterward, go through the
 `*-init-notes.md` inbox entry (`U<n>-init-notes.md`) ("Open points from `init.py`" / German "Offene Punkte von
 `init.py`") with the owner and enter the answers into `docs/ai/config.md`.
 
@@ -77,6 +80,20 @@ to `docs/ai/work/archive/` with `git mv` (`init.py` has committed it), then comm
 files and both paths of the todo, old and new, by pathspec in one commit (`docs: translate
 scaffold into <code>`); with `--no-commit`, move it as a plain file and leave everything
 uncommitted together with `init.py`'s own changes. `act-adopt` does the same in its own step 7.
+
+**What `init.py` also writes.** A `CHANGELOG.md` with an empty `## [Unreleased]` section (switch `changelog`
+in `docs/ai/config.md` § Formats: `file` is the default, `release-notes-only` or `off` skip it), and — when it
+replaces the template's README — a README in the layout of the README format (`readme-format`, default
+`standard`; a `docs/project/formats/project-readme.md` of the project is respected). Both formats and how to
+change them: `.act/formats/README.md`. Mention it once, so the owner knows where to turn.
+
+**Working methods.** Optional rule sets for how the assistant works (`test-first`, `spec-first`,
+`simple-changes`; list and meaning in `.act/methods/README.md`), none on by default. `init.py` asks once in the
+owner's own terminal; run by the assistant it asks nothing and takes `none`, so ask the owner in step 2 whether
+one should be on, and pass the answer as `--methods <names>` (comma-separated). It writes the `methods` row
+(`docs/ai/config.md` § Scope) and a methods section into `docs/project/coding_rules.md`, so the orchestrator and
+every worker load the sets. Change it any time with `/act-config methods <names|none>`, then
+`python .act/scripts/rules.py --sync-methods`.
 
 ## 4. Say what is there now
 

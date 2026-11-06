@@ -25,6 +25,10 @@
 #       Also includes docs/ai/local/scripts/, docs/ai/local/checklists/, docs/ai/local/agents/ (the
 #       project's own roles) and docs/ai/local/skills/ (its own skills) — each file shown
 #       individually before being written on import. Any of the four switches forces --with-files.
+#   python .act/scripts/settings_export.py --with-formats
+#       Also includes the project's format files, docs/project/formats/{commit,changelog,release-notes,
+#       project-readme}.md, as "[+] <name>.md" — each file carried in the zip under files/formats/<name>.md.
+#       Forces --with-files. settings_load.py writes them back to docs/project/formats/.
 #   python .act/scripts/settings_export.py --with-topics
 #       Also includes docs/ai/local/rules/topics/: a topic of the project's own as "[+] <name>.md",
 #       an override of a template topic as "[~] <name>.md (fp:<hash of the template topic>)" — each
@@ -368,6 +372,39 @@ def build_local_files_area(root: Path, subdir: str, area_name: str) -> tuple[Opt
 
 
 # ---------------------------------------------------------------------------
+# formats — the project's own format files, docs/project/formats/<name>.md
+# ---------------------------------------------------------------------------
+
+FORMAT_FILE_NAMES = ("commit.md", "changelog.md", "release-notes.md", "project-readme.md")  # as under .act/formats/
+
+
+def build_formats_area(root: Path) -> tuple[Optional[sf.SettingsArea], dict[str, str]]:
+    """Every format file of the project (docs/project/formats/<name>.md, a name the template ships under
+    .act/formats/) as one "[+] <name>.md" entry; the zip member is files/formats/<name>.md. The folder's
+    README.md and any other file are not format files and stay home. Returns (area_or_None, {id: text})."""
+    base = root / "docs" / "project" / "formats"
+    if not base.is_dir():
+        return None, {}
+    entries: list[sf.SettingsEntry] = []
+    contents: dict[str, str] = {}
+    for name in FORMAT_FILE_NAMES:
+        path = base / name
+        if not path.is_file():
+            continue
+        if path.is_symlink():
+            print(f"settings_export.py: skipped symlink {name} under docs/project/formats/", file=sys.stderr)
+            continue
+        try:
+            contents[name] = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        entries.append(sf.SettingsEntry(symbol="+", id=name, inline=f"file: files/formats/{name}"))
+    if not entries:
+        return None, {}
+    return sf.SettingsArea(name="formats", groups=[sf.SettingsGroup(label=None, entries=entries)]), contents
+
+
+# ---------------------------------------------------------------------------
 # topics — own topic rules and overrides of template topics, docs/ai/local/rules/topics/*.md
 # ---------------------------------------------------------------------------
 
@@ -475,7 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--with-agents", action="store_true", help="include docs/ai/local/agents/, the project's own roles (forces --with-files)")
     parser.add_argument("--with-skills", action="store_true", help="include docs/ai/local/skills/, the project's own skills (forces --with-files)")
     parser.add_argument("--with-topics", action="store_true", help="include docs/ai/local/rules/topics/, own topic rules and overrides of template topics (forces --with-files)")
-    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills/--with-topics")
+    parser.add_argument("--with-formats", action="store_true", help="include the project's format files, docs/project/formats/ (forces --with-files)")
+    parser.add_argument("--with-files", action="store_true", help="write a .zip even without --with-scripts/--with-checklists/--with-agents/--with-skills/--with-topics/--with-formats")
     parser.add_argument("--strict", action="store_true", help="abort on any finding instead of substituting a placeholder")
     parser.add_argument("--out", metavar="PATH", default=None,
                          help="output path (default: .act-local/export/act-settings-<date>.md|.zip)")
@@ -511,7 +549,7 @@ def main(argv: list[str]) -> int:
         print(f"settings_export.py: {exc}", file=sys.stderr)
         return 2
 
-    with_files = args.with_files or args.with_scripts or args.with_checklists or args.with_agents or args.with_skills or args.with_topics
+    with_files = args.with_files or args.with_scripts or args.with_checklists or args.with_agents or args.with_skills or args.with_topics or args.with_formats
 
     areas: list[sf.SettingsArea] = []
     for area in (build_rules_area(root, args.all), build_coding_area(root, args.all)):
@@ -544,6 +582,11 @@ def main(argv: list[str]) -> int:
         if area is not None:
             areas.append(area)
             file_payload["topics"] = contents
+    if args.with_formats:
+        area, contents = build_formats_area(root)
+        if area is not None:
+            areas.append(area)
+            file_payload["formats"] = contents
 
     settings = sf.SettingsFile(header=build_header(root), areas=areas)
     redacted, located = sf.redact(settings)

@@ -73,6 +73,7 @@ import tiers
 
 CATEGORY_DIRS = (
     "rules", "coding", "skills", "agents", "scripts", "bridges", "hooks", "skeleton", "migrations", "ide",
+    "formats", "methods",
 )
 
 
@@ -857,6 +858,50 @@ def step_list_new_coding_entries(
     return summary, ([] if plan else [root / rel])
 
 
+def step_sync_methods(root: Path, plan: bool, unsaved: Optional[bool] = None,
+                      notes: Optional[list[str]] = None, act_dir: Optional[Path] = None) -> tuple[str, list[Path]]:
+    """Bring the methods section of docs/project/coding_rules.md in line with the `methods` row of
+    docs/ai/config.md (rules.sync_method_imports): the replaced .act/methods/ may have added a group to a
+    method the project uses, or removed a file it names. A project that uses no method and has no such
+    section is not touched. A file with unsaved changes is left as it is (the update commit would take
+    them along); the step says so, with the command, and adds it to `notes` if given. Returns (summary,
+    touched); nothing is written under plan, and "" when there is nothing to say. Under plan, `act_dir`
+    is the fetched .act/ whose method files are previewed."""
+    rel = rules.AREAS["coding"].project_file
+    try:
+        preview = rules.sync_method_imports(root, write=False, act_dir=act_dir)
+        problems = rules.method_findings(root)
+        parts = (
+            ([f"methods entered: {', '.join(preview.added)}"] if preview.added else [])
+            + ([f"methods taken out: {', '.join(preview.removed)}"] if preview.removed else [])
+            + ([f"method groups updated: {', '.join(preview.updated)}"] if preview.updated else [])
+        )
+        if notes is not None and not plan:
+            notes.extend(f"{path}: {message}" for path, message in problems
+                         if not preview.changed or path != rel)
+        if not preview.changed:
+            return "", []
+        if unsaved is None:
+            unsaved = _has_unsaved_changes(root, rel)
+        if unsaved:
+            held = (f"{rel} has changes that are not committed, so the methods were not entered "
+                    f"({'; '.join(parts)}); commit them, then run {rules.SYNC_METHODS_COMMAND}")
+            if notes is not None and not plan:
+                notes.append(held)
+            return ("would hold back: " if plan else "held back: ") + held, []
+        if not plan:
+            rules.sync_method_imports(root, write=True)
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"methods not checked ({exc.__class__.__name__}: {exc})", []
+    return f"{'would enter' if plan else 'entered'} in {rel}: {'; '.join(parts)}", ([] if plan else [root / rel])
+
+
+def _plan_methods_part(root: Path, act_dir: Optional[Path] = None) -> str:
+    """The "; methods: ..." part of a plan line for step 6, "" when the working methods change nothing."""
+    summary = step_sync_methods(root, True, act_dir=act_dir)[0]
+    return f"; methods: {summary}" if summary else ""
+
+
 def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
     """Follow a rule the replaced .act/rules/ moved to another file in docs/ai/rules.md
     (rules.move_core_entries). A docs/ai/rules.md that is still exactly its generated copy is
@@ -970,7 +1015,7 @@ def step_show_diff(root: Path, new_act_dir: Path) -> tuple[str, bool]:
         for state in ("added", "changed", "removed"):
             for rel in entries.get(state, []):
                 print(f"[act]     {state}: {rel}")
-                if category in ("rules", "coding") and rel.endswith(".md"):
+                if category in ("rules", "coding", "methods") and rel.endswith(".md"):
                     old_p = old_act_dir / rel if (old_act_dir / rel).is_file() else None
                     new_p = new_act_dir / rel if (new_act_dir / rel).is_file() else None
                     id_added, id_changed, id_removed = _rule_id_diff(old_p, new_p)
@@ -2845,11 +2890,13 @@ def _finish_update(
         notes.append(f"own skill/role copies not checked ({exc.__class__.__name__}: {exc})")
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
     coding_summary, coding_touched = step_list_new_coding_entries(root, False, unsaved=coding_unsaved, notes=notes)
+    methods_summary, methods_touched = step_sync_methods(root, False, unsaved=coding_unsaved, notes=notes)
     moved_summary, moved_touched = step_move_core_entries(root, False)
     entered_summary, entered_touched, entered_notes = step_add_missing_core_entries(root, False)
     notes.extend(entered_notes)
-    sync_touched = [*sync_touched, *coding_touched, *moved_touched, *entered_touched]
+    sync_touched = [*sync_touched, *coding_touched, *methods_touched, *moved_touched, *entered_touched]
     _print_step(6, f"{sync_summary}; role frontmatter: {frontmatter_summary}; coding rules: {coding_summary}"
+                   + (f"; methods: {methods_summary}" if methods_summary else "")
                    + (f"; rule moves: {moved_summary}" if moved_summary else "")
                    + (f"; rules entered: {entered_summary}" if entered_summary else ""))
 
@@ -2952,6 +2999,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
             + "; roles: " + step_new_role_bridges(root, True)[0]
             + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
             + "; coding rules: " + step_list_new_coding_entries(root, True)[0]
+            + _plan_methods_part(root)
         )
         print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
         print("[act]   [8/10] " + _plan_migrations_summary(act_dir))
@@ -3134,6 +3182,7 @@ def main(argv: list[str]) -> int:
                 + "; roles: " + step_new_role_bridges(root, True)[0]
                 + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
                 + "; coding rules: " + step_list_new_coding_entries(root, True, new_act_dir)[0]
+                + _plan_methods_part(root, new_act_dir)
             )
             print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
