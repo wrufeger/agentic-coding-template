@@ -101,7 +101,8 @@
 #          in this order" (_simple_commands) and "is this one a `git <sub>` call, and under which
 #          `-C` directory" (_git_call) — much less than shell_targets' write-target machinery, so
 #          it is its own small walker, not a copy of _scan_tokens. If the command cannot be
-#          tokenized at all (an unclosed quote, `$'...'` ANSI-C quoting — that tokenizer does not know it),
+#          tokenized at all (an unclosed quote, a live `$'...'` ANSI-C quoting — that tokenizer does not know
+#          it; a `$'` that is only text is told apart by the quote pass the shell checks share),
 #          a coarse raw-text fallback treats a bare "git ... commit" mention as a `-a`-style commit
 #          with no known add-paths — over-inclusive on purpose, the same stance shell_targets takes
 #          for its own tokenizing fallback. The chain is read twice — once with the previous
@@ -202,11 +203,14 @@ from .shell_targets import (
     _SIMPLE_DIR_RE,
     _WRAPPER_ARG_RE,
     _WRAPPER_COMMANDS,
+    _LINE_CONTINUATION_RE,
     _cd_bases,
     _command_name,
     _is_dynamic_target,
     _line_mode_tokens,
+    _may_use_ansi_c_quoting,
     _operands,
+    _quote_model_applies,
     _shell_tokens,
     _to_native_path,
 )
@@ -774,6 +778,46 @@ def _strip_ab_prefix(path: str) -> str:
     return path[2:] if path[:2] in ("a/", "b/") else path
 
 
+_C_ESCAPES = {
+    "\\": b"\\", '"': b'"', "n": b"\n", "t": b"\t", "a": b"\a", "b": b"\b", "f": b"\f", "r": b"\r", "v": b"\v",
+}
+
+
+def _c_unquote(raw: str) -> str:
+    """A file name as git prints it in a diff header: a name with a control character, a quote or a
+    backslash (or, without core.quotePath=false, a non-ASCII character) comes wrapped in double quotes
+    with C escapes (`\\t`, `\\"`, `\\\\`, octal bytes such as `\\303\\244`). Returns the real name; a name not
+    wrapped in quotes, or one that does not decode, comes back as it is."""
+    if len(raw) < 2 or raw[0] != '"' or raw[-1] != '"':
+        return raw
+    inner = raw[1:-1]
+    out = bytearray()
+    i = 0
+    while i < len(inner):
+        ch = inner[i]
+        if ch != "\\" or i + 1 >= len(inner):
+            out.extend(ch.encode("utf-8"))
+            i += 1
+            continue
+        nxt = inner[i + 1]
+        if nxt in "01234567":
+            j = i + 1
+            while j < len(inner) and j < i + 4 and inner[j] in "01234567":
+                j += 1
+            out.append(int(inner[i + 1:j], 8) & 0xFF)
+            i = j
+        elif nxt in _C_ESCAPES:
+            out.extend(_C_ESCAPES[nxt])
+            i += 2
+        else:
+            out.extend(ch.encode("utf-8"))
+            i += 1
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return inner
+
+
 _DIFF_SECTION_SPLIT_RE = re.compile(r"(?m)^(?=diff --git )")
 
 
@@ -874,7 +918,14 @@ def _diff_entries(section: str) -> list[tuple[str, bool, list[tuple[int, str]]]]
             path = raw[4:]
             if path.endswith("\t"):
                 path = path[:-1]  # git appends a tab to a name with a blank; the blank itself stays
+            path = _c_unquote(path)
             file = None if path == "/dev/null" else _strip_ab_prefix(path)
+            continue
+        if not seen_hunk and (raw.startswith("rename to ") or raw.startswith("copy to ")):
+            # A rename or copy names its new path here (no a/ b/ prefix); a pure one has no `+++` line at
+            # all. The new name counts as a new file: `env.txt` -> `.env` brings in a .env file.
+            file = _c_unquote(raw.split(" to ", 1)[1])
+            is_new = True
             continue
         if not seen_hunk and (raw.startswith("--- ") or raw.startswith("index ")):
             continue
@@ -1253,8 +1304,13 @@ def _tokenize_chain(command: str, legacy: bool = False) -> Optional[list]:
     """shell_targets' own tokenizer (line mode first, whole-command fallback), None if neither
     manages (an unclosed quote, or `$'...'` ANSI-C quoting, which that tokenizer does not know).
     `legacy` selects the previous tokenizer, shell_targets_legacy's, instead of the word lexer."""
+    # The same quote pass the shell checks use (shell_targets._may_use_ansi_c_quoting): a `$'` that is only
+    # text (in quotes, escaped, in a comment, in a quoted heredoc body) no longer defeats the tokenizer;
+    # whatever the pass cannot tell counts as a live ANSI-C quote. With a heredoc and a backslash-newline
+    # in one command the pass does not apply and any `$'` counts, as in the shell checks.
     if "$'" in command:
-        return None
+        if not _quote_model_applies(command) or _may_use_ansi_c_quoting(_LINE_CONTINUATION_RE.sub(r"\1", command)):
+            return None
     line_tokens = _legacy_tokens._line_mode_tokens if legacy else _line_mode_tokens
     whole_tokens = _legacy_tokens._shell_tokens if legacy else _shell_tokens
     try:
@@ -1423,6 +1479,11 @@ def _git_commit_invocations_pass(
 
         elif call["kind"] == "continue":
             invocations.append({"cwd": call_cwd, "all": False, "add_paths": []})
+    # A `$'` that was only text no longer sends the whole command to the raw fallback, so a commit the token
+    # reading cannot see (inside `eval`, `bash <<<`, `| bash`, `source <(...)`) must not slip through: when the
+    # raw text mentions more commits than were read as invocations, the over-inclusive fallback stays.
+    if "$'" in command and len(_GIT_COMMIT_FALLBACK_RE.findall(command)) > len(invocations):
+        invocations.append({"cwd": base_cwd, "all": True, "add_paths": []})
     return invocations
 
 

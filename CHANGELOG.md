@@ -41,6 +41,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   gone were removed. Links are not followed, files of the running version are never touched, and nothing outside
   `.act-local/pyc/` is affected; they show up in the existing count, size and kinds summary.
 
+- `danger-scan`: a plain `raise`, `print`, logger or `warnings.warn` line (Python) and an `echo`, `error_log`, `throw new` or logger line (PHP) that only holds string literals and simple operands is no longer read as SQL built from values, even when its message happens to contain `select ... from`, `update ... set` or `delete ... from` ("Cannot select a row from %s"). A literal that opens like a statement, a second statement or call on the line, or an assignment keeps the commit held as before.
+- `secret-scan`: a file name that git prints in quotes in the diff header (a directory with a tab, a quote or a control character in its name) is read as the real name, so a new `.env` there is held and a `.env.example` there is no longer held by mistake.
+- `secret-scan`: a rename or copy to a `.env` name (`env.txt` -> `.env`) is held like a new `.env` file, also when the rename carries no content change.
+- `secret-scan`: a `$'` that is only text in the commit command (inside quotes, in a heredoc with a quoted delimiter) no longer makes the commit scan treat the commit as `-a`; it uses the same quote pass the shell checks use. A live `$'...'` keeps the fallback, and so does any further `git ... commit` mention the token reading cannot see (inside `eval`, `bash <<<`, `| bash`, `source <(...)`).
+
+### Security
+
+- `danger-scan`: PHP `"... ${name}"` interpolation inside a double-quoted statement is held like `$name` and `{$expr}`; the SQL checks for PHP now also cover the endings `.php3`, `.php4`, `.php5`, `.php7`, `.php8` and `.pht`.
+
 ## [2.5.0] - 2026-11-05
 
 Settings are shown and changed with `/act-config`, a project trims the template to what it uses with `profile` and

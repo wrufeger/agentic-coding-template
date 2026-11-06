@@ -201,7 +201,69 @@ def _without_like_operands(line: str) -> str:
     return _SQL_LIKE_OPERAND.sub(" ", _without_tagged_sql(line))
 
 
-_PHP_EXTENSIONS = (".php", ".phtml", ".inc", ".module")
+# PHP files: the versioned endings (`.php5`, `.php7`, ...) and `.pht` are PHP for the web servers that map
+# them, so they count like `.php`.
+_PHP_EXTENSIONS = (
+    ".php", ".php3", ".php4", ".php5", ".php7", ".php8", ".pht", ".phtml", ".inc", ".module",
+)
+
+# A line that only reports or logs (raise, print, a logger call; echo, error_log, throw new ...) and holds
+# nothing but string literals and plain operands is text, not a statement sent to a database: "Cannot select
+# a row from %s" is prose even though it holds `select ... from`. This is an allow-list for exactly that
+# shape: the whole line must be one such call with literals and simple operands (no call, no `;` and no
+# second statement), and no literal may open like a statement (`"SELECT ...`, `" select ...`, `"(SELECT ...`).
+# Anything else is checked as before. A call spread over several lines is not recognised (each line is
+# checked on its own, as before).
+_SQL_OPENING_LITERAL = re.compile(
+    r"""(?isx) ^ (?:[\s(]|\\[ntr])* (?:/\*.*?\*/ (?:[\s(]|\\[ntr])*)* (?:select|insert|update|delete|with)\b"""
+)
+_PY_OPERAND = r"""[\w.\[\]'"+\- ]+"""
+_PY_ARGS = r"""[\w.\[\]'"+\-=, ]*"""
+_PY_PROSE_CALL = re.compile(
+    r"""(?x) ^\s*
+    (?: raise\s+[\w.]+
+      | print
+      | (?:[\w.]*\.)?(?:logger|logging|log|_log|_logger|LOG|LOGGER)\.
+        (?:debug|info|warning|warn|error|exception|critical|fatal|log)
+      | warnings\.warn )
+    \s*\(\s*
+    [rRuU]?(?P<q>["']) (?:(?!(?P=q))[^\\\n]|\\.)* (?P=q)
+    (?: \s*% \s*(?: """ + _PY_OPERAND + r""" | \( """ + _PY_ARGS + r""" \) )
+      | \.format\( """ + _PY_ARGS + r""" \) )?
+    """ + _PY_ARGS + r""" \) (?:\s+from\s+[\w.]+)? \s*$"""
+)
+_PHP_PROSE_CALL = re.compile(
+    r"""(?x) ^\s*
+    (?: echo\b | print\b | die\b | exit\b
+      | (?:error_log|trigger_error|user_error)\s*\(
+      | \$[\w>-]*(?:logger|log)->(?:debug|info|notice|warning|error|critical|alert|emergency|log)\s*\(
+      | throw\s+new\s+[\\\w]+\s*\( )
+    \s*\(?
+    (?: \s*(?: "(?:[^"\\\n]|\\.)*" | '(?:[^'\\\n]|\\.)*' | \$[\w\[\]>'"-]{1,60} | \. | , | \d+ ) )+
+    \s*\)*\s*;?\s*$"""
+)
+_LITERAL_RE = re.compile(r"""(?s)"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'""")
+
+
+def _is_prose_line(line: str, call: "re.Pattern[str]") -> bool:
+    if len(line) > 1000 or "{$" in line or "${" in line or not call.match(line):
+        return False
+    for match in _LITERAL_RE.finditer(line):
+        body = match.group(1) if match.group(1) is not None else match.group(2)
+        if _SQL_OPENING_LITERAL.match(body):
+            return False
+    return True
+
+
+def _format_line(line: str) -> str:
+    """The line as sql-format sees it: blank for a plain log/raise/print line (see _PY_PROSE_CALL)."""
+    return " " if _is_prose_line(line, _PY_PROSE_CALL) else _without_like_operands(line)
+
+
+def _php_concat_line(line: str) -> str:
+    """The line as sql-php-concat sees it: blank for a plain echo/log/throw line (see _PHP_PROSE_CALL)."""
+    return " " if _is_prose_line(line, _PHP_PROSE_CALL) else line
+
 # PHP: a quote, the concatenation dot and a `$variable` (`"SELECT ... WHERE id = " . $id`), the variable
 # first (`$cols . " FROM t"`), or the statement's two words in different literals of one dotted chain.
 _SQL_PHP_CONCAT = (
@@ -209,10 +271,10 @@ _SQL_PHP_CONCAT = (
     r"""| \$[\w\[\]>'"-]{1,60}\s*\.\s*["'] [^\n;]{0,200}""" + _SQL_START + _SQL_STRUCT
     + r"""| """ + _SQL_START + _sql_struct(r"""[^\n;]{0,200}?["']\s*\.[^\n;]{0,200}?""", spanning=True)
 )
-# PHP: a `$variable` or `{$expr}` inside a double-quoted string that holds the statement (single quotes do
+# PHP: a `$variable`, `${name}` or `{$expr}` inside a double-quoted string that holds the statement (single quotes do
 # not interpolate in PHP, a `\$` is a literal dollar sign, `$1` is a positional parameter, not a variable).
 _SQL_PHP_INTERPOLATION = (
-    r"""(?ix) (?<![\w\\])"(?=[^"\n]{0,400}(?<!\\)(?:\$[A-Za-z_]|\{\$))[^"\n]{0,200}?"""
+    r"""(?ix) (?<![\w\\])"(?=[^"\n]{0,400}(?<!\\)(?:\$[A-Za-z_]|\$\{[A-Za-z_]|\{\$))[^"\n]{0,200}?"""
     + _SQL_START + _sql_struct(r"""[^"\n;]{0,200}?""")
 )
 # Python (and Ruby) formatting after the literal: `"... id = %s" % value`, `"... id = {}".format(value)`.
@@ -289,7 +351,7 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
         ),
         DangerPattern(
             "sql-php-concat", "SQL statement built by PHP string concatenation",
-            re.compile(_SQL_PHP_CONCAT), extensions=_PHP_EXTENSIONS,
+            re.compile(_SQL_PHP_CONCAT), prepare=_php_concat_line, extensions=_PHP_EXTENSIONS,
         ),
         DangerPattern(
             "sql-php-interpolation", "SQL statement with a PHP variable interpolated into the string",
@@ -297,7 +359,7 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
         ),
         DangerPattern(
             "sql-format", "SQL statement built with % or .format()",
-            re.compile(_SQL_FORMAT), prepare=_without_like_operands,
+            re.compile(_SQL_FORMAT), prepare=_format_line,
         ),
     ),
 }
