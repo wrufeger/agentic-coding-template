@@ -34,6 +34,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `update.py` no longer enters new coding rule sets or groups into `docs/project/coding_rules.md` while that file has changes that are not committed (they would have gone into the update commit). It says so in step 6 and in the closing notes, with the command to run after committing.
 - `rules.py` reports, when following a rule the template moved to another file in `docs/ai/rules.md`: a rule that moved into a file your project shadows with its own copy under `docs/ai/local/rules/` that lacks the rule (the rule does not load), and an ID listed twice in one block (only the last line counts; `--validate` flags it too).
 
+- `doctor.py --inbox`: the question that proposes a higher tier for a role is short now. The numbers (the finding,
+  the table of outcomes per role and tier, the cost of a higher tier) moved into an inbox report of their own,
+  `report-<date>-<time>-tier-numbers-<role>-<tier>.md`, which `doctor.py` writes right before the question; the
+  question's hint is two sentences and names that report. The recommended option, "look at the cases first", is
+  now option a) and opens with the bold label `**Recommended:**` (`**Empfehlung:**` with `language-docs: de`);
+  raising the tier is option b), leaving it c). The proposal still comes back only after the same number of
+  further outcomes. `doctor.py` prints a `wrote` line for the report as well as for the question; if the
+  question cannot be written, the report is deleted again. `update.py` names it in the doctor step's summary as the
+  question's numbers report, not as a doctor report with findings.
+- Questions in the inbox (`R-human-ask`, `docs/ai/inbox/README.md`): a recommended option always comes first, as
+  a), and opens with the bold label `**Recommended:**` in `language-docs` (`**Empfehlung:**` for `de`), its reason
+  closing the line in one sentence. `act-idea` and `act-prepare` put their recommendation first the same way.
+
 ### Fixed
 
 - A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
@@ -54,6 +67,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 - A rule line moved to another file in `docs/ai/rules.md` is now written after the whole entry of the rule it follows, so a wrapped reason stays with its rule.
 - `settings_export.py` exports an unchecked box of a moved rule as switched off even before `update.py` has moved the line, instead of as on.
+
+- A critical template advisory whose inbox todo was done and deleted (`done-entries: delete`) was filed again on
+  every other workstation that had not seen it yet. `advisory.py` now also looks in the git history, read only, for
+  a deleted inbox or archive todo with the same heading and does not file a second one. It reads at most the
+  newest 2000 commits that touched the inbox or the archive, reads at most 3 candidate files, and stops starting git
+  calls once 4 seconds are spent (or less than half a second is left); the last call is cut at the budget. Measured
+  with a git that hangs: the session start waits about 5.8 seconds at most (4 seconds plus roughly 1.8 seconds that
+  Windows needs to end the hung process); without git, outside a repository or on any git error it behaves as
+  before and prints nothing.
 
 ### Security
 

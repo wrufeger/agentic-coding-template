@@ -1094,8 +1094,9 @@ def _spawn_update_check_worker(root: Path) -> None:
 
 
 def _advisory_notes(root: Path, config: dict[str, str], state: dict) -> list[str]:
-    """The template author's warnings that apply to this project (advisory.py), from files only -- no
-    git, no network; the background worker keeps the cache current. Puts the visible lines (critical
+    """The template author's warnings that apply to this project (advisory.py), from files -- no
+    network; git only for the read-only history search before a critical advisory's todo is filed (a few
+    seconds at most); the background worker keeps the cache current. Puts the visible lines (critical
     first) in `state["advisory"]` for the human line and returns the notes for the model. A critical one
     also gets its inbox todo, once, unless `session-start-refresh` is off. `advisory-check: off` shows
     nothing. Never raises."""

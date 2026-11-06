@@ -8,7 +8,8 @@
 #          own (`.act-local/advisories.git`, never the project's `.git`), validates the file and keeps
 #          the accepted entries in `.act-local/advisories.json`. Everything that shows an advisory (the
 #          session start, the status line, the board, the chat acknowledgement) reads only that cache,
-#          the installed version (`.act/VERSION`) and the lock: files, no git, no network. An
+#          the installed version (`.act/VERSION`) and the lock: files, no network. (Only the session start's
+#          todo for a critical advisory may run git, read only, to look for a deleted earlier todo.) An
 #          acknowledgement then runs board.py once, as the session start does, so the board drops the
 #          line at once (board.py reads local git state, never the network).
 #
@@ -51,6 +52,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -653,9 +655,58 @@ def _todo_body(advisory: Advisory, version: str) -> str:
     return "\n".join(lines)
 
 
+HISTORY_BUDGET = 4.0     # seconds in all for the history search of a todo (it runs at the session start)
+HISTORY_COMMITS = 2000  # commits that touched the inbox or the archive, newest first, that are looked at
+HISTORY_CANDIDATES = 3  # deleted files of that advisory whose last content is read
+HISTORY_MIN_LEFT = 0.5  # seconds: with less left a git call is not started
+
+
+def _history_call(args: list[str], root: Path, deadline: float) -> Optional[bytes]:
+    """stdout of `git <args>` in `root` when it exited 0 within what is left of the budget, else None."""
+    left = deadline - time.monotonic()
+    if left < HISTORY_MIN_LEFT:
+        return None
+    try:
+        outcome = run_git(args, root, timeout=left, project=root)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return outcome[1] if outcome is not None and outcome[0] == 0 else None
+
+
+def _deleted_todo_in_history(root: Path, advisory: Advisory, heading: "re.Pattern[str]") -> Optional[str]:
+    """The file name of a todo of this advisory that the git history shows as deleted (a done entry is
+    deleted under `done-entries: delete`; another workstation then sees no file). Read only: one
+    `git log` over the inbox and the archive for deleted files whose name carries the advisory's slug,
+    then `git show` of the last version of at most HISTORY_CANDIDATES of them, to compare the heading.
+    Bounded by HISTORY_COMMITS and a HISTORY_BUDGET of seconds in all. Without git, outside a repository,
+    on any error or when the budget is spent: None, silently."""
+    slug = f"advisory-{advisory.id.lower()}"
+    deadline = time.monotonic() + HISTORY_BUDGET
+    listing = _history_call(
+        ["-c", "core.quotepath=off", "log", f"--max-count={HISTORY_COMMITS}", "--diff-filter=D", "--name-only",
+         "--relative", "--format=%x00%H", "--", "docs/ai/inbox", "docs/ai/work/archive"], root, deadline)
+    if not listing:
+        return None
+    candidates: list[tuple[str, str]] = []  # (commit, path), newest first
+    for block in listing.decode("utf-8", errors="replace").split("\0"):
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if not lines or not re.fullmatch(r"[0-9a-f]{40,64}", lines[0]):
+            continue
+        for name in lines[1:]:
+            base = name.rsplit("/", 1)[-1].lower()
+            if base.endswith(".md") and slug in base:
+                candidates.append((lines[0], name))
+    for commit, name in candidates[:HISTORY_CANDIDATES]:
+        content = _history_call(["show", f"{commit}^:./{name}"], root, deadline)
+        if content is not None and heading.search(content[:4096].decode("utf-8", errors="replace")):
+            return name.rsplit("/", 1)[-1]
+    return None
+
+
 def _existing_todo(root: Path, advisory: Advisory) -> Optional[str]:
     """The file name of a todo of this advisory that the project already has (in the inbox or archived,
-    filed from any workstation), found by its heading; None when there is none."""
+    filed from any workstation), found by its heading; failing that the name of one the git history
+    shows as deleted (_deleted_todo_in_history); None when there is none."""
     heading = re.compile(rf"^# Template advisory {advisory.id}:", re.MULTILINE)
     folders = ((root / "docs" / "ai" / "inbox", "*.md"), (root / "docs" / "ai" / "work" / "archive", "U*.md"))
     for folder, pattern in folders:
@@ -667,7 +718,10 @@ def _existing_todo(root: Path, advisory: Advisory) -> Optional[str]:
                     return path.name
         except OSError:
             continue
-    return None
+    try:
+        return _deleted_todo_in_history(root, advisory, heading)
+    except Exception:  # noqa: BLE001 -- the history is a bonus: whatever goes wrong, behave as without it
+        return None
 
 
 def _file_todo(root: Path, advisory: Advisory, version: str) -> Optional[str]:
@@ -684,7 +738,8 @@ def _file_todo(root: Path, advisory: Advisory, version: str) -> Optional[str]:
 
 
 def session_report(root: Path, file_todos: bool = True) -> SessionReport:
-    """What the session start shows for the active advisories, from files only: critical ones at every
+    """What the session start shows for the active advisories, from files and, per critical advisory without
+    a recorded todo, one bounded read-only git history search (no network): critical ones at every
     start with a note for the model and, once per id, an inbox todo (`file_todos`); warnings by `repeat`.
     An advisory judged fixed (its `files` lost the faulty snippet) adds one line "affected code changed,
     treated as fixed", once per id, and nothing else. Nothing is raised. The seen record
@@ -786,7 +841,7 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def run_git(args: list[str], cwd: Path, timeout: int = GIT_TIMEOUT,
+def run_git(args: list[str], cwd: Path, timeout: float = GIT_TIMEOUT,
             project: Optional[Path] = None) -> Optional[tuple[int, bytes]]:
     """`git <args>` (a list: no shell) with a time limit; (return code, stdout bytes), None when git could
     not be run or took too long. stdout goes to a real temp file, not a pipe, so a grandchild that keeps a

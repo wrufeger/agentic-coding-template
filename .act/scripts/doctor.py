@@ -1971,22 +1971,33 @@ def _related_roles(role: str, store: dict) -> list[str]:
     return roles
 
 
-def tier_question_text(store: dict, role: str, tier: str, language: str) -> tuple[str, str]:
-    """(title, body) of the inbox question for the proposal to raise `role` at `tier`. Numbers come
-    from `store` (usage.json) and this check's threshold constants, never from fixed text."""
+def _tier_facts(store: dict, role: str, tier: str) -> dict:
+    """The numbers of one tier proposal, from `store` (usage.json) and this check's threshold
+    constants, never from fixed text."""
+    accepted, reworked, escalated = _window_counts(store, role, tier)
+    trouble = reworked + escalated
+    return {"trouble": trouble, "window_size": accepted + trouble,
+            "total": sum(_outcome_counts(store, role, tier)),
+            "percent": round(_TIER_PROPOSAL_RAISE_RATIO * 100), "nxt": _next_tier(tier)}
+
+
+def _config_role(role: str) -> str:
+    # A generated `<x>-high` variant has no row of its own in § Roles: it runs at its base role's
+    # tier, one reasoning step further (init.py), so only the base role's row raises it.
+    return role[:-len("-high")] if role.endswith("-high") else role
+
+
+def tier_report_text(store: dict, role: str, tier: str, language: str) -> tuple[str, str]:
+    """(title, body) of the inbox report that carries the numbers of the tier proposal for `role`
+    at `tier`: the finding, the table, what applying it means. The question names this report."""
     def loc(en: str, de: str) -> str:
         return actlib.localized(language, en, de)
 
-    accepted, reworked, escalated = _window_counts(store, role, tier)
-    trouble = reworked + escalated
-    window_size = accepted + trouble
-    total = sum(_outcome_counts(store, role, tier))
-    percent = round(_TIER_PROPOSAL_RAISE_RATIO * 100)
+    facts = _tier_facts(store, role, tier)
+    trouble, window_size, total = facts["trouble"], facts["window_size"], facts["total"]
+    percent, nxt = facts["percent"], facts["nxt"]
     no_tier = loc("(no tier)", "(ohne Stufe)")
-    nxt = _next_tier(tier)
-    title = loc(f"{role}: {trouble} of the last {window_size} outcomes reworked or escalated - raise the tier?",
-                f"{role}: {trouble} der letzten {window_size} Ergebnisse nachgearbeitet oder eskaliert - "
-                "Stufe anheben?")
+    title = loc(f"Tier proposal numbers: {role}", f"Zahlen zum Stufenvorschlag: {role}")
     at_tier = loc(f"at tier `{tier}`", f"auf der Stufe `{tier}`") if tier else loc("with no tier", "ohne Stufe")
     rows = [loc("| Role | Tier | accepted | reworked | escalated | reworked or escalated, since the start "
                 f"| reworked or escalated, last {_TIER_PROPOSAL_WINDOW} |",
@@ -2005,9 +2016,7 @@ def tier_question_text(store: dict, role: str, tier: str, language: str) -> tupl
             rows.append(f"| `{name}` | {tier_cell} | {a} | {r} | {e} | {r + e}/{a + r + e} | "
                         f"{wr + we}/{wa + wr + we} |")
     empty_cells = " |" * (_ROLES_TABLE_COLUMNS - 2)
-    # A generated `<x>-high` variant has no row of its own in § Roles: it runs at its base role's
-    # tier, one reasoning step further (init.py), so only the base role's row raises it.
-    config_role = role[:-len("-high")] if role.endswith("-high") else role
+    config_role = _config_role(role)
     next_numbers = ""
     if nxt:
         na, nr, ne = _outcome_counts(store, role, nxt)
@@ -2018,14 +2027,10 @@ def tier_question_text(store: dict, role: str, tier: str, language: str) -> tupl
         applied = loc(f"Applied, that is a row in `docs/ai/config.md` § Roles: `| {config_role} | {nxt} |{empty_cells}`.",
                       f"Umgesetzt wäre das diese Zeile in `docs/ai/config.md` § Rollen: "
                       f"`| {config_role} | {nxt} |{empty_cells}`.")
-        option_a = loc("Raise the tier: put the row above into `docs/ai/config.md` § Roles.",
-                       "Stufe anheben: die Zeile oben in `docs/ai/config.md` § Rollen eintragen.")
     else:
         applied = loc(f"Applied, that means setting a higher tier for `{config_role}` in `docs/ai/config.md` § Roles.",
                       f"Umgesetzt hieße das, eine höhere Stufe für `{config_role}` in `docs/ai/config.md` § Rollen "
                       "zu setzen.")
-        option_a = loc(f"Raise the tier: set a higher tier for `{config_role}` in `docs/ai/config.md` § Roles.",
-                       f"Stufe anheben: eine höhere Stufe für `{config_role}` in `docs/ai/config.md` § Rollen setzen.")
     if config_role != role:
         applied += " " + loc(
             f"`{role}` has no row of its own: it runs at the tier of `{config_role}`, so the row raises both.",
@@ -2037,7 +2042,6 @@ def tier_question_text(store: dict, role: str, tier: str, language: str) -> tupl
                 f"Auf `{nxt}` entfällt `{role}`, `{config_role}` übernimmt seine Arbeit.")
     applied += " " + loc(f"Every run of `{config_role}` gets more expensive.",
                          f"Jeder Lauf von `{config_role}` wird damit teurer.")
-    renew_at = total + _TIER_PROPOSAL_RENEW_AFTER
     lines = [
         loc(f"**Finding (`R-role-outcome`):** Role `{role}` has {total} outcomes {at_tier}; of the last "
             f"{window_size}, {trouble} were reworked or escalated. Once {_TIER_PROPOSAL_WINDOW} outcomes are "
@@ -2053,22 +2057,60 @@ def tier_question_text(store: dict, role: str, tier: str, language: str) -> tupl
         loc("The numbers do not show what caused the rework: an unclear assignment or a model that is too weak.",
             "Die Zahlen zeigen nicht, woran die Nacharbeit lag: an einem unklaren Auftrag oder an einem zu schwachen Modell.")
         + next_numbers,
-        "", applied, "",
-        f"- **a)** {option_a} " + loc("Effort: one table row, a minute.", "Aufwand: eine Tabellenzeile, eine Minute."),
+        "", applied,
+    ]
+    return title, "\n".join(lines) + "\n"
+
+
+def tier_question_text(store: dict, role: str, tier: str, language: str, report_name: str) -> tuple[str, str]:
+    """(title, body) of the inbox question for the proposal to raise `role` at `tier`. The hint is
+    two sentences and names the report `report_name`, which holds the numbers (tier_report_text).
+    The recommended option comes first, as a), opening with the bold label."""
+    def loc(en: str, de: str) -> str:
+        return actlib.localized(language, en, de)
+
+    facts = _tier_facts(store, role, tier)
+    trouble, window_size, percent, nxt = facts["trouble"], facts["window_size"], facts["percent"], facts["nxt"]
+    total = facts["total"]
+    empty_cells = " |" * (_ROLES_TABLE_COLUMNS - 2)
+    config_role = _config_role(role)
+    title = loc(f"{role}: {trouble} of the last {window_size} outcomes reworked or escalated - raise the tier?",
+                f"{role}: {trouble} der letzten {window_size} Ergebnisse nachgearbeitet oder eskaliert - "
+                "Stufe anheben?")
+    if nxt:
+        raise_tier = loc(f"Raise the tier: put the row `| {config_role} | {nxt} |{empty_cells}` into "
+                         "`docs/ai/config.md` § Roles.",
+                         f"Stufe anheben: die Zeile `| {config_role} | {nxt} |{empty_cells}` in "
+                         "`docs/ai/config.md` § Rollen eintragen.")
+    else:
+        raise_tier = loc(f"Raise the tier: set a higher tier for `{config_role}` in `docs/ai/config.md` § Roles.",
+                         f"Stufe anheben: eine höhere Stufe für `{config_role}` in `docs/ai/config.md` § Rollen "
+                         "setzen.")
+    renew_at = total + _TIER_PROPOSAL_RENEW_AFTER
+    hint = loc(f"`{role}` had {trouble} of its last {window_size} outcomes reworked or escalated "
+               f"(`R-role-outcome`; a proposal starts at {percent}% of the last {_TIER_PROPOSAL_WINDOW}). "
+               f"The numbers, the table and what a higher tier costs are in the report `{report_name}` in this inbox.",
+               f"`{role}` hatte {trouble} der letzten {window_size} Ergebnisse nachgearbeitet oder eskaliert "
+               f"(`R-role-outcome`; ein Vorschlag beginnt bei {percent} % der letzten {_TIER_PROPOSAL_WINDOW}). "
+               f"Die Zahlen, die Tabelle und was eine höhere Stufe kostet, stehen im Bericht `{report_name}` "
+               "in diesem Eingang.")
+    lines = [
+        hint, "",
+        "- **a)** " + loc("**Recommended:** Look at the cases first: check the journal and transcripts of the reworked "
+                          "and escalated runs for the cause, then decide. Effort: about 15 minutes of reading. The "
+                          "numbers alone do not show whether a higher tier helps.",
+                          "**Empfehlung:** Erst die Fälle ansehen: Journal und Transkripte der nachgearbeiteten und "
+                          "eskalierten Läufe auf die Ursache prüfen, dann entscheiden. Aufwand: etwa 15 Minuten "
+                          "Lesen. Die Zahlen allein zeigen nicht, ob eine höhere Stufe hilft."),
         "",
-        "- **b)** " + loc(f"Leave it. The proposal comes back after {_TIER_PROPOSAL_RENEW_AFTER} more outcomes, at "
+        f"- **b)** {raise_tier} " + loc("Effort: one table row, a minute.", "Aufwand: eine Tabellenzeile, eine Minute."),
+        "",
+        "- **c)** " + loc(f"Leave it. The proposal comes back after {_TIER_PROPOSAL_RENEW_AFTER} more outcomes, at "
                           f"{renew_at}, if at least {percent}% of the then last {_TIER_PROPOSAL_WINDOW} are reworked "
                           "or escalated. Effort: none.",
                           f"So lassen. Der Vorschlag kommt nach {_TIER_PROPOSAL_RENEW_AFTER} weiteren Ergebnissen wieder, "
                           f"also bei {renew_at}, wenn dann noch mindestens {percent} % der letzten "
                           f"{_TIER_PROPOSAL_WINDOW} nachgearbeitet oder eskaliert sind. Aufwand: keiner."),
-        "",
-        "- **c)** " + loc("Look at the cases first: check the journal and transcripts of the reworked and escalated runs "
-                          "for the cause, then decide. Effort: about 15 minutes of reading. **Recommended:** the "
-                          "numbers alone do not show whether a higher tier helps.",
-                          "Erst die Fälle ansehen: Journal und Transkripte der nachgearbeiteten und eskalierten Läufe "
-                          "auf die Ursache prüfen, dann entscheiden. Aufwand: etwa 15 Minuten Lesen. **Empfehlung:** "
-                          "Die Zahlen allein zeigen nicht, ob eine höhere Stufe hilft."),
         "",
     ]
     return title, "\n".join(lines) + "\n"
@@ -2076,7 +2118,8 @@ def tier_question_text(store: dict, role: str, tier: str, language: str) -> tupl
 
 def file_tier_questions(root: Path) -> list[Path]:
     """Write one inbox question (kind: question, answer line last) for every proposal not filed
-    yet, note the outcome count of each one actually written, and return the files. A proposal
+    yet, each preceded by an inbox report (kind: report) with its numbers that the question names,
+    note the outcome count of each one actually written, and return the files (report, then question). A proposal
     whose question is written never comes back until _TIER_PROPOSAL_RENEW_AFTER more outcomes are
     recorded, however many reports are written or archived meanwhile. Each question is noted right
     after it is written. Best effort: a question that cannot be written is skipped with a warning
@@ -2094,13 +2137,21 @@ def file_tier_questions(root: Path) -> list[Path]:
     written: list[Path] = []
     for key, total, _ in new:
         role, _, tier = key.partition("|")
-        title, body = tier_question_text(store, role, tier, language)
+        report_title, report_body = tier_report_text(store, role, tier, language)
+        report_path: Optional[Path] = None
         try:
+            # The report first: the question names it, and without it the numbers would be lost.
+            report_path, _ = entries.create_entry(
+                root, "report", report_title, recipient="all", body=report_body,
+                slug=f"tier-numbers-{role}-{tier or 'none'}")
+            title, body = tier_question_text(store, role, tier, language, report_path.name)
             path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True)
         except (OSError, ValueError) as exc:
+            if report_path is not None:  # no orphan report, and no second one with the next run
+                report_path.unlink(missing_ok=True)
             print(f"doctor.py: tier proposal {key!r} not filed as a question: {exc}", file=sys.stderr)
             continue
-        written.append(path)
+        written += [report_path, path]
         if not remember_tier_proposals(root, {key: total}):
             print(f"doctor.py: could not write {_TIER_MEMORY_FILE.as_posix()} -- the question for {key!r} "
                   "will be filed again with the next run", file=sys.stderr)
@@ -2653,7 +2704,8 @@ def main(argv: list[str]) -> int:
 
     if args.inbox:
         # A tier proposal is a decision, so it goes into a question of its own, not into the
-        # report; the report carries the other findings and is skipped when there are none.
+        # doctor report; its numbers go into a report of their own that the question names. The
+        # doctor report carries the other findings and is skipped when there are none.
         for question in file_tier_questions(root):
             print(f"doctor.py: wrote {_rel(question, root)}")
         written = write_inbox(root, [f for f in findings if f.kind != "tier-proposal"])

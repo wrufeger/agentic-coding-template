@@ -30,8 +30,10 @@ inbox.
 A question in the inbox has the question itself as its heading, ending in a question mark. Below it
 comes a hint of at most three sentences and no list; background and reasons stay in the concept or
 backlog entry it names. Then 2–5 options as lines `- **a)** …`, never a numbered list, one or two
-lines each with the effort, the recommendation at its own option, and a blank line before, between
-and after them. A question without sensible options stays free text. Form:
+lines each with the effort, and a blank line before, between and after them. A recommended option
+always comes first, as a), its text opening with the bold label `**Recommended:**` (in
+`language-docs`, e.g. `**Empfehlung:**`) and closing with the reason in one sentence. A question
+without sensible options stays free text. Form:
 `docs/ai/inbox/README.md`.
 
 ## `R-human-capture` — Chat prefixes `todo:`, `note:`, `idea:` capture

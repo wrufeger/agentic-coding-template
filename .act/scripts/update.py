@@ -2509,8 +2509,8 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
 
 def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
     """Returns (summary, inbox_paths, touched). doctor.py's own exit codes: 0 = no findings, 1 =
-    findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md and one
-    question per new tier proposal, each announced by a `doctor.py: wrote <path>` line), 2 = a real
+    findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md and, per new
+    tier proposal, a numbers report plus one question, each announced by a `doctor.py: wrote <path>` line), 2 = a real
     failure. `inbox_paths` holds every file doctor.py wrote, report and questions. `touched` carries
     the bridge files _refresh_generated_bridges rewrote, so the caller can add them to the commit
     alongside the inbox files."""
@@ -2540,8 +2540,11 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
     if result.returncode == 0 and not wrote:
         return f"{bridge_summary}; doctor.py --inbox ran, no findings", [], bridge_touched
 
-    reports = [rel for rel in wrote if Path(rel).name.startswith("report-")]
-    questions = [rel for rel in wrote if rel not in reports]
+    all_reports = [rel for rel in wrote if Path(rel).name.startswith("report-")]
+    # A tier proposal's numbers report belongs to its question; it is not a doctor report with findings.
+    numbers = [rel for rel in all_reports if "-tier-numbers-" in Path(rel).name]
+    reports = [rel for rel in all_reports if rel not in numbers]
+    questions = [rel for rel in wrote if rel not in all_reports]
     # doctor.py's closing count includes the tier proposals, which went into questions, not the report.
     count_match = re.match(r"(\d+) finding", lines[-1].strip()) if lines else None
     count = str(max(int(count_match.group(1)) - len(questions), 0)) if count_match else "some"
@@ -2550,6 +2553,8 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
         parts.append(f"{count} finding(s) -> {', '.join(reports) if reports else 'docs/ai/inbox/'}")
     if questions:
         parts.append(f"{len(questions)} question(s) -> {', '.join(questions)}")
+    if numbers:
+        parts.append(f"{len(numbers)} numbers report(s) for the question(s) -> {', '.join(numbers)}")
     return f"{bridge_summary}; " + "; ".join(parts), inbox_paths, bridge_touched
 
 
