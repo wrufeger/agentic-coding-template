@@ -626,36 +626,9 @@ def _update_init_notes(root: Path, mapped: list[dict], plan: bool, language: str
     return dest
 
 
-def _decode_mixed(raw: bytes) -> tuple[str, int, int]:
-    """Decode `raw` as UTF-8, but a byte that is not valid UTF-8 as Windows-1252 on its own (a
-    byte cp1252 leaves undefined becomes U+FFFD) — so a mostly-UTF-8 file with a few foreign bytes
-    keeps its correct characters instead of turning all of them into mojibake. Returns the text,
-    the number of non-ASCII characters that decoded as valid UTF-8, and the number of bytes that
-    needed the Windows-1252 fallback."""
-    out: list[str] = []
-    utf8_chars = 0
-    fallback_bytes = 0
-    position = 0
-    while position < len(raw):
-        try:
-            tail = raw[position:].decode("utf-8")
-            out.append(tail)
-            utf8_chars += sum(1 for char in tail if ord(char) > 127)
-            break
-        except UnicodeDecodeError as exc:
-            head = raw[position:position + exc.start].decode("utf-8")
-            out.append(head)
-            utf8_chars += sum(1 for char in head if ord(char) > 127)
-            bad = raw[position + exc.start:position + exc.start + 1]
-            out.append(bad.decode("cp1252", errors="replace"))
-            fallback_bytes += 1
-            position += exc.start + 1
-    return "".join(out), utf8_chars, fallback_bytes
-
-
 def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
     """Decode the old AI-CONFIG.md: UTF-8 first; a file that is UTF-8 apart from a few stray bytes
-    keeps its UTF-8 characters and reads only those bytes as Windows-1252 (_decode_mixed); a file
+    keeps its UTF-8 characters and reads only those bytes as Windows-1252 (actlib.decode_mixed); a file
     with no valid multi-byte UTF-8 at all is read as Windows-1252 whole (common for a hand-edited
     file from an older editor). Returns the text plus a note for the report when a fallback was used
     or even that failed to map every byte."""
@@ -666,7 +639,7 @@ def _read_source_text(source: Optional[Path]) -> tuple[str, Optional[str]]:
         return raw.decode("utf-8"), None
     except UnicodeDecodeError:
         pass
-    text, utf8_chars, fallback_bytes = _decode_mixed(raw)
+    text, utf8_chars, fallback_bytes = actlib.decode_mixed(raw)
     if utf8_chars and fallback_bytes:
         note = f"read as UTF-8 with some Windows-1252 bytes ({source.name})"
         if "\uFFFD" in text:

@@ -887,7 +887,9 @@ def _folder_source_result(root: Path) -> Optional[dict]:
     folder cannot be judged (not a folder, git after all, no manifest, nothing applied yet)."""
     template = actlib.read_lock().get("template") or {}
     source = str(template.get("source") or "")
-    applied = str(template.get("manifest_sha256") or "")
+    # the source's own fingerprint recorded at update time; a lock from before that falls back to
+    # the project manifest's hash, which matches only while the source's manifest is current
+    applied = str(template.get("source_fingerprint") or template.get("manifest_sha256") or "")
     if not source or not applied:
         return None
     folder = Path(root, source)
@@ -2255,6 +2257,8 @@ def _human_line(state: dict) -> Optional[str]:
         parts.append(f"update {state['update']} available")
     if state.get("tidy"):
         parts.append(str(state["tidy"]))
+    if state.get("encoding"):
+        parts.append(str(state["encoding"]))
     return "act · " + " · ".join(parts) if parts else None
 
 
@@ -2358,6 +2362,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         identity_note = None
     if identity_note:
         print(identity_note)
+
+    try:
+        encoding_note = actlib.config_encoding_problem(root)
+    except Exception:  # informational only, must never block the session
+        encoding_note = ""
+    if encoding_note:
+        print(f"[act] note: {encoding_note}")
+        state["encoding"] = "docs/ai/config.md is not UTF-8, see note"
 
     try:
         topics = _active_topics(root, config)

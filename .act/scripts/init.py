@@ -265,6 +265,9 @@ def _checkout_template_ref(checkout_root: Path) -> tuple[str, str]:
                 return recorded.strip(), commit.strip() if isinstance(commit, str) else ""
         except (OSError, ValueError):
             pass  # unreadable lock: fall back to the checkout itself below
+    if not (checkout_root / ".git").exists():
+        # a plain folder without git of its own: a repository further up is not its origin or HEAD
+        return str(checkout_root.resolve()), ""
     origin = _get_remote_url(checkout_root, "origin")
     head = _git(["rev-parse", "HEAD"], cwd=checkout_root, check=False).stdout.strip()
     return (origin if origin else str(checkout_root.resolve())), head
@@ -1385,8 +1388,8 @@ def copy_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[s
         if skill_dir.name in _SKILLS_NOT_COPIED or skill_dir.name in cut_skills:
             continue
         for src in sorted(skill_dir.rglob("*")):
-            if not src.is_file():
-                continue
+            if not src.is_file() or actlib.is_bytecode_cache(src.relative_to(skill_dir)):
+                continue  # a Python cache is gitignored, a copy of it would break `git add`
             rel = src.relative_to(skills_dir).as_posix()  # "<name>/<file>"
             resolved = actlib.resolve(f"skills/{rel}")
             source_path = resolved[0] if resolved is not None else src
@@ -2925,6 +2928,18 @@ def step_own_files(
 # Step 9 — .act-lock.json + .act-local/cache.json
 # ---------------------------------------------------------------------------
 
+def _folder_source_fingerprint(source: str) -> str:
+    """Fingerprint of the MANIFEST.json of a template source that is a plain folder without git,
+    as it is now -- the value update.py records too and the session start compares the folder
+    against. "" for a git source, a URL or a folder without a manifest."""
+    if not source:
+        return ""
+    folder = Path(source)
+    if not folder.is_dir() or (folder / ".git").exists():
+        return ""
+    return manifest.manifest_fingerprint(folder / ".act")
+
+
 def step_lock_and_cache(
     root: Path, plan: bool, template_origin: str, template_commit: str,
     generated: dict[str, Path], copies: dict[str, dict],
@@ -2979,7 +2994,8 @@ def step_lock_and_cache(
         # bridges (agent_bridge_targets()) are not tracked here: they are never replaced once
         # written, so there is nothing to compare against later.
         lock_update = {
-            "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash},
+            "template": {"version": version, "commit": commit, "source": template_origin, "manifest_sha256": manifest_hash,
+                         "source_fingerprint": _folder_source_fingerprint(template_origin)},
             "copies": copies,
             # present from the start, so a later "nothing changed" never has to add it
             "removed_by_user": list(actlib.read_lock().get("removed_by_user", [])),

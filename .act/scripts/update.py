@@ -1266,8 +1266,8 @@ def step_refresh_copies(
         if own is None or local_skills not in own.parents:
             continue
         rel = own.relative_to(local_skills).as_posix()
-        if rel.split("/")[0] in cut_skills:
-            continue
+        if rel.split("/")[0] in cut_skills or actlib.is_bytecode_cache(Path(rel)):
+            continue  # a Python cache is gitignored, a copy of it would break `git add`
         for dest_root in active_dirs:
             dest = f"{dest_root}/{rel}"
             if dest not in new_specs:
@@ -2529,6 +2529,23 @@ def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
 # Step 10 — .act-lock.json + commit
 # ---------------------------------------------------------------------------
 
+def _folder_source_fingerprint(root: Path, source: str, keep_commit: bool) -> str:
+    """Fingerprint of the MANIFEST.json of a source that is a plain folder without git, as it is
+    now -- what the session start compares the folder against later. The project's own manifest is
+    rebuilt after the copy and can differ from the source's, so it cannot serve for that. "" for a
+    git source, a folder without a manifest, or a catch-up run (nothing was fetched, so the lock
+    keeps what it has)."""
+    if keep_commit:
+        template = actlib.read_lock().get("template") or {}
+        return str(template.get("source_fingerprint") or "")
+    if not source:
+        return ""
+    folder = Path(root, source)
+    if not folder.is_dir() or (folder / ".git").exists():
+        return ""
+    return manifest.manifest_fingerprint(folder / ".act")
+
+
 def step_lock(
     root: Path, plan: bool, source: str, new_copies: dict[str, dict], fetched_commit: Optional[str],
     keep_commit: bool = False, ref: Optional[str] = None,
@@ -2556,6 +2573,7 @@ def step_lock(
         "template": {
             "version": version, "commit": commit, "source": source, "ref": ref,
             "manifest_sha256": manifest_hash,
+            "source_fingerprint": _folder_source_fingerprint(root, source, keep_commit),
         },
         "copies": new_copies,
     })

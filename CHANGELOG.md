@@ -9,6 +9,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Fixed
+
+- A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
+- A migration that creates scaffold (the project docs index, the resources list) now names the new file in the inbox entry `*-translate-scaffold.md` when `language-docs` is not English: an open entry is extended, otherwise (also when the old one is answered or done) a new one is created as `init.py` does; the migrations' plan text names this entry. Before, such a file stayed English with no hint to translate it.
+- A `docs/ai/config.md` that is not UTF-8 (for example saved as Windows-1252 or UTF-16) no longer ends the session start early with "session start stopped early (UnicodeDecodeError)". The start prints a note naming the file and its encoding (also in the one-line message shown to you), reads the file as UTF-16 (byte order mark), as UTF-8 with the stray bytes read as Windows-1252, or as Windows-1252, and runs the remaining steps. The hook checks now read such a config instead of refusing writes: `secret-read` and `git-metadata-guard` keep blocking, and a check set to `off` stays off.
+- With a template source that is a plain folder without git, a stale `MANIFEST.json` in that folder no longer reports "update is available" at every session start. `update.py` records a fingerprint of the source's own manifest in `.act-lock.json` (`template.source_fingerprint`; `init.py` records it too when it runs from such a folder), and the session start compares that; a lock without the field behaves as before.
+
+- `act-local-tidy` now also removes compiled-module files (`<name>.cpython-NNN.pyc`, including the `.opt-N`
+  form) under `.act-local/pyc/` that belong to another Python version than the running one and are older than 7
+  days. They used to stay forever after an interpreter upgrade, because only whole folders whose source folder was
+  gone were removed. Links are not followed, files of the running version are never touched, and nothing outside
+  `.act-local/pyc/` is affected; they show up in the existing count, size and kinds summary.
+
 ## [2.5.0] - 2026-11-05
 
 Settings are shown and changed with `/act-config`, a project trims the template to what it uses with `profile` and

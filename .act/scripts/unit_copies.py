@@ -154,7 +154,8 @@ def ensure_own_unit_copies(
             if _link_like(skill_dir, skills_base):
                 messages.append(f"skill '{name}' is a symlink or junction — skipped, no copy made")
                 continue
-            for src in sorted(p for p in skill_dir.rglob("*") if p.is_file()):
+            for src in sorted(p for p in skill_dir.rglob("*")
+                              if p.is_file() and not actlib.is_bytecode_cache(p.relative_to(skill_dir))):
                 rel = f"{name}/{src.relative_to(skill_dir).as_posix()}"
                 if _escapes(src, skill_dir):
                     messages.append(f"docs/ai/local/skills/{rel}: symlink or outside its skill folder — skipped")

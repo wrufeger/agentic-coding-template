@@ -7,7 +7,9 @@
 #            - `.act-local/tmp/`: every entry older than 7 days that belongs to no open task;
 #            - `.act-local/backup/`: all but the newest 5 backups;
 #            - `.act-local/pyc/`: a folder of the compiled-module cache whose source folder no longer exists
-#              (a moved project, a replaced Python install), when nothing in it is newer than 7 days;
+#              (a moved project, a replaced Python install), when nothing in it is newer than 7 days; and a
+#              single `<name>.cpython-NNN.pyc` (or `.opt-N`) file of another interpreter version than the
+#              running one, when it is older than 7 days;
 #            - every other entry directly under `.act-local/` that no template script creates
 #              (KNOWN_ENTRIES below): same conditions as a `tmp/` entry. Known entries are never
 #              removed by this rule.
@@ -297,6 +299,41 @@ def _stale_pyc_dirs(root: Path) -> list[tuple[Path, str]]:
     return stale
 
 
+_PYC_FILE_RE = re.compile(r"^.+\.(cpython-\d+)(?:\.opt-\d+)?\.pyc$")
+
+
+def _foreign_pyc_files(root: Path, skip: Iterable[Path], limit: float) -> list[TidyItem]:
+    """Compiled files under `.act-local/pyc/` written by another CPython version than the running one
+    (`sys.implementation.cache_tag`) and not newer than `limit`; they stay behind after an interpreter
+    upgrade. Links are neither entered nor taken, folders in `skip` (removed whole) are not entered."""
+    tag = sys.implementation.cache_tag
+    skipped = {str(p) for p in skip}
+    found: list[TidyItem] = []
+    stack: list[Path] = [root / ".act-local" / "pyc"]
+    while stack:
+        folder = stack.pop()
+        try:
+            children = sorted(os.scandir(_fs(folder)), key=lambda e: e.name)
+        except OSError:
+            continue
+        for child in children:
+            try:
+                st = child.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if _is_link_stat(st):
+                continue
+            path = folder / child.name
+            if stat.S_ISDIR(st.st_mode):
+                if str(path) not in skipped:
+                    stack.append(path)
+                continue
+            match = _PYC_FILE_RE.match(child.name)
+            if match and match.group(1) != tag and st.st_mtime <= limit:
+                found.append(TidyItem(path, "pyc", 1, st.st_size, st.st_mtime))
+    return found
+
+
 def base_is_link(root: Path) -> bool:
     """True when `.act-local` itself is a link or junction: the tidy then does nothing, since every path
     below it would lead outside the project."""
@@ -462,12 +499,17 @@ def plan(root: Path, now: Optional[float] = None) -> list[TidyItem]:
                     continue
             except OSError:
                 continue
+            stale_dirs: list[Path] = []
             for folder, rel in _stale_pyc_dirs(root):
+                stale_dirs.append(folder)
                 if _kept(f"pyc/{rel}", patterns):
                     continue
                 files, size, newest = _scan(folder, limit)
                 if newest <= limit:
                     items.append(TidyItem(folder, "pyc", files, size, newest))
+            for item in _foreign_pyc_files(root, stale_dirs, limit):
+                if not _kept(f"pyc/{item.path.relative_to(path).as_posix()}", patterns):
+                    items.append(item)
         elif not _is_known(name):
             item = old_enough(path, name, name)
             if item is not None:

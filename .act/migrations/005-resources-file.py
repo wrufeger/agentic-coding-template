@@ -17,16 +17,38 @@
 #          already has the file from the scaffold. plan() only reads, never writes.
 #
 # Contract (.act/scripts/update.py step 8): plan(root) -> str, apply(root) -> (str, list[str]) of
-# project-relative paths (posix separators) touched. Stdlib only, no `actlib` import: a migration
-# must not depend on the *project's* possibly-older copy of it.
+# project-relative paths (posix separators) touched. Stdlib only; the one use of `actlib` (the inbox
+# entry for translating new scaffold, only with `language-docs` other than English) is guarded: a failure
+# there never stops the migration.
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 TARGET = "docs/ai/local/resources.md"
 SOURCE = ".act/skeleton/local/resources.md"
+
+
+def _note_translation(root: Path, rel: str) -> tuple[str, list[str]]:
+    """With `language-docs` other than English, enters the new scaffold file `rel` into the inbox
+    entry for the scaffold translation (actlib.note_scaffold_for_translation). Returns (a phrase
+    for the description or "", the entry's project-relative path as a list or empty). Never
+    raises: the file is created either way, a missing entry only costs the hint."""
+    scripts = str(root / ".act" / "scripts")
+    try:
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import actlib
+        note = getattr(actlib, "note_scaffold_for_translation", None)
+        entry = note(root, [rel]) if note is not None else None
+    except Exception as exc:
+        return f"; translation entry not written ({exc.__class__.__name__}: {exc})", []
+    if entry is None:
+        return "", []
+    entry_rel = entry.relative_to(root).as_posix()
+    return f"; named in {entry_rel} for translation", [entry_rel]
 
 
 def _exists(path: Path) -> bool:
@@ -47,7 +69,8 @@ def plan(root: Path) -> str:
     """Describes what apply() would do, writes nothing."""
     state = _state(root)
     if state == "create":
-        return f"would create {TARGET} from the scaffold"
+        return (f"would create {TARGET} from the scaffold; with `language-docs` other than English it would "
+                "also create or extend the inbox entry *-translate-scaffold.md")
     if state == "no-source":
         return f"{SOURCE} is missing — nothing to do"
     return f"{TARGET} exists — nothing to do"
@@ -69,4 +92,5 @@ def apply(root: Path) -> tuple[str, list[str]]:
     except BaseException:
         temp.unlink(missing_ok=True)
         raise
-    return f"created {TARGET} from the scaffold", [TARGET]
+    note, touched = _note_translation(root, TARGET)
+    return f"created {TARGET} from the scaffold{note}", [TARGET, *touched]
