@@ -55,7 +55,10 @@
 #    "roles":      {"<role>": {"count": n, "first_used": "YYYY-MM-DD", "last_used": "...",
 #                               "tiers": {"<tier-or-''>": n, ...}, "models": {"<model-or-''>": n},
 #                               "outcomes": {"<tier-or-''>": {"accepted": n, "reworked": n,
-#                                                              "escalated": n}}}},
+#                                                              "escalated": n}},
+#                               "recent": {"<tier-or-''>": ["accepted"|"reworked"|"escalated", ...]}}},
+#                               (recent: the last 30 outcomes per tier, oldest first, written by --outcome;
+#                                a file without it keeps working)
 #    "skills":     {"<skill>":     {"count": n, "first_used": ..., "last_used": ...}},
 #    "commands":   {"<command>":   {"count": n, "first_used": ..., "last_used": ...}},
 #    "scripts":    {"<script>":    {"count": n, "first_used": ..., "last_used": ...}},
@@ -420,13 +423,16 @@ def _read_store(root: Path) -> dict:
 
 
 # Fields of a store entry that hold a mapping, and the type their values must have.
-_ENTRY_MAPS = {"tiers": int, "models": int, "kinds": int, "runs": list, "outcomes": dict}
+_ENTRY_MAPS = {"tiers": int, "models": int, "kinds": int, "runs": list, "outcomes": dict, "recent": list}
+# How many of the latest outcomes per role/tier are kept in order (roles.<name>.recent); the tier
+# proposal in doctor.py looks at exactly this window.
+_RECENT_KEEP = 30
 
 
 def _sanitize_store(store: dict, path: Path) -> None:
     """Drop what has the wrong type in a hand-edited or damaged usage.json - an entry that is not
-    an object, a `count` that is not a number, a `tiers`/`models`/`kinds`/`runs`/`outcomes` field of
-    the wrong shape - with one note per read on stderr naming the place, so folding events and
+    an object, a `count` that is not a number, a `tiers`/`models`/`kinds`/`runs`/`outcomes`/`recent`
+    field of the wrong shape or with items that are not an outcome - with one note per read on stderr naming the place, so folding events and
     every read path work on a clean store instead of ending in a traceback. The file itself is
     rewritten by the next consolidation."""
     problems: list[str] = []
@@ -465,6 +471,14 @@ def _sanitize_store(store: dict, path: Path) -> None:
                                 problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is "
                                                 f"{number!r}, not a number")
                                 del counts[kind]
+                elif field == "recent":
+                    # Per tier the latest outcomes in order; any other item is dropped.
+                    for tier_key, items in value.items():
+                        kept = [item for item in items if isinstance(item, str) and item in _OUTCOME_VALUES]
+                        if len(kept) != len(items):
+                            problems.append(f"{cat}.{name}.{field}.{tier_key or '?'} holds "
+                                            f"{len(items) - len(kept)} item(s) that are not an outcome")
+                        items[:] = kept[-_RECENT_KEEP:]
     for problem in problems:
         print(f"usage: ignoring {problem} in {path}", file=sys.stderr)
 
@@ -763,6 +777,9 @@ def cmd_outcome(root: Path, role: str, tier: str, outcome: str) -> int:
         bucket = store["roles"].setdefault(role, {"count": 0})
         counts = bucket.setdefault("outcomes", {}).setdefault(tier or "", {})
         counts[outcome] = counts.get(outcome, 0) + 1
+        recent = bucket.setdefault("recent", {}).setdefault(tier or "", [])
+        recent.append(outcome)
+        del recent[:-_RECENT_KEEP]
 
     store = consolidate_and_mutate(root, _mutate)
     if store is None:

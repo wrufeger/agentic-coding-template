@@ -9,6 +9,25 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Added
+
+- The doctor reports a file under `docs/ai/local/` whose counterpart under `.act/` is gone (the template renamed or
+  removed it, so the override silently has no effect), with the most similar name under `.act/`. Rule overrides,
+  roles and a project's own skills are left out, and so is an own script or coding set unless its name is a strict
+  match for a template file (one name is the start of the other, or the same name with another extension). `update.py` shows the line in the report of its doctor run.
+- The doctor warns about a code block that is opened and never closed in an archive collection file
+  (`docs/ai/work/archive/<kind>-<YYYY-MM>.md`); anchors after it no longer count as found.
+
+### Changed
+
+- The doctor's tier proposal is rarer: it looks at the last 30 outcomes of a role at a tier and proposes a higher tier
+  only once 30 are recorded and at least 60 % (18 of 30) were reworked or escalated; older outcomes drop out of the
+  window, and a declined proposal comes back at or after 30 more outcomes, if 60 % of the last 30 are still reworked or escalated. `usage.py --outcome` now also keeps the order of
+  the last 30 outcomes per role and tier (`roles.<name>.recent` in `.act-local/usage.json`); an existing file without
+  it keeps working, its sums stay, and the window fills with the next outcomes.
+- The inbox question the doctor writes for a tier proposal follows the form of the question rule: a blank line before,
+  between and after the options, no `Options:` label, and an effort named for each option.
+
 ### Fixed
 
 - A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
