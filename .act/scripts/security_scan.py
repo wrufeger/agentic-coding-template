@@ -550,21 +550,32 @@ def _run(
     expected case here, not a failure by itself; the caller decides what a given `returncode`
     means for its own tool (2026-09-27 review, item 5: blank stdout plus an unexpected exit code
     used to come back as a silent "clean" result -- `returncode`/`stderr` are now handed back so
-    each runner can tell that apart from a real "nothing found")."""
+    each runner can tell that apart from a real "nothing found").
+
+    At the time limit the whole process tree is ended (`actlib.end_process_tree`): on Windows
+    `npm`, `pnpm` and `composer` are batch wrappers whose grandchild keeps the output pipes open,
+    and `subprocess.run(timeout=...)` used to wait for it -- an `npm audit` given 3 s came back
+    after 15 s, when its node child ended on its own."""
     try:
         # Every tool here prints UTF-8 JSON. Without an explicit encoding Python reads it in the
         # locale's code page (cp1252 on many Windows machines): a byte that code page lacks kills the
         # reader thread, stdout comes back empty, and a tool that exits 1 *because* it found
         # something looked like a tool that printed nothing.
-        result = subprocess.run(
-            args, cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout,
+        proc = subprocess.Popen(
+            args, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", start_new_session=(os.name != "nt"),
         )
-    except subprocess.TimeoutExpired:
-        return None, None, None, f"timed out after {timeout:.0f}s"
     except OSError as exc:
         return None, None, None, f"failed to start ({args[0]}): {exc}"
-    return result.stdout, result.returncode, result.stderr, None
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        actlib.end_process_tree(proc)
+        return None, None, None, f"timed out after {timeout:.0f}s"
+    except BaseException:  # Ctrl+C in a manual run: never leave the tool behind, as subprocess.run did
+        actlib.end_process_tree(proc)
+        raise
+    return stdout, proc.returncode, stderr, None
 
 
 def _relative(path_value: object, root: Path) -> str:

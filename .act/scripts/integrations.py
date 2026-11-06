@@ -66,7 +66,6 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -337,46 +336,17 @@ def run_mcp_list(root: Path) -> tuple[Optional[list[dict[str, str]]], str]:
     try:
         proc = subprocess.Popen(command, cwd=str(root), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-                                start_new_session=(os.name != "nt"))  # own process group: killpg below
+                                start_new_session=(os.name != "nt"))  # own process group: killpg in actlib.end_process_tree
     except (OSError, ValueError) as exc:
         return None, f"`claude mcp list` could not run ({type(exc).__name__})"
     try:
         stdout, _stderr = proc.communicate(timeout=seconds)
     except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
+        actlib.end_process_tree(proc)  # a claude.cmd grandchild would keep the pipes open
         return None, f"`claude mcp list` did not answer within {seconds:g} s"
     if proc.returncode != 0:
         return None, f"`claude mcp list` failed (exit {proc.returncode})"
     return parse_mcp_list(stdout), ""
-
-
-def _kill_process_tree(proc: "subprocess.Popen[str]") -> None:
-    """Stop `proc` and everything it started, then let go of its pipes. `subprocess.run(timeout=...)`
-    kills only the direct child; on Windows `claude` is `claude.cmd`, whose node grandchild keeps the pipes
-    open, so waiting for the output would hang far past the limit. Best effort: `taskkill /T /F` on
-    Windows, the process group elsewhere. Checked with a stand-in that leaves a sleeping grandchild
-    holding the pipes (tests/probes/t1-integrations); not checked against a real `claude.cmd` hang."""
-    try:
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
-                           stdin=subprocess.DEVNULL, timeout=10, check=False)
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    try:
-        proc.kill()
-    except OSError:
-        pass
-    try:
-        proc.communicate(timeout=5)
-    except subprocess.TimeoutExpired:  # a survivor still holds the pipes: stop waiting for them
-        for stream in (proc.stdout, proc.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
 
 
 def probe_mcp(root: Path, tools: dict[str, str]) -> tuple[McpInfo, list[Row]]:

@@ -38,7 +38,8 @@
 #          PreToolUse check's plain-text stdout (transcript-only, never fed back to the model — see
 #          checks/encoding_hint.py's and checks/worker_cap.py's own header comments for the
 #          research behind that), PostToolUse's hookSpecificOutput.additionalContext is documented
-#          to reach the model. A check that also needs to *deny* a call still does that from
+#          to reach the model, and reaches a worker for its own calls (live probe, see
+#          checks/worker_cap.py). A check that also needs to *deny* a call still does that from
 #          PreToolUse (exit 2 + stderr, the only channel confirmed to reach the model for that
 #          event) — PostToolUse's notes are for the non-blocking half of the same checks only.
 #

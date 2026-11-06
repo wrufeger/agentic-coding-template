@@ -114,7 +114,15 @@
 #   - two commits racing on the very same lock-file state can each spawn a worker (the marker check
 #     is best-effort, not a lock) — wasteful, never wrong: both compute the same answer;
 #   - the wait budget is shared with the other commit checks through the hook-wide deadline: when
-#     they have used the hook's time up, this check notes "not checked" instead of looking at all.
+#     they have used the hook's time up, this check notes "not checked" instead of looking at all;
+#   - the detached worker outlives the hook's own end and the end of the session (live probe,
+#     Claude Code 2.1.319 on Windows, 2026-11-06: hook processes run in no job object). On Windows a
+#     hook that Claude Code ends at its timeout takes its whole process tree with it, this worker
+#     included (not probed elsewhere, where the worker runs in a session of its own): the running
+#     marker then waits out `stale_after` and the next commit goes through with the "not checked"
+#     note. Spawning the worker so that it escapes that tree would gain little: a PreToolUse hook
+#     that times out lets its call through anyway (non-blocking error, same probe); a surviving
+#     worker would only fill the cache for the next commit.
 
 from __future__ import annotations
 

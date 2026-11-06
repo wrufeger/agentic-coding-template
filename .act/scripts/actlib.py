@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -171,6 +172,46 @@ def scratch_dir(purpose: str, root: "Optional[Path]" = None) -> Iterator[Path]:
         yield Path(path)
     finally:
         remove_tree(path)
+
+
+# ---------------------------------------------------------------------------
+# Child processes with a time limit
+# ---------------------------------------------------------------------------
+
+def end_process_tree(proc: "subprocess.Popen[str]") -> None:
+    """Stop `proc` and everything it started, then let go of its pipes -- for a caller whose
+    `communicate(timeout=...)` ran out. Killing only the direct child is not enough: on Windows a
+    tool behind a batch wrapper (`npm.cmd`, `pnpm.cmd`, `composer.bat`, `claude.cmd`) runs in a
+    grandchild that keeps the output pipes open, so waiting for the output hangs until that
+    grandchild ends on its own, far past the limit (`subprocess.run(timeout=...)` does exactly that
+    wait). By PID only, never by name: `taskkill /T /F` on Windows, the process group elsewhere, so
+    the caller starts `proc` with `start_new_session=(os.name != "nt")`. Best effort, never raises."""
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                           stdin=subprocess.DEVNULL, timeout=10, check=False)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        # A survivor the tree kill could not reach (its wrapper had already exited) still holds the
+        # pipes. On Windows the reader threads are blocked in read(), and close() would wait for the
+        # same lock until the survivor ends: leave them, they are daemon threads. Elsewhere no thread
+        # reads, so closing frees the pipes at once.
+        if sys.platform != "win32":
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
 
 
 # ---------------------------------------------------------------------------

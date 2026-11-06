@@ -62,7 +62,9 @@
 # For the two non-blocking hints ("cap reached" and, in `warn` mode, "cap exceeded"), this module
 # now (after PostToolUse was wired into dispatch.py) exports note_worker_cap(payload), registered
 # in dispatch.py's _POST_TOOL_USE_NOTES and delivered via that event's own
-# hookSpecificOutput.additionalContext — the field actually documented to reach the model. Division
+# hookSpecificOutput.additionalContext — the field actually documented to reach the model, a
+# worker's too (live probe, Claude Code 2.1.319, 2026-11-06: a sub-agent's own Bash and Read calls
+# each got their PostToolUse additionalContext into the sub-agent's context, not the caller's). Division
 # of labor: check_worker_cap (PreToolUse) is the only place that increments the running counter
 # (_register_worker_call) and the only place that denies; it never prints a hint any more.
 # note_worker_cap (PostToolUse) only *reads* the count check_worker_cap already wrote for this same
