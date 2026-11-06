@@ -931,8 +931,8 @@ options:
 Call: direct
 
 ```text
-usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --add-missing | --imports |
-                --worker] [--from FILE]
+usage: rules.py [-h] [--area {coding,core}] [--list | --validate | --add-missing |
+                --add-new-coding | --imports | --worker] [--from FILE]
                 [id]
 
 Read the effective coding/core rules after the project's checkboxes and replacements are applied.
@@ -948,6 +948,8 @@ options:
   --add-missing         enter the rules and rule files of the template that docs/ai/rules.md does
                         not know (--area core is implied); exit 1 if something could not be
                         entered
+  --add-new-coding      list in docs/project/coding_rules.md the rule sets and groups of
+                        .act/coding/ it does not know yet (--area coding is implied)
   --imports             files Claude Code loads through @-imports with their size in characters
                         and totals, exit 1 on any it cannot follow
   --worker              the parts a worker is handed instead of CLAUDE.md: size and sources per

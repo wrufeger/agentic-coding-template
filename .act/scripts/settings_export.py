@@ -179,19 +179,26 @@ def build_rules_area(root: Path, show_all: bool) -> Optional[sf.SettingsArea]:
 
     entries: list[sf.SettingsEntry] = []
     seen: set[str] = set()
-    for pset in project.sets:
-        template = rules.resolve_template_set(pset)
+    templates = [rules.resolve_template_set(pset) for pset in project.sets]
+    # A rule the template moved to another file is still listed under the old one until `update`
+    # moves the line; its box counts meanwhile (the last such line wins, as in a block).
+    moved: dict[str, "rules.ProjectGroup"] = {}
+    for pset, template in zip(project.sets, templates):
+        if template is not None:
+            moved.update({gid: line for gid, line in pset.groups.items() if gid not in template.groups})
+    for pset, template in zip(project.sets, templates):
         if template is None:
             continue
         for group_id, tgroup in template.groups.items():
             if group_id in seen:
                 continue
             seen.add(group_id)
-            symbol = rules.classify(group_id, pset.groups.get(group_id), override_by_id)
+            listed = pset.groups.get(group_id) or moved.get(group_id)
+            symbol = rules.classify(group_id, listed, override_by_id)
             if symbol == "=" and not show_all:
                 continue
             fingerprint = _group_fingerprint(tgroup) if symbol in ("~", "-") else None
-            entries.append(_entry_for_group(symbol, group_id, pset.groups.get(group_id),
+            entries.append(_entry_for_group(symbol, group_id, listed,
                                              override_by_id.get(group_id), fingerprint))
 
     used_ids = seen | set(override_by_id)

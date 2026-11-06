@@ -18,6 +18,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - The doctor warns about a code block that is opened and never closed in an archive collection file
   (`docs/ai/work/archive/<kind>-<YYYY-MM>.md`); anchors after it no longer count as found.
 
+- `update.py --plan` now previews the coding rule sets and groups an update would enter into `docs/project/coding_rules.md`, read from the fetched `.act/coding/` (with `--catch-up`, from the installed one); nothing is written.
+- `rules.py --add-new-coding` enters the rule sets and groups of `.act/coding/` that `docs/project/coding_rules.md` does not list yet (the step `update.py` runs itself).
+
 ### Changed
 
 - The doctor's tier proposal is rarer: it looks at the last 30 outcomes of a role at a tier and proposes a higher tier
@@ -27,6 +30,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   it keeps working, its sums stay, and the window fills with the next outcomes.
 - The inbox question the doctor writes for a tier proposal follows the form of the question rule: a blank line before,
   between and after the options, no `Options:` label, and an effort named for each option.
+
+- `update.py` no longer enters new coding rule sets or groups into `docs/project/coding_rules.md` while that file has changes that are not committed (they would have gone into the update commit). It says so in step 6 and in the closing notes, with the command to run after committing.
+- `rules.py` reports, when following a rule the template moved to another file in `docs/ai/rules.md`: a rule that moved into a file your project shadows with its own copy under `docs/ai/local/rules/` that lacks the rule (the rule does not load), and an ID listed twice in one block (only the last line counts; `--validate` flags it too).
 
 ### Fixed
 
@@ -45,6 +51,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `secret-scan`: a file name that git prints in quotes in the diff header (a directory with a tab, a quote or a control character in its name) is read as the real name, so a new `.env` there is held and a `.env.example` there is no longer held by mistake.
 - `secret-scan`: a rename or copy to a `.env` name (`env.txt` -> `.env`) is held like a new `.env` file, also when the rename carries no content change.
 - `secret-scan`: a `$'` that is only text in the commit command (inside quotes, in a heredoc with a quoted delimiter) no longer makes the commit scan treat the commit as `-a`; it uses the same quote pass the shell checks use. A live `$'...'` keeps the fallback, and so does any further `git ... commit` mention the token reading cannot see (inside `eval`, `bash <<<`, `| bash`, `source <(...)`).
+
+- A rule line moved to another file in `docs/ai/rules.md` is now written after the whole entry of the rule it follows, so a wrapped reason stays with its rule.
+- `settings_export.py` exports an unchecked box of a moved rule as switched off even before `update.py` has moved the line, instead of as on.
 
 ### Security
 

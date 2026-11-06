@@ -19,6 +19,7 @@
 #   python .act/scripts/rules.py CR-nuxt-basics           # one group in full, with its origin
 #   python .act/scripts/rules.py --validate               # schema + cross-checks, exit 1 on any finding
 #   python .act/scripts/rules.py --add-missing           # enter rules/rule files of the template that docs/ai/rules.md lacks
+#   python .act/scripts/rules.py --add-new-coding        # enter coding sets/groups of .act/coding/ that coding_rules.md lacks
 #   python .act/scripts/rules.py --imports [--from FILE]  # which files Claude Code loads from CLAUDE.md
 #   python .act/scripts/rules.py --worker                 # the parts a worker is handed instead of CLAUDE.md
 #
@@ -95,6 +96,8 @@ class ProjectSet:
     enabled: bool
     line: int
     groups: dict[str, ProjectGroup] = field(default_factory=dict)
+    # id -> line numbers of every listing, only for an id listed more than once in this block
+    duplicates: dict[str, list[int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -411,7 +414,13 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                 if current_set is None:
                     findings.append((line_no, "group checkbox with no preceding set line"))
                     continue
-                current_set.groups[group.group("id")] = ProjectGroup(
+                gid = group.group("id")
+                if gid in current_set.groups:
+                    earlier = current_set.duplicates.setdefault(gid, [current_set.groups[gid].line])
+                    earlier.append(line_no)
+                    findings.append((line_no, f"`{gid}` is listed again under {current_set.path} "
+                                              f"(first at line {earlier[0]}) — only the last line counts"))
+                current_set.groups[gid] = ProjectGroup(
                     enabled=enabled, reason=group.group("reason"), line=line_no,
                 )
             continue
@@ -795,16 +804,29 @@ def sync_coding_imports(root: Path, write: bool = True) -> int:
     return changed
 
 
-def add_new_coding_entries(root: Path, write: bool = True) -> list[str]:
+def _set_in(root: Path, act_dir: Path, project_set: ProjectSet) -> Optional[TemplateSet]:
+    """The template set behind a project set, read from `act_dir` (a fetched .act/ that is not yet
+    installed) instead of root/.act; a project's own file under docs/ai/local/ still wins, as in
+    actlib.resolve."""
+    rel = strip_template_prefix(project_set.path)
+    for base, origin in ((root / "docs" / "ai" / "local", "local"), (act_dir, "template")):
+        if (base / rel).is_file():
+            return parse_template_set(base / rel, origin)
+    return None
+
+
+def add_new_coding_entries(root: Path, write: bool = True, act_dir: Optional[Path] = None) -> list[str]:
     """List in docs/project/coding_rules.md what the template's .act/coding/ has and the file does
     not: a rule set the file never mentions as "- [ ] use: .act/coding/<set>.md" (off, after the
     last set), and a group of a checked set that the file does not list as "  - [x] `ID`" (at the
     end of that set's groups). A group left unlisted counts as switched on anyway (classify), so
     this only makes the file show what applies; boxes, reasons and every other line stay as they
     are, and a second run finds nothing. Returns one message per addition (also with write=False,
-    which only reports); empty if the file or .act/coding/ is missing or lists no set at all."""
+    which only reports); empty if the file or .act/coding/ is missing or lists no set at all.
+    With `act_dir`, what is new is read from that .act/ (the one an update has fetched, to preview
+    it) instead of the installed one."""
     path = root / AREAS["coding"].project_file
-    coding_dir = root / ".act" / "coding"
+    coding_dir = (act_dir or root / ".act") / "coding"
     if not path.is_file() or not coding_dir.is_dir():
         return []
     area = AREAS["coding"]
@@ -818,7 +840,7 @@ def add_new_coding_entries(root: Path, write: bool = True) -> list[str]:
     for pset in project.sets:
         if not pset.enabled:
             continue
-        template = resolve_template_set(pset)
+        template = _set_in(root, act_dir, pset) if act_dir else resolve_template_set(pset)
         if template is None:
             continue
         missing = [gid for gid in template.groups if gid not in pset.groups]
@@ -885,6 +907,10 @@ def _line_block(lines: list[str], index: int) -> list[int]:
     return block
 
 
+# A message that only reports (nothing in the file changes): the callers tell it from a move by these.
+REPORT_ONLY_MARKERS = ("the rule does not load", "has no effect")
+
+
 def move_core_entries(root: Path, write: bool = True) -> list[str]:
     """Follow a rule that the template moved from one rule file to another in docs/ai/rules.md. The
     file lists each rule as a checkbox line under the import of the file that holds it; after a
@@ -893,7 +919,9 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
     listed under a file that no longer holds its ID: if exactly one other imported file holds it,
     the line moves there verbatim (box and reason kept), after the last listed rule that precedes
     it in that file, else first. A rule that now lives in a file this file does not import stays
-    where it is and is reported (it does not load). An ID that no rule file holds, one that is
+    where it is and is reported (it does not load); so is a rule that moved into a file the project
+    shadows with its own copy under docs/ai/local/ that lacks the rule, and an ID listed twice in
+    one block (only the last line counts). An ID that no rule file holds, one that is
     listed under the right file already, and an ambiguous one are left alone. Returns one message
     per moved or reported ID (also with write=False, which only reports); a second run finds
     nothing to move."""
@@ -913,6 +941,12 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
     placed: dict[int, list[tuple[int, int]]] = {}
     moves: list[tuple[int, int, int, str, int]] = []  # (target, position, source, id, line index)
     stale = 0
+
+    for pset in project.sets:
+        for gid, numbers in pset.duplicates.items():
+            shown = ", ".join(str(n) for n in numbers)
+            messages.append(f"{gid}: listed {len(numbers)} times under {pset.path} (lines {shown}) — only the "
+                            "last line counts, every line before it has no effect")
 
     for si, (pset, template) in enumerate(zip(project.sets, templates)):
         if template is None:
@@ -953,6 +987,19 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
                     messages.append(
                         f"{gid}: listed under {pset.path}, now in {elsewhere[0]}, which {area.project_file} "
                         "does not import — the rule does not load")
+                else:
+                    # the template file that holds it now is imported, but a copy of it under
+                    # docs/ai/local/ is what loads, and that copy lacks the rule
+                    for ti, other in enumerate(templates):
+                        if ti == si or other is None or other.origin != "local":
+                            continue
+                        twin = root / ".act" / strip_template_prefix(project.sets[ti].path)
+                        if twin.is_file() and gid in parse_template_set(twin, "template").groups:
+                            messages.append(
+                                f"{gid}: listed under {pset.path}, now in {twin.relative_to(root).as_posix()}, but "
+                                f"{other.path.relative_to(root).as_posix()} replaces that file and lacks the "
+                                "rule — the rule does not load")
+                            break
 
     for ti, position, si, gid, index in sorted(moves):
         target, template = project.sets[ti], templates[ti]
@@ -963,7 +1010,9 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
         anchor = max(before)[1] if before else target.line - 1
         placed.setdefault(ti, []).append((position, anchor))
         block = _line_block(lines, index)
-        inserts.setdefault(anchor, []).append((position, "\n".join(lines[i] for i in block)))
+        # written after the whole anchor entry, so a reason the owner wrapped stays with its rule
+        end = anchor if anchor == target.line - 1 else _line_block(lines, anchor)[-1]
+        inserts.setdefault(end, []).append((position, "\n".join(lines[i] for i in block)))
         removed.update(block)
         mark = "checked" if project.sets[si].groups[gid].enabled else "unchecked"
         messages.append(f"{gid}: moved from {project.sets[si].path} to {target.path} ({mark})")
@@ -986,6 +1035,7 @@ def move_core_entries(root: Path, write: bool = True) -> list[str]:
 
 CORE_RULE_LAYERS = ("shared", "orchestrator")
 ADD_MISSING_COMMAND = "python .act/scripts/rules.py --add-missing"
+ADD_NEW_CODING_COMMAND = "python .act/scripts/rules.py --add-new-coding"
 
 
 def core_rule_files(root: Path) -> dict[str, TemplateSet]:
@@ -1953,6 +2003,9 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--add-missing", action="store_true",
                       help="enter the rules and rule files of the template that docs/ai/rules.md does not "
                            "know (--area core is implied); exit 1 if something could not be entered")
+    mode.add_argument("--add-new-coding", action="store_true",
+                      help="list in docs/project/coding_rules.md the rule sets and groups of .act/coding/ it does "
+                           "not know yet (--area coding is implied)")
     mode.add_argument("--imports", action="store_true",
                       help="files Claude Code loads through @-imports with their size in characters and totals, "
                            "exit 1 on any it cannot follow")
@@ -1980,9 +2033,10 @@ def main(argv: list[str]) -> int:
     except SystemExit as exc:
         return exc.code if isinstance(exc.code, int) else 2
 
-    if args.id is not None and (args.list or args.validate or args.imports or args.worker or args.add_missing):
-        print("rules.py: an id argument cannot be combined with --list, --validate, --imports, --worker "
-              "or --add-missing", file=sys.stderr)
+    if args.id is not None and (args.list or args.validate or args.imports or args.worker or args.add_missing
+                                or args.add_new_coding):
+        print("rules.py: an id argument cannot be combined with --list, --validate, --imports, --worker, "
+              "--add-missing or --add-new-coding", file=sys.stderr)
         return 2
 
     area = AREAS["core"] if args.add_missing else AREAS[args.area]
@@ -1992,6 +2046,22 @@ def main(argv: list[str]) -> int:
     except RuntimeError as exc:
         print(f"rules.py: {exc}", file=sys.stderr)
         return 1
+
+    if args.add_new_coding:
+        coding_file = AREAS["coding"].project_file
+        if not (root / coding_file).is_file():
+            print(f"rules.py: {coding_file} not found — nothing to enter into", file=sys.stderr)
+            return 1
+        try:
+            added = add_new_coding_entries(root)
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"rules.py: could not enter into {coding_file}: {exc}", file=sys.stderr)
+            return 1
+        for message in added:
+            print(f"{coding_file}: {message}")
+        if not added:
+            print(f"{coding_file} lists every rule set and group of .act/coding/")
+        return 0
 
     if args.add_missing:
         if not (root / area.project_file).is_file():

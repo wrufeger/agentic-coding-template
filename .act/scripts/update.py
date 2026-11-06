@@ -813,19 +813,48 @@ def _rule_id_diff(old_path: Optional[Path], new_path: Optional[Path]) -> tuple[l
     return added, changed, removed
 
 
-def step_list_new_coding_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
+def _has_unsaved_changes(root: Path, rel: str) -> bool:
+    """True if git reports `rel` as modified, staged or untracked, i.e. the owner's work that no commit
+    holds yet. False without git or outside a repository: nothing can be told, so nothing is held back."""
+    try:
+        result = subprocess.run(["git", "status", "--porcelain", "--", rel], cwd=root, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def step_list_new_coding_entries(
+    root: Path, plan: bool, act_dir: Optional[Path] = None, unsaved: Optional[bool] = None,
+    notes: Optional[list[str]] = None,
+) -> tuple[str, list[Path]]:
     """Enter what the replaced .act/coding/ added into docs/project/coding_rules.md: a new rule set
     as an unchecked line, a new group of a checked set as a checked line (rules.add_new_coding_entries).
+    Under plan, `act_dir` is the fetched .act/ whose coding sets are previewed. A file with unsaved
+    changes is left as it is (the update commit would take them along): the step says what it holds
+    back, with the command to run once the file is committed (also added to `notes`, if given).
+    `unsaved` is that state taken before this run wrote anything; None asks git now.
     Returns (summary, touched); nothing is written under plan."""
+    rel = rules.AREAS["coding"].project_file
     try:
-        messages = rules.add_new_coding_entries(root, write=not plan)
+        messages = rules.add_new_coding_entries(root, write=False, act_dir=act_dir)
+        if not messages:
+            return "docs/project/coding_rules.md lists everything", []
+        if unsaved is None:
+            unsaved = _has_unsaved_changes(root, rel)
+        if unsaved:
+            held = (f"{rel} has changes that are not committed, so nothing was entered ({'; '.join(messages)}); "
+                    f"commit them, then run {rules.ADD_NEW_CODING_COMMAND}")
+            if notes is not None and not plan:
+                notes.append(held)
+            return ("would hold back: " if plan else "held back: ") + held, []
+        if not plan:
+            rules.add_new_coding_entries(root, write=True)
     except (OSError, UnicodeDecodeError) as exc:
         return f"not checked ({exc.__class__.__name__}: {exc})", []
-    if not messages:
-        return "docs/project/coding_rules.md lists everything", []
     verb = "would list" if plan else "listed"
-    summary = f"{verb} in docs/project/coding_rules.md: {'; '.join(messages)}"
-    return summary, ([] if plan else [root / rules.AREAS["coding"].project_file])
+    summary = f"{verb} in {rel}: {'; '.join(messages)}"
+    return summary, ([] if plan else [root / rel])
 
 
 def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
@@ -847,8 +876,7 @@ def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
         return "", []
     # a message that only reports (the rule does not load; a line kept under its old file has no
     # effect) changes nothing: say so, name no file
-    changes = [m for m in messages
-               if "the rule does not load" not in m and "the line under the old file has no effect" not in m]
+    changes = [m for m in messages if not any(marker in m for marker in rules.REPORT_ONLY_MARKERS)]
     if not changes:
         return f"{rel} needs a look: {'; '.join(messages)}", []
     verb = "would follow" if plan else "followed"
@@ -2792,6 +2820,8 @@ def _finish_update(
     fetched_commit: Optional[str], rescue_active: bool, keep_commit: bool = False,
     ref: Optional[str] = None,
 ) -> int:
+    # before any step below writes: what the owner has not committed in the coding rules is theirs
+    coding_unsaved = _has_unsaved_changes(root, rules.AREAS["coding"].project_file)
     sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
     # Own skills/roles written by hand under docs/ai/local/ get their tool copies/bridge too; the
     # entries are merged into new_copies because step_lock() below writes that value as a whole.
@@ -2809,7 +2839,7 @@ def _finish_update(
     except Exception as exc:
         notes.append(f"own skill/role copies not checked ({exc.__class__.__name__}: {exc})")
     frontmatter_summary, frontmatter_touched = step_refresh_role_frontmatter(root, False, notes)
-    coding_summary, coding_touched = step_list_new_coding_entries(root, False)
+    coding_summary, coding_touched = step_list_new_coding_entries(root, False, unsaved=coding_unsaved, notes=notes)
     moved_summary, moved_touched = step_move_core_entries(root, False)
     entered_summary, entered_touched, entered_notes = step_add_missing_core_entries(root, False)
     notes.extend(entered_notes)
@@ -2916,6 +2946,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
             "[act]   [6/10] " + step_refresh_copies(root, True)[0]
             + "; roles: " + step_new_role_bridges(root, True)[0]
             + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
+            + "; coding rules: " + step_list_new_coding_entries(root, True)[0]
         )
         print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
         print("[act]   [8/10] " + _plan_migrations_summary(act_dir))
@@ -3097,6 +3128,7 @@ def main(argv: list[str]) -> int:
                 "[act]   [6/10] " + step_refresh_copies(root, True)[0]
                 + "; roles: " + step_new_role_bridges(root, True)[0]
                 + "; role frontmatter: " + step_refresh_role_frontmatter(root, True)[0]
+                + "; coding rules: " + step_list_new_coding_entries(root, True, new_act_dir)[0]
             )
             print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
