@@ -1,6 +1,8 @@
 <!-- act:template-readme -->
 # act — agentic coding template
 
+**Nothing is built before you decide, and nothing counts as done before it is proven.**
+
 Turns your AI coding assistant into a reliable member of the team — in a new project or one that
 already exists. You set the goals and decide; the assistant plans, hands the work to specialized
 sub-agents, proves its results, and keeps the project's state in the repository, so every session
