@@ -933,6 +933,8 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     for check in ("worker-docs-ai", "worker-git-write", "ide-mcp", "worker-cap", "status-poll",
                   "encoding-hint"):
         add(check, "Checks", values=_MODE3, default="block")
+    add("protected-watch", "Checks", values=_MODE3, default="block")
+    add("model-switch", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("update-branch-hint", "Checks", values=_MODE3, default="warn")
     add("update-check", "Checks", values=_MODE3, default="block", effect=nxt)
     add("docs-order", "Checks", values=_MODE3, default="warn")

@@ -66,6 +66,21 @@
 #          to synchronous here so the JSON this now also prints is reliably delivered, one hook
 #          entry doing both jobs rather than a second one added alongside it.
 #
+#          Before either of those, PostToolUse and PostToolUseFailure run the protected-files watcher
+#          (checks.protected_watch.run, R-safe-git-metadata: after every call it compares the files that
+#          rule protects with a snapshot, puts back what a worker changed and reports what the orchestrator
+#          changed) and deliver the notes queued for the orchestrator. It needs only the standard library,
+#          so PostToolUse runs it in the early block below, before the heavy imports, and the early exit
+#          still applies to every call that can produce no note -- except a TaskStop call of the
+#          orchestrator, which an observer (worker_scope_overlap) reacts to. Its report joins the notes in
+#          the one JSON object, plus a top-level systemMessage for the human.
+#
+#          Stop and SubagentStop run checks.model_switch.run after the observers: it reads the transcript
+#          (the worker's own at SubagentStop, the session's at Stop) and, if a refusal or another model shows
+#          up, prints {"systemMessage": ...} for the human; the note for the orchestrator is queued and
+#          delivered with its next PostToolUse (additionalContext of a stop event would keep the agent
+#          running). SessionStart takes the watcher's snapshot after the session handler has run.
+#
 #          The PreToolUse hook fires for every tool (settings.hooks.json: the Edit/Write/Bash
 #          entry, the Agent|Task entry and a third entry for all other tool names, e.g.
 #          PowerShell, Read, MCP tools) — each check filters the tool names it cares about.
@@ -107,8 +122,11 @@
 #                 module returned text, one line on stdout: {"hookSpecificOutput": {"hookEventName":
 #                 "PostToolUse"|"PostToolUseFailure", "additionalContext": "<note>\n<note>..."}} —
 #                 multiple notes joined with "\n", hookEventName matching whichever of the two
-#                 events this run is for.
+#                 events this run is for; the protected-files watcher's report comes first and adds a
+#                 top-level "systemMessage" (shown to the human).
 #                 Nothing printed at all when no note module had anything to say.
+#   Stop / SubagentStop: exit 0 always; when checks.model_switch found a refusal or a changed model, one
+#                 line on stdout: {"systemMessage": "⚠️ MODEL SWITCH ..."} (ASCII-escaped JSON).
 #   SessionStart: one JSON object on stdout: `hookSpecificOutput.additionalContext` holds
 #                 the lines below, kept under the 10,000-character cap (above it Claude Code
 #                 moves a hook output into a file and shows the model a 2,000-character
@@ -239,11 +257,41 @@ try:
 except (IndexError, OSError, ValueError, RuntimeError):  # no usable project path: no cache either
     sys.dont_write_bytecode = True
 
-# PostToolUse fires after every tool call, but only a worker's calls (cap note) and the writing
-# tools (encoding note, secret-scan note after a commit) can produce a note. Everything else
-# returns here, before the imports below — the common case costs one small JSON parse.
+# PostToolUse fires after every tool call, but only a worker's calls (cap note), the writing tools
+# (encoding note, secret-scan note after a commit) and a few observed tools can produce a note. The
+# protected-files watcher (checks/protected_watch.py, R-safe-git-metadata) and the orchestrator's queued
+# notes run first, for every call: they need nothing but the standard library, so the common case still
+# costs one small JSON parse, one directory listing and a few stat calls. Everything else returns
+# here, before the imports below.
 _POST_TOOL_USE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell"}
+# Tools of the orchestrator that an observer reacts to at PostToolUse, so the early exit must let them
+# through: TaskStop (checks/worker_scope_overlap.observe frees the scope of the worker it stopped).
+_POST_TOOL_USE_OBSERVED_TOOLS = {"TaskStop"}
 _early_payload = None
+_early_watch = None
+
+
+def _watch_protected_files(event: str, payload: dict):
+    """What checks.protected_watch has to say after this call -- {"context": str, "message": str} or None.
+    Imported on the spot (the module needs only the standard library) and never raises: a bug there is one
+    line on stderr, the call is not touched."""
+    try:
+        from checks import protected_watch  # noqa: E402 -- before the heavy imports on purpose
+        return protected_watch.run(event, payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[act] protected-watch skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return None
+
+
+def _post_tool_use_json(event: str, contexts: list, message: str = "") -> str:
+    """The one JSON object a PostToolUse/PostToolUseFailure hook prints: additionalContext for the model
+    and, when there is one, the systemMessage for the human."""
+    out = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": "\n".join(contexts)}}
+    if message:
+        out["systemMessage"] = message
+    return json.dumps(out)
+
+
 if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
     try:
         # Read raw bytes and decode as UTF-8 explicitly — sys.stdin.read() picks the console's
@@ -258,7 +306,11 @@ if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
         _early_payload = {}
     if not isinstance(_early_payload, dict):
         _early_payload = {}
-    if not _early_payload.get("agent_id") and _early_payload.get("tool_name") not in _POST_TOOL_USE_TOOLS:
+    _early_watch = _watch_protected_files("PostToolUse", _early_payload)
+    if (not _early_payload.get("agent_id")
+            and _early_payload.get("tool_name") not in _POST_TOOL_USE_TOOLS | _POST_TOOL_USE_OBSERVED_TOOLS):
+        if _early_watch:
+            print(_post_tool_use_json("PostToolUse", [_early_watch["context"]], _early_watch["message"]))
         sys.exit(0)
 
 # UserPromptSubmit "/act" fast intercept — a second, synchronous hook entry dedicated to
@@ -719,19 +771,46 @@ def _run_post_tool_use_notes(payload: dict) -> list[str]:
     return notes
 
 
-def _emit_post_tool_use_notes(event: str, payload: dict) -> None:
+def _emit_post_tool_use_notes(event: str, payload: dict, watch: "dict | None" = None) -> None:
     """Shared by the "PostToolUse" and "PostToolUseFailure" branches of main(): run
-    _POST_TOOL_USE_NOTES and, only if at least one note came back, print the single
-    hookSpecificOutput JSON object both events use, with hookEventName set to whichever of the two
-    this call is for (see this module's header, "Output format")."""
+    _POST_TOOL_USE_NOTES and, only if at least one note (or a watcher report, see
+    _watch_protected_files) came back, print the single hookSpecificOutput JSON object both events use,
+    with hookEventName set to whichever of the two this call is for (see this module's header, "Output
+    format"). The watcher's report comes first; its message for the human rides along as the top-level
+    systemMessage."""
     notes = _run_post_tool_use_notes(payload)
+    if watch:
+        notes.insert(0, watch["context"])
     if notes:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": event,
-                "additionalContext": "\n".join(notes),
-            }
-        }))
+        print(_post_tool_use_json(event, notes, watch["message"] if watch else ""))
+
+
+def _model_switch_output(event: str, payload: dict) -> None:
+    """Stop / SubagentStop: checks.model_switch reads the part of the transcript not read before and, on a
+    refusal or a changed model, prints one {"systemMessage": ...} object for the human (the note for the
+    orchestrator is queued, see that module). Never raises, never blocks."""
+    func, reason = _load("model_switch", "run")
+    if func is None:
+        if reason is not None:
+            print(f"[act] model-switch skipped ({reason})", file=sys.stderr)
+        return
+    try:
+        result = func(event, payload)
+    except Exception as exc:  # noqa: BLE001 -- a hook never ends in a traceback
+        print(f"[act] model-switch skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return
+    if isinstance(result, dict) and result:
+        print(json.dumps(result))
+
+
+def _snapshot_protected_files(payload: dict) -> None:
+    """SessionStart: the reference state for checks.protected_watch, taken after the session handler has
+    refreshed the bridges (so its own writes are not reported as a change)."""
+    try:
+        from checks import protected_watch
+        protected_watch.snapshot(session=payload.get("session_id"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[act] protected-watch snapshot skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
 
 
 def _run_worker_rules(part_arg: str) -> int:
@@ -797,10 +876,17 @@ def main(argv: list[str]) -> int:
     else:
         _run_observers(event, payload)
     if event in ("PostToolUse", "PostToolUseFailure"):
-        _emit_post_tool_use_notes(event, payload)
+        # PostToolUse was watched in the early block above (when it came through there), the failure event is not
+        watch = _early_watch if _early_payload is not None else _watch_protected_files(event, payload)
+        _emit_post_tool_use_notes(event, payload, watch)
         return 0  # notes never block
     if event == "SessionStart":
-        return refresh_session(payload)
+        code = refresh_session(payload)
+        _snapshot_protected_files(payload)
+        return code
+    if event in ("SubagentStop", "Stop"):
+        _model_switch_output(event, payload)
+        return 0
     return 0  # any other event (SubagentStart, UserPromptSubmit, ...) only feeds the observers
 
 

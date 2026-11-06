@@ -27,6 +27,12 @@
 # for what happens then (it is fail-closed only when scoping is demonstrably in use nearby, not
 # unconditionally).
 #
+# An entry outlives its worker's stop: the observer in worker_scope_overlap.py only marks it "ended" (a worker
+# the orchestrator continues with a message starts again under the same agent id, with no new Agent/Task
+# call, and must find its entry again), and a restart clears the mark. An ended entry still binds a call of
+# that agent id to its scope; it is not a "restricted scope registered" for the fail-closed fallback, as an
+# entry removed at the stop was not, and the overlap check does not count it as running.
+#
 # Agents started by a workflow script (Claude Code `Workflow`, `agent()`) have no Agent/Task start,
 # so nothing is recorded and there is no meta.json "toolUseId" (live-probe 2026-10-10). Their
 # transcript lives one level deeper, <session>/subagents/workflows/<run>/agent-<agent_id>.jsonl; the
@@ -86,7 +92,7 @@ __all__ = [
     "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_external_directories",
     "_external_pattern", "_scope_pattern", "_parse_write_scope", "_worker_scopes_dir",
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_scope_file_is_prunable",
-    "_prune_worker_scope_files",
+    "_prune_worker_scope_files", "_store_worker_scope_entry", "_entry_has_ended",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
@@ -401,21 +407,10 @@ def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
                 pass
 
 
-def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
-    """Record one Agent/Task start's write scope in its own file (see _worker_scope_file), so a
-    worker's later call can look it up via its meta.json's "toolUseId" (_scope_via_meta). Always
-    called — even for "unrestricted" — so _recent_restricted_scope_registered can tell "a start was
-    registered here and named no restriction" from "nothing has run against this check yet" (see
-    that function and check_worker_write_scope's fail-closed fallback). Best-effort: a failed write
-    here only weakens that fallback, it never blocks the orchestrator's own call.
-
-    Written via a temp file plus os.replace in the same directory, so a concurrent reader never
-    observes a partially written file — os.replace is an atomic rename on both POSIX and Windows."""
-    path = _worker_scope_file(root, tool_use_id)
-    if path is None:
-        return  # unsafe id -- never recorded, not an error
-    entry = dict(scope)
-    entry["ts"] = datetime.now(timezone.utc).isoformat()
+def _store_worker_scope_entry(path: Path, entry: dict) -> bool:
+    """Write one worker-scopes entry to `path`, via a temp file plus os.replace in the same directory, so a
+    concurrent reader never observes a partially written file -- os.replace is an atomic rename on both POSIX
+    and Windows. False if it could not be written (the temp file is removed again)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         # suffix ".tmp", not ".json": _prune_worker_scope_files globs "*.json", and a temp file
@@ -425,7 +420,7 @@ def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
         # starts sometimes wrote as few as 4 of 8 files under the old ".json"-suffixed temp name).
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".tmp", dir=str(path.parent))
     except OSError:
-        return
+        return False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n")
@@ -435,13 +430,38 @@ def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
             os.unlink(tmp_name)
         except OSError:
             pass
-        return
-    _prune_worker_scope_files(path.parent, skip=path)
+        return False
+    return True
+
+
+def _entry_has_ended(entry: dict) -> bool:
+    """True if the entry is marked as ended: its worker stopped (SubagentStop, or the orchestrator's
+    TaskStop), see worker_scope_overlap.observe. A restart clears the mark."""
+    return bool(entry.get("ended"))
+
+
+def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
+    """Record one Agent/Task start's write scope in its own file (see _worker_scope_file), so a
+    worker's later call can look it up via its meta.json's "toolUseId" (_scope_via_meta). Always
+    called — even for "unrestricted" — so _recent_restricted_scope_registered can tell "a start was
+    registered here and named no restriction" from "nothing has run against this check yet" (see
+    that function and check_worker_write_scope's fail-closed fallback). Best-effort: a failed write
+    here only weakens that fallback, it never blocks the orchestrator's own call.
+
+    Written by _store_worker_scope_entry (atomic, see there)."""
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None:
+        return  # unsafe id -- never recorded, not an error
+    entry = dict(scope)
+    entry["ts"] = datetime.now(timezone.utc).isoformat()
+    if _store_worker_scope_entry(path, entry):
+        _prune_worker_scope_files(path.parent, skip=path)
 
 
 def _read_worker_scope_entry(root: Path, tool_use_id: str) -> Optional[dict]:
     """The scope recorded for one tool_use_id, or None if it was never recorded, is unreadable, or
-    has aged past _SCOPE_ENTRY_TTL."""
+    has aged past _SCOPE_ENTRY_TTL. An entry marked ended is returned like any other: a worker the
+    orchestrator continued with a message is bound to its scope again before (or without) any restart event."""
     path = _worker_scope_file(root, tool_use_id)
     if path is None:
         return None
@@ -452,9 +472,9 @@ def _read_worker_scope_entry(root: Path, tool_use_id: str) -> Optional[dict]:
 
 
 def _recent_restricted_scope_registered(root: Path) -> bool:
-    """True if any worker-scopes file, within _SCOPE_ENTRY_TTL, holds an entry whose mode is "none"
-    or "patterns" (i.e. an assignment actually named a restriction) — as opposed to only
-    "unrestricted" entries or none at all. Used by check_worker_write_scope's fail-closed fallback:
+    """True if any worker-scopes file, within _SCOPE_ENTRY_TTL, holds an entry of a worker that has not
+    ended whose mode is "none" or "patterns" (i.e. an assignment actually named a restriction) — as
+    opposed to only "unrestricted" entries, ended ones or none at all. Used by check_worker_write_scope's fail-closed fallback:
     a binding failure is only treated as suspicious when scoping is demonstrably in active use
     nearby.
 
@@ -469,8 +489,8 @@ def _recent_restricted_scope_registered(root: Path) -> bool:
         return False
     for path in candidates:
         entry = _read_json_object(path)
-        if entry is None or entry.get("mode") not in ("none", "patterns"):
-            continue
+        if entry is None or entry.get("mode") not in ("none", "patterns") or _entry_has_ended(entry):
+            continue  # an ended worker's entry counts for nothing, as when it was removed at the stop
         if _entry_is_fresh(entry):
             return True
     return False

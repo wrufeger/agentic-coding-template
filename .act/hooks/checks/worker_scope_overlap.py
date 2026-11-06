@@ -22,12 +22,22 @@
 # write_scope._parse_write_scope (a trailing "/" means "/**", absolute paths and `../sibling/...`
 # resolve the same way).
 #
-# "Still running" = an entry exists, the observer has not removed it at SubagentStop, and it is
-# younger than _OVERLAP_ENTRY_TTL. The harness reports a stop only with an agent_id; the entry is
-# found through <session>/subagents/agent-<id>.meta.json ("toolUseId"), as write_scope does. The
-# harness also fires SubagentStop for its own helper agents, which never had an entry — those are
-# passed over silently (see checks/event_log.py). A worker that crashed without a stop leaves its
-# entry until the TTL; the message says how to free it at once (delete the named file).
+# "Still running" = an entry exists, the observer has not marked it ended, and it is younger than
+# _OVERLAP_ENTRY_TTL. The harness reports a stop only with an agent_id; the entry is found through
+# <session>/subagents/agent-<id>.meta.json ("toolUseId"), as write_scope does. The harness also fires
+# SubagentStop for its own helper agents, which never had an entry — those are passed over silently (see
+# checks/event_log.py). Three events reach observe():
+#   - SubagentStop, and PostToolUse of the orchestrator's TaskStop (its tool_input.task_id is the agent id;
+#     a worker stopped that way is not seen ending through SubagentStop): the entry is marked ended, not
+#     deleted. The worker no longer counts as running.
+#   - SubagentStart: a worker the orchestrator continues with a message (SendMessage) starts again under
+#     the same agent id, and no new Agent/Task call records anything. If its entry is marked ended, the mark
+#     is cleared and the entry's time renewed: the worker runs again. write_scope finds its scope either
+#     way (an ended entry still binds a call of that agent id to its scope).
+# Why marked, not deleted: a deleted entry is gone for the resume, and the restricted scopes of workers
+# started in the meantime then make write_scope's fail-closed fallback refuse the resumed worker's own writes.
+# A worker that crashed without a stop leaves its entry until the TTL; the message names the way to free it
+# at once (stop it with TaskStop).
 #
 # This check records the start's own entry too (same file and content write_scope writes), so it
 # works when `worker-write-scope` is off, and so a second start right behind the first already
@@ -48,18 +58,21 @@ import actlib
 from .common import _WORKER_TOOL_NAMES, _check_mode
 from .shell_targets import _is_absolute_target
 from .write_scope import (
+    _SAFE_ID_RE,
+    _entry_has_ended,
     _matches_scope,
     _parse_write_scope,
     _read_json_object,
     _record_worker_scope,
     _split_glob_prefix,
+    _store_worker_scope_entry,
     _worker_scope_file,
     _worker_scopes_dir,
 )
 
 __all__ = [
     "_OVERLAP_ENTRY_TTL", "_entry_time", "_patterns_overlap", "_scopes_overlap", "_remove_worker_scope",
-    "check_worker_scope_overlap", "observe",
+    "_mark_worker_scope", "check_worker_scope_overlap", "observe",
 ]
 
 # Shorter than write_scope's 24 h: a crashed worker or a start refused by a later check leaves an
@@ -159,7 +172,10 @@ def _entry_time(entry: dict) -> Optional[datetime]:
 
 
 def _entry_is_running(entry: dict) -> bool:
-    """Younger than the TTL and not more than 5 minutes in the future (then it is invalid)."""
+    """Not marked ended, younger than the TTL and not more than 5 minutes in the future (then it is
+    invalid)."""
+    if _entry_has_ended(entry):
+        return False
     when = _entry_time(entry)
     if when is None:
         return False
@@ -220,8 +236,9 @@ def check_worker_scope_overlap(payload: dict) -> int:
             f"(worker {path.stem}) — parallel workers need separate write scopes (R-cost-delegate): give "
             "each assignment its own line `Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: "
             "src/api/**` (syntax: .act/rules/topics/checks.md); or merge both tasks into one assignment "
-            "with one write scope; or start this one after the other has ended. If that worker is gone "
-            f"(crashed), delete .act-local/worker-scopes/{path.name} or wait {_OVERLAP_ENTRY_TTL}."
+            "with one write scope; or start this one after the other has ended. If that worker is no longer "
+            "wanted, stop it with TaskStop: that frees its scope at once. A worker that crashed without any "
+            f"stop frees it after {_OVERLAP_ENTRY_TTL}."
         )
         if mode == "warn":
             print(message)
@@ -246,10 +263,51 @@ def _remove_worker_scope(root: Path, tool_use_id: str) -> None:
             time.sleep(0.05)  # Windows: briefly held open by a concurrent reader; the TTL is the last resort
 
 
+def _mark_worker_scope(root: Path, tool_use_id: str, ended: bool) -> None:
+    """Mark the entry of one Agent/Task start as ended (the worker stopped), or clear that mark and renew
+    the entry's time (the worker runs again). Nothing else of the entry changes; an entry that is missing,
+    unreadable or already in that state is left alone, and none is created."""
+    path = _worker_scope_file(root, tool_use_id)
+    entry = _read_json_object(path) if path is not None else None
+    if path is None or entry is None or _entry_has_ended(entry) == ended:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    if ended:
+        entry["ended"] = now
+    else:
+        entry.pop("ended", None)
+        entry["ts"] = now
+    _store_worker_scope_entry(path, entry)
+
+
+def _mark_agent_scope(payload: dict, agent_id: object, ended: bool) -> None:
+    """Find the entry of the worker `agent_id` through its meta.json ("toolUseId") in the session's
+    subagents folder (payload transcript_path) or next to the worker's own transcript
+    (agent_transcript_path) and mark it (_mark_worker_scope). An id that is not a safe filename, a meta.json
+    that is missing or has no toolUseId: nothing happens."""
+    if not isinstance(agent_id, str) or not _SAFE_ID_RE.match(agent_id):
+        return
+    metas: list[Path] = []
+    transcript = payload.get("transcript_path")
+    if isinstance(transcript, str) and transcript:
+        metas.append(Path(transcript).with_suffix("") / "subagents" / f"agent-{agent_id}.meta.json")
+    agent_transcript = payload.get("agent_transcript_path")
+    if isinstance(agent_transcript, str) and agent_transcript:
+        metas.append(Path(agent_transcript).with_suffix(".meta.json"))
+    root = actlib.repo_root()
+    for meta_path in metas:
+        meta = _read_json_object(meta_path)
+        tool_use_id = meta.get("toolUseId") if meta else None
+        if isinstance(tool_use_id, str) and tool_use_id:
+            _mark_worker_scope(root, tool_use_id, ended)
+            return
+
+
 def observe(event: str, payload: dict) -> None:
-    """SubagentStop: drop the finished worker's entry. PostToolUseFailure of an Agent/Task call:
-    drop the entry of a start that failed. (Not PostToolUse: a background agent gets that right at
-    its start.) Never raises; an agent without an entry (the harness's own helper agents) is
+    """SubagentStop and the orchestrator's TaskStop (PostToolUse): mark the stopped worker's entry ended.
+    SubagentStart: clear that mark when a stopped worker is continued. PostToolUseFailure of an Agent/Task
+    call: drop the entry of a start that failed. (Not PostToolUse of Agent/Task: a background agent gets
+    that right at its start.) Never raises; an agent without an entry (the harness's own helper agents) is
     passed over silently."""
     try:
         if event == "PostToolUseFailure":
@@ -262,24 +320,12 @@ def observe(event: str, payload: dict) -> None:
             ):
                 _remove_worker_scope(actlib.repo_root(), tool_use_id)
             return
-        if event != "SubagentStop":
+        if event == "PostToolUse":
+            if payload.get("tool_name") == "TaskStop" and not payload.get("agent_id"):
+                tool_input = payload.get("tool_input")
+                _mark_agent_scope(payload, tool_input.get("task_id") if isinstance(tool_input, dict) else None, True)
             return
-        agent_id = payload.get("agent_id")
-        if not isinstance(agent_id, str) or not agent_id:
-            return
-        metas: list[Path] = []
-        transcript = payload.get("transcript_path")
-        if isinstance(transcript, str) and transcript:
-            metas.append(Path(transcript).with_suffix("") / "subagents" / f"agent-{agent_id}.meta.json")
-        agent_transcript = payload.get("agent_transcript_path")
-        if isinstance(agent_transcript, str) and agent_transcript:
-            metas.append(Path(agent_transcript).with_suffix(".meta.json"))
-        root = actlib.repo_root()
-        for meta_path in metas:
-            meta = _read_json_object(meta_path)
-            tool_use_id = meta.get("toolUseId") if meta else None
-            if isinstance(tool_use_id, str) and tool_use_id:
-                _remove_worker_scope(root, tool_use_id)
-                return
+        if event in ("SubagentStop", "SubagentStart"):
+            _mark_agent_scope(payload, payload.get("agent_id"), event == "SubagentStop")
     except Exception:  # noqa: BLE001 — an observer must never break the event
         return

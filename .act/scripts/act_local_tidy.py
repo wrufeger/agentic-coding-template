@@ -77,6 +77,8 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "status-poll",              # hooks/checks/status_poll.py
     "worker-caps",              # hooks/checks/worker_cap.py
     "worker-scopes",            # hooks/checks/write_scope.py, worker_scope_overlap.py
+    "protected-watch",          # hooks/checks/protected_watch.py: snapshot, copies, kept versions, queued notes
+    "model-switch",             # hooks/checks/model_switch.py: read offsets per transcript
     "danger-scan-hints",        # hooks/checks/danger_scan.py
     "encoding-hints",           # hooks/checks/encoding_hint.py
     "secret-scan-notes",        # hooks/checks/secret_scan.py

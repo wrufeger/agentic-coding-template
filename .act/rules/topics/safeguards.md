@@ -28,6 +28,24 @@ decide on a permission mode or a new conversation — restarting with the same h
 not help, since the history is the trigger. Work already done stays exactly where it is; nothing
 gets half-forced through.
 
+## A refusal can switch the model without a word
+
+When the safety filter of the chosen model refuses a request, Claude Code may carry on with a fallback model, and
+in a sub-agent nothing in the chat says so. The hook `model-switch` (`docs/ai/config.md` § Checks, `warn` or
+`off`, default `warn`) makes it visible: at `SubagentStop` it reads the worker's own transcript, at `Stop` the
+session's — only the part not read before — and reports an assistant record with `stop_reason: refusal` or a
+`message.model` that differs from the one before (`<synthetic>` is no model). The human sees a `systemMessage`
+that begins with `⚠️ MODEL SWITCH` and names the role and the models; the orchestrator gets a note with its next
+tool call. The hook says the same for a model the human changed with `/model`; that is no refusal.
+
+- Orchestrator: begin the next reply to the human with the warning (role, model) and treat the worker's result as
+  unchecked until it has been read.
+- The note reaches the orchestrator with a tool call, not as `additionalContext` of the stop event: the hook
+  documentation says that field keeps the stopping agent running. A worker that never stops, a record Claude Code
+  has not yet written at `Stop`, and a switch that leaves no assistant record on the other model are not seen.
+- For the session itself Claude Code has its own events, `PreModelSwitch` and `PostModelSwitch` (the latter also
+  for an automatic fallback); none is documented for a sub-agent, which is why the transcript is read.
+
 ## A different tool is not evasion
 
 "Don't rephrase and retry" means the same action in new wrapping. Trying the same change through a

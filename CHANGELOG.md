@@ -58,6 +58,50 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   session start, `act-update` and `python .act/scripts/rules.py --sync-methods` apply a changed row (`update --plan`
   previews it); `act-doctor` reports a name without a file, a file it cannot read and a section that does not match the
   row.
+- New check `protected-watch` (`docs/ai/config.md` § Checks, `block` | `warn` | `off`, default `block`): after every
+  tool call, in the orchestrator and in workers, the hook compares the files `R-safe-git-metadata` protects —
+  `.git/hooks/**`, `.git/config` (only the keys that start code), `.claude/settings*.json`, `.claude/agents/**`,
+  `.claude/skills/**`, `.claude/commands/**`, `.mcp.json`, `.envrc`, `.devcontainer/**`, `.vscode/tasks.json` — with a
+  snapshot taken at session start. It sees every way a file can change, also a script file or inline code that the
+  static check `git-metadata-guard` cannot read. A change made in a worker's call is put back at once from the
+  snapshot taken before the call, the changed version is kept under `.act-local/protected-watch/kept/`, and the
+  worker, the human (`systemMessage`) and the orchestrator (with its next tool call) are told. A change made by the
+  orchestrator is only reported, with the command that puts the previous version back. It costs a few milliseconds per
+  call (a file is hashed only when its size or modification time changed). It reports after the call and prevents
+  nothing; details and limits in `topics/checks.md`. It never follows a link: a watched folder or file that is a
+  symbolic link or a Windows junction is watched as that link only, nothing is deleted, created or written through
+  one (also not below `.act-local/protected-watch/`), and a link a worker put in place of a watched folder is removed
+  (the link, never its target). A restore that fails (read-only file, a path through a link) is reported again at
+  the next call instead of being forgotten. The commands the report gives for the orchestrator name the file
+  (`git config --file <path>`) and keep every character of a key, value or path, in bash, PowerShell and cmd.
+  A git config key whose danger depends on its value (`alias.*`, `remote.*.url`, `protocol.*.allow`) is restored to
+  its old, harmless value when a worker changed it to a dangerous one.
+  The places the watcher may delete, create or write are fixed when the snapshot is taken (the project root, the git
+  directories found then with their real paths, `.act-local/protected-watch/`); nothing it reads from the working
+  tree later can add one. The `.git` file at the project root and a git directory's `commondir` are watched as files
+  too, so a worker that points them elsewhere is put back or reported, and what lies at the new target is never
+  entered, removed or restored. A restore stops when the recorded git directory has become a link or no longer
+  resolves to its real path, and its temp file is created exclusively and never follows a link. Commands for the
+  orchestrator end git's options with `--` before key and value and put an argument that begins with `@`
+  (PowerShell splatting) or `-`, or that holds a comma (PowerShell reads a bare `a,b` as an array), in double quotes.
+  The `modules/` and `worktrees/` folders of a git directory, and the entries below them, are treated like every
+  other link: one that is a link is watched as that link only, and nothing behind it is listed, hashed or read.
+  Whether a git directory may be restored is decided from real paths: one first seen in a snapshot taken during a
+  worker's call (the snapshot was missing) is restored only when it lies below the project root in fact, with no
+  link between the root and it, so a `.git` file that names a path inside the root which reaches outside through a
+  linked folder makes nothing outside a place the watcher may delete or write. Limits: a `.git` file above the
+  project root is not watched, and a git directory that is first seen in such a snapshot and does not lie below the
+  root in fact is reported but not restored.
+- New check `model-switch` (`docs/ai/config.md` § Checks, `warn` | `off`, default `warn`): when a worker or the
+  session itself continues on another model — typically after the safety filter refused a request, which Claude Code
+  does not announce in a sub-agent — the hook reads the transcript at `SubagentStop` and `Stop` and shows the human a
+  message that starts with `⚠️ MODEL SWITCH` and names the role and the models; the orchestrator gets a note with its
+  next tool call. New `Stop` entry in the hooks that `init`/`update` write into `.claude/settings.json`. See
+  `topics/safeguards.md`. The refusal category in the message is cut to letters, digits, `_` and `-` (at most 40
+  characters), a worker id with other characters finds no transcript, and a transcript that grew by more than 4 MB
+  between two stops is read in blocks, so a refusal in the middle is not skipped. A model name from the transcript is
+  cut to letters, digits and `._:@/-` (at most 64 characters) before it reaches the message, the note or the state
+  file; the state file is not written through a linked `.act-local`, and its temp file is removed when the write fails.
 
 ### Changed
 
@@ -122,6 +166,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   style; the default `auto` keeps the old behaviour.
 - `topics/live-systems.md` names the release entry on GitHub/GitLab next to pull requests, issues and comments: its own
   "yes", the way back is deleting it in the web interface, no backup needed.
+- The `PostToolUse` hook no longer ends early for every tool call of the orchestrator that cannot produce a note: the
+  protected-files watcher and queued notes run first (standard library only, so the common call stays cheap), and a
+  `TaskStop` call now reaches the observers instead of being dropped.
 
 ### Fixed
 
@@ -165,6 +212,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `act-doctor` reports a rule set file that is not readable UTF-8 (a coding set, a working method or a rule file) as a
   finding naming the file, instead of crashing with a `UnicodeDecodeError`; `rules.py --validate` does the same for a
   `use:` target.
+- A worker that has ended and is continued with a message keeps its write scope: the scope registry marks the entry as
+  ended at the stop (instead of deleting it) and clears the mark when the worker starts again under the same agent id,
+  so its own writes are no longer refused by the fail-closed fallback after other workers with restricted scopes were
+  started in the meantime.
+- A worker the orchestrator stops with `TaskStop` no longer blocks the start of a worker with an overlapping write
+  scope: the stop frees its scope at once. The overlap message now names `TaskStop` as the way to free a scope.
 
 ### Security
 

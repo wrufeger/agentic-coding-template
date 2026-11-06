@@ -97,7 +97,7 @@ smaller calls.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
-Checks: git-metadata-guard.
+Checks: git-metadata-guard, protected-watch.
 
 Nobody writes `.git/hooks/**` or `.git/config` (also `config.worktree`, submodule and
 linked-worktree git directories), and copies nothing into them — neither with a file tool nor a
@@ -178,6 +178,116 @@ place, only source files that can land on a protected path are mapped: a protect
 through a link already below the destination, a Windows short name (`~1`). The body of a quoted
 heredoc is not scanned as commands only when the whole command is one text reader that stores it
 (`cat`, `tee [-a] <file>`, `git commit -F -`, `git tag -F -`) with nothing before or after it.
+
+### The watcher after every call: `protected-watch`
+
+`git-metadata-guard` reads the text of a call before it runs, so a script file, inline code or a program that
+writes a protected file itself stays invisible to it. `protected-watch` looks at the files afterwards, whatever
+wrote them. After every tool call (PostToolUse and PostToolUseFailure, orchestrator and workers) it compares
+these files with a snapshot kept under `.act-local/protected-watch/` (taken at session start, after the session
+handler has refreshed the bridges): `.git/hooks/**` and `.git/config` / `.git/config.worktree` of the repository,
+of a `.git` file's git directory and its `commondir`, and of submodule and linked-worktree git directories, plus the
+pointer files themselves - the `.git` file at the project root (`gitdir: ...`) and a git directory's `commondir`;
+`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**` of the project;
+`.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**` and `.vscode/tasks.json` at the project root.
+`.git/config` is compared only on the keys that start code (the list above, the one `git-metadata-guard` uses):
+git rewrites the file for `push -u` or `remote add`, and that is no change; without a usable `git` the whole
+file is compared. For a key whose danger depends on the value (`alias.*`, `remote.*.url` and `pushurl`,
+`protocol.*.allow`) every value is kept, harmless or not, so a harmless value that is changed to a dangerous one
+is put back as well.
+
+The watcher never follows a link. A watched folder or file that is a symbolic link, a Windows junction or another
+reparse point (the `modules/` and `worktrees/` folders of a git directory and the
+entries below them included) is listed as one entry of its own and never entered or read. Before it removes or restores a file it
+checks that no folder between the project root (or the git directory) and the file is such a link and that the real
+path of the folder is the expected one; a path that goes through a link is reported as "not restored (path goes
+through a link)" and left alone, and a link a worker put in place of a watched folder or file is removed (the link
+itself, never what it points at). The same check guards every write below `.act-local/protected-watch/`; if
+`.act-local` or that folder is a link, the watcher stops with one line on stderr.
+
+Everything the watcher may delete, create, replace or write lies below places fixed when the snapshot was taken: the
+project root, the git directories found then (each with the real path it had, both kept in the snapshot) and
+`.act-local/protected-watch/`. Nothing read from the working tree at restore time can add a place. The `.git` file at
+the root and a git directory's `commondir` are watched as files like any other, so a pointer a worker rewrites is a
+change that is put back (a worker) or reported (the orchestrator) - but the scan keeps listing the git directories
+of the snapshot, never the new target, and a file below a git directory the snapshot did not have is reported and never
+removed. A restore also stops when the recorded git directory is now a link, no longer a directory, or no longer
+resolves to the real path it had. The temp file of a restore is created exclusively and never follows a link, so a
+hard link or symlink standing at its name is not written through.
+
+Whether a git directory may be restored at all is decided from real paths. A snapshot taken at session start, or in
+an orchestrator's call that found none, is trusted, so the git directories it finds (also one outside the project
+root, such as a linked worktree's directory below the main repository's `.git`) are restorable. A snapshot taken
+during a worker's call (the snapshot was missing or deleted) is not: there a git directory is restorable only when it
+lies below the project root in fact - written below it, no link on the way from the root down to it, and its real
+path below the root's real path. A `.git` file that names a path inside the root which reaches outside through a
+linked folder therefore makes nothing outside a place the watcher may delete or write; the directory is watched and
+its changes are reported "not restored" until a session start takes a trusted snapshot.
+
+It is cheap: one directory listing of the project root and the watched folders, one stat per file, and a file is
+read and hashed (sha256) only when its size or modification time differs from the snapshot. A call that changed
+nothing costs a few milliseconds on top of the interpreter start (about 3 ms for 76 files, measured).
+
+What happens when a file really changed (its hash differs; for `.git/config` a code-starting key):
+
+- **A worker's call** (the payload carries `agent_id`), key `block`: the file is put back at once from the
+  snapshot taken before the call, not blindly from git — a versioned file can carry the orchestrator's wanted,
+  uncommitted edit, and `.git/hooks` and `.git/config` are never versioned. A file that appeared is removed, a
+  file that vanished is restored. For `.git/config` only the changed keys are reset with `git config --file`; the
+  rest of the file stays as git left it. The changed version is kept as a file under
+  `.act-local/protected-watch/kept/` (30 days). The worker gets the report as `additionalContext`, the human a
+  `systemMessage` that starts with the warning sign, and the orchestrator a note with its next tool call.
+- **The orchestrator's call**, or key `warn`: reported only, to the model and to the human, with the commands that
+  put the previous version back (the previous version is kept under `kept/` so the command stays valid; the
+  assistant's own writes to hooks and git config are refused, so the human runs them). The new state becomes the
+  reference, so the next call is quiet. The commands name the file (`git config --file <path> ...`, also for
+  `config.worktree` and a submodule's config), end git's options with `--` before the key and value (a value that
+  begins with `-` is a value, not an option), and are written so that no shell expands anything in a key, a value
+  or a path: an argument with a character other than letters, digits, space, comma and `_./:@+=-` is given as a
+  Python string literal with `\xNN` escapes, in one `python -c` call, and an argument that begins with `@`
+  (splatting in PowerShell) or `-`, or that holds a comma (PowerShell reads a bare `a,b` as an array), is put in
+  double quotes.
+- **A restore that fails** (a read-only file, a path through a link, no copy of the old version): the snapshot entry
+  stays the reference, so the next call reports the change again, and a temp file the write left behind is removed.
+
+Switch: `protected-watch` in `docs/ai/config.md` § Checks — `block` (default; restores a worker's change), `warn`
+(reports every change, restores nothing), `off` (no snapshot, no comparison); `ACT_PROTECTED_WATCH` in the
+environment overrides the value for one run.
+
+Limits:
+
+- It reports after the call and prevents nothing; a hook runs at the next git command, which can be the next call
+  of another worker.
+- A change made between two calls by someone else — the human in an editor, Claude Code writing
+  `.claude/settings.local.json` when a permission is granted, another session in the same project (it shares the
+  snapshot) — is attributed to the next call. A worker call that ends just after the orchestrator changed a
+  protected file is attributed to the worker and the change is put back: the kept copy and the command in the
+  message undo that. The same holds for a permission the human grants in a prompt during a worker's call.
+- Stat first: a write that leaves size and modification time as they were is not seen (a file modified within two
+  seconds before the snapshot is hashed once more at the next call, so a write in the same clock tick is not
+  missed). A file over 2 MB is hashed but has no copy and cannot be restored. At most 4000 files are listed.
+  `*.sample` files in a hooks folder are left out; git never runs them.
+- A worker that deletes the snapshot itself makes the next call take a new one; its write scope normally keeps it
+  out of `.act-local/`. Two sessions in one project share the snapshot.
+- A `.git` file above the project root (the project lies inside a linked worktree or a separate git directory whose
+  pointer is outside the root) is outside the root and not watched: the git directories it named at snapshot time
+  stay watched, but a rewrite of that pointer is not seen.
+- A git directory that is first seen in a snapshot taken during a worker's call (the snapshot was missing or deleted)
+  and does not lie below the project root in fact - by its real path, with no link between the root and it - is
+  watched and its changes are reported, but not restored, because that snapshot cannot be trusted as a reference for
+  it; the next session start takes a trusted one. A pointer that names a path inside the root which reaches outside
+  through a linked folder is such a case.
+- Who is blamed: a worker's change that is first seen in the orchestrator's own call — calls that run in
+  parallel, a background command that ends late, a worker call that finds the lock taken and returns — is reported
+  as the orchestrator's, is not put back, and becomes the reference. The report names the call it was seen in, not
+  who wrote.
+- A watched folder that was a link when the snapshot was taken (a shared `.claude/skills` linked in on purpose) is
+  watched as that link only, not what lies behind it. A link is checked at the moment of the write, not held: one
+  planted between the check and the write by a process running at that very instant is not caught.
+- Not watched: `~/.claude` (other projects share it and Claude Code writes there itself; it stays with the static
+  check), `*.code-workspace` files.
+- Nothing runs where hooks do not run (other tools stay with the static check). An error in the watcher is one line
+  on stderr and never blocks a call.
 
 ## `R-work-throwaway` — Throwaway material under `.act-local/tmp/`
 
@@ -441,14 +551,18 @@ and two patterns overlap when some path can match both, compared as the matching
 crosses `/`, `?` is one character, `[` is literal, `dir/**` also names `dir`): `src/lib/alpha/**` and
 `src/lib/beta*` do not overlap, `src/lib/**` and `src/lib/beta*` do.
 
-A finished worker or a failed start frees its scope; a crashed worker does so after three hours, or
-when its file under `.act-local/worker-scopes/` is deleted.
+A finished worker, a worker the orchestrator stops with `TaskStop`, and a failed start free their scope at
+once; a worker that crashed without any stop does so after three hours. The refusal names `TaskStop` as the
+way out. The entry under `.act-local/worker-scopes/` stays after a stop, marked as ended, so that a worker
+continued with a message (`SendMessage`) is bound to its own scope again: its restart clears the mark, and
+it counts as running once more. A call that cannot be bound to an entry (no `meta.json` of the agent, no
+entry under its `toolUseId`) is refused as before while a restricted scope is registered for a running
+worker.
 
-Limit: a worker continued with a message (`SendMessage`) is invisible to the check once it has
-ended, so the orchestrator keeps the scopes apart itself.
+Limit: the restart of a continued worker is not checked against the scopes of the workers started
+meanwhile, so the orchestrator keeps those apart itself.
 
-Whoever stops a worker and assigns it anew (`R-cost-amend`) first deletes its file there, if it
-still stands.
+Whoever stops a worker and assigns it anew (`R-cost-amend`) needs nothing more than the stop (`TaskStop`).
 
 The orchestrator starts it only after that worker has ended — only a rule, since a hook can refuse a
 start but not wait.

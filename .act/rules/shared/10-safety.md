@@ -78,6 +78,8 @@ agents, skills or commands under `.claude`, in the project or in `~/.claude`; th
 the human's request. Nor does it write files that start code when the folder is opened (editor
 tasks, dev container, `.envrc`, MCP config), and nobody adds a task that runs on `folderOpen`;
 the human writes such a file themselves. Checked mechanically by `git-metadata-guard` (`docs/ai/config.md` § Checks).
+After every call `protected-watch` compares these files with a snapshot, puts back what a worker changed and reports
+what the orchestrator changed.
 Details (every key, path and form covered, limit): `topics/checks.md`.
 
 ## `R-safe-dev-server` — The owner's dev server is theirs
