@@ -33,7 +33,13 @@ so a SQL string built with `+`, `.` or `%` that continues on the next line is no
 secret-scan joins only an environment lookup and its literal fallback split at an operator. A `%` that
 opens a short literal of its own (`strftime('%Y', d)`) is a date format, not the operator. The PHP
 patterns (`sql-php-concat`, `sql-php-interpolation`) run only on `.php`, `.phtml`, `.inc` and `.module`
-files.
+files. `sql-format` and `sql-php-concat` skip a line that is a single raise/print/log call (Python) or
+echo/error_log/throw/logger call (PHP) holding only string literals and simple operands, as long as no
+literal opens with a SQL keyword; anything else on the line is checked as before. `sql-php-interpolation`
+also covers `${name}`, and the PHP patterns cover `.php3/.php4/.php5/.php7/.php8/.pht`. Names that git quotes
+in the diff header are read unquoted. A rename or copy to a `.env` name counts as a new `.env` file. A `$'`
+in the commit command that is only text no longer forces the over-inclusive fallback; a live ANSI-C quote
+does.
 
 ## `R-safe-outside-root` — Stay inside the project
 
@@ -56,8 +62,14 @@ Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT
 the environment. Limits: the shell check is best effort, a program that opens files itself (`python
 script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked. A word
 of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a
-heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused; reads of a
-single `/` are not judged.
+heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused. A single `/` is
+read the same way when it is a shell word of its own (`ls /`, `find / -name x`, `du -sh /`), in Bash and in
+PowerShell; it is not a place where it is text (inline code behind `-c`/`-e`, a text option), the value of
+an option (`--grep=/`), the delimiter of `cut -d`, `paste -d`, `sort -t`, `join -t`, `awk -F` or `column -s`
+(`cut -d / -f1 file`), or the operator between two operands (`expr 6 / 2`, `$((6 / 2))`, PowerShell
+`$size / 1MB`). Limit: the operator is told by its neighbours alone - a lone `/` with any argument before it
+and a number, variable or parenthesis after it counts as one wherever it stands, so `ls -la / 2`, `ls -d / 1`
+and `du -sh / $X` pass.
 
 ## `R-safe-git-reset` — Check before `git reset --hard`
 
@@ -125,6 +137,18 @@ program inside `sh -c`, `eval` or a wsl line, and PowerShell. Not read: a callee
 without an import the reading knows, writing calls outside the families it knows (`io.FileIO`,
 `urllib.request.urlretrieve`, `extractall` of a zip or tar archive), other interpreters.
 
+A single-quoted or ANSI-C quoted `$(...)` among the words of `echo` or `printf` is printed text, not a command
+substitution, and is not read as one - but only on a command line that prints and does nothing else.
+Allow-list over the whole line: every command of the line is a bare `echo` or `printf` (the word itself, not
+`./echo`, no prefix, no keyword before it; `printf` without `-v`), the commands are joined by nothing but `;`,
+`&&`, `||` or a line break, and every word is plain - a `$` or backtick only inside single quotes or as the
+`$'` of ANSI-C quoting. Anything else on the line - a pipe, a redirection (also `>&2`), `&`, a group,
+subshell or process substitution, a compound command (`for`, `if`, `{ ...; }`), `exec`, `trap`, an alias,
+function or variable definition, `eval`, a nested shell, `$_`, `printf -v`, any other command, in PowerShell
+also `Set-Alias`, `New-Alias` and `iex` - makes the whole line one that is judged as before (`echo '$(cmd)' |
+sh`, `echo '$(cmd)'; sh -c "$_"`, `for i in 1; do echo '$(cmd)'; done | sh`, `echo '$(cmd)' > x.sh`,
+`echo '$(cmd)' && git status`). A double-quoted or unquoted `$(...)` is always judged.
+
 Two boundaries hold for every shell check that reads write targets from the command text (write-guard,
 worker-write-scope, git-metadata-guard, outside-root), since the checks read the text and run nothing:
 **runtime code** — code that becomes a script only when the command runs (`bash <<< '…'`, `source
@@ -158,6 +182,24 @@ to the folder above it, `.act-local/tmp` (git never climbs into a ceiling folder
 repository still finds itself), or call git only on a repository of its own. A deny entry on Windows can
 lock out the owner too (`(RX)` also denies `READ_CONTROL` and `SYNCHRONIZE`): deny only the one right
 the probe needs, such as `(RD)`, and run `icacls <path> /reset` in the `finally`.
+
+A throwaway project below `.act-local/tmp/` carries a `.act/` of its own, which is no part of the project's
+template tree: the template's `.act/` write-guard lets a write into it pass, also where the text of the target
+cannot be resolved (a variable in front of it, `$ROOT/.act-local/tmp/job/proj/.act/x`). Allow-list: the
+project root is known and does not itself lie below `.act-local/tmp/`, the text holds `.act-local/tmp/` as
+whole segments with no `.act` segment before them, the part before them is empty or made of plain segments
+with at most one variable, written `$NAME`, `${NAME}` or `$env:NAME` and standing alone as the very first
+segment, and every segment behind them is plain too. A plain segment holds no `..`, variable, command
+substitution, backtick, glob, brace, `~`, parenthesis, quote or white space. `$ROOT/.act/x`,
+`.act-local/tmp/$job/.act/x`, `$ROOT/.act-local/tmp/../../.act/x`, `$ROOT/.act-local-tmp/job/.act/x`,
+`$A$B/.act-local/tmp/job/.act/x`, a substitution that begins before the marker and ends behind it
+(`$(cd $ROOT/.act-local/tmp/job; cd ...)/x`) and a segment with a space or a quote stay refused. For a
+project that itself lies below `.act-local/tmp/` (a throwaway project run as a project) every text naming
+`.act/` stays refused, since its own `.act/` can then be spelled through `.act-local/tmp/` behind a variable
+or an administrative share (`${U}//localhost/D$/.../.act-local/tmp/job/.act/x`). Limit: a leading variable is
+trusted to stand for a place outside `.act/`; one that holds `.act` itself (`D=.act; echo x >
+$D/.act-local/tmp/a/.act/b`, `$PWD` from inside `.act/`) reaches only new files below
+`.act/.act-local/tmp/`, no file of the template.
 
 Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
 detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
@@ -225,7 +267,11 @@ outside the project root is refused, unless it lies in a directory listed in
 
 `worker-write-scope` (`docs/ai/config.md` § Checks) checks it; for a Bash command this is
 best-effort (it catches redirection and the common write commands, not a full shell parse): writes
-made from inside a script file stay invisible to it.
+made from inside a script file stay invisible to it. There is no cap on the number of write targets in one
+command: a target inside the scope costs about 1.4 ms, so the hook's 10 s time limit is reached at roughly
+7000 literal targets in one command (about 200 KB of command text), above which the remaining PreToolUse
+checks of that call do not run - no realistic command comes close, and a target outside the scope stops the
+check at the first hit.
 
 The command text of an `ssh [options] <host> <command>` call counts as remote - only the `$(...)` the
 local shell expands (easy to cut out: no `#`, `<<`, line break or `case` inside, no stray `)` around) are
@@ -240,7 +286,39 @@ first command word that begins with a plain character other than `-`. Every othe
 expansion up to the host or at the start of the command, a `PATH=`, `BASH_ENV`, an alias, a function
 `ssh`, `source` or `.`, `enable`, `command_not_found_handle` or the word `hash` in the same command - is
 read as a local command, as before. An alias in an ssh configuration that points here cannot be seen;
-local redirections behind the call are always checked.
+local redirections behind the call are always checked. The file an `ssh -E <file>` call writes its log to
+is a write target. The command text of a call whose destination is this machine, or one the shell still
+expands (`ssh localhost 'echo x > f'`), runs here and is read as a local command line; the text for another
+machine stays unread. An `rsync` destination on another machine (`host:path`, `host::module`,
+`rsync://host/...`) is no local file, as long as every option acts on the remote side alone: plain flags and
+flag clusters (`-avz`, `--archive`, `--delete`), pattern options (`--exclude`, `--include`, `--filter`, `-f`),
+the value options `--bwlimit`, `--timeout`, `--port`, `--chmod`, `--max-size`, `--min-size`,
+`--compress-level`, `--info` and `--debug`, and a remote shell that is only `ssh` (`-e ssh`, `-e 'ssh -p
+2222'`, `--rsh=ssh`) - and only when the whole command line is nothing but that one rsync call with plain
+words: the first word is `rsync` itself, no other command and no operator (`;`, `&&`, pipe, redirection, `&`,
+group, line break) anywhere, no `$` or backtick outside single quotes (in double quotes the shell still
+expands them), and no unquoted glob, brace or `~` in any word. rsync reads its own environment variables (`RSYNC_RSH`, `RSYNC_CONNECT_PROG`) and runs a local
+program from them, and a line can set one in more spellings than a text search finds - the shell removes
+quotes and escapes before `export`, `env` or `declare` see the name (`export RSYNC"_"RSH=...`) - so a line
+with a prefix assignment, `export`, `env`, a nested `sh -c` or a PowerShell part (`$env:RSYNC_RSH = ...; bash
+-c 'rsync ...'`) keeps the destination a local path; so does a line that holds the text `rsync_` (a plain
+name such as `docs/rsync_notes/` counts too). `rsync -a docs/ h2:x && echo done` is such a line as well. Any other
+option - another `-e`/`--rsh` program, `--rsync-path`, `--log-file`, `--write-batch`, `--only-write-batch`,
+`--backup-dir`, `--partial-dir`, `--temp-dir`, `--link-dest`, an option not on that list - makes the
+destination count as a local path again. A drive letter, a path with a `/` before the colon, a variable, a
+glob, a tilde and this machine (`localhost:path`) are read as local paths in any case. In PowerShell native
+programs such as `ssh` and `rsync` are not read for write targets at all.
+
+In PowerShell, `$name = <program> args` with `py`, `python`, `python3` or `git` and plain arguments (no
+sub-expression, script block, escape, `;` or comma-separated array) is read as the program call alone by the
+statement handlers: its redirections, and the `git mv`/`git rm` targets. For `write-guard` and
+`git-metadata-guard`, every word right of the `=` stays a possible target as before, except two kinds of
+word: the script of `py|python|python3 [-3|-u|-B ...] <script>` (never with `-m`, `-c` or an option that takes
+a value), and the path and revision words of `git log|diff|show|status|blame|ls-files|rev-parse|grep` without
+`-o` or `--output*`. So `$out = py .act/scripts/board.py` and `$log = git log -- .act/scripts` pass, while
+`$x = python -m zipfile -e a.zip .act/`, `$x = git clone <url> .act/y`, `$x = git archive -o .act/x.zip HEAD`
+and `$x = py x.py, '.act/x'` are judged as before. Any other right side (a cmdlet such as `Join-Path`, a
+string, an expression, the call operator) is read as before.
 
 Inline interpreter code is read too, for a worker with a restricted scope (`none` or patterns; a worker
 without a `Write scope:` line and the orchestrator are not affected). A Bash or PowerShell call that runs
@@ -332,7 +410,11 @@ Limits of that reading (what stays unseen; it catches the common form, not every
 
 When the reading meets text it cannot read, the call is not refused for it and
 `[act] inline interpreter code not read (...)` goes to standard error; the rest of the check runs as
-before.
+before. An error of the reader's own program (a bug of the check, not a text it fails to understand) is
+different: `worker-write-scope` and `git-metadata-guard` then name the error and, in block mode, refuse the
+call (in warn mode they only warn), since inline code that was never judged must not pass as code without a
+write call; `.act/scripts/doctor.py` or the owner decides how to go on. Text the reader cannot parse, or a program too large or too deep for it,
+stays on the lenient path above.
 
 `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope overlaps that of a
 worker still running: `none` overlaps nothing, a missing `Write scope:` line counts as everything,

@@ -108,6 +108,7 @@ import re
 from typing import Optional
 
 from . import inline_code as _inline_code
+from . import shell_targets as _shell_targets  # the module itself, for the rsync flag it holds while scanning
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
@@ -562,6 +563,67 @@ def _strip_literal_call(words: list[str]) -> list[str]:
     return words[1:]
 
 
+# `$name = <program> args...` with one of these programs is read as the call `<program> args...` alone by the
+# statement handlers (_strip_program_assignment). For check 1 (broad), the words right of the `=` stay
+# candidates as before, minus the few words that name what the program only reads (_assigned_read_words).
+_PS_ASSIGNED_PROGRAMS = frozenset({"py", "python", "python3", "git"})
+_PS_PYTHON_PROGRAMS = frozenset({"py", "python", "python3"})
+_PS_ASSIGN_VAR_RE = re.compile(r"^\$(?:\w+:)?\w+$")
+_PS_PROGRAM_WORD_RE = re.compile(r"^[\w.:/\ -]+$")
+# An argument that cannot start another command or build a list of words: no sub-expression, script block,
+# array comma, escape or statement separator. One that can keeps the whole assignment under the
+# over-inclusive reading.
+_PS_PLAIN_ARG_RE = re.compile(r"^[^(){}`;,]*$")
+# Interpreter options that take no value and cannot run other code (`-3`, `-3.12`, `-u`, `-B` ...): the first
+# word after them is the script. `-m`, `-c` and options with a value (`-X`, `-W`) are not among them.
+_PS_PYTHON_PLAIN_OPTION_RE = re.compile(r"^-(?:\d(?:\.\d+)?(?:-\d+)?|[uBOEsSIqdvb]+)$")
+# git subcommands that only read the repository; their path and revision words are no write target.
+_PS_GIT_READ_SUBCOMMANDS = frozenset({"log", "diff", "show", "status", "blame", "ls-files", "rev-parse", "grep"})
+
+
+def _strip_program_assignment(words: list[str]) -> tuple[list[str], list[str]]:
+    """`$name = <program> args...` split into (the call `<program> args...` alone, the words right of the `=`
+    that stay over-inclusive candidates for check 1). The call alone is what the statement handlers read
+    (its redirections, `git mv`, ...), for a program of _PS_ASSIGNED_PROGRAMS with plain arguments
+    (_PS_PLAIN_ARG_RE). The candidates are every word right of the `=` except those _assigned_read_words
+    names - the script of a python call, the path and revision words of a read-only git call. Anything
+    else - a cmdlet, a string, an expression, a call operator, a sub-expression or array among the
+    arguments - is returned as it is, with no extra candidates (the whole statement is read as before)."""
+    if len(words) < 3 or words[1] != "=" or not _PS_ASSIGN_VAR_RE.match(words[0]):
+        return words, []
+    program = words[2]
+    if not _PS_PROGRAM_WORD_RE.match(program) or _ps_command_name(program) not in _PS_ASSIGNED_PROGRAMS:
+        return words, []
+    if not all(_PS_PLAIN_ARG_RE.match(word) for word in words[3:]):
+        return words, []
+    dropped = _assigned_read_words(words[2:])
+    return words[2:], [word for index, word in enumerate(words[2:]) if index not in dropped]
+
+
+def _assigned_read_words(call: list[str]) -> frozenset[int]:
+    """Indexes in `call` (program word first) of the words that are no write target: the script word of
+    `py|python|python3 [plain interpreter options] <script> ...` (never with `-m`, `-c` or an option with a
+    value), and the non-option words (paths, revisions) of `git <log|diff|show|status|blame|ls-files|
+    rev-parse|grep> ...` without `-o` or `--output*`. Empty for every other call."""
+    name = _ps_command_name(call[0])
+    if name in _PS_PYTHON_PROGRAMS:
+        for index in range(1, len(call)):
+            word = call[index]
+            if _PS_PYTHON_PLAIN_OPTION_RE.match(word):
+                continue
+            return frozenset() if word.startswith("-") else frozenset({index})
+        return frozenset()
+    if name == "git" and len(call) > 1 and call[1] in _PS_GIT_READ_SUBCOMMANDS:
+        options = call[2:]
+        if any(
+            word.startswith("--output") or word == "-o" or (word.startswith("-") and not word.startswith("--") and "o" in word[1:])
+            for word in options
+        ):
+            return frozenset()
+        return frozenset(index for index in range(2, len(call)) if not call[index].startswith("-"))
+    return frozenset()
+
+
 def _broad_guard_candidates(words: list[str]) -> list[str]:
     """Extra, deliberately over-inclusive raw-text candidates for check 1 (write_guard) only — see
     the module docstring's `broad` paragraph and the _GUARD_OPAQUE_CMDLETS/_BROAD_EXCLUDE_VALUE_
@@ -637,7 +699,7 @@ def _flush_ps_statement(
         resolved = _resolve_ps_target(raw, cwd)
         if resolved:
             result.add(resolved)
-    words = _strip_literal_call(words)
+    words, assigned_candidates = _strip_program_assignment(_strip_literal_call(words))
     if words:
         name = _ps_command_name(words[0])
         args = words[1:]
@@ -684,7 +746,7 @@ def _flush_ps_statement(
                 if resolved:
                     result.add(resolved)
         if broad:
-            for raw in _broad_guard_candidates(words):
+            for raw in _broad_guard_candidates(words) + assigned_candidates:
                 candidate = raw.strip()
                 if candidate and not _ps_is_ignorable(candidate):
                     result.add(candidate)
@@ -749,7 +811,13 @@ def _powershell_write_targets(
     unterminated quote or here-string) — see the module docstring for what each caller does then.
     `git_writes` is the same choice of git subcommands shell_targets._bash_write_targets takes
     (_GIT_WRITES_TEMPLATE_GUARD for check 1, _GIT_WRITES_WORKER_SCOPE for check 1c); `broad` and
-    `depth` are documented in the module docstring's `broad` paragraph."""
+    `depth` are documented in the module docstring's `broad` paragraph. A `bash -c` text inside the
+    command is scanned by shell_targets._bash_write_targets, which drops an rsync destination on another
+    machine only while the PowerShell line as a whole is nothing but one rsync call with plain words
+    (`$env:RSYNC_RSH = ...; bash -c 'rsync ...'` keeps the destination a local path): the flag
+    shell_targets._RSYNC_ENV_NAMED is set here for the whole scan, a True from an outer scan kept."""
+    previous_named = _shell_targets._RSYNC_ENV_NAMED
+    _shell_targets._RSYNC_ENV_NAMED = bool(previous_named) or _shell_targets._names_rsync_variable(command)
     try:
         tokens = _ps_tokens(command)
         if tokens is None or _uses_invoke_expression(tokens):
@@ -759,6 +827,8 @@ def _powershell_write_targets(
         # A bug in this scanner must never turn into a silent allow (dispatch.py's docstring,
         # "when in doubt, deny"): None makes the caller fall back to its own raw-text search.
         return None
+    finally:
+        _shell_targets._RSYNC_ENV_NAMED = previous_named
 
 
 # (path literal, the directory it resolves against or None when unknown, interpreter language)

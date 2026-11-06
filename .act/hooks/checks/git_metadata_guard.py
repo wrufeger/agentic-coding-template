@@ -1336,6 +1336,12 @@ def _violation(payload: dict) -> Optional[str]:
             "a git hook, the repository config or another protected file (copy it in smaller parts, or "
             "ask the human to run it)"
         )
+    except _inline_code.ReaderFailure as failure:
+        return (
+            f"holds inline interpreter code that could not be read ({failure}), so it cannot be told whether "
+            "it writes a git hook, the repository config or another protected file (an error of the check; "
+            "run .act/scripts/doctor.py or ask the human to run it)"
+        )
     except Exception:  # noqa: BLE001 — never a silent allow: fall back to the raw text
         if _RAW_GIT_RE.search(command):
             return "mentions a git hook or the repository config in a command that cannot be analysed"

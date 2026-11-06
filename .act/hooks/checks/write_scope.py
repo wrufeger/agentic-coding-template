@@ -62,6 +62,7 @@ from typing import Optional
 
 import actlib
 
+from . import inline_code as _inline_code
 from .brace_expand import literal_brace_variants
 from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode
 from .powershell_targets import (
@@ -1037,10 +1038,24 @@ def check_worker_write_scope(payload: dict) -> int:
     inline_targets: list[tuple[str, Optional[str], str]] = []
     if inline_source is not None:
         source_tool, source_command, source_cwd = inline_source
-        if source_tool == "Bash":
-            inline_targets = _bash_inline_code_targets(source_command, source_cwd)
-        else:
-            inline_targets = _powershell_inline_code_targets(source_command, source_cwd)
+        try:
+            if source_tool == "Bash":
+                inline_targets = _bash_inline_code_targets(source_command, source_cwd)
+            else:
+                inline_targets = _powershell_inline_code_targets(source_command, source_cwd)
+        except _inline_code.ReaderFailure as failure:
+            # A program error of the reader (not a text it cannot read): the inline code was not judged,
+            # so the call is not let through as if it had no write call.
+            message = (
+                "[act] the inline interpreter code of this command could not be checked against the write "
+                f"scope: {failure}. That is an error of the check, not of the command; run "
+                ".act/scripts/doctor.py or ask the human to run the command"
+            )
+            if mode == "warn":
+                print(message)
+                return 0
+            print(message, file=sys.stderr)
+            return 2
     if not write_targets and not inline_targets:
         return 0  # nothing this check reads as a write
 

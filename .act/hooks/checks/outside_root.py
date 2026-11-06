@@ -153,6 +153,9 @@ _URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+://")
 # literal of inline code, a floor division, a separator in a pattern) it is never a place. Only
 # `//host/share` with a segment is a UNC path (`_UNC_RE`).
 _ONLY_SLASHES_RE = re.compile(r"^/{2,}$")
+# One or more forward slashes and nothing else: the same word with a single `/` included. A division
+# or a separator in the `-c` text of a language interpreter (`python -c "print(7 / 2)"`) is such a word.
+_BARE_SLASHES_RE = re.compile(r"^/+$")
 _FILE_URL_RE = re.compile(r"^file:/{2,3}(?=[A-Za-z]:|/|[^/])", re.IGNORECASE)
 _DYNAMIC_RE = re.compile(r"[$`{]|%[A-Za-z_][A-Za-z0-9_]*%")
 # (`//ve` is how Git Bash spells the Windows switch `/ve`, so that it is not turned into a path.)
@@ -418,6 +421,8 @@ def _looks_like_path(candidate: str, strict: bool = False) -> bool:
     text = candidate.strip().strip("'\"")
     if text == "~":
         return True
+    if text == "/" and not strict:
+        return True  # a shell word of its own (`ls /`) is the root, as `//` is; in a text literal it is not
     if len(text) < 2 or _URL_RE.match(text) or (strict and _ONLY_SLASHES_RE.match(text)):
         return False
     if _HOME_TOKEN_RE.match(text) or _DRIVE_RE.match(text) or _UNC_RE.match(text):
@@ -730,6 +735,41 @@ class _Words(list):
     feeds_xargs: bool = False
 
 
+_OPERAND_START_RE = re.compile(r"^[(\[]*[\d$]")
+
+
+def _is_division(name: str, args: list[str], index: int) -> bool:
+    """True when the lone `/` at `args[index]` stands between two operands of an expression (`expr 6 /
+    2`, `$((6 / 2))`, `$x / 1MB`): something that can be divided on its left (an argument, or a command
+    word that starts like a number, a variable, a parenthesis or a property) and a number, variable or parenthesis
+    on its right. `ls /`, `find / -name x` and `du -sh /` do not match."""
+    following = args[index + 1] if index + 1 < len(args) else ""
+    if not _OPERAND_START_RE.match(following):
+        return False
+    return index > 0 or name[:1] in ("(", "$", "[", ".") or name[:1].isdigit()
+
+
+# Options whose next word is a separator or delimiter, per program (`cut -d / -f1`, `sort -t /`, `awk -F /`):
+# a lone `/` right behind one is that text, not the root. Allow-list; any other program or option still
+# reads a lone `/` as the root.
+_SEPARATOR_VALUE_OPTIONS = {
+    "cut": frozenset({"-d", "--delimiter"}),
+    "paste": frozenset({"-d", "--delimiters"}),
+    "sort": frozenset({"-t", "--field-separator"}),
+    "join": frozenset({"-t"}),
+    "awk": frozenset({"-F", "--field-separator"}),
+    "gawk": frozenset({"-F", "--field-separator"}),
+    "mawk": frozenset({"-F"}),
+    "column": frozenset({"-s", "--separator"}),
+}
+
+
+def _is_separator_value(name: str, args: list[str], index: int) -> bool:
+    """True when the lone `/` at `args[index]` is the value of a delimiter option of `name`
+    (_SEPARATOR_VALUE_OPTIONS), e.g. the `/` of `cut -d / -f1 file`."""
+    return index > 0 and args[index - 1] in _SEPARATOR_VALUE_OPTIONS.get(name, frozenset())
+
+
 def _read_candidates(name: str, args: list[str], feeds_xargs: bool = False) -> list[tuple[str, bool]]:
     """(word, strict) pairs of a simple command that may name a place; `strict` marks a string
     literal of inline interpreter code, where a `..` is no path."""
@@ -740,7 +780,13 @@ def _read_candidates(name: str, args: list[str], feeds_xargs: bool = False) -> l
     for index, word in enumerate(args):
         if index in skip:
             continue
-        for candidate in _candidate_words(word):
+        for position, candidate in enumerate(_candidate_words(word)):
+            if candidate.strip().strip("'\"") == "/" and (
+                position or _is_division(name, args, index) or _is_separator_value(name, args, index)
+            ):
+                # `--grep=/` (the value of an option), `6 / 2` (a division) and `cut -d /` (a delimiter)
+                # name no place
+                continue
             if _looks_like_path(candidate):
                 found.append((candidate, False))
         if name in _INTERPRETERS and (" " in word or '"' in word or "'" in word):
@@ -1162,7 +1208,7 @@ def _ps_lists(command: str, depth: int = 0) -> list[list[str]]:
             continue
         nested = _ps_lists(inner, depth + 1)
         if _command_name(words[0]) in _CODE_INTERPRETERS:
-            trimmed = ([word for word in item if not _ONLY_SLASHES_RE.match(word)] for item in nested)
+            trimmed = ([word for word in item if not _BARE_SLASHES_RE.match(word)] for item in nested)
             nested = [item for item in trimmed if item]
         lists.extend(nested)
     return lists

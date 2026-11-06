@@ -87,7 +87,7 @@ from typing import Callable, NamedTuple, Optional
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
     "interpreter_language", "code_source", "code_source_at", "write_paths", "path_literals", "has_write_call",
-    "mentions_interpreter", "report_skipped",
+    "mentions_interpreter", "report_skipped", "ReaderFailure",
     "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
 
@@ -285,6 +285,12 @@ def _decode_escapes(text: str, javascript: bool, text_literal: bool = True) -> s
         return written
 
     return _ESCAPE_RE.sub(replace, text)
+
+
+class ReaderFailure(Exception):
+    """The reader of inline interpreter code failed with an error of its own program (a `TypeError`, a
+    `KeyError` ...), not with a text it does not understand. Such a command is not let through unread:
+    the callers refuse it and name the error."""
 
 
 def report_skipped(where: str, error: BaseException) -> None:

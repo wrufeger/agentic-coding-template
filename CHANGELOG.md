@@ -47,6 +47,38 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   a), and opens with the bold label `**Recommended:**` in `language-docs` (`**Empfehlung:**` for `de`), its reason
   closing the line in one sentence. `act-idea` and `act-prepare` put their recommendation first the same way.
 
+- `write-guard`: a write into a throwaway project's own `.act/` below `.act-local/tmp/` (`$ROOT/.act-local/tmp/job/
+  proj/.act/x`) passes also where the start of the path is a variable. Allow-list: the project root is known and does
+  not itself lie below `.act-local/tmp/`, `.act-local/tmp/` stands as whole segments with no `.act` segment before
+  it, the part before it is empty or plain segments with at most one lone variable (`$NAME`, `${NAME}`, `$env:NAME`)
+  as the very first segment, and every segment behind it is plain too (no `..`, variable, substitution, backtick,
+  glob, brace, `~`, parenthesis, quote or space); every other path naming `.act/` stays refused, among them a
+  substitution that begins before `.act-local/tmp/` and ends behind it. A project that itself lies below
+  `.act-local/tmp/` (a throwaway project run as a project) gets no exemption at all, since its own `.act/` can be
+  spelled through `.act-local/tmp/` behind a variable or an administrative share. Limit: a leading variable that
+  holds `.act` itself reaches only new files below `.act/.act-local/tmp/`.
+- `worker-write-scope` and the other shell write checks: an `rsync` destination on another machine (`host:path`,
+  `user@host:path`, `host::module`, `rsync://host/...`) is no local file as long as every option acts on the remote
+  side alone (plain flags, `--exclude`/`--include`/`--filter`, `--bwlimit`, `--timeout`, `--port`, `--chmod`,
+  `--max-size`, `--min-size`, `--compress-level`, `--info`, `--debug`, a remote shell that is only `ssh`) and the
+  whole command line is nothing but that one rsync call with plain words (the first word is `rsync`; no prefix
+  assignment, `export`, `env`, other command or operator, no `$` or backtick outside single quotes, no unquoted
+  glob, brace or `~`).
+  rsync runs a local program from `RSYNC_RSH` or `RSYNC_CONNECT_PROG`, and a line can set one in spellings no text
+  search finds (`export RSYNC"_"RSH=...`), so any other line - `RSYNC_RSH=... rsync`, `env ... rsync`, a nested
+  `sh -c`, a PowerShell part before a `bash -c`, or `rsync ... && echo done` - keeps the destination a local path,
+  as does a line holding the text `rsync_` (a name such as `docs/rsync_notes/` too). `-e`/`--rsh` with another
+  program, `--rsync-path`, `--log-file`, `--write-batch`, `--only-write-batch`, `--backup-dir`, `--partial-dir`,
+  `--temp-dir`, `--link-dest` or an unknown option make it a local path again, as do a drive letter, a path with a
+  `/` before the colon, a variable, a glob, a tilde and this machine (`localhost:path`).
+- PowerShell: for `write-guard` and `git-metadata-guard`, `$name = <program> args` with `py`, `python`, `python3` or
+  `git` and plain arguments (no sub-expression, script block, escape, `;` or comma array) no longer treats every word
+  right of the `=` as a possible target: the script of `py|python|python3 [options] <script>` (never with `-m` or
+  `-c`) and the path and revision words of `git log|diff|show|status|blame|ls-files|rev-parse|grep` (without `-o`
+  or `--output*`) are left out, every other word still counts. `$x = py .act/scripts/board.py` passes;
+  `$x = python -m zipfile -e a.zip .act/`, `$x = git clone <url> .act/y` and `$x = py x.py, '.act/x'` are judged as
+  before. A cmdlet, string, expression or call operator on the right side is read as before.
+
 ### Fixed
 
 - A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
@@ -77,9 +109,36 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   Windows needs to end the hung process); without git, outside a repository or on any git error it behaves as
   before and prints nothing.
 
+- `git-metadata-guard`: `echo '$(git config core.hooksPath x)'` and `echo $'$(...)'` (also `printf`) print text; they
+  are no longer read as a command substitution on a command line that prints and does nothing else: every command
+  of the line is a bare `echo` or `printf` (not `./echo`, no prefix; `printf` without `-v`), joined only by `;`,
+  `&&`, `||` or a line break, and every word is plain (a `$` or backtick only inside single quotes or as the `$'`
+  of ANSI-C quoting). Any other line - a pipe, a redirection, `&`, a group or process substitution, a loop or `if`,
+  `exec`, `trap`, an alias or function definition, `$_`, any other command next to the echo, in PowerShell
+  `Set-Alias`/`New-Alias`/`iex` - and a double-quoted or unquoted `$(...)` are judged as before.
+- Shell write checks: `git log -S'$(('` (a single-quoted `$((`) is text, no command substitution, and no longer
+  blocks.
+
 ### Security
 
 - `danger-scan`: PHP `"... ${name}"` interpolation inside a double-quoted statement is held like `$name` and `{$expr}`; the SQL checks for PHP now also cover the endings `.php3`, `.php4`, `.php5`, `.php7`, `.php8` and `.pht`.
+
+- `outside-root`: a shell word that is a single `/` (`ls /`, `find / -name x`, `cat /`, `du -sh /`), in Bash and in
+  PowerShell, is now read as the file system root, like `//`. A `/` in text (inline code behind `-c`/`-e`, a text
+  option such as `git log --grep=/`), the delimiter of `cut -d`, `paste -d`, `sort -t`, `join -t`, `awk -F` or
+  `column -s` (`cut -d / -f1 file`) and the division operator between two operands (`expr 6 / 2`, `$((6 / 2))`,
+  PowerShell `$size / 1MB`) are still no place. Limit: the operator is told by its neighbours alone, so a lone `/`
+  with an argument before it and a number or variable after it (`ls -la / 2`, `du -sh / $X`) still passes.
+- `worker-write-scope` and `git-metadata-guard`: an error of the inline-code reader's own program (a bug, not a text it
+  cannot parse) no longer lets the command pass as if it had no write call. In block mode the call is refused (in
+  warn mode the check only warns); the message names the error and points to `.act/scripts/doctor.py`. A text the
+  reader cannot read, or a program too large or too deep for it, is still skipped with a note on standard error.
+- Shell write targets: the file `ssh -E <file>` writes its log to is a write target (also glued, in a cluster like
+  `-vE`, and after other options). The command text of an `ssh localhost '... > f'` call (this machine, or a
+  destination the shell expands) runs here and is read as a local command line; the text for another machine stays
+  unread.
+- Shell write targets: `xargs -0I {} ...` (an option cluster with a digit) was not recognised, so the write that followed
+  it was missed; it is read like `xargs -I {} ...` now.
 
 ## [2.5.0] - 2026-11-05
 

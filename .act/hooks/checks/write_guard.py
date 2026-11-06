@@ -27,7 +27,7 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_PROTECTED_PATH_RE", "_WRITE_GUARD_MESSAGE", "_bash_targets_protected_path",
+    "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_bash_targets_protected_path",
     "_powershell_targets_protected_path", "_targets_protected_path", "_is_under_project_act",
     "_resolve_against", "_guard_root", "check_write_guard",
 ]
@@ -39,6 +39,51 @@ __all__ = [
 # check is what excludes ".act-lock.json" and ".act-local/", both project-level state next to
 # the template tree rather than inside it, from this guard.
 _PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)")
+# A throwaway tree: `.act-local/tmp/` as whole segments. A throwaway project below it carries a `.act/` of
+# its own, which is no part of the project's template tree.
+_THROWAWAY_RE = re.compile(r"(?:^|[\\/])\.act-local[\\/]tmp[\\/]")
+# A path segment that is known as it stands: no variable, command substitution, glob, brace, `~`, parenthesis,
+# quote or white space, and not `..`. What may follow `.act-local/tmp/` in an exempt text, and what may stand
+# before it, segment by segment (an empty segment is a doubled or trailing separator).
+_PLAIN_SEGMENT_RE = re.compile(r"^(?!\.\.$)[^\\/$`*?\[\]{}~()'\"\s]*$")
+# The one place a variable may stand before `.act-local/tmp/`: the whole first segment of the text, `$NAME`,
+# `${NAME}` or PowerShell's `$env:NAME`.
+_LEADING_VARIABLE_RE = re.compile(r"^\$(?:\w+|\{\w+\}|env:\w+)$")
+
+
+def _names_protected_path(text: str, root: Optional[Path]) -> bool:
+    """True when the text of a target that cannot be resolved (a variable in it, an unknown directory)
+    names `.act/` (_PROTECTED_PATH_RE) - unless it is a path inside a throwaway tree, which carries a
+    `.act/` of its own. Allow-list, one pattern: the project `root` is known and does not itself lie below
+    `.act-local/tmp/`, the text holds `.act-local/tmp/` as whole segments with no `.act` segment before it,
+    and both parts around it are known as they stand: every segment behind it, and every segment before it
+    except a first one that is a lone `$NAME`, `${NAME}` or `$env:NAME` (_LEADING_VARIABLE_RE), must match
+    _PLAIN_SEGMENT_RE (no `..`, no variable, command substitution, glob, brace, `~`, parenthesis, quote or
+    white space; the text before may also be empty). Allow-list: anything else that names `.act/` stays
+    protected. `$ROOT/.act-local/tmp/job/proj/.act/x` is free; `$ROOT/.act/x`, `.act-local/tmp/$job/.act/x`,
+    `$ROOT/.act-local/tmp/../../.act/x`, `$(x)/.act-local/tmp/job/.act/x` (a substitution that begins before
+    the marker and ends after it) and `$A$B/.act-local/tmp/job/.act/x` are not. With `root` None, or a root
+    below `.act-local/tmp/` (a throwaway project itself, where its own `.act/` can be spelled through
+    `.act-local/tmp/` behind a variable, an administrative share or any other prefix), there is no exemption
+    at all. Limit: a leading variable is trusted to stand for a place outside `.act/`; one that holds `.act`
+    itself reaches only new files below `.act/.act-local/tmp/`, no file of the template."""
+    if not _PROTECTED_PATH_RE.search(text):
+        return False
+    if root is None or _THROWAWAY_RE.search(root.as_posix() + "/"):
+        return True
+    marker = _THROWAWAY_RE.search(text)
+    if marker is None:
+        return True
+    before, after = text[:marker.start()], text[marker.end():]
+    if _PROTECTED_PATH_RE.search(before):
+        return True
+    if before:
+        first, *rest = re.split(r"[\\/]", before)
+        if not (_LEADING_VARIABLE_RE.match(first) or _PLAIN_SEGMENT_RE.match(first)):
+            return True
+        if not all(_PLAIN_SEGMENT_RE.match(segment) for segment in rest):
+            return True
+    return not all(_PLAIN_SEGMENT_RE.match(segment) for segment in re.split(r"[\\/]", after))
 
 
 def _is_under_project_act(resolved: Path, root: Path) -> bool:
@@ -78,7 +123,7 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
     the raw text — a sibling checkout's .act/ is not this project's to protect)."""
     for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
         if base is None or _is_dynamic_target(raw) or root is None:
-            if _PROTECTED_PATH_RE.search(raw):
+            if _names_protected_path(raw, root):
                 return True
             continue
         resolved = _resolve_path(raw, base)
@@ -112,7 +157,7 @@ def _powershell_targets_protected_path(command: str, base_cwd: str, root: Option
         return bool(_PROTECTED_PATH_RE.search(command))
     for target in targets:
         if _is_dynamic_target(target) or root is None:
-            if _PROTECTED_PATH_RE.search(target):
+            if _names_protected_path(target, root):
                 return True
             continue
         resolved = _resolve_path(target, base_cwd)
@@ -144,12 +189,12 @@ def _targets_protected_path(
         if not isinstance(value, str):
             continue
         if root is None:
-            if _PROTECTED_PATH_RE.search(value):
+            if _names_protected_path(value, root):
                 return True
             continue
         resolved = _resolve_against(base_cwd, value)
         if resolved is None:
-            if _PROTECTED_PATH_RE.search(value):
+            if _names_protected_path(value, root):
                 return True
             continue
         if _is_under_project_act(resolved, root):
