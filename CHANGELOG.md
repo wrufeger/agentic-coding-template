@@ -186,6 +186,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   unread.
 - Shell write targets: `xargs -0I {} ...` (an option cluster with a digit) was not recognised, so the write that followed
   it was missed; it is read like `xargs -I {} ...` now.
+- The shell checks (`git-metadata-guard`, `worker-write-scope`, `outside-root`, `write-guard`) now read text that a
+  pipeline hands to a shell as its script: `echo 'cmd' | bash`, `printf ... | sh -s`, a PowerShell string or
+  here-string piped into `powershell -` / `pwsh -` / `Invoke-Expression`. `eval $'...'`, `bash -c $'...'` and
+  `powershell -c $'...'` have their ANSI-C escapes resolved before the text is read as a command line (it was read
+  as the command `$git`).
+- When the raw-text fallback decides (a live ANSI-C quote the lexer cannot read), the target after a redirection is
+  reported whole, also where a quoted or escaped blank splits it (`> "src/a b/../../x"`); only its beginning up to
+  the first blank was judged before, so an absolute target could look like a path inside the scope.
+- `template-write-guard`: `.act` is recognised in any spelling of case in the text of a target that cannot be
+  placed (`$D/.ACT/x`); a project root below `.ACT-LOCAL/TMP/` in capitals gets no throwaway exemption, like one in
+  lower case; `%NAME%` (cmd) after `.act-local/tmp/` is no known path segment; on macOS a resolved target is
+  compared without regard to case.
 
 ## [2.5.0] - 2026-11-05
 

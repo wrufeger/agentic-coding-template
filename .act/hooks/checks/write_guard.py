@@ -32,20 +32,21 @@ __all__ = [
     "_resolve_against", "_guard_root", "check_write_guard",
 ]
 
-# ".act" as a whole path segment: ".act/" or ".act\" anywhere in the string, or ".act" at the
-# very end — never as a prefix of another name. Deliberately no required prefix character
+# ".act" as a whole path segment, in any spelling of case (".ACT/x" is the same file as ".act/x" on Windows
+# and on macOS, whose file systems do not tell the two apart): ".act/" or ".act\" anywhere in the string, or
+# ".act" at the very end — never as a prefix of another name. Deliberately no required prefix character
 # before ".act" (a shell command has it after a space, quote, "=", redirect symbol, "(", and
 # so on — enumerating all of those is more fragile than just not requiring one). The suffix
 # check is what excludes ".act-lock.json" and ".act-local/", both project-level state next to
 # the template tree rather than inside it, from this guard.
-_PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)")
+_PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)", re.IGNORECASE)
 # A throwaway tree: `.act-local/tmp/` as whole segments. A throwaway project below it carries a `.act/` of
 # its own, which is no part of the project's template tree.
 _THROWAWAY_RE = re.compile(r"(?:^|[\\/])\.act-local[\\/]tmp[\\/]")
-# A path segment that is known as it stands: no variable, command substitution, glob, brace, `~`, parenthesis,
-# quote or white space, and not `..`. What may follow `.act-local/tmp/` in an exempt text, and what may stand
-# before it, segment by segment (an empty segment is a doubled or trailing separator).
-_PLAIN_SEGMENT_RE = re.compile(r"^(?!\.\.$)[^\\/$`*?\[\]{}~()'\"\s]*$")
+# A path segment that is known as it stands: no variable (`$NAME`, cmd's `%NAME%`), command substitution, glob,
+# brace, `~`, parenthesis, quote or white space, and not `..`. What may follow `.act-local/tmp/` in an exempt
+# text, and what may stand before it, segment by segment (an empty segment is a doubled or trailing separator).
+_PLAIN_SEGMENT_RE = re.compile(r"^(?!\.\.$)[^\\/$%`*?\[\]{}~()'\"\s]*$")
 # The one place a variable may stand before `.act-local/tmp/`: the whole first segment of the text, `$NAME`,
 # `${NAME}` or PowerShell's `$env:NAME`.
 _LEADING_VARIABLE_RE = re.compile(r"^\$(?:\w+|\{\w+\}|env:\w+)$")
@@ -63,13 +64,15 @@ def _names_protected_path(text: str, root: Optional[Path]) -> bool:
     protected. `$ROOT/.act-local/tmp/job/proj/.act/x` is free; `$ROOT/.act/x`, `.act-local/tmp/$job/.act/x`,
     `$ROOT/.act-local/tmp/../../.act/x`, `$(x)/.act-local/tmp/job/.act/x` (a substitution that begins before
     the marker and ends after it) and `$A$B/.act-local/tmp/job/.act/x` are not. With `root` None, or a root
-    below `.act-local/tmp/` (a throwaway project itself, where its own `.act/` can be spelled through
-    `.act-local/tmp/` behind a variable, an administrative share or any other prefix), there is no exemption
-    at all. Limit: a leading variable is trusted to stand for a place outside `.act/`; one that holds `.act`
-    itself reaches only new files below `.act/.act-local/tmp/`, no file of the template."""
+    below `.act-local/tmp/` in any spelling of case (a throwaway project itself, where its own `.act/` can be
+    spelled through `.act-local/tmp/` behind a variable, an administrative share or any other prefix; the
+    root is compared lower-cased, the marker in the text only as typed in lower case), there is no exemption
+    at all. `%NAME%` (cmd's variable) is no known segment either, like `$NAME`. Limit: a leading variable is
+    trusted to stand for a place outside `.act/`; one that holds `.act` itself reaches only new files below
+    `.act/.act-local/tmp/`, no file of the template."""
     if not _PROTECTED_PATH_RE.search(text):
         return False
-    if root is None or _THROWAWAY_RE.search(root.as_posix() + "/"):
+    if root is None or _THROWAWAY_RE.search(root.as_posix().lower() + "/"):
         return True
     marker = _THROWAWAY_RE.search(text)
     if marker is None:
@@ -98,7 +101,15 @@ def _is_under_project_act(resolved: Path, root: Path) -> bool:
     act_root = _resolve_path(str(root / ".act"))
     if act_root is None:
         act_root = (root / ".act").resolve()
+    resolved, act_root = _folded(resolved), _folded(act_root)
     return resolved == act_root or act_root in resolved.parents
+
+
+def _folded(path: Path) -> Path:
+    """`path` lower-cased on macOS, whose default file system does not tell `.ACT` from `.act` while Path
+    compares them as different names (on Windows, Path already compares without regard to case; on Linux a
+    differently spelled name is a different file)."""
+    return Path(str(path).lower()) if sys.platform == "darwin" else path
 
 
 def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:

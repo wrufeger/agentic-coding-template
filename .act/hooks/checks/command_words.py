@@ -97,6 +97,7 @@ from .command_words_legacy import _coarse_word_lists
 from .shell_targets import (
     _join_line_continuations,
     _MAX_SCAN_DEPTH,
+    _PIPE_OPS,
     _SEPARATOR_OPS,
     _SHELL_NAMES,
     _ASSIGNMENT_RE,
@@ -104,9 +105,13 @@ from .shell_targets import (
     _WRAPPER_ARG_RE,
     _WRAPPER_COMMANDS,
     _WRAPPER_VALUE_FLAGS,
+    _ansi_c_unquote,
     _command_name,
     _is_span_word,
     _line_mode_tokens,
+    _literal_output,
+    _ps_reads_stdin,
+    _reads_script_from_stdin,
     _shell_tokens,
 )
 
@@ -245,6 +250,58 @@ def _print_only_line(tokens: list, pairs: list) -> bool:
     return True
 
 
+def _piped_text(words: list[str]) -> Optional[str]:
+    """The text a pipeline stage prints when that is literally known: `echo`/`printf` (shell_targets.
+    _literal_output), `Write-Output`/`Write-Host` with literal arguments, or a lone string word (PowerShell
+    sends a bare string down the pipe; quoting is gone from the word, so a lone word that is really a command
+    name counts as text too, which only means it is read once more as a command). A PowerShell here-string
+    word (`@'`, a line break, the body, a line break, `'@`) is unwrapped."""
+    stripped = _strip_command_prefix(words)
+    if not stripped:
+        return None
+    if len(stripped) == 1:
+        word = str(stripped[0])
+        for opener, closer in (("@\n", "\n@"), ("@\r\n", "\r\n@"), ("@'", "'@"), ('@"', '"@')):
+            if word.startswith(opener) and word.endswith(closer) and len(word) >= len(opener) + len(closer):
+                inner = word[len(opener):len(word) - len(closer)]
+                return inner[inner.find("\n") + 1:] if opener in ("@'", '@"') and "\n" in inner else inner
+        return _ansi_c_unquote(stripped[0])
+    if _command_name(stripped[0]) in ("write-output", "write-host"):
+        return " ".join(_ansi_c_unquote(word) for word in stripped[1:])
+    return _literal_output(words, None)
+
+
+def _is_bare_cat(words: list[str]) -> bool:
+    """True for a `cat` stage with no file operand (only options, or `-`): it passes its input on."""
+    stripped = _strip_command_prefix(words)
+    return bool(stripped) and _command_name(stripped[0]) == "cat" and all(
+        str(arg) == "-" or str(arg).startswith("-") for arg in stripped[1:]
+    )
+
+
+def _piped_script_texts(previous: list[str], words: list[str]) -> list[str]:
+    """The text the stage before this one prints, when this stage runs it as a script: a POSIX shell that
+    reads its script from standard input (`echo 'cmd' | bash`), `powershell`/`pwsh` that does (`| powershell
+    -`, `-Command -`), or `Invoke-Expression`/`iex` without an argument. Empty otherwise. The text is read as
+    a command line of its own, like the text behind `eval`."""
+    stripped = _strip_command_prefix(words)
+    if not stripped:
+        return []
+    name = _command_name(stripped[0])
+    if name in _SHELL_NAMES:
+        reads = _reads_script_from_stdin(words)
+    elif name in ("powershell", "pwsh"):
+        reads = _ps_reads_stdin([str(arg) for arg in stripped[1:]])
+    elif name in _IEX_NAMES:
+        reads = len(stripped) == 1
+    else:
+        return []
+    if not reads:
+        return []
+    text = _piped_text(previous)
+    return [text] if text else []
+
+
 def _command_word_lists_new(
     command: str, depth: int = 0, quoted_text: Optional[list[tuple[str, int]]] = None,
 ) -> list[tuple[list[str], Optional[str]]]:
@@ -324,6 +381,12 @@ def _command_word_lists_new(
                 nested.append(word[word.index("$(") + 2:])
         for word in words:
             nested.extend(getattr(word, "subs", ()))
+        if sep in _PIPE_OPS and pair_index > 0:
+            source = pair_index - 1
+            # a `cat` without a file hands its input on unchanged: `echo 'cmd' | cat | bash`
+            while source > 0 and pairs[source][1] in _PIPE_OPS and _is_bare_cat(pairs[source][0]):
+                source -= 1
+            nested.extend(_piped_script_texts(pairs[source][0], words))
         found_exec: list[list[str]] = []
         for variant in variants:
             stripped = _strip_command_prefix(variant)
@@ -343,7 +406,7 @@ def _command_word_lists_new(
                 if command_words:
                     nested.append(" ".join(command_words))
             if name == "eval":
-                nested.append(" ".join(args))
+                nested.append(" ".join(_ansi_c_unquote(arg) for arg in args))
             elif name in _IEX_NAMES:
                 # PowerShell's eval: the argument text is a command line; an optional leading
                 # -Command (or a prefix of it) names the parameter and is not part of it.
@@ -361,7 +424,10 @@ def _command_word_lists_new(
                         and name in _SHELL_NAMES
                     )
                     if is_c_flag:
-                        nested.append(" ".join(args[i + 1:]) if name in _PS_NAMES else args[i + 1])
+                        nested.append(
+                            " ".join(_ansi_c_unquote(rest) for rest in args[i + 1:]) if name in _PS_NAMES
+                            else _ansi_c_unquote(args[i + 1])
+                        )
                         break
             elif name == "find":
                 i = 0

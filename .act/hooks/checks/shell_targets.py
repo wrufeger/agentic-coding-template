@@ -1316,6 +1316,97 @@ def _reads_script_from_stdin(words: list[str]) -> bool:
     return True
 
 
+# PowerShell host options that take the next word as their value.
+_PS_HOST_VALUE_OPTIONS = ("-executionpolicy", "-inputformat", "-outputformat", "-windowstyle", "-workingdirectory",
+                          "-configurationname", "-version", "-settingsfile", "-custompipename", "-encodedarguments")
+
+
+def _ps_option_is(name: str, full: str, shortest: int = 2) -> bool:
+    """True if `name` (lower-case, with its dash) is `full` or an abbreviation of it of at least `shortest`
+    characters, the way PowerShell accepts one (`-c`, `-co` ... `-command`)."""
+    return len(name) >= shortest and full.startswith(name)
+
+
+def _ps_reads_stdin(args: list[str]) -> bool:
+    """True if a `powershell` or `pwsh` call with these arguments reads its script from standard input: only
+    options, or `-Command -`, `-c -`, `-File -`, a lone `-`. A call that names a command text, a script file
+    or an encoded command of its own, or has a word that is no option, reads something else. Callers read a
+    text piped into such a call as a script, so a doubtful call (an option this does not know is taken as a
+    flag without a value) errs toward reading it."""
+    index = 0
+    while index < len(args):
+        word = str(args[index])
+        low = word.lower()
+        if low == "-":
+            return True
+        if not low.startswith(("-", "/")) or len(low) < 2:
+            return False  # a word that is no option: the command text or a script file
+        name, _, glued = low.partition(":")
+        value = glued if glued else (str(args[index + 1]) if index + 1 < len(args) else "")
+        if _ps_option_is(name, "-command") or _ps_option_is(name, "-file") or _ps_option_is(name, "-encodedcommand"):
+            return value == "-"
+        if any(_ps_option_is(name, option, 3) for option in _PS_HOST_VALUE_OPTIONS) or name in ("-ep", "-wd", "-if", "-of"):
+            index += 1 if glued else 2
+            continue
+        index += 1
+    return True
+
+
+# What the escapes of an ANSI-C `$'...'` word stand for (bash's own table), and the numeric forms.
+_ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                  "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+_ANSI_C_ESCAPE_RE = re.compile(
+    r"\\(?:([0-7]{1,3})|x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|c(.)|(.))", re.DOTALL)
+
+
+def _ansi_c_decode(raw: str) -> str:
+    """The text bash makes of the inside of `$'...'` (escapes resolved; an unknown escape stays as typed)."""
+    def one(match: "re.Match[str]") -> str:
+        octal, hexa, short, long_, control, simple = match.groups()
+        try:
+            if octal is not None:
+                return chr(int(octal, 8) & 0xFF)
+            if hexa is not None:
+                return chr(int(hexa, 16))
+            if short is not None:
+                return chr(int(short, 16))
+            if long_ is not None:
+                return chr(int(long_, 16))
+        except (ValueError, OverflowError):
+            return match.group(0)
+        if control is not None:
+            return chr(ord(control) & 0x1F)
+        return _ANSI_C_SIMPLE.get(simple, match.group(0))
+
+    return _ANSI_C_ESCAPE_RE.sub(one, raw)
+
+
+def _ansi_c_unquote(word: str) -> str:
+    """`word` with each ANSI-C run in it read as bash reads it: the lexer does not know `$'...'` and hands
+    it back as a live `$` followed by single-quoted text (`live`: "L" then "'" characters), so `eval
+    $'git config x'` came out as the command `$git`. Here the `$` is dropped and the escapes of the quoted run
+    (the characters marked "'" after it) are resolved. A word without `live` (a plain `str`), and a word
+    with no such `$`, come back as they are. A run of several single-quoted pieces that stand together
+    (`$'a''b'`) is read as one run, which only matters for an escape in the second piece."""
+    live = getattr(word, "live", None)
+    if live is None or len(live) != len(word) or "$" not in word:
+        return str(word)
+    pieces: list[str] = []
+    index = 0
+    size = len(word)
+    while index < size:
+        if word[index] == "$" and live[index] == "L" and index + 1 < size and live[index + 1] == "'":
+            end = index + 1
+            while end < size and live[end] == "'":
+                end += 1
+            pieces.append(_ansi_c_decode(word[index + 1:end]))
+            index = end
+        else:
+            pieces.append(word[index])
+            index += 1
+    return "".join(pieces)
+
+
 def _group_reads_script_from_stdin(tokens: list[_Token], first: int, stop: int) -> bool:
     """True if some simple command in `tokens[first:stop]` (the inside of a `{ ...; }` or `( ... )` group
     whose standard input a heredoc replaces) is a shell reading its script from standard input."""
@@ -1535,7 +1626,57 @@ def _raw_redirect_targets(command: str) -> list[str]:
         word = match.group(1).strip("'\"")
         if not _FD_DUP_WORD_RE.match(word):
             targets.append(word)
+        # The expression above ends at the first blank, so a word that holds a quoted or escaped blank
+        # (`> "a b/c"`) was reported by its beginning only: the whole word is reported as well.
+        whole = _raw_target_word(command, match.start(1))
+        if whole and whole != word and not _FD_DUP_WORD_RE.match(whole):
+            targets.append(whole)
     return targets
+
+
+_RAW_WORD_LIMIT = 1024  # characters of one word read by _raw_target_word; bounds the work of a long text with many `>`
+
+
+def _raw_target_word(text: str, start: int) -> str:
+    """The shell word that begins at `text[start]` with its quoting taken off, as far as the text can be told
+    without a tokenizer: backslash pairs, `'...'`, `"..."` (a backslash escapes the next character there) and
+    ANSI-C `$'...'` (a backslash escapes the next character, escapes resolved) are read as runs; the word
+    ends at an unquoted blank or one of `;&|()<>`. A quote that never closes runs to the end of the text.
+    At most _RAW_WORD_LIMIT characters are read."""
+    size = min(len(text), start + _RAW_WORD_LIMIT)
+    pieces: list[str] = []
+    index = start
+    while index < size:
+        char = text[index]
+        if char.isspace() or char in ";&|()<>":
+            break
+        if char == "\\":
+            pieces.append(text[index + 1:index + 2])
+            index += 2
+        elif char == "'":
+            end = text.find("'", index + 1, size)
+            end = size if end < 0 else end
+            pieces.append(text[index + 1:end])
+            index = end + 1
+        elif char == '"':
+            index += 1
+            while index < size and text[index] != '"':
+                if text[index] == "\\" and index + 1 < size and text[index + 1] in '$`"\\\n':
+                    index += 1
+                pieces.append(text[index])
+                index += 1
+            index += 1
+        elif char == "$" and text.startswith("$'", index):
+            index += 2
+            begin = index
+            while index < size and text[index] != "'":
+                index += 2 if text[index] == "\\" else 1
+            pieces.append(_ansi_c_decode(text[begin:index]))
+            index += 1
+        else:
+            pieces.append(char)
+            index += 1
+    return "".join(pieces)
 
 
 def _command_name(word: str) -> str:
@@ -1835,10 +1976,10 @@ def _simple_command_targets(
         for position, arg in enumerate(args):
             if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
                 if position + 1 < len(args):
-                    return _scan_command(args[position + 1], bases, git_writes, depth + 1), None
+                    return _scan_command(_ansi_c_unquote(args[position + 1]), bases, git_writes, depth + 1), None
                 break
     elif name == "eval":
-        return _scan_command(" ".join(args), bases, git_writes, depth + 1), None
+        return _scan_command(" ".join(_ansi_c_unquote(arg) for arg in args), bases, git_writes, depth + 1), None
     elif name == "cmd":
         # `cmd /c <line>` (also `/k`, any case, after cmd's own switches such as `/d` or `/q`): cmd.exe
         # parses the line anew by its own rules, so it is read like an `eval` of the words - as close
@@ -1939,7 +2080,7 @@ def _literal_output(words: list[str], stdin_text: Optional[str]) -> Optional[str
     if at >= len(words):
         return None
     name = _command_name(words[at])
-    args = [str(word) for word in words[at + 1:]]
+    args = [_ansi_c_unquote(word) for word in words[at + 1:]]
     if name == "cat":
         return stdin_text if not [arg for arg in args if arg != "-" and not arg.startswith("-")] else None
     if name == "echo":
@@ -2628,7 +2769,10 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             found.extend(targets)
             if _INLINE_SINK is not None:
                 _collect_inline_code(words, bases, stdin_redirected, stdin_text, pipe_input, stdin_span)
-                produced = _literal_output(words, stdin_text)
+            produced = _literal_output(words, stdin_text if stdin_redirected else pipe_input)
+            if pipe_input is not None and not stdin_redirected and _reads_script_from_stdin(words):
+                # `echo 'cmd' | bash`: the text the previous stage prints is the shell's script.
+                found.extend(_scan_command(pipe_input, bases, git_writes, depth + 1))
             if cd_change is not None:
                 directory, prefixed = cd_change
                 near_pipe = prev_sep in _PIPE_OPS or separator in _PIPE_OPS or separator == "&"
@@ -2644,8 +2788,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     else:
                         after_list = after_list | new_bases
                     bases = new_bases
-        if _INLINE_SINK is not None:
-            produced, closed_group = _track_group_output(group_outputs, words, separator, produced, closed_group)
+        produced, closed_group = _track_group_output(group_outputs, words, separator, produced, closed_group)
         # A pipe hands the stage's literal output on; a `(` right behind a pipe (`cat <<EOF | (python -)`)
         # passes what it got to the first command inside.
         if separator in _PIPE_OPS:

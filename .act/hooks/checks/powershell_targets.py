@@ -115,6 +115,8 @@ from .shell_targets import (
     _git_targets,
     _is_absolute_target,
     _is_dynamic_target,
+    _ps_reads_stdin,
+    _reads_script_from_stdin,
     _resolve_path,
     _wsl_targets,
 )
@@ -766,6 +768,7 @@ def _scan_ps_tokens(
     cwd: Optional[str] = base_cwd
     words: list[str] = []
     redirect_targets: list[str] = []
+    piped: Optional[str] = None  # the literal text the previous stage of a pipeline sends down
     index = 0
     n = len(tokens)
     while True:
@@ -782,13 +785,47 @@ def _scan_ps_tokens(
             else:
                 index += 1
             continue
+        produced: Optional[str] = None
         if words or redirect_targets:
+            statement = _strip_literal_call(words)
+            if piped is not None:
+                result.update(_piped_script_targets(piped, statement, cwd, base_cwd, git_writes, broad, depth))
             cwd = _flush_ps_statement(words, redirect_targets, cwd, base_cwd, git_writes, result, broad, depth)
+            produced = _ps_literal_output(statement)
             words = []
             redirect_targets = []
         if at_end:
             return result
+        piped = produced if text == "|" else None
         index += 1
+
+
+def _piped_script_targets(
+    piped: str, statement: list[str], cwd: Optional[str], base_cwd: str, git_writes: frozenset, broad: bool,
+    depth: int,
+) -> set[str]:
+    """The write targets of a text a pipeline sends into a shell that runs it as its script: `powershell`
+    or `pwsh` reading standard input (`'cmd' | powershell -`, a here-string piped in), `bash` or `sh` doing
+    so (`'cmd' | bash`). The text is read like the one behind `-Command`; a text that cannot be evaluated that
+    way (Invoke-Expression in it, an unterminated quote) counts with its raw redirections. Empty for any
+    other receiver."""
+    if not statement:
+        return set()
+    name = _ps_command_name(statement[0])
+    where = cwd if cwd is not None else base_cwd
+    if name in _PS_INTERP_NAMES and _ps_reads_stdin(statement[1:]):
+        if depth >= _PS_MAX_SCAN_DEPTH:
+            return set(_ps_raw_redirect_targets(piped))
+        found = _powershell_write_targets(piped, where, git_writes, broad, depth + 1)
+        return set(_ps_raw_redirect_targets(piped)) if found is None else found
+    if name in ("bash", "sh") and _reads_script_from_stdin(statement):
+        result: set[str] = set()
+        for raw, base in _bash_write_targets(piped, where, git_writes):
+            resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
+            if resolved:
+                result.add(resolved)
+        return result
+    return set()
 
 
 def _ps_raw_redirect_targets(command: str) -> set[str]:

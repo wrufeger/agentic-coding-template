@@ -149,6 +149,19 @@ also `Set-Alias`, `New-Alias` and `iex` - makes the whole line one that is judge
 sh`, `echo '$(cmd)'; sh -c "$_"`, `for i in 1; do echo '$(cmd)'; done | sh`, `echo '$(cmd)' > x.sh`,
 `echo '$(cmd)' && git status`). A double-quoted or unquoted `$(...)` is always judged.
 
+Text that a pipeline hands to a shell as its script is read as a command line of its own, like the text behind
+`eval`: `echo 'cmd' | bash`, `printf '%s\n' 'cmd' | sh -s`, a bare `cat` in between (`echo 'cmd' | cat | bash`),
+and in PowerShell a string or here-string, `Write-Output`/`Write-Host` with literal arguments, piped into
+`powershell`/`pwsh` that reads standard input (`-`, `-Command -`, `-File -`, only options) or into
+`Invoke-Expression`/`iex` without an argument. A `$'...'` word behind `eval`, `bash -c`, `sh -c` or
+`powershell -c` has its escapes resolved first (the plain lexer does not know ANSI-C quoting and read
+`eval $'git config x'` as the command `$git`). Where a command line cannot be tokenized (a live ANSI-C quote the
+lexer misreads) and the raw-text fallback decides, the word after a redirection operator is reported whole -
+quotes taken off, a quoted or escaped blank kept, at most 1,024 characters - as well as its beginning up to the
+first blank (`> "src/a b/../../x"` is `src/a b/../../x` and `src/a`). Limit: a `$'...'` word with a backslash
+inside a double-quoted `bash -c "eval ..."` text is not read: the lexer keeps the backslash of the outer quotes,
+so the inner ANSI-C text is not decoded.
+
 Two boundaries hold for every shell check that reads write targets from the command text (write-guard,
 worker-write-scope, git-metadata-guard, outside-root), since the checks read the text and run nothing:
 **runtime code** — code that becomes a script only when the command runs (`bash <<< '…'`, `source
@@ -189,17 +202,23 @@ cannot be resolved (a variable in front of it, `$ROOT/.act-local/tmp/job/proj/.a
 project root is known and does not itself lie below `.act-local/tmp/`, the text holds `.act-local/tmp/` as
 whole segments with no `.act` segment before them, the part before them is empty or made of plain segments
 with at most one variable, written `$NAME`, `${NAME}` or `$env:NAME` and standing alone as the very first
-segment, and every segment behind them is plain too. A plain segment holds no `..`, variable, command
+segment, and every segment behind them is plain too. A plain segment holds no `..`, variable (`$NAME`, cmd's `%NAME%`), command
 substitution, backtick, glob, brace, `~`, parenthesis, quote or white space. `$ROOT/.act/x`,
 `.act-local/tmp/$job/.act/x`, `$ROOT/.act-local/tmp/../../.act/x`, `$ROOT/.act-local-tmp/job/.act/x`,
 `$A$B/.act-local/tmp/job/.act/x`, a substitution that begins before the marker and ends behind it
 (`$(cd $ROOT/.act-local/tmp/job; cd ...)/x`) and a segment with a space or a quote stay refused. For a
-project that itself lies below `.act-local/tmp/` (a throwaway project run as a project) every text naming
+project that itself lies below `.act-local/tmp/` (a throwaway project run as a project; the root is compared
+without regard to case, `.ACT-LOCAL/TMP/` counts) every text naming
 `.act/` stays refused, since its own `.act/` can then be spelled through `.act-local/tmp/` behind a variable
 or an administrative share (`${U}//localhost/D$/.../.act-local/tmp/job/.act/x`). Limit: a leading variable is
 trusted to stand for a place outside `.act/`; one that holds `.act` itself (`D=.act; echo x >
 $D/.act-local/tmp/a/.act/b`, `$PWD` from inside `.act/`) reaches only new files below
-`.act/.act-local/tmp/`, no file of the template.
+`.act/.act-local/tmp/`, no file of the template. `.act` is recognised in any spelling of case in the text of a target that cannot be placed
+(`$D/.ACT/x`, `.Act`): Windows and macOS do not tell the spellings apart, so the file is the same. The marker
+`.act-local/tmp/` in that text only counts as typed in lower case, so `$ROOT/.ACT-LOCAL/TMP/job/.act/x` stays
+refused. A target that can be placed is resolved: on Windows the comparison already ignored case, on macOS it now
+does too (a lower-cased comparison, not run on a Mac in the build), on Linux a differently spelled name is a
+different file.
 
 Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
 detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
