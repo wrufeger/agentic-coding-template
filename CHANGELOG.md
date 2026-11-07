@@ -133,6 +133,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `outside-root` no longer refuses the words of a literal `for p in /a /b; do curl "https://host$p"; done` loop,
+  which are only the tail of a URL: only this positive pattern is allowed (the variable's name occurs nowhere else in
+  the command, the body has no substitution, nested loop, `eval`, `source`, `.`, `export`, `local`, `set` or
+  indirection); everything else is judged as before.
 - With a linked security-scan cache folder, a commit that touches a lock file is held with a message naming the
   link (or `security-check: off`) instead of going ahead unscanned.
 - Migration 008 keeps the file mode of `docs/ai/config.md`.
@@ -356,6 +360,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `outside-root` reads a `file:` URL as the path it names (`file:///home/u/x` is `/home/u/x`, `file://host/share/x`
+  the UNC path, percent-decoded, query and fragment cut), also as a shell word (`curl file:///etc/passwd`); before,
+  the slashes were dropped and the path counted as inside the project. A `file:` entry in `outside-root-allow` is
+  ignored.
 - `outside-root`: a lone `/` followed by a number or variable (`ls -la / 2`, `du -sh / $X`) is the file system
   root again; only `expr`, `let`, shell arithmetic and PowerShell expressions count as division. A `<<` inside
   shell arithmetic no longer hides the following lines from the check.

@@ -121,8 +121,8 @@ other checks that use the same scanners and are not closed by this entry form.
 Further limits. An absolute entry with a glob character is not this form: it keeps the glob behavior (it opens
 what its pattern hits, and it is writable unless `(read)` stands behind it, as before). An entry that is a drive
 root, `/`, or a folder above the project or the home directory opens reading of everything below it, other
-projects and the home directory's folders included; name the program folder itself. A `file:///` or
-`//localhost/C$/` spelling is not recognized as absolute (as before). "Starting" is what the check sees of a
+projects and the home directory's folders included; name the program folder itself. An entry
+written as a `file:` URL or as `//localhost/C$/` is not recognized as absolute and is ignored. "Starting" is what the check sees of a
 program: the program word of a command is no path to it (as before), so `"D:/Program Files/Browser/browser.exe"
 --headless` needs no entry; what does need one are the words around it — a `cd` into the folder, a path argument,
 a wrapper such as `xvfb-run`, `Start-Process`, `bash -c`. What the started program writes itself (a profile
@@ -137,7 +137,11 @@ the target folder for 24 hours or until `--abort` (also past `--finish`) through
 valid marker for the same target. Checked mechanically by `outside-root` (`docs/ai/config.md` §
 Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in
 the environment. Limits: the shell check is best effort, a program that opens files itself (`python
-script.py`, `docker run -v`) is invisible to it, and an MCP tool that takes a path is checked only if
+script.py`, `docker run -v`) is invisible to it, a `file:` URL is read as the path it names (query and fragment cut,
+percent-decoded) only where it stands as a word of its own, and the words of a literal `for p in /a /b; do curl
+https://host$p; done` loop are taken as URL tails, not paths, only when the variable's name occurs nowhere else in
+the command than in the loop head and behind a `<scheme>://<host>` in the body, and the body has no
+substitution, nested loop, `eval`, `source`, `.`, `export`, `local`, `set` or indirection; everything else is read as before. An MCP tool that takes a path is checked only if
 it is a read tool of the IDE server's known list (`ide-mcp`). When the check itself fails, Bash and
 PowerShell are refused (see `R-safe-no-secret-read` above). A word
 of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a

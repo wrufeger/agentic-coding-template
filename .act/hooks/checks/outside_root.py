@@ -92,7 +92,10 @@
 #     path hidden behind one of those words goes unseen. A lone `/` is the root, except as the
 #     operator of `expr`/`let`, inside `$((...))`/`((...))`, in a PowerShell expression, and as the
 #     value of a delimiter option (`cut -d /`); on Windows a one-segment word such as `/c` or `/s`
-#     is a switch.
+#     is a switch. A `file:` URL is not a URL here but the path it names (`file:///home/u/x` is
+#     `/home/u/x`, `file://host/share/x` is `//host/share/x`, percent-decoded). The words of a
+#     `for` loop are no paths when every use of the variable in the loop is the tail of a
+#     `<scheme>://<host>` URL inside its literal body (`for p in /a /b; do curl "https://host$p"; done`).
 #   - a tree with a hidden `.act-local/outside-allow/` staged inside the project and copied into the
 #     project root as `dir/.` is not followed (only such a source from outside the project is, since a
 #     copy inside the project is everyday work); nor are links (`ln -s`).
@@ -111,6 +114,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 import actlib
 
@@ -171,7 +175,11 @@ _ONLY_SLASHES_RE = re.compile(r"^/{2,}$")
 # One or more forward slashes and nothing else: the same word with a single `/` included. A division
 # or a separator in the `-c` text of a language interpreter (`python -c "print(7 / 2)"`) is such a word.
 _BARE_SLASHES_RE = re.compile(r"^/+$")
-_FILE_URL_RE = re.compile(r"^file:/{2,3}(?=[A-Za-z]:|/|[^/])", re.IGNORECASE)
+# A `file:` URL names a local path: `file:///home/u/x`, `file:///C:/x`, `file://C:/x`, `file://host/share/x`
+# (see `_file_url_path`); one slash (`file:/x`) too.
+_FILE_URL_RE = re.compile(r"^file:/", re.IGNORECASE)
+_DRIVE_ONLY_RE = re.compile(r"^[A-Za-z]:$")
+_URL_DRIVE_PATH_RE = re.compile(r"^/[A-Za-z]:(?:[\\/]|$)")
 _DYNAMIC_RE = re.compile(r"[$`{]|%[A-Za-z_][A-Za-z0-9_]*%")
 # (`//ve` is how Git Bash spells the Windows switch `/ve`, so that it is not turned into a path.)
 _SWITCH_RE = re.compile(r"^/{1,2}[A-Za-z?][A-Za-z0-9:?=,+-]*$")
@@ -350,6 +358,28 @@ def _collapse_dotdot(text: str) -> str:
     return prefix + "/".join(stack)
 
 
+def _file_url_path(text: str) -> str:
+    """A `file:` URL as the path it names, percent-decoded: `file:///home/u/x` -> `/home/u/x`,
+    `file:///C:/x` and `file://C:/x` -> `C:/x`, `file://host/share/x` -> `//host/share/x` (a UNC path;
+    an empty host and `localhost` are this machine). Any other text is returned as it is."""
+    if not _FILE_URL_RE.match(text):
+        return text
+    rest = text[len("file:"):]
+    for mark in ("?", "#"):  # a query and a fragment are no part of the path
+        rest = rest.split(mark, 1)[0]
+    if rest.startswith("//"):
+        rest = rest[2:]
+        cut = rest.find("/")
+        host, rest = (rest, "") if cut < 0 else (rest[:cut], rest[cut:])
+        if _DRIVE_ONLY_RE.match(host):
+            rest = host + rest  # `file://C:/x`
+        elif host and host.lower() != "localhost":
+            rest = "//" + host + rest
+    if _URL_DRIVE_PATH_RE.match(rest):
+        rest = rest[1:]  # `/C:/x`
+    return unquote(rest, errors="replace").split("\x00", 1)[0] or text  # a NUL ends the name
+
+
 def _strip_stream(text: str) -> str:
     """On Windows a `:name` after the file name (`f.json:zone`, `f.json::$DATA`) is an NTFS data stream
     of the same file: cut it off, so the file is judged as itself. A drive letter's colon stays; a
@@ -388,7 +418,9 @@ def _resolve_text(raw: str, base: Optional[str], bash: bool, mode: str = "shell"
             text = home + text[match.end():]
         elif text.startswith("~"):
             return None  # `~user`: not knowable here
-    text = _FILE_URL_RE.sub("", text, count=1)
+    text = _file_url_path(text)
+    if chr(0) in text:
+        return None  # a decoded %00
     # The native drive form first (`/d/x`, the extended-length `\\?\D:\x`, the admin share
     # `\\localhost\C$\x`): the prefix holds a `?` that the glob cut below would take for a wildcard,
     # the share a `$` that the dynamic cut would.
@@ -438,6 +470,8 @@ def _looks_like_path(candidate: str, strict: bool = False) -> bool:
         return True
     if text == "/" and not strict:
         return True  # a shell word of its own (`ls /`) is the root, as `//` is; in a text literal it is not
+    if _FILE_URL_RE.match(text):
+        return True  # a `file:` URL is a local path (curl, git and others read it)
     if len(text) < 2 or _URL_RE.match(text) or (strict and _ONLY_SLASHES_RE.match(text)):
         return False
     if _HOME_TOKEN_RE.match(text) or _DRIVE_RE.match(text) or _UNC_RE.match(text):
@@ -564,8 +598,8 @@ def _allow_entries(value: str, root: Path) -> list[tuple[str, bool, bool]]:
             read_only = True
             part = part[: match.start()].strip()
         part = part.strip("`'\" ")
-        if not part:
-            continue
+        if not part or _FILE_URL_RE.match(part):
+            continue  # a `file:` URL is no entry (it names no place relative to the project)
         if any(char in part for char in _GLOB_CHARS):
             directory = _cut_glob(part)
             base = _resolve_key(directory or ".", str(root), False, "file")
@@ -1392,6 +1426,101 @@ def _ps_lists(command: str, depth: int = 0) -> list[list[str]]:
     return lists
 
 
+# --- loop words that are only the tail of a URL ---------------------------------------------------
+#
+# `for p in /a /b; do curl "https://host$p"; done`: the words after `in` are no files, they only ever
+# stand directly behind `<scheme>://<host>` in a URL. Allow-list: the words are left out of the read scan
+# only when the loop is literal and EVERY use of the variable in the command is such a URL tail inside
+# its body; anything else (a use outside the body, a plain `$p`, `${p:-x}`, `${!p}`, a `file:` URL, a
+# body with a command substitution, a nested loop, `eval` ...) reads the words as before.
+
+_LOOP_WORD = r"[^\s;&|<>$`'\"\\(){}*?\[\]~#!=]+"
+_LOOP_HEAD_RE = re.compile(
+    r"(?:^|(?<=[;&|\n]))[ \t]*for[ \t]+(?P<var>[A-Za-z_]\w*)[ \t]+in[ \t]+"
+    r"(?P<words>" + _LOOP_WORD + r"(?:[ \t]+" + _LOOP_WORD + r")*)[ \t]*(?:;|\n)[ \t\n]*do(?=[\s;])"
+)
+_LOOP_DONE_RE = re.compile(r"(?:^|(?<=[\s;]))done(?=[\s;&|)]|$)")
+_LOOP_BODY_BAD_RE = re.compile(
+    r"`|\$\(|<<|\$\{!|(?:^|(?<=[;&|(\n]))[ \t]*\.(?=\s|$)"
+    r"|\b(?:for|while|until|do|case|select|function|coproc|eval|declare|typeset|source"
+    r"|export|local|readonly|set|IFS)\b"
+)
+_URL_TAIL_SCHEMES = "https?|ftps?|wss?"
+
+
+def _in_quotes_at(command: str, position: int) -> bool:
+    """True when `position` lies inside a quoted string of the shell command (a plain left-to-right
+    reading, good enough to keep a loop that is only text out of the allow-list)."""
+    state = ""
+    index = 0
+    while index < position:
+        char = command[index]
+        if state == "'":
+            if char == "'":
+                state = ""
+        elif char == "\\":
+            index += 1
+        elif state == '"':
+            if char == '"':
+                state = ""
+        elif char in ("'", '"'):
+            state = char
+        index += 1
+    return state != ""
+
+
+def _url_loop_words(command: str) -> list[tuple[int, int]]:
+    """The (start, end) spans of the word lists after `in` of the `for` loops whose variable is used
+    only as the tail of a `<scheme>://<host>` URL inside the loop's body (see above)."""
+    if "<<" in command:
+        return []
+    spans: list[tuple[int, int]] = []
+    for head in _LOOP_HEAD_RE.finditer(command):
+        var = head.group("var")
+        if _in_quotes_at(command, head.start("var")):
+            continue
+        done = next(
+            (m for m in _LOOP_DONE_RE.finditer(command, head.end()) if not _in_quotes_at(command, m.start())),
+            None,
+        )
+        if done is None:
+            continue
+        body_start, body_end = head.end(), done.start()
+        if _LOOP_BODY_BAD_RE.search(command[body_start:body_end]):
+            continue
+        name = re.escape(var)
+        uses = {
+            match.start()
+            for match in re.finditer(rf"\$(?:{name}(?!\w)|\{{[^}}]*(?<!\w){name}(?!\w)[^}}]*\}})", command)
+        }
+        tails = {
+            match.start("ref")
+            for match in re.finditer(
+                rf"(?<![^\s'\"=])(?:{_URL_TAIL_SCHEMES})://[^\s/$`'\"\\;&|<>(){{}}]+(?P<ref>\${name}(?!\w)|\$\{{{name}\}})",
+                command[:body_end], re.IGNORECASE,
+            )
+            if match.start("ref") >= body_start
+        }
+        # The bare name may occur only in the head and in the tails: `x=p; cat "${!x}"` and `printenv p`
+        # use the variable by name alone.
+        names = len(re.findall(rf"(?<!\w){name}(?!\w)", command))
+        if uses and uses == tails and names == 1 + len(tails):
+            spans.append((head.start("words"), head.end("words")))
+    return spans
+
+
+def _without_url_loop_words(command: str) -> str:
+    """`command` with the words of every loop of `_url_loop_words` replaced by a plain word, for the read
+    scan only (the write-target scanners get the command as it is)."""
+    try:
+        spans = _url_loop_words(command)
+    except Exception:  # noqa: BLE001 - no allow-list then, the words are read as before
+        return command
+    for start, end in reversed(spans):
+        command = command[:start] + "_" + command[end:]
+    return command
+
+
 def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     powershell = tool == "PowerShell"
     # The text of a quoted heredoc is never run; cut out first, so that a line of the command that
@@ -1437,7 +1566,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
             judge.scanner_failed(exc)
     try:
         # The inside of a shell arithmetic expression is no command line (PowerShell has none of that syntax).
-        groups.append(_shell_word_lists(command if powershell else _without_arithmetic(command)))
+        groups.append(_shell_word_lists(command if powershell else _without_url_loop_words(_without_arithmetic(command))))
     except Exception as exc:  # noqa: BLE001
         judge.scanner_failed(exc)
     for lists in groups:
