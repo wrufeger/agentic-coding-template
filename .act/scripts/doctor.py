@@ -220,7 +220,7 @@ KIND_LABELS: dict[str, str] = {
     "docs-index-missing": "Project docs without an index line (or a folder without README.md)",
     "docs-index-stale": "Index lines of a project docs README.md that name nothing",
     "docs-link-dead": "Dead relative links and paths in the project docs",
-    "docs-concept-decided": "Concepts whose questions are all answered (delete once built)",
+    "docs-concept-decided": "Concepts whose questions are all answered (archive once built)",
     "own-rules-size": "Always-loaded own rules over the size budget (own-rules-budget)",
 }
 KIND_ORDER = list(KIND_LABELS)
@@ -265,7 +265,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "docs-index-missing": "Projektdoku ohne Indexzeile (oder Ordner ohne README.md)",
     "docs-index-stale": "Indexzeilen eines README.md der Projektdoku, die nichts benennen",
     "docs-link-dead": "Tote relative Verweise und Pfade in der Projektdoku",
-    "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (löschen, sobald gebaut)",
+    "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (archivieren, sobald gebaut)",
     "own-rules-size": "Immer geladene eigene Regeln über dem Größenbudget (own-rules-budget)",
 }
 
@@ -1453,6 +1453,8 @@ _DOCS_PROJECT_PATH_RE = re.compile(r"^docs/project/[\w.\-/]+\.md$")
 _DOCS_PLACEHOLDER_RE = re.compile(r"YYYY|MM-DD|NNN|[<>*{}]")  # a pattern such as YYYY-MM-DD_title.md, not a path
 _QUESTION_ID_RE = re.compile(r"`Q(\d+)`")  # only an identifier in backticks is a question, not a quarter in prose
 _STATUS_LINE_RE = re.compile(r"(?im)^status:\s*(.*?)\s*$")
+# the header line of a collection section: `status: done · archived: 2026-10-01 · file: ...` in inline code
+_SECTION_STATUS_RE = re.compile(r"(?i)(?:^|[`\s·])status:\s*([^·`]*?)\s*(?:·|`|$)")
 
 
 def docs_order_enabled(root: Path) -> bool:
@@ -1635,6 +1637,13 @@ def _question_states(root: Path) -> dict[str, str]:
         text = entries._safe_read(path)
         if text is None:
             continue
+        if actlib.is_collection(text):  # one header per section: the inline-code line under its heading
+            lines = text.removeprefix("\ufeff").split("\n")
+            for entry_id, anchor_line in actlib.collection_sections(text):
+                header = lines[anchor_line + 1] if anchor_line + 1 < len(lines) else ""
+                found = _SECTION_STATUS_RE.search(header)
+                states.setdefault(entry_id, found.group(1).lower() if found else "")
+            continue
         match = _STATUS_LINE_RE.search(actlib.header_block(text))
         for entry_id in actlib.entry_ids(text):
             states.setdefault(entry_id, match.group(1).lower() if match else "")
@@ -1676,7 +1685,7 @@ def _check_decided_concepts(root: Path, project: Path) -> list[Finding]:
             path=_rel(path, root), line=None, kind="docs-concept-decided",
             message=("every question it names is answered or gone — once decided, move what the build "
                      "needs into its backlog item or task and the reason into a decision record, then "
-                     "delete the concept (R-docs-order)"),
+                     "archive the concept with `entries.py archive <file>` (R-docs-order)"),
         ))
     return findings
 

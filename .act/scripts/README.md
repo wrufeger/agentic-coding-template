@@ -492,25 +492,25 @@ positional arguments:
                         line; `state` does the same on its first call
     list                list entries, optionally filtered by kind
     check               report a duplicate id or an entry file that isn't valid UTF-8
-    archive             archive a finished task, backlog item or inbox entry to
-                        docs/ai/work/archive/ — an inbox entry gets `status: done`, a task
-                        `finished: <timestamp>`; files it links beside itself (pasted images) move
-                        along, generic or colliding names get the entry's id in front, links are
-                        rewritten
+    archive             archive a finished task, backlog item or inbox entry, or a concept file
+                        (directly in docs/ai/concept/ or anywhere below docs/project/concepts/),
+                        by moving it to docs/ai/work/archive/ - an inbox entry gets `status:
+                        done`, a task `finished: <timestamp>`, every file `archived: <date>`;
+                        files an entry links beside itself (pasted images) move along, generic or
+                        colliding names get the entry's id in front, links are rewritten; links to
+                        a moved concept in other files follow it; `compact` folds the archive into
+                        monthly files
     compact             merge archived entries older than 7 days (and journal entries) into one
                         collection file per kind and month in docs/ai/work/archive/ (Q-2026-09.md,
                         T-, B-, U-, other-, ledger-), one section per entry with an anchor such as
                         #<id>; links in the project are rewritten, the head of each collection
-                        names the commit that holds the full text; each month's overview <YYYY-
-                        MM>.md gets one line per Q, T, B and U entry; needs the entries committed;
-                        running it twice changes nothing
-    purge               with `done-entries: delete`: delete the archived files marked `purge:
-                        after-commit` (and the pasted files only they link) in
-                        docs/ai/work/archive/ as far as Git holds them unchanged; `--all` also
-                        deletes the older archive without the mark; the README and the journal
-                        collections ledger-<YYYY-MM>.md stay; the ids stay reserved, references to
-                        a deleted entry become its bare id; a file Git does not hold yet stays
-                        until a commit does
+                        names the commit that holds the full text; concept files go into
+                        other-<YYYY-MM>.md; each month's overview <YYYY-MM>.md gets one line per
+                        Q, T, B and U entry; needs the entries committed; running it twice changes
+                        nothing
+    purge               retired: prints one line and exits 0, so an old call does not fail;
+                        archived entries stay in docs/ai/work/archive/ until `compact` folds them
+                        into their monthly file
 
 options:
   -h, --help            show this help message and exit
@@ -614,12 +614,16 @@ options:
 ```text
 usage: entries.py archive [-h] ID-OR-FILE
 
-archive a finished task, backlog item or inbox entry to docs/ai/work/archive/ — an inbox entry
-gets `status: done`, a task `finished: <timestamp>`; files it links beside itself (pasted images)
-move along, generic or colliding names get the entry's id in front, links are rewritten
+archive a finished task, backlog item or inbox entry, or a concept file (directly in
+docs/ai/concept/ or anywhere below docs/project/concepts/), by moving it to docs/ai/work/archive/
+- an inbox entry gets `status: done`, a task `finished: <timestamp>`, every file `archived:
+<date>`; files an entry links beside itself (pasted images) move along, generic or colliding names
+get the entry's id in front, links are rewritten; links to a moved concept in other files follow
+it; `compact` folds the archive into monthly files
 
 positional arguments:
-  ID-OR-FILE  an id such as Q<n> or T<n>, or the entry file's path
+  ID-OR-FILE  an id such as Q<n> or T<n>, the entry file's path, or a concept file's path (its
+              bare file name too, if it is unique in the two concept folders)
 
 options:
   -h, --help  show this help message and exit
@@ -633,8 +637,9 @@ usage: entries.py compact [-h] [--plan] [--today YYYY-MM-DD]
 merge archived entries older than 7 days (and journal entries) into one collection file per kind
 and month in docs/ai/work/archive/ (Q-2026-09.md, T-, B-, U-, other-, ledger-), one section per
 entry with an anchor such as #<id>; links in the project are rewritten, the head of each
-collection names the commit that holds the full text; each month's overview <YYYY-MM>.md gets one
-line per Q, T, B and U entry; needs the entries committed; running it twice changes nothing
+collection names the commit that holds the full text; concept files go into other-<YYYY-MM>.md;
+each month's overview <YYYY-MM>.md gets one line per Q, T, B and U entry; needs the entries
+committed; running it twice changes nothing
 
 options:
   -h, --help          show this help message and exit
@@ -645,20 +650,13 @@ options:
 ### `entries.py purge`
 
 ```text
-usage: entries.py purge [-h] [--plan] [--all]
+usage: entries.py purge [-h]
 
-with `done-entries: delete`: delete the archived files marked `purge: after-commit` (and the
-pasted files only they link) in docs/ai/work/archive/ as far as Git holds them unchanged; `--all`
-also deletes the older archive without the mark; the README and the journal collections
-ledger-<YYYY-MM>.md stay; the ids stay reserved, references to a deleted entry become its bare id;
-a file Git does not hold yet stays until a commit does
+retired: prints one line and exits 0, so an old call does not fail; archived entries stay in
+docs/ai/work/archive/ until `compact` folds them into their monthly file
 
 options:
   -h, --help  show this help message and exit
-  --plan      show what would be deleted, write nothing
-  --all       also delete the archive from before `done-entries: delete` (files without the
-              `purge: after-commit` header field), as far as Git holds it; the owner's decision,
-              never run by an assistant on its own
 ```
 
 ## `feedback.py`

@@ -18,7 +18,7 @@ this file directly for anything those two miss — it stays a plain table, not a
 | `docs/ai/inbox/`, `docs/ai/proposals/` | Things waiting for a decision: questions, tasks for a human, tool reports, notes, proposed rule changes | <today> | at session start, and before starting a new task |
 | `docs/ai/work/tasks/`, `docs/ai/work/backlog/` | Open tasks (the assistant's own work) and backlog items | <today> | when picking a task or grooming the backlog |
 | `docs/ai/work/ledger/` | Journal — one entry per file, newest first | <today> | to see recent activity; `board.py` reads it too |
-| `docs/ai/work/archive/` | Journal collections (`ledger-*.md`), `legacy/` and `proposals/`; finished tasks, backlog items and inbox entries too where `done-entries` is `keep` (under `delete` Git history keeps them) | <today> | rarely — history, not current state |
+| `docs/ai/work/archive/` | Journal collections (`ledger-*.md`), `legacy/` and `proposals/`; finished tasks, backlog items, inbox entries and concepts too, until `act-compact` folds them into monthly files | <today> | rarely — history, not current state |
 | `docs/ai/local/` | This project's own overrides of template files | <today> | whenever the matching template file changes |
 | `docs/ai/local/resources.md` | Your own reading list: own sources and private links; the template's maintained list is on the documentation site under "Further reading" | <today> | when looking for background reading, and to add a source |
 

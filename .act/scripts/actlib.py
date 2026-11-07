@@ -988,7 +988,6 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("feedback-scope", "Feedback", pattern=r"\s*[abc]\s*(?:,\s*[abc]\s*)*", default="a,b,c")
     add("update-channel", "Update", values=("release", "latest"), default="release")
     add("advisory-check", "Update", values=_ON_OFF, default="on")
-    add("done-entries", "Archive", values=("delete", "keep"), default="delete")
     add("archive-compact", "Archive", values=("off",), pattern=r"\d+\s*d\s+\d+", default="30d 300", effect=nxt)
     add("tips", "Tips", values=("never", "occasionally", "regularly"), default="occasionally")
     return {entry.key: entry for entry in entries}
@@ -1002,26 +1001,6 @@ def config_value_ok(entry: ConfigKey, value: str) -> bool:
     if entry.values is not None and value.lower() in (item.lower() for item in entry.values):
         return True
     return entry.pattern is not None and re.fullmatch(entry.pattern, value, re.IGNORECASE) is not None
-
-
-# ---------------------------------------------------------------------------
-# done-entries — what happens to a finished task, backlog item or inbox entry
-# ---------------------------------------------------------------------------
-
-DONE_ENTRIES_VALUES = ("delete", "keep")
-
-
-def done_entries_mode(root: Optional[Path] = None) -> str:
-    """The effective `done-entries` mode of the project at `root`: "delete" or "keep".
-
-    `delete` removes a finished entry once Git holds it unchanged, `keep` moves it to the archive for
-    good. A missing, empty or unknown value is the default: `delete` when the project has its own Git
-    repository (a `.git` entry at the root), else `keep`. An explicit `delete` without a repository
-    counts as `keep` as well: nothing would hold the deleted text."""
-    root = root or repo_root()
-    raw = read_config(root).get("done-entries", "").strip().strip("`").strip().lower()
-    wanted = raw if raw in DONE_ENTRIES_VALUES else "delete"
-    return "delete" if wanted == "delete" and (root / ".git").exists() else "keep"
 
 
 # ---------------------------------------------------------------------------

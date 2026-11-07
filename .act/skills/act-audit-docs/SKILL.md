@@ -29,8 +29,9 @@ by `act-doctor`.
    place is moved with `python .act/scripts/move_doc.py <from> <to>` (plan first, then again
    with `--apply`) - never by hand, the script pulls links, paths and the index line along and lists what it
    cannot know (a bare file name, a README.md that is missing); then `doc-writer` writes the missing index
-   lines and `README.md` files (one line per file with its state), and a decided concept is deleted after
-   its build and reason stand in the backlog item, the task or a decision record. A file past about 300
+   lines and `README.md` files (one line per file with its state), and a decided concept is archived with
+   `entries.py archive <file>` once its build and reason stand in the backlog item, the task or a decision
+   record (`act-compact` later folds it into the monthly file). A file past about 300
    lines is split into a folder with a `README.md`. Run `doctor.py` again and stage the old and the new
    path of every move.
 5. `doc-writer` updates `docs/README.md` (folders and top-level files only, data-as-of dates).

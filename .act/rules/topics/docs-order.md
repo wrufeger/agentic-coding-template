@@ -16,11 +16,13 @@ move a document stand here.
   subfolder is for a series only, at most two levels below `docs/project/`.
 - A number in a file name only for a series with a reading order, in a folder of its own; otherwise a
   speaking name.
-- No archive folder. Under version control the history keeps what was deleted; the journal under
-  `docs/ai/work/` is the one lasting record.
+- No archive folder under `docs/project/`. What is finished goes to `docs/ai/work/archive/` and, folded by
+  `act-compact` into the monthly files, stays there; the journal under `docs/ai/work/` is the lasting record.
 - A concept under `docs/project/concepts/` lives while it is open. Decided: the build goes into its backlog
   item or task, the reason into a decision record. Built: the result stands in the code, the journal, the
-  project docs or a learning. Then the file is deleted, not moved.
+  project docs or a learning. Then the file is archived with `python .act/scripts/entries.py archive <file>`;
+  `act-compact` folds it into the monthly file (`other-<YYYY-MM>.md`), and only then is it gone. A concept is
+  never just deleted.
 
 ## What `doctor.py` reports
 
@@ -42,7 +44,8 @@ All four kinds are findings like any other (exit 1); none rewrites a file.
   seen.
 - `docs-concept-decided` — a file under `docs/project/concepts/` that names questions (as `Q<number>` in
   backticks; a bare quarter name in running text is not a question) when none of them is still open: each is answered or
-  done, or its entry is gone and its number is reserved. A concept
+  done (also in the archive or a monthly file), or its entry is gone and its number is reserved (left from the
+  retired `done-entries: delete`). A concept
   that names no question is not reported, and neither is one that names an open one. The report is a
   prompt to apply the lifecycle above, not a judgement that the concept is finished.
 

@@ -360,30 +360,20 @@ shows nothing. The lookup runs with the `update-check` background run, so `updat
 
 | Key | Value |
 | :--- | :--- |
-| `done-entries` | delete |
 | `archive-compact` | 30d 300 |
 
-`done-entries`: `delete` \| `keep`. What happens to a finished task, backlog item or inbox entry. `delete`: once
-Git holds the entry unchanged, `entries.py archive` deletes it (with the pasted files that travel with it) instead of
-moving it to `docs/ai/work/archive/`; Git keeps the text (`git log --follow`, `git show <commit>:<path>`). An entry
-Git does not hold yet (never committed, or changed since) still goes to the archive, marked `purge: after-commit`, and is removed by the next
-`entries.py purge`, which `act-commit` runs; so does every task, with its `finished:` stamp, so a finished task
-stays visible until the commit that holds it. An id stays taken: the highest id of each kind is kept in
-`docs/ai/work/reserved-ids.json` and the next `new` hands out one above it. A link to a deleted entry in other
-Markdown files becomes its bare id, so an id in text stays valid. `act-compact` then folds only the journal. `keep`:
-finished entries go to the archive for good, as before. A missing, empty or unknown value is `delete` in a project
-with its own Git repository and `keep` without one; `delete` without a repository counts as `keep`, since nothing would
-hold the text. An archive that exists when a project moves to `delete` stays as it is until you decide: the session
-start names the number of files once, `python .act/scripts/entries.py purge --all --plan` lists what would go and
-`entries.py purge --all` deletes what Git holds unchanged. Plain `purge` touches only files marked
-`purge: after-commit`, and the assistant never runs `--all` on its own.
+A finished task, backlog item or inbox entry is moved to `docs/ai/work/archive/` by `entries.py archive`; nothing is
+deleted there. The same goes for a concept file (`docs/ai/concept/*.md`, `docs/project/concepts/**/*.md`) that is
+decided or built: `entries.py archive <path>` moves it too (links to it follow). `act-compact` later folds the single
+files into their monthly file (`Q-`, `T-`, `B-`, `U-<YYYY-MM>.md`, concepts into `other-<YYYY-MM>.md`) with an overview
+`<YYYY-MM>.md`; only then is the single file gone, and Git still holds its full text. A row `done-entries` that an
+older template version wrote is ignored; the update removes it.
 
 `archive-compact`: `<n>d <n>` \| `off`. `entries.py compact` is due for the archive or the journal folder once its
 oldest single entry is older than this many days, or the folder holds more than this many single files; the session
 start says so once a day, with the number of entries (`act-compact`). Only entries archived more than 7 days ago are
 merged, word for word, with a monthly overview `archive/YYYY-MM.md` of one line per entry; no worker takes part. A
-missing or malformed value counts as `30d 300`; in team mode the note appears only on the default branch. With
-`done-entries: delete` only the journal folder counts and is merged (`archive/ledger-<YYYY-MM>.md`).
+missing or malformed value counts as `30d 300`; in team mode the note appears only on the default branch.
 
 ## Tips
 

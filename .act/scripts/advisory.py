@@ -674,8 +674,8 @@ def _history_call(args: list[str], root: Path, deadline: float) -> Optional[byte
 
 
 def _deleted_todo_in_history(root: Path, advisory: Advisory, heading: "re.Pattern[str]") -> Optional[str]:
-    """The file name of a todo of this advisory that the git history shows as deleted (a done entry is
-    deleted under `done-entries: delete`; another workstation then sees no file). Read only: one
+    """The file name of a todo of this advisory that the git history shows as deleted (an older template
+    version deleted done entries; another workstation then sees no file). Read only: one
     `git log` over the inbox and the archive for deleted files whose name carries the advisory's slug,
     then `git show` of the last version of at most HISTORY_CANDIDATES of them, to compare the heading.
     Bounded by HISTORY_COMMITS and a HISTORY_BUDGET of seconds in all. Without git, outside a repository,

@@ -34,30 +34,21 @@ secures the result.
    to this task — from `docs/ai/work/tasks/` / `.../backlog/` / `docs/ai/inbox/` with `python
    .act/scripts/entries.py archive <id|file>`; it also takes along the images and files the entry
    links beside itself and prints every path it moved, copied, deleted or changed: stage all of
-   them (a deleted path too, so the deletion is part of the commit). Short IDs already assigned
-   stay valid. What happens to the entry depends on `done-entries` in `docs/ai/config.md` § Archive:
-   - `keep` (or no Git repository): it moves to `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`)
-     and keeps its name; a generic image name gets the id in front.
-   - `delete` (the default in a Git project): an entry Git holds unchanged is deleted — Git keeps the
-     text, the id stays reserved in `docs/ai/work/reserved-ids.json` (stage it when the script prints
-     `reserved`), and links to the entry in other files become the bare id (stage every file the
-     script prints as `rewrote`). An entry Git does not hold yet (a fresh answer, a state change) moves
-     to the archive as under `keep`, and so does every task, with its `finished:` stamp: the accepted
-     task stays visible until the commit that holds it. The archive step marks what it moves in with the header field
-     `purge: after-commit`. Then run `python .act/scripts/entries.py purge`: it deletes the marked files
-     that earlier commits left in the archive and Git now holds unchanged; stage `docs/ai/work/archive`,
-     `docs/ai/work/reserved-ids.json` and every path it prints as `rewrote`. What this run moved in is
-     committed first and removed by the next run. An archive from before `delete` (files without the mark) stays: never
-     run `purge --all` on your own; it is the owner's decision, only on their explicit word.
+   them (stage every file the script prints as `rewrote` too). Short IDs already assigned
+   stay valid. The entry always moves to `docs/ai/work/archive/` (`docs/ai/work/archive/README.md`) and
+   keeps its name; a generic image name gets the id in front. Nothing is deleted: `act-compact` folds
+   the single files into the monthly files later. A concept file that was decided or built in this task
+   is archived the same way, `entries.py archive <file>` (`R-docs-order`).
 4. **Add or tighten the journal entry** under `docs/ai/work/ledger/` — a new file if this step
    isn't recorded yet, older entries left as they are otherwise. Journal entries stay single files
    only until they are old: `act-compact` later folds them into one file per month
-   (`archive/ledger-<YYYY-MM>.md`), and with `done-entries: keep` the archived entries too.
+   (`archive/ledger-<YYYY-MM>.md`); archived entries go into `Q-/T-/B-/U-<YYYY-MM>.md` and concepts into
+   `other-<YYYY-MM>.md`.
 5. **Docs index.** A new file under `docs/project/` gets its line (name, contents, state) in the `README.md` of
    its folder, a moved or deleted one loses or changes it (`R-docs-order`); a folder with fewer than five
    entries and no `README.md` of its own is listed by the line in the `README.md` above it; a new top-level folder or file
    under `docs/` goes into `docs/README.md`. Check the data-as-of note on files that changed. A concept
-   whose questions are answered and whose build is done is deleted in this step.
+   whose questions are answered and whose build is done is archived in step 3.
 6. **Learning check.** Did the task need at least two rework rounds (a worker result rejected
    twice, or two repair rounds after review or test)? Count them yourself. If so, run step 8 of
    `act-bug` and put the note into this commit. A rule recorded for a new pitfall is one imperative

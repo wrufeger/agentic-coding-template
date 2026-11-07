@@ -17,7 +17,7 @@ An id is linked only when an entry file exists for it under `docs/ai/`, searched
 order: a single file `<id>-*.md` or `<id>.md` in `inbox/`, `work/tasks/` or `work/backlog/`; the same
 form in `work/archive/`; then a section `## <id>` (with its `<a id="<id>"></a>` anchor) in a collection
 file in `work/archive/`, newest file first. An id without a file stays plain text — so does the id of an
-entry deleted under `done-entries: delete`, whose text Git history keeps. There is no stored
+entry an older template version deleted, whose text Git history keeps. There is no stored
 index, so a link is never out of date. The project root is the open folder that contains `docs/ai/`.
 
 ## Install, once per machine

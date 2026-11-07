@@ -51,7 +51,7 @@ __all__ = [
     "_LEDGER_DATE_IN_NAME_RE", "_parse_docs_audit_due", "_ledger_entry_date",
     "_last_ledger_entry_with_prefix", "_last_docs_audit_entry", "_commits_since", "_docs_audit_note",
     "_DEPENDENCY_CHECK_TITLE_PREFIX", "_DEPENDENCY_CHECK_DUE_DAYS", "_dependency_check_note",
-    "_parse_archive_compact", "_compact_due_note", "_archive_leftover_note",
+    "_parse_archive_compact", "_compact_due_note",
     "_refresh_board", "_BRIDGE_MAP", "_TOPIC_SWITCHES", "_IDE_SERVER_NAME_HINTS",
     "_IDE_SERVER_EXACT_NAMES", "_is_ide_server_name", "_servers_match_ide_hint", "_user_mcp_servers",
     "_same_project_path", "_ide_mcp_connected", "_active_topics", "_scope_notes",
@@ -405,11 +405,8 @@ def _compact_due_note(root: Path, config: dict[str, str]) -> Optional[str]:
             return None
     reasons: list[str] = []
     foldable = 0
-    journal_only = actlib.done_entries_mode(root) == "delete"  # a delete project folds only the journal
     for label, folder, journal in (("archive", root / "docs" / "ai" / "work" / "archive", False),
                                    ("journal", root / "docs" / "ai" / "work" / "ledger", True)):
-        if journal_only and not journal:
-            continue
         days = _single_entry_days(root, folder, journal)
         old = sum(1 for day in days if (today - day).days > _COMPACT_KEEP_DAYS)
         if not old:
@@ -428,35 +425,6 @@ def _compact_due_note(root: Path, config: dict[str, str]) -> Optional[str]:
     return (f"[act] note: archive compaction is due ({'; '.join(reasons)}; limits {max_days}d / {max_files} files): "
             f"{foldable} entr(ies) older than {_COMPACT_KEEP_DAYS} days to merge, no worker -- act-compact at the next "
             "task boundary (archive-compact in docs/ai/config.md)")
-
-
-_ARCHIVE_NOTE_MARKER = Path(".act-local") / "done-entries-hint"
-
-
-def _archive_leftover_note(root: Path) -> Optional[str]:
-    """Once per checkout: with `done-entries` on `delete`, a note that the archive still holds finished
-    entries from before, how many files, the command that deletes what Git holds unchanged and the
-    way to keep them (`done-entries: keep`). The marker is written at the first session start under
-    `delete`, with or without a note, so only a project that had an archive when it moved to `delete`
-    (an update, or a switch from `keep`) hears it, and never the files a later `archive` leaves
-    behind until the next commit. A project on `keep` writes no marker and checks nothing."""
-    if actlib.done_entries_mode(root) != "delete":
-        return None
-    marker = root / _ARCHIVE_NOTE_MARKER
-    if marker.exists():
-        return None
-    import entries
-    files = entries.purgeable_archive_files(root)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(f"noted {date.today().isoformat()}, {len(files)} file(s) in the archive\n", encoding="utf-8")
-    if not files:
-        return None
-    return (f"[act] note: done-entries is `delete`, and docs/ai/work/archive/ still holds {len(files)} file(s) of finished "
-            "entries from before (the journal files, ledger-*.md and YYYY-MM-DD-*.md, not counted). They stay until the owner "
-            "decides; tell the owner, and never run `--all` on your own: "
-            "`python .act/scripts/entries.py purge --all --plan` lists what would go, `python .act/scripts/entries.py purge --all` "
-            "deletes what Git holds unchanged (the ids stay reserved); `done-entries: keep` in docs/ai/config.md "
-            "keeps the archive instead. Plain `purge` only removes what is archived from now on. Said once.")
 
 
 def _refresh_board(root: Path) -> None:
@@ -2447,13 +2415,6 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         compact_due = None  # informational only, must never block the session
     if compact_due:
         print(compact_due)
-
-    try:
-        archive_note = _archive_leftover_note(root)
-    except Exception:
-        archive_note = None  # informational only, must never block the session
-    if archive_note:
-        print(archive_note)
 
     mode = _check_mode(config, "session-start-refresh", default="block")
     if mode == "off":

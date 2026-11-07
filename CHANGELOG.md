@@ -224,6 +224,30 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   finding (they are taken out before matching and do not count toward the limit of five); a malformed or linked list
   counts as empty. The booking has no expiry: a new hit of a booked rule in a booked file passes too, until the key is
   removed. Secrets keep holding.
+- Nothing leaves `docs/` before it stands in its monthly file. `entries.py archive` always moves a finished task,
+  backlog item or inbox entry to `docs/ai/work/archive/`, also when Git holds it; `entries.py compact` (`act-compact`)
+  always folds the archive and the journal into the monthly files (`Q-`, `T-`, `B-`, `U-`, `ledger-<YYYY-MM>.md`) with
+  the overview `<YYYY-MM>.md`, and only then is the single file gone. `act-commit` no longer runs `entries.py purge`.
+  A project that had `done-entries: delete` archives from now on: migration `008-done-entries-keep` removes the row
+  from `docs/ai/config.md` (any value, line endings kept); entries it deleted before stay in Git history, nothing is
+  reconstructed. `entries.py` no longer writes `docs/ai/work/reserved-ids.json` (`act-adopt` still does for old ids
+  that get no entry); an existing one is still read, so no id is handed out twice.
+- A decided or built concept file (`docs/ai/concept/*.md`, `docs/project/concepts/**/*.md`) is archived too:
+  `entries.py archive <path>` (or its unique file name) moves it with an `archived:` date (a file without front matter
+  also gets `file:` with its old path), rewrites links to it in other Markdown files, and `compact` folds it into
+  `other-<YYYY-MM>.md`. A folder, a concept folder's `README.md`, a name already in the archive, an ambiguous name and
+  a file outside the two folders are refused. `R-docs-order` and `topics/docs-order.md` say "into the monthly file
+  first, then deleted" instead of "deleted, not moved", and `doctor`'s `docs-concept-decided` asks to archive the
+  concept.
+
+### Removed
+
+- The config key `done-entries` (`delete` | `keep`): every project behaves as `keep` did; a row left in
+  `docs/ai/config.md` is ignored.
+- `entries.py purge` is retired: it prints `entries: purge is retired - archived entries stay until act-compact folds
+  them` and exits 0, so an old call does not fail. The header field `purge: after-commit` is no longer written; one
+  already in an archived file is carried into the monthly file like any other field.
+- The session-start note about files left in the archive and the journal-only compaction hint of projects on `delete`.
 
 ### Fixed
 
@@ -277,6 +301,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   started in the meantime.
 - A worker the orchestrator stops with `TaskStop` no longer blocks the start of a worker with an overlapping write
   scope: the stop frees its scope at once. The overlap message now names `TaskStop` as the way to free a scope.
+- `doctor`'s `docs-concept-decided` read a question folded into a monthly file as open (it took the collection's
+  header instead of the section's own `status:`), so a concept naming only such questions was never reported.
 
 ### Security
 
