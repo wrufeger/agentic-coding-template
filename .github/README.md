@@ -81,7 +81,8 @@ Once the project exists, everyday work runs the same way:
 ### Python
 
 The setup, the scripts, and the hooks need Python 3.9+, standard library only. The assistant checks
-for it and walks you through installing it if it is missing:
+for it and walks you through installing it if it is missing. It is found as `python3`, `python` or, on
+Windows, `py -3` — the hooks try the three in that order, so any one of them is enough:
 
 - **Windows:** `winget install Python.Python.3.12`, or https://www.python.org/downloads/ — tick
   "Add python.exe to PATH" in the installer.

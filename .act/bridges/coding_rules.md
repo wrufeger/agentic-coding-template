@@ -14,7 +14,9 @@ Check a box below to turn a rule set on, uncheck one to turn it off; the boxes b
 pre-checked from what `init` detected in this project (see `docs/ai/config.md` § `stack` to
 correct it), adjust freely — the project always overrides the template (`R-work-override`). A
 checked set lists its groups underneath, also checked; uncheck a single group to switch it off,
-optionally with a reason after " — ".
+optionally with a reason after " — ". A whole set takes the same optional reason after its path
+(`- [ ] use: .act/coding/go.md — read-only service, no Go`); `init --carry exceptions` carries an
+unchecked set into a new project only when it has such a reason.
 
 ## Rule sets from the template
 

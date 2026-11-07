@@ -963,12 +963,41 @@ def _inline_target_offends(raw: str, base: Optional[str], root: Path, scope: dic
     return rel is None or not _matches_scope(rel, scope.get("patterns") or [])
 
 
-def _inline_hint(language: str, raw: str, scope: dict, in_throwaway_place: bool = False) -> str:
-    """How to proceed after a refusal of inline interpreter code: what was found, and the ways out."""
+# A heredoc operator (`<<`, `<<-`, not the here-string `<<<`) followed by its delimiter, or the opening of a
+# PowerShell here-string (`@'` / `@"` at the end of a line).
+_HEREDOC_START_RE = re.compile(r"""(?<!<)<<-?(?!<)\s*[\\'"A-Za-z_]|@['"]\s*$""", re.MULTILINE)
+
+
+def _literal_in_heredoc_body(command: str, raw: str) -> bool:
+    """True if the path literal `raw` stands in the text of `command` after the first heredoc (or here-string)
+    opener: it was found in the body of an interpreter call fed through one. Used for the wording of a refusal
+    only, never for a verdict; a literal the reader decoded (escapes) differently from how it stands in the
+    text is not found and simply gets the shorter message."""
+    start = _HEREDOC_START_RE.search(command)
+    return start is not None and raw in command[start.end():]
+
+
+_HEREDOC_WAY_OUT = (
+    "the code is fed to the interpreter through a heredoc: if the code only reads that path (a literal mistaken "
+    "for a target), write the helper script as a file inside the write scope and run it (`python <file>`), or "
+    "use Write/Edit instead of a heredoc; a file outside the write scope is never written, not through a script "
+    "either"
+)
+
+
+def _inline_hint(
+    language: str, raw: str, scope: dict, in_throwaway_place: bool = False, in_heredoc: bool = False
+) -> str:
+    """How to proceed after a refusal of inline interpreter code: what was found, and the ways out. With
+    `in_heredoc` (the path literal was found in the body of a heredoc) it also names the way out for a
+    program fed that way: a script file inside the scope, run as a file; not for a read-only assignment,
+    which has no place in the scope to write one."""
     hint = (
         f"inline {language} code with a write call names a path outside the write scope: write the file with "
         "Write/Edit; read outside the scope in a separate call without a write call"
     )
+    if in_heredoc and scope.get("mode") != "none":
+        hint += "; " + _HEREDOC_WAY_OUT
     if _INLINE_DYNAMIC_RE.search(raw):
         hint += "; a path with `$` or a backtick in the code cannot be checked, write it out"
     way_out = _throwaway_way_out(scope, in_throwaway_place)
@@ -1154,7 +1183,10 @@ def check_worker_write_scope(payload: dict) -> int:
         in_throwaway_place = _names_throwaway_place(
             _inline_literal_path(raw_path, base, root), base, root, scratchpad_dir, literal_brace=True
         )
-        message = _write_scope_message(raw_path, scope, _inline_hint(language, raw_path, scope, in_throwaway_place))
+        in_heredoc = inline_source is not None and _literal_in_heredoc_body(inline_source[1], raw_path)
+        message = _write_scope_message(
+            raw_path, scope, _inline_hint(language, raw_path, scope, in_throwaway_place, in_heredoc)
+        )
         if mode == "warn":
             print(message)
             return 0

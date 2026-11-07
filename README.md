@@ -39,6 +39,10 @@ python .act/scripts/init.py --target ../my-project
 python .act/scripts/init.py --language-docs de   # docs in the owner's language (default en)
 ```
 
+Where `python` is not on the PATH, use `python3` or, on Windows, `py -3`. The Claude Code hooks look for
+the interpreter the same way: `python3`, then `python`, then `py -3`, the first one that really runs
+Python 3.9 or newer.
+
 Read the effective rules of a project:
 
 ```bash

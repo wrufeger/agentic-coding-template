@@ -1433,7 +1433,15 @@ def inbox_kind(text: str) -> str:
 # otherwise never gets it).
 # ---------------------------------------------------------------------------
 
-_HOOK_COMMAND_PREFIX = 'P=""; for c in python3 python'
+# The interpreter probe really runs each candidate (never `command -v`): python3, python, then the
+# Windows launcher `py -3`. "py -3" is two words, so the loop variable is expanded unquoted (`$c`,
+# `$P`) -- it only ever holds one of these three fixed literals, so no path is word-split; every
+# path (`"$D"`) stays quoted. The launcher is tried on every platform: where `py` does not exist the
+# probe simply fails and the loop moves on.
+_HOOK_COMMAND_PREFIX = 'P=""; for c in python3 python \'py -3\''
+# The form before the launcher was added; a project that has not run update.py since still carries
+# it, so is_ours_hook (and the status line check) keep recognizing it and replace it.
+_HOOK_COMMAND_PREFIX_OLD = 'P=""; for c in python3 python'
 
 
 def _hook_command_suffix(event: str) -> str:
@@ -1443,6 +1451,12 @@ def _hook_command_suffix(event: str) -> str:
     against the *hook's own* current directory, which a Bash tool's own lasting `cd` moves for the
     rest of the session — Python then can't find the file and exits 2, which
     Claude Code reads as "block", for every tool call, not just Bash's."""
+    return f'$P "$D" {event}'
+
+
+def _hook_command_suffix_quoted_form(event: str) -> str:
+    """The form with a quoted interpreter variable (`"$P" "$D"`), written before `py -3` joined the
+    candidates; still recognized by is_ours_hook so update.py's reconcile upgrades it."""
     return f'"$P" "$D" {event}'
 
 
@@ -1473,11 +1487,12 @@ _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
 
 def _hook_command_suffixes(event: str) -> list[str]:
     """Every exact tail this template's own hook commands for `event` are known to end with,
-    current form first: the current $D-anchored form, the older bare-relative form (still
-    produced by a project that has not run update.py since it changed), and, for the one event with
-    an
-    extra fixed argument, each of those two with that argument appended too."""
-    bases = [_hook_command_suffix(event), _hook_command_suffix_old_form(event)]
+    current form first: the current $D-anchored form with an unquoted interpreter variable, the
+    same with a quoted one, the older bare-relative form (all still produced by a project that has
+    not run update.py since they changed), and, for the events with extra fixed arguments, each of
+    those with that argument appended too."""
+    bases = [_hook_command_suffix(event), _hook_command_suffix_quoted_form(event),
+             _hook_command_suffix_old_form(event)]
     extra_args = _HOOK_COMMAND_EXTRA_ARGS.get(event, ())
     return bases + [f"{base} {extra}" for base in bases for extra in extra_args]
 
@@ -1499,8 +1514,8 @@ def is_ours_hook(hook, event: str) -> bool:
     if not isinstance(hook, dict):
         return False
     command = hook.get("command", "")
-    if not isinstance(command, str) or not command.startswith(_HOOK_COMMAND_PREFIX):
-        return False
+    if not isinstance(command, str) or not command.startswith(_HOOK_COMMAND_PREFIX_OLD):
+        return False  # the current prologue starts with the old one, so one check covers both
     return any(command.endswith(suffix) or command.endswith(suffix + "; true")
                for suffix in _hook_command_suffixes(event))
 
@@ -1630,18 +1645,23 @@ def merge_settings_hooks(current: dict, bridge_data: dict) -> tuple[dict, list[s
 # "the project's own choice always wins" rule.
 # ---------------------------------------------------------------------------
 
-def status_line_command() -> str:
+def status_line_command(*, old_form: bool = False) -> str:
     """The exact shell command for the template's statusLine bridge entry: the same
     interpreter-detection prologue the hook commands use (_HOOK_COMMAND_PREFIX), invoking
     .act/hooks/statusline.py with no event argument (it takes none, unlike dispatch.py) and no
     trailing "; true" — a statusLine command's stdout is read as the line to show regardless of its
     exit code, but a missing interpreter or file must still resolve to an empty line rather than an
-    error banner, hence the same "exit 0 either way" guard as every other generated hook command."""
+    error banner, hence the same "exit 0 either way" guard as every other generated hook command.
+    `old_form=True` gives the text written before `py -3` joined the candidates (quoted `"$c"`,
+    `"$P"`), which _is_ours_status_line still recognizes."""
+    prefix = _HOOK_COMMAND_PREFIX_OLD if old_form else _HOOK_COMMAND_PREFIX
+    probe_word = '"$c"' if old_form else "$c"
+    call_word = '"$P"' if old_form else "$P"
     return (
-        f'{_HOOK_COMMAND_PREFIX}; do "$c" -c \'import sys; sys.exit(0 if sys.version_info>=(3,9) '
+        f'{prefix}; do {probe_word} -c \'import sys; sys.exit(0 if sys.version_info>=(3,9) '
         'else 1)\' >/dev/null 2>&1 && { P="$c"; break; }; done; '
         'D="${CLAUDE_PROJECT_DIR:-.}/.act/hooks/statusline.py"; '
-        'if [ -z "$P" ]; then exit 0; fi; if [ ! -f "$D" ]; then exit 0; fi; "$P" "$D"'
+        f'if [ -z "$P" ]; then exit 0; fi; if [ ! -f "$D" ]; then exit 0; fi; {call_word} "$D"'
     )
 
 
@@ -1652,7 +1672,8 @@ def _is_ours_status_line(entry) -> bool:
     (a wrapped call, extra flags, a completely different script) is correctly left alone."""
     if not isinstance(entry, dict):
         return False
-    return entry.get("type") == "command" and entry.get("command") == status_line_command()
+    return entry.get("type") == "command" and entry.get("command") in (
+        status_line_command(), status_line_command(old_form=True))
 
 
 def _user_wide_status_line_path() -> Path:

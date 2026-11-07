@@ -96,6 +96,7 @@ class ProjectSet:
     path: str  # as written in the project file, e.g. ".act/coding/nuxt.md"
     enabled: bool
     line: int
+    reason: Optional[str] = None  # the optional " — reason" after the path (a set switched off on purpose)
     groups: dict[str, ProjectGroup] = field(default_factory=dict)
     # id -> line numbers of every listing, only for an id listed more than once in this block
     duplicates: dict[str, list[int]] = field(default_factory=dict)
@@ -152,8 +153,9 @@ RE_CHECKBOX = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[ xX])\](?![(\[])\s*(?
 # A near-miss checkbox ("[X ]", "[-]", "[]") is reported; a Markdown link "- [Text](target)"
 # or "- [Text][ref]" never is — only a mark of at most two characters counts as a try.
 RE_CHECKBOX_LOOSE = re.compile(r"^(?P<indent>\s*)-\s*\[(?P<mark>[^\]]{0,2})\](?![(\[])\s*(?P<rest>.*)$")
-RE_USE = re.compile(r"^use:\s*(?P<path>\S+)\s*$")
 # The reason separator is an em dash; an en dash or "--" (what people type instead) counts the same.
+# A set line takes an optional reason after the path, like a group line: "use: <path> — <reason>".
+RE_USE = re.compile(r"^use:\s*(?P<path>\S+)(?:\s+(?:—|–|--)\s*(?P<reason>\S.*?))?\s*$")
 RE_GROUP_ID = re.compile(r"^`(?P<id>[^`]+)`\s*(?:(?:—|–|--)\s*(?P<reason>.+))?$")
 # "- replaces ..." — and, like an own rule, "* replaces ..." / "+ replaces ...".
 RE_REPLACES = re.compile(r"^(?:-\s*|[*+]\s+)replaces\s+`(?P<id>[^`]+)`:\s*(?P<text>.*)$")
@@ -402,10 +404,11 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                     continue
                 use = RE_USE.match(rest)
                 if not use:
-                    findings.append((line_no, "expected '- [ ] use: <path>'"))
+                    findings.append((line_no, "expected '- [ ] use: <path>' with an optional ' — reason'"))
                     current_set = None
                     continue
-                current_set = ProjectSet(path=normalize_set_path(use.group("path")), enabled=enabled, line=line_no)
+                current_set = ProjectSet(path=normalize_set_path(use.group("path")), enabled=enabled, line=line_no,
+                                         reason=use.group("reason"))
                 sets.append(current_set)
             else:
                 group = RE_GROUP_ID.match(rest)

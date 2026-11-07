@@ -38,7 +38,14 @@
 #          `outside-root-allow` row of docs/ai/config.md (a path relative to the project root or
 #          starting with `~`, ` (read)` behind it = read-only; an entry with glob characters opens
 #          only what its pattern hits, `../zone/o*` the folders of `zone` that start with `o`, never
-#          `zone` itself); and, while a marker younger than 24 hours says so, the target folder of an
+#          `zone` itself; an absolute path - a drive path in either slash style, or a POSIX-rooted
+#          one - outside the project and outside the home directory is entered as read-only whether
+#          or not ` (read)` stands behind it: it is the entry for a program folder, meant for reading
+#          and starting a program, not for writing. Only the writes the scanners below recognize are
+#          refused there, exactly as below a ` (read)` entry; a write they do not see passes. An
+#          entry with a glob character keeps the glob rule above (writable unless ` (read)`), and one that is a drive root, `/`
+#          or a folder above the project or the home directory opens reading everything below it);
+#          and, while a marker younger than 24 hours says so, the target folder of an
 #          act-adopt run (`.act-local/outside-allow/adopt.json`, written by the adopt scripts from
 #          inside Python). A marker target that would open far more than one project counts as
 #          broken: a drive root, `/`, a UNC share root, the home directory or a directory above it,
@@ -50,10 +57,11 @@
 #          means `warn`, `ACT_OUTSIDE_ROOT` overrides it for one run. Under `warn` the message goes
 #          to stdout and the call passes.
 #
-# Failure: this module is deliberately NOT in dispatch.py's `_FAIL_CLOSED` set. The default mode is
-#          `warn`, and a crash of an accident guard must not refuse every Bash or Write call (the
-#          owner could not even edit the config row that switches it off). A crash in the dispatcher
-#          therefore skips the check with one line on stderr, like `secret_read`; inside this
+# Failure: this module is one of dispatch.py's fail-closed guards for Bash and PowerShell, like
+#          `secret_read`: if it cannot be imported or raises while it looks at such a call, the
+#          dispatcher refuses that call and reports the failure to the model and the human. Read,
+#          Write, Edit and the other tools stay possible, so the owner (or the assistant) can still
+#          look into the cause and edit the config row that switches the check off. Inside this
 #          module each scanner runs on its own, so a bug in one (say the PowerShell target
 #          scanner) does not hide what the others found.
 #
@@ -508,10 +516,35 @@ def _marker_target(root: Path) -> Optional[str]:
     return _key(text)
 
 
+def _is_absolute_form(part: str) -> bool:
+    """True for an entry written as an absolute path: a drive path in either slash style (`D:\\x`,
+    `D:/x`) or a POSIX-rooted one (`/opt/x`; on Windows the Git-Bash `/d/x` too). A UNC share
+    (`//host/share`), `~`, a drive-relative `D:x` and a relative path are not."""
+    return bool(_DRIVE_RE.match(part)) or (part[:1] == "/" and part[1:2] != "/")
+
+
+def _program_folder_entry(part: str, key: str, root: Path) -> bool:
+    """True when the entry (no glob characters, already resolved to `key`) is exactly the program-folder
+    form: written as an absolute path, and lying neither in the project nor in the home directory
+    (those have their own forms). Such an entry is read-only, like one with ` (read)` behind it: meant
+    for reading and starting a program. Judged on the resolved key, so `D:/prog/../other` counts as
+    `D:/other`."""
+    if not _is_absolute_form(part):
+        return False
+    root_key = _resolve_key(str(root), None, False)
+    if root_key and _under(key, root_key):
+        return False
+    home = _home()
+    home_key = _resolve_key(home, None, False) if home else None
+    return not (home_key and _under(key, home_key))
+
+
 def _allow_entries(value: str, root: Path) -> list[tuple[str, bool, bool]]:
     """The (key or glob regex source, read-only, is a pattern) triples of the `outside-root-allow`
     value: `none` or empty = nothing. An entry with glob characters opens only what its pattern hits
-    (`../zone/o*` the folders of `zone` that start with `o`, never `zone` itself)."""
+    (`../zone/o*` the folders of `zone` that start with `o`, never `zone` itself). An entry that is an
+    absolute path outside the project and the home directory is read-only whatever follows it (see
+    `_program_folder_entry`)."""
     text = value.strip().strip("`").strip()
     if not text or text.lower() == "none":
         return []
@@ -535,7 +568,7 @@ def _allow_entries(value: str, root: Path) -> list[tuple[str, bool, bool]]:
             continue
         key = _resolve_key(part, str(root), False, "file")
         if key:
-            entries.append((key, read_only, False))
+            entries.append((key, read_only or _program_folder_entry(part, key, root), False))
     return entries
 
 
@@ -1295,8 +1328,11 @@ def _message(findings: list[_Finding], tool: str, mode: str) -> str:
         action = "writes" if first.write else "reads"
         what = f"{tool} {action} {shown}, outside the project and its allowed places (R-safe-outside-root)."
         ways = (
-            "Ways out: an entry in `outside-root-allow` (docs/ai/config.md § Checks; `<path>` or "
-            "`<path> (read)`), the folder under `permissions.additionalDirectories`, or "
+            "Ways out, only on the owner's word for this case (never add one yourself): an entry in "
+            "`outside-root-allow` (docs/ai/config.md § Checks; `<path>` or `<path> (read)`; for a program "
+            "folder outside the project and the home directory, such as a browser, the absolute path "
+            "`D:/Program Files/Browser` or `/opt/browser`, which is read-only: for reading and starting a "
+            "program, not for writing), the folder under `permissions.additionalDirectories`, or "
             f"{_ENV_OVERRIDE}=warn for one run"
         )
     more = ""

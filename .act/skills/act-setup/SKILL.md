@@ -12,7 +12,8 @@ runs every command itself and reports what happened. Follow these steps in order
 
 Try, in order, `python3 --version`, `python --version`, and on Windows `py -3 --version`; the
 first one whose output looks like a version answers. A bare `python`/`py` reachable through the
-Windows Store placeholder does not count — confirm with a command that actually runs code:
+Windows Store placeholder does not count — confirm with a command that actually runs code (the Claude
+Code hooks probe the same three candidates, `python3`, `python`, `py -3`, the same way):
 
 ```bash
 python3 -c "import sys; print(sys.version)"

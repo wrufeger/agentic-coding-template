@@ -19,8 +19,9 @@
 #          To add a new PreToolUse check: write checks/<name>.py exporting a function
 #          check_<name>(payload: dict) -> int (0 = allow, 2 = deny — print the reason to stderr
 #          before returning 2, same as every existing check) and add ("<name>", "check_<name>")
-#          to _PRE_TOOL_USE_CHECKS at the position it should run in. A listed module that does
-#          not exist yet is skipped. Observers (event log, usage counter) work the same way via
+#          to _PRE_TOOL_USE_CHECKS at the position it should run in. A listed module whose file is
+#          missing counts as a failed check (see "Exit-code contract" below), not as one that is not
+#          built yet. Observers (event log, usage counter) work the same way via
 #          _OBSERVERS, with observe(event, payload) -> None (checks/board_refresh.py, for instance,
 #          regenerates the board after a PostToolUse of a git merge/pull/rebase/switch/...); for
 #          every event but PreToolUse they see it before any check runs and never block — for
@@ -118,16 +119,25 @@
 #
 # Output format:
 #   PreToolUse:   exit 0 (allow) or exit 2 with a one-line reason on stderr (deny) — the
-#                 harness convention for "block this tool call and show the assistant why".
+#                 harness convention for "block this tool call and show the assistant why". A call
+#                 that goes ahead although a check failed (see "Exit-code contract" below) prints one
+#                 line on stdout, {"systemMessage": "<failure texts>"}, for the human, and leaves the
+#                 same texts for this call's PostToolUse (.act-local/check-failures/<tool_use_id>.txt),
+#                 whose additionalContext hands them to the model. Whatever else the checks print on
+#                 stdout is held back meanwhile and joins that message, so stdout stays one JSON
+#                 object; without a failure it is written unchanged.
 #   PostToolUse / PostToolUseFailure: exit 0 always (notes never block); if at least one note
 #                 module returned text, one line on stdout: {"hookSpecificOutput": {"hookEventName":
 #                 "PostToolUse"|"PostToolUseFailure", "additionalContext": "<note>\n<note>..."}} —
 #                 multiple notes joined with "\n", hookEventName matching whichever of the two
 #                 events this run is for; the protected-files watcher's report comes first and adds a
 #                 top-level "systemMessage" (shown to the human).
-#                 Nothing printed at all when no note module had anything to say.
+#                 Nothing printed at all when no note module had anything to say. A note that fails,
+#                 and the texts queued by this call's PreToolUse (above), come after the watcher's
+#                 report in the same additionalContext and systemMessage.
 #   Stop / SubagentStop: exit 0 always; when checks.model_switch found a refusal or a changed model, one
-#                 line on stdout: {"systemMessage": "⚠️ MODEL SWITCH ..."} (ASCII-escaped JSON).
+#                 line on stdout: {"systemMessage": "⚠️ MODEL SWITCH ..."} (ASCII-escaped JSON); when
+#                 that module itself fails, the same kind of line carries "[act] model-switch skipped ...".
 #   SessionStart: one JSON object on stdout: `hookSpecificOutput.additionalContext` holds
 #                 the lines below, kept under the 10,000-character cap (above it Claude Code
 #                 moves a hook output into a file and shows the model a 2,000-character
@@ -199,10 +209,12 @@
 #                 any error means the prompt goes through untouched.
 #
 # Exit-code contract for PreToolUse specifically: a mechanism error while checking a candidate
-# write is NOT swallowed the way a SessionStart error is. Every other check in this template
-# fails open (never blocks the session on its own bug); the write-guard is the one exception —
-# "when in doubt, deny" — because a false allow here means the template
-# silently loses its own files to an edit the next update overwrites anyway.
+# call is NOT swallowed the way a SessionStart error is. The guards in _FAIL_CLOSED — the write-guard
+# and the other write guards, and secret_read and outside_root for Bash and PowerShell — "when in doubt,
+# deny": a false allow there means the template silently loses its own files to an edit the next update
+# overwrites, or a secret or a foreign folder reaches the context. Every other check fails open (never
+# blocks the session on its own bug), but not silently: see "Output format" for how the failure is
+# reported to the model and the human.
 #
 # Backward compatibility: every name that used to live directly in this module (before the
 # checks/ split, 2026-09-23) is still reachable as dispatch.<name> — each checks/ submodule
@@ -219,6 +231,8 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
+import stat
 import sys
 import time
 
@@ -270,6 +284,117 @@ _POST_TOOL_USE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "P
 _POST_TOOL_USE_OBSERVED_TOOLS = {"TaskStop"}
 _early_payload = None
 _early_watch = None
+_early_failures: "list[str]" = []
+
+# Check failures (a check that cannot be imported or raises, a note that fails) are not only a stderr line:
+# stderr reaches the model only when the call is refused (exit 2). A call that goes ahead gets the failure
+# as a systemMessage for the human (PreToolUse and PostToolUse output) and, for the model, as
+# additionalContext of the same call's PostToolUse, which the dispatcher already uses for its notes
+# (reaches the model and a worker: live probe, Claude Code 2.1.319). The text waits in
+# .act-local/check-failures/<tool_use_id>.txt between the two hook runs, the way checks/encoding_hint.py
+# queues its note; without a tool_use_id the reader (session and agent) is the key.
+_CHECK_FAILURES: "list[str]" = []   # this process's failures of PreToolUse checks, in the order they happened
+_NOTE_FAILURES: "list[str]" = []    # ... of PostToolUse notes
+_FAILURE_PARTS = (".act-local", "check-failures")
+_FAILURE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+_FAILURE_TTL = 86400.0  # seconds a queued failure text stays valid (the call may never reach PostToolUse)
+_MAX_FAILURE_REASON = 300  # characters of a check's own error text that go into a report
+
+
+def _failure_key(payload: dict) -> "str | None":
+    tool_use_id = payload.get("tool_use_id")
+    if isinstance(tool_use_id, str) and _FAILURE_ID_RE.match(tool_use_id):
+        return tool_use_id
+    session = payload.get("session_id")
+    if isinstance(session, str) and _FAILURE_ID_RE.match(session):
+        agent = payload.get("agent_id")
+        return f"{session}__{agent if isinstance(agent, str) and _FAILURE_ID_RE.match(agent) else 'main'}"
+    return None
+
+
+def _is_link(path: "str | os.PathLike[str]") -> bool:
+    """True for a symbolic link and, on Windows, any reparse point (a junction too). A missing path is no link."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x400)
+
+
+# The project this dispatcher runs in, as it was started: <project>/.act/hooks/dispatch.py, two levels up, with
+# no link resolved. A `.act` that is a link must not move the queue (and the prune of old texts in it) to the
+# place the link points at, which can lie outside the project.
+_QUEUE_ROOT = Path(os.path.abspath(__file__)).parents[2]
+
+
+def _failure_folder() -> Path:
+    return _QUEUE_ROOT.joinpath(*_FAILURE_PARTS)
+
+
+def _failure_folder_clear(folder: Path) -> bool:
+    """Neither `.act-local` nor the queue folder is a link: nothing is written or read through one."""
+    return not (_is_link(folder.parent) or _is_link(folder))
+
+
+def _queue_failure_notes(payload: dict, texts: "list[str]") -> None:
+    """Leave `texts` for this call's PostToolUse (see above). Best effort: a queue that cannot be written
+    is one line on stderr, never a reason to fail the call."""
+    key = _failure_key(payload)
+    if key is None or not texts:
+        return
+    folder = _failure_folder()
+    try:
+        if not _failure_folder_clear(folder):
+            return
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{key}.txt"
+        if not _failure_folder_clear(folder) or _is_link(path):
+            return
+        _prune_failure_notes(folder)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(texts) + "\n")
+    except OSError as exc:
+        print(f"[act] check failure not queued for the model ({type(exc).__name__}: {exc})", file=sys.stderr)
+
+
+def _prune_failure_notes(folder: Path) -> None:
+    """Remove the texts of calls that never reached PostToolUse. Best effort, entry by entry: one that cannot be
+    read or removed is left, and never costs the text that is about to be queued."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    now = time.time()
+    for name in names:
+        old = folder / name
+        try:
+            if name.endswith(".txt") and not _is_link(old) and now - os.lstat(old).st_mtime > _FAILURE_TTL:
+                os.remove(old)
+        except OSError:
+            continue
+
+
+def _take_failure_notes(payload: dict) -> "list[str]":
+    """The texts `_queue_failure_notes` left for this call, each delivered once; [] when there are none
+    (the common case: one failed lstat)."""
+    key = _failure_key(payload)
+    if key is None:
+        return []
+    folder = _failure_folder()
+    path = folder / f"{key}.txt"
+    try:
+        os.lstat(path)
+    except OSError:
+        return []
+    try:
+        if not _failure_folder_clear(folder) or _is_link(path):
+            return []
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            text = handle.read(65536)
+        os.remove(path)
+    except OSError:
+        return []
+    return [line for line in text.splitlines() if line.strip()]
 
 
 def _watch_protected_files(event: str, payload: dict):
@@ -308,10 +433,13 @@ if len(sys.argv) == 2 and sys.argv[1] == "PostToolUse":
     if not isinstance(_early_payload, dict):
         _early_payload = {}
     _early_watch = _watch_protected_files("PostToolUse", _early_payload)
+    _early_failures = _take_failure_notes(_early_payload)
     if (not _early_payload.get("agent_id")
             and _early_payload.get("tool_name") not in _POST_TOOL_USE_TOOLS | _POST_TOOL_USE_OBSERVED_TOOLS):
-        if _early_watch:
-            print(_post_tool_use_json("PostToolUse", [_early_watch["context"]], _early_watch["message"]))
+        if _early_watch or _early_failures:
+            print(_post_tool_use_json(
+                "PostToolUse", ([_early_watch["context"]] if _early_watch else []) + _early_failures,
+                "\n".join(([_early_watch["message"]] if _early_watch else []) + _early_failures)))
         sys.exit(0)
 
 # UserPromptSubmit "/act" fast intercept — a second, synchronous hook entry dedicated to
@@ -464,8 +592,8 @@ del _compat_module
 
 # PreToolUse checks, in the order they run — first non-zero return wins and is this call's own
 # exit code. See the header comment above for how to add one. Each entry is (module under checks/,
-# function name); a module that does not exist yet is skipped, so a check can be registered here
-# before it is built (several modules are built in parallel, one each).
+# function name); a module whose file is missing is a failed check like one that cannot be imported
+# (_load, _check_failed): refused for a guard in _FAIL_CLOSED, reported for every other check.
 #
 # Order note: worker_cap and status_poll are deliberately
 # the LAST two entries — both can deny based on their own running counter/streak (worker's tool-call
@@ -503,7 +631,7 @@ _PRE_TOOL_USE_CHECKS = (
 # PostToolUse / PostToolUseFailure notes, all of them run every time for either event (no "first
 # wins" — unlike _PRE_TOOL_USE_CHECKS, these never block, so there is nothing to short-circuit).
 # Each entry is (module under checks/, function name); signature note_<name>(payload: dict) -> str
-# | None. Same skip-if-missing rule as _PRE_TOOL_USE_CHECKS. See the header comment above for the
+# | None. A missing module is reported as for _PRE_TOOL_USE_CHECKS. See the header comment above for the
 # full contract, and for why PostToolUseFailure shares this exact list instead of its own.
 _POST_TOOL_USE_NOTES = (
     ("worker_cap", "note_worker_cap"),        # cap-reached / cap-exceeded hints (R-cost-delegate)
@@ -517,7 +645,7 @@ _POST_TOOL_USE_NOTES = (
 # None; an exception inside one is swallowed. For every event but PreToolUse they run before any
 # check does; for PreToolUse itself they run *after* the checks instead (_run_pre_tool_use_observers
 # below). Used for the event log (topic "logging") and the usage counter. Same
-# skip-if-missing rule as above.
+# missing-module rule as above, except that an observer is skipped without a report.
 _OBSERVERS = (
     ("event_log", "observe"),
     ("usage", "observe"),
@@ -538,11 +666,18 @@ _OBSERVERS = (
 # Checks whose failure (import error, missing function, exception while running) refuses the
 # call instead of letting it through: exit code 1 would count as "not blocking" for the harness,
 # so a broken guard would silently open the door it is meant to keep shut. Every other check
-# fails open with one line on stderr — a broken convenience check must not stop all work.
-_FAIL_CLOSED = {"write_guard", "git_metadata_guard", "nesting_guard", "write_scope", "mcp_ide"}
+# fails open — a broken convenience check must not stop all work — but its failure is reported
+# to the model and the human (see _report_check_failures), not left to one stderr line.
+_FAIL_CLOSED = {"write_guard", "git_metadata_guard", "nesting_guard", "write_scope", "mcp_ide",
+                "secret_read", "outside_root"}
 # Only tools that can write or start a worker are refused by a broken guard — reading stays
 # possible, so the assistant can still look into what broke.
 _FAIL_CLOSED_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Agent", "Task"}
+# The two read guards are refused for the shell only: a broken secret_read must not let `cat .env` through,
+# and a broken outside_root not a command that reaches out of the project; Read, Write, Edit and the rest
+# stay possible, so the cause can be looked into and the config fixed.
+_FAIL_CLOSED_SHELL_ONLY = {"secret_read", "outside_root"}
+_SHELL_TOOLS = {"Bash", "PowerShell"}
 
 def _mcp_call_needs_mcp_ide(tool_name: str, payload: dict) -> bool:
     """True when a *working* checks.mcp_ide.check_mcp_ide could have denied this call -- i.e.
@@ -588,13 +723,14 @@ def _mcp_call_needs_mcp_ide(tool_name: str, payload: dict) -> bool:
 
 
 def _load(module_name: str, func_name: str):
-    """(func, None) when the check is available, (None, None) when its module does not exist yet,
-    (None, reason) when it exists but cannot be used."""
+    """(func, None) when the check is available, (None, reason) when it cannot be used: its module file is
+    missing, it fails to import, or the function is not there. A missing file is a failure like the others
+    -- a guard whose file was deleted must not be taken for one that is not built yet."""
     try:
         module = importlib.import_module(f"checks.{module_name}")
     except ModuleNotFoundError as exc:
         if exc.name == f"checks.{module_name}":
-            return None, None  # not built yet
+            return None, f"module file checks/{module_name}.py missing"
         return None, f"import failed: {exc}"
     except Exception as exc:  # noqa: BLE001
         return None, f"import failed: {type(exc).__name__}: {exc}"
@@ -615,13 +751,20 @@ def _check_failed(module_name: str, reason: str, payload: dict) -> int:
         # read-only or unrecognized MCP tool passes through the same as mcp_ide.py's own final
         # `return 0` would for it, broken check or not.
         applies = isinstance(tool_name, str) and _mcp_call_needs_mcp_ide(tool_name, payload)
+    elif module_name in _FAIL_CLOSED_SHELL_ONLY:
+        applies = tool_name in _SHELL_TOOLS
     else:
         applies = tool_name in _FAIL_CLOSED_TOOLS
+    reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
     if module_name in _FAIL_CLOSED and applies:
         print(f"[act] check {module_name} failed ({reason}) — refusing to be safe; "
-              "run .act/scripts/doctor.py", file=sys.stderr)
+              f"{tool_name} stays refused until the check works again, ask the owner to run "
+              ".act/scripts/doctor.py (with the `!` prefix)", file=sys.stderr)
         return 2
-    print(f"[act] check {module_name} skipped ({reason})", file=sys.stderr)
+    text = (f"[act] check {module_name} skipped ({reason}) — it did not look at this "
+            f"{tool_name if isinstance(tool_name, str) else 'tool'} call; run .act/scripts/doctor.py")
+    print(text, file=sys.stderr)
+    _CHECK_FAILURES.append(text)
     return 0
 
 
@@ -635,9 +778,7 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
     for module_name, func_name in _PRE_TOOL_USE_CHECKS:
         func, reason = _load(module_name, func_name)
         if func is None:
-            if reason is None:
-                continue
-            result = _check_failed(module_name, reason, payload)
+            result = _check_failed(module_name, reason or "check not available", payload)
         else:
             try:
                 result = func(checked_payload)
@@ -750,40 +891,64 @@ def _run_pre_tool_use_observers(payload: dict, denied: bool, denied_by: "str | N
         pass
 
 
+def _note_failed(module_name: str, reason: str) -> None:
+    reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
+    text = f"[act] note {module_name} skipped ({reason}) — its hint for this call is missing; run .act/scripts/doctor.py"
+    print(text, file=sys.stderr)
+    _NOTE_FAILURES.append(text)
+
+
 def _run_post_tool_use_notes(payload: dict) -> list[str]:
     """Every note module's text, in _POST_TOOL_USE_NOTES order, skipping None. A module that does
-    not exist yet is skipped silently (same as a not-yet-built PreToolUse check); one that exists
-    but fails to load, or raises while called, is skipped too but logged as one stderr line — never
-    blocks, never corrupts the stdout JSON main() builds from the list this returns."""
+    not exist is reported like one that fails to load or raises while called: skipped, logged as one
+    stderr line and kept in _NOTE_FAILURES for the report to the model and the human — never blocks,
+    never corrupts the stdout JSON main() builds from the list this returns."""
     notes: list[str] = []
     for module_name, func_name in _POST_TOOL_USE_NOTES:
         func, reason = _load(module_name, func_name)
         if func is None:
             if reason is not None:
-                print(f"[act] note {module_name} skipped ({reason})", file=sys.stderr)
+                _note_failed(module_name, reason)
             continue
         try:
             note = func(payload)
         except Exception as exc:  # noqa: BLE001 — a broken note must never block or corrupt the JSON
-            print(f"[act] note {module_name} skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+            _note_failed(module_name, f"{type(exc).__name__}: {exc}")
             continue
         if isinstance(note, str) and note:
             notes.append(note)
     return notes
 
 
-def _emit_post_tool_use_notes(event: str, payload: dict, watch: "dict | None" = None) -> None:
+def _emit_post_tool_use_notes(event: str, payload: dict, watch: "dict | None" = None,
+                              queued: "list[str] | None" = None) -> None:
     """Shared by the "PostToolUse" and "PostToolUseFailure" branches of main(): run
     _POST_TOOL_USE_NOTES and, only if at least one note (or a watcher report, see
     _watch_protected_files) came back, print the single hookSpecificOutput JSON object both events use,
     with hookEventName set to whichever of the two this call is for (see this module's header, "Output
     format"). The watcher's report comes first; its message for the human rides along as the top-level
-    systemMessage."""
+    systemMessage. After it come the check failures of this call's PreToolUse (`queued`, see
+    _queue_failure_notes) and of the notes just run, for the model as context and for the human as the
+    systemMessage; then the notes themselves."""
     notes = _run_post_tool_use_notes(payload)
+    failures = list(queued or []) + _NOTE_FAILURES
+    notes = failures + notes
+    messages = ([watch["message"]] if watch and watch["message"] else []) + failures
     if watch:
         notes.insert(0, watch["context"])
     if notes:
-        print(_post_tool_use_json(event, notes, watch["message"] if watch else ""))
+        print(_post_tool_use_json(event, notes, "\n".join(messages)))
+
+
+def _model_switch_failed(event: str, reason: str) -> None:
+    """The model-switch report could not be made: one stderr line and a systemMessage for the human. A stop
+    event has no channel to the model that would not keep the agent running, and a live probe showed that
+    Claude Code records a systemMessage of Stop/SubagentStop in the transcript without showing it."""
+    reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
+    text = (f"[act] model-switch skipped ({reason}) — a model change in this {event} was not checked; "
+            "run .act/scripts/doctor.py")
+    print(text, file=sys.stderr)
+    print(json.dumps({"systemMessage": text}))
 
 
 def _model_switch_output(event: str, payload: dict) -> None:
@@ -793,12 +958,12 @@ def _model_switch_output(event: str, payload: dict) -> None:
     func, reason = _load("model_switch", "run")
     if func is None:
         if reason is not None:
-            print(f"[act] model-switch skipped ({reason})", file=sys.stderr)
+            _model_switch_failed(event, reason)
         return
     try:
         result = func(event, payload)
     except Exception as exc:  # noqa: BLE001 -- a hook never ends in a traceback
-        print(f"[act] model-switch skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+        _model_switch_failed(event, f"{type(exc).__name__}: {exc}")
         return
     if isinstance(result, dict) and result:
         print(json.dumps(result))
@@ -835,6 +1000,20 @@ def _run_worker_rules(part_arg: str) -> int:
     return 0
 
 
+def _report_check_failures(payload: dict, held: str) -> None:
+    """A PreToolUse call goes ahead although a check failed (it was skipped, see _check_failed): tell the
+    human with a systemMessage now and leave the same text for this call's PostToolUse, which hands it to
+    the model as additionalContext (_queue_failure_notes). `held` is what the checks printed meanwhile;
+    it joins the message instead of standing in front of the JSON object. Nothing here can raise."""
+    try:
+        parts = ([held.strip()] if held.strip() else []) + list(_CHECK_FAILURES)
+        print(json.dumps({"systemMessage": "\n".join(parts)}))
+    except Exception as exc:  # noqa: BLE001 -- a hook never ends in a traceback
+        print(f"[act] check failure not reported ({type(exc).__name__}: {exc})", file=sys.stderr)
+        sys.stdout.write(held)
+    _queue_failure_notes(payload, list(_CHECK_FAILURES))
+
+
 def main(argv: list[str]) -> int:
     # "_update-check-worker" is the one exception to the "exactly one arg" harness contract
     # below: it is never a harness hook event, only what checks.session._spawn_update_check_
@@ -868,8 +1047,21 @@ def main(argv: list[str]) -> int:
         # Checks run first, observers second — the reverse of every other event, and
         # the reverse of this module's own order before this fix. See _run_pre_tool_use_observers'
         # own docstring for why a denied call must never reach a counting observer at all.
-        result, denied_by = _run_checks(payload)
-        _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
+        # What the checks and observers print on stdout is held back: a call that goes ahead with a failed check
+        # prints one JSON object (the failure report), and plain text in front of it would make it unreadable.
+        import io
+        real_stdout = sys.stdout
+        held = io.StringIO()
+        sys.stdout = held
+        try:
+            result, denied_by = _run_checks(payload)
+            _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
+        finally:
+            sys.stdout = real_stdout
+        if result == 0 and _CHECK_FAILURES:
+            _report_check_failures(payload, held.getvalue())
+        elif held.getvalue():
+            sys.stdout.write(held.getvalue())
         return result
 
     if event == "UserPromptSubmit":
@@ -879,7 +1071,8 @@ def main(argv: list[str]) -> int:
     if event in ("PostToolUse", "PostToolUseFailure"):
         # PostToolUse was watched in the early block above (when it came through there), the failure event is not
         watch = _early_watch if _early_payload is not None else _watch_protected_files(event, payload)
-        _emit_post_tool_use_notes(event, payload, watch)
+        queued = _early_failures if _early_payload is not None else _take_failure_notes(payload)
+        _emit_post_tool_use_notes(event, payload, watch, queued)
         return 0  # notes never block
     if event == "SessionStart":
         code = refresh_session(payload)

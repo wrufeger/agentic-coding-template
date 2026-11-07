@@ -60,6 +60,12 @@
 #     only the changed keys are reset (`git config --file`), the rest of the file stays as git left it.
 #     The worker gets the message, the human gets a `systemMessage`, and a note is queued for the
 #     orchestrator's next tool call (`take_orchestrator_notes`).
+#     One exception, a single form: a change of the project's `.claude/settings.local.json` that only ADDS
+#     entries to the list `permissions.allow` (strict JSON on both sides; every other key and every other
+#     `permissions` key equal; every earlier entry still there, order free; all entries strings) is
+#     reported, never put back -- it is Claude Code writing the owner's "always allow" answer. A removed or
+#     altered entry, a hook, `env` or any other key, a file that does not parse or appeared new is put back
+#     as above. That judgement reads two copies the watcher holds and writes nothing, so it adds no place.
 #   - the ORCHESTRATOR's call, or mode `warn`: reported only, with the command that puts the file back; the
 #     previous version is kept under `kept/` so the command stays valid; the new state becomes the
 #     reference. The commands name the file (`git config --file <path>`), end git's options with `--` (a
@@ -919,6 +925,90 @@ def _keep(base: str, stamp: str, label: str, path: str, data: bytes | None) -> s
     return target
 
 
+def _strict_object(pairs: list) -> dict:
+    """json object hook: a repeated key is an error (which of the two counts would depend on the reader)."""
+    out: dict = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError(f"repeated key {key!r}")
+        out[key] = value
+    return out
+
+
+def _no_constant(name: str) -> None:
+    raise ValueError(f"constant {name} is not valid JSON")
+
+
+def _parse_settings(data: bytes | None) -> dict | None:
+    """The JSON object a settings file holds, None when it is missing, not UTF-8, not strict JSON (repeated
+    keys, NaN and Infinity count as errors) or not an object."""
+    if data is None:
+        return None
+    try:
+        doc = json.loads(data.decode("utf-8"), object_pairs_hook=_strict_object, parse_constant=_no_constant)
+    except (ValueError, RecursionError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _canon(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _local_settings_path(root: str) -> str:
+    return os.path.normcase(root.rstrip("/") + "/.claude/settings.local.json")
+
+
+def _allow_additions(old_doc: dict, new_doc: dict) -> list[str] | None:
+    """The entries `new_doc` adds to `permissions.allow` when that is ALL it changes against `old_doc`;
+    None for every other difference (also: nothing added). The one form that qualifies: every key outside
+    `permissions` equal, every key of `permissions` except `allow` equal, `allow` a list of strings in
+    which every earlier entry is still present (as often as before, order free) and at least one is new.
+    A missing `permissions` or `allow` in the old file counts as empty, but only when the old file lacked
+    the key: an existing key may not vanish, an empty `permissions` may not turn into none."""
+    if {key: _canon(value) for key, value in old_doc.items() if key != "permissions"} != \
+            {key: _canon(value) for key, value in new_doc.items() if key != "permissions"}:
+        return None
+    new_perm = new_doc.get("permissions")
+    if not isinstance(new_perm, dict) or "permissions" not in new_doc:
+        return None
+    old_perm = old_doc.get("permissions", {}) if "permissions" in old_doc else {}
+    if not isinstance(old_perm, dict):
+        return None
+    if {key: _canon(value) for key, value in old_perm.items() if key != "allow"} != \
+            {key: _canon(value) for key, value in new_perm.items() if key != "allow"}:
+        return None
+    new_allow = new_perm.get("allow")
+    old_allow = old_perm.get("allow", []) if "allow" in old_perm else []
+    if not isinstance(new_allow, list) or not isinstance(old_allow, list):
+        return None
+    if not all(isinstance(item, str) for item in new_allow) or not all(isinstance(item, str) for item in old_allow):
+        return None
+    remaining = list(new_allow)
+    for item in old_allow:
+        if item not in remaining:
+            return None
+        remaining.remove(item)
+    return remaining or None
+
+
+def _reportable_addition(base: str, change: dict, root: str) -> list[str] | None:
+    """For a change of the project's `.claude/settings.local.json` that only adds entries to
+    `permissions.allow` (Claude Code writing the owner's "always allow" answer): the added entries; None
+    for everything else, which is put back as before. The judgement reads two copies the watcher itself
+    holds (the snapshot's blob and the content read from the changed file) and touches nothing: no place
+    is resolved here and nothing is written below any."""
+    if change["op"] != "modified" or change["kind"] != _KIND_FILE or change["old"] is None:
+        return None
+    if os.path.normcase(change["path"]) != _local_settings_path(root):
+        return None
+    old_doc = _parse_settings(_read_blob(base, change["old"]["h"]))
+    new_doc = _parse_settings(change.get("data"))
+    if old_doc is None or new_doc is None:
+        return None
+    return _allow_additions(old_doc, new_doc)
+
+
 def _anchors(state: dict, root: str) -> list[_Anchor]:
     """The places a restore may write below, fixed when the snapshot was taken: the project root (itself
     reached however the owner set it up) and the git directories recorded then, each with its real path.
@@ -1210,7 +1300,13 @@ def watch(event: str, payload: dict, root: str | None = None) -> dict | None:
         anchors = _anchors(state, root) if restoring else []
         results = []
         for change in changes:
-            if restoring:
+            added = _reportable_addition(base, change, root) if restoring else None
+            if added:
+                # only entries added to permissions.allow: reported, never put back; the changed file is the
+                # reference from now on (new_files already holds it), the previous version is kept
+                before = _keep(base, stamp, "before", change["path"], _read_blob(base, change["old"]["h"]))
+                results.append({"restored": False, "kept": before, "how": "", "added": added})
+            elif restoring:
                 results.append(_restore(base, change, stamp, new_files, root, anchors))
             else:
                 before = None
@@ -1243,7 +1339,14 @@ def _report(event: str, payload: dict, root: str, base: str, changes: list, resu
     lines = []
     for change, result in zip(listed, results):
         line = f"- {_describe(root, change)}"
-        if restoring:
+        if restoring and result.get("added"):
+            shown = ", ".join(json.dumps(item[:200]) for item in result["added"][:_MAX_LISTED])  # JSON escapes control characters
+            line += (f" -> only entries added to permissions.allow ({shown}"
+                     + (f", +{len(result['added']) - _MAX_LISTED} more" if len(result["added"]) > _MAX_LISTED else "")
+                     + "): reported, not put back")
+            if result["kept"]:
+                line += f"; previous version kept at {_shown(root, result['kept'])}"
+        elif restoring:
             line += f" -> {result['how'] or 'not restored'}"
             if result["kept"]:
                 line += f"; changed version kept at {_shown(root, result['kept'])}"
@@ -1251,21 +1354,42 @@ def _report(event: str, payload: dict, root: str, base: str, changes: list, resu
     if len(changes) > len(listed):
         lines.append(f"- and {len(changes) - len(listed)} more")
     head = f"{who} changed protected files with {tool}{' (call failed)' if event == 'PostToolUseFailure' else ''}"
+    if restoring and all(result.get("added") for result in results):
+        context = (
+            f"[act] protected-watch: {head}: only entries were added to the permissions.allow list of "
+            ".claude/settings.local.json (Claude Code writes that when the owner answers \"always allow\").\n"
+            + "\n".join(lines)
+            + "\nReported, not put back; the file as it stands is the reference from now on. Do not edit Claude settings "
+            "yourself (R-safe-git-metadata); if you did not expect this, say so in your result."
+        )
+        message = f"ℹ️ PERMISSIONS ADDED to .claude/settings.local.json during a call by {who} (reported, not put back):\n" + "\n".join(lines)
+        note = (
+            f"[act] protected-watch: {who} was running when entries were added to permissions.allow in "
+            f".claude/settings.local.json (call to {tool}); reported, not put back. Tell the human if it was not an "
+            "\"always allow\" answer.\n" + "\n".join(lines)
+        )
+        try:
+            queue_orchestrator_note(root, note)
+        except OSError:
+            pass
+        return {"context": context, "message": message}
     if restoring:
-        all_back = all(result["restored"] for result in results)
+        all_back = all(result["restored"] for result in results if not result.get("added"))
+        kept_addition = any(result.get("added") for result in results)
+        except_addition = " except the reported permissions.allow addition" if kept_addition else ""
         context = (
             f"[act] protected-watch: {head} (R-safe-git-metadata: a worker never writes these).\n" + "\n".join(lines)
-            + ("\nThe files were put back. " if all_back else "\nSome files could NOT be put back. ")
+            + (f"\nThe files were put back{except_addition}. " if all_back else "\nSome files could NOT be put back. ")
             + "Do not try again; name the file and the change you need in your result and let the orchestrator decide."
         )
         message = (
             f"⚠️ PROTECTED FILES CHANGED by {who}"
-            + (" - put back" if all_back else " - NOT all put back")
+            + (f" - put back{except_addition}" if all_back else " - NOT all put back")
             + ":\n" + "\n".join(lines)
         )
         note = (
             f"[act] protected-watch: {who} changed protected files during a call to {tool}; "
-            + ("put back" if all_back else "not all put back")
+            + (f"put back{except_addition}" if all_back else "not all put back")
             + " (R-safe-git-metadata). Tell the human.\n" + "\n".join(lines)
         )
         try:

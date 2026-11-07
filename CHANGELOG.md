@@ -11,6 +11,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
+
+- A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report is a `systemMessage` of Stop and SubagentStop. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.
+
+- A rule set line in `docs/project/coding_rules.md` takes an optional reason after the path, like a group line:
+  `- [ ] use: .act/coding/go.md — read-only service, no Go`. The reason is kept when the file is rewritten at session
+  start, by `rules.py --add-new-coding` and by an update.
+
 - The doctor reports a file under `docs/ai/local/` whose counterpart under `.act/` is gone (the template renamed or
   removed it, so the override silently has no effect), with the most similar name under `.act/`. Rule overrides,
   roles and a project's own skills are left out, and so is an own script or coding set unless its name is a strict
@@ -107,8 +115,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `act-adopt`); it lists what would be carried over and asks once per category, then suggests `act-update` in the new
   project.
 - `init.py --carry <list>` (and `adopt.py --apply --carry <list>`) chooses what `--target` takes over from the project
-  it runs from: `skills` (own skills), `rules` (`## Own rules`), `exceptions` (rule groups switched off with their
-  reason), `overrides` (`replaces` lines and the other files under `docs/ai/local/`), `topics`
+  it runs from: `skills` (own skills), `rules` (`## Own rules`), `exceptions` (rule groups and rule sets switched
+  off with their reason; a set switched off without a reason is left to the new project's stack detection), `overrides` (`replaces` lines and the other files under `docs/ai/local/`), `topics`
   (`docs/ai/local/rules/topics/`). Default is all; `none` or `--no-local` carries nothing; `--carry` without `--target`
   is refused.
 - `adopt_baseline.py` (step 7b of `act-adopt`, before the first commit): checks an adopted project's existing code
@@ -118,6 +126,29 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   Prints file, line and rule, never a secret value.
 
 ### Changed
+
+- `secret-read` and `outside-root` now fail closed for Bash and PowerShell: if the check cannot be imported or raises while it looks at such a call, the call is refused and the failure is named, instead of letting the command through unchecked. Read, Write, Edit and the other tools stay possible, so the cause can be looked into. A check whose module file is missing counts as a failed check, like one that cannot be imported: the guards are refused, any other missing check, note or model-switch report is reported instead of being skipped silently.
+
+- An absolute `outside-root-allow` entry outside the project and the home directory is treated as read-only now, like one with `(read)`: the writes `outside-root` recognizes are refused there; before, such an entry (not documented) also allowed those writes. Writes the check does not recognize pass as before. Relative entries, `~` entries, entries with a glob character (writable unless `(read)`) and absolute entries inside the project or the home directory behave as before.
+
+- The Claude Code hook commands and the status line now try `py -3` (the Windows Python launcher) as a third
+  interpreter candidate after `python3` and `python`, with the same probe (it must really run Python 3.9 or newer).
+  On a Windows machine where only `py -3` works, the template's checks are no longer silently inactive. Existing
+  projects get the new commands with `act-update`; your own hooks are left alone.
+
+- The README and the `act-setup` skill name the three ways Python is found (`python3`, `python`, `py -3`).
+
+- `protected-watch` (mode `block`): when Claude Code itself writes the owner's "always allow" answer into
+  `.claude/settings.local.json` during a worker's call, the watcher no longer puts the file back. Only the exact form
+  "entries added to the list `permissions.allow`, everything else in the file equal, every earlier entry still there"
+  is reported (the report names the entries, the previous version is kept under `kept/`); any other change to that
+  file (hooks, `env`, other keys, a removed or altered entry, a file that does not parse or did not exist) and the
+  same addition in any other protected file are put back as before.
+
+- `worker-write-scope`: when it refuses a path found in the body of an interpreter heredoc (`python - <<'EOF'`,
+  `node - <<'EOF'`), the message now names the way out for code that only reads that path: write the helper script as a file inside
+  the write scope and run it, or use Write/Edit instead of a heredoc; a file outside the scope is never written, not
+  through a script either. Only the message changed; no call is refused or allowed differently.
 
 - The doctor's tier proposal is rarer: it looks at the last 30 outcomes of a role at a tier and proposes a higher tier
   only once 30 are recorded and at least 60 % (18 of 30) were reworked or escalated; older outcomes drop out of the
@@ -195,6 +226,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `rules.py` no longer drops a rule set line that has ` — reason` after the path (it was dropped with a format
+  finding, so the set was missing from the effective rules).
+
 - On Windows the dependency scan's time limit per tool (`security-check: deps`/`full`) now holds for a tool behind a batch wrapper (`npm.cmd`; `pnpm` and `composer` start the same way). The wrapper's child process kept the output open, so an `npm audit` that ran into the limit was only given up when its child ended on its own; the scan could outrun its "running" marker, and the commit then went through with "not checked". At the limit the tool's whole process tree is now ended, by its process id.
 - A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
 - A migration that creates scaffold (the project docs index, the resources list) now names the new file in the inbox entry `*-translate-scaffold.md` when `language-docs` is not English: an open entry is extended, otherwise (also when the old one is answered or done) a new one is created as `init.py` does; the migrations' plan text names this entry. Before, such a file stayed English with no hint to translate it.
@@ -244,6 +278,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   scope: the stop frees its scope at once. The overlap message now names `TaskStop` as the way to free a scope.
 
 ### Security
+
+- A broken `secret-read` or `outside-root` no longer lets a shell command through unchecked (`cat .env` with a failing `secret-read`).
 
 - `danger-scan`: PHP `"... ${name}"` interpolation inside a double-quoted statement is held like `$name` and `{$expr}`; the SQL checks for PHP now also cover the endings `.php3`, `.php4`, `.php5`, `.php7`, `.php8` and `.pht`.
 

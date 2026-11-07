@@ -60,6 +60,12 @@
 #          matches a path inside the home directory only; it is compared lexically (no symlink or
 #          8.3 short-name resolution).
 #
+# Failure: this check is one of dispatch.py's fail-closed guards for Bash and PowerShell. If the
+#          module cannot be imported or raises while it looks at such a call, the dispatcher refuses
+#          the call (a broken check must not let `cat .env` through) and reports the failure to the
+#          model and the human; Read and the other tools stay possible, so the cause can be looked
+#          into.
+#
 # Known limits:
 #   - a program that reads the file itself stays invisible — `python script.py`, `node app.js`,
 #     `docker run --env-file`; only string literals of an interpreter's inline code (`python -c`,

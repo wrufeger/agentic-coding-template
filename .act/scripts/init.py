@@ -1918,8 +1918,8 @@ def _merge_settings_hooks(
 # decided 2026-09-20.
 # `--target <dir>` run from a checkout that is itself an already set-up project (its own
 # docs/ai/config.md exists) carries that project's own rule/coding-rule deviations plus its whole
-# docs/ai/local/ tree into the freshly materialized target -- never the `use:` set selection
-# (coding_rules.md), never work state (docs/ai/inbox/, docs/ai/work/, docs/project/ beyond the two
+# docs/ai/local/ tree into the freshly materialized target -- of the `use:` set selection (coding_rules.md) only the
+# sets switched off with a reason, never work state (docs/ai/inbox/, docs/ai/work/, docs/project/ beyond the two
 # named sections). What does not fit (a group id the target has no match for) is named in the
 # inbox, never silently dropped. `--no-local` opts out.
 # ---------------------------------------------------------------------------
@@ -2032,30 +2032,14 @@ def _insert_after_mark(text: str, mark_name: str, new_lines: list[str]) -> tuple
     return text[:insert_at] + "\n\n" + "\n".join(new_lines) + text[insert_at:], True
 
 
-_SET_OFF_WITH_REASON = re.compile(r"^-\s*\[ \]\s*use:\s*(?P<path>\S+)\s+(?:—|–|--)\s*(?P<reason>\S.*?)\s*$")
-
-
-def _sets_switched_off_with_reason(text: str) -> dict[str, str]:
-    """Normalized set path -> reason, for every `- [ ] use: <path> — <reason>` line of a project file's
-    text. Read from the raw lines on purpose: `rules.py` does not record a reason on a set line. A set
-    switched off without a reason is a stack default (every set the stack does not need starts
-    unchecked) and is never carried -- the same rule as for a group."""
-    found: dict[str, str] = {}
-    for line in text.splitlines():
-        match = _SET_OFF_WITH_REASON.match(line)
-        if match:
-            found[rules.normalize_set_path(match.group("path"))] = match.group("reason")
-    return found
-
-
 def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bool,
                       dest_was_preexisting: bool, notes: list[str],
                       carry: frozenset[str] = frozenset(CARRY_CATEGORIES)) -> Optional[str]:
     """One area (docs/ai/rules.md or docs/project/coding_rules.md): copy the source project's
     switched-off groups (with their reason) and its '## Overrides'/'## Own rules' sections into
     the target's freshly materialized file of the same area -- only for a group id the target file
-    already carries a checkbox line for (a set the target never enabled has none, so the `use:`
-    selection itself is never touched here). Never overwrites a target file that already has
+    already carries a checkbox line for; of the `use:` selection only a set switched off with a
+    reason is carried (switched off in the target, with that reason). Never overwrites a target file that already has
     overrides/own rules of its own, and never touches one at all if it pre-dates this run
     (`dest_was_preexisting`): docking `--target` onto an already set-up project whose file
     just has no '## Overrides'/'## Own rules' section yet still means a person made those checkbox
@@ -2090,7 +2074,11 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
         head_copy = tmp_dir / source_path.name
         head_copy.write_bytes(head_bytes)
         source_project = rules.parse_project_file(head_copy, area)
-    source_sets_off = _sets_switched_off_with_reason(head_bytes.decode("utf-8", errors="replace"))         if "exceptions" in carry and area.name == "coding" else {}
+    # Every unchecked set line with a reason is carried; one without a reason is a stack default (the sets the
+    # stack does not need start unchecked) and is not -- the same rule as for a group.
+    source_sets_off = {
+        pset.path: pset.reason for pset in source_project.sets if not pset.enabled and pset.reason
+    } if "exceptions" in carry and area.name == "coding" else {}
     has_deviation = (
         bool(source_sets_off) or
         ("overrides" in carry and source_project.overrides) or ("rules" in carry and source_project.own_rules)
@@ -2131,18 +2119,14 @@ def _carry_over_area(root: Path, source_root: Path, area: "rules.Area", plan: bo
         if tset is None:
             sets_missing.append(set_path)
             continue
-        if not tset.enabled:
-            continue  # off in the target already
         idx = tset.line - 1
+        if not tset.enabled:  # off in the target already: only the reason is carried
+            if rules.RE_USE.match(lines[idx].split("]", 1)[1].strip()).group("reason") is None:
+                lines[idx] = lines[idx].rstrip() + f" — {reason}"
+            continue
         lines[idx] = rules.coding_set_line(re.sub(r"\[[xX]\]", "[ ]", lines[idx], count=1))  # bare path, no import
-        with_reason = lines[idx].rstrip() + f" — {reason}"
-        # the reason goes on the line only where rules.py reads such a line; else it goes to the note
-        if re.match(r"^-\s*\[ \]\s*(.*)$", with_reason) and rules.RE_USE.match(
-                re.match(r"^-\s*\[ \]\s*(.*)$", with_reason).group(1)):
-            lines[idx] = with_reason
-        else:
-            notes.append(f"Rule set {set_path} is switched off in the source project ({reason}); switched off "
-                         f"here too, the reason has no place on a set line: {_relative_label(dest_path, root)}.")
+        if rules.RE_USE.match(lines[idx].split("]", 1)[1].strip()).group("reason") is None:
+            lines[idx] = lines[idx].rstrip() + f" — {reason}"
         sets_toggled.append(set_path)
 
     missing = sorted(gid for gid in source_group_state if gid not in target_group_ids) if "exceptions" in carry else []

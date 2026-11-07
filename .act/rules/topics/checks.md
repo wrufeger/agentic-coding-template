@@ -14,6 +14,25 @@ Checked mechanically by `secret-read` (`docs/ai/config.md` § Checks); the owner
 or `off` there, or for one run with `ACT_SECRET_READ` in the environment. Limit: a program that
 opens the file itself (`python script.py`, `docker run --env-file`) is invisible to the check.
 
+When the check itself fails — its module cannot be imported, or it raises while it looks at a call — it fails
+closed for the shell: Bash and PowerShell are refused and the failure is named on standard error, so that a broken
+check does not let `cat .env` through. Read, Write, Edit and the other tools stay possible, so the cause can be
+looked into (and a Read of `.env` is not stopped while the check is broken); the owner starts
+`.act/scripts/doctor.py` with the `!` prefix, because the shell is refused until the check works again. A
+module that cannot be imported is refused before its switch is read, so `off` does not help then; a module file that
+is missing counts as the same failure (a guard is refused, any other missing check is reported as skipped). `outside-root`
+is treated the same way. Every other check fails open (a broken convenience check must not stop all work), but
+no failure is silent: `[act] check <name> skipped (...)` goes to standard error as before, and a call that goes
+ahead carries the failure on, as a `systemMessage` of the PreToolUse output (for the human) and as the
+`additionalContext` of the same call's PostToolUse (for the model; the text waits in
+`.act-local/check-failures/<tool_use_id>.txt` in between, is removed when delivered, a text older than a day is
+removed the next time one is queued, and nothing is written or read through a link). A PostToolUse note that fails is reported the same way, a failed
+model-switch report as a `systemMessage` of Stop and SubagentStop. Assumptions, not verified: that Claude Code
+displays the `systemMessage` of a PreToolUse or PostToolUse hook to the human (a live probe on 2026-11-07, Claude
+Code 2.1.319, showed that the `systemMessage` of Stop and SubagentStop is recorded in the transcript but not
+displayed, so the model-switch report may be seen only there). That PostToolUse `additionalContext` reaches the
+model, a worker included, was shown by a live probe on that version.
+
 ## `R-safe-no-secret-diff` — Check the diff before every commit
 
 Checks: secret-scan.
@@ -68,13 +87,42 @@ neighbouring repository, another project, the home directory — only on the own
 case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
 workaround. Applies to every role and tool.
 
+A program folder outside the project and outside the home directory (the system browser of a browser check,
+a compiler, an SDK) has an entry form of its own: the absolute path, a drive path in either slash style
+(`D:/Program Files/Browser`, `D:\Program Files\Browser`) or a POSIX one (`/opt/browser`). Such an entry is
+read-only, with or without `(read)` behind it: it is meant for reading and starting a program below it, not for
+writing; the block message names this form. Like every entry it needs the owner's word for this folder. What the
+check does with it: the path is judged as it is resolved (`..` cut out), so a sibling folder that shares the name
+prefix (`Browser-old` next to `Browser`), the parent folder and a path that leaves the folder through `..` stay
+refused.
+Read-only means: a write the shared write-target scanners recognize (a redirect, `tee`, a copy into the folder,
+Write, Edit, `Set-Content` …) is refused there. It is no stronger than a `(read)` entry, and as at the state before
+this form existed, a write those scanners do not see passes: for example a `cd` or `pushd` into the folder followed
+by a write with a relative path, a clone or a download whose target is a plain argument, a path handed to another
+program through `xargs`, the target of `robocopy` or of a PowerShell move, `perl -pi`, `chmod`, code inside an
+interpreter's `-c`/`-e` argument, a write after more than 150 chained commands. These gaps are shared with the
+other checks that use the same scanners and are not closed by this entry form.
+Further limits. An absolute entry with a glob character is not this form: it keeps the glob behavior (it opens
+what its pattern hits, and it is writable unless `(read)` stands behind it, as before). An entry that is a drive
+root, `/`, or a folder above the project or the home directory opens reading of everything below it, other
+projects and the home directory's folders included; name the program folder itself. A `file:///` or
+`//localhost/C$/` spelling is not recognized as absolute (as before). "Starting" is what the check sees of a
+program: the program word of a command is no path to it (as before), so `"D:/Program Files/Browser/browser.exe"
+--headless` needs no entry; what does need one are the words around it — a `cd` into the folder, a path argument,
+a wrapper such as `xvfb-run`, `Start-Process`, `bash -c`. What the started program writes itself (a profile
+folder, a log) is invisible to the check, as for any program. An entry that is not exactly the program-folder form
+behaves as before: a relative path, `~`, an entry with a glob character, a UNC share, and an absolute path inside
+the project or inside the home directory (writable, as always). Note: an absolute entry outside both used to be
+accepted without being documented and then allowed writing; it is read-only now for the writes the scanners see.
+
 `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix, which opens
 the target folder for 24 hours or until `--abort` (also past `--finish`) through a marker under
 `.act-local/outside-allow/` that nobody but the adopt scripts writes; `--apply` only refreshes a
 valid marker for the same target. Checked mechanically by `outside-root` (`docs/ai/config.md` §
 Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in
 the environment. Limits: the shell check is best effort, a program that opens files itself (`python
-script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked. A word
+script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked. When the
+check itself fails, Bash and PowerShell are refused (see `R-safe-no-secret-read` above). A word
 of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a
 heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused. A single `/` is
 read the same way when it is a shell word of its own (`ls /`, `find / -name x`, `du -sh /`), in Bash and in
@@ -251,6 +299,19 @@ What happens when a file really changed (its hash differs; for `.git/config` a c
   rest of the file stays as git left it. The changed version is kept as a file under
   `.act-local/protected-watch/kept/` (30 days). The worker gets the report as `additionalContext`, the human a
   `systemMessage` that starts with the warning sign, and the orchestrator a note with its next tool call.
+- **One exception in a worker's call, key `block`:** a change of the project's `.claude/settings.local.json` that only
+  adds entries to the list `permissions.allow` is reported and never put back — it is Claude Code writing the
+  owner's "always allow" answer, which arrives during the worker's call. Exactly this form qualifies: the file
+  parses as strict JSON before and after (a repeated key, `NaN`, a byte order mark or an unparsable file do not),
+  every key outside `permissions` and every key of `permissions` except `allow` is equal, `allow` is a list of
+  strings in which every earlier entry is still there (as often as before, in any order) and at least one entry is
+  new. A missing `permissions` or `allow` in the old file counts as empty. Everything else in that file is put back
+  as above: a hook, `env`, `permissions.deny`, `defaultMode` or any other key, a removed or altered entry, a
+  reordering or reformatting that adds nothing, a file that did not exist before, one that does not parse, one that
+  became a link; the same addition in `.claude/settings.json` too. The report names the added entries and says
+  "not put back"; the previous version is kept under `kept/`, the changed file becomes the reference, and the
+  orchestrator gets a note. The judgement reads two copies the watcher itself holds (the snapshot's copy and the
+  file as read) and writes nothing, so it adds no place the watcher acts below.
 - **The orchestrator's call**, or key `warn`: reported only, to the model and to the human, with the commands that
   put the previous version back (the previous version is kept under `kept/` so the command stays valid; the
   assistant's own writes to hooks and git config are refused, so the human runs them). The new state becomes the
@@ -276,7 +337,11 @@ Limits:
   `.claude/settings.local.json` when a permission is granted, another session in the same project (it shares the
   snapshot) — is attributed to the next call. A worker call that ends just after the orchestrator changed a
   protected file is attributed to the worker and the change is put back: the kept copy and the command in the
-  message undo that. The same holds for a permission the human grants in a prompt during a worker's call.
+  message undo that. A permission the human grants in a prompt during a worker's call is written to
+  `.claude/settings.local.json` by Claude Code: as a pure addition to `permissions.allow` it is only reported
+  (see above), any other change there is put back. An entry a worker adds to that list on its own is only
+  reported too: the report names the entries, so it is visible, but the file does not tell it from the
+  owner's answer.
 - Stat first: a write that leaves size and modification time as they were is not seen (a file modified within two
   seconds before the snapshot is hashed once more at the next call, so a write in the same clock tick is not
   missed). A file over 2 MB is hashed but has no copy and cannot be restored. At most 4000 files are listed.
@@ -488,8 +553,12 @@ shell target, against the directory the call runs in (a `cd` before it counts), 
 `/tmp` mapping, no brace or tilde expansion, and no Git-Bash drive form - on Windows a literal such as
 `/d/work/x` is the folder `d` on the drive of the directory the call runs in, as the interpreter sees it,
 not drive D. A literal holding `$` or a backtick counts as unknown and is refused. The refusal says to write the file with
-Write/Edit; code that only reads - no write call - may name any path, so read outside the scope in a call
-of its own.
+Write/Edit; when the literal was found in the body of a heredoc (or a PowerShell here-string) it adds the way out for a
+program fed that way, for the case that the code only reads that path: write the helper script as a file inside the
+write scope and run it (`python <file>`), or use Write/Edit instead of a heredoc; a file outside the scope is never
+written, not through a script either (`R-role-worker`) (left out for a read-only assignment, which has no place in the scope to write a
+script). Only the wording differs; which calls are refused does not change. Code that only reads - no write call -
+may name any path, so read outside the scope in a call of its own.
 
 A literal that is only a switch of a Windows tool (`icacls`, `cacls`, `robocopy`, `xcopy`, `takeown`,
 `attrib`, `cmd`; `/deny`, `/grant:r`, `/MIR`, `/R:3`, `/c`) is no path in one place only: among the

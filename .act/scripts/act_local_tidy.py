@@ -93,6 +93,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "advisories-seen.json", "advisories-ack.json",             # advisory.py: todos/warnings shown, acknowledgements
     "update-tmp",               # update.py
     "pyc",                      # hooks/dispatch.py: compiled-module cache (sys.pycache_prefix)
+    "check-failures",           # hooks/dispatch.py: failure texts of skipped checks, queued for PostToolUse
     "template-dev",             # marker: this checkout builds the template (init.py refuses to convert it)
     "identity.json", "cache.json", "last-applied.json",        # actlib.py
     "tips.json", "usage.json", "context-hint.json",            # hooks/checks/tips.py, usage.py, context_hint.py
