@@ -246,9 +246,10 @@ def observe(event: str, payload: dict) -> None:
         return
 
     if event == "Notification":
-        # No live payload sample for this event was available while this was built (see the
-        # accompanying report) — field names are carried over from the template's predecessor
-        # script (.claude/scripts/ai-log.py) rather than confirmed against a real capture.
+        # Confirmed by a live capture (Claude Code 2.1.319, 2026-11-07): a permission prompt
+        # sends `notification_type: "permission_prompt"` and `message: "Claude needs your
+        # permission"`, with no `title` and no tool name or command. `type` and `matcher` stay
+        # as fallbacks for other tools and older versions.
         kind = _first_str(payload, ("notification_type", "type", "matcher")) or ""
         message = payload.get("message", "")
         if kind == "permission_prompt" or re.search(r"permission", kind, re.IGNORECASE):

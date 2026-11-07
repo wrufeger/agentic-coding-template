@@ -74,7 +74,7 @@
   "hooks/checks/danger_scan.py": "8b0a6bbbf824f96395815fe2449338b8c81196b958ec2a739e031d997614ab66",
   "hooks/checks/deps_scan.py": "5f86eb5294213a4c271b192032a15ef316abfbb0793ddccb7bc62be70cda1c2c",
   "hooks/checks/encoding_hint.py": "acae10da35a6bc6e4510154dc00c8774583a9eae0aed95c9ca19302a4f574dd8",
-  "hooks/checks/event_log.py": "d55142eee0e8bdce20589f89e63fcafbf31f3c324e4ba34f67306cf34ba307b5",
+  "hooks/checks/event_log.py": "bc29f97067d6966e1c9ef25690b3563b4a7e47b73024ee90ca3af2e2ba351eaa",
   "hooks/checks/git_discard.py": "31bf748cb28691241c9e1150bac7da1ae777c1abfd6dd54f8d4c10a335accb14",
   "hooks/checks/git_metadata_guard.py": "111c11d8723098bf397f9cf0e2a527dcc3ac8ca3c0f442b851bf80940c3e60a9",
   "hooks/checks/git_reset_hard.py": "acafc12be7d6ccc277f12453e6da2d875aaa4c63018faa7e655a9949cbb2ef03",
