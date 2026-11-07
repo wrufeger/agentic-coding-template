@@ -30,7 +30,8 @@ Say which of the three applies when you start, so the human sees where the text 
       (timeout, unparsable output, a Semgrep error) — treat this like a finding: it blocks the
       release the same as step 3.3 below, until fixed or explicitly accepted.
    2. Start a security pass of the `reviewer` role over the same changed files: `Tier: elevated ·
-      Estimate: ~<n> min · ~<n> tkn fresh · ~<n> tkn cache · Cap: <n> · Write scope: none` (`R-cost-delegate`).
+      Estimate: ~<n> min · ~<n> tkn fresh · ~<n> tkn cache · Cap: <n>`, then `Write scope: none` on a line
+      of its own, since the check reads that line only at a line start (`R-cost-delegate`).
    3. A finding of severity ERROR/high (from either step) blocks the release until it is either
       fixed, or explicitly accepted with a reason in `docs/ai/local/security-accepted.md` — one
       line per accepted Semgrep finding, `<rule-id> <path>: <reason>` (advisory ids from the

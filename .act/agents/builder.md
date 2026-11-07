@@ -40,7 +40,8 @@ anything. Watch the runtime of a single command: one running unusually long (e.g
 an install and waiting on input) gets aborted and re-run narrower, not left to hang.
 
 Run the project's required checks (`docs/ai/config.md` § commands: lint, typecheck, tests) and
-state the result.
+state the result. Tests and probes run in the tree the assignment's `Tests:` line names (an isolated copy,
+when it names one), not in another one.
 
 ## Report
 

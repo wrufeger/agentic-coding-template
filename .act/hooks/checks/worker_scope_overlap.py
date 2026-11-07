@@ -9,8 +9,18 @@
 # Two workers running at the same time must not write into the same files, so a start whose scope
 # overlaps the scope of a worker that is still running is refused (or only reported, mode warn).
 #
-# Rules: `Write scope: none` never overlaps anything (read-only). A start without the line counts
-# as "everything" — it overlaps every scope except none. Two pattern lists overlap when one pair of
+# A test or probe run reads a tree and must not run next to a worker that writes in it, so an assignment
+# that runs tests also names the tree it reads as its own line `Tests: <glob>[, <glob> ...]` (same
+# patterns and normalization as `Write scope:`, see write_scope._parse_tests_scope); it is recorded in the
+# start's entry under "tests". A starting worker's `Tests:` patterns are compared with the `Write scope:` of
+# every running worker, and its `Write scope:` with the `Tests:` of every running worker, with the same
+# overlap test as below. Two `Tests:` lines never clash (two readers), and a worker's own `Tests:` against
+# its own `Write scope:` is no conflict (a worker is only compared with the others).
+#
+# Rules: `Write scope: none` never overlaps anything (read-only), a `Tests:` line included. A start without
+# the line counts as "everything" — it overlaps every scope except none; against a `Tests:` line it overlaps
+# that line too (it may write anywhere), and a running worker without the line likewise overlaps a starting
+# `Tests:` line. Two pattern lists overlap when one pair of
 # patterns may match the same path. An exact path is compared with the other pattern by matching it
 # (write_scope._matches_scope). Two glob patterns are compared as the matching reads them — `*` any run
 # of characters, `/` included, `?` any one character, every other character (a `[` too) itself — and
@@ -59,9 +69,9 @@ from .common import _WORKER_TOOL_NAMES, _check_mode
 from .shell_targets import _is_absolute_target
 from .write_scope import (
     _SAFE_ID_RE,
+    _assignment_scope,
     _entry_has_ended,
     _matches_scope,
-    _parse_write_scope,
     _read_json_object,
     _record_worker_scope,
     _split_glob_prefix,
@@ -71,7 +81,7 @@ from .write_scope import (
 )
 
 __all__ = [
-    "_OVERLAP_ENTRY_TTL", "_entry_time", "_patterns_overlap", "_scopes_overlap", "_remove_worker_scope",
+    "_OVERLAP_ENTRY_TTL", "_entry_time", "_patterns_overlap", "_scopes_overlap", "_tests_overlap", "_remove_worker_scope",
     "_mark_worker_scope", "check_worker_scope_overlap", "observe",
 ]
 
@@ -159,6 +169,29 @@ def _scopes_overlap(new: dict, other: dict) -> Optional[tuple[str, str]]:
     return None
 
 
+def _write_line(scope: dict, shown: str) -> str:
+    """How a message names the `Write scope:` of a scope: its line with the matching pattern, or the missing line."""
+    if scope.get("mode") == "unrestricted":
+        return "no `Write scope:` line (counts as everything)"
+    return f"`Write scope: {shown}`"
+
+
+def _tests_overlap(reader: dict, writer: dict) -> Optional[tuple[str, str]]:
+    """None if the tree `reader` runs tests in (its `Tests:` patterns) cannot meet what `writer` writes (its
+    scope), else a pair of readable descriptions (a Tests pattern, the writer's scope). A writer without a
+    `Write scope:` line may write anywhere; `none` and an unusable scope write nothing."""
+    tests = [pattern for pattern in reader.get("tests") or [] if isinstance(pattern, str)]
+    if not tests or writer.get("mode") not in ("patterns", "unrestricted"):
+        return None
+    if writer.get("mode") == "unrestricted":
+        return tests[0], _describe(writer)
+    for pattern in tests:
+        for existing in writer.get("patterns") or []:
+            if isinstance(existing, str) and _patterns_overlap(pattern, existing):
+                return pattern, existing
+    return None
+
+
 def _entry_time(entry: dict) -> Optional[datetime]:
     """The entry's timestamp as an aware datetime (a naive one is read as UTC), else None."""
     ts = entry.get("ts")
@@ -209,7 +242,7 @@ def check_worker_scope_overlap(payload: dict) -> int:
     except RuntimeError:
         return 0
 
-    new = _parse_write_scope(prompt, root) or {"mode": "unrestricted"}
+    new = _assignment_scope(prompt, root)
     _record_worker_scope(root, tool_use_id, new)  # claim first, then look at the others
     own_file = _worker_scope_file(root, tool_use_id)
     own_entry = _read_json_object(own_file) if own_file is not None else None
@@ -228,18 +261,42 @@ def check_worker_scope_overlap(payload: dict) -> int:
         other_when = _entry_time(entry)
         if other_when is None or (other_when, path.stem) > own_key:
             continue  # started after this one: that start yields, not this one
-        clash = _scopes_overlap(new, entry)
-        if clash is None:
-            continue
-        message = (
-            f"[act] write scope overlaps a running worker's: {clash[0]} vs. {clash[1]} "
-            f"(worker {path.stem}) — parallel workers need separate write scopes (R-cost-delegate): give "
-            "each assignment its own line `Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: "
-            "src/api/**` (syntax: .act/rules/topics/checks.md); or merge both tasks into one assignment "
-            "with one write scope; or start this one after the other has ended. If that worker is no longer "
-            "wanted, stop it with TaskStop: that frees its scope at once. A worker that crashed without any "
-            f"stop frees it after {_OVERLAP_ENTRY_TTL}."
+        free = (
+            "If that worker is no longer wanted, stop it with TaskStop: that frees it at once. A worker that "
+            f"crashed without any stop frees it after {_OVERLAP_ENTRY_TTL}."
         )
+        clash = _scopes_overlap(new, entry)
+        reads = _tests_overlap(new, entry)
+        writes = None if reads else _tests_overlap(entry, new)
+        if clash is not None:
+            message = (
+                f"[act] write scope overlaps a running worker's: {clash[0]} vs. {clash[1]} "
+                f"(worker {path.stem}) — parallel workers need separate write scopes (R-cost-delegate): give "
+                "each assignment its own line `Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: "
+                "src/api/**` (syntax: .act/rules/topics/checks.md); or merge both tasks into one assignment "
+                "with one write scope; or start this one after the other has ended. If that worker is no longer "
+                "wanted, stop it with TaskStop: that frees its scope at once. A worker that crashed without any "
+                f"stop frees it after {_OVERLAP_ENTRY_TTL}."
+            )
+        elif reads is not None:
+            message = (
+                f"[act] the tree this assignment runs tests in is written by a running worker: `Tests: "
+                f"{reads[0]}` vs. that worker's {_write_line(entry, reads[1])} (worker {path.stem}) — a test or "
+                "probe run never runs against a tree a worker writes in at the same time (R-cost-delegate): "
+                "start this one after that worker has ended, or test an isolated copy (a clone or worktree) and "
+                "name the copy in `Tests:` (syntax: .act/rules/topics/checks.md). " + free
+            )
+        elif writes is not None:
+            message = (
+                f"[act] a running worker runs tests in the tree this assignment writes: "
+                f"{_write_line(new, writes[1])} vs. that worker's `Tests: {writes[0]}` (worker {path.stem}) — a test or "
+                "probe run never runs against a tree a worker writes in at the same time (R-cost-delegate): "
+                "start this one after that test run has ended, or let that worker test an isolated copy (a "
+                "clone or worktree) and name the copy in its `Tests:` line (syntax: .act/rules/topics/checks.md). "
+                + free
+            )
+        else:
+            continue
         if mode == "warn":
             print(message)
             return 0

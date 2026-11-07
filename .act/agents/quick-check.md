@@ -10,7 +10,7 @@ Runs a fixed set of read-only lookups and returns the raw result, without judgme
 - `wc -l` — line counts.
 - A named file's freshness/status marker via `grep -n`, where the project's docs use one.
 - A test run's exit code and last lines (command comes from the assignment, see
-  `docs/ai/config.md` § commands).
+  `docs/ai/config.md` § commands), in the tree its `Tests:` line names.
 
 ## Rules
 

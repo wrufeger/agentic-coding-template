@@ -4,7 +4,7 @@ summary: when to delegate, delegation tiers and caps, waiting on workers, amendi
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
-summary: delegate where a handover pays off (more than three files or an unknown spot, test runs, material past ~20k tokens), template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments, long work split into parallel parts, overlapping tasks joined
+summary: delegate where a handover pays off (more than three files or an unknown spot, test runs, material past ~20k tokens), template roles before the tool's own agents; tier, estimate in minutes and tkn fresh/cache, a mechanically checked cap, small assignments, long work split into parallel parts, overlapping tasks joined, no test run beside a worker writing in the tested tree
 
 A handover costs a worker's fresh start and loses context, so delegate only where it pays off:
 independent parts that run in parallel, a check that should not share the implementation's
@@ -38,6 +38,15 @@ system temp directory and its scratchpad included, so an assignment that needs t
 
 Workers running at the same time get separate write scopes, otherwise they run one after the other
 (`worker-scope-overlap`, `docs/ai/config.md` § Checks).
+
+An assignment that runs tests or probes also names the tree it reads as its own line `Tests: <glob>[, <glob>
+...]` (same patterns as `Write scope:`). A test or probe run — the full suite, a worker's own probes, a
+review that runs something — never runs against a tree a worker writes in at the same time: the full suite
+runs once after the reviews are accepted, during rework only the rework's own tests, and a run still going
+when rework starts or another worker begins writing there is stopped and started again on the new state.
+Parallel builders that must test while others build each test an isolated copy (clone or worktree).
+`worker-scope-overlap` refuses a start whose `Tests:` meets a running worker's `Write scope:`, or the
+reverse; the rest is the orchestrator's to keep. Details: `topics/checks.md`.
 
 Work expected to run longer than about five minutes is first checked for independent parts — test
 and probe runs, case catalogs, assignments over separate files, a review per checked spot. If it

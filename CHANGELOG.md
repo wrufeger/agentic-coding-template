@@ -11,6 +11,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- An assignment that runs tests or probes names the tree it reads as its own line `Tests: <glob>[, <glob> ...]`
+  (same patterns as `Write scope:`). `worker-scope-overlap` refuses a worker start whose `Tests:` tree is written
+  by a running worker, and a writing worker whose `Write scope:` meets a running worker's `Tests:` tree; the
+  message names the other worker's line and the way out (wait, or test an isolated copy). A word on the line that
+  is no plausible path is ignored, a pattern outside the project is dropped on its own.
 - `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
 
 - A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report reaches the assistant as a note with its next tool call. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.
@@ -128,6 +133,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `R-cost-delegate`: a test or probe run never runs against a tree a worker writes in at the same time. The full
+  suite runs once after the reviews are accepted, rework runs only its own tests, and a run still going when
+  rework starts is restarted on the new state; parallel builders test isolated copies.
 - `secret-read` and `outside-root` now fail closed for Bash and PowerShell: if the check cannot be imported or raises while it looks at such a call, the call is refused and the failure is named, instead of letting the command through unchecked. Read, Write, Edit and the other tools stay possible, so the cause can be looked into. A check whose module file is missing counts as a failed check, like one that cannot be imported: the guards are refused, any other missing check, note or model-switch report is reported instead of being skipped silently.
 
 - An absolute `outside-root-allow` entry outside the project and the home directory is treated as read-only now, like one with `(read)`: the writes `outside-root` recognizes are refused there; before, such an entry (not documented) also allowed those writes. Writes the check does not recognize pass as before. Relative entries, `~` entries, entries with a glob character (writable unless `(read)`) and absolute entries inside the project or the home directory behave as before.
@@ -251,6 +259,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `act-release` starts its security reviewer with `Write scope: none` on a line of its own; in the one-line
+  header before, the check did not read it and the reviewer ran without a write scope.
 - `rules.py` no longer drops a rule set line that has ` — reason` after the path (it was dropped with a format
   finding, so the set was missing from the effective rules).
 

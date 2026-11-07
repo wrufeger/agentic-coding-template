@@ -43,5 +43,5 @@ Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 Findings by severity first (`path:line`, symptom, evidence, fix status), then what was checked and
 found clean, then residual risks for the backlog, then the verdict (Task A) with its condition. Run the
-project's required checks (`docs/ai/config.md` § commands) at the end and name the result. ≤ 40
-lines.
+project's required checks (`docs/ai/config.md` § commands) at the end, in the tree the assignment's
+`Tests:` line names, and name the result. ≤ 40 lines.

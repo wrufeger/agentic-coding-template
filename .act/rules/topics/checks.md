@@ -648,6 +648,31 @@ worker.
 Limit: the restart of a continued worker is not checked against the scopes of the workers started
 meanwhile, so the orchestrator keeps those apart itself.
 
+**A test run beside a writer: the `Tests:` line.** A test or probe run reads the tree it tests, and a half-written
+file there fails the run without saying anything about the code. So no run — the full suite, a worker's own probes,
+a review that executes something — goes on while a worker writes in that tree, and no worker starts writing there
+while a run goes on. An assignment that runs tests names the tree as its own line `Tests: <glob>[, <glob> ...]`:
+the same patterns and normalization as `Write scope:` (project-root-relative, `/` as separator, a trailing `/` read
+as `/**`, a sibling checkout as `../name/**` when `additionalDirectories` lists it), on a line of its own with the
+same optional bullet, bold key and backticks. Each comma-separated word counts on its own: a word counts only if it
+has no white space and holds a `/` or a glob character (`*`, `?`, `[`), or names an existing path below the project
+root, so prose after the key (`Tests: run the suite`) is ignored; a word outside the project and the listed
+directories is dropped, the valid ones stay; `Tests: none`, or a line with no valid word left, is no `Tests:` line. `worker-scope-overlap` compares a starting worker's `Tests:` patterns with the
+`Write scope:` of every running worker, and its `Write scope:` with the `Tests:` of every running worker, with the
+overlap test above (`dir/**` also names `dir`, `*` crosses `/`). A running worker without a `Write scope:` line
+counts as writing everywhere, so a starting `Tests:` line meets it, and a start without the line meets every
+running `Tests:` line; `Write scope: none` writes nothing and never meets a `Tests:` line. Two `Tests:` lines never
+meet (two readers), and a worker's own `Tests:` against its own `Write scope:` is no conflict. The `Tests:`
+patterns are stored with the worker's entry under `.act-local/worker-scopes/` and freed with it (a stop, a failed
+start, the three hours). The refusal names the other worker's line; the way out is to wait until that worker has
+ended (or stop it with `TaskStop`), or to test an isolated copy — a clone or a worktree — and name the copy in
+`Tests:`.
+
+What the check cannot see stays with the orchestrator: a run does not start before the reviews are accepted (the
+full suite runs once on that state, during rework only the rework's own tests), and a run still going when rework
+starts, or when another worker begins writing in the tested tree, is stopped and started again on the new state.
+Parallel builders that must test while others build each work in an isolated copy of their own.
+
 Whoever stops a worker and assigns it anew (`R-cost-amend`) needs nothing more than the stop (`TaskStop`).
 
 The orchestrator starts it only after that worker has ended — only a rule, since a hook can refuse a

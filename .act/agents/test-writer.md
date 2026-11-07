@@ -23,6 +23,7 @@ proves them with a test run. Applies `R-role-worker`.
 
 ## Report
 
-Run the tests and show the result (evidence, no success claim without output). ≤ 40 lines: tests
+Run the tests in the tree the assignment's `Tests:` line names and show the result (evidence, no success
+claim without output). ≤ 40 lines: tests
 written per file with a short reason, edge cases covered, real bugs found (kept separate from the
 tests that found them), assumptions, what's open.

@@ -88,9 +88,9 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE",
+    "_WORKER_SCOPES_DIRNAME", "_SCOPE_ENTRY_TTL", "_SAFE_ID_RE", "_SCOPE_LINE_RE", "_TESTS_LINE_RE",
     "_strip_backticks", "_split_glob_prefix", "_root_relative_pattern", "_external_directories",
-    "_external_pattern", "_scope_pattern", "_parse_write_scope", "_worker_scopes_dir",
+    "_external_pattern", "_scope_pattern", "_parse_write_scope", "_parse_pattern_list", "_parse_tests_scope", "_assignment_scope", "_worker_scopes_dir",
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_scope_file_is_prunable",
     "_prune_worker_scope_files", "_store_worker_scope_entry", "_entry_has_ended",
     "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
@@ -125,6 +125,14 @@ _WORKFLOW_SCAN_LINES = 5  # records at the top of a workflow transcript searched
 # (impossible) empty pattern list — see _parse_write_scope.
 _SCOPE_LINE_RE = re.compile(
     r"^[ \t]*(?:[-*]\s+)?(?:\*\*|__)?Write scope(?:\*\*|__)?:(?:\*\*|__)?\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# "Tests: <patterns>" — the tree an assignment that runs tests or probes reads, as its own line in the
+# same shapes as the `Write scope:` line (bullet, bold key, backticks, trailing "/"). It is bookkeeping for
+# worker_scope_overlap only: no write is ever judged by it.
+_TESTS_LINE_RE = re.compile(
+    r"^[ \t]*(?:[-*]\s+)?(?:\*\*|__)?Tests(?:\*\*|__)?:(?:\*\*|__)?\s*(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -294,7 +302,13 @@ def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dic
     match = _SCOPE_LINE_RE.search(prompt)
     if not match:
         return None
-    raw = match.group(1).strip()
+    return _parse_pattern_list(match.group(1), root)
+
+
+def _parse_pattern_list(text: str, root: Optional[Path]) -> Optional[dict]:
+    """The pattern list of one scope line (the text after its key), read as _parse_write_scope documents:
+    None for an empty list, else {"mode": "none"}, {"mode": "patterns", ...} or {"mode": "error", ...}."""
+    raw = text.strip()
     parts = [_strip_backticks(p.strip()) for p in raw.split(",")]
     parts = [p for p in parts if p]
     if not parts:
@@ -315,6 +329,59 @@ def _parse_write_scope(prompt: str, root: Optional[Path] = None) -> Optional[dic
             pattern += "/**"
         patterns.append(pattern)
     return {"mode": "patterns", "patterns": patterns}
+
+
+def _plausible_tests_pattern(pattern: str, root: Optional[Path]) -> bool:
+    """A word of a `Tests:` line counts as a pattern only if it looks like a path: it holds no white space
+    and has a `/` or a glob character (`*`, `?`, `[`), or it names an existing path below the project root.
+    Prose after the key (`Tests: run the suite`, `Tests: python tests/run.py`) is not a tree."""
+    if pattern.lower() == "none":
+        return False
+    if not any(char.isspace() for char in pattern) and any(char in pattern for char in "/*?["):
+        return True
+    if root is None:
+        return False
+    try:
+        return (root / pattern).exists()
+    except (OSError, ValueError):
+        return False
+
+
+def _parse_tests_scope(prompt: str, root: Optional[Path] = None) -> list[str]:
+    """The patterns of the first `Tests: ...` line of an assignment prompt, normalized like `Write scope:`
+    patterns (see _parse_write_scope). Each comma-separated word is judged on its own: one that is no
+    plausible path (_plausible_tests_pattern) or lies outside the project and its additionalDirectories is
+    dropped and the others are kept. [] if there is no such line or nothing valid remains (the line then
+    counts as absent)."""
+    match = _TESTS_LINE_RE.search(prompt)
+    if not match:
+        return []
+    patterns: list[str] = []
+    for part in match.group(1).split(","):
+        pattern = _strip_backticks(part.strip()).replace("\\", "/")
+        if not pattern or not _plausible_tests_pattern(pattern, root):
+            continue
+        trailing_slash = pattern.endswith("/")
+        if trailing_slash:
+            pattern = pattern[:-1]
+        if root is not None:
+            pattern, error = _scope_pattern(pattern, root)
+            if error:
+                continue
+        if trailing_slash:
+            pattern += "/**"
+        patterns.append(pattern)
+    return patterns
+
+
+def _assignment_scope(prompt: str, root: Optional[Path] = None) -> dict:
+    """What an Agent/Task start records for its worker: the `Write scope:` scope (unrestricted without
+    the line) and, when the assignment has a `Tests:` line, its patterns under "tests"."""
+    scope = _parse_write_scope(prompt, root) or {"mode": "unrestricted"}
+    tests = _parse_tests_scope(prompt, root)
+    if tests:
+        scope = dict(scope, tests=tests)
+    return scope
 
 
 def _worker_scopes_dir(root: Path) -> Path:
@@ -1036,7 +1103,7 @@ def check_worker_write_scope(payload: dict) -> int:
             tool_use_id = payload.get("tool_use_id")
             prompt = tool_input.get("prompt")
             if isinstance(tool_use_id, str) and tool_use_id and isinstance(prompt, str):
-                scope = _parse_write_scope(prompt, root) or {"mode": "unrestricted"}
+                scope = _assignment_scope(prompt, root)
                 _record_worker_scope(root, tool_use_id, scope)
         return 0
 
