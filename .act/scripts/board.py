@@ -988,6 +988,10 @@ def main(argv: list[str]) -> int:
         except ValueError as exc:
             print(f"board: --identity: {exc}; give a name with letters or digits (a-z, 0-9)", file=sys.stderr)
             return 2
+        blocked = actlib.link_problem(root, root / ".act-local" / "identity.json")
+        if blocked:
+            print(f"board: --identity: {data['identity']!r} was not stored: {blocked}", file=sys.stderr)
+            return 1
         print(f"board: identity {data['identity']!r} set for this checkout in .act-local/identity.json"
               + (f" (was {previous!r})" if previous and previous != data["identity"] else ""))
         if previous and previous != data["identity"]:
@@ -1118,7 +1122,11 @@ def main(argv: list[str]) -> int:
     )
 
     board_path = root / board_rel
-    actlib.write_text_lf(board_path, content)
+    local_blocked: list[str] = []  # why a write below .act-local was left out (a link, or a path leaving the project)
+    if board_rel.parts[0] == ".act-local" and not actlib.local_write_ok(root, board_path):
+        local_blocked.append(actlib.link_problem(root, board_path))
+    else:
+        actlib.write_text_lf(board_path, content)
 
     if versioned_name is not None:
         versioned_content = render_board(
@@ -1133,7 +1141,10 @@ def main(argv: list[str]) -> int:
     # then simply empty) — a fresh checkout still gets a file to read, "Nothing waiting.".
     view_filename = f"inbox-{sanitize_identity(my_identity)}.md"
     view_path = root / ".act-local" / view_filename
-    actlib.write_text_lf(view_path, render_inbox_view(view_entries, root))
+    if actlib.local_write_ok(root, view_path):
+        actlib.write_text_lf(view_path, render_inbox_view(view_entries, root))
+    elif actlib.link_problem(root, view_path) not in local_blocked:
+        local_blocked.append(actlib.link_problem(root, view_path))
 
     ledger_count = len(ledger_entries) if ledger_entries is not None else 0
     waiting_total = (
@@ -1141,10 +1152,15 @@ def main(argv: list[str]) -> int:
     )
     backlog_count = len(backlog_titles) if backlog_titles is not None else 0
     rel = board_path.relative_to(root).as_posix()
-    print(
-        f"board: wrote {rel} (mode={board_mode}, branch={branch_label}, ledger={ledger_count}, "
-        f"waiting={waiting_total}, tasks={task_count}, backlog={backlog_count})"
-    )
+    if board_rel.parts[0] == ".act-local" and local_blocked:
+        print(f"board: wrote nothing to {rel} ({local_blocked[0]})", file=sys.stderr)
+    else:
+        print(
+            f"board: wrote {rel} (mode={board_mode}, branch={branch_label}, ledger={ledger_count}, "
+            f"waiting={waiting_total}, tasks={task_count}, backlog={backlog_count})"
+        )
+    if local_blocked and board_rel.parts[0] != ".act-local":
+        print(f"board: wrote nothing below .act-local ({local_blocked[0]})", file=sys.stderr)
     if versioned_name is not None:
         print(f"board: wrote docs/ai/{versioned_name} (versioned, mode=shared)")
     return 0

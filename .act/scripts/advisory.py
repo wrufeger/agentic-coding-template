@@ -191,7 +191,7 @@ class SessionReport:
 @dataclass
 class RefreshResult:
     """Outcome of refresh(): `status` is one of disabled, no-source, unreachable, unchanged, updated, cleared,
-    rejected, error."""
+    rejected, error, skipped (a link or junction on the way to the files)."""
     status: str
     detail: str = ""
     accepted: int = 0
@@ -457,8 +457,23 @@ def _read_state_file(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _local_blocked(root: Path) -> bool:
+    """True when .act-local, or the cache and store below it, is a link or junction or leaves the project:
+    this module then writes, fetches and removes nothing there (actlib.local_write_ok)."""
+    return not (actlib.local_write_ok(root, cache_path(root)) and actlib.local_write_ok(root, store_path(root) / "HEAD"))
+
+
+def _remove_cache(root: Path) -> None:
+    """Remove the cache file, never through a link."""
+    if actlib.local_write_ok(root, cache_path(root)):
+        cache_path(root).unlink(missing_ok=True)
+
+
 def _write_atomic(path: Path, data: bytes) -> bool:
-    """Write `data` to `path` through a temp file and a rename. False when it could not be written."""
+    """Write `data` to `path` through a temp file and a rename. False when it could not be written, also when
+    .act-local (the folder this module keeps its files in) is a link or junction or leaves the project."""
+    if path.parent.name == ".act-local" and not actlib.local_write_ok(path.parent.parent, path):
+        return False
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -908,7 +923,7 @@ def _install(root: Path, data: bytes, ref_commit: str) -> RefreshResult:
     result = validate_document(data)
     if result.invalid:
         try:
-            cache_path(root).unlink(missing_ok=True)
+            _remove_cache(root)
         except OSError:
             pass
         _record(root, ref_commit, [], result.invalid)
@@ -919,7 +934,7 @@ def _install(root: Path, data: bytes, ref_commit: str) -> RefreshResult:
             return RefreshResult("error", "cannot write the cache")
     else:
         try:
-            cache_path(root).unlink(missing_ok=True)
+            _remove_cache(root)
         except OSError:
             pass
     _record(root, ref_commit, result.rejected, None)
@@ -928,7 +943,7 @@ def _install(root: Path, data: bytes, ref_commit: str) -> RefreshResult:
 
 def _clear(root: Path) -> RefreshResult:
     try:
-        cache_path(root).unlink(missing_ok=True)
+        _remove_cache(root)
     except OSError:
         pass
     _record(root, None, [], None)
@@ -947,6 +962,8 @@ def _fetch_branch(root: Path, source: str) -> Optional[bytes]:
     file is larger than the limit (decided by `cat-file -s`, before the content is read)."""
     store = store_path(root)
     cwd = store.parent
+    if _local_blocked(root):
+        return None  # nothing is fetched into, created or removed behind a link
     cwd.mkdir(parents=True, exist_ok=True)
     git_dir = f"--git-dir={store}"  # explicit on every call: git never searches upward into the project's .git
     healthy = store.is_dir() and (run_git([git_dir, "rev-parse", "--git-dir"], cwd, project=root) or (1,))[0] == 0
@@ -1001,6 +1018,8 @@ def refresh(root: Path, ls_remote_fn: Optional[Callable[[str, list[str]], Option
 def _refresh(root: Path, ls_remote_fn: Optional[Callable[[str, list[str]], Optional[str]]]) -> RefreshResult:
     if not enabled(root):
         return RefreshResult("disabled", "advisory-check is off")
+    if _local_blocked(root):
+        return RefreshResult("skipped", ".act-local is a link or leaves the project")
     source = str(_lock_template(root).get("source") or "")
     if not source:
         return RefreshResult("no-source", "the lock records no template source")
@@ -1037,7 +1056,7 @@ def _refresh(root: Path, ls_remote_fn: Optional[Callable[[str, list[str]], Optio
         data = _fetch_branch(root, source)
     except ValueError as exc:
         try:
-            cache_path(root).unlink(missing_ok=True)
+            _remove_cache(root)
         except OSError:
             pass
         _record(root, commit, [], str(exc))

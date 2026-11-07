@@ -33,19 +33,38 @@
 #          Re-running apply() changes nothing (a numbered todo is not a candidate any more); plan()
 #          only reads, never writes.
 #
+#          Links: nothing is written through a symbolic link or a Windows junction. A linked docs/ai/inbox
+#          (or a link on the way to it), and a linked todo, are left as they are and named in one phrase
+#          ("skipped: ... is a link or junction"); a todo is numbered by replacing the file through an
+#          exclusively created temporary file in its own folder, then renaming it, and the lock file is not
+#          taken when .act-local is a link (the migration then goes on without a lock).
+#
 # Contract (.act/scripts/update.py step 8): plan(root) -> str, apply(root) -> (str, list[str]) of
 # project-relative paths (posix separators) touched — old and new path for every rename. Stdlib
 # only, no `actlib` import: a migration must not depend on the *project's* possibly-older copy of
-# it — the small pieces of entries.py's id scan and slugging this needs are reimplemented below.
+# it — the small pieces of entries.py's id scan and slugging this needs are reimplemented below, and
+# the link test lives in the sibling file _links.py (loaded below, shipped together with this file).
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
 import time
 from pathlib import Path
 from typing import Optional
+
+
+def _load_links():
+    """The sibling _links.py (link test, exclusive temporary file), loaded by file name."""
+    spec = importlib.util.spec_from_file_location("_act_migration_links", Path(__file__).with_name("_links.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_LINKS = _load_links()
 
 INBOX_DIR = "docs/ai/inbox"
 ARCHIVE_DIR = "docs/ai/work/archive"
@@ -55,6 +74,7 @@ RESERVED_FILES = ("docs/ai/work/reserved-ids.json", ".act-local/adopt/reserved-i
 LOCK_FILE = ".act-local/entries.lock"  # the lock entries.py's _EntriesLock takes
 LOCK_TIMEOUT = 5.0
 LOCK_STALE_AFTER = 30.0
+LIST_LIMIT = 10  # reasons listed in a description before "... and N more"
 CONFIG_FILE = "docs/ai/config.md"
 PREFIX = "U"
 INBOX_KINDS = ("question", "todo", "report", "note")
@@ -207,11 +227,11 @@ def _candidates(root: Path) -> list[tuple[bytes, Path, bytes]]:
     """(created, file, content) of every inbox todo without an id, in numbering order."""
     inbox = root / INBOX_DIR
     found: list[tuple[bytes, Path, bytes]] = []
-    if not inbox.is_dir():
+    if _LINKS.link_problem(root, inbox) or not inbox.is_dir():  # a linked inbox is not touched
         return found
     for path in inbox.glob("*.md"):
-        if not path.is_file() or _is_readme(path.name):
-            continue
+        if _LINKS.link_problem(root, path) or not path.is_file() or _is_readme(path.name):
+            continue  # a linked todo is not written through (named by _skipped)
         try:
             data = path.read_bytes()
         except OSError:
@@ -221,6 +241,21 @@ def _candidates(root: Path) -> list[tuple[bytes, Path, bytes]]:
         created = _CREATED_RE.search(_header(data))
         found.append((created.group(1) if created else b"", path, data))
     return sorted(found, key=lambda item: (item[0], item[1].name))
+
+
+def _skipped(root: Path) -> str:
+    """"skipped: <why>, ..." for a linked inbox or linked todos that are left alone, else "". Only names
+    what is a link; the content of a linked file is not read."""
+    inbox = root / INBOX_DIR
+    reasons = [_LINKS.link_problem(root, inbox)]
+    if not reasons[0]:
+        paths = [p for p in inbox.glob("*.md") if not _is_readme(p.name)] if inbox.is_dir() else []
+        reasons = _LINKS.list_links(root, paths)
+    reasons = [reason for reason in reasons if reason]
+    if not reasons:
+        return ""
+    shown = ", ".join(reasons[:LIST_LIMIT])
+    return "skipped: " + shown + (f", ... and {len(reasons) - LIST_LIMIT} more" if len(reasons) > LIST_LIMIT else "")
 
 
 def _plan_renames(root: Path) -> tuple[list[tuple[Path, Path, bytes, str]], list[str]]:
@@ -252,13 +287,17 @@ def plan(root: Path) -> str:
             return "mode is team, no todo without an id — nothing to do"
         return (f"mode is team: {count} todo(s) without an id stay as they are — "
                 "`entries.py assign` on the default branch numbers them")
-    if not renames and not conflicts:
-        return "no todo without an id — nothing to do"
     parts = [f"would number {len(renames)} todo(s): "
              + ", ".join(f"{src.name} -> {dest.name}" for src, dest, _data, _id in renames)] if renames else []
     if conflicts:
         parts.append("would skip " + ", ".join(conflicts))
-    return "; ".join(parts)
+    if _skipped(root):
+        parts.append(_skipped(root))
+    description = "; ".join(parts) if parts else "no todo without an id — nothing to do"
+    lock_problem = _LINKS.link_problem(root, root / LOCK_FILE)
+    if lock_problem:  # as apply() says it
+        description += f"; no lock taken ({lock_problem})"
+    return description
 
 
 class _Lock:
@@ -267,8 +306,11 @@ class _Lock:
     def __init__(self, root: Path) -> None:
         self.path = root / LOCK_FILE
         self.held = False
+        self.problem = _LINKS.link_problem(root, self.path)  # "" unless .act-local is a link
 
     def __enter__(self) -> "_Lock":
+        if self.problem:  # no lock file is created through a link: the migration goes on without one
+            return self
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + LOCK_TIMEOUT
         while True:
@@ -302,8 +344,11 @@ def apply(root: Path) -> tuple[str, list[str]]:
     old and new name of every rename)."""
     if _mode(root) == "team":
         return plan(root), []
-    with _Lock(root):
-        return _apply_solo(root)
+    with _Lock(root) as lock:
+        description, touched = _apply_solo(root)
+        if lock.problem:
+            description += f"; no lock taken ({lock.problem})"
+        return description, touched
 
 
 def _apply_solo(root: Path) -> tuple[str, list[str]]:
@@ -314,7 +359,10 @@ def _apply_solo(root: Path) -> tuple[str, list[str]]:
         if dest.exists():
             conflicts.append(f"{src.name} (target {dest.name} already exists)")
             continue  # planned a moment ago; re-check right before touching the filesystem
-        src.write_bytes(new_data)
+        if _LINKS.link_problem(root, src):
+            conflicts.append(f"{src.name} (is a link or junction)")
+            continue
+        _LINKS.write_replace(src, new_data)  # exclusive temporary file in the same folder, then os.replace
         src.rename(dest)
         touched.extend([src, dest])
         done.append(f"{src.name} -> {dest.name}")
@@ -323,5 +371,7 @@ def _apply_solo(root: Path) -> tuple[str, list[str]]:
         parts.append(f"numbered {len(done)} todo(s): " + ", ".join(done))
     if conflicts:
         parts.append("left alone: " + ", ".join(conflicts))
+    if _skipped(root):
+        parts.append(_skipped(root))
     description = "; ".join(parts) if parts else "no todo without an id — nothing to do"
     return description, [p.relative_to(root).as_posix() for p in touched]

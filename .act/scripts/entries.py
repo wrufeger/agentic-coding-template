@@ -679,6 +679,8 @@ class _EntriesLock:
         self._timeout = _LOCK_TIMEOUT if timeout is None else timeout
 
     def __enter__(self) -> "_EntriesLock":
+        if not actlib.local_write_ok(self.path.parent.parent, self.path):
+            return self  # .act-local is a link or junction: no lock is made through it (as on a timeout)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self._timeout
         while True:

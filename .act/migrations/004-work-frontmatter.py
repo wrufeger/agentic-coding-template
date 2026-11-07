@@ -27,8 +27,11 @@
 #              or the frontmatter would not be recognized), as migrations 002 and 003 do.
 #            - The header is found the way actlib.split_header finds it: lines end at LF only (a lone
 #              CR is no line break) and a field is matched with the readers' own pattern.
-#            - Each file is replaced through a temporary file and os.replace, so an abort never leaves
-#              a cut-off file; a symbolic link is left alone instead of being written through.
+#            - Each file is replaced through a temporary file (created exclusively, with a name of its own, in
+#              the file's folder) and os.replace, so an abort never leaves a cut-off file and the temporary
+#              file is gone on every path. Nothing is written through a symbolic link or a Windows junction:
+#              a linked entry, or a linked folder anywhere from docs/ai/work down to it, is left alone and
+#              named in the description ("skipped: ... is a link or junction", each link once).
 #            - Left byte-identical: a file that already starts with "---", a file without a header,
 #              the READMEs, the legacy archive and every other folder (docs/ai/inbox/ was handled by
 #              003). A file that is not valid UTF-8 is reported and left as it is.
@@ -39,15 +42,28 @@
 # Contract (.act/scripts/update.py step 8): plan(root) -> str, apply(root) -> (str, list[str]) of
 # project-relative paths (posix separators) touched. Stdlib only, no `actlib` import: a migration
 # must not depend on the *project's* possibly-older copy of it — the small header scan this needs is
-# reimplemented below.
+# reimplemented below, and the link test lives in the sibling file _links.py (loaded below, shipped
+# together with this file).
 
 from __future__ import annotations
 
+import fnmatch
+import importlib.util
 import os
 import re
-import shutil
 from pathlib import Path
 from typing import Optional
+
+
+def _load_links():
+    """The sibling _links.py (link test, exclusive temporary file), loaded by file name."""
+    spec = importlib.util.spec_from_file_location("_act_migration_links", Path(__file__).with_name("_links.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_LINKS = _load_links()
 
 WORK_DIR = "docs/ai/work"
 SCAN_DIRS = ("tasks", "backlog", "ledger", "archive")  # below WORK_DIR; the archive is walked recursively
@@ -75,11 +91,6 @@ def _is_legacy(relative: Path) -> bool:
     return [part.lower() for part in relative.parts[:len(legacy_parts)]] == legacy_parts
 
 
-def _has_link(path: Path, base: Path) -> bool:
-    """True if `path` or a folder between `base` and it is a symbolic link."""
-    return any(part.is_symlink() for part in (path, *path.parents) if part != base and base in part.parents)
-
-
 def _convert(data: bytes) -> Optional[bytes]:
     """`data` in frontmatter form, or None when the file is not a candidate (already frontmatter,
     no header). Raises UnicodeDecodeError for content that is not valid UTF-8. The header is found
@@ -103,33 +114,64 @@ def _convert(data: bytes) -> Optional[bytes]:
 
 
 def _write_atomic(path: Path, content: bytes) -> None:
-    """Replace `path` by `content` through a temporary file in the same folder and os.replace, so
-    an abort leaves either the old or the new file, never a cut-off one; the file mode is kept."""
-    temp = path.with_name(f".{path.name}.migrating")
-    try:
-        temp.write_bytes(content)
-        shutil.copymode(path, temp)
-        os.replace(temp, path)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+    """Replace `path` by `content` through a temporary file in the same folder (exclusively created, a
+    name of its own) and os.replace, so an abort leaves either the old or the new file, never a
+    cut-off one; the file mode is kept. The temporary file is gone on every path."""
+    _LINKS.write_replace(path, content)
+
+
+def _walk(root: Path) -> tuple[list[Path], list[str]]:
+    """(every *.md file the migration looks at, sorted by project-relative path; why linked ones are left
+    alone, each link once). A file counts as linked when the file or any folder from docs/ai/work down to it
+    is a link or junction, or its real path leaves the project."""
+    work = root / WORK_DIR
+    found: list[Path] = []
+    linked: list[str] = []
+    check = _LINKS.LinkCheck(root)  # remembers the folders: the archive holds thousands of files in few folders
+    for name in SCAN_DIRS:
+        base = work / name
+        problem = check.problem(base)
+        if problem:
+            if problem not in linked:
+                linked.append(problem)
+            continue
+        if not base.is_dir():
+            continue
+        # os.walk, not rglob: rglob does not descend into a symlinked folder on POSIX (and so never names it),
+        # while os.walk lists a linked folder (a junction too) among the subfolders, where it is tested and
+        # pruned: its content is neither looked at nor written.
+        for dirpath, dirnames, filenames in os.walk(base):
+            here = Path(dirpath)
+            kept: list[str] = []
+            for sub in sorted(dirnames):
+                if _is_legacy((here / sub).relative_to(work)):
+                    continue  # old material: not descended into, as its files are not candidates
+                problem = check.problem(here / sub)
+                if problem:
+                    if problem not in linked:
+                        linked.append(problem)
+                    continue
+                kept.append(sub)
+            dirnames[:] = kept
+            for filename in filenames:
+                path = here / filename
+                if not fnmatch.fnmatch(filename, "*.md") or _is_readme(filename) \
+                        or _is_legacy(path.relative_to(work)):
+                    continue
+                if not path.is_file() and not path.is_symlink():
+                    continue
+                problem = check.problem(path)
+                if problem:  # a linked file is not rewritten through
+                    if problem not in linked:
+                        linked.append(problem)
+                    continue
+                found.append(path)
+    return sorted(found, key=lambda p: p.relative_to(root).as_posix()), linked
 
 
 def _candidates(root: Path) -> list[Path]:
     """Every *.md file the migration looks at, sorted by project-relative path."""
-    work = root / WORK_DIR
-    found: list[Path] = []
-    for name in SCAN_DIRS:
-        base = work / name
-        if not base.is_dir():
-            continue
-        for path in base.rglob("*.md"):
-            if not path.is_file() or _is_readme(path.name) or _is_legacy(path.relative_to(work)):
-                continue
-            if _has_link(path, base):  # a link (file, or folder on the way) is not rewritten through
-                continue
-            found.append(path)
-    return sorted(found, key=lambda p: p.relative_to(root).as_posix())
+    return _walk(root)[0]
 
 
 def _scan(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
@@ -165,6 +207,8 @@ def plan(root: Path) -> str:
                      + _names([p.relative_to(root).as_posix() for p, _ in todo]))
     if skipped:
         parts.append("would skip (not valid UTF-8): " + _names(skipped))
+    if _walk(root)[1]:
+        parts.append("skipped: " + _names(_walk(root)[1]))
     return "; ".join(parts) if parts else "no work entry in the old header form — nothing to do"
 
 
@@ -173,7 +217,13 @@ def apply(root: Path) -> tuple[str, list[str]]:
     paths)."""
     todo, skipped = _scan(root)
     touched: list[Path] = []
+    linked = _walk(root)[1]
     for path, new in todo:
+        problem = _LINKS.link_problem(root, path)  # checked again right before the write
+        if problem:
+            if problem not in linked:
+                linked.append(problem)
+            continue
         _write_atomic(path, new)
         touched.append(path)
     parts: list[str] = []
@@ -182,5 +232,7 @@ def apply(root: Path) -> tuple[str, list[str]]:
         parts.append(f"converted {len(touched)} work entr(y/ies) to frontmatter: " + _names(rels))
     if skipped:
         parts.append("left alone (not valid UTF-8): " + _names(skipped))
+    if linked:
+        parts.append("skipped: " + _names(linked))
     description = "; ".join(parts) if parts else "no work entry in the old header form — nothing to do"
     return description, rels

@@ -24,8 +24,11 @@
 #              or the frontmatter would not be recognized), as the todo-id migration does.
 #            - The header is found the way actlib.split_header finds it: lines end at LF only (a lone
 #              CR is no line break) and a field is matched with the readers' own pattern.
-#            - Each file is replaced through a temporary file and os.replace, so an abort never leaves
-#              a cut-off file; a symbolic link is left alone instead of being written through.
+#            - Each file is replaced through a temporary file (created exclusively, with a name of its own, in
+#              the file's folder) and os.replace, so an abort never leaves a cut-off file and the temporary
+#              file is gone on every path. Nothing is written through a symbolic link or a Windows junction:
+#              a linked docs/ai/inbox, or a linked entry, is left alone and named in the description
+#              ("skipped: ... is a link or junction").
 #            - Left byte-identical: a file that already starts with "---", a file without a header,
 #              the README, the archive (docs/ai/work/archive/ is never rewritten) and every other
 #              folder. A file that is not valid UTF-8 is reported and left as it is.
@@ -37,15 +40,26 @@
 # Contract (.act/scripts/update.py step 8): plan(root) -> str, apply(root) -> (str, list[str]) of
 # project-relative paths (posix separators) touched. Stdlib only, no `actlib` import: a migration
 # must not depend on the *project's* possibly-older copy of it — the small header scan this needs is
-# reimplemented below.
+# reimplemented below, and the link test lives in the sibling file _links.py (loaded below, shipped
+# together with this file).
 
 from __future__ import annotations
 
-import os
+import importlib.util
 import re
-import shutil
 from pathlib import Path
 from typing import Optional
+
+
+def _load_links():
+    """The sibling _links.py (link test, exclusive temporary file), loaded by file name."""
+    spec = importlib.util.spec_from_file_location("_act_migration_links", Path(__file__).with_name("_links.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_LINKS = _load_links()
 
 INBOX_DIR = "docs/ai/inbox"
 LIST_LIMIT = 10  # names listed in plan()/apply() descriptions before "... and N more"
@@ -87,27 +101,34 @@ def _convert(data: bytes) -> Optional[bytes]:
 
 
 def _write_atomic(path: Path, content: bytes) -> None:
-    """Replace `path` by `content` through a temporary file in the same folder and os.replace, so
-    an abort leaves either the old or the new file, never a cut-off one; the file mode is kept."""
-    temp = path.with_name(f".{path.name}.migrating")
-    try:
-        temp.write_bytes(content)
-        shutil.copymode(path, temp)
-        os.replace(temp, path)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+    """Replace `path` by `content` through a temporary file in the same folder (exclusively created, a
+    name of its own) and os.replace, so an abort leaves either the old or the new file, never a
+    cut-off one; the file mode is kept. The temporary file is gone on every path."""
+    _LINKS.write_replace(path, content)
+
+
+def _linked(root: Path) -> list[str]:
+    """Why a linked docs/ai/inbox, or a linked entry in it, is left alone (project-relative, each once)."""
+    inbox = root / INBOX_DIR
+    problem = _LINKS.link_problem(root, inbox)
+    if problem:
+        return [problem]
+    if not inbox.is_dir():
+        return []
+    return _LINKS.list_links(root, sorted((p for p in inbox.glob("*.md") if not _is_readme(p.name)),
+                                          key=lambda p: p.name))
 
 
 def _scan(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
-    """(file, new content) for every file to convert, and the names of non-UTF-8 files left alone."""
+    """(file, new content) for every file to convert, and the names of non-UTF-8 files left alone.
+    A linked inbox, and a linked entry, are not looked at (see _linked)."""
     inbox = root / INBOX_DIR
     todo: list[tuple[Path, bytes]] = []
     skipped: list[str] = []
-    if not inbox.is_dir():
+    if _LINKS.link_problem(root, inbox) or not inbox.is_dir():
         return todo, skipped
     for path in sorted(inbox.glob("*.md"), key=lambda p: p.name):
-        if path.is_symlink() or not path.is_file() or _is_readme(path.name):  # a link is not rewritten through
+        if _LINKS.link_problem(root, path) or not path.is_file() or _is_readme(path.name):  # a link is not rewritten through
             continue
         try:
             data = path.read_bytes()
@@ -137,6 +158,8 @@ def plan(root: Path) -> str:
                      + _names([p.name for p, _ in todo]))
     if skipped:
         parts.append("would skip (not valid UTF-8): " + _names(skipped))
+    if _linked(root):
+        parts.append("skipped: " + _names(_linked(root)))
     return "; ".join(parts) if parts else "no inbox entry in the old header form — nothing to do"
 
 
@@ -145,7 +168,11 @@ def apply(root: Path) -> tuple[str, list[str]]:
     project-relative paths)."""
     todo, skipped = _scan(root)
     touched: list[Path] = []
+    raced: list[str] = []
     for path, new in todo:
+        if _LINKS.link_problem(root, path):  # checked again right before the write
+            raced.append(_LINKS.link_problem(root, path))
+            continue
         _write_atomic(path, new)
         touched.append(path)
     parts: list[str] = []
@@ -154,5 +181,8 @@ def apply(root: Path) -> tuple[str, list[str]]:
                      + _names([p.name for p in touched]))
     if skipped:
         parts.append("left alone (not valid UTF-8): " + _names(skipped))
+    linked = _linked(root)
+    if linked or raced:
+        parts.append("skipped: " + _names(linked + [r for r in raced if r not in linked]))
     description = "; ".join(parts) if parts else "no inbox entry in the old header form — nothing to do"
     return description, [p.relative_to(root).as_posix() for p in touched]

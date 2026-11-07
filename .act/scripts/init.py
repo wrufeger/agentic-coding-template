@@ -964,6 +964,9 @@ def step_workspace_identity(root: Path, plan: bool, owner: str) -> str:
         return "no usable name, nothing created: run board.py --identity <name>"
     if status != "created" or data is None:
         return "already present, left unchanged"
+    blocked = "" if plan else actlib.link_problem(root, root / ".act-local" / "identity.json")
+    if blocked:
+        return f"identity '{data['identity']}' not stored: {blocked}; run board.py --identity <name> once it is a real folder"
     return (f"identity '{data['identity']}', workspace '{data.get('workspace', '(to be created)')}'"
             + (" (plan)" if plan else ""))
 

@@ -670,6 +670,8 @@ def _refresh_bridges(root: Path, write: bool, only_changed: bool = True) -> tupl
                 actlib.write_cache({"generated": generated})
             continue
 
+        if not actlib.local_write_ok(root, root / ".act-local" / "cache.json"):
+            continue  # the new hash could not be recorded: a rewrite would make the next start see the bridge as edited
         try:
             content = _scoped_bridge_text(root, dest_rel, source_path.read_text(encoding="utf-8"), record=True)
             actlib.write_text_lf(dest_path, content)
@@ -746,6 +748,8 @@ def _already_checked_today(root: Path) -> bool:
 
 def _mark_checked_today(root: Path) -> None:
     path = _update_check_state_path(root)
+    if not actlib.local_write_ok(root, path):
+        return  # .act-local is a link or leaves the project: nothing is written through it
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"last_checked": date.today().isoformat()}) + "\n", encoding="utf-8")
@@ -922,13 +926,15 @@ def _pending_update_note(root: Path, state: Optional[dict] = None) -> Optional[s
         return None
     if not info["pending"]:
         try:
-            actlib.update_result_path(root).unlink()
+            if actlib.local_write_ok(root, actlib.update_result_path(root)):
+                actlib.update_result_path(root).unlink()
         except OSError:
             pass
         if info.get("stale"):
             # the lock moved since the check: look again at this start instead of tomorrow
             try:
-                _update_check_state_path(root).unlink()
+                if actlib.local_write_ok(root, _update_check_state_path(root)):
+                    _update_check_state_path(root).unlink()
             except OSError:
                 pass
         return None
@@ -1043,6 +1049,8 @@ def _spawn_update_check_worker(root: Path) -> None:
     file main() (and thus this internal event) is wired to — actually lives."""
     script = Path(__file__).resolve().parent.parent / "dispatch.py"
     args = [sys.executable, str(script), "_update-check-worker", str(root)]
+    if not actlib.local_write_ok(root, root / ".act-local" / "update-check.json"):
+        return  # the worker leaves its result below .act-local: not through a link
     try:
         if sys.platform == "win32":
             subprocess.Popen(
@@ -1137,6 +1145,8 @@ def _security_scan_already_checked_today(root: Path) -> bool:
 
 def _mark_security_scan_checked_today(root: Path) -> None:
     path = _security_scan_state_path(root)
+    if not actlib.local_write_ok(root, path):
+        return  # .act-local is a link or leaves the project: nothing is written through it
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"last_checked": date.today().isoformat()}) + "\n", encoding="utf-8")
@@ -1206,6 +1216,8 @@ def _run_security_scan_worker(
         return 0
     try:
         path = _security_scan_result_path(root)
+        if not actlib.local_write_ok(root, path):
+            return 0  # .act-local is a link or leaves the project: nothing is written through it
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(
@@ -1240,6 +1252,8 @@ def _spawn_security_scan_worker(
     if state_hash is not None:
         args.append(state_hash)
         args.extend(str(path) for path in (lock_paths or []))
+    if not actlib.local_write_ok(root, root / ".act-local" / "security-scan-result.json"):
+        return False  # the worker leaves its result below .act-local: not through a link
     try:
         if sys.platform == "win32":
             subprocess.Popen(
@@ -1271,7 +1285,8 @@ def _consume_pending_security_scan_note(root: Path) -> Optional[str]:
     except (OSError, json.JSONDecodeError):
         return None
     try:
-        path.unlink()
+        if actlib.local_write_ok(root, path):
+            path.unlink()
     except OSError:
         pass
     if not isinstance(data, dict):
@@ -1391,7 +1406,8 @@ def _consume_pending_tidy_note(root: Path) -> Optional[str]:
     except (OSError, json.JSONDecodeError):
         return None
     try:
-        path.unlink()
+        if actlib.local_write_ok(root, path):
+            path.unlink()
     except OSError:
         pass
     line = (tidy.format_result(data) if isinstance(data, dict) else "") or None
@@ -1738,6 +1754,10 @@ def _identity_note(root: Path) -> Optional[str]:
     line; with no usable git name say that none exists. None when it was there already."""
     status, data = actlib.ensure_identity(root)
     if status == "created" and data:
+        blocked = actlib.link_problem(root, root / ".act-local" / "identity.json")
+        if blocked:  # nothing was written: do not say "created"
+            return (f"[act] identity `{data['identity']}` taken from git user.name but not stored: {blocked}; "
+                    "set it with `python .act/scripts/board.py --identity <name>` once `.act-local` is a real folder")
         return (f"[act] identity `{data['identity']}` created from git user.name (workspace "
                 f"{data.get('workspace', '?')}); change with `python .act/scripts/board.py --identity <name>`")
     if status == "unreadable":
@@ -1769,6 +1789,8 @@ def _outside_root_note(root: Path, config: dict[str, str]) -> Optional[str]:
     marker = root / ".act-local" / "outside-root-note.json"
     if marker.exists():
         return None
+    if not actlib.local_write_ok(root, marker):
+        return None  # .act-local is a link or leaves the project: nothing is written through it
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps({"noted": date.today().isoformat()}) + "\n", encoding="utf-8")
@@ -2122,6 +2144,8 @@ def _scope_notes(root: Path, write: bool, copies_moved: bool) -> tuple[list[str]
 # ---------------------------------------------------------------------------
 
 CONTEXT_LIMIT = 9000  # characters; the harness cap is 10,000 per field, this leaves a margin
+_LOCAL_SKIP_NOTE = "[act] note: writes behind a link were skipped"  # the one line about refused writes below .act-local
+_TIDY_LINK_NOTE = "[act] note: act-local-tidy: skipped"  # act-local-tidy's own line when .act-local is linked
 _RULES_MARK = "\x00act-orchestrator-rules\x00"
 # Older forms Claude Code never loads: "@.act/..." (resolved from docs/ai/) and the orchestrator
 # files listed in backticks instead of imported.
@@ -2248,15 +2272,23 @@ def _fit_context(text: str, rules_full: str, rules_compact: str, excerpt: str = 
         fitted = candidate
         if len(fitted) <= CONTEXT_LIMIT:
             return fitted.rstrip("\n")
+    stored = False
     try:
-        path = actlib.repo_root() / ".act-local" / "session-start.txt"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(full, encoding="utf-8")
+        root = actlib.repo_root()
+        path = root / ".act-local" / "session-start.txt"
+        if actlib.local_write_ok(root, path):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(full, encoding="utf-8")
+            stored = True
     except (OSError, RuntimeError):
         pass
-    tail = "[act] note: session notes cut here — all of them in .act-local/session-start.txt"
-    kept = fitted[:CONTEXT_LIMIT - len(tail) - 1].rsplit("\n", 1)[0]
-    return kept + "\n" + tail
+    tail = ("[act] note: session notes cut here — all of them in .act-local/session-start.txt" if stored
+            else "[act] note: session notes cut here — the full text could not be stored")
+    # The note about a refused write (a link in the way) is not cut away: it says why the rest is missing.
+    pinned = "".join(line for line in fitted.splitlines(keepends=True) if line.startswith(_LOCAL_SKIP_NOTE))
+    body = fitted.replace(pinned, "", 1) if pinned else fitted
+    kept = body[:CONTEXT_LIMIT - len(tail) - len(pinned) - 1].rsplit("\n", 1)[0]
+    return kept + "\n" + pinned + tail
 
 
 def _session_title_for(payload: dict) -> Optional[str]:
@@ -2748,6 +2780,14 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
                                        waiting + (1 if feedback_due else 0) + len(ideas_keys))
     except Exception:
         tip_line = None
+    # Every write the steps above refused, one line in all. With `.act-local` itself linked act-local-tidy has
+    # said so already (every reason is then the same one): no second line.
+    skipped = actlib.take_local_skips()
+    if any(note.startswith(_TIDY_LINK_NOTE) for note in post_update_notes):
+        skipped = [reason for reason in skipped if not reason.startswith(".act-local is a link")]
+    if skipped:
+        more = f" (+{len(skipped) - 1} more)" if len(skipped) > 1 else ""
+        print(f"{_LOCAL_SKIP_NOTE} ({skipped[0]}{more})")
     if tip_line:
         print(tip_line)
     return True

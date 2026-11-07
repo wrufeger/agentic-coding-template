@@ -22,7 +22,9 @@
 #          Git history; nothing is reconstructed. A leftover `purge: after-commit` field in an archived file
 #          stays as it is, `entries.py purge` is retired and does nothing.
 #          Nothing found, or no docs/ai/config.md: nothing to do, and the description says so. No other file is
-#          touched.
+#          touched. The file is replaced through a temporary file created exclusively next to it (a name of its
+#          own, gone on every path); when docs/ai/config.md, or a folder on its way, is a symbolic link or a
+#          Windows junction, nothing is written: the description says "skipped: ... is a link or junction".
 #          Why a migration and not a step of update.py: it edits a file the project owns, so update.py lists it in
 #          its plan (`would run: 008-...`) and prints its plan line, which tells a `delete` project what changes,
 #          before applying it. A row left behind by a project that skips the migration is ignored, never an
@@ -30,14 +32,26 @@
 #          plan() only reads, never writes; it names each part it would remove, apply() reports the same.
 #
 # Contract (.act/scripts/update.py step 8): plan(root) -> str, apply(root) -> (str, list[str]) of
-# project-relative paths (posix separators) touched. Stdlib only.
+# project-relative paths (posix separators) touched. Stdlib only; the link test lives in the sibling file _links.py
+# (loaded below, shipped together with this file).
 
 from __future__ import annotations
 
-import os
+import importlib.util
 import re
 import sys
 from pathlib import Path
+
+
+def _load_links():
+    """The sibling _links.py (link test, exclusive temporary file), loaded by file name."""
+    spec = importlib.util.spec_from_file_location("_act_migration_links", Path(__file__).with_name("_links.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_LINKS = _load_links()
 
 CONFIG = "docs/ai/config.md"
 BOM = b"\xef\xbb\xbf"
@@ -179,29 +193,37 @@ def _describe(data: bytes | None) -> str:
     return text + (f"; and would remove {'; '.join(others)}" if others else "")
 
 
+def _skipped(root: Path) -> str:
+    """The description of a skipped file when `docs/ai/config.md` (or a folder on its way) is a link or junction,
+    whether or not there is something to remove (as migrations 005 to 007 do), else "": nothing is written
+    through a link."""
+    problem = _LINKS.link_problem(root, root / CONFIG)
+    if not problem:
+        return ""
+    return f"skipped: {problem} — nothing is written through it, {CONFIG} is left as it is"
+
+
 def plan(root: Path) -> str:
     """Describes what apply() would do, writes nothing."""
-    return _describe(_read(root))
+    return _skipped(root) or _describe(_read(root))
 
 
 def apply(root: Path) -> tuple[str, list[str]]:
     """Removes the parts described above. Returns (description, touched project-relative paths)."""
+    skipped = _skipped(root)
+    if skipped:
+        return skipped, []
     data = _read(root)
     if data is None:
         return _describe(None), []
     new, parts, _values = _clean(data)
     if not parts or new == data:
         return _describe(data), []
+    skipped = _skipped(root)  # once more right before the write
+    if skipped:
+        return skipped, []
     description = _describe(data).replace("would remove", "removed")
-    target = root / CONFIG
-    temp = target.with_name(f".{target.name}.migrating")
-    try:
-        with open(temp, "wb") as handle:
-            handle.write(new)
-        os.replace(temp, target)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+    _LINKS.write_replace(root / CONFIG, new)
     return description, [CONFIG]
 
 

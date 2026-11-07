@@ -176,10 +176,26 @@ def _lock_path(root: Path) -> Path:
 # Recording — one file per occurrence, see this module's "Concurrency" section above
 # ---------------------------------------------------------------------------
 
+def _link_problem(root: Path) -> str:
+    """"" or, when .act-local or a folder below it that this module writes in is a link or junction (or the
+    real path leaves the project), one short line naming it: nothing is written, folded or removed through
+    it (actlib.local_write_ok)."""
+    for path in (_store_path(root), _lock_path(root), _events_dir(root) / "ev"):
+        if not actlib.local_write_ok(root, path):
+            return actlib.link_problem(root, path)
+    return ""
+
+
+def _linked(root: Path) -> bool:
+    return bool(_link_problem(root))
+
+
 def _write_event(root: Path, category: str, key: str, **fields: str) -> None:
     if category not in _CATEGORIES or not key:
         return
     events_dir = _events_dir(root)
+    if _linked(root):
+        return
     try:
         events_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -389,7 +405,7 @@ def measure_agent(agent_transcript: Path, agent_id: str, fallback_role: str = ""
 def record_run(root: Path, run: RunMeasure) -> None:
     """Write one measured run as an event file (folded into usage.json by consolidation). Best
     effort, never raises - same contract as the other recorders."""
-    if not run.role:
+    if not run.role or _linked(root):
         return
     events_dir = _events_dir(root)
     try:
@@ -662,6 +678,8 @@ def consolidate(root: Path, *, lock_timeout: float = 5.0,
     was last written, without folding or blocking further — see this module's header
     ("Concurrency") for why a plain read is an acceptable fallback here, and consolidate_and_mutate
     for the path that is not allowed to fail silently."""
+    if _linked(root):
+        return _read_store(root)  # nothing is folded, written or removed through a link
     lock = _acquire_lock(root, lock_timeout)
     if lock is None:
         return _read_store(root)
@@ -678,6 +696,8 @@ def consolidate_and_mutate(root: Path, mutate: Callable[[dict], None], *,
     point 5: cmd_outcome used to call consolidate() and then _write_store() as two separate,
     unlocked steps). Returns None if the lock could not be acquired within `lock_timeout` — the
     caller must treat that as "not recorded" (see cmd_outcome), never as silent success."""
+    if _linked(root):
+        return None  # not recorded: the caller reports it, as for a lock it could not take
     lock = _acquire_lock(root, lock_timeout)
     if lock is None:
         return None
@@ -783,7 +803,9 @@ def cmd_outcome(root: Path, role: str, tier: str, outcome: str) -> int:
 
     store = consolidate_and_mutate(root, _mutate)
     if store is None:
-        print("usage: could not acquire the consolidation lock in time — try again",
+        problem = _link_problem(root)
+        print(f"usage: {problem}, so nothing is written through it" if problem
+              else "usage: could not acquire the consolidation lock in time — try again",
               file=sys.stderr)
         return 1
     print(f"usage: {role}/{tier or '(no tier)'} outcome recorded: {outcome}")
@@ -797,6 +819,10 @@ def cmd_unused(root: Path, key: str) -> int:
 
 
 def cmd_reset(root: Path) -> int:
+    problem = _link_problem(root)
+    if problem:
+        print(f"usage: nothing reset: {problem}, so nothing is removed through it", file=sys.stderr)
+        return 1
     removed = 0
     store_path = _store_path(root)
     if store_path.is_file():
@@ -930,7 +956,9 @@ def cmd_backfill(root: Path, transcripts_dir: Optional[Path] = None) -> int:
             counts[_add_run(store, run.role, run.tier, run.record())] += 1
 
     if consolidate_and_mutate(root, _mutate) is None:
-        print("usage: could not acquire the consolidation lock in time - try again", file=sys.stderr)
+        problem = _link_problem(root)
+        print(f"usage: {problem}, so nothing is written through it" if problem
+              else "usage: could not acquire the consolidation lock in time - try again", file=sys.stderr)
         return 1
     print(f"usage: backfill: {seen} worker transcript(s) found, {counts['added']} run(s) added, "
           f"{counts['updated']} updated, {counts['known']} already known or beyond the newest "

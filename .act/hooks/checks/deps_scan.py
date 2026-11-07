@@ -199,9 +199,13 @@ class _Outcome:
     """What `_resolve_scan` found out for one commit's touched lock files: `status` is "result"
     (with `result` set), "running" (a scan is in flight, deny once), "dead" (a marker outlived its
     own stale limit -- cleared, fail open), "spawn_failed" (no worker could be started, fail open)
-    or "unhashable" (a file changed between being listed and being digested, fail open)."""
+    or "unhashable" (a file changed between being listed and being digested, fail open) or "linked"
+    (the running marker cannot be written because `.act-local` or its scan-cache folder is a link or
+    junction, `detail` names it; a scan cannot be handed to a worker and the hook's own time does not
+    suffice for one, so the commit is held, not let through unchecked)."""
     status: str
     result: Optional[security_scan.ScanResult] = None
+    detail: str = ""
 
 
 def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
@@ -343,6 +347,9 @@ def _resolve_scan(root: Path, paths: "list[Path]", payload: dict) -> _Outcome:
     else:
         stale_after = now + security_scan.scan_time_limit(lock_files) + _WORKER_MARGIN_SECONDS
         if not security_scan.write_running_marker(root, state_hash, stale_after):
+            linked = actlib.link_problem(root, security_scan.running_marker_path(root, state_hash))
+            if linked:
+                return _Outcome("linked", detail=linked)
             return _Outcome("spawn_failed")  # a worker nobody can see would be waited for by no one
         if not _spawn_scan_worker(root, state_hash, paths, report=False):
             security_scan.clear_running_marker(root, state_hash)
@@ -675,6 +682,14 @@ def _check(payload: dict, root: Path, command: str) -> int:
             file=sys.stderr,
         )
         return 2
+    if outcome.status == "linked":
+        names = ", ".join(_display(path, root) for path in paths)
+        print(
+            f"[act] security-check (deps): {names} cannot be scanned: {outcome.detail}, so no scan can be recorded "
+            "through it -- make it a real folder, or set `security-check` to `off` in docs/ai/config.md",
+            file=sys.stderr,
+        )
+        return 2
     if outcome.status == "dead":
         _note(payload, "[act] security-check (deps): a previous scan attempt never finished -- not checked this time")
         return 0
@@ -889,9 +904,9 @@ def _record_integration_heads(payload: dict, root: Path, command: str) -> None:
         head = _run_git(["rev-parse", "-q", "--verify", "HEAD"], toplevel, min(_GIT_TIMEOUT, deadline - time.monotonic()))
         if head and head.strip():
             heads[toplevel] = head.strip()
-    if heads:
+    if heads and actlib.local_write_ok(root, path):
         _prune_heads(path.parent)
-        security_scan._write_json(path, {"heads": heads, "written": time.time()})
+        security_scan._write_json(root, path, {"heads": heads, "written": time.time()})
 
 
 def _take_recorded_heads(root: Path, tool_use_id: object) -> "dict[str, str]":
@@ -900,10 +915,11 @@ def _take_recorded_heads(root: Path, tool_use_id: object) -> "dict[str, str]":
     if path is None:
         return {}
     data = security_scan._read_json(path)
-    try:
-        path.unlink()
-    except OSError:
-        pass
+    if actlib.local_write_ok(root, path):  # nothing is removed through a link
+        try:
+            path.unlink()
+        except OSError:
+            pass
     heads = data.get("heads") if data else None
     if not isinstance(heads, dict):
         return {}

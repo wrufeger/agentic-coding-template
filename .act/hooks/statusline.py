@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import Optional
@@ -54,12 +55,38 @@ from typing import Optional
 # path budget: past it no cache is written at all. Must run before the imports below.
 _PYC_PATH_BUDGET = 240  # keep equal to dispatch.py
 _PYC_LONGEST_TAIL = 70  # keep equal to dispatch.py
+
+
+def _pyc_way_is_clear(project_root: Path) -> bool:
+    """False when `.act-local` or `.act-local/pyc` is a symbolic link, a Windows junction or another
+    name-surrogate reparse point, or when the real path of the cache folder lies outside the project: Python
+    would write the compiled caches through it. Keep equal to dispatch.py (standard library only: this runs
+    before anything of .act/ is imported)."""
+    folder = project_root
+    for part in (".act-local", "pyc"):
+        folder = folder / part
+        try:
+            info = os.lstat(folder)
+        except OSError:
+            return True  # not there yet: Python creates a real folder
+        attributes = getattr(info, "st_file_attributes", 0)
+        tag = getattr(info, "st_reparse_tag", 0)
+        if stat.S_ISLNK(info.st_mode) or (attributes & 0x400 and (not tag or tag & 0x20000000)):
+            return False
+    try:
+        real_root = os.path.normcase(os.path.realpath(project_root))
+        real = os.path.normcase(os.path.realpath(folder))
+        return os.path.commonpath([real_root, real]) == real_root
+    except (OSError, ValueError):  # a path that cannot be resolved is not safe; ValueError: another drive
+        return False
+
+
 try:
     _project_root = Path(__file__).resolve().parents[2]
     _pyc_prefix = _project_root / ".act-local" / "pyc"
     _sources = (str(_project_root / ".act"), os.path.dirname(os.__file__))
     _longest_source = max(len(s) - 2 if s[1:2] == ":" else len(s) for s in _sources)
-    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET:
+    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET or not _pyc_way_is_clear(_project_root):
         sys.dont_write_bytecode = True
     else:
         sys.pycache_prefix = str(_pyc_prefix)

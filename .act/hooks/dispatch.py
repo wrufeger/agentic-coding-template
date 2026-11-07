@@ -256,19 +256,47 @@ _HOOK_STARTED = time.monotonic()
 # .act-local/ and goes away with the project. The limit: pycache_prefix mirrors the full source path
 # (without the drive letter) below the prefix, so inside the project the cache path is about twice as
 # long as the source path, and Windows fails at 260 characters (deleting the folder, `git clean`).
+# A `.act-local` or `.act-local/pyc` that is a link or junction, or whose real path leaves the project,
+# gets no cache either (nothing is compiled into a place outside the project).
 # If the longest cache path of this tree or of the standard library (cached below the prefix too)
 # could pass _PYC_PATH_BUDGET, no cache is written at all — sys.dont_write_bytecode, so there is no
 # __pycache__/ under .act/ either. Writing a cache is best effort in Python — a failure there never
 # fails the hook.
 _PYC_PATH_BUDGET = 240  # characters; Windows' limit is 260 including the drive and the file name
 _PYC_LONGEST_TAIL = 70  # below .act/: "/hooks/checks/<longest module>.cpython-3NN.pyc" is about 50 today
+
+
+def _pyc_way_is_clear(project_root: Path) -> bool:
+    """False when `.act-local` or `.act-local/pyc` is a symbolic link, a Windows junction or another
+    name-surrogate reparse point, or when the real path of the cache folder lies outside the project: Python
+    would write the compiled caches through it. Standard library only (this runs before anything of
+    .act/ is imported); the same test as actlib.link_problem."""
+    folder = project_root
+    for part in (".act-local", "pyc"):
+        folder = folder / part
+        try:
+            info = os.lstat(folder)
+        except OSError:
+            return True  # not there yet: Python creates a real folder
+        attributes = getattr(info, "st_file_attributes", 0)
+        tag = getattr(info, "st_reparse_tag", 0)
+        if stat.S_ISLNK(info.st_mode) or (attributes & 0x400 and (not tag or tag & 0x20000000)):
+            return False
+    try:
+        real_root = os.path.normcase(os.path.realpath(project_root))
+        real = os.path.normcase(os.path.realpath(folder))
+        return os.path.commonpath([real_root, real]) == real_root
+    except (OSError, ValueError):  # a path that cannot be resolved is not safe; ValueError: another drive
+        return False
+
+
 try:
     _project_root = Path(__file__).resolve().parents[2]
     _pyc_prefix = _project_root / ".act-local" / "pyc"
     # The mirrored path drops only a drive letter ("D:"); a UNC share stays in it.
     _sources = (str(_project_root / ".act"), os.path.dirname(os.__file__))
     _longest_source = max(len(s) - 2 if s[1:2] == ":" else len(s) for s in _sources)
-    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET:
+    if len(str(_pyc_prefix)) + _longest_source + _PYC_LONGEST_TAIL > _PYC_PATH_BUDGET or not _pyc_way_is_clear(_project_root):
         sys.dont_write_bytecode = True
     else:
         sys.pycache_prefix = str(_pyc_prefix)

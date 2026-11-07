@@ -153,6 +153,8 @@ def _read_state(root: Path) -> dict:
 
 def _write_state(root: Path, state: dict) -> None:
     path = _state_path(root)
+    if not actlib.local_write_ok(root, path):
+        return  # .act-local is a link or leaves the project: nothing is written through it
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(prefix=".tips-", suffix=".tmp", dir=str(path.parent))

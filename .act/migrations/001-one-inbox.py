@@ -43,15 +43,36 @@
 # step_commit's `git add`/`git commit` cover both sides. Stdlib only, no `actlib` import: a
 # migration must not depend on the *project's* possibly-older copy of it (see the module docstring
 # in update.py's step 8 section) — the small pieces of actlib.header_block/entries.py's slugging
-# this needs are reimplemented below instead.
+# this needs are reimplemented below instead. The one exception is the link test, kept in the sibling file
+# _links.py (loaded above, shipped together with this file).
+#
+# Links: nothing is written, moved, renamed or removed through a symbolic link or a Windows junction. A linked
+# docs/ai/questions or docs/ai/inbox (or a link on the way to it), a linked folder below the work folders and a
+# linked entry or README are left as they are and named in one phrase ("skipped: ... is a link or junction", each
+# link once). New files are written through a temporary file created exclusively in their folder, then renamed.
 
 from __future__ import annotations
 
+import fnmatch
+import importlib.util
+import os
 import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple, Optional
+
+
+def _load_links():
+    """The sibling _links.py (link test, exclusive temporary file), loaded by file name."""
+    spec = importlib.util.spec_from_file_location("_act_migration_links", Path(__file__).with_name("_links.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_LINKS = _load_links()
+LIST_LIMIT = 10  # names listed in a description before "... and N more"
 
 QUESTIONS_DIR = "docs/ai/questions"
 INBOX_DIR = "docs/ai/inbox"
@@ -199,27 +220,39 @@ class _Report(NamedTuple):
     readmes_reported: list[str]
     questions_readme_dropped: bool
     questions_readme_reported: bool
+    linked: list[str]  # why a linked file or folder is left alone (project-relative, each once)
+
+
+def _note_link(linked: list[str], problem: str) -> bool:
+    """Enters `problem` (a reason from the link test, "" for none) once into `linked`; True when there was one."""
+    if problem and problem not in linked:
+        linked.append(problem)
+    return bool(problem)
 
 
 def _archive_excluded(rel_posix: str) -> bool:
     return any(rel_posix == excl or rel_posix.startswith(excl + "/") for excl in ARCHIVE_EXCLUDE)
 
 
-def _plan_moves(root: Path) -> tuple[list[tuple[Path, Path, bytes]], list[str], list[str]]:
+def _plan_moves(root: Path, linked: list[str]) -> tuple[list[tuple[Path, Path, bytes]], list[str], list[str]]:
     """Question files to move (src, dest, new_content), filenames that collide with an
     already-existing destination (reported, left in place), and ids that are syntactically
     invalid or carry the wrong prefix for docs/ai/questions/ (reported, kept under their old
-    name)."""
+    name). A linked questions folder or inbox, and a linked question file, give no move; the reason
+    goes into `linked`."""
     moves: list[tuple[Path, Path, bytes]] = []
     conflicts: list[str] = []
     invalid: list[str] = []
     questions_dir = root / QUESTIONS_DIR
-    if not questions_dir.is_dir():
+    check = _LINKS.LinkCheck(root)
+    if not questions_dir.is_dir() or _note_link(linked, check.problem(questions_dir)):
         return moves, conflicts, invalid
     inbox_dir = root / INBOX_DIR
     for src in sorted(questions_dir.glob("*.md")):
         if _is_readme(src.name):
             continue
+        if _note_link(linked, check.problem(src)) or _note_link(linked, check.problem(inbox_dir)):
+            continue  # nothing is read from or written through a link
         data = src.read_bytes()
         entry_id = _entry_id(data)
         dest_name = src.name
@@ -240,24 +273,50 @@ def _plan_moves(root: Path) -> tuple[list[tuple[Path, Path, bytes]], list[str], 
     return moves, conflicts, invalid
 
 
-def _plan_renames(root: Path) -> tuple[list[tuple[Path, Path]], list[str], list[str]]:
+def _walk_markdown(root: Path, base: Path, check: "_LINKS.LinkCheck", linked: list[str]) -> list[Path]:
+    """Every *.md file below `base`, sorted, except the excluded archive subtrees. A linked file, and a linked
+    folder (a junction too) anywhere below `base` or `base` itself, is named in `linked` and not looked at:
+    os.walk lists a linked folder among the subfolders, where it is tested and pruned (rglob would not descend
+    into a symlinked folder on POSIX, and so never name it)."""
+    found: list[Path] = []
+    if _note_link(linked, check.problem(base)):
+        return found
+    for dirpath, dirnames, filenames in os.walk(base):
+        here = Path(dirpath)
+        kept: list[str] = []
+        for sub in sorted(dirnames):
+            if _archive_excluded((here / sub).relative_to(root).as_posix()):
+                continue  # old material: not descended into
+            if not _note_link(linked, check.problem(here / sub)):
+                kept.append(sub)
+        dirnames[:] = kept
+        for filename in filenames:
+            path = here / filename
+            if not fnmatch.fnmatch(filename, "*.md") or _is_readme(filename) \
+                    or _archive_excluded(path.relative_to(root).as_posix()):
+                continue
+            if not path.is_file() and not path.is_symlink():
+                continue
+            if not _note_link(linked, check.problem(path)):
+                found.append(path)
+    return sorted(found)
+
+
+def _plan_renames(root: Path, linked: list[str]) -> tuple[list[tuple[Path, Path]], list[str], list[str]]:
     """Existing id-bearing files under RENAME_DIRS not yet named "<ID>-<slug>.md", plus name
     conflicts and ids invalid for their own location (see _canonical_id), both reported and left
-    untouched."""
+    untouched. Linked files and folders are left alone and named in `linked`."""
     renames: list[tuple[Path, Path]] = []
     conflicts: list[str] = []
     invalid: list[str] = []
     seen_dests: set[Path] = set()
+    check = _LINKS.LinkCheck(root)
     for rel in RENAME_DIRS:
         base = root / rel
-        if not base.is_dir():
+        if not base.is_dir() and not base.is_symlink():
             continue
-        for src in sorted(base.rglob("*.md")):
-            if _is_readme(src.name):
-                continue
+        for src in _walk_markdown(root, base, check, linked):
             rel_posix = src.relative_to(root).as_posix()
-            if _archive_excluded(rel_posix):
-                continue
             data = src.read_bytes()
             entry_id = _entry_id(data)
             if entry_id is None:
@@ -292,15 +351,17 @@ def _committed_bytes(root: Path, rel: str) -> Optional[bytes]:
     return result.stdout if result.returncode == 0 else None
 
 
-def _plan_readmes(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
+def _plan_readmes(root: Path, linked: list[str]) -> tuple[list[tuple[Path, bytes]], list[str]]:
     """Unedited-scaffold README copies whose skeleton content changed, plus a note for every
-    README this migration leaves untouched because it no longer looks like the scaffold."""
+    README this migration leaves untouched because it no longer looks like the scaffold. A linked
+    README, or one in a linked folder, is left alone and named in `linked`."""
     refresh: list[tuple[Path, bytes]] = []
     reported: list[str] = []
+    check = _LINKS.LinkCheck(root)
     for rel_dest, rel_src in README_REFRESH:
         dest = root / rel_dest
         src = root / rel_src
-        if not dest.is_file():
+        if not dest.is_file() or _note_link(linked, check.problem(dest)):
             continue
         current = dest.read_bytes()
         if not src.is_file():
@@ -320,10 +381,10 @@ def _plan_readmes(root: Path) -> tuple[list[tuple[Path, bytes]], list[str]]:
     return refresh, reported
 
 
-def _questions_readme(root: Path) -> tuple[bool, bool]:
-    """(would_drop, would_report) for docs/ai/questions/README.md."""
+def _questions_readme(root: Path, linked: list[str]) -> tuple[bool, bool]:
+    """(would_drop, would_report) for docs/ai/questions/README.md; (False, False) for a linked one."""
     readme = root / QUESTIONS_DIR / "README.md"
-    if not readme.is_file():
+    if not readme.is_file() or _note_link(linked, _LINKS.link_problem(root, readme)):
         return False, False
     data = readme.read_bytes()
     if data.lstrip(b"\xef\xbb\xbf").startswith(_DEFAULT_MARK):
@@ -332,10 +393,11 @@ def _questions_readme(root: Path) -> tuple[bool, bool]:
 
 
 def _build_report(root: Path) -> _Report:
-    moves, move_conflicts, move_invalid = _plan_moves(root)
-    renames, rename_conflicts, rename_invalid = _plan_renames(root)
-    readmes, readme_reports = _plan_readmes(root)
-    drop_readme, report_readme = _questions_readme(root)
+    linked: list[str] = []
+    moves, move_conflicts, move_invalid = _plan_moves(root, linked)
+    renames, rename_conflicts, rename_invalid = _plan_renames(root, linked)
+    readmes, readme_reports = _plan_readmes(root, linked)
+    drop_readme, report_readme = _questions_readme(root, linked)
     return _Report(
         questions_moved=len(moves),
         questions_conflicts=move_conflicts,
@@ -347,6 +409,7 @@ def _build_report(root: Path) -> _Report:
         readmes_reported=readme_reports,
         questions_readme_dropped=drop_readme,
         questions_readme_reported=report_readme,
+        linked=linked,
     )
 
 
@@ -369,6 +432,10 @@ def _describe(report: _Report) -> str:
     invalid = report.questions_invalid + report.rename_invalid
     if invalid:
         parts.append(f"{len(invalid)} invalid id(s), not renamed: " + "; ".join(invalid))
+    if report.linked:
+        shown = ", ".join(report.linked[:LIST_LIMIT])
+        more = f", ... and {len(report.linked) - LIST_LIMIT} more" if len(report.linked) > LIST_LIMIT else ""
+        parts.append("skipped: " + shown + more + " — nothing is written through a link")
     return "; ".join(parts)
 
 
@@ -449,63 +516,78 @@ def apply(root: Path) -> tuple[str, list[str]]:
     touched_rel_paths) — every path this run actually created, rewrote, or made vanish, both sides
     of a rename included, so update.py's step_commit stages the whole change."""
     touched: list[Path] = []
+    linked: list[str] = []
 
-    moves, move_conflicts, move_invalid = _plan_moves(root)
+    moves, move_conflicts, move_invalid = _plan_moves(root, linked)
     inbox_dir = root / INBOX_DIR
     if moves:
         inbox_dir.mkdir(parents=True, exist_ok=True)
     for src, dest, new_content in moves:
         if dest.exists():
             continue  # planned a moment ago; re-check before ever touching the filesystem
-        dest.write_bytes(new_content)
+        if _note_link(linked, _LINKS.link_problem(root, src)) or _note_link(linked, _LINKS.link_problem(root, dest)):
+            continue  # re-checked right before the write
+        _LINKS.write_new(dest, new_content)  # exclusive temporary file in the inbox, then renamed into place
         src.unlink()
         touched.append(src)
         touched.append(dest)
 
-    drop_readme, report_readme = _questions_readme(root)
+    drop_readme, report_readme = _questions_readme(root, linked)
     if drop_readme:
         readme = root / QUESTIONS_DIR / "README.md"
         readme.unlink()
         touched.append(readme)
 
     questions_dir = root / QUESTIONS_DIR
-    if questions_dir.is_dir():
+    if questions_dir.is_dir() and not _note_link(linked, _LINKS.link_problem(root, questions_dir)):
         try:
             next(questions_dir.iterdir())
         except StopIteration:
             questions_dir.rmdir()
 
-    renames, rename_conflicts, rename_invalid = _plan_renames(root)
+    renames, rename_conflicts, rename_invalid = _plan_renames(root, linked)
+    done_renames: list[tuple[Path, Path]] = []
     for src, dest in renames:
         if dest.exists():
             continue  # planned a moment ago; re-check right before the rename itself
+        if _note_link(linked, _LINKS.link_problem(root, src)):
+            continue
         src.rename(dest)
+        done_renames.append((src, dest))
         touched.append(src)
         touched.append(dest)
 
-    readmes, readme_reports = _plan_readmes(root)
+    readmes, readme_reports = _plan_readmes(root, linked)
     for dest, new_content in readmes:
-        dest.write_bytes(new_content)
+        if _note_link(linked, _LINKS.link_problem(root, dest)):
+            continue
+        _LINKS.write_replace(dest, new_content)  # exclusive temporary file next to it, mode kept
         touched.append(dest)
 
     report = _Report(
         questions_moved=len(moves),
         questions_conflicts=move_conflicts,
         questions_invalid=move_invalid,
-        renamed=len(renames),
+        renamed=len(done_renames),
         rename_conflicts=rename_conflicts,
         rename_invalid=rename_invalid,
         readmes_refreshed=[str(p.relative_to(root)).replace("\\", "/") for p, _ in readmes],
         readmes_reported=readme_reports,
         questions_readme_dropped=drop_readme,
         questions_readme_reported=report_readme,
+        linked=linked,
     )
+    notes = _outstanding_notes(report)
+    report_blocked = _LINKS.link_problem(root, inbox_dir) if notes else ""
+    if report_blocked:
+        _note_link(linked, report_blocked)  # the report would go into a linked inbox
     description = _describe(report)
 
-    notes = _outstanding_notes(report)
     if notes:
         existing_report = _find_open_migration_report(root)
-        if existing_report is None:
+        if report_blocked:
+            description += "; outstanding items not written to a report"
+        elif existing_report is None:
             report_path = _write_migration_report(root, notes)
             touched.append(report_path)
             description += f"; outstanding items written to {report_path.relative_to(root).as_posix()}"

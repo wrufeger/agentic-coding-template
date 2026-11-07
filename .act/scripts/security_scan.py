@@ -315,7 +315,9 @@ def running_marker_path(root: Path, state_hash: str) -> Path:
     return cache_dir(root) / f"{state_hash}.running.json"
 
 
-def _write_json(path: Path, data: dict) -> bool:
+def _write_json(root: Path, path: Path, data: dict) -> bool:
+    if not actlib.local_write_ok(root, path):
+        return False  # .act-local or the cache folder is a link or leaves the project: nothing goes through it
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -338,7 +340,7 @@ def write_running_marker(root: Path, state_hash: str, stale_after: float) -> boo
     False when the marker could not be written (the caller then does not spawn: a worker nobody
     can see would only be waited for by no one)."""
     return _write_json(
-        running_marker_path(root, state_hash), {"started": time.time(), "stale_after": stale_after},
+        root, running_marker_path(root, state_hash), {"started": time.time(), "stale_after": stale_after},
     )
 
 
@@ -356,6 +358,8 @@ def read_running_marker(root: Path, state_hash: str) -> Optional[dict]:
 
 
 def clear_running_marker(root: Path, state_hash: str) -> None:
+    if not actlib.local_write_ok(root, running_marker_path(root, state_hash)):
+        return  # nothing is removed through a link
     try:
         running_marker_path(root, state_hash).unlink()
     except OSError:
@@ -370,6 +374,8 @@ def prune_cache(root: Path) -> int:
     removed and never raises on I/O."""
     start_of_today = datetime.combine(date.today(), datetime.min.time()).timestamp()
     removed = 0
+    if not actlib.local_write_ok(root, cache_dir(root)):
+        return 0  # .act-local or the cache folder is a link or leaves the project: nothing is removed through it
     try:
         entries = list(cache_dir(root).iterdir())
     except OSError:
@@ -392,7 +398,7 @@ def write_result_cache(root: Path, state_hash: str, result: "ScanResult", files:
     can apply a short retry interval to a failed run), `cacheable` (`result.is_clean()`: no tool
     error, no missing tool -- a reader treats anything else as a miss once the retry interval is
     over), `files` (what was scanned, for a human reading the file)."""
-    return _write_json(result_cache_path(root, state_hash), {
+    return _write_json(root, result_cache_path(root, state_hash), {
         "day": date.today().isoformat(),
         "written": time.time(),
         "cacheable": result.is_clean(),

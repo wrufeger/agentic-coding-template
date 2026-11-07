@@ -133,6 +133,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- With a linked security-scan cache folder, a commit that touches a lock file is held with a message naming the
+  link (or `security-check: off`) instead of going ahead unscanned.
+- Migration 008 keeps the file mode of `docs/ai/config.md`.
 - `R-work-handover` and the context hint: the closing line that proposes `/clear` names the current context size
   as `ctx <n>k` (from `python .act/scripts/context_size.py`).
 - The Nuxt coding rules find the own test server's process on Windows with
@@ -270,6 +273,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- Migration temp files get exclusive, unique names and are removed on every path; the fixed name
+  `.<file>.migrating` is gone.
 - The release-tag lookup (`git ls-remote`) and the `semgrep` call of the deep security check keep their time
   limit on Windows when a child process holds the output pipe open; the whole process tree is ended.
 - `init.py` and `init.py --profile` commit only the paths they wrote, with literal pathspecs; files already
@@ -344,6 +349,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- Migrations 001–008 and the session start never write, move or remove through a symbolic link or Windows
+  junction (a linked `docs/ai/inbox`, work folder, file, `.act-local` or part of it); the skipped place is named
+  in one line. Hook processes write no compiled caches through a linked `.act-local`.
 - IDE MCP read tools (`read_file`, `list_directory_tree`, the `search_*` tools, `lint_files`, `git_status` …) hand
   every path argument to `secret-read` and `outside-root`, including `file:` and `jar:` URLs, include globs such
   as `**/.env*` and a `projectPath` outside the project; before, `.env`, `~/.ssh/id_rsa` or files outside the
