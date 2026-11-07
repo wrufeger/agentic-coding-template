@@ -29,8 +29,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import unicodedata
+from urllib.parse import urlsplit
 
 # Rather one false positive too many: a rejected message costs a minute, a leaked credential
 # cannot be called back. Every pattern here is intentionally broad.
@@ -92,13 +94,40 @@ def _normalize(text: str) -> str:
 
 
 def _split_host_path(url: str) -> tuple[str, str]:
-    """(host, path) of an http(s) URL, lowercased host, no port/userinfo/query/fragment. Never
-    raises — an unparsable fragment just yields an empty host."""
+    """(host, path) of an http(s) URL, lowercased host, no port/userinfo/query/fragment/brackets
+    (an IPv6 literal comes back as `::1`, not `[`). Never raises — an unparsable fragment just
+    yields an empty host."""
     rest = re.sub(r"(?i)^https?://", "", url)
-    host_part, _, path = rest.partition("/")
-    host_part = host_part.split("@")[-1]  # strip userinfo, if any
-    host = host_part.split(":", 1)[0].lower()
-    return host, "/" + path
+    _host_part, _, path = rest.partition("/")
+    # `?` and `#` stay inside the authority: it ends at the first `/`, as before.
+    authority = _host_part.replace("?", "%3F").replace("#", "%23")
+    try:
+        host = urlsplit("//" + authority).hostname or ""
+    except ValueError:
+        host = ""
+    return host.lower(), "/" + path
+
+
+# Documentation ranges (RFC 5737, RFC 3849) are reserved for examples; `ipaddress` calls them
+# private, but the IPv4 pattern never refused them in a link, so the IPv6 one stays consistent.
+_DOC_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32"))
+
+
+def _private_ip(host: str) -> bool:
+    """True when `host` is an IP literal that cannot be reached from the public internet:
+    loopback, private/ULA, link-local (also with a zone id such as `fe80::1%25eth0`),
+    unspecified, multicast or reserved. IPv4-mapped IPv6 is judged by its IPv4 part."""
+    try:
+        addr = ipaddress.ip_address(re.split(r"%", host, maxsplit=1)[0])
+    except ValueError:
+        return False
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    if any(addr.version == net.version and addr in net for net in _DOC_NETWORKS):
+        return False
+    return (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_unspecified
+            or addr.is_multicast or addr.is_reserved)
 
 
 def check_text(text: str, endpoint: str, *, template_repo: str | None = None) -> list[str]:
@@ -153,7 +182,7 @@ def check_link(url: str) -> list[str]:
     rest = re.sub(r"(?i)^https?://", "", url)
     if "@" in rest.split("/", 1)[0]:
         findings.append("credentials in the address")
-    if not host or _PRIVATE_HOST.search(host):
+    if not host or _PRIVATE_HOST.search(host) or _private_ip(host):
         findings.append(f"not publicly reachable ({host or url[:40]})")
     if len(url) > 300:
         findings.append("address longer than 300 characters")

@@ -1535,10 +1535,13 @@ def _names_in(text: str, name: str, folder: bool = False) -> bool:
 
 
 def _index_path(line: str) -> Optional[str]:
-    """The first path token (link target or backticks) of a table row or list item that looks like a
-    Markdown file or a folder, else None."""
+    """The first path token (link target or backticks) of a list item, or of the FIRST CELL of a table
+    row, that looks like a Markdown file or a folder, else None. Later cells of a table row are
+    content (a decision's link, an old -> new mapping), not index entries."""
     stripped = line.strip()
-    if not (stripped.startswith("|") or re.match(r"[-*+]\s", stripped)):
+    if stripped.startswith("|"):
+        stripped = stripped[1:].split("|", 1)[0].strip()
+    elif not re.match(r"[-*+]\s", stripped):
         return None
     first: Optional[tuple[int, str]] = None
     for regex in (_DOCS_TICK_RE, _DOCS_LINK_TARGET_RE):
@@ -1592,7 +1595,8 @@ def _check_docs_indexes(root: Path, project: Path, ignored: list[Path]) -> list[
 
 def _check_docs_links(root: Path, docs: Path, ignored: list[Path]) -> list[Finding]:
     """Dead relative Markdown links and `docs/project/...md` paths in docs/README.md and docs/project/
-    (decisions.md: links only, its records name files that were deleted later; ignored files skipped)."""
+    (decisions.md and the decisions/ folder: links only, their records name files that were deleted later;
+    ignored files skipped)."""
     files = [docs / "README.md"] if (docs / "README.md").is_file() else []
     project = docs / "project"
     if project.is_dir():
@@ -1617,7 +1621,8 @@ def _check_docs_links(root: Path, docs: Path, ignored: list[Path]) -> list[Findi
                 message=f"link target {target} does not exist",
             ))
         seen: set[str] = set()
-        for number, line in ([] if path == project / "decisions.md" else _unfenced(text)):
+        records = path == project / "decisions.md" or (project / "decisions") in path.parents
+        for number, line in ([] if records else _unfenced(text)):
             for match in _DOCS_TICK_RE.finditer(line):
                 token = match.group(1).strip()
                 if (_DOCS_PROJECT_PATH_RE.match(token) and not _DOCS_PLACEHOLDER_RE.search(token)

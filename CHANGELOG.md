@@ -259,6 +259,21 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `init.py` and `init.py --profile` commit only the paths they wrote, with literal pathspecs; files already
+  staged in the target repository stay staged and are named in the output instead of landing in the init commit.
+- The feedback link check recognises IPv6 hosts: `[::1]`, `[fd00::1]`, `[fe80::1%25eth0]` and IPv4-mapped
+  addresses are refused as not publicly reachable, like `127.0.0.1`; documentation ranges stay allowed.
+- `act-doctor` docs-order reads an index entry only from the first cell of a table row, so content tables no
+  longer give `docs-index-stale`, and skips backtick paths inside `docs/project/decisions/` as it does for
+  `decisions.md`.
+- The hint buffer of the commit scans: concurrent hooks of one session no longer lose or half-write a pending
+  hint (short lock, atomic replace; the hook never blocks or fails).
+- `entries.py compact` writes its files atomically and finishes an interrupted run: a source that already stands
+  in its collection file word for word is removed, one with a different text is kept and reported; entries
+  without an id are no longer appended twice.
+- `entries.py archive` keeps the byte order mark and line ends of the moved file and rewrites links written
+  percent-encoded (`%20`) or, on case-insensitive file systems, in other letter case; a rewritten link to a
+  folded file whose name has a space stays a valid link.
 - `act-release` starts its security reviewer with `Write scope: none` on a line of its own; in the one-line
   header before, the check did not read it and the reviewer ran without a write scope.
 - `rules.py` no longer drops a rule set line that has ` — reason` after the path (it was dropped with a format

@@ -3475,13 +3475,22 @@ def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
         return "nothing to commit"
     if plan:
         return f"would commit {len(rels)} path(s): {', '.join(rels)}"
-    actlib.git_pathspec_stdin(["add"], rels, cwd=root)
-    diff = _git(["diff", "--cached", "--name-only"], cwd=root)
-    if not diff.stdout.strip():
-        return "nothing staged, no commit made"
-    _git(["commit", "-m", message], cwd=root)
+    actlib.git_pathspec_stdin(["--literal-pathspecs", "add"], rels, cwd=root)
+    diff = _git(["diff", "--cached", "--no-renames", "--name-only", "-z"], cwd=root)
+    staged = [name for name in diff.stdout.split("\0") if name]
+    # The index may hold more than this run staged (the target repo's own work in progress). The
+    # commit is limited to the run's own paths; foreign entries stay staged and are only named.
+    own = [name for name in staged if any(name == rel or name.startswith(rel.rstrip("/") + "/") for rel in rels)]
+    foreign = [name for name in staged if name not in own]
+    note = ""
+    if foreign:
+        shown = ", ".join(foreign[:5]) + (f" (+{len(foreign) - 5} more)" if len(foreign) > 5 else "")
+        note = f"; left {len(foreign)} foreign staged path(s) staged: {shown}"
+    if not own:
+        return "nothing staged, no commit made" + note
+    actlib.git_pathspec_stdin(["--literal-pathspecs", "commit", "-m", message], rels, cwd=root)
     sha = _git(["rev-parse", "--short", "HEAD"], cwd=root).stdout.strip()
-    return f"committed {len(rels)} path(s) as {sha}"
+    return f"committed {len(rels)} path(s) as {sha}{note}"
 
 
 # ---------------------------------------------------------------------------

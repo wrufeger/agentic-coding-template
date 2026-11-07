@@ -109,7 +109,11 @@
 #     collection `Q-|T-|B-|U-|other-|ledger-<YYYY-MM>.md`, a journal `YYYY-MM-DD-*.md`, an overview
 #     `YYYY-MM.md`) is refused: rename the concept first. Links to
 #     it in the other Markdown files of the project (not legacy/, not .act/; a fragment stays) are
-#     rewritten to the archive path, and pasted files it links move along as for an entry.
+#     rewritten to the archive path, and pasted files it links move along as for an entry. A link
+#     written percent-encoded (`My%20Concept.md`) is found like a plain one; one written in other letter
+#     case only where the file system ignores case (asked of the file system: does the name with its case
+#     swapped open the same file?). A moved file keeps its byte order mark and its line ends (CRLF when
+#     most lines use it), entry or concept.
 #     Prints one "entries: archived|moved|copied|relinked|left ..." line per change, so a commit by
 #     pathspec can stage every path (a "relinked links to <name> in <path>" line names a file that
 #     links to a moved concept); exit 2 with the reason on stderr, nothing changed, for an unknown id or
@@ -134,7 +138,7 @@
 #     archive, else `created:`.
 #     Links to a merged file in any Markdown file of the project (not legacy/, not .act/) are rewritten to
 #     the collection plus anchor. The newest week, a subfolder (legacy/, proposals/), a README, an
-#     unreadable file and an entry whose id is carried twice stay single files; a monthly overview
+#     unreadable file and an entry whose id is carried by another single file stay single files; a monthly overview
 #     (`YYYY-MM.md`) is never folded. For every month with a Q-, T-, B- or U- collection (also when nothing
 #     is left to merge), the overview `archive/<YYYY-MM>.md` lists each entry of those collections in one
 #     line: a link to its anchor, the title, the `status:`. A new overview gets one section per kind; an
@@ -143,6 +147,11 @@
 #     after the last bullet line that links into the same collection, else in a new section at the end; a
 #     byte order mark and CRLF line ends stay. Refuses (exit 2, nothing
 #     changed) when the project is not a Git repository with a commit or a file to merge is not committed.
+#     Every file is written whole into a temporary file and moved over its target, the single files are
+#     removed last. A run that stopped in between leaves a single file next to the collection file that
+#     already holds it: the next run removes only such a source whose section stands in its collection
+#     file word for word (line "removed <path> - ... word for word"); one whose id or name is there with
+#     a different text stays and is reported, never removed (`check` and `doctor` still list a doubled id).
 #     `--plan` lists what would be merged and writes nothing. A second run changes nothing. Prints one
 #     "entries: compacted|would compact <id>: <old path> -> <collection>#<anchor>" line per entry, one
 #     "entries: relinked ..." line per rewritten file and a closing "entries: wrote ..." line.
@@ -1186,9 +1195,9 @@ def _format_target(raw: str, path: str, suffix: str, html: bool) -> str:
         return urllib.parse.quote(path, safe="/.-_~()") + suffix
     if raw.strip().startswith("<"):
         return f"<{path}{suffix}>"
-    if "%" in raw:
-        return urllib.parse.quote(path, safe="/.-_~()") + suffix
-    return f"<{path}{suffix}>" if " " in path else path + suffix
+    if "%" in raw:  # percent-encoded style: the fragment (the anchor may be a file stem with a space) too
+        return urllib.parse.quote(path, safe="/.-_~()") + urllib.parse.quote(suffix, safe="#?=&/.-_~()%:")
+    return f"<{path}{suffix}>" if " " in path + suffix else path + suffix
 
 
 # A mapper returns the new link path, or (path, fragment) to also replace the fragment, or None to keep the link.
@@ -1414,6 +1423,32 @@ class ArchivePlan:
     outside: list[tuple[Path, Path]] = field(default_factory=list)  # (link, real file) left in place
     concept: bool = False  # a concept file, not a task, backlog item or inbox entry
     incoming: dict[Path, str] = field(default_factory=dict)  # concept only: other file -> its text with the links to it moved
+    bom: bool = False  # the file starts with a byte order mark: the archived copy keeps it
+    newline: str = "\n"  # the file's line ends ("\r\n" when most are): the archived copy keeps them
+
+
+def _file_bytes_style(path: Path) -> tuple[bool, str]:
+    """(has a UTF-8 byte order mark, the line end most of the file's lines use: CRLF or LF) - what
+    `_safe_read` drops and folds, so that the archived copy can be written the way the file was."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False, "\n"
+    crlf = raw.count(b"\r\n")
+    return raw.startswith(b"\xef\xbb\xbf"), "\r\n" if crlf > raw.count(b"\n") - crlf else "\n"
+
+
+def _fs_ignores_case(path: Path) -> bool:
+    """True when the file system under the existing `path` treats a name in other letter case as the same file
+    (Windows and macOS by default, a Linux folder normally not). Asked of the file system itself, one stat: does
+    the name with its letter case swapped open the very same file?"""
+    swapped = path.with_name(path.name.swapcase())
+    if swapped.name == path.name:
+        return False
+    try:
+        return swapped.exists() and os.path.samefile(swapped, path)
+    except OSError:
+        return False
 
 
 def _is_inside(path: Path, folder: Path) -> bool:
@@ -1436,6 +1471,7 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> Archi
     entry_dir = entry.parent
     plan = ArchivePlan(text=text, dest=dest, entry_id=entry_id, inbox=is_inbox,
                        concept=_is_concept(root, entry) and not is_inbox)
+    plan.bom, plan.newline = _file_bytes_style(entry)
 
     if plan.concept and (_COLLECTION_NAME_RE.match(entry.name) or _LEDGER_NAME_RE.match(entry.name)
                          or _OVERVIEW_NAME_RE.match(entry.name)):
@@ -1523,24 +1559,47 @@ def plan_archive(root: Path, entry: Path, today: Optional[date] = None) -> Archi
     return plan
 
 
+def _link_texts(raw: str) -> list[str]:
+    """The texts `_mentions` searches for a file name: `raw`, and once its percent-encoding is undone
+    (`My%20Concept.md`) too. Made once per file, not once per name."""
+    return [raw] if "%" not in raw else [raw, urllib.parse.unquote(raw)]
+
+
+def _mentions(texts: list[str], name: str, ignore_case: bool = False) -> bool:
+    """True when one of `texts` (from `_link_texts`) may link a file called `name`: in any letter case
+    when `ignore_case`. Only a cheap pre-filter: the link rewrite itself decides which links really point
+    at the file."""
+    if ignore_case:
+        name = name.lower()
+        return any(name in text.lower() for text in texts)
+    return any(name in text for text in texts)
+
+
 def _incoming_links(root: Path, old: Path, new: Path) -> dict[Path, str]:
     """For a concept file that moves from `old` to `new`: every other Markdown file of the project that links
     to it (not legacy/, not .act/) -> its text with those links pointing at `new`. Links in code are
-    untouched; a fragment stays."""
-    key = os.path.normcase(os.path.normpath(old))
+    untouched; a fragment stays. A link written percent-encoded (`My%20Concept.md`) is found as well, and
+    - only where the file system ignores letter case - one written in other case."""
+    ignore_case = _fs_ignores_case(old)
+
+    def path_key(path: Path) -> str:
+        key = os.path.normcase(os.path.normpath(path))
+        return key.lower() if ignore_case else key
+
+    key = path_key(old)
     changed: dict[Path, str] = {}
     for markdown in _walk_markdown(root):
-        if os.path.normcase(os.path.normpath(markdown)) == key:
+        if path_key(markdown) == key:
             continue
         try:
             raw = markdown.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if old.name not in raw:
+        if not _mentions(_link_texts(raw), old.name, ignore_case):
             continue
 
         def mapper(_path: str, resolved: Path, base: Path = markdown.parent) -> Optional[str]:
-            if os.path.normcase(os.path.normpath(resolved)) != key:
+            if path_key(resolved) != key:
                 return None
             try:
                 return Path(os.path.relpath(new, base)).as_posix()
@@ -1565,8 +1624,8 @@ def cmd_archive(root: Path, ref: str) -> int:
     created: list[Path] = []
     try:
         archive.mkdir(parents=True, exist_ok=True)
-        with open(dest, "x", encoding="utf-8", newline="\n") as handle:
-            handle.write(plan.text)
+        with open(dest, "x", encoding="utf-8", newline=plan.newline) as handle:
+            handle.write(("\ufeff" if plan.bom else "") + plan.text)
         created.append(dest)
         for source, name in plan.names.items():
             target = archive / name
@@ -1656,6 +1715,9 @@ class CompactItem:
     day: date  # the archive date (a journal entry: its file name's date)
     anchor: str
     section: str  # the section text; links are still relative to the original folder
+    # the section(s) of this anchor a collection file already holds (an earlier run stopped after writing
+    # it, before it removed the source); None when there is none
+    standing: Optional[list[str]] = None
 
     @property
     def month(self) -> str:
@@ -1791,10 +1853,34 @@ def _id_sort_number(anchor: str) -> int:
     return int(match.group(2)) if match else 0
 
 
+def _standing_sections(collection: str, anchor: str) -> Optional[list[str]]:
+    """The text of every section with `anchor` in the collection file text `collection` (from its anchor line
+    up to the next section's, trailing blank lines cut, LF line ends), or None when there is none. A pair
+    of anchor line and heading inside a fenced code block is an example and does not count."""
+    lines = collection.removeprefix("\ufeff").replace("\r\n", "\n").split("\n")
+    starts: list[int] = []
+    fence: actlib.FenceState = None
+    for index, line in enumerate(lines):
+        if fence is None and _ANY_ANCHOR_RE.match(line) and index + 1 < len(lines) and lines[index + 1].startswith("## "):
+            starts.append(index)
+            continue
+        fence = actlib.fence_step(fence, line)
+    found = []
+    for position, start in enumerate(starts):
+        match = _ANCHOR_VALUE_RE.match(lines[start])
+        if match and match.group(1) == anchor:
+            end = starts[position + 1] if position + 1 < len(starts) else len(lines)
+            found.append("\n".join(lines[start:end]).rstrip("\n"))
+    return found or None
+
+
 def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str], int]:
     """(items to fold, notes on files left alone, number of single files kept because they are
     newer than the keep window), computed without touching a file. A collection file, a README,
-    a subfolder (legacy/, proposals/) and an entry whose id is carried twice are never folded."""
+    a subfolder (legacy/, proposals/) and an entry whose id is carried by another single file are never
+    folded. A file whose section already stands in its collection file (a run that stopped before it
+    removed the sources) is returned with `standing` set: the caller decides between removing the
+    source and keeping it."""
     archive = root / ARCHIVE_DIR
     ledger = root / LEDGER_DIR
     sources: list[tuple[Path, bool]] = []  # (file, lives in the journal folder)
@@ -1808,6 +1894,7 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
     items: list[CompactItem] = []
     notes: list[str] = []
     kept = 0
+    collections: dict[str, Optional[str]] = {}  # collection file name -> its text, read once
     for path, journal in sources:
         text = _safe_read(path)
         if text is None:
@@ -1818,9 +1905,7 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
         header = actlib.header_block(text)
         ids = actlib.entry_ids(text)
         entry_id = ids[0] if ids else None
-        if entry_id in duplicated:
-            notes.append(f"left {_rel(path, root)} - id {entry_id} is carried by more than one entry")
-            continue
+        is_duplicate = entry_id in duplicated
         named = _LEDGER_NAME_RE.match(path.name)
         as_journal = journal or (named is not None and entry_id is None)
         try:
@@ -1829,14 +1914,23 @@ def plan_compact(root: Path, today: date) -> tuple[list[CompactItem], list[str],
             notes.append(f"left {_rel(path, root)} - {named.group(1)} in the file name is not a valid date")
             continue
         day = dating.day(path, header, journal, name_day)
-        if day >= cutoff:
-            kept += 1
-            continue
         prefix = entry_id[0] if entry_id and entry_id[0] in "QTBU" and entry_id[1:2].isdigit() else None
         group = prefix or ("ledger" if as_journal else "other")
         anchor, section = _build_section(path, text, entry_id, day)
-        items.append(CompactItem(path=path, origin=_rel(path.parent, root), group=group, day=day,
-                                 anchor=anchor, section=section))
+        item = CompactItem(path=path, origin=_rel(path.parent, root), group=group, day=day,
+                           anchor=anchor, section=section)
+        if item.collection_name not in collections:
+            collections[item.collection_name] = _safe_read(archive / item.collection_name)
+        collection = collections[item.collection_name]
+        item.standing = _standing_sections(collection, anchor) if collection is not None else None
+        if item.standing is None:
+            if is_duplicate:
+                notes.append(f"left {_rel(path, root)} - id {entry_id} is carried by more than one entry")
+                continue
+            if day >= cutoff:
+                kept += 1
+                continue
+        items.append(item)
     items.sort(key=lambda item: (item.group, item.day, _id_sort_number(item.anchor), item.path.name))
     return items, notes, kept
 
@@ -1995,26 +2089,74 @@ def _porcelain_paths(output: str) -> set[str]:
     return names
 
 
+def _compact_mapper(archive: Path, targets: dict[str, tuple[str, str]], dest_base: Path,
+                    everything: bool) -> LinkMapper:
+    """Link mapper for text that ends up in `dest_base`: a link to a merged entry (a key of `targets`) becomes
+    the collection plus anchor; with `everything`, any other existing target is re-based as well (a journal
+    entry moves to another folder)."""
+    def mapper(path: str, resolved: Path) -> Union[None, str, tuple[str, str]]:
+        key = os.path.normcase(os.path.normpath(resolved))
+        try:
+            if key in targets:
+                name, anchor = targets[key]
+                return Path(os.path.relpath(archive / name, dest_base)).as_posix(), anchor
+            if everything and resolved.exists():
+                new = Path(os.path.relpath(resolved, dest_base)).as_posix()
+                return None if new == path else new
+        except ValueError:  # another drive: keep the link as written
+            return None
+        return None
+    return mapper
+
+
+def _compact_section(item: CompactItem, archive: Path, targets: dict[str, tuple[str, str]]) -> str:
+    """The section of `item` as it is written into its collection: its links re-based to the archive folder."""
+    if "](" in item.section or "src=" in item.section:
+        return _rewrite_links(item.section, item.path.parent,
+                              _compact_mapper(archive, targets, archive, item.path.parent != archive))
+    return item.section
+
+
+def _targets_of(items: list[CompactItem]) -> dict[str, tuple[str, str]]:
+    return {os.path.normcase(os.path.normpath(item.path)): (item.collection_name, item.anchor) for item in items}
+
+
 def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> int:
     today = today or date.today()
-    items, notes, kept = plan_compact(root, today)
+    candidates, notes, kept = plan_compact(root, today)
+    archive = root / ARCHIVE_DIR
+
+    # An earlier run that stopped after it wrote the collection files and before it removed the sources
+    # leaves entries twice. A source whose section stands in its collection file word for word is only
+    # removed; one whose text differs is kept and reported, never removed.
+    every_target = _targets_of(candidates)
+    items: list[CompactItem] = []  # to be folded into a collection
+    resumed: list[CompactItem] = []  # already folded word for word: only the source goes
+    for item in candidates:
+        if item.standing is None:
+            items.append(item)
+        elif _compact_section(item, archive, every_target).rstrip("\n") in item.standing:
+            resumed.append(item)
+        else:
+            notes.append(f"left {_rel(item.path, root)} - {item.anchor} already stands in "
+                         f"{_rel(archive / item.collection_name, root)}, but with a different text; compare "
+                         "the two by hand and remove one")
     for note in notes:
         print(f"entries: {note}")
-    archive = root / ARCHIVE_DIR
-    if not items:  # an overview a month still lacks (an older run, a skipped step) is written all the same
+    if not items and not resumed:  # an overview a month still lacks (an older run, a skipped step) is written all the same
         overviews = _overview_writes(root, _collection_months(archive), {})
         if not plan_only:
             for path, text in overviews.items():
-                with open(path, "w", encoding="utf-8", newline="") as handle:
-                    handle.write(text)
+                actlib.write_text_atomic(path, text)
         done = (f"{'would write' if plan_only else 'wrote'} {', '.join(_rel(p, root) for p in overviews)}; "
                 if overviews else "")
         print(f"entries: {done}nothing to compact ({kept} single file(s) newer than {COMPACT_KEEP_DAYS} days stay)")
         return 0
+    removals = items + resumed  # every source this run removes
     groups: dict[str, list[CompactItem]] = defaultdict(list)
     for item in items:
         groups[item.collection_name].append(item)
-    targets = {os.path.normcase(os.path.normpath(item.path)): (item.collection_name, item.anchor) for item in items}
+    targets = _targets_of(removals)
     for name in groups:
         if (archive / name).is_file() and _safe_read(archive / name) is None:
             raise CompactError(f"{_rel(archive / name, root)} exists but is not valid UTF-8: it would be "
@@ -2023,7 +2165,7 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
     commit = (board.run_git(["rev-parse", "--short=12", "HEAD"], root) or "").strip()
     pending = _git_text(["status", "--porcelain", "-z", "--untracked-files=all", "--", ARCHIVE_DIR.as_posix(),
                          LEDGER_DIR.as_posix()], root)
-    wanted = {_rel(item.path, root) for item in items}
+    wanted = {_rel(item.path, root) for item in removals}
     dirty = sorted(name for name in _porcelain_paths(pending or "") if name in wanted)
     if not plan_only:
         if not commit or pending is None:
@@ -2037,46 +2179,25 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
         print(f"entries: {verb} {item.anchor}: {_rel(item.path, root)} -> "
               f"{_rel(archive / item.collection_name, root)}#{item.anchor}")
     if plan_only:
+        for item in resumed:
+            print(f"entries: would remove {_rel(item.path, root)} - {item.anchor} already stands in "
+                  f"{_rel(archive / item.collection_name, root)} word for word")
         print(f"entries: plan - {len(items)} entr(ies) into {len(groups)} collection file(s), {kept} newer single "
               f"file(s) stay; nothing written" + (f"; not committed yet: {', '.join(dirty)}" if dirty else ""))
         return 0
 
-    def mapper_for(dest_base: Path, everything: bool) -> LinkMapper:
-        """Link mapper for text that ends up in `dest_base`: a link to a merged entry becomes the
-        collection plus anchor; with `everything`, any other existing target is re-based as well
-        (a journal entry moves to another folder)."""
-        def mapper(path: str, resolved: Path) -> Optional[str]:
-            key = os.path.normcase(os.path.normpath(resolved))
-            try:
-                if key in targets:
-                    name, anchor = targets[key]
-                    return Path(os.path.relpath(archive / name, dest_base)).as_posix(), anchor
-                if everything and resolved.exists():
-                    new = Path(os.path.relpath(resolved, dest_base)).as_posix()
-                    return None if new == path else new
-            except ValueError:  # another drive: keep the link as written
-                return None
-            return None
-        return mapper
-
     writes: dict[Path, str] = {}
     for name, members in groups.items():
-        sections = []
-        for item in members:
-            if "](" in item.section or "src=" in item.section:
-                sections.append(_rewrite_links(item.section, item.path.parent,
-                                               mapper_for(archive, item.path.parent != archive)))
-            else:
-                sections.append(item.section)
+        sections = [_compact_section(item, archive, targets) for item in members]
         target = archive / name
         existing = _safe_read(target)
         if existing is not None:  # older sections may link to an entry merged by this run
-            existing = _rewrite_links(existing, archive, mapper_for(archive, False))
+            existing = _rewrite_links(existing, archive, _compact_mapper(archive, targets, archive, False))
         writes[target] = _collection_text(existing, members, sections, commit, today)
 
-    skip = {os.path.normcase(os.path.normpath(item.path)) for item in items}
+    skip = {os.path.normcase(os.path.normpath(item.path)) for item in removals}
     skip |= {os.path.normcase(os.path.normpath(path)) for path in writes}
-    names = [item.path.name for item in items]
+    names = [item.path.name for item in removals]
     relinked: list[Path] = []
     for md in _walk_markdown(root):
         if os.path.normcase(os.path.normpath(md)) in skip:
@@ -2085,9 +2206,10 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
             raw = md.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if not any(name in raw for name in names):
+        texts = _link_texts(raw)
+        if not any(_mentions(texts, name) for name in names):
             continue
-        new = _rewrite_links(raw, md.parent, mapper_for(md.parent, False))
+        new = _rewrite_links(raw, md.parent, _compact_mapper(archive, targets, md.parent, False))
         if new != raw:
             writes[md] = new
             relinked.append(md)
@@ -2095,15 +2217,19 @@ def cmd_compact(root: Path, plan_only: bool, today: Optional[date] = None) -> in
     months = _collection_months(archive) | {item.month for item in items if item.group in _OVERVIEW_HEADINGS}
     writes.update(_overview_writes(root, months, writes))
 
+    # Every file is written whole into a temporary file and moved over its target, and the sources go last: an
+    # abort in between leaves a source next to a complete collection file, which the next run removes.
     for path, text in writes.items():
-        with open(path, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-    for item in items:
+        actlib.write_text_atomic(path, text)
+    for item in removals:
         item.path.unlink()
+    for item in resumed:
+        print(f"entries: removed {_rel(item.path, root)} - {item.anchor} already stood in "
+              f"{_rel(archive / item.collection_name, root)} word for word")
     for path in relinked:
         print(f"entries: relinked links to merged entries in {_rel(path, root)}")
     written = [_rel(path, root) for path in writes if path not in relinked]
-    print(f"entries: wrote {', '.join(written)}; {len(items)} single file(s) removed, full text in Git at {commit}")
+    print(f"entries: wrote {', '.join(written)}; {len(removals)} single file(s) removed, full text in Git at {commit}")
     return 0
 
 
