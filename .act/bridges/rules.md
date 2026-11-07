@@ -58,6 +58,7 @@ Applies to the main session only — workers skip this section.
 
 @../../.act/rules/orchestrator/10-work.md
   - [x] `R-work-record-now`
+  - [x] `R-work-process-error`
   - [x] `R-work-session-start`
   - [x] `R-work-idea-first`
   - [x] `R-work-config`

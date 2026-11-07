@@ -85,7 +85,8 @@ summary: bounded assignment, evidence and marked assumptions, no commits, no doc
 
 A worker (sub-agent) works from a bounded assignment and returns a result **plus evidence**, at
 most 40 lines, no raw dumps, every assumption it made marked **assumption**. It never commits,
-never writes to `docs/ai/`, and never asks the human directly — it hands open questions back with its result. If the human addresses a worker
+never writes to `docs/ai/`, and never asks the human directly — it hands open questions back with its result, as well as
+any fault it notices in how the work runs (`R-work-process-error`). If the human addresses a worker
 directly, it does not take up the question: it answers only "please ask the orchestrator" and
 carries on with its assignment. Asked for status, it answers at
 once with facts: done, open, unexpected. Git access is read-only (`status`, `diff`, `log`,

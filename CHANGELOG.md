@@ -11,6 +11,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Rule `R-work-process-error`: a fault in how the work itself runs (workers getting in each other's way, a run
+  checking the wrong state, a step against a rule) is reported the first time it shows, as an inbox question with
+  proposed fixes, and the process changes before the work goes on; a workaround alone is not enough, and a cause in
+  the template is feedback too. A worker hands such a fault back with its result (`R-role-worker`). `act-update`
+  enters the new line in an existing project's `docs/ai/rules.md`.
 - An assignment that runs tests or probes names the tree it reads as its own line `Tests: <glob>[, <glob> ...]`
   (same patterns as `Write scope:`). `worker-scope-overlap` refuses a worker start whose `Tests:` tree is written
   by a running worker, and a writing worker whose `Write scope:` meets a running worker's `Tests:` tree; the

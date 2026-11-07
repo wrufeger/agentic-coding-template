@@ -1,6 +1,6 @@
 # Work rules
 
-summary: recording promptly, restart checks, concept-first, config.md, handover readiness
+summary: recording promptly, process errors, restart checks, concept-first, config.md, handover readiness
 
 ## `R-work-record-now` — Write immediately, not at session end
 
@@ -10,6 +10,16 @@ Journal, task status, and new questions go to their place right after the step t
 while the evidence is still fresh — not reconstructed from memory later. An open decision goes where
 `inbox-decisions` puts it (`R-human-ask`), including one that arose only in chat;
 one the human makes in chat goes into the inbox at once, answered.
+
+## `R-work-process-error` — A process error is reported and fixed the first time
+
+summary: a fault in how the work itself runs reported at its first occurrence as an inbox question with proposed fixes; the process changed before going on, a workaround alone is not enough; a cause in the template is feedback too
+
+A fault in how the work itself runs — workers getting in each other's way, a run checking the wrong
+state, a step against a rule — is reported the first time it shows, as an inbox question with
+proposed fixes (`R-human-ask`), and the process changes for the rest of the work before it goes on;
+working around it alone is not enough. If the cause lies in the template (a rule, skill or check),
+it is also feedback to the template (`R-work-override`).
 
 ## `R-work-session-start` — Check restarts yourself; "continue" means work
 
