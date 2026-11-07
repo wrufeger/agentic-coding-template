@@ -273,6 +273,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `git restore <file>` and `git checkout -- <file>` of a tracked file that was deleted in the work tree are no
+  longer refused by `git-discard`: git must know the path as exactly one tracked file (also read
+  case-insensitively); a deleted folder, a pattern, `:(…)` magic, a trailing `/` and an unknown path are judged
+  as before.
+- The dependency scan no longer reports a tool failure for `pnpm audit` when every finding is ignored through
+  `auditConfig.ignoreGhsas`: exit 0 with an empty `advisories` object counts as clean whatever `metadata`
+  counts.
 - Migration temp files get exclusive, unique names and are removed on every path; the fixed name
   `.<file>.migrating` is gone.
 - The release-tag lookup (`git ls-remote`) and the `semgrep` call of the deep security check keep their time

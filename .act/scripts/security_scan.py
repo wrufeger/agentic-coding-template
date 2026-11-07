@@ -890,8 +890,8 @@ def _run_pnpm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[
     # Output shape: pnpm audit --json prints npm's classic audit report,
     # {"advisories": {"<id>": {"module_name", "severity", "vulnerable_versions", "patched_versions",
     # "github_advisory_id", "url", "title"}}, "metadata": ...}; the id kept is the GHSA one, the same
-    # key osv-scanner reports. Not verified against a live pnpm on this machine (assumption); the
-    # npm-style "vulnerabilities" map is read too, in case a newer pnpm prints that form.
+    # key osv-scanner reports. Checked against pnpm 12 (assumption for older majors); the npm-style
+    # "vulnerabilities" map is read too, in case a newer pnpm prints that form.
     stdout, returncode, stderr, start_error = _run([tool_path, "audit", "--json"], lock_path.parent, timeout=_TOOL_TIMEOUT)
     if start_error:
         return [], start_error
@@ -950,6 +950,13 @@ def _run_pnpm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[
     if not isinstance(data, dict) or not (isinstance(advisories, dict) or isinstance(vulnerabilities, dict)):
         keys = sorted(str(k) for k in data) if isinstance(data, dict) else type(data).__name__
         return [], _tool_error(returncode, f"unexpected pnpm audit JSON (keys: {keys})", _FINDINGS_EXIT_1)
+    if (not findings and returncode == 0 and isinstance(advisories, dict) and not advisories
+            and ("vulnerabilities" not in data or vulnerabilities == {})):
+        # Exit 0 with an empty advisory map is clean whatever the counters say: pnpm 12 still counts a
+        # finding that the project's audit settings ignore (`auditConfig.ignoreGhsas`) in
+        # metadata.vulnerabilities, but leaves it out of the advisories and exits 0. A report that
+        # lists nothing and exits 1, or a report with an npm-style vulnerabilities map, stays as below.
+        return [], None
     if not findings:
         metadata = data.get("metadata")
         counts = metadata.get("vulnerabilities") if isinstance(metadata, dict) else None
@@ -961,8 +968,7 @@ def _run_pnpm_audit(tool_path: str, root: Path, lock_path: Path) -> "tuple[list[
                     _FINDINGS_EXIT_1,
                 )
             if any(isinstance(v, int) and not isinstance(v, bool) for v in counts.values()):
-                # The report itself counts zero: clean, whatever the exit code (pnpm also exits with 1 when
-                # every advisory it found is ignored by the project's audit settings).
+                # The report itself counts zero: clean, whatever the exit code.
                 return [], None
     if not findings:
         return [], _silent_findings_error(returncode, _FINDINGS_EXIT_1, "pnpm audit JSON holds no advisory")

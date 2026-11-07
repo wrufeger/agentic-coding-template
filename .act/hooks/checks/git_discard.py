@@ -12,8 +12,10 @@
 #            - `git checkout -- <folder>`, `git checkout .`, `git restore <folder>` (working tree) when
 #              tracked changes lie below that folder, and `git checkout -f` / `git switch -f` /
 #              `--discard-changes` when the tree has tracked changes. A single file stays free; the
-#              file/folder decision is made on the file system of the target directory, and a glob or
-#              a path that does not exist counts as a folder;
+#              file/folder decision is made on the file system of the target directory, and a glob
+#              or a path that does not exist counts as a folder -- except a missing path that git
+#              knows as exactly one tracked file (a tracked file deleted in the work tree), which
+#              counts as a file;
 #            - `git stash drop`, `git stash clear` always;
 #            - a forced push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) whose
 #              target is the default branch;
@@ -52,6 +54,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 import subprocess
 import sys
@@ -77,6 +80,7 @@ __all__ = ["check_git_discard"]
 
 _TIME_BUDGET = 7.0  # seconds for every git call of one hook run together (the hook timeout is 10)
 _CALL_LIMIT = 4.0   # seconds for a single git call
+_LOOKUP_LIMIT = 2.0  # seconds for the one git call that looks up a missing path in the index
 _HOOK_BUDGET = 7.5  # seconds after dispatch.py's own start (payload["_act_hook_started"]) at the latest
 
 _RULE = "R-safe-git-discard"
@@ -107,14 +111,14 @@ class _Budget:
     def expired(self) -> bool:
         return time.monotonic() >= self._deadline
 
-    def run(self, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    def run(self, args: list[str], cwd: Path, limit: float = _CALL_LIMIT) -> subprocess.CompletedProcess:
         remaining = self._deadline - time.monotonic()
         if remaining <= 0.2:
             raise _Unknown("time budget used up")
         try:
             return subprocess.run(
                 ["git", *args], cwd=str(cwd), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=min(_CALL_LIMIT, remaining),
+                encoding="utf-8", errors="replace", timeout=min(limit, remaining),
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise _Unknown(f"git {args[0]} could not run: {error}") from error
@@ -221,18 +225,58 @@ def _clean_verdict(sub_args: list[str], target: Path, budget: _Budget, force_by_
     return f"it would delete {len(lines)} untracked path(s), e.g. `{lines[0]}`"
 
 
-def _is_folder(raw: str, base: Path) -> bool:
+_FILE_MODES = ("100644", "100755", "120000")  # a regular file or a symlink; not a submodule (160000)
+
+
+def _is_folder(raw: str, base: Path, budget: _Budget) -> bool:
     """A path given to checkout/restore is a folder unless it names an existing file; a glob, a
-    pathspec with magic, `.` or a path that does not exist counts as a folder."""
+    pathspec with magic, `.` or a path that does not exist counts as a folder -- except a missing
+    path that git knows as exactly one tracked file (see _is_deleted_tracked_file)."""
     if not raw or raw.startswith(":") or any(ch in raw for ch in "*?["):
         return True
     path = Path(_to_native_path(raw))
     if not path.is_absolute():
         path = base / path
     try:
-        return not path.is_file()
+        if path.is_file():
+            return False
+        if os.path.lexists(path):  # a folder, or anything else that is there: as before
+            return True
     except OSError:
         return True
+    return not _is_deleted_tracked_file(raw, path, base, budget)
+
+
+def _is_deleted_tracked_file(raw: str, path: Path, base: Path, budget: _Budget) -> bool:
+    """True only if `raw` (missing on disk) is, spelled exactly like that, the one tracked file in the
+    index of the repository at `base`: `git ls-files --stage --error-unmatch` with case-insensitive
+    pathspecs (the widest reading the command's own `--icase-pathspecs` or `GIT_ICASE_PATHSPECS` could
+    give; globbing stays on, so a pattern word yields another name or several entries) answers with one stage-0 entry of a regular file or symlink whose path is the path itself. A
+    folder (several entries, or one entry with a longer path), a pattern, an unknown or untracked
+    path, a trailing slash, a submodule, an unmerged entry, a git failure or a used-up budget: False."""
+    if raw.endswith(("/", "\\")) or any(ch in raw for ch in "\n\r\0"):
+        return False
+    try:
+        wanted = path.relative_to(base).as_posix()
+    except ValueError:
+        return False  # outside the directory git runs in (or another drive): not judged here
+    if not wanted or wanted == "." or wanted.startswith(("-", ":")):
+        return False
+    try:
+        result = budget.run(
+            ["--icase-pathspecs", "ls-files", "--stage", "--error-unmatch", "-z", "--", wanted],
+            base, limit=_LOOKUP_LIMIT,
+        )
+    except _Unknown:
+        return False
+    if result.returncode != 0 or not isinstance(result.stdout, str):
+        return False
+    entries = [entry for entry in result.stdout.split("\0") if entry]
+    if len(entries) != 1:
+        return False
+    meta, tab, name = entries[0].partition("\t")
+    fields = meta.split(" ")
+    return bool(tab) and name == wanted and len(fields) == 3 and fields[0] in _FILE_MODES and fields[2] == "0"
 
 
 def _tracked_changes(paths: list[str], target: Path, budget: _Budget) -> str:
@@ -272,7 +316,7 @@ def _checkout_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Opt
                 if (arg == "." or arg.startswith(":") or any(ch in arg for ch in "*?[")
                         or _is_existing_dir(arg, target)):
                     paths.append(arg)
-    folders = [p for p in paths if _is_folder(p, target)]
+    folders = [p for p in paths if _is_folder(p, target, budget)]
     if not folders:
         return None
     if _tracked_changes(folders, target, budget):
@@ -319,7 +363,7 @@ def _restore_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Opti
         if arg.startswith("-"):
             continue
         paths.append(arg)
-    folders = [p for p in paths if _is_folder(p, target)]
+    folders = [p for p in paths if _is_folder(p, target, budget)]
     if not folders:
         return None
     if _tracked_changes(folders, target, budget):
