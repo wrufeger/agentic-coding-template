@@ -92,6 +92,11 @@ neighbouring repository, another project, the home directory — only on the own
 case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
 workaround. Applies to every role and tool.
 
+Two scripts write outside the project, only when the human explicitly asks for it: `id_links_install.py` to
+`~/.act/id-links/` (Windows `%USERPROFILE%\.act\id-links\`) and `act-export-settings --profile` to
+`%APPDATA%\act\settings.md` on Windows (fallback `~/AppData/Roaming/act/`), `$XDG_CONFIG_HOME/act/settings.md` on POSIX, else
+`~/.config/act/settings.md`; an existing file is first copied to `settings.md.bak-<stamp>`.
+
 A program folder outside the project and outside the home directory (the system browser of a browser check,
 a compiler, an SDK) has an entry form of its own: the absolute path, a drive path in either slash style
 (`D:/Program Files/Browser`, `D:\Program Files\Browser`) or a POSIX one (`/opt/browser`). Such an entry is

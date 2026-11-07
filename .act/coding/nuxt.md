@@ -76,11 +76,15 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
   - **Windows:** an aborted dev server can keep its port bound; the next start moves to the next free
     port and HMR/WebSocket errors follow. If it is a server the assistant started itself, end exactly
     that process instead of configuring a custom HMR port. Find the listening PID with
-    `(Get-NetTCPConnection -LocalPort <port> -State Listen).OwningProcess`, or with
-    `netstat -ano | findstr /C:":<port> " | findstr LISTENING` — plain `findstr ":<port> "` also
-    matches longer port numbers, and lines without `LISTENING` belong to clients — then
-    `taskkill /PID <pid> /F`; elsewhere `lsof -iTCP:<port> -sTCP:LISTEN`, `kill <pid>`. A server on
-    the owner's port is theirs: ask first (`R-safe-dev-server`).
+    `(Get-NetTCPConnection -LocalPort <port> | Where-Object RemotePort -eq 0).OwningProcess`. Do not rely on
+    `-State Listen` (on some Windows builds it returns client connections or nothing) nor on `netstat | findstr
+    LISTENING` (the word is localized, `ABHÖREN` on German Windows). The filter can still list Bound or
+    Closed entries and several or stale PIDs: before `Stop-Process -Id <pid>`, check the process's command line
+    (`(Get-CimInstance Win32_Process -Filter "ProcessId=<pid>").CommandLine`) is the test server you started
+    (`R-safe-dev-server`). From Git Bash wrap the commands in `powershell -NoProfile -Command "…"`, or use
+    `taskkill //PID <pid> //F` (a single `/PID` is rewritten to a path there and ends nothing). Afterwards
+    request `http://localhost:<port>/` (a server may listen on `::1` only): it must be refused. Elsewhere use
+    `lsof -iTCP:<port> -sTCP:LISTEN` and `kill <pid>`. A server on the owner's port is theirs: ask first.
 
 ## `CR-nuxt-root-folders` — Fixed root folders with their own aliases
 

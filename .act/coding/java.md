@@ -32,12 +32,13 @@ summary: explicit nullability, no raw types, correct exception handling, logging
 
 ## `CR-java-modern-idioms` — Records, sealed types, text blocks, virtual threads
 
-summary: modern language features, requires Java 17 for most, Java 21 for virtual threads
+summary: modern language features, requires Java 17 for most, Java 21 for pattern matching for switch and virtual threads
 
 - Use records for immutable data carriers (DTOs, value objects) instead of a manual class with
-  getters, `equals`, `hashCode` and a constructor — requires Java 17 (records) or 16 (preview).
-- Use sealed interfaces/classes with pattern matching (`switch` on type) instead of `instanceof` chains
-  — requires Java 17.
+  getters, `equals`, `hashCode` and a constructor — requires Java 16 (records; preview in 14 and 15).
+- Use sealed interfaces/classes instead of open hierarchies — requires Java 17; with pattern matching
+  for `switch` (`switch` on type) instead of `instanceof` chains — requires Java 21 (final there; only a
+  preview in 17).
 - Use text blocks for multi-line strings (SQL, JSON templates) instead of concatenation — requires
   Java 17.
 - Use virtual threads only where the runtime and every library on the path support them — requires

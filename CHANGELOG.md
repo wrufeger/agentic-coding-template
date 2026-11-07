@@ -133,6 +133,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `R-work-handover` and the context hint: the closing line that proposes `/clear` names the current context size
+  as `ctx <n>k` (from `python .act/scripts/context_size.py`).
+- The Nuxt coding rules find the own test server's process on Windows with
+  `(Get-NetTCPConnection -LocalPort <port> | Where-Object RemotePort -eq 0).OwningProcess`, check its command line
+  before `Stop-Process -Id`, use `taskkill //PID <pid> //F` from Git Bash and check afterwards with a request to
+  `http://localhost:<port>/`; `-State Listen`, `netstat | findstr LISTENING` and `taskkill /PID` from Git Bash
+  fail on some Windows builds, on non-English Windows and in Git Bash.
+- The Java rules give the right versions (records final in 16, pattern matching for `switch` final in 21); the
+  README no longer counts the coding rule sets; `act-adopt` keeps its commit grouping in
+  `references/commit-groups.md`; `checks.md` names the two places outside the project that scripts write only on
+  your explicit request (`id_links_install.py`, `act-export-settings --profile`).
 - `R-cost-delegate`: a test or probe run never runs against a tree a worker writes in at the same time. The full
   suite runs once after the reviews are accepted, rework runs only its own tests, and a run still going when
   rework starts is restarted on the new state; parallel builders test isolated copies.
@@ -259,6 +270,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- The release-tag lookup (`git ls-remote`) and the `semgrep` call of the deep security check keep their time
+  limit on Windows when a child process holds the output pipe open; the whole process tree is ended.
 - `init.py` and `init.py --profile` commit only the paths they wrote, with literal pathspecs; files already
   staged in the target repository stay staged and are named in the output instead of landing in the init commit.
 - The feedback link check recognises IPv6 hosts: `[::1]`, `[fd00::1]`, `[fe80::1%25eth0]` and IPv4-mapped

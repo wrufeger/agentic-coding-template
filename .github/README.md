@@ -20,8 +20,8 @@ What you get:
   reviewer, explorer, test-writer, debugger, …), each with its own model and effort tier.
 - **A structured process with sensible rules.** Concept before code, "done" only with evidence,
   nothing irreversible without your yes, no secrets in commands, commits, or logs; in Claude Code,
-  hooks enforce the mechanical ones before every action. Coding rules for eleven languages and
-  frameworks — Python, TypeScript, Java, C#, Go, PHP, SQL, Bash, Vue, Nuxt, Tailwind — switched on
+  hooks enforce the mechanical ones before every action. Coding rules for many languages and
+  frameworks — Python, TypeScript, Java, C#, Go, PHP, SQL, Bash, Vue, Nuxt, Tailwind and more — switched on
   to match the stack it detects.
 - **Documentation, tests, and a record of the work, as a matter of course.** Every step lands in a
   journal, tasks and decisions in `docs/ai/`; the project docs in `docs/project/` are kept in line
@@ -145,7 +145,7 @@ explicitly (`act-feedback <text>`) goes even when it is off, anonymously. Policy
 
 A project set up from here has three places that matter:
 
-- **`.act/`** — the template layer: rules, coding rule sets for eleven languages, skills, sub-agent
+- **`.act/`** — the template layer: rules, coding rule sets per language and framework, skills, sub-agent
   roles, hooks, and scripts. Never edited in the project (a project version goes to `docs/ai/local/`
   instead), replaced as a whole by `act-update`.
 - **`docs/ai/`** — the working state, versioned with the code: settings (`config.md`), the rules

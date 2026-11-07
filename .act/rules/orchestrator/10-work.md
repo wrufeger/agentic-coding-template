@@ -58,7 +58,7 @@ on someone or something gets its state with `entries.py state <id> --wait <text>
 At a task boundary (task done and committed, no worker running, nothing left only in chat), once the
 context has reached `context-hint` (`docs/ai/config.md`), check the handover yourself first: run
 `python .act/scripts/handover.py` and fix what it finds, and leave every open task's state line so
-that the board alone names its next step. Only then does the closing line say "now `/clear`" — with
-no sentence to copy: after `/clear` a bare "continue" picks up from the board
+that the board alone names its next step. Only then does the closing line say "now `/clear`", naming the context size as `ctx <n>k` (from
+`python .act/scripts/context_size.py`) — with no sentence to copy: after `/clear` a bare "continue" picks up from the board
 (`R-work-session-start`). `act-handover` stays for the human's question whether the session can be
 left.

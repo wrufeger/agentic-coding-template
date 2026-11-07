@@ -30,14 +30,14 @@ Only on request. Read `R-safe-dev-server` first: the owner's dev server is their
    `--json` has all of them.
 5. **Stop the server** by the process ID noted in step 2, never by name and never by searching for the port:
    `npm` and `astro` start a chain (shell, npm, node), and the process that listens is a child of it, which a
-   command-line or port search easily misses (`Get-NetTCPConnection -State Listen` may not list it, `netstat` is
+   command-line or port search easily misses (`Get-NetTCPConnection -State Listen` can list the wrong entries, `netstat` is
    localized). First check that the root is still yours: its command line must be the command you started
    (PowerShell `(Get-CimInstance Win32_Process -Filter "ProcessId=<pid>").CommandLine`; POSIX `ps -p <pid> -o args=`).
    Then end the whole tree:
-   - Windows: `taskkill /T /F /PID <pid>`.
+   - Windows: `taskkill /T /F /PID <pid>` (from Git Bash `taskkill //T //F //PID <pid>`, else the slashes are rewritten).
    - POSIX: `kill -- -<pid>` (the process group made by `setsid`).
-   Afterwards check that nothing answers on the test port any more (a request to `http://127.0.0.1:<port>/`
-   must be refused). If something still does, look at its process and command line before ending anything else.
+   Afterwards check that nothing answers on the test port any more (a request to `http://localhost:<port>/`
+   must be refused (a server may listen on `::1` only)). If something still does, look at its process and command line before ending anything else.
    Stop every server you started, including a second one from a retried start. Never end a server the owner
    started, and never use `taskkill /IM`, `Stop-Process -Name` or `pkill`.
 

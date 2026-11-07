@@ -905,6 +905,9 @@ def tag_check_note(forge: Forge, tag: str) -> str:
             "(a local git call: no request to the host, no token); a missing tag stops the run")
 
 
+LS_REMOTE_TIMEOUT = 60.0  # seconds for the release-tag lookup with git ls-remote
+
+
 def require_remote_tag(root: Path, forge: Forge, tag: str) -> None:
     """Stop with a ForgeError unless the tag exists on the remote. Only `git ls-remote` runs: no API
     request and no token, so the check works before the token is even looked at."""
@@ -914,10 +917,22 @@ def require_remote_tag(root: Path, forge: Forge, tag: str) -> None:
     ref = f"refs/tags/{tag}"
     name = forge.remote.name
     try:
-        proc = subprocess.run(["git", "-C", str(root), "ls-remote", "--tags", name, ref], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=60, env=env)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Popen, not subprocess.run(timeout=...): git starts git-remote-https/ssh, which keeps the output
+        # pipes open, and run() would wait for it far past the limit; at the limit the whole tree is ended.
+        child = subprocess.Popen(["git", "-C", str(root), "ls-remote", "--tags", name, ref],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                                 errors="replace", env=env, start_new_session=(os.name != "nt"))
+    except OSError as exc:
         raise ForgeError(f"cannot look for tag {tag!r} on remote '{name}': {exc}") from exc
+    try:
+        out, err = child.communicate(timeout=LS_REMOTE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        actlib.end_process_tree(child)
+        raise ForgeError(f"cannot look for tag {tag!r} on remote '{name}': {exc}") from exc
+    except BaseException:  # Ctrl+C: never leave git behind
+        actlib.end_process_tree(child)
+        raise
+    proc = subprocess.CompletedProcess(child.args, child.returncode, out, err)
     if proc.returncode != 0:
         reason = (proc.stderr.strip().splitlines() or ["no message"])[-1][:200]
         raise ForgeError(f"cannot look for tag {tag!r} on remote '{name}' (git ls-remote exit {proc.returncode}): {reason}")
