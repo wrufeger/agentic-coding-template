@@ -26,18 +26,20 @@
 # model id. A switch the human made with `/model` shows up the same way and is named as a switch; the
 # message says so.
 #
-# What it says:
-#   - `systemMessage` to the human, printed by dispatch.py as the hook's JSON output: starts with
-#     "⚠️ MODEL SWITCH", names the role and the models.
-#   - a note for the orchestrator, delivered with the additionalContext of its next tool call
-#     (checks/protected_watch.py queues and delivers the notes). It is NOT put into `additionalContext` of
-#     the Stop/SubagentStop output: the hook documentation says that field keeps the stopping agent running
-#     (for SubagentStop the SUBAGENT, not its caller), and recommends a PostToolUse hook for the parent.
-#   Nothing here blocks or keeps an agent running.
+# What it says: one note for the orchestrator, delivered with the additionalContext of its next tool call
+# (checks/protected_watch.py queues and delivers the notes); the orchestrator tells the human in chat. The
+# hook prints nothing for the human: a live probe (Claude Code 2.1.319) showed that a `systemMessage` of
+# Stop/SubagentStop is recorded in the transcript but never displayed. The note is NOT put into
+# `additionalContext` of the Stop/SubagentStop output: the hook documentation says that field keeps the
+# stopping agent running (for SubagentStop the SUBAGENT, not its caller), and recommends a PostToolUse hook
+# for the parent. Nothing here blocks or keeps an agent running. `run` returns None in every case; a note
+# that cannot be queued raises before the offset is saved (the next Stop reads it again), and dispatch.py
+# reports that failure on stderr (the note is the only path).
 #
 # Switch: `model-switch` in docs/ai/config.md § Checks, `warn` (default) or `off` (`block` counts as `warn`).
 #
 # Limits:
+#   - The human learns of a switch only when the orchestrator says so in chat; the hook shows nothing itself.
 #   - It reports after the agent has stopped; a worker that never stops (killed, crashed) is not read.
 #   - Claude Code does not promise the final message to be in the transcript at Stop; a record that is
 #     not there yet is read at the next Stop.
@@ -54,7 +56,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -76,7 +77,6 @@ _EXCLUSIVE = (os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")  # an agent id used as a file name part
 _STATE_TTL = 7 * 86400.0        # seconds a per-transcript state file is kept after its last use
 _SYNTHETIC = "<synthetic>"
-_BANNER = "⚠️ MODEL SWITCH"
 
 
 def _project_root() -> Path:
@@ -250,8 +250,8 @@ def _transcript_for(event: str, payload: dict) -> Optional[Path]:
     return None
 
 
-def _messages(event: str, payload: dict, scanned: dict) -> Optional[tuple[str, str]]:
-    """(text for the human, note for the orchestrator) or None when the lines held nothing."""
+def _messages(event: str, payload: dict, scanned: dict) -> Optional[str]:
+    """The note for the orchestrator, or None when the lines held nothing."""
     refusals, switches = scanned["refusals"], scanned["switches"]
     if not refusals and not switches:
         return None
@@ -270,34 +270,25 @@ def _messages(event: str, payload: dict, scanned: dict) -> Optional[tuple[str, s
             core = f"{who} continued on another model{refused}: {steps}."
         else:
             core = f"{who} was refused by the safety filter (no change of model seen yet; it now runs on `{now_on}`)."
-        human = (
-            f"{_BANNER}: {core} Claude Code does not show this in the chat; check the result like any other. "
-            "(A model you chose yourself for the role is no switch; one changed with /model shows up here too.)"
+        return (
+            f"[act] model switch: {core} Claude Code does not show this in the chat. Tell the human at the start "
+            "of your next reply, name the role and the model, and treat its result as unchecked until you have "
+            "read it. (A model chosen for the role is no switch; one changed with /model shows up here too.)"
         )
-        note = (
-            f"[act] model switch: {core} Tell the human at the start of your next reply, name the role and the "
-            "model, and treat its result as unchecked until you have read it."
-        )
-        return human, note
     if switches:
         core = f"this session now runs on `{now_on}`{refused}: {steps}."
     else:
         core = f"the safety filter refused a request of this session (it runs on `{now_on}`)."
-    human = (
-        f"{_BANNER}: {core} The session stays on this model until it is restarted. "
-        "(If you changed the model yourself with /model, ignore this.)"
-    )
-    note = (
+    return (
         f"[act] model switch: {core} Tell the human at the start of your next reply that this session runs on "
-        "that model until it is restarted."
+        "that model until it is restarted. (If the human changed the model with /model, say so and drop it.)"
     )
-    return human, note
 
 
-def run(event: str, payload: dict) -> Optional[dict]:
+def run(event: str, payload: dict) -> None:
     """Stop / SubagentStop: read what the transcript gained since the last read and, if it shows a refusal
-    or a changed model, return {"systemMessage": ...} (dispatch.py prints it) and queue the orchestrator's
-    note. None otherwise, and always None when the check is off or the transcript cannot be read."""
+    or a changed model, queue the note for the orchestrator. Always returns None (nothing is printed for the
+    human). A note that cannot be queued raises OSError for dispatch.py, which reports it."""
     if event not in ("Stop", "SubagentStop"):
         return None
     config = actlib.read_config()
@@ -324,15 +315,10 @@ def run(event: str, payload: dict) -> Optional[dict]:
                 break
     except OSError:
         return None
+    note = _messages(event, payload, scanned)
+    if note is not None:
+        # queued before the offset is saved: when queuing raises, the offset stays and the next Stop reports it
+        protected_watch.queue_orchestrator_note(str(root).replace("\\", "/"), note)
     _save(root, state_path, {"offset": new_offset, "model": scanned["last_model"], "path": str(transcript)})
     _prune(root)
-    found = _messages(event, payload, scanned)
-    if found is None:
-        return None
-    human, note = found
-    try:
-        from . import protected_watch
-        protected_watch.queue_orchestrator_note(str(root).replace("\\", "/"), note)
-    except Exception as exc:  # noqa: BLE001 -- the warning to the human is the point, the note is the extra
-        print(f"[act] model-switch: orchestrator note not queued ({type(exc).__name__}: {exc})", file=sys.stderr)
-    return {"systemMessage": human}
+    return None

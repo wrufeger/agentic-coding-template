@@ -13,7 +13,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 - `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
 
-- A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report is a `systemMessage` of Stop and SubagentStop. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.
+- A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report reaches the assistant as a note with its next tool call. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.
 
 - A rule set line in `docs/project/coding_rules.md` takes an optional reason after the path, like a group line:
   `- [ ] use: .act/coding/go.md — read-only service, no Go`. The reason is kept when the file is rewritten at session
@@ -102,14 +102,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   root in fact is reported but not restored.
 - New check `model-switch` (`docs/ai/config.md` § Checks, `warn` | `off`, default `warn`): when a worker or the
   session itself continues on another model — typically after the safety filter refused a request, which Claude Code
-  does not announce in a sub-agent — the hook reads the transcript at `SubagentStop` and `Stop` and shows the human a
-  message that starts with `⚠️ MODEL SWITCH` and names the role and the models; the orchestrator gets a note with its
-  next tool call. New `Stop` entry in the hooks that `init`/`update` write into `.claude/settings.json`. See
-  `topics/safeguards.md`. The refusal category in the message is cut to letters, digits, `_` and `-` (at most 40
-  characters), a worker id with other characters finds no transcript, and a transcript that grew by more than 4 MB
-  between two stops is read in blocks, so a refusal in the middle is not skipped. A model name from the transcript is
-  cut to letters, digits and `._:@/-` (at most 64 characters) before it reaches the message, the note or the state
-  file; the state file is not written through a linked `.act-local`, and its temp file is removed when the write fails.
+  does not announce in a sub-agent — the hook reads the transcript at `SubagentStop` and `Stop`; the orchestrator gets
+  a note with its next tool call that names the role and the models, and tells you in chat. The hook itself shows you
+  nothing: a live probe showed that Claude Code records a `systemMessage` of these events but never displays it. New
+  `Stop` entry in the hooks that `init`/`update` write into `.claude/settings.json`. See `topics/safeguards.md`. The
+  refusal category in the note is cut to letters, digits, `_` and `-` (at most 40 characters), a worker id with other
+  characters finds no transcript, and a transcript that grew by more than 4 MB between two stops is read in blocks, so
+  a refusal in the middle is not skipped. A model name from the transcript is cut to letters, digits and `._:@/-` (at
+  most 64 characters) before it reaches the note or the state file; the state file is not written through a linked
+  `.act-local`, and its temp file is removed when the write fails.
 - `act-adopt` now ships in every project, not only in the template checkout. From a project it starts a new
   project (empty or new folder, `init.py --target`) or adopts another one (folder with content, `adopt.py`, branch
   `act-adopt`); it lists what would be carried over and asks once per category, then suggests `act-update` in the new

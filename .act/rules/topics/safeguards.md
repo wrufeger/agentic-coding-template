@@ -34,9 +34,12 @@ When the safety filter of the chosen model refuses a request, Claude Code may ca
 in a sub-agent nothing in the chat says so. The hook `model-switch` (`docs/ai/config.md` § Checks, `warn` or
 `off`, default `warn`) makes it visible: at `SubagentStop` it reads the worker's own transcript, at `Stop` the
 session's — only the part not read before — and reports an assistant record with `stop_reason: refusal` or a
-`message.model` that differs from the one before (`<synthetic>` is no model). The human sees a `systemMessage`
-that begins with `⚠️ MODEL SWITCH` and names the role and the models; the orchestrator gets a note with its next
-tool call. The hook says the same for a model the human changed with `/model`; that is no refusal.
+`message.model` that differs from the one before (`<synthetic>` is no model). The hook shows the human
+nothing itself: a live probe (Claude Code 2.1.319) showed that a `systemMessage` of `Stop` or `SubagentStop` is
+recorded in the transcript but never displayed. The orchestrator gets a note with its next tool call, naming the role
+and the models, and reports it to the human in chat; a failure of the hook itself is queued for the orchestrator as a note too,
+and when the note queue cannot be written, standard error is the last resort (the offset is then not saved, so the
+next stop reads the transcript again). The hook says the same for a model the human changed with `/model`; that is no refusal.
 
 - Orchestrator: begin the next reply to the human with the warning (role, model) and treat the worker's result as
   unchecked until it has been read.

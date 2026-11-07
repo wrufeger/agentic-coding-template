@@ -78,10 +78,11 @@
 #          the one JSON object, plus a top-level systemMessage for the human.
 #
 #          Stop and SubagentStop run checks.model_switch.run after the observers: it reads the transcript
-#          (the worker's own at SubagentStop, the session's at Stop) and, if a refusal or another model shows
-#          up, prints {"systemMessage": ...} for the human; the note for the orchestrator is queued and
-#          delivered with its next PostToolUse (additionalContext of a stop event would keep the agent
-#          running). SessionStart takes the watcher's snapshot after the session handler has run.
+#          (the worker's own at SubagentStop, the session's at Stop) and, if a refusal or another model
+#          shows up, queues a note for the orchestrator, delivered with its next PostToolUse
+#          (additionalContext of a stop event would keep the agent running). Nothing is printed for the
+#          human: Claude Code records a Stop/SubagentStop systemMessage in the transcript but never
+#          displays it. SessionStart takes the watcher's snapshot after the session handler has run.
 #
 #          The PreToolUse hook fires for every tool (settings.hooks.json: the Edit/Write/Bash
 #          entry, the Agent|Task entry and a third entry for all other tool names, e.g.
@@ -135,9 +136,11 @@
 #                 Nothing printed at all when no note module had anything to say. A note that fails,
 #                 and the texts queued by this call's PreToolUse (above), come after the watcher's
 #                 report in the same additionalContext and systemMessage.
-#   Stop / SubagentStop: exit 0 always; when checks.model_switch found a refusal or a changed model, one
-#                 line on stdout: {"systemMessage": "⚠️ MODEL SWITCH ..."} (ASCII-escaped JSON); when
-#                 that module itself fails, the same kind of line carries "[act] model-switch skipped ...".
+#   Stop / SubagentStop: exit 0 always, nothing on stdout (a systemMessage of these events is never shown).
+#                 checks.model_switch queues its note for the orchestrator; when that module fails, or its
+#                 note cannot be queued, one "[act] model-switch failed ..." line goes to stderr and the
+#                 same text is queued as a note; stderr alone is the last resort when that queue itself
+#                 fails (see _model_switch_failed).
 #   SessionStart: one JSON object on stdout: `hookSpecificOutput.additionalContext` holds
 #                 the lines below, kept under the 10,000-character cap (above it Claude Code
 #                 moves a hook output into a file and shows the model a 2,000-character
@@ -941,32 +944,37 @@ def _emit_post_tool_use_notes(event: str, payload: dict, watch: "dict | None" = 
 
 
 def _model_switch_failed(event: str, reason: str) -> None:
-    """The model-switch report could not be made: one stderr line and a systemMessage for the human. A stop
-    event has no channel to the model that would not keep the agent running, and a live probe showed that
-    Claude Code records a systemMessage of Stop/SubagentStop in the transcript without showing it."""
+    """The model-switch report could not be made (module missing, raising, or its note not queued): one stderr
+    line and the same text as a note for the orchestrator. A stop event has no channel to the human (Claude Code
+    records a systemMessage of Stop/SubagentStop in the transcript without showing it) nor to the model that
+    would not keep the agent running, so the text goes where the orchestrator's next tool call delivers it: the
+    note queue of checks/protected_watch.py. The check-failure queue is not used: its key for a stop event is
+    never read by a real PostToolUse. When the note queue itself fails, stderr is the last resort."""
     reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
-    text = (f"[act] model-switch skipped ({reason}) — a model change in this {event} was not checked; "
+    text = (f"[act] model-switch failed ({reason}) — a model change in this {event} may not have been reported; "
             "run .act/scripts/doctor.py")
     print(text, file=sys.stderr)
-    print(json.dumps({"systemMessage": text}))
+    try:
+        from checks import protected_watch
+        protected_watch.queue_orchestrator_note(str(_QUEUE_ROOT).replace("\\", "/"), text)
+    except Exception:  # noqa: BLE001 -- a hook never ends in a traceback; stderr above is all that is left
+        pass
 
 
 def _model_switch_output(event: str, payload: dict) -> None:
     """Stop / SubagentStop: checks.model_switch reads the part of the transcript not read before and, on a
-    refusal or a changed model, prints one {"systemMessage": ...} object for the human (the note for the
-    orchestrator is queued, see that module). Never raises, never blocks."""
+    refusal or a changed model, queues the note for the orchestrator (see that module). Prints nothing on
+    stdout. A module that cannot be loaded, raises or cannot queue its note is reported by
+    _model_switch_failed. Never raises, never blocks."""
     func, reason = _load("model_switch", "run")
     if func is None:
         if reason is not None:
             _model_switch_failed(event, reason)
         return
     try:
-        result = func(event, payload)
+        func(event, payload)
     except Exception as exc:  # noqa: BLE001 -- a hook never ends in a traceback
         _model_switch_failed(event, f"{type(exc).__name__}: {exc}")
-        return
-    if isinstance(result, dict) and result:
-        print(json.dumps(result))
 
 
 def _snapshot_protected_files(payload: dict) -> None:

@@ -26,11 +26,14 @@ no failure is silent: `[act] check <name> skipped (...)` goes to standard error 
 ahead carries the failure on, as a `systemMessage` of the PreToolUse output (for the human) and as the
 `additionalContext` of the same call's PostToolUse (for the model; the text waits in
 `.act-local/check-failures/<tool_use_id>.txt` in between, is removed when delivered, a text older than a day is
-removed the next time one is queued, and nothing is written or read through a link). A PostToolUse note that fails is reported the same way, a failed
-model-switch report as a `systemMessage` of Stop and SubagentStop. Assumptions, not verified: that Claude Code
-displays the `systemMessage` of a PreToolUse or PostToolUse hook to the human (a live probe on 2026-11-07, Claude
-Code 2.1.319, showed that the `systemMessage` of Stop and SubagentStop is recorded in the transcript but not
-displayed, so the model-switch report may be seen only there). That PostToolUse `additionalContext` reaches the
+removed the next time one is queued, and nothing is written or read through a link). A PostToolUse note that fails is reported the same way. A failed
+model-switch report (module error, or a note that cannot be queued) is one `[act] model-switch failed (...)` line on
+standard error and, because a Stop or SubagentStop event has no call of its own to carry it, the same text as a note
+for the orchestrator (see `topics/safeguards.md`); if the note queue itself fails, standard error is all that is left.
+It prints no `systemMessage`. A live
+probe on 2026-11-07, Claude Code 2.1.319, showed that the `systemMessage` of Stop and SubagentStop is recorded in the
+transcript but never displayed. Assumption, not verified: that Claude Code displays the `systemMessage` of a
+PreToolUse or PostToolUse hook to the human. That PostToolUse `additionalContext` reaches the
 model, a worker included, was shown by a live probe on that version.
 
 ## `R-safe-no-secret-diff` — Check the diff before every commit
