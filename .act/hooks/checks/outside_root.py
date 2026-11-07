@@ -65,7 +65,9 @@
 #          Write, Edit and the other tools stay possible, so the owner (or the assistant) can still
 #          look into the cause and edit the config row that switches the check off. Inside this
 #          module each scanner runs on its own, so a bug in one (say the PowerShell target
-#          scanner) does not hide what the others found.
+#          scanner) does not hide what the others found - but a scanner that raises on a Bash or
+#          PowerShell command still refuses that call, naming the exception class (whatever the
+#          mode says, short of `off`): what the scanner would have found is unknown.
 #
 # Known limits:
 #   - a program that touches the path itself stays invisible (`python script.py`, `node app.js`);
@@ -78,16 +80,19 @@
 #     Nothing is looked up on the network: a UNC path to another host is compared as written. NTFS
 #     data streams (`f:name`, `f::$DATA`) are cut off; Windows short names (`PROGRA~1`) and trailing
 #     dots or spaces in a segment are compared as written.
-#   - a command line with more than 150 `cd`-like statements is not given to the shared write-target
-#     scanners (their cost grows with the cube of such a chain: 800 statements took 20 seconds);
-#     the words are still read as reads, and a word naming the marker folder counts as a write.
+#   - a command line with more than 150 `cd`-like statements is refused, whatever the mode says short
+#     of `off`: the shared write-target scanners are not run on it (their cost grows with the cube of
+#     such a chain: 800 statements took 20 seconds), so a write behind it would go unseen. The
+#     message asks for shorter commands.
 #   - the `cd` tracking is lexical and best effort: a relative word counts only if it leaves the
 #     allowed places from every directory the scanner thinks the shell may be in.
 #   - heuristics against false alarms, all best effort: the program word, the text of `echo`/
 #     `printf`, the value of `-m`/`--message`/`--body`/`--title`, URLs, the search pattern of
 #     `grep`/`rg`, the script of `sed`/`awk`/`jq` and the value of `find -name` are not paths. A
-#     path hidden behind one of those words goes unseen. A lone `/` is not a path, and on Windows
-#     a one-segment word such as `/c` or `/s` is a switch.
+#     path hidden behind one of those words goes unseen. A lone `/` is the root, except as the
+#     operator of `expr`/`let`, inside `$((...))`/`((...))`, in a PowerShell expression, and as the
+#     value of a delimiter option (`cut -d /`); on Windows a one-segment word such as `/c` or `/s`
+#     is a switch.
 #   - a tree with a hidden `.act-local/outside-allow/` staged inside the project and copied into the
 #     project root as `dir/.` is not followed (only such a source from outside the project is, since a
 #     copy inside the project is everyday work); nor are links (`ln -s`).
@@ -624,6 +629,9 @@ class _Judge:
         self.lock_parent_key = _key(_marker_dir(root).parent)
         self.root_key = _resolve_key(str(root), None, False) or _key(root)
         self.found: list[_Finding] = []
+        # Reasons why a shell command was not looked at in full (a scanner raised, the command is longer than the
+        # scanners follow): the call is refused for them, see check_outside_root.
+        self.unchecked: list[str] = []
 
     def judge(self, raw: str, write: bool, bases: list[Optional[str]], mode: str = "shell") -> None:
         keys: list[str] = []
@@ -639,6 +647,12 @@ class _Judge:
         if not locked and any(self.places.allows(key, write) for key in keys):
             return
         self._add(raw, keys[0], texts[0], write, locked)
+
+    def scanner_failed(self, exc: Exception) -> None:
+        """A scanner raised on this command: what it would have found is unknown, so the call counts as not checked."""
+        reason = f"a scanner of the check failed on it ({type(exc).__name__})"
+        if reason not in self.unchecked:
+            self.unchecked.append(reason)
 
     def lock(self, raw: str, text: str) -> None:
         """A write that can create the marker folder (a copy, an unpacking or a sync into one of its
@@ -771,17 +785,91 @@ class _Words(list):
 
 
 _OPERAND_START_RE = re.compile(r"^[(\[]*[\d$]")
+# Programs whose arguments are an arithmetic expression: a lone `/` between two operands is the operator there.
+_DIVISION_COMMANDS = frozenset({"expr", "let"})
 
 
-def _is_division(name: str, args: list[str], index: int) -> bool:
-    """True when the lone `/` at `args[index]` stands between two operands of an expression (`expr 6 /
-    2`, `$((6 / 2))`, `$x / 1MB`): something that can be divided on its left (an argument, or a command
-    word that starts like a number, a variable, a parenthesis or a property) and a number, variable or parenthesis
-    on its right. `ls /`, `find / -name x` and `du -sh /` do not match."""
+# What may stand inside an arithmetic expression of the shell, `$(( ... ))` or `(( ... ))`, that is taken out of the
+# command before its words are read: no command substitution, quote, backtick, `;`, backslash or line break. Bash
+# evaluates names there as variables and never reads a file, so `$(( a / b ))` and `$(( /etc/passwd ))` name no place.
+_ARITHMETIC_BAD_RE = re.compile("[`'\";\\\\\\n]|\\$\\(")
+_ARITHMETIC_START_RE = re.compile(r"\$\(\(|(?:^|[;&|{(\n]|\b(?:then|do|else|elif|if|while|until))[ \t]*\(\(")
+
+
+def _without_arithmetic(command: str) -> str:
+    """`command` with every shell arithmetic expression `$(( ... ))` and `(( ... ))` (at a command start) that
+    holds nothing but operands and operators replaced by `$((0))` / `((0))`: the shell word lexer reads the inside
+    of `$(( ... ))` as a command, where the `/` of `6 / 2` would be taken for the root. An expression with a
+    command substitution, quote or backtick inside, or one that is not closed, stays as it is."""
+    out: list[str] = []
+    position = 0
+    for match in _ARITHMETIC_START_RE.finditer(command):
+        start = match.start()
+        if start < position:
+            continue
+        opener = match.end() - 2
+        # Inside the body the parentheses must balance; the first `)` that would take the depth below 0 has to be
+        # followed by the second `)` of the closer. Any other character there means the shell reads subshells or a
+        # command substitution (`((cat /etc/passwd) && (ls))`), not arithmetic.
+        depth = 0
+        end = None
+        for index in range(opener + 2, len(command)):
+            char = command[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth:
+                    depth -= 1
+                elif command[index + 1:index + 2] == ")":
+                    end = index + 1
+                    break
+                else:
+                    break
+        if end is None or end - 1 <= opener + 2:
+            continue
+        body = command[opener + 2:end - 1]
+        if _ARITHMETIC_BAD_RE.search(body):
+            continue
+        out.append(command[position:opener])
+        out.append("((0))")
+        position = end + 1
+    out.append(command[position:])
+    return "".join(out)
+
+
+# The word before a lone `/` in a PowerShell statement that makes it a division: a number (`1MB`), a variable or a
+# property of one (`$x`, `$x.Length`), a closed parenthesis or index, with or without properties behind it
+# (`(Get-Item a).Length`, `$a[0]`, `(Get-ChildItem | Measure-Object Length -Sum).Sum`).
+_PS_OPERAND_END_RE = re.compile(r"^(?:[+-]?\d[\d_.]*(?:kb|mb|gb|tb|pb)?|\$[\w:.{}]+|.*[)\]](?:\.\w+)*)$", re.IGNORECASE)
+
+
+def _paren_open(words: list[str]) -> bool:
+    """True when `words` leave a parenthesis unclosed (`((Get-Item`, `$(`)."""
+    text = " ".join(words)
+    return text.count("(") > text.count(")")
+
+
+def _is_division(name: str, args: list[str], index: int, powershell: bool = False) -> bool:
+    """True when the lone `/` at `args[index]` is the operator of an expression, not the root. Allow-list,
+    with a number, variable or parenthesis after the `/` in every form: `expr` and `let` (`expr 6 / 2`, an
+    argument before it); in the shell an arithmetic expression `$(( ... ))` or `(( ... ))`, which is cut out of the
+    command first (_without_arithmetic, so no `/` of it gets here); in PowerShell a
+    statement that is an expression itself (its first word starts like a number, a variable, a parenthesis,
+    a type or a property: `$x / 1MB`, `(Get-Item a).Length / 1MB`), an open parenthesis before the `/`
+    (`Write-Output ((Get-Item a).Length / 1MB)`) or a number, variable or closed parenthesis right before it
+    (`x = 7 / 2`; limit: `Get-ChildItem $dir / 2` passes). Anything else, `ls -la / 2`, `du -sh / $X`, `ls /`, is the
+    root: a number or a variable behind it does not make it a division."""
     following = args[index + 1] if index + 1 < len(args) else ""
     if not _OPERAND_START_RE.match(following):
         return False
-    return index > 0 or name[:1] in ("(", "$", "[", ".") or name[:1].isdigit()
+    before = [name, *args[:index]]
+    if name in _DIVISION_COMMANDS:
+        return index > 0
+    if not powershell:
+        return False
+    left = args[index - 1] if index > 0 else name
+    return (name[:1] in ("(", "$", "[", ".") or name[:1].isdigit() or _paren_open(before)
+            or bool(_PS_OPERAND_END_RE.match(left)))
 
 
 # Options whose next word is a separator or delimiter, per program (`cut -d / -f1`, `sort -t /`, `awk -F /`):
@@ -805,7 +893,9 @@ def _is_separator_value(name: str, args: list[str], index: int) -> bool:
     return index > 0 and args[index - 1] in _SEPARATOR_VALUE_OPTIONS.get(name, frozenset())
 
 
-def _read_candidates(name: str, args: list[str], feeds_xargs: bool = False) -> list[tuple[str, bool]]:
+def _read_candidates(
+    name: str, args: list[str], feeds_xargs: bool = False, powershell: bool = False,
+) -> list[tuple[str, bool]]:
     """(word, strict) pairs of a simple command that may name a place; `strict` marks a string
     literal of inline interpreter code, where a `..` is no path."""
     if name in _TEXT_COMMANDS and not feeds_xargs:
@@ -817,7 +907,7 @@ def _read_candidates(name: str, args: list[str], feeds_xargs: bool = False) -> l
             continue
         for position, candidate in enumerate(_candidate_words(word)):
             if candidate.strip().strip("'\"") == "/" and (
-                position or _is_division(name, args, index) or _is_separator_value(name, args, index)
+                position or _is_division(name, args, index, powershell) or _is_separator_value(name, args, index)
             ):
                 # `--grep=/` (the value of an option), `6 / 2` (a division) and `cut -d /` (a delimiter)
                 # name no place
@@ -1115,7 +1205,7 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
         if name == "wsl" and depth < 2 and _scan_wsl(judge, args, bases, depth):
             continue  # the words of the wsl call itself are its options and the line read above
         feeds = bool(getattr(words, "feeds_xargs", False))
-        for text, _strict in _read_candidates(name, args, feeds):
+        for text, _strict in _read_candidates(name, args, feeds, not judge.bash):
             judge.judge(text, False, bases)
         if len(words) > 2 and _PS_ASSIGN_RE.match(str(words[0])) and words[1] == "=":
             # `$t = "C:\\x"`: the value of an assignment is a word like any other.
@@ -1128,14 +1218,15 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
             if flag is not None:
                 try:
                     inner = _ps_word_lists(" ".join(args[flag + 1:]))
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 - the command counts as not checked
+                    judge.scanner_failed(exc)
                     inner = []
                 if inner:
                     _scan_from(judge, inner, bases, depth + 1)
         try:
             _lock_scan(judge, name, args, bases)
-        except Exception:  # noqa: BLE001 - the plain read scan keeps its findings
-            pass
+        except Exception as exc:  # noqa: BLE001 - the plain read scan keeps its findings, the call is refused
+            judge.scanner_failed(exc)
         if name not in _TEXT_COMMANDS and name not in _CD_NAMES and name != "export":
             # A command that runs in a directory outside the allowed places acts there, whatever its
             # words are (`cat a.txt` after the session started elsewhere).
@@ -1153,6 +1244,58 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
 
 
 _QUOTED_HEREDOC_RE = re.compile(r"""<<(-?)\s*(?:'([^'\s]+)'|"([^"\s]+)"|\\(\w+))""")
+
+
+def _arithmetic_open_before(command: str) -> list[bool]:
+    """For every index of `command`: True when an arithmetic expression (`$(( ... ))`, `(( ... ))` at a command
+    start, `$[ ... ]`) is still open there, counted across lines. Quotes are not followed, on purpose: a quote
+    that hides an opener only makes more of the command count as arithmetic, where a `<<` is a shift and no heredoc
+    (so less is stripped, never more)."""
+    openers = {match.end() - 2 for match in _ARITHMETIC_START_RE.finditer(command)}
+    flags = [False] * (len(command) + 1)
+    stack: list[str] = []
+    index = 0
+    while index < len(command):
+        flags[index] = "A" in stack or "B" in stack
+        char = command[index]
+        if index in openers or (char == "$" and command.startswith("$((", index)):
+            if char == "$":
+                flags[index + 1] = flags[index + 2] = True
+                index += 1
+            stack.append("A")
+            flags[index + 1] = True
+            index += 2
+            continue
+        if char == "$" and command.startswith("$[", index):
+            stack.append("B")
+        elif char == "(" and stack:
+            stack.append("p")
+        elif char == ")" and stack:
+            if stack[-1] == "A":
+                stack.pop()
+                if command.startswith(")", index + 1):
+                    flags[index + 1] = True
+                    index += 1
+            elif stack[-1] == "p":
+                stack.pop()
+        elif char == "]" and stack and stack[-1] == "B":
+            stack.pop()
+        index += 1
+    return flags
+
+
+def _without_arithmetic_shifts(command: str) -> str:
+    """`command` with every `<<` inside an arithmetic expression blanked out (same length): the word lexers
+    take `<<'EOF'` there for a heredoc and skip the lines up to `EOF`, which in bash are commands (`(( 1
+    <<'EOF' ))` followed by `touch /x`). Nothing in an arithmetic expression is a path, so nothing is lost."""
+    if "<<" not in command:
+        return command
+    inside = _arithmetic_open_before(command)
+    chars = list(command)
+    for index in range(len(chars) - 1):
+        if chars[index] == "<" and chars[index + 1] == "<" and inside[index]:
+            chars[index] = chars[index + 1] = " "
+    return "".join(chars)
 
 
 def _without_quoted_heredocs(command: str) -> str:
@@ -1256,6 +1399,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     # message would be a redirection). A body a shell may run (`bash <<'EOF'`) stays.
     if not powershell:
         try:
+            command = _without_arithmetic_shifts(command)
             if not _heredoc_may_feed_shell(command):
                 command = _without_quoted_heredocs(command)
         except Exception:  # noqa: BLE001 - the whole command is scanned then
@@ -1264,9 +1408,14 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     try:
         if len(_CD_WORD_RE.findall(command)) > _MAX_CD_FOR_TARGET_SCAN:
             # The shared write-target scanners follow every directory change and their cost grows with
-            # the cube of a `cd a; cd b; ...` chain (800 of them: 20 s, past any hook timeout). Beyond
-            # a chain no real command line has they are skipped: the words are still read as reads,
-            # and a word that names the marker folder counts as a write to it.
+            # the cube of a `cd a; cd b; ...` chain (800 of them: 20 s, past any hook timeout). They are
+            # not run beyond a chain no real command line has, and the call is refused rather than let
+            # through unchecked: a write behind such a chain would not be seen. A word that names the
+            # marker folder is still reported as a write to it.
+            judge.unchecked.append(
+                f"it holds more than {_MAX_CD_FOR_TARGET_SCAN} directory changes (cd, pushd, Set-Location ...), "
+                "more than the write-target scanners can follow"
+            )
             if "outside-allow" in command.lower():
                 judge.lock(".act-local/outside-allow", judge.lock_dir)
         elif powershell:
@@ -1278,23 +1427,24 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
         else:
             for target, base in _bash_write_targets(command, cwd, _GIT_WRITES_WORKER_SCOPE):
                 judge.judge(str(target), True, [base if base is not None else cwd])
-    except Exception:  # noqa: BLE001 - the read scan below still runs
-        pass
+    except Exception as exc:  # noqa: BLE001 - the read scan below still runs, the call is refused
+        judge.scanner_failed(exc)
     groups: list[list[list[str]]] = []
     if powershell:
         try:
             groups.append(_ps_lists(command))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            judge.scanner_failed(exc)
     try:
-        groups.append(_shell_word_lists(command))
-    except Exception:  # noqa: BLE001
-        pass
+        # The inside of a shell arithmetic expression is no command line (PowerShell has none of that syntax).
+        groups.append(_shell_word_lists(command if powershell else _without_arithmetic(command)))
+    except Exception as exc:  # noqa: BLE001
+        judge.scanner_failed(exc)
     for lists in groups:
         try:
             _scan_word_lists(judge, lists, cwd)
-        except Exception:  # noqa: BLE001 - one group failing leaves the other
-            continue
+        except Exception as exc:  # noqa: BLE001 - one group failing leaves the other, the call is refused
+            judge.scanner_failed(exc)
 
 
 # --- the check ---------------------------------------------------------------------------------
@@ -1347,6 +1497,21 @@ def _message(findings: list[_Finding], tool: str, mode: str) -> str:
     return f"{lead} {what}{more} {ways}"
 
 
+def _unchecked_message(reasons: list[str], tool: str, found: list[_Finding]) -> str:
+    if not found:
+        named = ""
+    elif found[0].lock:
+        named = f" It also writes where the `.act-local/outside-allow` folder could be created (`{found[0].raw}`)."
+    else:
+        named = f" It also reads or writes `{found[0].raw}`, outside the project and its allowed places."
+    bug = " A scanner failure is a bug of the template: report it." if any("failed" in item for item in reasons) else ""
+    return (
+        f"[act] outside-root refused -- {tool} command not checked in full: {'; '.join(reasons)}, so what it "
+        f"touches is unknown (R-safe-outside-root).{named} Split it into shorter commands.{bug} The owner can set "
+        f"`outside-root` to `off` in docs/ai/config.md § Checks, or for one run with {_ENV_OVERRIDE}=off"
+    )
+
+
 def check_outside_root(payload: dict) -> int:
     """Check: a tool call that reads or writes outside the project and its allowed places (see this
     module's header). Runs for every caller; `warn` lets the call through and reports it on stdout."""
@@ -1374,6 +1539,11 @@ def check_outside_root(payload: dict) -> int:
         _shell_findings(judge, shell[0], shell[1], cwd)
     else:
         _file_tool_findings(judge, payload, cwd)
+    if shell is not None and judge.unchecked:
+        # Fail closed, like a failing check module (dispatch.py): a command the scanners did not see in full
+        # may hold what they would have refused. Whatever mode says, short of `off`.
+        print(_unchecked_message(judge.unchecked, tool, judge.found), file=sys.stderr)
+        return 2
     if not judge.found:
         return 0
     message = _message(judge.found, tool, mode)

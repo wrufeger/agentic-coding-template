@@ -349,6 +349,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `outside-root`: a lone `/` followed by a number or variable (`ls -la / 2`, `du -sh / $X`) is the file system
+  root again; only `expr`, `let`, shell arithmetic and PowerShell expressions count as division. A `<<` inside
+  shell arithmetic no longer hides the following lines from the check.
+- `outside-root` and `secret-read` refuse a Bash or PowerShell command when one of their scanners crashes,
+  naming the exception class; `outside-root` also refuses a command with more than 150 `cd`-like statements
+  (split it).
+- The hook dispatcher no longer ends with a traceback and exit 1 when it cannot import one of its own modules:
+  it prints one line naming the module and exits 2 for PreToolUse (every tool refused until repaired, the `!`
+  prefix still runs) and 0 for other events.
 - Migrations 001–008 and the session start never write, move or remove through a symbolic link or Windows
   junction (a linked `docs/ai/inbox`, work folder, file, `.act-local` or part of it); the skipped place is named
   in one line. Hook processes write no compiled caches through a linked `.act-local`.

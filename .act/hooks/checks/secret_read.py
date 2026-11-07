@@ -64,7 +64,8 @@
 #          module cannot be imported or raises while it looks at such a call, the dispatcher refuses
 #          the call (a broken check must not let `cat .env` through) and reports the failure to the
 #          model and the human; Read and the other tools stay possible, so the cause can be looked
-#          into.
+#          into. A word scanner that raises on a shell command is no longer replaced by a coarser
+#          one: the call is refused with a message naming the exception class (mode `off` aside).
 #
 # Known limits:
 #   - a program that reads the file itself stays invisible — `python script.py`, `node app.js`,
@@ -345,11 +346,9 @@ def _candidate_words(word: str) -> list[str]:
 def _ps_word_lists(command: str, depth: int = 0) -> list[list[str]]:
     """The simple commands of a PowerShell command line as word lists, read with PowerShell's own
     tokenizer (a backslash is a path separator there, not an escape), including the text behind a
-    nested `pwsh -Command`; empty when the line cannot be tokenized."""
-    try:
-        tokens = _ps_tokens(command)
-    except Exception:  # noqa: BLE001 — falls back to the shell word scanner alone
-        return []
+    nested `pwsh -Command`; empty when the line cannot be tokenized (an unterminated quote). A crash of
+    the tokenizer is not caught here: check_secret_read refuses the call for it."""
+    tokens = _ps_tokens(command)
     if tokens is None:
         return []
     lists: list[list[str]] = []
@@ -475,14 +474,7 @@ def _command_label(command: str, cwd: Optional[str], powershell: bool = False) -
         label = secret_label(match.group(1), cwd)
         if label:
             return match.group(1), label
-    try:
-        word_lists = _stripped_word_lists(command)
-    except Exception:  # noqa: BLE001 — a scanner bug must not turn into a silent allow
-        word_lists = []
-        for fragment in re.split(r"[;&|\n]+", command):
-            words = fragment.split()
-            if words:
-                word_lists.append(words)
+    word_lists = _stripped_word_lists(command)  # a crash is not caught: check_secret_read refuses the call
     if powershell:
         word_lists = _ps_word_lists(command) + word_lists
     for words in word_lists:
@@ -566,7 +558,21 @@ def check_secret_read(payload: dict) -> int:
         return 0
     cwd_raw = payload.get("cwd")
     cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
-    hit = _tool_hits(payload, cwd)
+    try:
+        hit = _tool_hits(payload, cwd)
+    except Exception as exc:  # noqa: BLE001 — re-raised for every tool but the shell, refused for it
+        tool_name = payload.get("tool_name")
+        if tool_name not in ("Bash", "PowerShell"):
+            raise
+        # Fail closed, like a failing check module (dispatch.py): what the scanner would have found is unknown.
+        print(
+            f"[act] read refused -- a scanner of the secret-read check failed on this {tool_name} command "
+            f"({type(exc).__name__}), so it could not be checked for a secret file (R-safe-no-secret-read). "
+            "Simplify or split the command. A scanner failure is a bug of the template: report it. The owner "
+            f"can set `secret-read` to `off` in docs/ai/config.md § Checks, or for one run with {_ENV_OVERRIDE}=off",
+            file=sys.stderr,
+        )
+        return 2
     if hit is None:
         return 0
     path, label = hit

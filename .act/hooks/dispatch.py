@@ -219,6 +219,11 @@
 # blocks the session on its own bug), but not silently: see "Output format" for how the failure is
 # reported to the model and the human.
 #
+# The same holds one level up: if the dispatcher cannot import a module it needs itself (actlib, manifest,
+# tiers, checks.common, checks.session, or what they import), it ends with one line on stderr naming the module and
+# exit 2 for a PreToolUse event (refused: no guard can run), exit 0 for every other event - never a traceback
+# with exit 1, which Claude Code counts as not blocking.
+#
 # Backward compatibility: every name that used to live directly in this module (before the
 # checks/ split, 2026-09-23) is still reachable as dispatch.<name> — each checks/ submodule
 # declares its public surface in its own __all__, and this file re-imports all of it with a
@@ -596,18 +601,43 @@ _HOOKS_DIR = str(Path(__file__).resolve().parent)
 if _HOOKS_DIR in sys.path:
     sys.path.remove(_HOOKS_DIR)
 sys.path.insert(0, _HOOKS_DIR)
-import actlib  # noqa: E402 (sys.path setup above must run first)
-import manifest  # noqa: E402
-import tiers  # noqa: E402
+def _import_failed(module: str, exc: BaseException) -> None:
+    """The modules the dispatcher itself needs (below) cannot be imported: end with one line on stderr
+    naming the module, never with a traceback and exit 1 (which Claude Code reads as "not blocking", so every
+    call would go through unchecked). A PreToolUse event exits 2 and is refused: no guard can be run. Every
+    other event exits 0, the way the hook commands' `; true` would end it anyway."""
+    event = sys.argv[1] if len(sys.argv) > 1 else ""
+    detail = " ".join(f"{type(exc).__name__}: {exc}".split())[:_MAX_FAILURE_REASON]
+    refuse = event == "PreToolUse"
+    try:
+        print(f"[act] dispatcher cannot import {module} ({detail})"
+              + (" -- refusing to be safe; ask the owner to run .act/scripts/doctor.py (with the `!` prefix)"
+                 if refuse else " -- event skipped; run .act/scripts/doctor.py"), file=sys.stderr)
+    except (OSError, ValueError):
+        pass
+    sys.exit(2 if refuse else 0)
 
-# checks/ lives next to this file (.act/hooks/checks/); Python already put this file's own
-# directory (.act/hooks/) on sys.path[0] when it started, so the package is importable as-is.
-# common and session are needed by main() itself; a failure there is a template bug that must
-# surface, not be hidden. The other re-imports only keep `dispatch.<name>` reachable for probes —
-# a broken check module must not crash the dispatcher here; the registry below decides what a
-# broken check means (see _FAIL_CLOSED).
-from checks.common import *  # noqa: E402,F401,F403
-from checks.session import *  # noqa: E402,F401,F403
+
+_importing = "actlib"
+try:
+    import actlib  # noqa: E402 (sys.path setup above must run first)
+    _importing = "manifest"
+    import manifest  # noqa: E402
+    _importing = "tiers"
+    import tiers  # noqa: E402
+
+    # checks/ lives next to this file (.act/hooks/checks/); Python already put this file's own
+    # directory (.act/hooks/) on sys.path[0] when it started, so the package is importable as-is.
+    # common and session are needed by main() itself; a failure there is a template bug that must
+    # surface (_import_failed), not be hidden. The other re-imports only keep `dispatch.<name>`
+    # reachable for probes — a broken check module must not crash the dispatcher here; the registry
+    # below decides what a broken check means (see _FAIL_CLOSED).
+    _importing = "checks.common"
+    from checks.common import *  # noqa: E402,F401,F403
+    _importing = "checks.session"
+    from checks.session import *  # noqa: E402,F401,F403
+except Exception as _import_exc:  # noqa: BLE001 -- ImportError, SyntaxError and whatever a module does at import time
+    _import_failed(_importing, _import_exc)
 for _compat_module in ("nesting_guard", "shell_targets", "write_guard", "write_scope"):
     try:
         _mod = importlib.import_module(f"checks.{_compat_module}")

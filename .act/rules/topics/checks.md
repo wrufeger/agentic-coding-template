@@ -23,7 +23,13 @@ looked into (and a Read of `.env` is not stopped while the check is broken); the
 `.act/scripts/doctor.py` with the `!` prefix, because the shell is refused until the check works again. A
 module that cannot be imported is refused before its switch is read, so `off` does not help then; a module file that
 is missing counts as the same failure (a guard is refused, any other missing check is reported as skipped). `outside-root`
-is treated the same way. Every other check fails open (a broken convenience check must not stop all work), but
+is treated the same way. So is a word scanner of either check that raises on a shell command: Bash and PowerShell are
+refused with a message naming the exception class (unless the check is `off`; `warn` does not soften it), and
+`outside-root` does the same for a command line with more than 150 `cd`-like statements, which it cannot follow: split
+it. The same goes for the dispatcher itself: if it cannot import `checks/common.py` or `checks/session.py` (or
+`actlib`, `manifest`, `tiers`), it ends with one line naming the module, exit 2 for a PreToolUse event (every tool is
+refused then, since no guard can run) and exit 0 for every other event. Every other check fails open (a broken
+convenience check must not stop all work), but
 no failure is silent: `[act] check <name> skipped (...)` goes to standard error as before, and a call that goes
 ahead carries the failure on, as a `systemMessage` of the PreToolUse output (for the human) and as the
 `additionalContext` of the same call's PostToolUse (for the model; the text waits in
@@ -110,7 +116,7 @@ Write, Edit, `Set-Content` …) is refused there. It is no stronger than a `(rea
 this form existed, a write those scanners do not see passes: for example a `cd` or `pushd` into the folder followed
 by a write with a relative path, a clone or a download whose target is a plain argument, a path handed to another
 program through `xargs`, the target of `robocopy` or of a PowerShell move, `perl -pi`, `chmod`, code inside an
-interpreter's `-c`/`-e` argument, a write after more than 150 chained commands. These gaps are shared with the
+interpreter's `-c`/`-e` argument. These gaps are shared with the
 other checks that use the same scanners and are not closed by this entry form.
 Further limits. An absolute entry with a glob character is not this form: it keeps the glob behavior (it opens
 what its pattern hits, and it is writable unless `(read)` stands behind it, as before). An entry that is a drive
@@ -139,10 +145,15 @@ heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays r
 read the same way when it is a shell word of its own (`ls /`, `find / -name x`, `du -sh /`), in Bash and in
 PowerShell; it is not a place where it is text (inline code behind `-c`/`-e`, a text option), the value of
 an option (`--grep=/`), the delimiter of `cut -d`, `paste -d`, `sort -t`, `join -t`, `awk -F` or `column -s`
-(`cut -d / -f1 file`), or the operator between two operands (`expr 6 / 2`, `$((6 / 2))`, PowerShell
-`$size / 1MB`). Limit: the operator is told by its neighbours alone - a lone `/` with any argument before it
-and a number, variable or parenthesis after it counts as one wherever it stands, so `ls -la / 2`, `ls -d / 1`
-and `du -sh / $X` pass.
+(`cut -d / -f1 file`), or the operator of an expression, on an allow-list: `expr` and `let`, a shell
+arithmetic expression (`$((6 / 2))`, `(( x = 6 / 2 ))`; one with a command substitution, quote or backtick inside,
+and text like `((cat /etc/passwd) && (ls))` that the shell reads as subshells, is not taken out; a lone `/` in it
+counts as the root), and in PowerShell a statement that is an expression (`$size / 1MB`, `(Get-Item a).Length / 1MB`),
+a division inside parentheses, or a number, variable or closed parenthesis (with properties behind it) right before
+the `/` (`x = 7 / 2`, `(Get-ChildItem -Recurse | Measure-Object Length -Sum).Sum / 1MB`).
+Anywhere else a lone `/` is the root even with a number or variable behind it: `ls -la / 2`, `ls -d / 1` and
+`du -sh / $X` are refused. Limit: in PowerShell `Get-ChildItem $dir / 2` still passes (a variable before the `/` reads
+as an operand). A command line with more than 150 `cd`-like statements is refused (see above).
 
 ## `R-safe-git-reset` — Check before `git reset --hard`
 
