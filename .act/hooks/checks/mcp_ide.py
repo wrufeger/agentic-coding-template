@@ -73,7 +73,14 @@
 #                       claim that any one of them writes a file.
 #            - read:   a plainly read-only tool, by **exact** name (`_READ_TOOLS`: every read tool
 #                       of the JetBrains server, plus `getDiagnostics` of Claude Code's own `ide`
-#                       server), untouched by this check whatever server it came from. Exact, not a
+#                       server), whatever server it came from. One that takes a file, a directory
+#                       or a search root (`_READ_TOOL_PATHS`) has each such path resolved like a
+#                       write target (`_absolute_write_targets`) and handed, as a `Read`, to the
+#                       secret-read and outside-root checks; first denial wins. A `file:` URL is
+#                       first turned into its path, a `jar:` URL or `x.jar!/...` cut to the archive
+#                       (`jrt:` gives no path); the include globs of a search tool's `paths` also go
+#                       as a Grep `glob` (`!` excludes are skipped); a call without a path argument
+#                       reads the folder of its own `projectPath`. Exact, not a
 #                       name prefix (review finding M-b): `find_and_replace` starts with `find_`
 #                       and `replace_text_in_file` fits no prefix at all, so the earlier prefix rule
 #                       let a worker run the first unchecked and left the second to the "unlisted"
@@ -170,6 +177,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 import actlib
 
@@ -177,8 +185,12 @@ from .common import _check_mode, _is_worker
 from .danger_scan import check_danger_scan
 from .deps_scan import check_deps_scan
 from .git_reset_hard import check_git_reset_hard
-from .mcp_ide_tables import _EXEC_TOOLS, _READ_TOOLS, _SHELL_TOOL_ARGS, _WRITE_TOOL_FIELDS, _tool_class
+from .mcp_ide_tables import (
+    _EXEC_TOOLS, _READ_TOOL_PATHS, _READ_TOOLS, _SHELL_TOOL_ARGS, _WRITE_TOOL_FIELDS, _tool_class,
+)
+from .outside_root import check_outside_root
 from .recursive_delete import check_recursive_delete
+from .secret_read import check_secret_read
 from .secret_scan import check_secret_scan
 from .session import _is_ide_server_name
 from .shell_targets import _is_absolute_target, _resolve_path
@@ -188,10 +200,11 @@ from .write_guard import _guard_root, check_write_guard
 from .write_scope import _resolve_worker_scope, check_worker_write_scope
 
 __all__ = [
-    "_SHELL_TOOL_ARGS", "_WRITE_TOOL_FIELDS", "_EXEC_TOOLS", "_READ_TOOLS",
-    "_SHELL_REUSE_CHECKS", "_WRITE_REUSE_CHECKS", "_PATCH_PATH_PREFIXES",
+    "_SHELL_TOOL_ARGS", "_WRITE_TOOL_FIELDS", "_EXEC_TOOLS", "_READ_TOOLS", "_READ_TOOL_PATHS",
+    "_SHELL_REUSE_CHECKS", "_WRITE_REUSE_CHECKS", "_READ_REUSE_CHECKS", "_PATCH_PATH_PREFIXES",
     "_mcp_tool_suffix", "_mcp_tool_server", "_is_read_only_suffix", "_is_ide_server",
-    "_extract_str_arg", "_c_unquote", "_patch_paths", "_write_tool_targets", "_write_target_base",
+    "_extract_str_arg", "_read_tool_paths", "_read_path_texts", "_file_url_path", "_read_payload",
+    "_c_unquote", "_patch_paths", "_write_tool_targets", "_write_target_base",
     "_project_root", "_absolute_write_targets", "_shell_cwd_variants", "_rename_worker_scope",
     "_deny_or_warn", "_run_reused_checks", "check_mcp_ide",
 ]
@@ -236,6 +249,12 @@ _WRITE_REUSE_CHECKS = (
     check_write_guard,
     check_worker_docs_ai,
     check_worker_write_scope,
+)
+
+# Reused, in this order, for each path a translated "read" call names -- as a plain `Read`.
+_READ_REUSE_CHECKS = (
+    check_secret_read,
+    check_outside_root,
 )
 
 # A shell-class MCP call is run through _SHELL_REUSE_CHECKS once per one of these tool_name
@@ -438,6 +457,92 @@ def _write_tool_targets(info: dict, tool_input: dict) -> Optional[list]:
         targets = _patch_paths(text)
         return targets or None
     return None  # pragma: no cover -- every _WRITE_TOOL_FIELDS entry uses a kind handled above
+
+
+def _read_tool_paths(suffix: str, tool_input: dict) -> tuple:
+    """(paths, globs) a read-class call names, per `_READ_TOOL_PATHS`: `paths` are files,
+    directories and search roots, `globs` the project-relative globs of a search tool's `paths`
+    list, minus the `!` entries (an exclusion makes the search read less). Both empty for a read
+    tool that takes none, or a call that leaves its optional path arguments out."""
+    info = _READ_TOOL_PATHS.get(suffix)
+    if info is None:
+        return [], []
+    paths: list = []
+    globs: list = []
+    for field in info["single"]:
+        value = tool_input.get(field)
+        if isinstance(value, str) and value:
+            paths.append(value)
+    for field in info["list"]:
+        value = tool_input.get(field)
+        if isinstance(value, list):
+            paths.extend(v for v in value if isinstance(v, str) and v)
+    for field in info["glob"]:
+        value = tool_input.get(field)
+        if isinstance(value, list):
+            globs.extend(v for v in value if isinstance(v, str) and v and not v.startswith("!"))
+    return paths, globs
+
+
+# `file:` URL: optional `//authority`, then the path (`/C:/Users/x`, `/home/x`).
+_FILE_URL_PARTS_RE = re.compile(r"^file:(?://([^/]*))?(.*)$", re.IGNORECASE | re.DOTALL)
+_DRIVE_PATH_RE = re.compile(r"^/[A-Za-z]:(?:[/\\]|$)")
+_DRIVE_ONLY_RE = re.compile(r"^[A-Za-z]:$")
+
+
+def _file_url_path(text: str) -> str:
+    """The path a `file:` URL names, percent-decoded: `file:///C:/Users/x` -> `C:/Users/x`,
+    `file:///home/x` -> `/home/x`, `file://host/share/x` -> `//host/share/x` (a UNC path), `file:/x`
+    -> `/x`. A text that is no such URL comes back unchanged."""
+    match = _FILE_URL_PARTS_RE.match(text)
+    if match is None:
+        return text
+    authority, path = match.group(1) or "", unquote(match.group(2))
+    if _DRIVE_ONLY_RE.match(authority):
+        return authority + path  # `file://C:/x`: the drive letter is no host
+    if authority and authority.lower() != "localhost":
+        return f"//{authority}{path}"
+    return path[1:] if _DRIVE_PATH_RE.match(path) else path
+
+
+def _read_path_texts(raw: str) -> list:
+    """The path texts a read tool's path argument stands for. A plain path is itself; a `file:` URL
+    is the path it names (pathlib would take `file:///C:/Users/x` for a path relative to the
+    drive's current directory and miss what it points at); a `jar:` URL, and anything with a `!/`
+    inside, is cut down to the archive in front of the `!/` (`jar:file:///C:/lib/x.jar!/a/B.class`
+    -> `C:/lib/x.jar`, `jar://C:/lib/x.jar!/a` -> `C:/lib/x.jar`, `/x.jar!/a/B.class` ->
+    `/x.jar`); `jrt:` names a module of the JDK's runtime image, no file of the project or the home
+    directory, and gives no path at all. More than one text where the spelling is ambiguous
+    (`jar://home/u/x.jar!/a` is the relative path or the absolute one): each is checked."""
+    text = raw.strip()
+    jar = False
+    if text.lower().startswith("jrt:"):
+        return []
+    if text.lower().startswith("jar:"):
+        jar = True
+        text = text[4:]
+    cut = text.find("!/")
+    if cut >= 0:
+        text = text[:cut]
+    if not text:
+        return []
+    if text.lower().startswith("file:"):
+        return [_file_url_path(text)]
+    if jar and text.startswith("//"):
+        rest = unquote(text[2:])
+        texts = [rest[1:] if _DRIVE_PATH_RE.match(rest) else rest]
+        if not rest.startswith("/") and not _DRIVE_PATH_RE.match("/" + rest[:2]):
+            texts.append("/" + rest)
+        return texts
+    return [unquote(text) if jar else text]
+
+
+def _read_payload(payload: dict, tool_name: str, **tool_input: str) -> dict:
+    """`payload` rewritten as a call of the file tool `tool_name` with `tool_input`."""
+    sub_payload = dict(payload)
+    sub_payload["tool_name"] = tool_name
+    sub_payload["tool_input"] = tool_input
+    return sub_payload
 
 
 def _write_target_base(tool_input: dict) -> Optional[str]:
@@ -646,7 +751,27 @@ def check_mcp_ide(payload: dict) -> int:
         return 0
 
     if _is_read_only_suffix(suffix):
-        return 0  # a plainly read-only MCP tool -- never this check's business
+        # A plainly read-only tool: free, except for what it reads. Each path goes to secret-read
+        # and outside-root as a `Read`, resolved like a write target; each include glob of a
+        # search tool also as a Grep `glob`, which secret-read judges by the names it can match
+        # (`**/.env*`). A call with no path argument reads the project it names: its `projectPath`
+        # is checked then, as a directory read.
+        base = _write_target_base(tool_input)
+        root = _project_root()
+        paths, globs = _read_tool_paths(suffix, tool_input)
+        if not paths and not globs and base is not None:
+            paths = [base]
+        for target in paths + globs:
+            for text in _read_path_texts(target):
+                for candidate in _absolute_write_targets(text, base, root):
+                    result = _run_reused_checks(_READ_REUSE_CHECKS, _read_payload(payload, "Read", file_path=candidate))
+                    if result != 0:
+                        return result
+        for pattern in globs:
+            result = _run_reused_checks(_READ_REUSE_CHECKS, _read_payload(payload, "Grep", glob=pattern))
+            if result != 0:
+                return result
+        return 0
 
     if _is_ide_server(tool_name, suffix):
         if _is_worker(payload):

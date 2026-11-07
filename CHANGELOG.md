@@ -316,6 +316,14 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- IDE MCP read tools (`read_file`, `list_directory_tree`, the `search_*` tools, `lint_files`, `git_status` …) hand
+  every path argument to `secret-read` and `outside-root`, including `file:` and `jar:` URLs, include globs such
+  as `**/.env*` and a `projectPath` outside the project; before, `.env`, `~/.ssh/id_rsa` or files outside the
+  project could be read through them unchecked.
+- `git-metadata-guard` refuses git calls that run code behind a PowerShell assignment
+  (`$null = git config core.hooksPath x`, `$x = git -c core.hooksPath=x status`).
+- `worker-docs-ai` sees PowerShell writes into `docs/ai/` (`Set-Content`, `Out-File`, `Add-Content`, `New-Item`)
+  as well as the Unix and native programs it saw before (`| tee`, `curl.exe -o`, `tar -C`, `sed -i`).
 - A broken `secret-read` or `outside-root` no longer lets a shell command through unchecked (`cat .env` with a failing `secret-read`).
 
 - `danger-scan`: PHP `"... ${name}"` interpolation inside a double-quoted statement is held like `$name` and `{$expr}`; the SQL checks for PHP now also cover the endings `.php3`, `.php4`, `.php5`, `.php7`, `.php8` and `.pht`.

@@ -112,6 +112,9 @@
 #     only as far as command_words reads it. Not followed: `xargs ... git config`, `git submodule
 #     foreach '...'`, an archive unpacked into the git directory (`tar -C .git`, `Expand-Archive`).
 #   - A `git` started through `Start-Process` is read from its text only (`_start_process_git_args`).
+#   - A git call behind a PowerShell assignment (`$null = git config core.hooksPath x`) is read through
+#     powershell_targets._strip_program_assignment, so only the forms that helper takes: a plain
+#     variable, plain arguments (no sub-expression, script block, comma or backtick among them).
 #   - Failure mode: a scanner error is NOT swallowed into an allow — it falls back to a raw-text
 #     search for the protected names (`_RAW_GIT_RE`/`_RAW_CLAUDE_RE`), like checks/write_guard.py.
 
@@ -132,7 +135,9 @@ from . import inline_code as _inline_code
 from .command_words import _git_invocations_with_prefix
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
 from .git_reset_hard import _resolve_cwd_after_leading_cd, _resolve_target_dir
-from .powershell_targets import _powershell_write_targets
+from .powershell_targets import (
+    _powershell_write_targets, _ps_command_name, _strip_literal_call, _strip_program_assignment,
+)
 from .shell_targets import (
     _GIT_WRITES_TEMPLATE_GUARD, _bash_inline_code, _bash_write_targets, _is_dynamic_target, _resolve_path,
 )
@@ -552,15 +557,36 @@ def _start_process_git_args(command: str) -> list[list[str]]:
     return found
 
 
-def _invocation_reason(command: str, base_cwd: Optional[str]) -> Optional[str]:
+def _assigned_git_invocations(command: str) -> list[tuple[list[str], list[str]]]:
+    """The git calls of a PowerShell `command` that sit behind a variable assignment (`$null = git
+    config core.hooksPath x`, `$x = git -c core.fsmonitor=y status`), as (prefix, argv) like
+    command_words._git_invocations_with_prefix: the Bash word scanner reads `$x` as the command
+    there and never sees the git call. The assignment is cut off by the helper the write scanner
+    uses (powershell_targets._strip_program_assignment), so both read the same forms."""
+    # Imported here, not at module level: a broken secret_read must only cost this PowerShell
+    # branch (the dispatcher then refuses the call), never the whole check for Write and Edit.
+    from .secret_read import _ps_word_lists
+
+    found = []
+    for words in _ps_word_lists(command):
+        call = _strip_literal_call(words)
+        stripped, _ = _strip_program_assignment(call)
+        if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
+            found.append(([], stripped[1:]))
+    return found
+
+
+def _invocation_reason(command: str, base_cwd: Optional[str], powershell: bool = False) -> Optional[str]:
     """Why a git call in the shell `command` is refused (key that runs code, template directory),
-    or None."""
+    or None. With `powershell`, a git call behind a variable assignment is read as well."""
     if _CONFIG_EXPR_KEY_RE.search(command):
         return "contains a git config key that cannot be determined (an expression)"
     effective_cwd, determinable = _resolve_cwd_after_leading_cd(command, base_cwd)
     invocations = _git_invocations_with_prefix(command) + [
         ([], args) for args in _start_process_git_args(command)
     ]
+    if powershell:
+        invocations += _assigned_git_invocations(command)
     for prefix, args in invocations:
         env = _env_words(prefix, command)
         reason = _prefix_reason(env)
@@ -1353,7 +1379,7 @@ def _violation(payload: dict) -> Optional[str]:
             return "mentions the VS Code tasks file (it can start code when the folder is opened) in a command that cannot be analysed"
 
     try:
-        return _invocation_reason(shell_command, base_cwd)
+        return _invocation_reason(shell_command, base_cwd, tool_name == "PowerShell")
     except Exception:  # noqa: BLE001 — see above
         if re.search(r"\bgit\b", command) and re.search(r"\bconfig\b|\s-c\s", command) and re.search(
             r"hookspath|fsmonitor|sshcommand|alias\.|include|core\.(?:editor|pager)", command, re.IGNORECASE,

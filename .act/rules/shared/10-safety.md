@@ -39,9 +39,9 @@ summary: only the project and its allowed places; a new place on the owner's wor
 
 Read and write only inside the project and its allowed places. A new place only on the owner's
 word, as an entry in `outside-root-allow` — even when the check only warns, and also where it
-cannot see: a program that opens files itself, an MCP tool that takes a path. Checked mechanically
-by `outside-root` (`docs/ai/config.md` § Checks). Details (allowed places, `act-adopt` exception,
-switches, limits): `topics/checks.md`.
+cannot see: a program that opens files itself, an MCP tool that takes a path (only the IDE read
+tools of the known list are checked). Checked mechanically by `outside-root` (`docs/ai/config.md`
+§ Checks). Details (allowed places, `act-adopt` exception, switches, limits): `topics/checks.md`.
 
 ## `R-safe-no-secret-log` — Never credentials or personal data in a log
 

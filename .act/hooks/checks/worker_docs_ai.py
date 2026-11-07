@@ -12,11 +12,12 @@
 #          never checked here — it is exactly who is *allowed* to write to docs/ai/.
 #
 #          Shape mirrors checks/write_guard.py (protected-path regex over a Write/Edit/MultiEdit/
-#          NotebookEdit path field, or a Bash/PowerShell write-target scan via shell_targets),
-#          scoped to workers only — write_guard.py already covers .act/ for everyone, including
-#          the orchestrator; this check is the docs/ai/ analogue, worker-only. Like write_guard.py,
-#          only the *calling* project's own <root>/docs/ai/ is protected — a determinable
-#          target outside `root` (a sibling checkout's docs/ai/) is not this check's business, and
+#          NotebookEdit path field, or a write-target scan: Bash via shell_targets, PowerShell via
+#          powershell_targets and shell_targets both), scoped to workers only — write_guard.py already
+#          covers .act/ for everyone, including the orchestrator; this check is the docs/ai/ analogue,
+#          worker-only. Like write_guard.py, only the *calling* project's own <root>/docs/ai/ is
+#          protected — a determinable target outside `root` (a sibling checkout's docs/ai/) is not
+#          this check's business, and
 #          `root` is found the same way (checks.write_guard._guard_root, reused here): the
 #          `CLAUDE_PROJECT_DIR` a hook always receives, else dispatch.py's own location, `cwd` only
 #          as a last resort.
@@ -29,12 +30,12 @@
 #     child would over-block; accepted as the safe-side tradeoff, same as write_guard.py's. This
 #     text-only match is also the fallback used whenever a target's base/root cannot be
 #     determined at all (fail toward blocking, same as write_guard.py).
-#   - PowerShell commands are scanned with the same Bash-oriented tokenizer as Bash ones
-#     (shell_targets._bash_write_targets) — best effort per this stage's assignment. A native
-#     PowerShell write cmdlet that shell_targets does not know as a "write command"
-#     (Set-Content, Out-File, Add-Content, New-Item, ...) is invisible to this check; the generic
-#     `>`/`>>` redirection operators (which PowerShell also supports) and Unix-tool-alias writes
-#     it does recognize (tee, cp, mv, ...) still are.
+#   - PowerShell commands go through powershell_targets._powershell_write_targets (as in
+#     write_guard.py) and, as well, through shell_targets._bash_write_targets, which Bash commands
+#     use alone: refused if either finds a target. What neither scanner knows as a write stays
+#     invisible: a cmdlet or program outside both tables, and a write made by a program the command
+#     starts (see the next item). A PowerShell command the PowerShell scanner cannot
+#     evaluate (Invoke-Expression/iex, an unterminated quote) is denied when docs/ai is named in it.
 #   - a write made from inside a program (`python -c "..."`, a script file) is invisible, same
 #     limit shell_targets.py's own docstring states for write targets generally.
 
@@ -44,18 +45,21 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import actlib
 
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
-from .shell_targets import _GIT_WRITES_WORKER_SCOPE, _bash_write_targets, _is_dynamic_target, _resolve_path
+from .powershell_targets import _powershell_write_targets
+from .shell_targets import (
+    _GIT_WRITES_WORKER_SCOPE, _bash_write_targets, _is_absolute_target, _is_dynamic_target, _resolve_path,
+)
 from .write_guard import _guard_root, _resolve_against
 from .write_scope import _within_scratchpad
 
 __all__ = [
     "_DOCS_AI_PATH_RE", "_DOCS_AI_MESSAGE", "_is_under_project_docs_ai", "_bash_targets_docs_ai",
-    "_targets_docs_ai", "check_worker_docs_ai",
+    "_powershell_targets_docs_ai", "_pairs_target_docs_ai", "_targets_docs_ai", "check_worker_docs_ai",
 ]
 
 # "docs/ai" as a path segment pair: "docs/ai", "docs/ai/x", "docs\ai\x" — but not "docs/ai-notes"
@@ -97,7 +101,40 @@ def _bash_targets_docs_ai(
     names docs/ai — mirrors checks/write_guard.py's _bash_targets_protected_path exactly (a
     *determinable* target is resolved and checked against `root`'s own docs/ai/ only,
     never against the raw text — a sibling checkout's docs/ai/ is not this project's to protect)."""
-    for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE):
+    return _pairs_target_docs_ai(
+        _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE), root, scratchpad_dir,
+    )
+
+
+def _powershell_targets_docs_ai(
+    command: str, base_cwd: str, root: Optional[Path], scratchpad_dir: object,
+) -> bool:
+    """True if a PowerShell command writes into `root`'s own docs/ai/: when **either** scanner finds
+    such a target. The Bash scanner (shell_targets._bash_write_targets) knows the Unix and native
+    programs a PowerShell command can start just as well (`| tee`, `curl.exe -o`, `tar -C`,
+    `sed -i`, `touch`, `dd of=`, `rsync` ...); the PowerShell scanner
+    (powershell_targets._powershell_write_targets, the one write_guard.py uses) knows the write
+    cmdlets (Set-Content, Out-File, Add-Content, New-Item, ...) as well as `>`/`>>` and the aliases.
+    Each judges its targets as _bash_targets_docs_ai says. The PowerShell scanner resolves a target
+    to an absolute path itself where it can; one left relative or dynamic (a variable, or the
+    directory unknown after an unresolvable Set-Location) is judged by its own text. None back from
+    it (Invoke-Expression/iex, an unterminated quote or here-string) denies if docs/ai is named
+    anywhere in the command, same as write_guard.py's own fallback."""
+    if _bash_targets_docs_ai(command, base_cwd, root, scratchpad_dir):
+        return True
+    targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+    if targets is None:
+        return bool(_DOCS_AI_PATH_RE.search(command))
+    return _pairs_target_docs_ai(
+        [(target, base_cwd if _is_absolute_target(target) else None) for target in sorted(targets)],
+        root, scratchpad_dir,
+    )
+
+
+def _pairs_target_docs_ai(pairs: Iterable[tuple[str, Optional[str]]], root: Optional[Path], scratchpad_dir: object) -> bool:
+    """True if one of the (raw target, base directory) pairs lands in `root`'s own docs/ai/ (see
+    _bash_targets_docs_ai for the rules this applies to each one); a base of None is unknown."""
+    for raw, base in pairs:
         if (
             not _is_dynamic_target(raw)
             and isinstance(scratchpad_dir, str)
@@ -129,9 +166,12 @@ def _targets_docs_ai(
     (review, 2026-09-23: `Docs/AI/x` on Windows' case-insensitive filesystem, or `docs/./ai/x`
     built by joining pieces, would otherwise slip past the regex unmatched) whenever `root` is
     unknown or the path cannot be resolved at all."""
-    if tool_name in ("Bash", "PowerShell"):
+    if tool_name == "Bash":
         command = tool_input.get("command")
         return isinstance(command, str) and _bash_targets_docs_ai(command, base_cwd, root, scratchpad_dir)
+    if tool_name == "PowerShell":
+        command = tool_input.get("command")
+        return isinstance(command, str) and _powershell_targets_docs_ai(command, base_cwd, root, scratchpad_dir)
     for field in _TOOL_PATH_FIELDS.get(tool_name, ()):
         value = tool_input.get(field)
         if not isinstance(value, str) or not value:

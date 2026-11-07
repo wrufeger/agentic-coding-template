@@ -23,7 +23,10 @@
 #                     rule read `find_and_replace` as a read because it starts with `find_`, and let a
 #                     worker run it) — every read tool of the JetBrains server enumerated in
 #                     `tests/probes/t76-d3/jetbrains_tools.txt` of the template-maintenance repo,
-#                     plus `getDiagnostics` from Claude Code's own `ide` server.
+#                     plus `getDiagnostics` from Claude Code's own `ide` server. A read tool that
+#                     takes a file, a directory or a search root is listed in `_READ_TOOL_PATHS`
+#                     too: mcp_ide.py hands each such path to the secret-read and outside-root
+#                     checks as a plain `Read`.
 #          A tool of an IDE server in none of the four is "unlisted": denied for a worker, noted for
 #          the orchestrator — see mcp_ide.check_mcp_ide. `_tool_class` is the one lookup both
 #          modules use, so the two can never disagree on a name.
@@ -33,7 +36,8 @@ from __future__ import annotations
 from typing import Optional
 
 __all__ = [
-    "_SHELL_TOOL_ARGS", "_WRITE_TOOL_FIELDS", "_EXEC_TOOLS", "_READ_TOOLS", "_tool_class",
+    "_SHELL_TOOL_ARGS", "_WRITE_TOOL_FIELDS", "_EXEC_TOOLS", "_READ_TOOLS", "_READ_TOOL_PATHS",
+    "_tool_class",
 ]
 
 # suffix -> the tool_input field(s) holding its command line, first present non-empty string wins.
@@ -137,6 +141,48 @@ _READ_TOOLS = frozenset({
     # Claude Code's own `ide` server
     "getDiagnostics",
 })
+
+# Read tools that take a path, and where: suffix -> {"single": names of fields holding one path (a
+# file, a directory or a search root), "list": names of fields holding a list of paths, "glob": names
+# of list fields holding project-relative globs}. Every field present as a non-empty string (or list
+# of them) is a path the tool reads; a call with none of them (the field is optional, or the tool has
+# none) reads nothing this check can name and stays free. The spellings verified against the JetBrains
+# server's schemas: `file_path` (read_file), `directoryPath` (list_directory_tree), `filePath`
+# (get_file_problems, open_file_in_editor, get_symbol_info), `files` (lint_files), `paths` (the
+# search_* tools: project-relative globs, `!` in front excludes), `repositoryPathRelativeToProject`
+# (git_status). The other spellings are aliases kept on purpose (assumption: not all of them occur in
+# a live schema); a name too many only checks one more argument. `projectPath` is the project to act
+# in, not a path read, and is used as the base a relative path resolves against -- and, for a call
+# with no path argument at all, as the folder the tool reads (see mcp_ide.check_mcp_ide).
+_SINGLE_PATH_FIELDS = (
+    "file_path", "filePath", "pathInProject", "path", "directoryPath", "directory_path",
+    "repositoryPathRelativeToProject",
+)
+_LIST_PATH_FIELDS = ("file_paths", "filePaths", "files")
+_GLOB_LIST_FIELDS = ("paths",)
+_READ_TOOL_PATHS = {
+    suffix: {"single": _SINGLE_PATH_FIELDS, "list": _LIST_PATH_FIELDS, "glob": _GLOB_LIST_FIELDS}
+    for suffix in (
+        "analyze_calls",
+        "get_file_problems",
+        "get_inspections",
+        "get_notebook_state",
+        "get_symbol_info",
+        "git_status",
+        "lint_files",
+        "list_directory_tree",
+        "open_file_in_editor",
+        "read_file",
+        "read_notebook",
+        "read_notebook_cell",
+        "search_file",
+        "search_regex",
+        "search_structural",
+        "search_symbol",
+        "search_text",
+        "wait_cell_execution",
+    )
+}
 
 
 def _tool_class(suffix: str) -> Optional[str]:

@@ -12,7 +12,9 @@ Checks: secret-read.
 
 Checked mechanically by `secret-read` (`docs/ai/config.md` § Checks); the owner may set it to `warn`
 or `off` there, or for one run with `ACT_SECRET_READ` in the environment. Limit: a program that
-opens the file itself (`python script.py`, `docker run --env-file`) is invisible to the check.
+opens the file itself (`python script.py`, `docker run --env-file`) is invisible to the check, and so
+is an MCP tool that takes a path, unless it is a read tool of the IDE server's known list (`ide-mcp`):
+each path argument of those is checked as a Read.
 
 When the check itself fails — its module cannot be imported, or it raises while it looks at a call — it fails
 closed for the shell: Bash and PowerShell are refused and the failure is named on standard error, so that a broken
@@ -124,8 +126,9 @@ the target folder for 24 hours or until `--abort` (also past `--finish`) through
 valid marker for the same target. Checked mechanically by `outside-root` (`docs/ai/config.md` §
 Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in
 the environment. Limits: the shell check is best effort, a program that opens files itself (`python
-script.py`, `docker run -v`) is invisible to it, and MCP tools that take a path are not checked. When the
-check itself fails, Bash and PowerShell are refused (see `R-safe-no-secret-read` above). A word
+script.py`, `docker run -v`) is invisible to it, and an MCP tool that takes a path is checked only if
+it is a read tool of the IDE server's known list (`ide-mcp`). When the check itself fails, Bash and
+PowerShell are refused (see `R-safe-no-secret-read` above). A word
 of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a
 heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused. A single `/` is
 read the same way when it is a shell word of its own (`ls /`, `find / -name x`, `du -sh /`), in Bash and in

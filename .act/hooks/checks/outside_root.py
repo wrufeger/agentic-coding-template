@@ -21,7 +21,9 @@
 #          started there) reads that directory. The command line of `wsl`/`wsl.exe` is read as the
 #          commands it runs inside WSL, where `/mnt/<x>/...` is the Windows drive <X>: (_scan_wsl,
 #          the same mapping the shared write-target scanners apply there, and only there: a file
-#          tool's `/mnt/d/x` is no drive on Windows). MCP tools are not looked at.
+#          tool's `/mnt/d/x` is no drive on Windows). MCP tools are not looked at here, except
+#          the read tools of the IDE server's known list, whose path arguments `ide-mcp` hands to
+#          this check as a Read.
 #
 #          Two readings of a path word. The file tools expand nothing, so their path is taken
 #          literally (`$x`, `{a,b}` and `%X%` are plain characters) and `x/..` is cut out as text, as
