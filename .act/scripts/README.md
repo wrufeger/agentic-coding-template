@@ -522,7 +522,7 @@ options:
 
 ```text
 usage: entries.py new [-h] [--id ID] [--formerly OLD_ID] [--status {open,answered}]
-                      [--for IDENTITY] [--body-file PATH]
+                      [--for IDENTITY] [--body-file PATH] [--triage]
                       {backlog,inbox,ledger,note,question,report,task,todo} title [title ...]
 
 positional arguments:
@@ -543,6 +543,8 @@ options:
   --body-file PATH      body below the heading, copied verbatim (UTF-8); a question ends with an
                         empty answer label below it, unless --status answered or the text has one
                         already
+  --triage              todo/note entry: write `triage: open` (a chat message captured by hand, to
+                        be processed right after the answered entries)
 ```
 
 ### `entries.py assign`
