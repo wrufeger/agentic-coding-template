@@ -341,6 +341,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `write-guard` no longer refuses ordinary inline Python whose write targets the text shows: a loop over a list or
+  tuple of literals (also `for name, ans in [("a", "b"), ...]`), a path or glob pattern built from its variable,
+  `next(<glob on a literal folder>)`, the path parameter of a function used only as `onerror=` / `onexc=` of
+  `shutil.rmtree` calls with shown targets (it lies under those targets), `<path>.with_suffix(..)` and
+  `from os import path; path.join(..)`. Each is judged against the folder or literal the text shows; a target under
+  `.act/`, a function used otherwise and any other unknown target are refused as before.
 - `outside-root` reads a command line the way the other checks do: a single-quoted `$(...)` in a line that only
   prints (`echo '$(cat /x)'`) is text and no longer taken for a command that reads `/x`.
 - `git-discard` no longer refuses a listing-only `git branch` (`--show-current`, `--list`, `-a`, `-v` …) whose

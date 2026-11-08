@@ -82,11 +82,13 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import itertools
 import os
 import re
 import shlex
 import sys
 import unicodedata
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Callable, NamedTuple, Optional
 
 from .common import _unplaced_target
@@ -1267,7 +1269,13 @@ _JOIN_MODULES = {"os": ["path", "join"], "os.path": ["join"], "posixpath": ["joi
 #     (_REBINDING_NAMES, _REBINDING_ATTRIBUTES, an attribute stored on a module): else every name is unknown;
 #   - those parts joined with `+`, `/` or put into an f-string field;
 #   - `<such a path>.glob('<literal>')` / `.rglob(...)` as the iterable of a `for` loop: the files are somewhere
-#     under that folder (_Under), when neither the folder nor the pattern holds `..` and the folder is relative.
+#     under that folder (_Under), when neither the folder nor the pattern holds `..` and the folder is relative;
+#     so is a name bound once to `next(<such a glob>)`;
+#   - the variable of a `for` loop over a list or tuple of literals (`for name, ans in [("a", "b"), ...]` too): it is
+#     one of them, and a path or glob pattern built from it is judged once for each (at most _LOOP_COMBINATIONS);
+#   - `<such a path>.with_suffix('<literal>')`, and `<file of a glob>.with_suffix(...)`: somewhere under the folder;
+#   - the path parameter of a function the program uses only as `onerror=` / `onexc=` of `shutil.rmtree` calls whose
+#     targets are shown: somewhere under those targets (when they are relative and hold no `..`).
 _REBINDING_NAMES = frozenset({
     "exec", "eval", "compile", "globals", "locals", "vars", "setattr", "getattr", "delattr", "__import__",
     "_getframe", "currentframe", "f_globals", "f_locals", "__dict__", "__setattr__", "__builtins__", "runpy",
@@ -1282,6 +1290,7 @@ _PROTECTED_PROBES = (
     ".devcontainer/devcontainer.json", ".envrc",
 )
 _ANY_FILE = "(any file here)"
+_LOOP_COMBINATIONS = 64  # a path built from loop variables is judged once for each combination, up to this many
 
 
 class _Under(NamedTuple):
@@ -1324,11 +1333,17 @@ class _Env:
     """What the text of a program shows about the paths it writes (see the allow-list above)."""
 
     def __init__(self, tree: ast.AST, aliases: _Aliases) -> None:
+        self.tree = tree
         self.aliases = aliases
         self.bound, star = _bindings(tree)
         self.imports: dict[str, int] = {}
         self.assigned: dict[str, ast.expr] = {}
         self.looped: dict[str, ast.expr] = {}
+        self.functions: dict[str, ast.FunctionDef] = {}
+        self.loops: dict[str, tuple[int, int]] = {}  # loop variable -> (the loop, its column in a row)
+        self.loop_rows: dict[int, list[tuple[Optional[str], ...]]] = {}  # the loop -> the literals it goes through
+        self.subst: dict[str, Optional[str]] = {}  # loop variable -> its value in the combination being judged
+        self.handlers: Optional[dict[str, list]] = None
         self.memo: dict[str, Optional[str]] = {}
         self.active = not star
         for node in ast.walk(tree):
@@ -1340,10 +1355,56 @@ class _Env:
                 self.assigned[node.targets[0].id] = node.value
             elif isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
                 self.assigned[node.target.id] = node.value
-            elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
-                self.looped[node.target.id] = node.iter
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                if isinstance(node.target, ast.Name):
+                    self.looped[node.target.id] = node.iter
+                self._literal_loop(node)
+            elif isinstance(node, ast.FunctionDef):
+                self.functions[node.name] = node
             if self.active and self._rebinds(node):
                 self.active = False
+
+    def _literal_loop(self, node: "ast.For | ast.AsyncFor") -> None:
+        """Take note of `for a in [<literals>]` and `for a, b in [(<literals>), ...]`: a list or tuple written out,
+        each element a string (a column that is none stays unknown) or, for several names, a tuple of that length."""
+        target, items = node.target, node.iter
+        names = [target] if isinstance(target, ast.Name) else target.elts if isinstance(target, (ast.Tuple, ast.List)) else []
+        if not names or not all(isinstance(name, ast.Name) for name in names):
+            return
+        if not isinstance(items, (ast.List, ast.Tuple)) or not items.elts:
+            return
+        if any(len(self.bound.get(name.id, ())) != 1 for name in names):  # type: ignore[union-attr]
+            return  # a name the program binds again (or in another loop) keeps no literal
+        rows: list[tuple[Optional[str], ...]] = []
+        for element in items.elts:
+            if isinstance(target, ast.Name):
+                rows.append((_fold_string(element),))
+            elif isinstance(element, (ast.Tuple, ast.List)) and len(element.elts) == len(names):
+                rows.append(tuple(_fold_string(part) for part in element.elts))
+            else:
+                return
+        self.loop_rows[id(node)] = rows
+        for column, name in enumerate(names):
+            self.loops[name.id] = (id(node), column)  # type: ignore[union-attr]
+
+    def _loops_in(self, node: ast.expr) -> list[int]:
+        """The literal loops whose variable `node` uses, directly or through a name bound once to a value, a glob
+        or a loop that uses it."""
+        found: dict[int, None] = {}
+        seen: set[str] = set()
+        todo = [node]
+        while todo:
+            for part in ast.walk(todo.pop()):
+                if not isinstance(part, ast.Name) or part.id in seen or len(self.bound.get(part.id, ())) != 1:
+                    continue
+                seen.add(part.id)
+                if part.id in self.loops:
+                    found[self.loops[part.id][0]] = None
+                elif part.id in self.assigned:
+                    todo.append(self.assigned[part.id])
+                elif part.id in self.looped:
+                    todo.append(self.looped[part.id])
+        return list(found)
 
     def _rebinds(self, node: ast.AST) -> bool:
         """True if `node` can change what a name or a function stands for behind the text of the call."""
@@ -1376,6 +1437,8 @@ class _Env:
             return function == "join" and module in ("os.path", "posixpath", "ntpath") and self._imported_only(func.id)
         root, names = _dotted_root(func)
         module = self.aliases.modules.get(root) if root is not None else None
+        if module is None and self.aliases.functions.get(root or "") == ("os", "path"):
+            module = "os.path"  # `from os import path`
         return module in _JOIN_MODULES and names == _JOIN_MODULES[module] and self._imported_only(root or "")
 
     def text(self, node: Optional[ast.expr], depth: int = 0) -> Optional[str]:
@@ -1402,6 +1465,15 @@ class _Env:
             return left + right if isinstance(node.op, ast.Add) else os.path.join(left, right)
         if isinstance(node, ast.Name) and self.active:
             return self._name_text(node.id, depth)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "with_suffix"
+                and self.active and len(node.args) == 1 and not node.keywords):
+            base, suffix = self.text(node.func.value, depth + 1), self.text(node.args[0], depth + 1)
+            try:
+                if base is not None and suffix is not None:
+                    return str((PureWindowsPath if "\\" in base else PurePosixPath)(base).with_suffix(suffix))
+            except ValueError:
+                pass
+            return None
         if isinstance(node, ast.Call) and node.args and not node.keywords:
             if self._is_path_class(node.func) or (self.active and self._is_join(node.func)):
                 parts = [self.text(argument, depth + 1) for argument in node.args]
@@ -1409,6 +1481,8 @@ class _Env:
         return None
 
     def _name_text(self, name: str, depth: int) -> Optional[str]:
+        if name in self.subst:
+            return self.subst[name]
         if name not in self.memo:
             self.memo[name] = None  # a name that refers to itself is unknown
             if len(self.bound.get(name, ())) == 1 and name in self.assigned:
@@ -1455,20 +1529,128 @@ class _Env:
             return None
         return _Under(base, pattern, node.func.attr == "rglob")
 
-    def path_value(self, node: Optional[ast.expr]) -> "Optional[str | _Under]":
-        """The path a write call's path argument or receiver names: its text, the glob folder of a `for` loop's
-        target (`for f in Path('docs').glob('*.md'): f.write_text(...)`), or None - not shown, so not judged."""
+    def path_value(self, node: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
+        """The paths a write call's path argument or receiver names: its text, the folders a glob's files are under
+        (`for f in Path('docs').glob('*.md'): f.write_text(...)`, `next(...)`, a handler's parameter), once for each
+        combination of the literal loops it is built from - or None: not shown, so not judged."""
+        loops = self._loops_in(node) if node is not None and self.active else []
+        size = 1
+        for key in loops:
+            size *= len(self.loop_rows[key])
+        if size > _LOOP_COMBINATIONS:
+            return None
+        saved = self.subst, self.memo
+        found: list = []
+        try:
+            for rows in itertools.product(*(self.loop_rows[key] for key in loops)):
+                if loops:
+                    chosen = dict(zip(loops, rows))
+                    self.subst = {name: chosen[key][column] for name, (key, column) in self.loops.items() if key in chosen}
+                    self.memo = {}
+                value = self._path_value_once(node)
+                if value is None:
+                    return None
+                found.extend(value)
+        finally:
+            self.subst, self.memo = saved
+        return found
+
+    def _path_value_once(self, node: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
         text = self.text(node)
         if text is not None:
-            return text
+            return [text]
         if not self.active:
             return None
+        return self._under(node)
+
+    def _under(self, node: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
+        """The folders the files `node` stands for are under, when it is `Path(f)` of one of these: the variable of
+        a `for` loop over a glob; a name bound once to `next(<glob>)`, or that call; `<one of these>.with_suffix(..)`
+        (any suffix: the file stays in its folder); the path parameter of a handler (_handler_targets)."""
         if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords and self._is_path_class(node.func):
             node = node.args[0]  # `Path(f)` of a loop variable is that variable
         if isinstance(node, ast.Name) and len(self.bound.get(node.id, ())) == 1:
-            iterable = self.looped.get(node.id)
-            return self.glob(iterable) if iterable is not None else None
+            if node.id in self.looped:
+                return self._globbed(self.looped[node.id])
+            if node.id in self.assigned and self._next_argument(self.assigned[node.id]) is not None:
+                return self._under(self.assigned[node.id])
+            return self._handler_targets(node.id)
+        if self._next_argument(node) is not None:
+            return self._globbed(self._next_argument(node))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "with_suffix"
+                and len(node.args) == 1 and not node.keywords):
+            inner = self._under(node.func.value)
+            if inner is None or any(not isinstance(item, _Under) for item in inner):
+                return None
+            return [_Under(item.base, "*", True) for item in inner if isinstance(item, _Under)]
         return None
+
+    def _globbed(self, iterable: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
+        under = self.glob(iterable) if iterable is not None else None
+        return [under] if under is not None else None
+
+    def _next_argument(self, node: Optional[ast.expr]) -> Optional[ast.expr]:
+        """The glob of `next(<glob>)` / `next(<glob>, None)` (when `next` is not rebound), else None."""
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "next"
+                and not self.bound.get("next") and not node.keywords and node.args and len(node.args) <= 2
+                and all(isinstance(item, ast.Constant) and item.value is None for item in node.args[1:])):
+            return node.args[0]
+        return None
+
+    def _handler_targets(self, name: str) -> "Optional[list[str | _Under]]":
+        """`path` of `def handler(function, path, excinfo)` when the program uses `handler` only as `onerror=` /
+        `onexc=` of `shutil.rmtree` calls: it lies under what those calls delete, which must be shown and relative
+        with no `..`. Any other use of the function (a call, a name, a decorator) leaves `path` unknown."""
+        if self.handlers is None:
+            self.handlers = {}  # a handler whose target needs a handler is unknown
+            self.handlers = self._find_handlers()
+        return self.handlers.get(name)
+
+    def _plain_rmtree(self, func: ast.expr) -> bool:
+        """True if `func` is `shutil.rmtree` / `rmtree` and the program binds `shutil` (or `rmtree`) only by importing it."""
+        root = func.id if isinstance(func, ast.Name) else _dotted_root(func)[0]
+        return root is not None and self.imports.get(root, 0) > 0 and self._imported_only(root)
+
+    def _find_handlers(self) -> dict[str, list]:
+        calls: dict[str, list[ast.Call]] = {}
+        as_handler: set[int] = set()
+        for node in ast.walk(self.tree):
+            if (isinstance(node, ast.Call) and _callee(node.func, self.aliases) == ("shutil", "rmtree", None)
+                    and self._plain_rmtree(node.func)):
+                for item in node.keywords:
+                    if item.arg in ("onerror", "onexc") and isinstance(item.value, ast.Name):
+                        calls.setdefault(item.value.id, []).append(node)
+                        as_handler.add(id(item.value))
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in as_handler:
+                calls.pop(node.id, None)  # the function is used otherwise
+        found: dict[str, list] = {}
+        for function, rmtrees in calls.items():
+            definition = self.functions.get(function)
+            if definition is None or definition.decorator_list or len(self.bound.get(function, ())) != 1:
+                continue
+            positional = definition.args.posonlyargs + definition.args.args
+            if len(positional) < 2 or len(self.bound.get(positional[1].arg, ())) != 1:
+                continue
+            under: list = []
+            for rmtree in rmtrees:
+                targets = self.path_value(_argument(rmtree, 0, "path"))
+                if targets is None:
+                    under = []
+                    break
+                for target in targets:
+                    if isinstance(target, _Under):
+                        under.append(target)
+                    elif _relative_without_parent(target):
+                        under.append(_Under(target, "*", True))
+                    else:
+                        under = []
+                        break
+                if not under:
+                    break
+            if under:
+                found[positional[1].arg] = under
+        return found
 
 
 def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[ProgramCall]:
@@ -1523,10 +1705,11 @@ def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[Progr
     paths = [env.path_value(node) for node in nodes]
     values: list[str] = []
     for path in paths:
-        if isinstance(path, _Under):
-            values.extend(_under_paths(path))
-        elif path is not None:
-            values.append(path)
+        for item in path or ():
+            if isinstance(item, _Under):
+                values.extend(_under_paths(item))
+            else:
+                values.append(item)
     return ProgramCall(name, CALL_WRITE, tuple(values), None, True, line, None in paths)
 
 
