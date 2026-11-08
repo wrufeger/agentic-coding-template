@@ -7,7 +7,8 @@
 #
 #          1. For everyone: a write under `.git/hooks/**` or to `.git/config` / `.git/config.worktree`
 #             (file tools and the write targets of a Bash/PowerShell command, found by the shared
-#             scanners shell_targets / powershell_targets), and `git config` / `git -c` /
+#             readers shell_targets / powershell_targets, asked through the dispatcher's shared parse,
+#             command_parse.py), and `git config` / `git -c` /
 #             `GIT_CONFIG_KEY_<n>` with a key that runs code (`_dangerous_reason`). A hook or such a
 #             key runs at the next git command, past every other check and beyond the session.
 #          2. For workers only (the payload carries `agent_id`): a write to `.claude/settings*.json`,
@@ -140,15 +141,11 @@ from typing import Optional
 import actlib
 
 from . import inline_code as _inline_code
-from .command_words import _git_invocations_with_prefix
+from .command_parse import Parse, parse_for
 from .common import MAX_NESTING, _TOOL_PATH_FIELDS, _check_mode, _is_worker
 from .git_discard import _resolve_cwd_after_leading_cd, _resolve_target_dir
-from .powershell_targets import (
-    _powershell_write_targets, _ps_command_name, _strip_literal_call, _strip_program_assignment,
-)
-from .shell_targets import (
-    _GIT_WRITES_TEMPLATE_GUARD, _bash_inline_code, _bash_write_targets, _is_dynamic_target, _resolve_path,
-)
+from .powershell_targets import _ps_command_name, _strip_literal_call, _strip_program_assignment
+from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _bash_inline_code, _is_dynamic_target, _resolve_path
 from .worker_git_write import _parse_git_invocation
 from .write_guard import _guard_root
 
@@ -565,18 +562,21 @@ def _start_process_git_args(command: str) -> list[list[str]]:
     return found
 
 
-def _assigned_git_invocations(command: str) -> list[tuple[list[str], list[str]]]:
+def _assigned_git_invocations(
+    command: str, parse: Optional[Parse] = None,
+) -> list[tuple[list[str], list[str]]]:
     """The git calls of a PowerShell `command` that sit behind a variable assignment (`$null = git
     config core.hooksPath x`, `$x = git -c core.fsmonitor=y status`), as (prefix, argv) like
     command_words._git_invocations_with_prefix: the Bash word scanner reads `$x` as the command
     there and never sees the git call. The assignment is cut off by the helper the write scanner
-    uses (powershell_targets._strip_program_assignment), so both read the same forms."""
-    # Imported here, not at module level: a broken secret_read must only cost this PowerShell
-    # branch (the dispatcher then refuses the call), never the whole check for Write and Edit.
-    from .secret_read import _ps_word_lists
-
+    uses (powershell_targets._strip_program_assignment), so both read the same forms. `parse` is the
+    dispatcher's reading of `command`; without it the command is read here. The PowerShell word lists
+    are read only when this is asked, i.e. for a PowerShell call, and a reader error propagates to the
+    caller's fallback."""
+    if parse is None:
+        parse = Parse("PowerShell", command)
     found = []
-    for words in _ps_word_lists(command):
+    for words in parse.ps_words():
         call = _strip_literal_call(words)
         stripped, _ = _strip_program_assignment(call)
         if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
@@ -584,17 +584,29 @@ def _assigned_git_invocations(command: str) -> list[tuple[list[str], list[str]]]
     return found
 
 
-def _invocation_reason(command: str, base_cwd: Optional[str], powershell: bool = False) -> Optional[str]:
+def _parse_of(parse: Parse, text: str) -> Parse:
+    """`parse` when it is the reading of `text`, else a fresh reading of `text` for the same tool: the
+    command with its harmless inline Python taken out, or the command line a program hands to a shell,
+    is another text and must never be read from the dispatcher's object."""
+    return parse if parse.command == text else Parse(parse.tool_name, text)
+
+
+def _invocation_reason(
+    command: str, base_cwd: Optional[str], powershell: bool = False, parse: Optional[Parse] = None,
+) -> Optional[str]:
     """Why a git call in the shell `command` is refused (key that runs code, template directory),
-    or None. With `powershell`, a git call behind a variable assignment is read as well."""
+    or None. With `powershell`, a git call behind a variable assignment is read as well. `parse` is the
+    dispatcher's reading of `command`; without it the command is read here."""
     if _CONFIG_EXPR_KEY_RE.search(command):
         return "contains a git config key that cannot be determined (an expression)"
-    effective_cwd, determinable = _resolve_cwd_after_leading_cd(command, base_cwd)
-    invocations = _git_invocations_with_prefix(command) + [
+    if parse is None:
+        parse = Parse("PowerShell" if powershell else "Bash", command)
+    effective_cwd, determinable = _resolve_cwd_after_leading_cd(command, base_cwd, parse)
+    invocations = parse.git_invocations_with_prefix() + [
         ([], args) for args in _start_process_git_args(command)
     ]
     if powershell:
-        invocations += _assigned_git_invocations(command)
+        invocations += _assigned_git_invocations(command, parse)
     for prefix, args in invocations:
         env = _env_words(prefix, command)
         reason = _prefix_reason(env)
@@ -1270,14 +1282,17 @@ def _python_programs_reason(
 
 def _shell_command_reason(
     command: str, base_cwd: Optional[str], powershell: bool, gitdirs: list[Path], claude_dirs: list[Path],
-    worker: bool, deadline: float, depth: int,
+    worker: bool, deadline: float, depth: int, parse: Optional[Parse] = None,
 ) -> tuple[Optional[str], str]:
     """(why the shell `command` is refused for what it writes, or None; the command as the shell
     reading saw it - without the inline Python programs read in full): the inline Python programs
     (Bash only, _python_programs_reason), the write targets the shared scanners find, the files a copy
     lands on. `base_cwd` None: the directory the command runs in is unknown. Raises _CopySourceTooLarge
     for a copy source that cannot be read in time, and lets any other error through to the caller's
-    raw-text fallback."""
+    raw-text fallback. `parse` is the dispatcher's reading of `command`; the text left after the harmless
+    inline Python is freed is another text and is read from a parse of its own."""
+    if parse is None:
+        parse = Parse("PowerShell" if powershell else "Bash", command)
     shell_command = command
     if not powershell:
         reason, shell_command = _python_programs_reason(
@@ -1285,14 +1300,15 @@ def _shell_command_reason(
         )
         if reason:
             return reason, shell_command
+    shell_parse = _parse_of(parse, shell_command)
     if powershell:
-        found = _powershell_write_targets(command, base_cwd or os.getcwd(), _GIT_WRITES_TEMPLATE_GUARD, broad=True)
+        found = parse.write_targets(base_cwd or os.getcwd(), _GIT_WRITES_TEMPLATE_GUARD, broad=True)
         if found is None:
             raise ValueError("PowerShell command not evaluable")
         targets = [(raw, base_cwd) for raw in found]
     else:
-        targets = list(_bash_write_targets(shell_command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD))
-    copy_base, copy_known = _resolve_cwd_after_leading_cd(shell_command, base_cwd)
+        targets = list(shell_parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD))
+    copy_base, copy_known = _resolve_cwd_after_leading_cd(shell_command, base_cwd, shell_parse)
     copy_targets = [
         (raw, copy_base if copy_known else None)
         for raw in _copy_effective_targets(
@@ -1319,13 +1335,15 @@ def _command_line_reason(
 ) -> Optional[str]:
     """Why a command line that inline Python hands to a shell or a program is refused, or None: the
     whole reading of a Bash command (_shell_command_reason, then _invocation_reason), in the directory
-    `base_cwd` (None = unknown)."""
+    `base_cwd` (None = unknown). The text is the program's own, so it is read from a parse of its own,
+    never from the dispatcher's object."""
+    parse = Parse("Bash", command)
     reason, shell_command = _shell_command_reason(
-        command, base_cwd, False, gitdirs, claude_dirs, worker, deadline, depth,
+        command, base_cwd, False, gitdirs, claude_dirs, worker, deadline, depth, parse,
     )
     if reason:
         return reason
-    return _invocation_reason(shell_command, base_cwd)
+    return _invocation_reason(shell_command, base_cwd, parse=_parse_of(parse, shell_command))
 
 
 def _violation(payload: dict) -> Optional[str]:
@@ -1359,10 +1377,12 @@ def _violation(payload: dict) -> Optional[str]:
     if not isinstance(command, str) or not command.strip():
         return None
 
+    parse = parse_for(payload, command)
     shell_command = command
     try:
         reason, shell_command = _shell_command_reason(
             command, base_cwd, tool_name == "PowerShell", gitdirs, claude_dirs, worker, _copy_deadline(payload), 0,
+            parse,
         )
         if reason:
             return reason
@@ -1389,7 +1409,7 @@ def _violation(payload: dict) -> Optional[str]:
             return "mentions the VS Code tasks file (it can start code when the folder is opened) in a command that cannot be analysed"
 
     try:
-        return _invocation_reason(shell_command, base_cwd, tool_name == "PowerShell")
+        return _invocation_reason(shell_command, base_cwd, tool_name == "PowerShell", _parse_of(parse, shell_command))
     except Exception:  # noqa: BLE001 — see above
         if re.search(r"\bgit\b", command) and re.search(r"\bconfig\b|\s-c\s", command) and re.search(
             r"hookspath|fsmonitor|sshcommand|alias\.|include|core\.(?:editor|pager)", command, re.IGNORECASE,
