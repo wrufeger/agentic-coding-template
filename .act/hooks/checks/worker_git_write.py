@@ -179,7 +179,7 @@ def _is_git_write_subcommand(subcommand: str, args: list[str]) -> bool:
 def _prefix_has_dir_override(prefix: list[str]) -> bool:
     """True if a GIT_DIR=/GIT_WORK_TREE= assignment precedes `git` in the same simple command —
     directly, or as an `env VAR=... git ...` wrapper's own argument (both land in `prefix`
-    unstripped, see command_words._git_invocations_with_prefix)."""
+    unstripped, see `Parse.git_invocations_with_prefix`)."""
     return any(w.startswith("GIT_DIR=") or w.startswith("GIT_WORK_TREE=") for w in prefix)
 
 

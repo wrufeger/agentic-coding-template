@@ -667,7 +667,7 @@ def _normalize_candidate_path(raw: str, root: Path, base: str) -> Optional[str]:
     """Turn a write-target path (absolute Windows, forward-slash, or Git-Bash `/d/...` form, or
     one already relative — resolved against `base`, not always `root`: a Bash target is relative to
     the tool call's own `cwd`, tracked forward through any `cd` the command made, see
-    shell_targets._bash_write_targets) into the form _matches_scope compares against: project-root-
+    `Parse.bash_write_targets`) into the form _matches_scope compares against: project-root-
     relative POSIX when it resolves under `root`, same as always; its own resolved absolute-POSIX
     form otherwise — still out of scope by definition (shell_targets' module docstring step
     4) unless the scope's own patterns include a matching absolute-POSIX one, which only happens for

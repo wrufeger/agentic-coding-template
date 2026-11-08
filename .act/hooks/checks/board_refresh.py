@@ -49,7 +49,7 @@ from typing import Optional
 
 import actlib
 
-from .command_words import _git_invocations_with_prefix
+from .command_parse import Parse
 from .common import _check_mode, _is_worker, _shell_command
 from .worker_git_write import _parse_git_invocation, _resolve_dash_c_chain
 
@@ -65,11 +65,11 @@ _STASH_REFRESH_ACTIONS = frozenset({"pop", "apply"})
 _BOARD_TIMEOUT_SECONDS = 6  # below the PostToolUse hook timeout in .act/bridges/settings.hooks.json
 
 
-def _command_changes_tree(command: str) -> "list[list[str]]":
+def _command_changes_tree(command: str, tool_name: str = "Bash") -> "list[list[str]]":
     """The `-C` directory lists (one per matching `git` invocation, empty for none) of every git
     call in `command` that moves other people's work into the tree; [] when nothing matches."""
     found: "list[list[str]]" = []
-    for _prefix, args in _git_invocations_with_prefix(command):
+    for _prefix, args in Parse(tool_name, command).git_invocations_with_prefix():
         subcommand, sub_args, dash_c_dirs, _override, _alias = _parse_git_invocation(args)
         if subcommand is None:
             continue
@@ -143,8 +143,8 @@ def observe(event: str, payload: dict) -> None:
     shell = _shell_command(payload)
     if shell is None:
         return
-    _tool, command = shell
-    dash_c_lists = _command_changes_tree(command)
+    tool, command = shell
+    dash_c_lists = _command_changes_tree(command, tool)
     if not dash_c_lists:
         return
     root = _own_project_root()

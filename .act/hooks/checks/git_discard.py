@@ -224,7 +224,7 @@ def _alias_expansion(
 
 def _prefix_changes_directory(prefix: list[str]) -> bool:
     """True if a wrapper ahead of `git` in the same simple command (`prefix`: the unstripped words
-    command_words._git_invocations_with_prefix hands back) runs it in a directory of its own
+    `Parse.git_invocations_with_prefix` hands back) runs it in a directory of its own
     choosing rather than the shell's current one -- `env -C <dir>`/`env --chdir[=]<dir> git ...`.
     Which directory is knowable in principle but not followed here (the same answer
     shell_targets.py gives for its write targets); the caller refuses the call as "not

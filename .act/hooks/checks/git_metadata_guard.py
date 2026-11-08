@@ -567,7 +567,7 @@ def _assigned_git_invocations(
 ) -> list[tuple[list[str], list[str]]]:
     """The git calls of a PowerShell `command` that sit behind a variable assignment (`$null = git
     config core.hooksPath x`, `$x = git -c core.fsmonitor=y status`), as (prefix, argv) like
-    command_words._git_invocations_with_prefix: the Bash word scanner reads `$x` as the command
+    `Parse.git_invocations_with_prefix`: the Bash word scanner reads `$x` as the command
     there and never sees the git call. The assignment is cut off by the helper the write scanner
     uses (powershell_targets._strip_program_assignment), so both read the same forms. `parse` is the
     dispatcher's reading of `command`; without it the command is read here. The PowerShell word lists
@@ -582,13 +582,6 @@ def _assigned_git_invocations(
         if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
             found.append(([], stripped[1:]))
     return found
-
-
-def _parse_of(parse: Parse, text: str) -> Parse:
-    """`parse` when it is the reading of `text`, else a fresh reading of `text` for the same tool: the
-    command with its harmless inline Python taken out, or the command line a program hands to a shell,
-    is another text and must never be read from the dispatcher's object."""
-    return parse if parse.command == text else Parse(parse.tool_name, text)
 
 
 def _invocation_reason(
@@ -1300,7 +1293,7 @@ def _shell_command_reason(
         )
         if reason:
             return reason, shell_command
-    shell_parse = _parse_of(parse, shell_command)
+    shell_parse = parse.for_text(shell_command)
     if powershell:
         found = parse.write_targets(base_cwd or os.getcwd(), _GIT_WRITES_TEMPLATE_GUARD, broad=True)
         if found is None:
@@ -1343,7 +1336,7 @@ def _command_line_reason(
     )
     if reason:
         return reason
-    return _invocation_reason(shell_command, base_cwd, parse=_parse_of(parse, shell_command))
+    return _invocation_reason(shell_command, base_cwd, parse=parse.for_text(shell_command))
 
 
 def _violation(payload: dict) -> Optional[str]:
@@ -1409,7 +1402,7 @@ def _violation(payload: dict) -> Optional[str]:
             return "mentions the VS Code tasks file (it can start code when the folder is opened) in a command that cannot be analysed"
 
     try:
-        return _invocation_reason(shell_command, base_cwd, tool_name == "PowerShell", _parse_of(parse, shell_command))
+        return _invocation_reason(shell_command, base_cwd, tool_name == "PowerShell", parse.for_text(shell_command))
     except Exception:  # noqa: BLE001 — see above
         if re.search(r"\bgit\b", command) and re.search(r"\bconfig\b|\s-c\s", command) and re.search(
             r"hookspath|fsmonitor|sshcommand|alias\.|include|core\.(?:editor|pager)", command, re.IGNORECASE,

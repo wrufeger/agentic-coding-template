@@ -100,12 +100,10 @@ import actlib
 from .brace_expand import expand_braces as _expand_braces
 from .command_parse import Parse, parse_for
 from .common import _check_mode, _shell_command
-from .powershell_targets import _ps_word_lists
 from .shell_targets import _command_name, _to_native_path
 
 __all__ = [
     "SECRET_EXCEPTIONS", "check_secret_read", "secret_label", "_READ_COMMANDS", "_home_roots",
-    "_ps_word_lists",  # moved to powershell_targets; kept as a re-export for callers outside the checks
 ]
 
 SECRET_EXCEPTIONS = frozenset({".env.example", ".env.sample", ".env.template"})

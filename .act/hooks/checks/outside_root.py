@@ -1377,15 +1377,6 @@ def _leading_assignments(words: list[str]) -> list[str]:
     return found
 
 
-def _parse_of(parse: Parse, text: str) -> Parse:
-    """`parse` when it is the reading of `text`, else a fresh reading of `text` for the same tool: the
-    read scan gets the command with its arithmetic, quoted heredocs and URL loop words taken out, the
-    Bash write scan the whole text when it hands code to an interpreter and the cut text otherwise, the
-    PowerShell write scan the command as it is, so only the same text may be read from the dispatcher's
-    object."""
-    return parse if parse.command == text else Parse(parse.tool_name, text)
-
-
 def _shell_word_lists(parse: Parse) -> list[list[str]]:
     """The simple commands of `parse.command` as word lists, read the way every other check reads them
     (`Parse.words`); a coarse split only when the lexer fails. An assignment in front of a
@@ -1557,7 +1548,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
             if "outside-allow" in command.lower():
                 judge.lock(".act-local/outside-allow", judge.lock_dir)
         elif powershell:
-            targets = _parse_of(parse, command).write_targets(cwd, _GIT_WRITES_WORKER_SCOPE)
+            targets = parse.for_text(command).write_targets(cwd, _GIT_WRITES_WORKER_SCOPE)
             if targets is None:
                 targets = _ps_raw_redirect_targets(command)
             for target in sorted(targets):
@@ -1573,7 +1564,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
                     continue
                 judge.judge(target, True, [cwd])
         else:
-            scanned = _parse_of(parse, whole if mentions_interpreter(whole) else command)
+            scanned = parse.for_text(whole if mentions_interpreter(whole) else command)
             for target, base in scanned.bash_write_targets(cwd, _GIT_WRITES_WORKER_SCOPE):
                 if target == UNKNOWN_WRITE:
                     continue  # inline code whose path the text does not show: refused by the write guards, in every mode
@@ -1586,13 +1577,13 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
     groups: list[list[list[str]]] = []
     if powershell:
         try:
-            groups.append(_ps_lists(_parse_of(parse, command)))
+            groups.append(_ps_lists(parse.for_text(command)))
         except Exception as exc:  # noqa: BLE001
             judge.scanner_failed(exc)
     try:
         # The inside of a shell arithmetic expression is no command line (PowerShell has none of that syntax).
-        groups.append(_shell_word_lists(_parse_of(
-            parse, command if powershell else _without_url_loop_words(_without_arithmetic(command)))))
+        groups.append(_shell_word_lists(parse.for_text(
+            command if powershell else _without_url_loop_words(_without_arithmetic(command)))))
     except Exception as exc:  # noqa: BLE001
         judge.scanner_failed(exc)
     for lists in groups:

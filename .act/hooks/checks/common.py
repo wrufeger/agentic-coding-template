@@ -90,8 +90,8 @@ def _check_mode(config: dict[str, str], key: str, default: str) -> str:
 
 
 # Which tool_input field holds the write target, per tool. Bash has no single target field —
-# each check that needs a Bash command's write targets scans it itself via
-# shell_targets._bash_write_targets. Shared by checks/write_guard.py and checks/write_scope.py.
+# each check that needs a Bash command's write targets reads them through the dispatcher's shared
+# parse (`Parse.bash_write_targets`). Shared by checks/write_guard.py and checks/write_scope.py.
 _TOOL_PATH_FIELDS = {
     "Write": ("file_path",),
     "Edit": ("file_path",),

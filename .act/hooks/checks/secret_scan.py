@@ -188,7 +188,7 @@ from typing import Optional
 import actlib
 import feedback_privacy
 
-from .command_parse import parse_for
+from .command_parse import Parse, parse_for
 from .common import MAX_NESTING, _check_mode, _shell_command
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
@@ -205,7 +205,6 @@ from .shell_targets import (
     _is_dynamic_target,
     _operands,
     _to_native_path,
-    _tokenize_chain,
 )
 
 __all__ = [
@@ -220,7 +219,7 @@ __all__ = [
     "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries", "_text_lines", "_match_secret_line",
     "_joined_line_hit",
     "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
-    "_git_call", "_nested_command", "_simple_commands", "_with_span_commands", "_tokenize_chain",
+    "_git_call", "_nested_command", "_simple_commands", "_with_span_commands",
     "_git_commit_invocations", "_scan_commit", "_pending_file", "_queue_note",
     "_ADD_UNTRACKED_FLAGS", "_WHOLE_TREE_PATHSPEC", "_HOOK_BUDGET", "_hook_deadline", "_check_deadline",
     "_ADD_SUBCOMMANDS", "_ADD_VALUE_FLAGS", "_ADD_ALL_LETTERS", "_ADD_UNTRACKED_LETTERS",
@@ -1284,7 +1283,7 @@ def _with_span_commands(commands: list[list[str]], depth: int = 0) -> list[list[
         if depth < _MAX_NESTED_DEPTH:
             for word in words:
                 for span in getattr(word, "subs", ()):
-                    span_tokens = _tokenize_chain(span)
+                    span_tokens = Parse("Bash", span).chain_tokens()
                     if span_tokens is not None:
                         expanded.extend(_with_span_commands(_simple_commands(span_tokens), depth + 1))
                     elif _GIT_COMMIT_FALLBACK_RE.search(span):
@@ -1321,13 +1320,13 @@ def _git_commit_invocations(
     "git ... commit" mention is treated as a `-a`-style commit with no known add-paths —
     over-inclusive on purpose (shell_targets takes the same stance for its own fallback).
 
-    `chain_tokens` is the result of `_tokenize_chain(command)` for the top-level call when the caller
+    `chain_tokens` is the result of `Parse.chain_tokens` for the top-level call when the caller
     already has it (the dispatcher's shared parse hands it to the three commit-reading checks; None
     is a result too: the text does not tokenize). Left out, the chain is tokenized here, as are all
     nested texts. Only this pure reading is shared -- alias lookups and their cache stay per call."""
     if alias_cache is None:
         alias_cache = {}
-    tokens = _tokenize_chain(command) if chain_tokens is _TOKENIZE_HERE else chain_tokens
+    tokens = Parse("Bash", command).chain_tokens() if chain_tokens is _TOKENIZE_HERE else chain_tokens
     if tokens is None:
         if _GIT_COMMIT_FALLBACK_RE.search(command):
             return [{"cwd": base_cwd, "all": True, "add_paths": []}]

@@ -67,6 +67,13 @@ class Parse:
     def command(self) -> str:
         return self._command
 
+    def for_text(self, text: str) -> "Parse":
+        """This parse when it is the reading of `text`, else a fresh one of `text` for the same tool. A
+        check that reads another text than the hook's command (the command with arithmetic, quoted heredocs,
+        URL loop words or harmless inline code taken out, the whole text for an interpreter, or the command
+        line a program hands to a shell) must not take it from the dispatcher's object."""
+        return self if self._command == text else Parse(self._tool_name, text)
+
     def _once(self, key: Any, reader: Callable[[], Any], copy: Callable[[Any], Any]) -> Any:
         """Run `reader` on the first ask for `key`; later asks replay its outcome."""
         if key not in self._memo:
