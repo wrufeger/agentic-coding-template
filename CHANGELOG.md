@@ -328,6 +328,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   them` and exits 0, so an old call does not fail. The header field `purge: after-commit` is no longer written; one
   already in an archived file is carried into the monthly file like any other field.
 - The session-start note about files left in the archive and the journal-only compaction hint of projects on `delete`.
+- `act-update` no longer brings a project older than `v2.2.0` up to date: the format migrations `001-one-inbox`,
+  `002-todo-ids`, `003-inbox-frontmatter` and `004-work-frontmatter` (1 402 lines) and the recognition of the hook
+  command written before `v2.2.0` are gone. `update.py` stops such a project (installed version below 2.2.0) with one
+  message that names `act-adopt` as the way, and changes nothing; `--versions` still works. Migrations
+  `005` to `008` stay.
 
 ### Fixed
 

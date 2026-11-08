@@ -40,7 +40,8 @@
 #   descriptive line each for 5-10), plus a closing "[act] done" line. Exit 0 on success or a clean
 #   --plan/abort, 1 if a fatal precondition is not met (no source resolvable, fetch failed, the
 #   fetched state is older than/unrelated to the installed commit without --allow-downgrade, the
-#   user chose abort at step 2 or declined at step 4, or --catch-up found .act/ hand-edited).
+#   user chose abort at step 2 or declined at step 4, --catch-up found .act/ hand-edited, or the
+#   installed version is older than v2.2.0 -- that project goes through act-adopt; nothing is changed).
 
 from __future__ import annotations
 
@@ -387,6 +388,33 @@ def _installed_state(root: Path) -> tuple[str, str]:
     if not version:
         version, _ = _read_version_file(root / ".act")
     return version, commit
+
+
+# The oldest installed template version update.py still brings up to date; a project below it goes
+# through act-adopt (the format migrations that bridged those versions are gone).
+OLDEST_UPDATABLE = (2, 2, 0)
+
+
+def _too_old_message(root: Path) -> Optional[str]:
+    """The refusal text when the project's installed version (the lock's, else .act/VERSION) is older
+    than OLDEST_UPDATABLE, else None. A version that is empty or has no X.Y.Z at its start says
+    nothing about its age and passes. Run as the continuation of an older update script (which had
+    replaced .act/ before it handed over), the text says so."""
+    version, _commit = _installed_state(root)
+    match = re.match(r"v?(\d+)\.(\d+)\.(\d+)", version.strip())
+    if not match or tuple(int(part) for part in match.groups()) >= OLDEST_UPDATABLE:
+        return None
+    floor = "v" + ".".join(str(part) for part in OLDEST_UPDATABLE)
+    message = (
+        f"this project is on template version {version}, older than {floor}, which update.py no longer "
+        "brings up to date. Set the project up again with act-adopt: run it from a current template "
+        "checkout or project with this folder as <dir> (.act/skills/act-adopt/SKILL.md); it carries "
+        "the project's docs and own rules over. "
+    )
+    if os.environ.get(_SELF_RELAUNCH_GUARD_ENV) == "1":
+        return message + (".act/ was already replaced by the older update script that started this run "
+                          "(`git status` lists it); the lock, copies and settings were not touched.")
+    return message + "Nothing was changed."
 
 
 def _release_decision(root: Path, source: str, implicit: bool = False) -> tuple[str, Optional[str], str, str]:
@@ -2383,10 +2411,8 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
 
 # Contract for a migration module (.act/migrations/NNN-slug.py, id = file stem): a plan(root)
 # function returning a description without writing anything, and an apply(root) function that
-# performs the change and returns (description, touched_paths). Neither is documented elsewhere
-# yet — this is the minimal shape that satisfies the spec's "--plan first, then run, repeatable"
-# and is exercised by this script's test fixtures; 001-one-inbox.py is the first
-# migration to actually ship it.
+# performs the change and returns (description, touched_paths) — the minimal shape for "--plan
+# first, then run, repeatable", exercised by this script's test fixtures.
 
 def _load_migration(path: Path):
     saved = sys.modules.pop(path.stem, None)
@@ -3078,6 +3104,11 @@ def main(argv: list[str]) -> int:
             lines.append(f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies")
         print("\n".join(lines))
         return code
+
+    too_old = _too_old_message(actlib.repo_root())
+    if too_old:
+        print(f"update.py: {too_old}", file=sys.stderr)
+        return 1
 
     if not (args.no_commit or args.plan):
         git_problem = actlib.git_version_problem()

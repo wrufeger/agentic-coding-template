@@ -5,7 +5,7 @@
 #          write a file safely. A migration never writes through a symbolic link or a Windows junction, and
 #          never to a place whose real path leaves the project: it skips that file or folder and says so in
 #          its plan/apply line. This module is not a migration (update.py picks up NNN-*.py only); each
-#          migration loads it by file name from its own folder (importlib, see the top of 002-todo-ids.py).
+#          migration loads it by file name from its own folder (importlib, see the top of 008-done-entries-keep.py).
 #          Why not `actlib`: a migration must not depend on the *project's* possibly-older copy of it, so
 #          the same test as `actlib.link_problem` is kept here, stdlib only, in the same words.
 #

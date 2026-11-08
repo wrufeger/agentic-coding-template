@@ -1573,14 +1573,6 @@ def _hook_command_suffix_quoted_form(event: str) -> str:
     return f'"$P" "$D" {event}'
 
 
-def _hook_command_suffix_old_form(event: str) -> str:
-    """The older form (bare relative ".act/hooks/dispatch.py"), still recognized by
-    is_ours_hook so update.py's reconcile replaces it with the current form instead of leaving it
-    behind as an unrecognized, un-mergeable duplicate in a project that has not run update.py
-    since that form changed."""
-    return f'"$P" .act/hooks/dispatch.py {event}'
-
-
 # Per event, every extra fixed argument this template's own hooks may pass dispatch.py beyond the
 # plain "dispatch.py <event>" call — currently only UserPromptSubmit's dedicated "/act" fast-path
 # entry (.act/bridges/settings.hooks.json), a second, synchronous hook for that one event
@@ -1600,12 +1592,10 @@ _HOOK_COMMAND_EXTRA_ARGS: dict[str, tuple[str, ...]] = {
 
 def _hook_command_suffixes(event: str) -> list[str]:
     """Every exact tail this template's own hook commands for `event` are known to end with,
-    current form first: the current $D-anchored form with an unquoted interpreter variable, the
-    same with a quoted one, the older bare-relative form (all still produced by a project that has
-    not run update.py since they changed), and, for the events with extra fixed arguments, each of
-    those with that argument appended too."""
-    bases = [_hook_command_suffix(event), _hook_command_suffix_quoted_form(event),
-             _hook_command_suffix_old_form(event)]
+    current form first: the $D-anchored form with an unquoted interpreter variable, and the same
+    with a quoted one (still produced by a project that has not run update.py since it changed),
+    and, for the events with extra fixed arguments, each of those with that argument appended too."""
+    bases = [_hook_command_suffix(event), _hook_command_suffix_quoted_form(event)]
     extra_args = _HOOK_COMMAND_EXTRA_ARGS.get(event, ())
     return bases + [f"{base} {extra}" for base in bases for extra in extra_args]
 

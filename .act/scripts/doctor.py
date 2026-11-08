@@ -44,8 +44,8 @@
 #               importing file, at most four hops, rules.resolve_imports), every rule file
 #               under .act/rules/shared|orchestrator/ docs/ai/rules.md names but does not import,
 #               and every checked coding set that does not load.
-#           15. leftover files under docs/ai/questions/ (besides its own README.md) — the
-#               format migration 001-one-inbox moved to docs/ai/inbox/ (kind: question); a project
+#           15. leftover files under docs/ai/questions/ (besides its own README.md) — questions
+#               live in docs/ai/inbox/ (kind: question) since the one-inbox format; a project
 #               someone still writes to at the old location with an older checkout falls here.
 #           16. a role/tier whose recorded usage.py outcomes cross a threshold
 #               raise proposed once 30 outcomes are recorded and 60%+ of the last 30 are reworked/escalated — a finding (with
@@ -206,7 +206,7 @@ KIND_LABELS: dict[str, str] = {
     "config-value": "Invalid values in docs/ai/config.md",
     "methods": "Working methods (`methods` in docs/ai/config.md) that are unknown or not entered in the coding rules",
     "status-value": "Unknown `status:` values in entry headers",
-    "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since migration 001-one-inbox)",
+    "legacy-questions-dir": "docs/ai/questions/ still in use (obsolete since the one-inbox format)",
     "local-risky-frontmatter": "Hand-written own role/skill with elevated-permission frontmatter keys",
     "tier-proposal": "Tier proposals from worker outcomes (R-role-outcome)",
     "template-remote": "Git remote pointing at the template while the branch has no upstream",
@@ -251,7 +251,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "config-value": "Ungültige Werte in docs/ai/config.md",
     "methods": "Arbeitsmuster (`methods` in docs/ai/config.md), die unbekannt oder nicht in den Coding-Regeln eingetragen sind",
     "status-value": "Unbekannte `status:`-Werte in Eintragsköpfen",
-    "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit Migration 001-one-inbox)",
+    "legacy-questions-dir": "docs/ai/questions/ noch in Gebrauch (überholt seit dem Ein-Postfach-Format)",
     "local-risky-frontmatter": "Handgeschriebene eigene Rolle/Skill mit Frontmatter-Schlüsseln erhöhter Berechtigung",
     "tier-proposal": "Stufenvorschläge aus Worker-Ergebnissen (R-role-outcome)",
     "template-remote": "Git-Remote zeigt auf die Vorlage, obwohl der Branch keinen Upstream hat",
@@ -742,9 +742,9 @@ def check_duplicate_entry_ids(root: Path) -> list[Finding]:
 
 def check_legacy_questions_dir(root: Path) -> list[Finding]:
     """15. A project still has docs/ai/questions/ files besides its own README.md — e.g. a
-    colleague on a checkout from before the one-inbox format still filing a question there. Migration 001-one-inbox
-    moved the format to docs/ai/inbox/ (kind: question); this is a per-project drift check, not a
-    duplicate of the migration itself."""
+    colleague on a checkout from before the one-inbox format still filing a question there. Questions
+    live in docs/ai/inbox/ (kind: question) since that format; no update step moves them any more, so
+    this per-project drift check is the only place that notices a file left at the old location."""
     questions_dir = root / "docs" / "ai" / "questions"
     if not questions_dir.is_dir():
         return []
@@ -753,7 +753,7 @@ def check_legacy_questions_dir(root: Path) -> list[Finding]:
         return []
     return [Finding(
         path=_rel(questions_dir, root), line=None, kind="legacy-questions-dir",
-        message=(f"{len(leftover)} file(s) still here; obsolete since migration 001-one-inbox — "
+        message=(f"{len(leftover)} file(s) still here; obsolete since the one-inbox format — "
                  "questions live in docs/ai/inbox/ (kind: question)"),
     )]
 

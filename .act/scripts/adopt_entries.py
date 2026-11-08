@@ -28,7 +28,7 @@
 #
 # Batch format (UTF-8 JSON): a list, or {"entries": [...]}, of objects with the keys
 #   kind       task | backlog | question | todo | report | note | proposal | reserved  (required)
-#              ("inbox" is accepted too, an alias for "todo" from before the one-inbox migration)
+#              ("inbox" is accepted too, an alias for "todo" from before the one-inbox format)
 #   title      one line, becomes the heading (reserved: a short reason, kept for traceability only)
 #   source     {"path": "<old file>", "line": <n>} or "<old file>:<n>"            (required)
 #   id         keep this id: T/B/Q/U<n>, optional sub-letter (task/backlog/question/todo, or required
