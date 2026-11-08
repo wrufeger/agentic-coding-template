@@ -46,7 +46,9 @@ runs once after the reviews are accepted, during rework only the rework's own te
 when rework starts or another worker begins writing there is stopped and started again on the new state.
 Parallel builders that must test while others build each test an isolated copy (clone or worktree).
 `worker-scope-overlap` refuses a start whose `Tests:` meets a running worker's `Write scope:`, or the
-reverse; the rest is the orchestrator's to keep. Details: `topics/checks.md`.
+reverse; the orchestrator's own write under a running worker's `Tests:`, or its test run in a tree a worker
+writes in, only gets a note (`R-cost-delegate` binds it all the same), the rest is its to keep. Details:
+`topics/checks.md`.
 
 Work expected to run longer than about five minutes is first checked for independent parts — test
 and probe runs, case catalogs, assignments over separate files, a review per checked spot. If it

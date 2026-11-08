@@ -27,6 +27,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   by a running worker, and a writing worker whose `Write scope:` meets a running worker's `Tests:` tree; the
   message names the other worker's line and the way out (wait, or test an isolated copy). A word on the line that
   is no plausible path is ignored, a pattern outside the project is dropped on its own.
+- `worker-scope-overlap` also notes (never refuses) when the main session writes under a running worker's `Tests:` tree or
+  runs the test command in a tree a running worker writes in; the note names the worker's line and the way out, and
+  enters the incident log.
 - `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
 
 - A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report reaches the assistant as a note with its next tool call. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.

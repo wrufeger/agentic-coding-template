@@ -700,6 +700,22 @@ start, the three hours). The refusal names the other worker's line; the way out 
 ended (or stop it with `TaskStop`), or to test an isolated copy — a clone or a worktree — and name the copy in
 `Tests:`.
 
+**The orchestrator only gets a note, never a refusal** (same switch, `worker-scope-overlap`; `off` silences it, a `block`
+row counts as `warn` for it, so every note enters the incident log). The note names the worker's line and the way out
+(wait until that worker has ended or stop it with `TaskStop`, or work in an isolated copy). It comes when a `Write`,
+`Edit`, `MultiEdit` or `NotebookEdit` path of the main session, or a write target of its Bash or PowerShell command
+(the scanners `worker-write-scope` uses, inline code included), falls under the `Tests:` of a running worker; and when a
+command runs the test command (third entry of `commands` in `docs/ai/config.md`; `(not set)` means none: a simple
+command starting with its words, the program by name, quoted text not counted) in a tree a running worker writes in. That
+tree is the directory the run starts in (the call's cwd, moved by a literal `cd`) and every word that names an existing
+file or folder, such as `--template <dir>`; a worker that writes below `.act-local/tmp/` is an isolated copy and meets
+only a tree below `.act-local/tmp/`, a worker without a `Write scope:` line meets every tree. PreToolUse text does not
+reach the model, so the note is repeated with the PostToolUse of the same call. Limits: a target still expanded by the
+shell (`$VAR`, `~`, a nested `{`) or relative with no known directory cannot be placed, inline code the reader fails
+on and an unreadable registry are not looked at, and a target is compared with the `Tests:` pattern only from below: a
+write that moves, copies or restores a parent folder of the tested tree (`mv tests tests-old`, `git restore .`) and a
+glob class such as `tests/t24[8]/a.py` pass without a note.
+
 What the check cannot see stays with the orchestrator: a run does not start before the reviews are accepted (the
 full suite runs once on that state, during rework only the rework's own tests), and a run still going when rework
 starts, or when another worker begins writing in the tested tree, is stopped and started again on the new state.

@@ -685,6 +685,7 @@ _PRE_TOOL_USE_CHECKS = (
                                                           # after every check that could still refuse the start: it records the start's
                                                           # scope, and a later refusal would leave that entry standing (worker_cap and
                                                           # status_poll never refuse the orchestrator's own Agent/Task call)
+    ("worker_scope_overlap", "check_main_session_overlap"),  # notes, never a refusal: the orchestrator's write under a running worker's Tests:, its test run in a tree a worker writes in
     ("worker_cap", "check_worker_cap"),                   # tool calls beyond the worker's cap (R-cost-delegate) — last on purpose, see above
     ("status_poll", "check_status_poll"),                 # repeated status queries (R-cost-wait) — last on purpose, see above
 )
@@ -700,6 +701,7 @@ _POST_TOOL_USE_NOTES = (
     ("secret_scan", "note_secret_scan"),      # `warn` mode / incomplete scan after a commit (R-safe-no-secret-diff)
     ("deps_scan", "note_deps_scan"),          # lower-severity/accepted findings after a commit (security-check)
     ("deps_scan", "note_deps_merge_scan"),    # lock files a merge/pull/cherry-pick brought in -> inbox report (security-check)
+    ("worker_scope_overlap", "note_main_session_overlap"),  # the orchestrator's test run beside a worker writing in the tree (R-cost-delegate)
 )
 
 # Observers see every hook event and never block: signature observe(event: str, payload: dict) ->
