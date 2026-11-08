@@ -174,7 +174,7 @@ __all__ = [
     "_match_ps_operator", "_consume_here_string", "_ps_tokens", "_uses_invoke_expression",
     "_ps_command_name", "_ps_split_args", "_target_from_flags", "_target_destination",
     "_target_new_item", "_targets_remove", "_cmdlet_targets", "_extract_dash_c",
-    "_extract_ps_command_flag", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
+    "_extract_ps_command_flag", "_ps_word_lists", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
     "_broad_guard_candidates", "_resolve_ps_target", "_resolve_ps_targets", "_resolve_cd_target",
     "_join_directory", "_directory_exists", "_place_key", "_TrackedDirs", "_follow_cd", "_flush_ps_statement",
     "_scan_ps_tokens", "_ps_raw_redirect_targets", "_powershell_write_targets",
@@ -728,6 +728,30 @@ def _extract_ps_command_flag(args: list[str]) -> Optional[str]:
         if arg.lower() in ("-c", "-command") and index + 1 < len(args):
             return args[index + 1]
     return None
+
+
+def _ps_word_lists(command: str, depth: int = 0) -> list[list[str]]:
+    """The simple commands of a PowerShell command line as word lists, read with PowerShell's own
+    tokenizer (a backslash is a path separator there, not an escape), including the text behind a
+    nested `pwsh -Command`; empty when the line cannot be tokenized (an unterminated quote). A crash of
+    the tokenizer is not caught here: check_secret_read refuses the call for it."""
+    tokens = _ps_tokens(command)
+    if tokens is None:
+        return []
+    lists: list[list[str]] = []
+    words: list[str] = []
+    for text, is_operator in [*tokens, ("", True)]:
+        if not is_operator:
+            words.append(text)
+            continue
+        if words:
+            lists.append(words)
+            if depth < 2:
+                inner = _extract_ps_command_flag(words[1:])
+                if inner:
+                    lists.extend(_ps_word_lists(inner, depth + 1))
+        words = []
+    return lists
 
 
 def _extract_cmd_c(args: list[str]) -> Optional[str]:

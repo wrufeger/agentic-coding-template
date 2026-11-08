@@ -98,13 +98,14 @@ from typing import Optional
 import actlib
 
 from .brace_expand import expand_braces as _expand_braces
-from .command_words import _stripped_word_lists
+from .command_parse import Parse, parse_for
 from .common import _check_mode, _shell_command
-from .powershell_targets import _extract_ps_command_flag, _ps_tokens
+from .powershell_targets import _ps_word_lists
 from .shell_targets import _command_name, _to_native_path
 
 __all__ = [
     "SECRET_EXCEPTIONS", "check_secret_read", "secret_label", "_READ_COMMANDS", "_home_roots",
+    "_ps_word_lists",  # moved to powershell_targets; other checks still import it from here
 ]
 
 SECRET_EXCEPTIONS = frozenset({".env.example", ".env.sample", ".env.template"})
@@ -343,30 +344,6 @@ def _candidate_words(word: str) -> list[str]:
     return candidates + more
 
 
-def _ps_word_lists(command: str, depth: int = 0) -> list[list[str]]:
-    """The simple commands of a PowerShell command line as word lists, read with PowerShell's own
-    tokenizer (a backslash is a path separator there, not an escape), including the text behind a
-    nested `pwsh -Command`; empty when the line cannot be tokenized (an unterminated quote). A crash of
-    the tokenizer is not caught here: check_secret_read refuses the call for it."""
-    tokens = _ps_tokens(command)
-    if tokens is None:
-        return []
-    lists: list[list[str]] = []
-    words: list[str] = []
-    for text, is_operator in [*tokens, ("", True)]:
-        if not is_operator:
-            words.append(text)
-            continue
-        if words:
-            lists.append(words)
-            if depth < 2:
-                inner = _extract_ps_command_flag(words[1:])
-                if inner:
-                    lists.extend(_ps_word_lists(inner, depth + 1))
-        words = []
-    return lists
-
-
 # Options of the search tools that take a value, for finding the search pattern (the first operand
 # that is not an option or an option's value). Short options by command family, then long ones. An
 # option not listed counts as a switch: a misjudged value then ends up read as the pattern, and the
@@ -464,8 +441,11 @@ def _git_literals(args: list[str]) -> list[str]:
     return literals
 
 
-def _command_label(command: str, cwd: Optional[str], powershell: bool = False) -> Optional[tuple[str, str]]:
-    """(path, label) of the first secret path a reading command in `command` names, else None."""
+def _command_label(
+    command: str, cwd: Optional[str], powershell: bool = False, parse: Optional[Parse] = None,
+) -> Optional[tuple[str, str]]:
+    """(path, label) of the first secret path a reading command in `command` names, else None. `parse`
+    is the dispatcher's reading of this command; without it the command is read here."""
     for match in _DOTNET_READ_RE.finditer(command):
         label = secret_label(match.group(1), cwd)
         if label:
@@ -474,9 +454,11 @@ def _command_label(command: str, cwd: Optional[str], powershell: bool = False) -
         label = secret_label(match.group(1), cwd)
         if label:
             return match.group(1), label
-    word_lists = _stripped_word_lists(command)  # a crash is not caught: check_secret_read refuses the call
+    if parse is None:
+        parse = Parse("PowerShell" if powershell else "Bash", command)
+    word_lists = parse.stripped()  # a crash is not caught: check_secret_read refuses the call
     if powershell:
-        word_lists = _ps_word_lists(command) + word_lists
+        word_lists = parse.ps_words() + word_lists
     for words in word_lists:
         # PowerShell `$x = Get-Content .env`: the assignment is not the command.
         while len(words) > 2 and _PS_ASSIGN_RE.match(words[0]) and words[1] == "=":
@@ -536,7 +518,8 @@ def _tool_hits(payload: dict, cwd: Optional[str]) -> Optional[tuple[str, str]]:
     else:
         shell = _shell_command(payload)
         if shell is not None:
-            return _command_label(shell[1], cwd, powershell=shell[0] == "PowerShell")
+            return _command_label(
+                shell[1], cwd, powershell=shell[0] == "PowerShell", parse=parse_for(payload, shell[1]))
     return None
 
 

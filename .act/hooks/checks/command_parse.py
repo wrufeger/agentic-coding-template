@@ -87,6 +87,12 @@ class Parse:
         """command_words._stripped_word_lists(command)."""
         return self._once("stripped", lambda: _command_words._stripped_word_lists(self._command), _copy_lists)
 
+    def ps_words(self) -> list:
+        """powershell_targets._ps_word_lists(command) at depth 0: the word lists read with PowerShell's
+        own tokenizer, the text behind a nested `pwsh -Command` included; empty when the line does not
+        tokenize (a result, not an error). Nested calls read their own text and are not kept here."""
+        return self._once("ps_words", lambda: _powershell_targets._ps_word_lists(self._command), _copy_lists)
+
     def git_invocations(self) -> list:
         """command_words._git_invocations(command)."""
         return self._once(
