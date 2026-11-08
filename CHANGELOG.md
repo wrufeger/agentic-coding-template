@@ -148,6 +148,15 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 ### Changed
 
 - The `act-adopt` skill is about half as long (63 700 to about 30 000 characters): the steps keep every decision and safety stop, and point to the script's `--plan` output and `--help` instead of repeating what they list.
+- `init` sets the scope profile by the detected stack: `full` for a web project (a frontend framework, CSS or HTML
+  in the folder, or named in the stack), `standard` for any other; `--scope minimal|standard|full` decides
+  otherwise. A project that already exists keeps its profile, `update` never changes it.
+- `act-update`, `act-doctor`, `act-export-settings` and `act-setup` no longer repeat what the script's `--help`
+  and output say; each names the command and the decisions that stay with the assistant (together about 11 000
+  characters shorter).
+- `/act-info` and `/act-version` are now answered by the session hook like `/act-config`: it runs `info.py` and
+  `update.py --versions` itself and shows their output unchanged. The three skills stay as short carriers (Claude Code
+  needs them to know the commands) and the `act` skill lists the commands.
 - The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
   assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
   case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works

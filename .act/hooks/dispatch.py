@@ -503,15 +503,30 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
         sys.exit(0)  # a worker's own payload — nothing to do here
     # `/act-config ...`: answered by .act/scripts/config.py without a model turn. The cheap start
     # test decides before config is imported; `/act-configure` and every other prompt do not match.
-    _config_match = (_re.match(r"\s*/act-config(?=\s|$)", _prompt2) if isinstance(_prompt2, str) else None)
+    # `/act-info [--limit N]` and `/act-version [--all]` are shortcuts the same way: the script's own output,
+    # run as a child process (a timeout or failure passes the prompt on, like a failure of config).
+    _config_match = (_re.match(r"\s*/act-(config|info|version)(?=\s|$)", _prompt2) if isinstance(_prompt2, str) else None)
     if _config_match is not None:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
         try:
-            import config as _config  # noqa: E402
-            _config_code, _config_out = _config.handle(Path(__file__).resolve().parents[2],
-                                                       _prompt2[_config_match.end():])
+            _root5 = Path(__file__).resolve().parents[2]
+            _rest5 = _prompt2[_config_match.end():]
+            if _config_match.group(1) == "config":
+                import config as _config  # noqa: E402
+                _config_code, _config_out = _config.handle(_root5, _rest5)
+            else:
+                import shlex as _shlex
+                import subprocess as _subprocess
+                _script5, _lead5 = (("info.py", []) if _config_match.group(1) == "info"
+                                    else ("update.py", ["--versions"]))
+                _run5 = _subprocess.run(
+                    [sys.executable, str(_root5 / ".act" / "scripts" / _script5), *_lead5, *_shlex.split(_rest5)],
+                    cwd=str(_root5), capture_output=True, timeout=8, stdin=_subprocess.DEVNULL)
+                _config_out = _run5.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").rstrip("\n")
+                if not _config_out:
+                    _config_out = _run5.stderr.decode("utf-8", errors="replace").strip() or f"{_script5} printed nothing"
         except Exception as _exc5:  # noqa: BLE001 -- a bug here must never eat the user's prompt
-            print(f"[act] act-config: failed, message passed through ({_exc5!r})", file=sys.stderr)
+            print(f"[act] act-{_config_match.group(1)}: failed, message passed through ({_exc5!r})", file=sys.stderr)
             sys.exit(0)
         try:
             sys.stdout.reconfigure(encoding="utf-8")

@@ -79,6 +79,7 @@ class ProjectConfig(TypedDict):
     feedback_mode: str
     update_channel: str
     methods: str
+    profile: str
 
 
 class BridgeSpec(TypedDict):
@@ -539,9 +540,21 @@ def _language(key: str, given: Optional[str], prompt_text: str, default: str, in
     return code, given is not None
 
 
+# The coding sets that make a project a web project; with a `.html` file they decide the scope profile.
+_WEB_SETS = frozenset({"nuxt", "nuxt5", "vue", "react", "tailwind", "css"})
+
+
+def default_profile(root: Path, stack: str) -> str:
+    """`full` for a web project (a frontend framework, CSS or HTML found in the directory or named in the
+    stack text), else `standard` -- the scope profile a new project starts with (docs/ai/config.md § Scope)."""
+    web = bool(_detect_coding_sets(root, stack, set(_WEB_SETS))) or _has_flat(root, ("src", "public"), (".html", ".htm"))
+    return "full" if web else "standard"
+
+
 def step_config(root: Path, interactive: bool, notes: list[str],
                 languages: Optional[dict[str, Optional[str]]] = None,
-                update_channel: Optional[str] = None, methods: Optional[str] = None) -> ProjectConfig:
+                update_channel: Optional[str] = None, methods: Optional[str] = None,
+                scope: Optional[str] = None) -> ProjectConfig:
     default_owner = "unknown"
     git_name = _git(["config", "user.name"], cwd=root, check=False).stdout.strip()
     if git_name and not _is_placeholder_name(git_name):
@@ -602,6 +615,7 @@ def step_config(root: Path, interactive: bool, notes: list[str],
         "feedback_mode": feedback_mode,
         "update_channel": channel,
         "methods": chosen_methods,
+        "profile": scope or default_profile(root, stack),
     }
 
 
@@ -1815,6 +1829,8 @@ def _config_tokens(cfg: ProjectConfig) -> dict[str, str]:
         "<update-channel>": cfg.get("update_channel", _UPDATE_CHANNEL_DEFAULT),
         # .act/skeleton/config.md § Scope's `methods` row (rules.sync_method_imports reads it back).
         "<methods>": cfg.get("methods", METHODS_DEFAULT),
+        # .act/skeleton/config.md § Scope's `profile` row; a caller that builds the dict itself (adopt) gets `full`.
+        "<profile>": cfg.get("profile", act_profile.DEFAULT_PROFILE),
     }
 
 
@@ -3789,6 +3805,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--methods", metavar="LIST",
                         help="working methods to switch on (names from .act/methods/, comma-separated, or none) "
                              "instead of asking; default none")
+    parser.add_argument("--scope", choices=act_profile.PROFILES, metavar="{minimal,standard,full}",
+                        help="the scope profile of a new project (docs/ai/config.md § Scope) instead of the "
+                             "detected one: full for a web project, standard for any other")
     args = parser.parse_args(argv)
     methods_given: Optional[str] = None
     if args.methods is not None:
@@ -3913,7 +3932,7 @@ def main(argv: list[str]) -> int:
 
     cfg = step_config(root, interactive, notes,
                       {"language-docs": args.language_docs, "language-chat": args.language_chat},
-                      args.update_channel, methods_given)
+                      args.update_channel, methods_given, args.scope)
     if not (root / "docs" / "ai" / "config.md").is_file() and cfg["update_channel"] == "release":
         release_note = _clone_release_note(source_act.parent)
         if release_note:
@@ -3931,8 +3950,8 @@ def main(argv: list[str]) -> int:
         f"config: name={cfg['name']!r}, owner={cfg['owner']!r}, language-chat={cfg['language_chat']!r}, "
         f"language-docs={cfg['language_docs']!r}, "
         f"stack={cfg['stack']!r}, tools={cfg['tools']}, mode={cfg['mode']!r}, "
-        f"feedback={feedback_display}, update-channel={cfg.get('update_channel', 'release')!r} "
-        "(suggested, change it in docs/ai/config.md)",
+        f"feedback={feedback_display}, update-channel={cfg.get('update_channel', 'release')!r}, "
+        f"profile={cfg['profile']!r} (suggested, change it in docs/ai/config.md)",
     )
 
     orphan_rebuilt = False

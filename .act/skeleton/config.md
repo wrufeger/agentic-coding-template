@@ -49,13 +49,13 @@ without one. The IDs are `T<n>` (task), `B<n>` (backlog item), `Q<n>`
 
 | Key | Value |
 | :--- | :--- |
-| `profile` | full |
+| `profile` | <profile> |
 | `exclude` | none |
 | `methods` | <methods> |
 
 `profile`: `minimal` \| `standard` \| `full`. How much of the template's skills and roles this project
 loads; every skill description and every rule file is part of each session start, so fewer of them is a
-smaller start. `full` (default; a missing key counts as `full`) keeps everything. `standard` leaves out the
+smaller start. `full` keeps everything (a missing key counts as `full`; `init` writes `full` for a web project, `standard` for any other, `--scope` decides otherwise, `update` never changes it). `standard` leaves out the
 web, design and teaching skills: `act-a11y`, `act-check-translations`, `act-design-assets`,
 `act-design-build`, `act-design-ideas`, `act-seo`, `act-slides`, `act-teach`. `minimal` keeps only the core,
 the skills `act`, `act-adopt`, `act-bug`, `act-commit`, `act-compact`, `act-config`, `act-doctor`,

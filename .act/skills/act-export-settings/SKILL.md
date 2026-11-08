@@ -6,56 +6,27 @@ disable-model-invocation: true
 
 # Export the project's settings
 
-Thin wrapper around `python .act/scripts/settings_export.py` — writes what this project changed
-against the template (rules/coding: own rules, switched-off groups, `replaces` overrides) into one
-`settings.md`, readable and diffable. Nothing about the project itself (name, work state, the
-`use:` selection) goes into it.
-
-## Switches
-
-- Default: only `[~]`/`[-]`/`[+]` deviations for rules + coding — `--all` also lists every
-  unchanged (`[=]`) rule/group.
-- `--with-scripts` / `--with-checklists` / `--with-agents` / `--with-skills`: also include
-  `docs/ai/local/scripts/`, `docs/ai/local/checklists/`, this project's own roles
-  (`docs/ai/local/agents/`) and its own skills (`docs/ai/local/skills/`). Any of the four forces a
-  `.zip` (`--with-files`) instead of a plain `.md`, since these carry whole files alongside the
-  summary line settings.md shows for each one.
-- `--with-topics`: also include the topic rules under `docs/ai/local/rules/topics/` — a topic of
-  the project's own as `[+] <name>.md`, an override of a template topic as `[~] <name>.md` with a
-  fingerprint of the template topic it overrides. Whole files, so it forces a `.zip` as well.
-- `--with-formats`: also include the project's format files from `docs/project/formats/` (`commit.md`,
-  `changelog.md`, `release-notes.md`, `project-readme.md` — whole files, so it forces a `.zip` too). The folder's
-  own `README.md` stays home. The import writes them to the same folder in the other project.
-- `--strict`: abort instead of substituting a placeholder — use this when the file is headed to
-  people outside the project, not just another one of the human's own.
-- `--out PATH`: write there instead of the default `.act-local/export/act-settings-<date>.md`/
-  `.zip` (machine-local, gitignored, created on demand). The natural handover is dropping that file
-  straight into another checkout's `.act-local/import/` — that's exactly what `act-load-settings`
-  picks up when run with no path. With the `outside-root` guard, a `--out` path outside the project is refused:
-  use the default folder under `.act-local/`, add the path to `outside-root-allow`, or set `ACT_OUTSIDE_ROOT=warn` for one run.
-- `--profile`: write to the Owner's profile instead — the grounds a future `init` will hand to a
-  fresh clone as its starting point (`init` does not read the profile yet, only this writes it).
-  Same format, same switches; goes to the platform config dir (Windows `%APPDATA%\act\settings.md`,
-  else `~/.config/act/settings.md`), never a path inside this project. Use it for "these are the
-  personal defaults I want every future project to start with", not for handing settings to
-  someone else — that is `--out`. An existing profile file is backed up next to itself
-  (`settings.md.bak-<stamp>`), never silently overwritten. Mutually exclusive with `--out`.
+Wrapper around `python .act/scripts/settings_export.py` (switches: `--help`): it writes what this project changed
+against the template into one `settings.md`, readable and diffable. Nothing about the project itself (name, work
+state, the `use:` selection) goes into it.
 
 ## Steps
 
-1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, topics, an own
-   role, an own skill or the format files is a deliberate choice, not a default. Ask separately whether this run
-   goes to a file/another project (`--out` or the default location) or to the Owner's own profile
-   (`--profile`) — the two are mutually exclusive.
-2. Run the script. It scans every value it writes for credentials, mail addresses, IPs, local
-   paths and internal hosts on its own and replaces a hit with a visible `<setup:KIND>` placeholder
-   plus a `## setup-required` line — never a silent drop, never a silent secret.
-3. **Always show the human the finding count the script prints, and remind them to skim the file
-   before sending it anywhere** — the script is the second check, not the only one.
-4. `--strict` failing with findings is not a bug: fix or accept each one, then decide whether to
-   rerun with `--strict` or drop it for this handover.
+1. Ask which switches apply — do not guess `--with-*`: handing over scripts, checklists, topics, an own role, an
+   own skill or the format files is a deliberate choice, not a default. Ask separately whether the run goes to a
+   file for another project (`--out`, or the default under `.act-local/export/`; dropped into another checkout's
+   `.act-local/import/` it is what `act-load-settings` picks up) or to the Owner's own profile (`--profile`: the
+   personal defaults for every future project, never a handover to someone else); the two exclude each other.
+   Use `--strict` when the file goes to people outside the project.
+2. Run the script. It replaces credentials, mail addresses, IPs, local paths and internal hosts with a visible
+   `<setup:KIND>` placeholder plus a `## setup-required` line — never a silent drop.
+3. **Show the human the finding count the script prints, and remind them to skim the file before sending it
+   anywhere** — the script is the second check, not the only one. `--strict` failing with findings is not a bug:
+   fix or accept each one, then decide whether to rerun with `--strict`.
+4. A `--out` path outside the project is refused by the `outside-root` check: use the default folder, add the
+   path to `outside-root-allow`, or set `ACT_OUTSIDE_ROOT=warn` for one run.
 
 ## When not
 
-The file is meant for another project of the same human, or for the human's own review — not a
-substitute for `act-feedback` (a template-wide finding) or for handing a whole repo to someone.
+The file is for another project of the same human or for their own review — not a substitute for `act-feedback`
+(a template-wide finding) or for handing a whole repo to someone.

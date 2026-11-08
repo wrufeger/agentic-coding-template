@@ -850,6 +850,7 @@ Call: direct
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
                [--carry LIST] [--no-profile] [--profile] [--language-docs CODE]
                [--language-chat CODE] [--update-channel {release,latest}] [--methods LIST]
+               [--scope {minimal,standard,full}]
 
 Turn a template checkout into a project, or dock onto an existing directory (--target). Inside a
 project that is already set up, only --profile runs (see there); bringing .act/ up to date is
@@ -884,6 +885,9 @@ options:
                         latest = tip of the template's default branch; instead of asking
   --methods LIST        working methods to switch on (names from .act/methods/, comma-separated,
                         or none) instead of asking; default none
+  --scope {minimal,standard,full}
+                        the scope profile of a new project (docs/ai/config.md § Scope) instead of
+                        the detected one: full for a web project, standard for any other
 ```
 
 ## `integrations.py`

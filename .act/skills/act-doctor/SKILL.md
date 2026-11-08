@@ -5,64 +5,36 @@ description: Use to check for drift against the template, after an update, or wh
 
 # Reconcile against the template
 
-Two parts, kept separate because of cost: the mechanical half is cheap and runs on its own; the
-content half needs a model and runs only on request or for what an update just touched.
+Two parts, kept apart because of cost: the mechanical half is cheap and runs on its own; the content half needs a
+model and runs only on request or for what an update just touched.
 
 ## Mechanical (always, cheap)
 
-`python .act/scripts/doctor.py` (add `--inbox` to also write
-`docs/ai/inbox/report-<timestamp>-doctor.md` when
-there are findings; `--json` for machine output; `--accept ID [...]` / `--accept-all` to record a
-stale override's current template text as the accepted baseline). Runs `rules.py --validate` for
-both areas plus: dead override/off IDs, a disabled coding set whose `use:` target is gone, an
-override/off whose template text changed since it was last accepted, duplicate skills/agents/
-scripts from earlier updates, a short id (`T`/`B`/`Q`) assigned to more than one entry file under
-`docs/ai/work/` or `docs/ai/inbox/` (or one that isn't valid UTF-8 and so can't be scanned at
-all), broken `act:ref` references and bridge targets, and a script/agent/skill under
-`docs/ai/local/` or `.claude/` that no generated copy or bridge explains, and the frontmatter of
-every skill and role: a value strict YAML rejects (an unquoted `: `), a missing `name` or
-`description`, a `name` that differs from its folder or file, an invalid `tier`, `reasoning`,
-`tools`, `model` or `effort`, and — as a hint only — a field no known tool reads, and the order of the
-project docs (`R-docs-order`, switch `docs-order` in `docs/ai/config.md` § Checks): a folder under
-`docs/project/` of five or more entries without `README.md`, a file its `README.md` does not name, an index
-line without a file, a dead relative link, a concept whose questions are all answered, and the size
-of the always-loaded own rules (`own-rules-budget` in `docs/ai/config.md`, default 6000 characters; a warning, with
-the lines that read like history), and the working methods (`methods` in `docs/ai/config.md` § Scope): a name
-no `.act/methods/` or `docs/ai/local/methods/` file backs, and a methods section in `docs/project/coding_rules.md`
-that does not match the row (fixed by `python .act/scripts/rules.py --sync-methods`). `update.py`
-calls this itself as its step 8 — running it again by hand afterward is redundant unless something
-was fixed in between.
+`python .act/scripts/doctor.py` — what it checks and its options (`--inbox`, `--json`, `--accept ID`,
+`--accept-all`): `--help` and the script's header. `update.py` runs it as its step 8; running it again afterwards
+is redundant unless something was fixed in between. A stale override is accepted (`--accept`) only once the human
+has read the changed template text.
 
-Optional: `agnix`, an external linter for agent files (skills, roles, rule files), can be run
-locally as a second opinion — for example the release binary on `.act/`, `.claude/` and `docs/ai/`.
-It is not part of the template and is never installed unasked (`R-code-tools`). Its stock rules
-raise known false alarms here: `XML-001` on placeholders such as `<n>`, `REF-001` and
-`CDX-AG-005` on the sources under `.act/bridges/`, and `CC-AG-019` on the role fields `tier`,
-`reasoning` and `variant-of`, which the template reads itself. Switch those four off in agnix's
-configuration file (see agnix's docs for its format) and read the rest as hints; `doctor.py` stays
-the check that decides.
+Optional: `agnix`, an external linter for agent files, may be run as a second opinion, never installed unasked
+(`R-code-tools`). Its stock rules `XML-001`, `REF-001`, `CDX-AG-005` and `CC-AG-019` raise known false alarms
+here (placeholders, `.act/bridges/` sources, the role fields `tier`, `reasoning`, `variant-of`); switch them off
+and read the rest as hints. `doctor.py` decides.
 
 ## Content (on request, or for rules an update just changed)
 
-For each new or changed template rule ID, compare it against the project's own rules (`[+]` and
-`replaces` entries in `docs/ai/rules.md`) — only that cross-product, not everything against
-everything. Same comparison, other direction, for two projects' own rules on `act-load-settings`.
-Three findings, three offers, **never a silent fix**:
+For each new or changed template rule ID, compare it against the project's own rules (`[+]` and `replaces`
+entries in `docs/ai/rules.md`) — only that cross-product. Same comparison, other direction, for two projects'
+own rules on `act-load-settings`. Three findings, three offers, **never a silent fix**:
 
 - **matches** the template rule → offer to drop the project's own rule and check the template one.
-- **goes beyond** it → offer to trim the project's rule down to the remainder (diff proposed, the
-  wording stays the human's).
-- **contradicts** it → report only, change nothing — the project's rule still wins, but
-  the human should know the template now thinks differently.
+- **goes beyond** it → offer to trim the project's rule to the remainder (diff proposed, the wording stays the
+  human's).
+- **contradicts** it → report only; the project's rule still wins, but the human should know.
 
-Also flags: a widely-applicable own rule as a template candidate (never sent on its own —
-`act-feedback`'s consent and `Feedback` setting in `docs/ai/config.md` still govern any send), and
-a `docs/ai/proposals/` entry sitting unanswered past its threshold — **gap:** that threshold isn't
-defined anywhere yet, and `doctor.py` doesn't check `proposals/` at all today.
+Also flag a widely applicable own rule as a template candidate (never sent on its own — `act-feedback`'s consent
+and the `feedback` setting govern any send).
 
 ## Result
 
-Every finding is an entry in `docs/ai/inbox/`, never a rewritten file — `R-work-record-now`
-applies. A widespread mechanical finding (e.g. many dead IDs after a large rule reshuffle) can
-still be summarized as one inbox entry with a list, but the fix itself needs the human's choice per
-item above.
+Every finding is an entry in `docs/ai/inbox/`, never a rewritten file (`R-work-record-now`). Many findings of one
+kind may be one entry with a list; the fix needs the human's choice per item.
