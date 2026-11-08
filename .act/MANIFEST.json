@@ -82,7 +82,7 @@
   "hooks/checks/mcp_ide_tables.py": "8e1d38a3547031e370fa63a5410b35d9885eed2ac0016f5c78f95d288a928f25",
   "hooks/checks/model_switch.py": "616149eab7b5d01686b685a1e4bdab7cbc7cb547653effcdc175d9d81cba3c63",
   "hooks/checks/nesting_guard.py": "82e18a6aa6e6ffdca2cc030a3a640003c02e0e9dcdf6853af4422d2cf3673b23",
-  "hooks/checks/outside_root.py": "3fd6b1cd5542ddb6a49bf3d754958d2c497ad36505bd8b1fc977f87302db053d",
+  "hooks/checks/outside_root.py": "e440f5bd65d819b58ef604ae89095d826b4bf7d20fb26a69112964fbcd60a796",
   "hooks/checks/powershell_targets.py": "1213f0b2b5048b3f1cff995ef90e56c610d87b31cb2b620d407f89d8ff67b721",
   "hooks/checks/protected_watch.py": "456418e4a213e7a4a98aabac6aa5fa00da39a437a4edf4b19c14c06bc6943ddc",
   "hooks/checks/quick_capture.py": "a251f78a764fcc8957e6d5374e76acd9f0227b29c851cec2958a376b7a1acb74",

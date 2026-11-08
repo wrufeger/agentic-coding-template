@@ -119,7 +119,7 @@ from urllib.parse import unquote
 import actlib
 
 from .brace_expand import expand_braces
-from .command_words import _command_word_lists_new, _strip_command_prefix, _stripped_word_lists
+from .command_words import _command_word_lists, _strip_command_prefix
 from .inline_code import UNKNOWN_WRITE, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
 from .powershell_targets import (
@@ -140,6 +140,7 @@ from .shell_targets import (
     _bash_write_targets,
     _command_name,
     _heredoc_may_feed_shell,
+    _operands,
     _resolve_path,
     _to_native_path,
     _wsl_command_line,
@@ -1021,36 +1022,10 @@ def _last_segment(word: str) -> str:
     return _SEGMENT_SPLIT_RE.split(word.strip().strip("'\"").rstrip("\\/"))[-1]
 
 
-def _operands(args: list[str], value_flags: frozenset) -> tuple[list[str], dict[str, str]]:
-    """(operands, flag -> value) of a POSIX-style command line: `-t DIR`, `-tDIR`, `--flag=DIR`."""
-    operands: list[str] = []
-    values: dict[str, str] = {}
-    index = 0
-    while index < len(args):
-        arg = args[index]
-        if arg == "--":
-            operands.extend(args[index + 1:])
-            break
-        if arg.startswith("--"):
-            flag, _, value = arg.partition("=")
-            if flag in value_flags:
-                if value:
-                    values[flag] = value
-                elif index + 1 < len(args):
-                    values[flag] = args[index + 1]
-                    index += 1
-        elif arg.startswith("-") and len(arg) > 1:
-            if arg in value_flags and index + 1 < len(args):
-                values[arg] = args[index + 1]
-                index += 1
-            else:
-                for flag in value_flags:
-                    if len(flag) == 2 and arg.startswith(flag) and len(arg) > 2:
-                        values[flag] = arg[2:]
-        else:
-            operands.append(arg)
-        index += 1
-    return operands, values
+def _last_value(values: dict[str, list[str]], *flags: str) -> Optional[str]:
+    """The value of the first of `flags` that was given with a non-empty value; of a repeated flag the
+    last one, since for `cp -t`, `tar -C` and `unzip -d` the later option overrides the earlier."""
+    return next((values[flag][-1] for flag in flags if values.get(flag) and values[flag][-1]), None)
 
 
 def _ps_operands(args: list[str]) -> tuple[list[str], dict[str, str], set[str]]:
@@ -1101,7 +1076,7 @@ def _copy_plan(name: str, args: list[str]) -> Optional[tuple[list[str], str, boo
         recursive = any(item and "recurse".startswith(item) for item in switches)
         return [part for part in slots["path"].split(",") if part], slots["destination"], recursive
     operands, values = _operands(args, frozenset({"-t", "--target-directory"}))
-    target = values.get("-t") or values.get("--target-directory")
+    target = _last_value(values, "-t", "--target-directory")
     if target:
         return (operands, target, _is_recursive(args)) if operands else None
     if len(operands) < 2:
@@ -1122,10 +1097,10 @@ def _extract_destination(name: str, args: list[str]) -> Optional[tuple[Optional[
         if not extracts:
             return None
         _, values = _operands(args, frozenset({"-C", "--directory"}))
-        return (values.get("-C") or values.get("--directory"),)
+        return (_last_value(values, "-C", "--directory"),)
     if name == "unzip":
         _, values = _operands(args, frozenset({"-d"}))
-        return (values.get("-d"),)
+        return (values.get("-d", [None])[-1],)
     if name == "expand-archive":
         operands, named, _ = _ps_operands(args)
         spare = iter(operands)
@@ -1403,14 +1378,12 @@ def _leading_assignments(words: list[str]) -> list[str]:
 
 
 def _shell_word_lists(command: str) -> list[list[str]]:
-    """The simple commands of `command` as word lists, read with the quote-aware word lexer alone.
-    The union with the previous reading that the write-guards use (`_stripped_word_lists`) also
-    takes a backtick span inside single quotes (`printf '... `GET /x` ...'`) for a command, which
-    for a guard that judges every word is a steady source of false alarms; that union is the
-    fallback only when the lexer fails. An assignment in front of a command is returned as the
-    arguments of its own `export`; the command that feeds `xargs` is marked (`_Words`)."""
+    """The simple commands of `command` as word lists, read the way every other check reads them
+    (`_command_word_lists`); a coarse split only when the lexer fails. An assignment in front of a
+    command is returned as the arguments of its own `export`; the command that feeds `xargs` is
+    marked (`_Words`)."""
     try:
-        raw = _command_word_lists_new(command)
+        raw = _command_word_lists(command)
         lists: list[list[str]] = []
         for index, (words, _separator) in enumerate(raw):
             assigned = _leading_assignments(words)
@@ -1426,10 +1399,7 @@ def _shell_word_lists(command: str) -> list[list[str]]:
             lists.append(item)
         return lists
     except Exception:  # noqa: BLE001 - a scanner bug must not turn into a silent allow
-        try:
-            return _stripped_word_lists(command)
-        except Exception:  # noqa: BLE001
-            return _coarse_word_lists(command)
+        return _coarse_word_lists(command)
 
 
 # Programs whose `-c` text is code of a language, not a command line.

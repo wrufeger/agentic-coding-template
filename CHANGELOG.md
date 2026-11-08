@@ -336,6 +336,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `outside-root` reads a command line the way the other checks do: a single-quoted `$(...)` in a line that only
+  prints (`echo '$(cat /x)'`) is text and no longer taken for a command that reads `/x`.
 - `git-discard` no longer refuses a listing-only `git branch` (`--show-current`, `--list`, `-a`, `-v` …) whose
   `-C` target is a variable.
 - The shell reading follows bash more closely where the older scanner used to catch what it missed: inside
