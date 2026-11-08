@@ -157,6 +157,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 - `/act-info` and `/act-version` are now answered by the session hook like `/act-config`: it runs `info.py` and
   `update.py --versions` itself and shows their output unchanged. The three skills stay as short carriers (Claude Code
   needs them to know the commands) and the `act` skill lists the commands.
+- The write flow for the repo host (access, preview, apply, verify, journal, token) stands once in `topics/live-systems.md`; `act-pr`, `act-issue`, `act-release`, `act-feedback`, `act-idea` and `act-prepare` refer to it and to the rules instead of repeating them, and `act-prepare` gains a short path for one task without an open question.
 - The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
   assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
   case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works

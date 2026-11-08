@@ -10,6 +10,11 @@ questions, stated assumptions) and `R-work-handover`. **In one sentence:** the h
 everything open **once**, then the block runs unattended. The costliest mistake is a question the
 code already answers, so research comes before the question round, never after.
 
+**Short path — one task, no open question:** bound the scope in a sentence, one `explorer` look at what exists
+and at `decisions.md`, then `entries.py new task <title>` with goal, acceptance criterion, steps and size
+(step 3). Ready by step 4's test: say so and hand it over. No question round, no ADR, no order plan. Anything
+open or conflicting: the full path below.
+
 1. **Bound the scope** — what's in, what's explicitly not, both written down.
 2. **Research what exists, in parallel** — several `explorer` roles in one message: what already
    exists, which files are affected, does anything in `docs/project/decisions.md` conflict, where
@@ -17,18 +22,15 @@ code already answers, so research comes before the question round, never after.
    `tags:`) for the topic and read only the hits; a note whose `retire_when` is met gets reported,
    not followed.
 3. **Cut it into tasks or stories.** Each task: one-sentence goal, checkable acceptance criterion,
-   steps as bullets, and a size as duration and tokens (`~45 min · ~600k tkn fresh · ~15M tkn cache`
-   plus its assumption, from `python .act/scripts/usage.py --estimates`). Something bigger with its own justification becomes a story
+   steps as bullets, and a size as duration and tokens with its assumption (`python .act/scripts/usage.py
+   --estimates`, as in `act-idea`). Something bigger with its own justification becomes a story
    (`docs/project/stories/`, where the project uses them); the rest is a task under
    `docs/ai/work/tasks/` (`python .act/scripts/entries.py new task <title>`).
 4. **Check readiness** — goal unambiguous, acceptance checkable, decisions made, preconditions
    met, unknowns researched. Anything failing this stays marked open and **doesn't start**.
-5. **One bundled question round.** Questions each with its own id (`Q<n>`), answer options as
-   `a)`, `b)`, `c)`, a recommendation where there is one first as `a)` and marked, ordered by how much each blocks, with one line on what
-   happens if it stays unanswered. File the same questions in the inbox (`entries.py new question
-   <title>` per question, `kind: question`, in the form the inbox README gives) so the answer has
-   somewhere to land — the board's Waiting section already surfaces them, no separate inbox entry
-   needed. Under `inbox-decisions: at-start` this is where a backlog
+5. **One bundled question round.** Each question in the inbox (`entries.py new question <title>`, form of
+   `R-human-ask` and `docs/ai/inbox/README.md`), ordered by how much each blocks, with one line on what happens
+   if it stays unanswered; the board's Waiting section surfaces them. Under `inbox-decisions: at-start` this is where a backlog
    entry's `decision: open` points get asked; under `immediate` they are already in the inbox —
    still check the backlog entries in scope for any left over.
 6. **Record the answers**: ADR in `docs/project/decisions.md`, open points cleared, tasks marked

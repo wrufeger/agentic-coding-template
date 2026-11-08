@@ -18,7 +18,7 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    the concept's folder with it, the idea's id or topic in front of a generic name like `img.png`,
    and the links are adjusted): starting point with findings — who
    will use the result, and how it would show that nobody does — then **options** (description,
-   pros, cons, effort each in the form below), **recommendation** with its **failure modes** (how it could break, what it
+   pros, cons, effort each as in step 5), **recommendation** with its **failure modes** (how it could break, what it
    could leak or expose, which assumption carries it) and its **way back** (revert, migration
    down, switch off). "Do nothing" is a real option, with its consequences. Where the requirement
    is still unclear, a throwaway prototype is an option of its own: time-boxed, in a scratch
@@ -27,14 +27,12 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    round — weighed on maintenance, security, lock-in and running cost, not on build effort alone.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new
    question <title>` — writes `kind: question` and `for: all` into the header), options as
-   `a)`, `b)` …, the recommendation first as `a)` and marked, in the form the inbox README gives. Nothing built, no
-   task filed, before it's answered. Any other open decision that comes up while filing goes into the inbox too, or stays on the backlog item
+   in the form of `R-human-ask` and `docs/ai/inbox/README.md`. Nothing built, no task filed, before it's answered. Any other open decision that comes up while filing goes into the inbox too, or stays on the backlog item
    as `decision: open` under `inbox-decisions: at-start` (`R-human-ask`).
-5. **Estimate for the chosen path only**, as duration and tokens, never person-days: `~45 min · ~600k tkn
-   fresh · ~15M tkn cache`, plus the assumption it rests on ("2 builder, 1 reviewer, 1 test run"). Work
-   it out from `python .act/scripts/usage.py --estimates` (runs of a role × its median, as a range up to
-   the 80th percentile; add about a third for the main session); with no measured runs, from experience in
-   the same form and say so. Also: scope, missing tooling (library, MCP server, rule set,
+5. **Estimate for the chosen path only**, as duration and tokens, never person-days, with the assumption it
+   rests on ("2 builder, 1 reviewer, 1 test run"); worked out from `python .act/scripts/usage.py --estimates`
+   (runs of a role × its median, as a range up to the 80th percentile; add about a third for the main session), without measured runs from experience in
+   the same form, said so. Also: scope, missing tooling (library, MCP server, rule set,
    a skill that doesn't exist yet — its own step, not "along the way"), a rough task breakdown
    with goal and acceptance check, and an ADR in `docs/project/decisions.md`. Optional: a line
    `revisit: YYYY-MM-DD` under the ADR when it rests on an assumption that should be checked

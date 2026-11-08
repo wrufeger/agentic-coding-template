@@ -7,10 +7,10 @@ description: Use when asked to "show issues", "show my open stories", "show issu
 
 Sentences instead of subcommands, in three parts. Runs in the main session. Only GitHub and GitLab
 (also self-hosted) work; Jira, YouTrack and Linear are not supported yet (trackers without Git). Before the first
-call: `python .act/scripts/integrations.py status` — exit 3 (missing or stale) means
-`act-integrations` first. Everything that writes follows `R-safe-approval` and the rule section
-"Repo host and issue tracker" in `.act/rules/topics/live-systems.md`. Never show or ask for a
-token in chat.
+call: `python .act/scripts/integrations.py status` — exit 3 means `act-integrations` first (also for
+`forge-host`; flow in `live-systems.md`). Everything that writes follows `R-safe-approval` and the
+rule section "Repo host and issue tracker" in `.act/rules/topics/live-systems.md` (approval, way back, journal,
+token) — read that section before the first write.
 
 ## 1. Read — free, no approval
 
@@ -24,23 +24,11 @@ token in chat.
 
 ## 2. Create, comment, close — only after "yes"
 
-1. Draft the text to a file under `.act-local/` (a title; a body with what, why, how to check).
-2. **Preview:** `forge.py create-issue --title "<title>" --body-file <file> [--label <name>]`,
-   `forge.py comment <number> --body-file <file>` or `forge.py close-issue <number>` — without
-   `--apply` nothing is sent, the preview shows what would be.
-3. Show it; on the human's "yes" for exactly this preview, run the same command with `--apply`.
-4. **Verify independently:** `forge.py issue <number>` (or `forge.py issues`) shows the result;
-   show the link.
-5. Record the link, the date and the "yes" given in the chat (date, what was approved) in the
-   journal (`entries.py`). No backup is needed — nothing is overwritten. The way back is closing
-   (`forge.py close-issue`), never deleting; for a comment it is a correcting comment (or editing it
-   in the web interface), not closing.
-
-`forge.py` stops with the hint to set `forge-host` when the host is self-hosted and not yet released
-for the token: run `act-integrations` (the human confirms the host), then continue.
-
-Writing back into an issue while working (a comment, a status change) follows the same steps:
-preview, "yes", `--apply`, never on its own initiative.
+Each write: preview without `--apply`, show it, "yes" for exactly that preview, the same command plus
+`--apply`, verify, journal (flow in `live-systems.md`). Draft: a title; a body with what, why, how to check. Commands:
+`forge.py create-issue --title "<title>" --body-file <file> [--label <name>]`, `forge.py comment <number>
+--body-file <file>`, `forge.py close-issue <number>`. Verify with `forge.py issue <number>`. The way back is
+`close-issue`; for a comment a correcting comment, not closing.
 
 ## 3. Start work — "start work on issue 42"
 

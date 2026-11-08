@@ -45,6 +45,15 @@ Creating a pull/merge request, an issue, a comment or a release entry, and closi
 system (GitHub, GitLab) and follow the rules above with these specifics. A release entry is the public page of a
 tag (title, notes, pre-release flag): published by `act-release` as its last step, only after its own "yes":
 
+- **Flow (every write):** access first (`python .act/scripts/integrations.py status`; exit 3 = missing or stale: run
+  `act-integrations`, which also sets `forge-host` when `forge.py` asks for it); text drafted to a file under
+  `.act-local/`, never into the repo; the `forge.py` command without `--apply` shows the preview; the human's "yes"
+  for exactly that preview; the same command plus `--apply`; verify with a fresh read (`forge.py prs`, `issue`,
+  `releases`) and show the link; journal entry. The token never appears in chat or on the command line
+  (`R-safe-no-secret-cli`); it comes from the environment or `.env`. A `forge.py` failure (exit 2, one line) is
+  reported as it is; a wrong hoster guess is fixed with `forge` in `docs/ai/config.md` § `Git hosting`; a bug in the
+  script goes to `feedback.py --add --kind bug`. Writing into an issue or PR while working follows the same flow,
+  never on the assistant's own initiative.
 - **Approval:** a preview plus the human's explicit "yes" in the chat, per action, is the dated
   approval for exactly that action. Show what will be sent — target, title, text, labels — and write
   exactly that, nothing more; one "yes" covers one action, never the next one. A draft PR/MR is not
