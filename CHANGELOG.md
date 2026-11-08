@@ -149,7 +149,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 ### Changed
 
 - `topics/checks.md` keeps, per mechanically checked rule, what the check blocks, its switch and the limits an owner
-  must know (the part for secret, outside-root, git and throwaway checks: 41 800 to 15 200 characters); how a command
+  must know (the whole page about 67 000 to 41 000 characters); how a command
   is read (parser allow-lists, time budgets, failure handling) is documented in the header comments of the check
   modules. The topic `worker-rules.md` is gone; its content stands in the header of `.act/scripts/rules.py`
   (`--worker`).
