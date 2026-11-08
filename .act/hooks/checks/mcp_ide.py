@@ -184,7 +184,7 @@ import actlib
 from .common import _check_mode, _is_worker
 from .danger_scan import check_danger_scan
 from .deps_scan import check_deps_scan
-from .git_reset_hard import check_git_reset_hard
+from .git_discard import check_git_discard
 from .mcp_ide_tables import (
     _EXEC_TOOLS, _READ_TOOL_PATHS, _READ_TOOLS, _SHELL_TOOL_ARGS, _WRITE_TOOL_FIELDS, _tool_class,
 )
@@ -237,7 +237,7 @@ _SHELL_REUSE_CHECKS = (
     check_worker_docs_ai,
     check_worker_write_scope,
     check_worker_git_write,
-    check_git_reset_hard,
+    check_git_discard,
     check_recursive_delete,
     check_secret_scan,
     check_danger_scan,

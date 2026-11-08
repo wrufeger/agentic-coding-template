@@ -158,6 +158,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `update.py --versions` itself and shows their output unchanged. The three skills stay as short carriers (Claude Code
   needs them to know the commands) and the `act` skill lists the commands.
 - The write flow for the repo host (access, preview, apply, verify, journal, token) stands once in `topics/live-systems.md`; `act-pr`, `act-issue`, `act-release`, `act-feedback`, `act-idea` and `act-prepare` refer to it and to the rules instead of repeating them, and `act-prepare` gains a short path for one task without an open question.
+- `git-reset-hard` and `git-discard` run as one check (both rows and their modes stay); `git branch -D` is let
+  through only for a branch HEAD contains (a cherry-picked one no longer is), and a worker's `git branch` is free
+  only when it lists.
 - The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
   assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
   case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works
@@ -313,6 +316,8 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `git-discard` no longer refuses a listing-only `git branch` (`--show-current`, `--list`, `-a`, `-v` …) whose
+  `-C` target is a variable.
 - `git restore <file>` and `git checkout -- <file>` of a tracked file that was deleted in the work tree are no
   longer refused by `git-discard`: git must know the path as exactly one tracked file (also read
   case-insensitively); a deleted folder, a pattern, `:(…)` magic, a trailing `/` and an unknown path are judged

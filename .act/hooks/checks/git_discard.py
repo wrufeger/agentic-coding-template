@@ -1,55 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
-# Purpose: Check — git commands that throw away work without an undo, other than `git reset --hard`
-#          (PreToolUse): a guardrail next to `R-safe-git-reset` (checks/git_reset_hard.py, which keeps
-#          `reset --hard` for itself). The matching rule text (`R-safe-git-discard`) is authored
-#          elsewhere; this module only enforces it. Applies to **everyone**, orchestrator included.
+# Purpose: Check -- git commands that throw work away without an undo (PreToolUse), for everyone,
+#          orchestrator included: `git reset --hard` (config row `git-reset-hard`, `R-safe-git-reset`) and
+#          the others (row `git-discard`, `R-safe-git-discard`). _TABLE below is the one place that says
+#          which subcommand discards work, under which row and rule, and what decides it. Applies the
+#          neighbour split in checks/worker_git_write.py: that one asks WHO runs a mutating git command
+#          (workers only, with an outside-the-project exemption); this one asks WHAT is lost.
 #
-#          What is refused:
-#            - `git clean -f...` (not `-n`) when `git clean -n` with the same switches and operands
-#              would delete something;
-#            - `git checkout -- <folder>`, `git checkout .`, `git restore <folder>` (working tree) when
-#              tracked changes lie below that folder, and `git checkout -f` / `git switch -f` /
-#              `--discard-changes` when the tree has tracked changes. A single file stays free; the
-#              file/folder decision is made on the file system of the target directory, and a glob
-#              or a path that does not exist counts as a folder -- except a missing path that git
-#              knows as exactly one tracked file (a tracked file deleted in the work tree), which
-#              counts as a file;
-#            - `git stash drop`, `git stash clear` always;
-#            - a forced push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) whose
-#              target is the default branch;
-#            - `git branch -D` (and `-d -f`) of a branch that `git branch --no-merged` lists, unless
-#              it was taken over by cherry-pick: `git cherry` shows only `-` lines (an equivalent
-#              patch in HEAD, whitespace ignored), it has no merge commit and no empty commit of its
-#              own, and merging it into HEAD would change nothing (`git merge-tree --write-tree`
-#              gives HEAD's tree; git 2.38 or later, else it stays refused). A move or copy that
-#              overwrites an existing branch (`-M`, `-C`) gets no such release.
-#              `@{-N}` is resolved to the branch it names first. On a case-insensitive file system a
-#              name that exists in two spellings (a loose and a packed ref) gets no such release.
+#          Refused:
+#            - `reset --hard` (any abbreviation of `--hard`) while `git status --porcelain` shows anything,
+#              untracked files included;
+#            - `clean -f...` (not `-n`) when `git clean -n` with the same switches would delete something;
+#            - `checkout -- <folder>`, `checkout .`, `restore <folder>` (working tree) with tracked changes
+#              below that folder, and `checkout -f` / `switch -f` / `--discard-changes` with tracked changes
+#              in the tree. A single file stays free; a glob or a path that does not exist counts as a
+#              folder, except a missing path that git knows as exactly one tracked file;
+#            - `stash drop`, `stash clear` always;
+#            - a forced push (`-f`, `--force`, `--force-with-lease`, `+refspec`, `--mirror`) or a delete whose
+#              target is the default branch (`origin/HEAD`, else `init.defaultBranch`, else main and master);
+#            - `branch -D` (and `-d -f`, `-M`/`-C` over an existing branch) of a branch HEAD does not
+#              contain (`git branch --no-merged HEAD` lists it); `@{-N}` is resolved first.
 #
-#          The default branch is read from `git symbolic-ref refs/remotes/origin/HEAD`, else
-#          `init.defaultBranch`, else both `main` and `master`.
+#          Free without looking at the repository (_FREE_FORMS, a positive pattern per word, everything
+#          else is judged as before): a `branch` that only lists (`--show-current`, `--list`, `-a`, `-r`, `-v`,
+#          `--contains X` ...) and a `reset` without `--hard`. status, log, diff, show and rev-parse are
+#          not in the table at all.
 #
-#          Command decomposition, alias handling and target-directory resolution are shared with
-#          checks/git_reset_hard.py (`_alias_definitions`, `_alias_expansion`,
-#          `_resolve_cwd_after_leading_cd`, `_resolve_target_dir`, `_has_find_execdir`) — see that
-#          module's header for how `cd`, `-C`, `--git-dir`, `env -C` and `find -execdir` are treated:
-#          a directory that cannot be pinned down is refused, never assumed clean.
-#
-#          All git calls made here share one time budget well under the hook timeout; a call that
-#          fails or runs out of budget counts as "unknown" and is refused (deny by default).
+#          Which tree is meant: a leading `cd` (_resolve_cwd_after_leading_cd), then the `-C` chain, else the
+#          call's own `cwd`. A tree that cannot be pinned down -- no `cwd`, a dynamic `-C` or `cd` target,
+#          a second directory change, `--git-dir`/`--work-tree`/`GIT_DIR=`, `env -C`, `find -execdir` -- is
+#          refused, as is a git call that fails or runs out of the shared time budget (deny by default).
+#          An inline alias is judged by what it expands to (the call's own arguments appended, nested
+#          aliases followed); one that cannot be expanded (`!shell`, `--config-env`, a cycle) or that
+#          expands to `reset`/`--hard` is refused outright.
 #
 # Known limits:
-#   - an alias that lives in a git config file (not defined inline with `-c alias.x=...`) is
-#     invisible here, as in checks/git_reset_hard.py.
-#   - a push without a refspec is judged by the current branch, `push.default=matching` and any
-#     configured `remote.<name>.push`; other ways config can redirect a push are not followed.
-#   - `git clean` without `-f` is not examined (git itself refuses unless `clean.requireForce` is
-#     off); other destructive commands (`update-ref -d`, `worktree remove -f`, `reflog expire`,
-#     `tag -d`, `gc --prune`) are out of scope.
-#   - a checkout operand that is neither `.`, a glob nor an existing folder is read as a branch or
-#     revision when no `--` separates it from the options.
+#   - an alias in a git config file (not defined inline with `-c alias.x=...`) is invisible here.
+#   - a push without a refspec is judged by the current branch, `push.default` and `remote.<name>.push`;
+#     other ways config can redirect a push are not followed.
+#   - `clean` without `-f` is not examined (git refuses unless `clean.requireForce` is off); `update-ref -d`,
+#     `worktree remove -f`, `reflog expire`, `tag -d`, `gc --prune` are out of scope.
+#   - a checkout operand that is neither `.`, a glob nor an existing folder is read as a branch or revision
+#     when no `--` separates it from the options.
+#   - a heredoc body written into a file is data and not judged; one fed to a shell (`bash <<EOF`) or a command
+#     word inside `bash -c '...'` is a script and judged like a command (checks/command_words.py).
 
 from __future__ import annotations
 
@@ -60,39 +55,38 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import actlib
 
-from .command_words import _git_invocations_with_prefix
+from .command_words import _git_invocations_with_prefix, _stripped_word_lists
 from .common import _check_mode, _shell_command
-from .git_reset_hard import (
-    _alias_definitions,
-    _alias_expansion,
-    _has_find_execdir,
-    _resolve_cwd_after_leading_cd,
-    _resolve_target_dir,
+from .shell_targets import _command_name, _to_native_path
+from .worker_git_write import (
+    _CD_LIKE_NAMES,
+    _CD_UNKNOWN_NAMES,
+    _branch_lists_only,
+    _first_operand,
+    _parse_git_invocation,
+    _prefix_has_dir_override,
+    _resolve_dash_c_chain,
+    _resolve_dir,
 )
-from .shell_targets import _to_native_path
-from .worker_git_write import _parse_git_invocation
 
-__all__ = ["check_git_discard"]
+__all__ = ["check_git_discard", "_resolve_cwd_after_leading_cd", "_resolve_target_dir"]
 
 _TIME_BUDGET = 7.0  # seconds for every git call of one hook run together (the hook timeout is 10)
-_CALL_LIMIT = 4.0   # seconds for a single git call
+_CALL_LIMIT = _TIME_BUDGET  # seconds for a single git call: at most the whole budget (a clean large repo's `status`)
 _LOOKUP_LIMIT = 2.0  # seconds for the one git call that looks up a missing path in the index
 _HOOK_BUDGET = 7.5  # seconds after dispatch.py's own start (payload["_act_hook_started"]) at the latest
 
-_RULE = "R-safe-git-discard"
-_UNKNOWN_DIR_MESSAGE = (
-    "[act] git {what} refused -- could not determine (or read the state of) the repository it "
-    f"targets ({_RULE}): check with git status / git branch --no-merged first"
-)
-_ALIAS_MESSAGE = (
-    "[act] git alias refused -- a git alias defined inline can hide a command that discards work "
-    f"({_RULE}): run the expanded command directly"
-)
+_RESET_ROW, _DISCARD_ROW = "git-reset-hard", "git-discard"
+_RESET_RULE, _DISCARD_RULE = "R-safe-git-reset", "R-safe-git-discard"
 _REFUSED = "[act] git {what} refused -- {why} ({rule}): {hint}"
+_UNKNOWN_WHY = "could not determine (or read the state of) the repository it targets"
+_UNKNOWN_HINT = "check with git status / git log -1 first"
+_ALIAS_WHY = "a git alias defined inline can hide a command that discards work"
+_ALIAS_HINT = "run the expanded command directly"
 
 
 class _Unknown(Exception):
@@ -138,6 +132,7 @@ class _Budget:
         return result.stdout if result.returncode == 0 else ""
 
 
+
 # ---------------------------------------------------------------------------------------------
 # option helpers
 
@@ -174,12 +169,167 @@ def _has_letter(args: list[str], letter: str, value_letters: str = "") -> bool:
 
 
 # ---------------------------------------------------------------------------------------------
-# per-command verdicts; each returns a reason text for a refusal, or None for "free"
+# tree and alias helpers
+
+def _alias_definitions(global_args: list[str]) -> dict[str, Optional[str]]:
+    """name (lowercased) -> replacement text for every alias the git global options in
+    `global_args` (the words ahead of the subcommand, see `_parse_git_invocation`) define inline:
+    `-c alias.<name>=<value>` in the split or joined (`-calias.x=...`) form, and
+    `--config-env=alias.<name>=<VAR>` (or the split `--config-env alias.<name>=<VAR>`), whose value
+    lives in an environment variable this check cannot read -- recorded as None, "unknown".
+    Best-effort like the rest of this module's tokenizing (see "Known limits"): a `-c`-shaped word
+    that is really some other global option's own argument could be picked up too -- that only
+    ever adds a definition, never a silent allowance."""
+    definitions: dict[str, Optional[str]] = {}
+    index = 0
+    while index < len(global_args):
+        arg = global_args[index]
+        candidate: Optional[str] = None
+        from_environment = False
+        if arg in ("-c", "--config-env") and index + 1 < len(global_args):
+            candidate = global_args[index + 1]
+            from_environment = arg == "--config-env"
+            index += 1
+        elif arg.startswith("--config-env="):
+            candidate = arg[len("--config-env="):]
+            from_environment = True
+        elif arg.startswith("-c") and not arg.startswith("--") and "=" in arg:
+            candidate = arg[2:]
+        index += 1
+        if candidate is None or not candidate.lower().startswith("alias."):
+            continue
+        name, sep, value = candidate[len("alias."):].partition("=")
+        if sep and name:
+            definitions[name.lower()] = None if from_environment else value
+    return definitions
 
 
-def _clean_verdict(sub_args: list[str], target: Path, budget: _Budget, force_by_config: bool) -> Optional[str]:
-    """`force_by_config`: `clean.requireForce` is switched off for this call, so no `-f` is needed."""
-    force = force_by_config
+def _alias_expansion(
+    definitions: dict[str, Optional[str]], subcommand: str, sub_args: list[str]
+) -> Optional[list[str]]:
+    """The words git actually runs for `git <subcommand> <sub_args>` once every inline alias in
+    `definitions` is applied -- the alias's replacement text with the call's own arguments
+    appended, nested aliases followed (git resolves an alias whose expansion names another alias)
+    -- or None when that cannot be known here: an alias whose value is unknown (--config-env), a
+    shell alias (`!...`, whose text git hands to a shell as-is), or an alias cycle. A subcommand
+    that is no inline alias expands to itself plus its own arguments."""
+    words = [subcommand] + sub_args
+    seen: set[str] = set()
+    while words and words[0].lower() in definitions:
+        name = words[0].lower()
+        value = definitions[name]
+        if name in seen or value is None or value.startswith("!"):
+            return None
+        seen.add(name)
+        words = value.split() + words[1:]
+    return words
+
+
+def _prefix_changes_directory(prefix: list[str]) -> bool:
+    """True if a wrapper ahead of `git` in the same simple command (`prefix`: the unstripped words
+    command_words._git_invocations_with_prefix hands back) runs it in a directory of its own
+    choosing rather than the shell's current one -- `env -C <dir>`/`env --chdir[=]<dir> git ...`.
+    Which directory is knowable in principle but not followed here (the same answer
+    shell_targets.py gives for its write targets); the caller refuses the call as "not
+    determinable"."""
+    if not any(_command_name(word) == "env" for word in prefix):
+        return False
+    return any(word in ("-C", "--chdir") or word.startswith("--chdir=") for word in prefix)
+
+
+def _has_find_execdir(command: str) -> bool:
+    """True if any `find` in `command` carries `-execdir`/`-okdir`, which run their command inside
+    whichever directory find happens to match -- one this check cannot pin down. Judged for the
+    whole command rather than the one exec tail (command_words.py hands that tail back as a simple
+    command of its own, without saying where it came from), so a `reset --hard` anywhere in such a
+    command is refused as "not determinable" -- over-refusing a `find -execdir` that has nothing to
+    do with the git call is the accepted price."""
+    return any(
+        _command_name(words[0]) == "find" and any(arg in ("-execdir", "-okdir") for arg in words[1:])
+        for words in _stripped_word_lists(command)
+    )
+
+
+def _has_hard_flag(sub_args: list[str]) -> bool:
+    """True for `--hard` or any abbreviation of it git itself accepts (`--ha`, `--har`, ...) --
+    git resolves an unambiguous option prefix, confirmed at runtime; `--h`/`-h` alone stay
+    ambiguous with `--help`/`-h` and are not counted as `--hard`."""
+    for arg in sub_args:
+        if arg == "--hard":
+            return True
+        if arg.startswith("--") and len(arg) >= 4 and "--hard".startswith(arg):
+            return True
+    return False
+
+
+def _resolve_cwd_after_leading_cd(command: str, base_cwd: Optional[str]) -> tuple[Optional[str], bool]:
+    """The effective cwd a `git reset --hard` invocation in `command` runs against, after a
+    possible leading `cd`-family command -- (effective_cwd, determinable). No leading cd at all:
+    (base_cwd, True), unchanged. A literal leading cd with a literal directory operand, and no
+    later simple command changing directory again: (that resolved directory, True). Anything else
+    a leading cd could mean (a dynamic operand, a later cd-like/`popd`-like command anywhere) is
+    not determinable: (None, False) -- the caller then refuses the call outright rather than
+    falling back to the unchanged `cwd`, since `cwd` is exactly what pinning down the leading cd
+    was supposed to override."""
+    if base_cwd is None:
+        return None, True
+    commands = _stripped_word_lists(command)
+    if not commands:
+        return base_cwd, True
+    first = commands[0]
+    first_is_cd = _command_name(first[0]) in _CD_LIKE_NAMES
+    # A directory-change form anywhere else in the same command -- not only after a leading cd --
+    # already makes the target impossible to pin down: `true && cd ../other && git reset --hard`
+    # is exactly as "not determinable" as a leading `cd` followed by a second one.
+    for later in commands[1:]:
+        if _command_name(later[0]) in _CD_LIKE_NAMES | _CD_UNKNOWN_NAMES:
+            return None, False
+    if not first_is_cd:
+        return base_cwd, True
+    directory = _first_operand(first[1:])
+    if directory is None:
+        return None, False
+    resolved = _resolve_dir(directory, base_cwd)
+    if resolved is None:
+        return None, False
+    return str(resolved), True
+
+
+def _resolve_target_dir(
+    prefix: list[str], dash_c_dirs: list[str], has_dir_override: bool, base_cwd: Optional[str]
+) -> Optional[Path]:
+    """The working tree a `git reset --hard` invocation targets, or None if it cannot be pinned
+    down (see this module's header). `--git-dir`/`--work-tree` (either form) name the tree
+    independently of `-C`/`cwd`, and an `env -C <dir>` wrapper moves it somewhere this check does
+    not follow, so their presence always means "unknown" here."""
+    if has_dir_override or _prefix_has_dir_override(prefix) or _prefix_changes_directory(prefix):
+        return None
+    if dash_c_dirs:
+        if base_cwd is None:
+            return None
+        return _resolve_dash_c_chain(dash_c_dirs, base_cwd)
+    if base_cwd is None:
+        return None
+    try:
+        return Path(_to_native_path(base_cwd))
+    except (OSError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------------------------
+# per-command verdicts: a reason text for a refusal, or None for "free"
+
+
+def _config_switches_force_off(words: list[str]) -> bool:
+    """True if one of `words` (git's global options, or the words ahead of `git`) sets
+    `clean.requireForce` to anything but a plain true -- by `-c`, `--config-env` or GIT_CONFIG_*."""
+    return any("clean.requireforce" in w.lower() and not w.lower().endswith(("=true", "=yes", "=on", "=1"))
+               for w in words)
+
+
+def _clean_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
+    # with `clean.requireForce` switched off for this call no `-f` is needed
+    force = _config_switches_force_off(words) or budget.soft(["config", "--bool", "--get", "clean.requireForce"], target).strip() == "false"
     dry = False
     probe: list[str] = []
     skip_value = False
@@ -286,7 +436,7 @@ def _tracked_changes(paths: list[str], target: Path, budget: _Budget) -> str:
     return budget.out(args, target).strip()
 
 
-def _checkout_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
+def _checkout_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
     value_letters = "bB"
     before = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     after = sub_args[sub_args.index("--") + 1:] if "--" in sub_args else []
@@ -334,7 +484,7 @@ def _is_existing_dir(raw: str, base: Path) -> bool:
         return False
 
 
-def _restore_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
+def _restore_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
     value_letters = "s"
     before = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     after = sub_args[sub_args.index("--") + 1:] if "--" in sub_args else []
@@ -371,7 +521,7 @@ def _restore_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Opti
     return None
 
 
-def _switch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
+def _switch_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
     head = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     forced = (
         any(_long_is(a, "force", 4) or _long_is(a, "discard-changes", 6) for a in head)
@@ -400,7 +550,7 @@ def _current_branch(target: Path, budget: _Budget) -> Optional[str]:
 
 
 def _push_verdict(
-    sub_args: list[str], target: Path, budget: _Budget, config_words: Optional[list[str]] = None,
+    sub_args: list[str], target: Path, budget: _Budget, config_words: list[str],
 ) -> Optional[str]:
     """`config_words`: git's global options and the words ahead of `git`, searched for an inline
     `push.default=...`."""
@@ -472,7 +622,7 @@ def _push_verdict(
         if branch is None:
             raise _Unknown("current branch unknown")
         upstream_mode = False
-        for word in config_words or []:
+        for word in config_words:
             lowered = word.lower()
             if "push.default=matching" in lowered:
                 return "push.default=matching pushes every matching branch, the default branch included"
@@ -505,39 +655,6 @@ def _push_verdict(
     return None
 
 
-def _fully_taken_over(name: str, remote: bool, target: Path, budget: _Budget) -> bool:
-    """True if the branch `name` was taken over into HEAD by cherry-pick, so deleting it loses
-    nothing: every commit of it has an equivalent patch in HEAD (`git cherry` marks it `-`), none
-    of them is a merge (`git cherry` does not see merges) or empty (every empty commit matches any
-    other), and merging the branch into HEAD gives HEAD's own tree. The last condition catches what
-    the patch comparison misses, since it ignores whitespace. Any doubt (a git error, a conflict, a
-    timeout, a used-up budget, git older than 2.38) is False: the name then stays blocked as if
-    this check did not exist."""
-    ref = ("refs/remotes/" if remote else "refs/heads/") + name
-    try:
-        cherry = budget.run(["cherry", "HEAD", ref], target)
-        if cherry.returncode != 0 or cherry.stdout is None:
-            return False
-        lines = [line for line in cherry.stdout.splitlines() if line.strip()]
-        if not lines or not all(line.startswith("-") for line in lines):
-            return False
-        merges = budget.run(["rev-list", "--merges", f"HEAD..{ref}"], target)
-        if merges.returncode != 0 or merges.stdout is None or merges.stdout.strip():
-            return False
-        # with a pathspec, rev-list leaves out commits that change no file: fewer means an empty one
-        changing = budget.run(["rev-list", f"HEAD..{ref}", "--", ":/"], target)
-        if changing.returncode != 0 or changing.stdout is None                 or len(changing.stdout.split()) != len(lines):
-            return False
-        merged = budget.run(["merge-tree", "--write-tree", "HEAD", ref], target)
-        head_tree = budget.run(["rev-parse", "HEAD^{tree}"], target)
-    except _Unknown:
-        return False
-    if merged.returncode != 0 or merged.stdout is None or head_tree.returncode != 0 or head_tree.stdout is None:
-        return False
-    merged_lines = merged.stdout.split()
-    return len(merged_lines) == 1 and merged_lines[0] == head_tree.stdout.strip()
-
-
 _PREVIOUS_BRANCH_RE = re.compile(r"@\{-\d+\}")
 
 
@@ -551,16 +668,9 @@ def _resolve_previous(name: str, target: Path, budget: _Budget) -> str:
     return full[len("refs/heads/"):] if full.startswith("refs/heads/") else name
 
 
-def _spelled_twice(name: str, remote: bool, target: Path, budget: _Budget) -> bool:
-    """True if two refs differ from `name` only in letter case (a loose and a packed one, possible on
-    a case-insensitive file system). `git branch -D` removes both, while the patch comparison reads
-    only one of them, so such a name is never released as taken over."""
-    prefix = "refs/remotes/" if remote else "refs/heads/"
-    refs = budget.out(["for-each-ref", "--format=%(refname)", prefix], target).split("\n")
-    return sum(1 for ref in refs if ref.strip().lower() == (prefix + name).lower()) > 1
 
-
-def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optional[str]:
+def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
+    """`branch -D` / `-d -f` / `-M` / `-C` / `--move --force`: refused for a branch HEAD does not contain."""
     head = sub_args[: sub_args.index("--")] if "--" in sub_args else sub_args
     delete = any(_long_is(a, "delete", 5) for a in head) or _has_letter(head, "d", "")
     force = any(_long_is(a, "force", 4) for a in head) or _has_letter(head, "f", "")
@@ -572,173 +682,159 @@ def _branch_verdict(sub_args: list[str], target: Path, budget: _Budget) -> Optio
         return None
     remote = any(_long_is(a, "remotes", 4) for a in head) or _has_letter(head, "r", "")
     names = [a for a in sub_args if a != "--" and not a.startswith("-")]
-    if not names:
-        return None
     if overwrite and not force_delete:
         names = names[-1:]  # a move or copy overwrites only its destination
     if not remote:
         names = [_resolve_previous(name, target, budget) for name in names]
-    # lstrip=2, not short: `short` prints `heads/x` when a tag `x` exists too, and the name would
-    # no longer match
+    # lstrip=2, not short: `short` prints `heads/x` when a tag `x` exists too, and the name would no longer match
     listing_args = ["branch", "--format=%(refname:lstrip=2)", "--no-merged", "HEAD"]
     if remote:
         listing_args.insert(1, "-r")
     fold = sys.platform in ("win32", "darwin")  # ref names are looked up without regard to case there
     unmerged = {name.lower() if fold else name for name in budget.out(listing_args, target).split()}
     blocked = [name for name in names if (name.lower() if fold else name) in unmerged]
-    if force_delete:
-        # Work taken over by cherry-pick leaves the branch "not merged" by ancestry; release only a
-        # branch whose content is in HEAD already (see _fully_taken_over). Any doubt refuses.
-        blocked = [
-            name for name in blocked
-            if (fold and _spelled_twice(name, remote, target, budget))
-            or not _fully_taken_over(name, remote, target, budget)
-        ]
-    if blocked:
-        return "not merged into HEAD: " + ", ".join(f"`{n}`" for n in blocked)
+    return ("not merged into HEAD: " + ", ".join(f"`{n}`" for n in blocked)) if blocked else None
+
+
+def _reset_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
+    """Called for `reset --hard` only (_FREE_FORMS lets the rest through). Untracked files count: a
+    `reset --hard <rev>` can overwrite them silently."""
+    if budget.out(["status", "--porcelain"], target).strip():
+        return "the working tree has uncommitted changes, including untracked files, which `reset --hard` would overwrite silently"
     return None
 
 
-# what -> verdict function (clean takes one more argument, see _judge)
-_VERDICTS: dict[str, Callable[..., Optional[str]]] = {
-    "clean": _clean_verdict,
-    "checkout": _checkout_verdict,
-    "restore": _restore_verdict,
-    "switch": _switch_verdict,
-    "push": _push_verdict,
-    "branch": _branch_verdict,
-}
-
-_HINTS = {
-    "clean": "run `git clean -n` and review the list, move what you need away, or `git stash -u` first",
-    "checkout": "commit or `git stash` the changes first, or name single files",
-    "restore": "commit or `git stash` the changes first, or name single files",
-    "switch": "commit or `git stash` the changes first",
-    "push": "push to a feature branch, or ask the owner to force-push",
-    "branch": "merge the branch first, or check `git log <branch>` and ask the owner",
-    "stash": "apply it with `git stash pop`/`apply` or commit it first, or ask the owner",
-}
-
-
-def _stash_verdict(sub_args: list[str]) -> Optional[tuple[str, str]]:
-    """(what, why) for `stash drop`/`stash clear`, else None."""
+def _stash_verdict(sub_args: list[str], target: Path, budget: _Budget, words: list[str]) -> Optional[str]:
     action = next((a for a in sub_args if not a.startswith("-")), None)
-    if action == "drop":
-        return "stash drop", "it deletes a stash entry for good"
-    if action == "clear":
-        return "stash clear", "it deletes every stash entry for good"
+    if action in ("drop", "clear"):
+        return f"`stash {action}` deletes " + ("a stash entry" if action == "drop" else "every stash entry") + " for good"
     return None
 
+
+# ---------------------------------------------------------------------------------------------
+# forms that are free without looking at the repository (a positive pattern per word, anything else is
+# judged as before); `branch` shares worker_git_write._branch_lists_only
+
+_FREE_FORMS: dict[str, Callable[[list[str]], bool]] = {
+    "branch": _branch_lists_only,
+    "reset": lambda sub_args: not _has_hard_flag(sub_args),
+}
+
+# ---------------------------------------------------------------------------------------------
+# the table: subcommand -> (label in the message, config row, rule, verdict, hint)
+
+_Verdict = Callable[[list[str], Path, _Budget, list[str]], Optional[str]]
+_TABLE: dict[str, tuple[str, str, str, _Verdict, str]] = {
+    "reset": ("reset --hard", _RESET_ROW, _RESET_RULE, _reset_verdict,
+              "run `git stash -u` or `git reset --soft` as its own call first; check `git log -1` / `git reflog` "
+              "if you are unsure what you would lose"),
+    "clean": ("clean", _DISCARD_ROW, _DISCARD_RULE, _clean_verdict,
+              "run `git clean -n` and review the list, move what you need away, or `git stash -u` first"),
+    "checkout": ("checkout", _DISCARD_ROW, _DISCARD_RULE, _checkout_verdict,
+                 "commit or `git stash` the changes first, or name single files"),
+    "restore": ("restore", _DISCARD_ROW, _DISCARD_RULE, _restore_verdict,
+                "commit or `git stash` the changes first, or name single files"),
+    "switch": ("switch", _DISCARD_ROW, _DISCARD_RULE, _switch_verdict, "commit or `git stash` the changes first"),
+    "push": ("push", _DISCARD_ROW, _DISCARD_RULE, _push_verdict,
+             "push to a feature branch, or ask the owner to force-push"),
+    "branch": ("branch", _DISCARD_ROW, _DISCARD_RULE, _branch_verdict,
+               "merge the branch first, or check `git log <branch>` and ask the owner"),
+    "stash": ("stash", _DISCARD_ROW, _DISCARD_RULE, _stash_verdict,
+              "apply it with `git stash pop`/`apply` or commit it first, or ask the owner"),
+}
 
 _TIMEOUT_MESSAGE = (
     "[act] git refused -- ran out of time before every git command in this call could be checked "
-    f"({_RULE}): split the command into smaller calls"
+    f"({_DISCARD_RULE}): split the command into smaller calls"
 )
 _ERROR_MESSAGE = (
     "[act] git refused -- the check itself failed ({error}) "
-    f"({_RULE}): run the git commands one at a time"
+    f"({_DISCARD_RULE}): run the git commands one at a time"
 )
 
 
 def check_git_discard(payload: dict) -> int:
-    """Check: deny a git command that discards work without an undo (see this module's header),
-    for every caller. `warn` prints the reason and lets the call through, `off` skips the check."""
+    """Check: deny a git command that discards work without an undo (see this module's header), for every
+    caller. Each row (`git-reset-hard`, `git-discard`) keeps its own mode: a refusal under a `block` row denies
+    the call, one under a `warn` row is printed and the scan goes on (a later refusal under a `block` row still
+    denies), a refusal under an `off` row is not made. A refusal that belongs to no row (an alias that cannot
+    be expanded, a used-up time budget, a failed check) follows the stricter mode of the rows that are not off."""
     config = actlib.read_config()
-    mode = _check_mode(config, "git-discard", default="block")
-    if mode == "off":
+    modes = {row: _check_mode(config, row, default="block") for row in (_RESET_ROW, _DISCARD_ROW)}
+    if all(mode == "off" for mode in modes.values()):
         return 0
-
     shell = _shell_command(payload)
     if shell is None:
         return 0
-    _, command = shell
-
+    warnings: list[str] = []
     try:
-        message = _first_refusal(payload, command)
+        for row, message in _refusals(payload, shell[1], modes):
+            if _mode_of(row, modes) == "block":
+                print(message, file=sys.stderr)
+                return 2
+            warnings.append(message)
     except Exception as error:  # a check that fails must not let the command through
         message = _ERROR_MESSAGE.format(error=f"{type(error).__name__}: {error}"[:120])
-    if message is None:
-        return 0
-    if mode == "warn":
+        if _mode_of(None, modes) == "block":
+            print(message, file=sys.stderr)
+            return 2
+        warnings.append(message)
+    for message in warnings:
         print(message)
-        return 0
-    print(message, file=sys.stderr)
-    return 2
+    return 0
 
 
-def _first_refusal(payload: dict, command: str) -> Optional[str]:
-    """The message for the first git invocation in `command` that is refused, else None."""
+def _mode_of(row: Optional[str], modes: dict[str, str]) -> str:
+    """The mode that decides a refusal: its own row's, or for no row the stricter one that is not `off`."""
+    if row:
+        return modes[row]
+    return "block" if "block" in modes.values() else "warn"
+
+
+def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tuple[Optional[str], str]]:
+    """(config row or None, message) for every git invocation in `command` that is refused, in order."""
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
-
     budget = _Budget(payload.get("_act_hook_started"))
     find_execdir = _has_find_execdir(command)
-    cwd_cache: list[tuple[Optional[str], bool]] = []  # the same for every invocation of the command
+    resolved_cwd: list[tuple[Optional[str], bool]] = []  # the same for every invocation of the command
     for prefix, args in _git_invocations_with_prefix(command):
         if budget.expired():
-            return _TIMEOUT_MESSAGE
+            yield None, _TIMEOUT_MESSAGE
+            return
         subcommand, sub_args, dash_c_dirs, has_dir_override, _ = _parse_git_invocation(args)
         if subcommand is None:
             continue
-
         global_args = args[: len(args) - len(sub_args) - 1]
-        definitions = _alias_definitions(global_args)
-        expansion = _alias_expansion(definitions, subcommand, sub_args)
-        if expansion is None:
-            return _ALIAS_MESSAGE
-        subcommand, sub_args = expansion[0], expansion[1:]
-        if subcommand != "stash" and subcommand not in _VERDICTS:
+        expansion = _alias_expansion(_alias_definitions(global_args), subcommand, sub_args)
+        if expansion is None or (expansion != [subcommand, *sub_args] and ("reset" in expansion or _has_hard_flag(expansion))):
+            row = _RESET_ROW if expansion is not None else None  # no row: it could be any command
+            if row is not None and modes[row] == "off":
+                continue
+            rule = _RESET_RULE if row == _RESET_ROW else f"{_RESET_RULE}, {_DISCARD_RULE}"
+            yield row, _REFUSED.format(what="alias", why=_ALIAS_WHY, rule=rule, hint=_ALIAS_HINT)
             continue
-        if subcommand != "stash" and not cwd_cache:
-            cwd_cache.append(_resolve_cwd_after_leading_cd(command, base_cwd))
-        message = _judge(subcommand, sub_args, prefix, global_args, dash_c_dirs, has_dir_override,
-                         cwd_cache[0] if cwd_cache else (None, True), find_execdir, budget)
-        if message is not None:
-            return message
-    return None
-
-
-def _config_switches_force_off(words: list[str]) -> bool:
-    """True if one of `words` (git's global options, or the words ahead of `git`) sets
-    `clean.requireForce` to anything but a plain true -- by `-c`, `--config-env` or GIT_CONFIG_*."""
-    for word in words:
-        lowered = word.lower()
-        if "clean.requireforce" in lowered and not lowered.endswith(("=true", "=yes", "=on", "=1")):
-            return True
-    return False
-
-
-def _judge(
-    subcommand: str, sub_args: list[str], prefix: list[str], global_args: list[str],
-    dash_c_dirs: list[str], has_dir_override: bool, resolved_cwd: tuple[Optional[str], bool],
-    find_execdir: bool, budget: _Budget,
-) -> Optional[str]:
-    """The refusal message for one git invocation, or None if it is free."""
-    what = subcommand
-    if subcommand == "stash":
-        verdict = _stash_verdict(sub_args)
-        if verdict is None:
-            return None
-        return _REFUSED.format(what=verdict[0], why=verdict[1], rule=_RULE, hint=_HINTS["stash"])
-    effective_cwd, determinable = resolved_cwd
-    if not determinable or find_execdir:
-        return _UNKNOWN_DIR_MESSAGE.format(what=what)
-    target = _resolve_target_dir(prefix, dash_c_dirs, has_dir_override, effective_cwd)
-    if target is None:
-        return _UNKNOWN_DIR_MESSAGE.format(what=what)
-    try:
-        if subcommand == "clean":
-            force_off = _config_switches_force_off(global_args + prefix)
-            if not force_off:
-                value = budget.soft(["config", "--bool", "--get", "clean.requireForce"], target).strip()
-                force_off = value == "false"
-            why = _clean_verdict(sub_args, target, budget, force_off)
-        elif subcommand == "push":
-            why = _push_verdict(sub_args, target, budget, global_args + prefix)
-        else:
-            why = _VERDICTS[subcommand](sub_args, target, budget)
-    except _Unknown:
-        return _UNKNOWN_DIR_MESSAGE.format(what=what)
-    if why is None:
-        return None
-    return _REFUSED.format(what=what, why=why, rule=_RULE, hint=_HINTS[subcommand])
+        subcommand, sub_args = expansion[0], expansion[1:]
+        if subcommand not in _TABLE or _FREE_FORMS.get(subcommand, lambda _: False)(sub_args):
+            continue
+        label, row, rule, verdict, hint = _TABLE[subcommand]
+        if modes[row] == "off":
+            continue
+        unknown = _REFUSED.format(what=label, why=_UNKNOWN_WHY, rule=rule, hint=_UNKNOWN_HINT)
+        target = None
+        if subcommand != "stash":  # a stash drop is refused wherever it runs
+            if not resolved_cwd:
+                resolved_cwd.append(_resolve_cwd_after_leading_cd(command, base_cwd))
+            effective_cwd, determinable = resolved_cwd[0]
+            if determinable and not find_execdir:
+                target = _resolve_target_dir(prefix, dash_c_dirs, has_dir_override, effective_cwd)
+            if target is None:
+                yield row, unknown
+                continue
+        try:
+            why = verdict(sub_args, target, budget, global_args + prefix)
+        except _Unknown:
+            yield row, unknown
+            continue
+        if why is not None:
+            yield row, _REFUSED.format(what=label, why=why, rule=rule, hint=hint)

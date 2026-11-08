@@ -170,7 +170,7 @@ as an operand). A command line with more than 150 `cd`-like statements is refuse
 
 ## `R-safe-git-reset` — Check before `git reset --hard`
 
-Checks: git-reset-hard.
+Checks: git-reset-hard (the same module as git-discard; each row keeps its own mode).
 
 The rule text carries everything the check enforces; there is nothing further to add.
 
@@ -183,14 +183,13 @@ Next to `git reset --hard`, these git commands throw work away with no way back:
 something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`, `git checkout -f`,
 `git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
 forced push (`-f`, `--force-with-lease`, `+refspec`, `--mirror`) to the default branch, or deleting
-it on the remote (`git push origin :main`, `--delete`); `git branch -D` of a branch `git branch
---no-merged` lists, and `git branch -M`/`-C` over one. `git branch -D` is let through for a branch
-taken over by cherry-pick: `git cherry HEAD <branch>` shows only `-` lines, the branch has no merge
-and no empty commit of its own, and merging it into HEAD would change nothing (`git merge-tree
---write-tree`, git 2.38 or later). A branch HEAD has edited further after the pick stays refused.
-`@{-N}` is resolved to its branch before the unmerged check; a name with two case-different refs is not
-released as taken over. A call too long to check in time, or a check that fails, is refused — run
-smaller calls.
+it on the remote (`git push origin :main`, `--delete`); `git branch -D` and `git branch -M`/`-C` over a
+branch HEAD does not contain (`git branch --no-merged` lists it; `@{-N}` is resolved first). A branch
+that was only cherry-picked into HEAD counts as not contained.
+A call whose repository cannot be determined is refused, except a `branch` that only lists
+(`--show-current`, `--list`, `-a`, `-r`, `-v`, `--contains <rev>` … — a positive pattern per word; a
+bare word creates a branch) and a `reset` without `--hard`. A call too long to check in time, or a check
+that fails, is refused — run smaller calls.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 

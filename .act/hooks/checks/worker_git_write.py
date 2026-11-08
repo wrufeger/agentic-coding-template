@@ -2,12 +2,11 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check — a worker running a git command that changes the tree or history (PreToolUse,
-#          R-role-worker): a worker only ever reads git (status, diff, log,
-#          show) — every other subcommand this module names in _GIT_WRITE_SUBCOMMANDS is a write
-#          for this check's purposes, plus `branch` when it is not a plain listing (see
-#          _BRANCH_MUTATING_FLAGS / _is_git_write_subcommand): `status`, `diff`, `log`, `show`,
-#          `rev-parse`, `ls-files`, `blame` and a plain/--list `branch` are simply never in the
-#          write set, so they "stay free" by construction rather than by a separate allow-list.
+#          R-role-worker): a worker only ever reads git (status, diff, log, show) — every subcommand
+#          in _GIT_WRITE_SUBCOMMANDS is a write for this check's purposes, plus `branch` unless it only
+#          lists (_branch_lists_only); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
+#          `blame` are never in the write set. Split from checks/git_discard.py: this one asks WHO runs a
+#          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
 #          Command decomposition (finding every `git ...` invocation despite quoting, heredocs,
 #          `bash -c`/`pwsh -c`/`cmd /c`/`eval`/`$(...)`/backticks) is checks/command_words.py's
@@ -53,6 +52,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -69,7 +69,7 @@ from .shell_targets import (
 )
 
 __all__ = [
-    "_GIT_WRITE_SUBCOMMANDS", "_BRANCH_MUTATING_FLAGS", "_CD_LIKE_NAMES", "_CD_UNKNOWN_NAMES",
+    "_GIT_WRITE_SUBCOMMANDS", "_branch_lists_only", "_CD_LIKE_NAMES", "_CD_UNKNOWN_NAMES",
     "_parse_git_invocation", "_is_git_write_subcommand", "_resolve_dir", "_is_outside_root",
     "_resolve_dash_c_chain", "_prefix_has_dir_override", "_first_operand",
     "_leading_cd_outside_project", "_worker_git_write_message", "check_worker_git_write",
@@ -86,13 +86,37 @@ _GIT_WRITE_SUBCOMMANDS = frozenset({
     "clean", "push", "pull", "cherry-pick", "revert", "am", "apply", "rm", "mv", "init",
 })
 
-# `git branch` is a write only when one of these mutating flags is present, or a bare (non-flag)
-# operand names a branch to create — every other flag (--list, -a, -r, -v, ...) is a listing
-# modifier and stays read-only, same as no flags at all. See _is_git_write_subcommand.
-_BRANCH_MUTATING_FLAGS = frozenset({
-    "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy", "--set-upstream-to",
-    "--track", "--no-track", "--unset-upstream", "--edit-description",
+_BRANCH_SHORT_RE = re.compile(r"-[alrvi]+")
+_BRANCH_PLAIN = frozenset({
+    "--show-current", "--list", "--all", "--remotes", "--verbose", "--ignore-case", "--color", "--no-color",
+    "--column", "--no-column", "--abbrev", "--no-abbrev",
 })
+_BRANCH_VALUE = ("--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format")
+
+
+def _branch_lists_only(sub_args: list[str]) -> bool:
+    """True for a `branch` that only lists: listing switches, listing filters with their value, and bare
+    words only as patterns (after `--list`/`-l` or a filter, else they would create a branch). A value
+    never starts with `-`, so `--contains -D x` stays a delete."""
+    listing, bare, index = False, 0, 0
+    while index < len(sub_args):
+        arg = sub_args[index]
+        index += 1
+        name, equals, _ = arg.partition("=")
+        if _BRANCH_SHORT_RE.fullmatch(arg):
+            listing = listing or "l" in arg
+        elif name in _BRANCH_PLAIN:
+            listing = listing or name == "--list"
+        elif name in _BRANCH_VALUE:
+            listing = listing or name not in ("--sort", "--format")
+            if not equals and index < len(sub_args) and not sub_args[index].startswith("-"):
+                index += 1
+        elif not arg.startswith("-"):
+            bare += 1
+        else:
+            return False
+    return bare == 0 or listing
+
 
 # Directory-change command names for the outside-project exemption (see this module's header).
 # _CD_LIKE_NAMES take a literal directory operand the same way `cd` does; _CD_UNKNOWN_NAMES change
@@ -149,19 +173,7 @@ def _parse_git_invocation(
 
 
 def _is_git_write_subcommand(subcommand: str, args: list[str]) -> bool:
-    if subcommand in _GIT_WRITE_SUBCOMMANDS:
-        return True
-    if subcommand != "branch":
-        return False
-    if any(arg in _BRANCH_MUTATING_FLAGS for arg in args):
-        return True
-    # No mutating flag: a write only if some argument is a bare (non-flag) operand — a branch
-    # name to create. Every other flag (--list, -a/--all, -r/--remotes, -v, --contains, --sort,
-    # ...) is a listing modifier and stays read-only, same as no flags at all; not special-cased
-    # one by one (only --list was per the assignment's own example) since a fixed allow-list of
-    # git's many listing flags would just as easily miss one and wrongly flag a plain `git
-    # branch -a` as a write, which is far more disruptive than under-blocking one uncommon case.
-    return any(not arg.startswith("-") for arg in args)
+    return subcommand in _GIT_WRITE_SUBCOMMANDS or (subcommand == "branch" and not _branch_lists_only(args))
 
 
 def _prefix_has_dir_override(prefix: list[str]) -> bool:

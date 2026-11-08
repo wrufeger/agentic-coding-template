@@ -134,7 +134,7 @@ import actlib
 from . import inline_code as _inline_code
 from .command_words import _git_invocations_with_prefix
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
-from .git_reset_hard import _resolve_cwd_after_leading_cd, _resolve_target_dir
+from .git_discard import _resolve_cwd_after_leading_cd, _resolve_target_dir
 from .powershell_targets import (
     _powershell_write_targets, _ps_command_name, _strip_literal_call, _strip_program_assignment,
 )

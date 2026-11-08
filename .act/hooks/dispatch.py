@@ -687,8 +687,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("worker_git_write", "check_worker_git_write"),       # worker runs a mutating git command (R-role-worker)
     ("mcp_ide", "check_mcp_ide"),                          # IDE MCP tool calls, classified and reused
     ("commit_pathspec", "check_commit_pathspec"),         # git add -A / . / commit -a (R-code-commit)
-    ("git_reset_hard", "check_git_reset_hard"),           # git reset --hard on a dirty tree (R-safe-git-reset)
-    ("git_discard", "check_git_discard"),                 # clean -f, checkout/restore of a folder, stash drop, force push to the default branch, branch -D (R-safe-git-discard)
+    ("git_discard", "check_git_discard"),                 # git that discards work: reset --hard, clean -f, folder checkout/restore, stash drop, force push to the default branch, branch -D (R-safe-git-reset, R-safe-git-discard)
     ("recursive_delete", "check_recursive_delete"),       # rm -r and friends (R-safe-no-shell-delete)
     ("secret_read", "check_secret_read"),                 # reading a secret file (.env, keys, cloud credentials) into the context
     ("outside_root", "check_outside_root"),               # reading or writing outside the project and its allowed places (R-safe-outside-root)
