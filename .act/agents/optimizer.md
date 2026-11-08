@@ -35,8 +35,9 @@ nothing.
 
 ## Before the report
 
-Run the project's required checks (`docs/ai/config.md` § commands). Not green afterward: revert
-the change instead of "fixing" it — this role is a polish pass, not a rebuild.
+Without a `Tests:` line in the assignment, make no edit and return the proposals. With one, run the
+checks (`docs/ai/config.md` § commands) in that tree. Not green afterward: revert the change instead
+of "fixing" it — this role is a polish pass, not a rebuild.
 
 ## Report
 

@@ -15,13 +15,15 @@ secures the result.
 ## Steps
 
 1. **Check the evidence.** A test run, an outside call, or a commit hash — nothing gets accepted
-   without one. The project's required checks (`docs/ai/config.md` § commands) must be green.
-   If the `reviewer` returned `CONDITIONAL` (acceptable once a named condition is met that this
-   step cannot check), file the condition now: `entries.py new todo <title>`, or `new question`
-   if the human must decide — the condition and how its fulfilment shows in the body. Its id goes
-   into the commit message in step 7. `BLOCK` still stops the commit; so does a `CONDITIONAL`
-   with no recognisable condition or with more than one — treat it as `BLOCK` and send it back to
-   the `reviewer`.
+   without one. The project's required checks (`docs/ai/config.md` § commands) must be green; the
+   full suite runs once here (via `quick-check`), not again from builder and reviewer. File each
+   backlog case the `reviewer` listed (with its input) with `entries.py new backlog <title>`. If
+   the `reviewer` returned `CONDITIONAL` (a named condition this step cannot check), file the
+   condition now: `entries.py new todo <title>`, or `new question` if
+   the human must decide — the condition and how its fulfilment shows in the body. Its id goes into
+   the commit message in step 7. `BLOCK` still stops the commit; so does a `CONDITIONAL` with no
+   recognisable condition or with more than one — treat it as `BLOCK` and send it back to the
+   `reviewer`.
 2. **Assign ids.** `docs/ai/config.md` § `mode` decides when a task/backlog/question got its short
    id: in `solo` it already has one. In `team`, run `python .act/scripts/entries.py assign` — it
    hands out `T`/`B`/`Q` numbers, but only once this commit lands on the project's default branch;

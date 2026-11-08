@@ -18,9 +18,6 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 - Only the assignment, nothing "improved along the way." A deviation from the existing style
   needs a real reason — state it in the report instead of doing it quietly.
-- Path-bound rules under `.claude/rules/` (frontmatter `paths:`) load only when Claude Code reads or writes a
-  matching file; editing through a shell command does not trigger them. Before changing files in such an area, read
-  the matching rule file first.
 - Respect the layer separation and shared types from `docs/project/coding_rules.md`; no untyped
   "whatever" (`any` or its equivalent).
 - New migrations are versioned and idempotent (naming convention: `docs/project/coding_rules.md`
@@ -34,14 +31,12 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 ## Before the report
 
-Before running a test: check the runner and the test files actually exist (`docs/ai/config.md` §
-commands, `docs/project/testing.md`); if not, skip the run and report it instead of installing
-anything. Watch the runtime of a single command: one running unusually long (e.g. `npx` triggering
-an install and waiting on input) gets aborted and re-run narrower, not left to hang.
-
-Run the project's required checks (`docs/ai/config.md` § commands: lint, typecheck, tests) and
-state the result. Tests and probes run in the tree the assignment's `Tests:` line names (an isolated copy,
-when it names one), not in another one.
+Run tests and probes only when the assignment has a `Tests:` line, in the tree it names (an isolated
+copy, when it names one) and not the whole suite unless it says so; the full suite runs once before the
+commit, from the orchestrator. Check first that the runner and test files exist (`docs/ai/config.md` §
+commands, `docs/project/testing.md`); if not, skip the run and report it instead of installing anything.
+A command running unusually long (e.g. `npx` waiting on input) is aborted and re-run narrower. Lint and
+typecheck (`docs/ai/config.md` § commands) run as the assignment says; state the result.
 
 ## Report
 

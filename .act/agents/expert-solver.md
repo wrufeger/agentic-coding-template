@@ -25,5 +25,7 @@ architect and problem-solver for exactly that case, not routine implementation. 
 
 ## Report
 
-Run the project's required checks (`docs/ai/config.md` § commands) before reporting. ≤ 40 lines:
-cause, fix with evidence, what should change going forward. No success claim without evidence.
+Without a `Tests:` line in the assignment, make no edit: return the fix as a proposal with its
+evidence plan. With one, run the checks (`docs/ai/config.md` § commands) in that tree before
+reporting. ≤ 40 lines: cause, fix with evidence, what should change going forward. No success claim
+without evidence.

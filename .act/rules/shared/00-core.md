@@ -97,3 +97,6 @@ refused it; the worker names the file and the change it needs in its result. Any
 check refused is not made another way either; the worker reports the refusal with its result.
 A worker never starts another worker: if the task would be better split, it says so in its result
 and the orchestrator decides.
+The whole result goes into the return, never "see above". Path-bound rules (`.claude/rules/`, `paths:`)
+load only when Claude Code reads or writes a matching file, not for a search or a shell command: read the
+matching rule file before working in such an area.

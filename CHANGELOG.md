@@ -138,6 +138,17 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
+  assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
+  case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works
+  within the assignment's `Cap:` (finishing at three quarters of it) instead of trying every change with every
+  conceivable input; in a derived project's application code, input from outside the trust boundary and a missing or
+  wrong auth or role check still count as ordinary paths. `act-commit` runs the full suite once, on the accepted state, and files the backlog
+  cases.
+- Worker roles run tests only when the assignment has a `Tests:` line; a worker's whole result goes into its return
+  (never "see above"), and the note on path-bound rules under `.claude/rules/` now stands once in `R-role-worker`
+  instead of in two roles.
+
 - `outside-root` no longer refuses the words of a literal `for p in /a /b; do curl "https://host$p"; done` loop,
   which are only the tail of a URL: only this positive pattern is allowed (the variable's name occurs nowhere else in
   the command, the body has no substitution, nested loop, `eval`, `source`, `.`, `export`, `local`, `set` or
