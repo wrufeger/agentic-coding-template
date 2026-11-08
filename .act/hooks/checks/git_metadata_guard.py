@@ -108,6 +108,14 @@
 #     `GIT_CONFIG_PARAMETERS` are, as they are `-c` in another spelling. A separate `export` is not
 #     followed.
 #   - `git config --global core.hooksPath` is free by decision and applies to every repository.
+#   - Two boundaries hold for every shell check that reads write targets from the command text (write-guard,
+#     worker-write-scope, git-metadata-guard, outside-root), since the checks read the text and run nothing:
+#     RUNTIME CODE - code that becomes a script only when the command runs (`bash <<< '...'`,
+#     `source /dev/stdin`, `$CMD <<'EOF'`, `eval "$(cat <<'EOF' ...)"`, `[scriptblock]::Create`, `Start-Process`) -
+#     is not followed into; and STATE - a target that depends on an earlier command or on an alternative
+#     (`ln -s <project>/src l && echo x > l/f`, `cd a || cd b` many times over) - is judged on what the text
+#     says, not on what the file system will hold. The checks are a guard rail against mistakes, not a wall
+#     against intent: whoever routes a write around them already acts against their own assignment.
 #   - A `git config` inside an alias, a script or an `eval` text the scanners cannot open is judged
 #     only as far as command_words reads it. Not followed: `xargs ... git config`, `git submodule
 #     foreach '...'`, an archive unpacked into the git directory (`tar -C .git`, `Expand-Archive`).

@@ -564,6 +564,14 @@ def _is_absolute_form(part: str) -> bool:
     return bool(_DRIVE_RE.match(part)) or (part[:1] == "/" and part[1:2] != "/")
 
 
+# Program-folder entry, what the check does with it: the path is judged as resolved (`..` cut out), so a sibling
+# folder that shares the name prefix (`Browser-old` next to `Browser`), the parent folder and a path that leaves the
+# folder through `..` stay refused. An entry written as a `file:` URL or as `//localhost/C$/` is not recognised as
+# absolute and is ignored. "Starting" is what the check sees of a program: the program word of a command is no path
+# (`"D:/Program Files/Browser/browser.exe" --headless` needs no entry), but a `cd` into the folder, a path argument
+# or a wrapper (`xvfb-run`, `Start-Process`, `bash -c`) does; what the started program writes itself is invisible.
+# A relative path, `~`, a glob entry, a UNC share and an absolute path inside the project or the home directory keep
+# their own behaviour (the last two are writable).
 def _program_folder_entry(part: str, key: str, root: Path) -> bool:
     """True when the entry (no glob characters, already resolved to `key`) is exactly the program-folder
     form: written as an absolute path, and lying neither in the project nor in the home directory

@@ -46,6 +46,22 @@
 #     files CLAUDE.md loads (user level, project, CLAUDE.local.md) without any import below
 #     .act/rules/orchestrator/, cut into parts of at most WORKER_PART_LIMIT characters. Prints
 #     one line per part with its size and sources, then the total against the full CLAUDE.md load.
+#     Worker rules in short. The orchestrator rules (.act/rules/orchestrator/, overridden from
+#     docs/ai/local/rules/orchestrator/) concern the main session only, yet
+#     CLAUDE.md loads them into every worker start; the template's roles therefore carry `omitClaudeMd: true` (also
+#     the generated -high variants of builder and reviewer), and the SubagentStart hook hands the worker this text
+#     instead. The hook is `dispatch.py SubagentStart --worker-rules <i>`: WORKER_RULES_PARTS (12, actlib.py) fixed
+#     entries in .claude/settings.json from .act/bridges/settings.hooks.json, next to the plain SubagentStart entry
+#     for the usage and event log. It acts only if the role file of the started agent type
+#     (.claude/agents/<type>.md, else ~/.claude/agents/<type>.md) says `omitClaudeMd: true`; any other agent loads
+#     CLAUDE.md itself. Claude Code moves a hook string over 10,000 characters into a file, hence the parts (at file
+#     boundaries, a long file at `## ` headings); parts beyond the twelfth are not delivered, entry 12 names their
+#     source files in one line instead (this script and doctor.py warn). Limits: Claude Code before 2.1.271 ignores
+#     `omitClaudeMd`, so the worker gets the rules twice (costs tokens only); without Python 3.9+ the hook prints
+#     nothing and the mechanical checks are inactive too; on any exception the first entry prints one fixed sentence
+#     telling the worker to read CLAUDE.md, docs/ai/rules.md and the shared rule files itself, and the hook never
+#     exits non-zero; CLAUDE.md files in parent folders and .claude/rules/ are not assembled. Off: remove
+#     `omitClaudeMd: true` from a role file or set it to false (update.py adds the line only where none exists).
 #   Errors (unknown area, missing project file, unknown id, bad arguments): one line on stderr,
 #     exit 1 (2 for a bad command line), never a traceback.
 

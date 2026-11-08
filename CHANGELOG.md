@@ -147,6 +147,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `topics/checks.md` keeps, per mechanically checked rule, what the check blocks, its switch and the limits an owner
+  must know (the part for secret, outside-root, git and throwaway checks: 41 800 to 15 200 characters); how a command
+  is read (parser allow-lists, time budgets, failure handling) is documented in the header comments of the check
+  modules. The topic `worker-rules.md` is gone; its content stands in the header of `.act/scripts/rules.py`
+  (`--worker`).
 - The `act-adopt` skill is about half as long (63 700 to about 30 000 characters): the steps keep every decision and safety stop, and point to the script's `--plan` output and `--help` instead of repeating what they list.
 - `init` sets the scope profile by the detected stack: `full` for a web project (a frontend framework, CSS or HTML
   in the folder, or named in the stack), `standard` for any other; `--scope minimal|standard|full` decides
@@ -1242,7 +1247,7 @@ on v2.2.0 update with `act-update`.
   limit — about 24k characters less in every worker start. `update` adds the field to existing template roles and
   their `-high` variants (your own roles and an explicit `omitClaudeMd: false` stay as they are) and the hook entries
   to `.claude/settings.json`. `rules.py --worker` shows the parts. Claude Code before 2.1.271 ignores the field, so
-  workers there get the rules twice; details in `.act/rules/topics/worker-rules.md`.
+  workers there get the rules twice; details in the header of `.act/scripts/rules.py`.
 - **The seven mechanically checked rules are shortened to what they forbid or require**
   (`R-safe-no-secret-read`, `R-safe-outside-root`, `R-safe-git-reset`, `R-safe-git-discard`, `R-safe-git-metadata`,
   `R-cost-delegate`, `R-cost-wait`): recognition details, limits, switches and the `Write scope:`/`Cap:` syntax moved

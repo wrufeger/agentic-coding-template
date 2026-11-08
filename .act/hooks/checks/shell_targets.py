@@ -1405,6 +1405,8 @@ def _ps_reads_stdin(args: list[str]) -> bool:
     return True
 
 
+# Limit: a `$'...'` word with a backslash inside a double-quoted `bash -c "eval ..."` text is not read: the lexer keeps
+# the backslash of the outer quotes, so the inner ANSI-C text is not decoded.
 # What the escapes of an ANSI-C `$'...'` word stand for (bash's own table), and the numeric forms.
 _ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
                   "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}

@@ -79,6 +79,8 @@
 #   handler has refreshed the bridges.
 #
 # Limits (stated in .act/rules/topics/checks.md):
+#   - An entry a worker adds to permissions.allow in .claude/settings.local.json itself is only reported,
+#     like the owner's "always allow" answer: the file does not tell the two apart.
 #   - It reports AFTER the call; it prevents nothing. A hook runs at the next git command, which can be
 #     the very next call of another worker.
 #   - A change made between two calls by someone else (the human in an editor, Claude Code itself writing

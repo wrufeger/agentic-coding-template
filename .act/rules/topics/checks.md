@@ -1,172 +1,96 @@
 # Mechanically checked rules — details
 
-Detail page for the rules that name `topics/checks.md`. Each rule in `.act/rules/` keeps what is
-forbidden or required; what its check recognises, where its limits lie, how it is switched and which
-syntax it expects stands here, one section per rule. The block messages of the checks name the
-syntax and point here. The checks are switched in `docs/ai/config.md` § Checks (`block`, `warn` or
-`off`). The sentences below are the former text of the rules, moved here unchanged.
+Detail page for the rules that name `topics/checks.md`. A rule in `.act/rules/` says what is forbidden or required;
+this page adds, per check, what it blocks, how it is switched and the limits an owner must know. How a check reads
+a command (parser allow-lists, time budgets, failure handling) is documented at its code in `.act/hooks/checks/`
+(header comment of the module); the block messages name the syntax and point here. The checks are switched in
+`docs/ai/config.md` § Checks (`block`, `warn` or `off`).
 
-**Incident log.** What a check does without stopping the call is noted for later: a check in `warn` mode that
-printed its message, a check that crashed or ran past 8 s of the hook's 10 s limit, a refusal of the main session
-(a worker's refusals are routine), a refusal that made the session or a worker switch model, and `usage.py --outcome <role> <tier> escalated`. One line each goes to
-`.act-local/incidents.jsonl` (time, kind, source, role, a short identifier message; never a command or a path — a
-shell command is cut to its first word when that is a plain word). The next session start puts the new lines into the
-inbox report `Incident log <date>` (`kind: report`, `for: all`; an open report of the same day is extended), counts
-per kind on top, and names the file in one line; it stays silent when there is nothing new. Delivered lines are kept
-30 days. It is written by `session-start-refresh: block` only; there is no switch of its own.
+**Incident log.** What a check does without stopping the call is noted in `.act-local/incidents.jsonl` (time, kind,
+source, role, a short message; never a command or a path): a `warn` message that was printed, a check that crashed or
+ran past 8 s of the hook's 10 s limit, a refusal of the main session (a worker's refusals are routine), a refusal that
+made the session or a worker switch model, and `usage.py --outcome <role> <tier> escalated`. The next session start
+puts the new lines into the inbox report `Incident log <date>` (`kind: report`, `for: all`; an open report of the same
+day is extended), counts per kind on top, and is silent when nothing is new. Delivered lines are kept 30 days. It is
+written by `session-start-refresh: block`; there is no switch of its own.
+
+**When a check itself fails.** `secret-read` and `outside-root` fail closed for the shell: if the module cannot be
+imported or raises on a call, Bash and PowerShell are refused and the failure is named on standard error, so a broken
+check does not let `cat .env` through (`off` does not help when the module cannot be imported; `warn` does not soften
+it). Read, Write and Edit stay possible; the owner starts `.act/scripts/doctor.py` with the `!` prefix. If the
+dispatcher cannot import its own helpers, every tool is refused (PreToolUse). Every other check fails open, but not
+silently: the failure goes to standard error, to the human as `systemMessage` and to the model as `additionalContext`
+of the call's PostToolUse (see `dispatch.py`). Assumption, not verified: that Claude Code displays the `systemMessage`
+of a PreToolUse or PostToolUse hook (a live probe, 2026-11-07, showed it is never displayed for Stop and SubagentStop).
 
 ## `R-safe-no-secret-read` — Never read a secret file into the context
 
 Checks: secret-read.
 
-Checked mechanically by `secret-read` (`docs/ai/config.md` § Checks); the owner may set it to `warn`
-or `off` there, or for one run with `ACT_SECRET_READ` in the environment. Limit: a program that
-opens the file itself (`python script.py`, `docker run --env-file`) is invisible to the check, and so
-is an MCP tool that takes a path, unless it is a read tool of the IDE server's known list (`ide-mcp`):
-each path argument of those is checked as a Read.
-
-When the check itself fails — its module cannot be imported, or it raises while it looks at a call — it fails
-closed for the shell: Bash and PowerShell are refused and the failure is named on standard error, so that a broken
-check does not let `cat .env` through. Read, Write, Edit and the other tools stay possible, so the cause can be
-looked into (and a Read of `.env` is not stopped while the check is broken); the owner starts
-`.act/scripts/doctor.py` with the `!` prefix, because the shell is refused until the check works again. A
-module that cannot be imported is refused before its switch is read, so `off` does not help then; a module file that
-is missing counts as the same failure (a guard is refused, any other missing check is reported as skipped). `outside-root`
-is treated the same way. So is a word scanner of either check that raises on a shell command: Bash and PowerShell are
-refused with a message naming the exception class (unless the check is `off`; `warn` does not soften it), and
-`outside-root` does the same for a command line with more than 150 `cd`-like statements, which it cannot follow: split
-it. The same goes for the dispatcher itself: if it cannot import `checks/common.py` or `checks/session.py` (or
-`actlib`, `manifest`, `tiers`), it ends with one line naming the module, exit 2 for a PreToolUse event (every tool is
-refused then, since no guard can run) and exit 0 for every other event. Every other check fails open (a broken
-convenience check must not stop all work), but
-no failure is silent: `[act] check <name> skipped (...)` goes to standard error as before, and a call that goes
-ahead carries the failure on, as a `systemMessage` of the PreToolUse output (for the human) and as the
-`additionalContext` of the same call's PostToolUse (for the model; the text waits in
-`.act-local/check-failures/<tool_use_id>.txt` in between, is removed when delivered, a text older than a day is
-removed the next time one is queued, and nothing is written or read through a link). A PostToolUse note that fails is reported the same way. A failed
-model-switch report (module error, or a note that cannot be queued) is one `[act] model-switch failed (...)` line on
-standard error and, because a Stop or SubagentStop event has no call of its own to carry it, the same text as a note
-for the orchestrator (see `topics/safeguards.md`); if the note queue itself fails, standard error is all that is left.
-It prints no `systemMessage`. A live
-probe on 2026-11-07, Claude Code 2.1.319, showed that the `systemMessage` of Stop and SubagentStop is recorded in the
-transcript but never displayed. Assumption, not verified: that Claude Code displays the `systemMessage` of a
-PreToolUse or PostToolUse hook to the human. That PostToolUse `additionalContext` reaches the
-model, a worker included, was shown by a live probe on that version.
+Blocks a Read, Grep or shell reading command (`cat`, `grep`, `Get-Content`, `< file`, `git show HEAD:<file>` …) that
+names a secret file; path list and exceptions (`.env.example`, `*.pub` …) in the header of `secret_read.py`. Switch
+`secret-read` (`block`, `warn`, `off`); `ACT_SECRET_READ` in the environment for one run. Limits: a program that
+opens the file itself (`python script.py`, `docker run --env-file`) is invisible, and so is an MCP tool that takes a
+path, unless it is a read tool of the IDE server's known list (`ide-mcp`; each path argument of those is checked as a
+Read). A word that merely looks like a secret name (`grep .env README`) is refused as well.
 
 ## `R-safe-no-secret-diff` — Check the diff before every commit
 
-Checks: secret-scan.
+Checks: secret-scan (and danger-scan, same commit trigger).
 
-Before a `git commit` (also inside a chain or a nested shell), `secret-scan` scans what the commit
-would take — the staged diff, plus unstaged changes or new files where the call stages them itself
-(`-a`, `git add -A`). Only added lines count. It looks for key/token formats, private keys, an added
-`.env` file (`.env.example`, `.env.sample`, `.env.template` excepted) and assignments to a
-credential-like name with a long, high-entropy value. A match stops the commit and is reported
-without the value, never silently stripped. A line carrying `act:allow-secret`, or a value that reads
-as a placeholder, is not reported; for a file that cannot carry a comment (JSON), list the line in
-`docs/ai/local/secret-accepted.md` as `- <path> <hash>: <reason>` (the hold message prints the
-finished entry). The one exemption by shape: a line of `.act-lock.json` at the project root that holds
-only a rule ID and a 64-digit lowercase hex digest (an override hash). Switch: `secret-scan` in
-`docs/ai/config.md` § Checks (`block`, `warn` or `off`). Limits: each added line is checked on its own,
-so a SQL string built with `+`, `.` or `%` that continues on the next line is not seen by danger-scan;
-secret-scan joins only an environment lookup and its literal fallback split at an operator. A `%` that
-opens a short literal of its own (`strftime('%Y', d)`) is a date format, not the operator. The PHP
-patterns (`sql-php-concat`, `sql-php-interpolation`) run only on `.php`, `.phtml`, `.inc` and `.module`
-files. `sql-format` and `sql-php-concat` skip a line that is a single raise/print/log call (Python) or
-echo/error_log/throw/logger call (PHP) holding only string literals and simple operands, as long as no
-literal opens with a SQL keyword; anything else on the line is checked as before. `sql-php-interpolation`
-also covers `${name}`, and the PHP patterns cover `.php3/.php4/.php5/.php7/.php8/.pht`. Names that git quotes
-in the diff header are read unquoted. A rename or copy to a `.env` name counts as a new `.env` file. A `$'`
-in the commit command that is only text no longer forces the over-inclusive fallback; a live ANSI-C quote
-does.
+Before a `git commit` (also inside a chain or a nested shell) `secret-scan` scans what the commit would take — the
+staged diff, plus unstaged changes or new files where the call stages them itself (`-a`, `git add -A`). Only added
+lines count: key/token formats, private keys, an added `.env` file (`.env.example`, `.env.sample`, `.env.template`
+excepted) and assignments to a credential-like name with a long, high-entropy value. A match stops the commit and is
+reported without the value. Exempt: a line carrying `act:allow-secret`, a value that reads as a placeholder, and for a
+file that cannot carry a comment (JSON) a line listed in `docs/ai/local/secret-accepted.md` as `- <path> <hash>:
+<reason>` (the hold message prints the finished entry); also a line of `.act-lock.json` at the project root that holds
+only a rule ID and a 64-digit hex digest (an override hash). Switch: `secret-scan` (`block`, `warn`, `off`).
 
-Adopted project: `adopt_baseline.py --book` (skill `act-adopt`, step 7b) books the dangerous patterns found in the
-existing code as backlog entries and lists their keys `file|rule-id` in `.act-local/danger-scan-hints/baseline.json`.
-A danger-scan finding with exactly such a key passes without the first hold. The list is an allow-list of exact keys
-(no prefix, glob, other case, `./` prefix or path normalisation) for the whole project; the check reads it and never
-writes it or copies it into the per-reader hints. A missing, malformed, oversized or linked (symlink or junction, also
-one of its folders) list, or one holding anything but strings, counts as empty. Booked rules are taken out of a file's
-pattern list before a line is matched, so they never count toward the limit of five findings and cannot hide an
-unbooked rule on the same line. Only an open entry directly in `docs/ai/work/backlog/` that carries the line
-`baseline: <key>` counts as booked. Limit: the key has no line number and no expiry, so after the first commit a new
-hit of a booked rule in a booked file passes too, until the owner removes the key from the list or deletes the file
-(the booked entry says so). A new rule in a booked file, the booked rule in another file and every other new pattern
-hold as before. Secrets are not covered: secret-scan keeps holding until the value is removed, the line carries
-`act:allow-secret` or is listed in `docs/ai/local/secret-accepted.md`.
+Limit: each added line is checked on its own, so a SQL string continued on the next line is not seen by danger-scan.
+`danger-scan` (switch `security-check`; `act:allow-danger` exempts a line) holds the first commit per reader, file and
+pattern and lets the second attempt through; its patterns, PHP file types and SQL heuristics are in `danger_scan.py`.
+
+Adopted project: `adopt_baseline.py --book` (skill `act-adopt`, step 7b) books the dangerous patterns of the existing
+code as backlog entries and lists their keys `file|rule-id` in `.act-local/danger-scan-hints/baseline.json`; a
+danger-scan finding with exactly such a key passes without the first hold. Limit: the key has no line number and no
+expiry, so a new hit of a booked rule in a booked file passes too, until the owner removes the key from the list or
+deletes the file. Secrets are never covered by it.
 
 ## `R-safe-outside-root` — Stay inside the project
 
 Checks: outside-root.
 
-Read and write only inside the project root and the places allowed for it: the folders in
-`permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for this
-project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders
-(`~/.claude/plugins/`, `~/.claude/skills/`), and the entries of `outside-root-allow`
-(`docs/ai/config.md` § Checks; `(read)` after a path allows reading only). Any other place — a
-neighbouring repository, another project, the home directory — only on the owner's word for this
-case, and then as an entry in `outside-root-allow` or `additionalDirectories`, never as a one-off
-workaround. Applies to every role and tool.
+Allowed places: the project root, the folders in `permissions.additionalDirectories`, the system temp directory, Claude
+Code's own folder for this project, its plan folder `~/.claude/plans/`, read-only its plugin and skill folders
+(`~/.claude/plugins/`, `~/.claude/skills/`), and the entries of `outside-root-allow` (`docs/ai/config.md` § Checks;
+`(read)` after a path allows reading only). Any other place — a neighbouring repository, another project, the home
+directory — only on the owner's word for this case, as an entry in `outside-root-allow` or `additionalDirectories`,
+never as a one-off workaround. Applies to every role and tool. Switch `outside-root` (`block`, `warn`, `off`);
+`ACT_OUTSIDE_ROOT` in the environment for one run.
 
-Two scripts write outside the project, only when the human explicitly asks for it: `id_links_install.py` to
-`~/.act/id-links/` (Windows `%USERPROFILE%\.act\id-links\`) and `act-export-settings --profile` to
-`%APPDATA%\act\settings.md` on Windows (fallback `~/AppData/Roaming/act/`), `$XDG_CONFIG_HOME/act/settings.md` on POSIX, else
-`~/.config/act/settings.md`; an existing file is first copied to `settings.md.bak-<stamp>`.
+Entry forms. A program folder outside the project and the home directory (browser, compiler, SDK) is entered as an
+absolute path in either slash style (`D:/Program Files/Browser`, `/opt/browser`); it is read-only with or without
+`(read)` and needs the owner's word for this folder. A write the shared write-target scanners recognise is refused
+there; one they do not see (a `cd` into the folder followed by a relative write, a clone, `xargs`, `robocopy`,
+`chmod`, code behind `-c`/`-e`) passes. An absolute entry with a glob character keeps the glob behaviour and is
+writable unless `(read)` stands behind it. An entry that is a drive root, `/` or a folder above the project or the home
+directory opens everything below it: name the program folder itself. A `file:` URL entry is ignored. The program word
+of a command is no path (`"D:/Program Files/Browser/browser.exe" --headless` needs no entry); a `cd` into the folder,
+a path argument or a wrapper (`xvfb-run`, `bash -c`) does.
 
-A program folder outside the project and outside the home directory (the system browser of a browser check,
-a compiler, an SDK) has an entry form of its own: the absolute path, a drive path in either slash style
-(`D:/Program Files/Browser`, `D:\Program Files\Browser`) or a POSIX one (`/opt/browser`). Such an entry is
-read-only, with or without `(read)` behind it: it is meant for reading and starting a program below it, not for
-writing; the block message names this form. Like every entry it needs the owner's word for this folder. What the
-check does with it: the path is judged as it is resolved (`..` cut out), so a sibling folder that shares the name
-prefix (`Browser-old` next to `Browser`), the parent folder and a path that leaves the folder through `..` stay
-refused.
-Read-only means: a write the shared write-target scanners recognize (a redirect, `tee`, a copy into the folder,
-Write, Edit, `Set-Content` …) is refused there. It is no stronger than a `(read)` entry, and as at the state before
-this form existed, a write those scanners do not see passes: for example a `cd` or `pushd` into the folder followed
-by a write with a relative path, a clone or a download whose target is a plain argument, a path handed to another
-program through `xargs`, the target of `robocopy` or of a PowerShell move, `perl -pi`, `chmod`, code inside an
-interpreter's `-c`/`-e` argument. These gaps are shared with the
-other checks that use the same scanners and are not closed by this entry form.
-Further limits. An absolute entry with a glob character is not this form: it keeps the glob behavior (it opens
-what its pattern hits, and it is writable unless `(read)` stands behind it, as before). An entry that is a drive
-root, `/`, or a folder above the project or the home directory opens reading of everything below it, other
-projects and the home directory's folders included; name the program folder itself. An entry
-written as a `file:` URL or as `//localhost/C$/` is not recognized as absolute and is ignored. "Starting" is what the check sees of a
-program: the program word of a command is no path to it (as before), so `"D:/Program Files/Browser/browser.exe"
---headless` needs no entry; what does need one are the words around it — a `cd` into the folder, a path argument,
-a wrapper such as `xvfb-run`, `Start-Process`, `bash -c`. What the started program writes itself (a profile
-folder, a log) is invisible to the check, as for any program. An entry that is not exactly the program-folder form
-behaves as before: a relative path, `~`, an entry with a glob character, a UNC share, and an absolute path inside
-the project or inside the home directory (writable, as always). Note: an absolute entry outside both used to be
-accepted without being documented and then allowed writing; it is read-only now for the writes the scanners see.
+Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
+and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to
+`settings.md.bak-<stamp>`). `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix,
+which opens the target folder for 24 hours or until `--abort` through a marker under `.act-local/outside-allow/` that
+only the adopt scripts write.
 
-`act-adopt` is the one exception: the owner starts the first scan with the `!` prefix, which opens
-the target folder for 24 hours or until `--abort` (also past `--finish`) through a marker under
-`.act-local/outside-allow/` that nobody but the adopt scripts writes; `--apply` only refreshes a
-valid marker for the same target. Checked mechanically by `outside-root` (`docs/ai/config.md` §
-Checks); the owner may set it to `warn` or `off` there, or for one run with `ACT_OUTSIDE_ROOT` in
-the environment. Limits: the shell check is best effort, a program that opens files itself (`python
-script.py`, `docker run -v`) is invisible to it, a `file:` URL is read as the path it names (query and fragment cut,
-percent-decoded) only where it stands as a word of its own, and the words of a literal `for p in /a /b; do curl
-https://host$p; done` loop are taken as URL tails, not paths, only when the variable's name occurs nowhere else in
-the command than in the loop head and behind a `<scheme>://<host>` in the body, and the body has no
-substitution, nested loop, `eval`, `source`, `.`, `export`, `local`, `set` or indirection; everything else is read as before. An MCP tool that takes a path is checked only if
-it is a read tool of the IDE server's known list (`ide-mcp`). When the check itself fails, Bash and
-PowerShell are refused (see `R-safe-no-secret-read` above). A word
-of only slashes (`//`) is never a path where it is text (inline code behind `-c`/`-e`, a text option, a
-heredoc); on its own (`ls //`, `cp x //`) it is the file system root and stays refused. A single `/` is
-read the same way when it is a shell word of its own (`ls /`, `find / -name x`, `du -sh /`), in Bash and in
-PowerShell; it is not a place where it is text (inline code behind `-c`/`-e`, a text option), the value of
-an option (`--grep=/`), the delimiter of `cut -d`, `paste -d`, `sort -t`, `join -t`, `awk -F` or `column -s`
-(`cut -d / -f1 file`), or the operator of an expression, on an allow-list: `expr` and `let`, a shell
-arithmetic expression (`$((6 / 2))`, `(( x = 6 / 2 ))`; one with a command substitution, quote or backtick inside,
-and text like `((cat /etc/passwd) && (ls))` that the shell reads as subshells, is not taken out; a lone `/` in it
-counts as the root), and in PowerShell a statement that is an expression (`$size / 1MB`, `(Get-Item a).Length / 1MB`),
-a division inside parentheses, or a number, variable or closed parenthesis (with properties behind it) right before
-the `/` (`x = 7 / 2`, `(Get-ChildItem -Recurse | Measure-Object Length -Sum).Sum / 1MB`).
-Anywhere else a lone `/` is the root even with a number or variable behind it: `ls -la / 2`, `ls -d / 1` and
-`du -sh / $X` are refused. Limit: in PowerShell `Get-ChildItem $dir / 2` still passes (a variable before the `/` reads
-as an operand). A command line with more than 150 `cd`-like statements is refused (see above).
+Limits: the shell check is best effort. A program that opens files itself (`python script.py`, `docker run -v`) is
+invisible; an MCP tool that takes a path is checked only if it is a read tool of the IDE server's known list. A command
+line with more than 150 `cd`-like statements is refused: split it. A word of only slashes (`//`), and a lone `/` as a
+shell word of its own (`ls /`, `du -sh /`), is the file system root and refused; as text, an option value, a
+delimiter or the operator of an arithmetic expression it is not (allow-list in `outside_root.py`; in PowerShell
+`Get-ChildItem $dir / 2` passes).
 
 ## `R-safe-git-reset` — Check before `git reset --hard`
 
@@ -178,290 +102,87 @@ The rule text carries everything the check enforces; there is nothing further to
 
 Checks: git-discard.
 
-Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f` (or
-`git clean` with `clean.requireForce` switched off) when `git clean -n` with the same switches lists
-something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`, `git checkout -f`,
-`git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
-forced push (`-f`, `--force-with-lease`, `+refspec`, `--mirror`) to the default branch, or deleting
-it on the remote (`git push origin :main`, `--delete`); `git branch -D` and `git branch -M`/`-C` over a
-branch HEAD does not contain (`git branch --no-merged` lists it; `@{-N}` is resolved first). A branch
-that was only cherry-picked into HEAD counts as not contained.
-A call whose repository cannot be determined is refused, except a `branch` that only lists
-(`--show-current`, `--list`, `-a`, `-r`, `-v`, `--contains <rev>` … — a positive pattern per word; a
-bare word creates a branch) and a `reset` without `--hard`. A call too long to check in time, or a check
-that fails, is refused — run smaller calls.
+Next to `git reset --hard`, these git commands throw work away with no way back: `git clean -f` when `git clean -n`
+with the same switches lists something; `git checkout -- <folder>`, `git checkout .`, `git restore <folder>`,
+`git checkout -f`, `git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
+forced push or a delete of the default branch on the remote; `git branch -D` and `git branch -M`/`-C` over a branch
+HEAD does not contain (a branch only cherry-picked into HEAD counts as not contained). A call whose repository cannot
+be determined, too long to check in time or whose check fails is refused (run smaller calls), except a `branch` that
+only lists and a `reset` without `--hard`. Switches: `git-reset-hard` and `git-discard`. The full table is `_TABLE`
+in `git_discard.py`.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
 Checks: git-metadata-guard, protected-watch.
 
-Nobody writes `.git/hooks/**` or `.git/config` (also `config.worktree`, submodule and
-linked-worktree git directories), and copies nothing into them — neither with a file tool nor a
-shell command, nor with `git config`, `git -c` or `GIT_CONFIG_KEY_<n>` for a key that starts a
-program (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, a `!` alias, `include.path`, a
-filter, textconv or credential helper, an `ext::` remote URL, `protocol.allow=always` …), and
-`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` or `GIT_CONFIG` pointing at `.git/config` counts like
-`--file`; `git init --template` is refused the same way. Files that start code when the folder is
-opened are covered too: a worker never writes `.vscode/tasks.json`, `.devcontainer/**`,
-`.devcontainer.json`, `.envrc` or `.mcp.json` (file tool or shell, also by copying into their
-directory), and nobody writes `.vscode/tasks.json` with a shell command, or adds a task that runs on
-`folderOpen` to `.vscode/tasks.json` or a `*.code-workspace` with a file tool (judged on the text
-the edit produces); the human writes such a file themselves. Limit: what a program or script writes
-itself (`pre-commit install`, `python -c "open(...)"`) is invisible to the check. Inline Python
-narrows that limit: a Python program a Bash command hands to `python` behind `-c`, as a heredoc, a
-here-string or a literal piped in is also read as Python, so that very `python -c "open(...)"` is
-judged, while a script file (`python script.py`) stays invisible. A call that runs a command or writes
-a file (`os.system`, `subprocess`, `os.exec*`, `open(..., 'w')`, `shutil.copy`, `Path(...).write_text` …)
-is judged by its literal value — the command line like a shell command, the path (a string, or
-`Path(...)` of strings) like a write target —, and `exec`/`eval` of a literal is read again, one level
-deep (a literal `exec` inside that one is not followed). An `open` of a literal path counts as a write
-also when its mode is no literal. A value that is no literal is not seen: a variable, a name bound
-earlier, `os.path.join`, `Path(...) / x`, an f-string, a glob result, a loop over a list. That is the
-same limit as for a script file: the reading catches a literal path typed by mistake, it does not work
-out what a program computes. On top of that, a program is taken out of the shell reading of the command
-only when it is harmless — every call a plain builtin that computes or prints (`print`, `len`, `sorted`,
-`str` …), a method on a literal, `sys.exit`; no `key=`, no decorator, no class, no dunder name but
-`__name__` and `__file__`, no attribute read beyond those calls and `sys.argv`/`sys.stdout`/`sys.stderr`,
-no store on an attribute or an item, no rebinding of such a name — and only at the place
-it stands: the one word behind `-c` or the body of a quoted heredoc, on the top level of the command.
-So a string such as `"cp x .git/hooks/y"` in a list the program only prints is free, while the same
-text behind `git -c` or `bash -c` next to it still counts. Everything else is read as before, its text
-as shell commands: a program that calls anything off that list (`open`, `subprocess`, a function of
-its own), a program that does not parse as Python, a here-string, a pipe, an unquoted heredoc, a
-program inside `sh -c`, `eval` or a wsl line, and PowerShell. Not read: a callee reached through
-`getattr` or a subscript, a function bound to a variable, `str.replace` and `Path.replace`, a name
-without an import the reading knows, writing calls outside the families it knows (`io.FileIO`,
-`urllib.request.urlretrieve`, `extractall` of a zip or tar archive), other interpreters.
+`git-metadata-guard` (switch `git-metadata-guard`) refuses a write to `.git/hooks/**` or `.git/config` (also
+`config.worktree` and the git directories of submodules and linked worktrees), also by copying into them, with a file
+tool, a shell command, or `git config`, `git -c` or `GIT_CONFIG_KEY_<n>` for a key that starts a program
+(`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, a `!` alias, a filter, textconv or credential helper, an
+`ext::` remote URL …; the full list is in `git_metadata_guard.py`); `git init --template` too. A worker also never
+writes `.claude/settings*.json`, `.claude/agents`, `.claude/skills`, `.claude/commands`, `.vscode/tasks.json`,
+`.devcontainer/**`, `.devcontainer.json`, `.envrc` or `.mcp.json`; nobody adds a `folderOpen` task to
+`.vscode/tasks.json` or a `*.code-workspace` with a file tool, or writes `.vscode/tasks.json` with a shell command; the
+human writes such a file themselves.
 
-A single-quoted or ANSI-C quoted `$(...)` among the words of `echo` or `printf` is printed text, not a command
-substitution, and is not read as one - but only on a command line that prints and does nothing else.
-Allow-list over the whole line: every command of the line is a bare `echo` or `printf` (the word itself, not
-`./echo`, no prefix, no keyword before it; `printf` without `-v`), the commands are joined by nothing but `;`,
-`&&`, `||` or a line break, and every word is plain - a `$` or backtick only inside single quotes or as the
-`$'` of ANSI-C quoting. Anything else on the line - a pipe, a redirection (also `>&2`), `&`, a group,
-subshell or process substitution, a compound command (`for`, `if`, `{ ...; }`), `exec`, `trap`, an alias,
-function or variable definition, `eval`, a nested shell, `$_`, `printf -v`, any other command, in PowerShell
-also `Set-Alias`, `New-Alias` and `iex` - makes the whole line one that is judged as before (`echo '$(cmd)' |
-sh`, `echo '$(cmd)'; sh -c "$_"`, `for i in 1; do echo '$(cmd)'; done | sh`, `echo '$(cmd)' > x.sh`,
-`echo '$(cmd)' && git status`). A double-quoted or unquoted `$(...)` is always judged.
-
-Text that a pipeline hands to a shell as its script is read as a command line of its own, like the text behind
-`eval`: `echo 'cmd' | bash`, `printf '%s\n' 'cmd' | sh -s`, a bare `cat` in between (`echo 'cmd' | cat | bash`),
-and in PowerShell a string or here-string, `Write-Output`/`Write-Host` with literal arguments, piped into
-`powershell`/`pwsh` that reads standard input (`-`, `-Command -`, `-File -`, only options) or into
-`Invoke-Expression`/`iex` without an argument. A `$'...'` word behind `eval`, `bash -c`, `sh -c` or
-`powershell -c` has its escapes resolved first (the plain lexer does not know ANSI-C quoting and read
-`eval $'git config x'` as the command `$git`). Where a command line cannot be tokenized (a live ANSI-C quote the
-lexer misreads) and the raw-text fallback decides, the word after a redirection operator is reported whole -
-quotes taken off, a quoted or escaped blank kept, at most 1,024 characters - as well as its beginning up to the
-first blank (`> "src/a b/../../x"` is `src/a b/../../x` and `src/a`). Limit: a `$'...'` word with a backslash
-inside a double-quoted `bash -c "eval ..."` text is not read: the lexer keeps the backslash of the outer quotes,
-so the inner ANSI-C text is not decoded.
-
-Two boundaries hold for every shell check that reads write targets from the command text (write-guard,
-worker-write-scope, git-metadata-guard, outside-root), since the checks read the text and run nothing:
-**runtime code** — code that becomes a script only when the command runs (`bash <<< '…'`, `source
-/dev/stdin`, `$CMD <<'EOF'`, `eval "$(cat <<'EOF' …)"`, `[scriptblock]::Create`, `Start-Process`) is
-not followed into; and **state** — a target that depends on an earlier command or on an alternative
-(`ln -s <project>/src l && echo x > l/f`, `cd a || cd b` many times over) is judged on what the text
-says, not on what the file system will hold. The checks are a guard rail against mistakes, not a wall
-against intent: whoever routes a write around them already acts against their own assignment.
-
-Redirections behind a copy command are not operands. A copy source is read whole: there is no
-file-count limit, links and junctions inside it are followed once each, and a source that cannot be
-read within the time budget (about 4 s) is refused. Below a copy destination that is no protected
-place, only source files that can land on a protected path are mapped: a protected name, a path
-through a link already below the destination, a Windows short name (`~1`). The body of a quoted
-heredoc is not scanned as commands only when the whole command is one text reader that stores it
-(`cat`, `tee [-a] <file>`, `git commit -F -`, `git tag -F -`) with nothing before or after it.
+Limits. The checks read the text of a call and run nothing: what a program or script file writes itself
+(`pre-commit install`, `python script.py`) is invisible; a Python program handed to `python` (`-c`, heredoc,
+here-string) is read for literal paths and literal command lines, not for computed ones (a variable, an f-string).
+Code that becomes a script only when the command runs (`bash <<< '…'`, `source /dev/stdin`, `[scriptblock]::Create`)
+is not followed, and a target that depends on an earlier command is judged on what the text says — for every shell
+check that reads write targets. The checks are a guard rail against mistakes, not a wall against intent.
 
 ### The watcher after every call: `protected-watch`
 
-`git-metadata-guard` reads the text of a call before it runs, so a script file, inline code or a program that
-writes a protected file itself stays invisible to it. `protected-watch` looks at the files afterwards, whatever
-wrote them. After every tool call (PostToolUse and PostToolUseFailure, orchestrator and workers) it compares
-these files with a snapshot kept under `.act-local/protected-watch/` (taken at session start, after the session
-handler has refreshed the bridges): `.git/hooks/**` and `.git/config` / `.git/config.worktree` of the repository,
-of a `.git` file's git directory and its `commondir`, and of submodule and linked-worktree git directories, plus the
-pointer files themselves - the `.git` file at the project root (`gitdir: ...`) and a git directory's `commondir`;
-`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**` of the project;
-`.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**` and `.vscode/tasks.json` at the project root.
-`.git/config` is compared only on the keys that start code (the list above, the one `git-metadata-guard` uses):
-git rewrites the file for `push -u` or `remote add`, and that is no change; without a usable `git` the whole
-file is compared. For a key whose danger depends on the value (`alias.*`, `remote.*.url` and `pushurl`,
-`protocol.*.allow`) every value is kept, harmless or not, so a harmless value that is changed to a dangerous one
-is put back as well.
+Because the guard cannot see a script file, `protected-watch` compares the protected files with a snapshot (taken at
+session start, kept under `.act-local/protected-watch/`) after every tool call of the orchestrator and of workers:
+`.git/hooks/**` and `.git/config` (only the keys that start code) of the repository and its linked git directories,
+`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**`, and `.mcp.json`, `.envrc`,
+`.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the project root. It never follows a link.
 
-The watcher never follows a link. A watched folder or file that is a symbolic link, a Windows junction or another
-reparse point (the `modules/` and `worktrees/` folders of a git directory and the
-entries below them included) is listed as one entry of its own and never entered or read. Before it removes or restores a file it
-checks that no folder between the project root (or the git directory) and the file is such a link and that the real
-path of the folder is the expected one; a path that goes through a link is reported as "not restored (path goes
-through a link)" and left alone, and a link a worker put in place of a watched folder or file is removed (the link
-itself, never what it points at). The same check guards every write below `.act-local/protected-watch/`; if
-`.act-local` or that folder is a link, the watcher stops with one line on stderr.
+Switch `protected-watch`: `block` (default), `warn` (reports every change, restores nothing), `off` (no snapshot, no
+comparison); `ACT_PROTECTED_WATCH` in the environment for one run. On a change:
 
-Everything the watcher may delete, create, replace or write lies below places fixed when the snapshot was taken: the
-project root, the git directories found then (each with the real path it had, both kept in the snapshot) and
-`.act-local/protected-watch/`. Nothing read from the working tree at restore time can add a place. The `.git` file at
-the root and a git directory's `commondir` are watched as files like any other, so a pointer a worker rewrites is a
-change that is put back (a worker) or reported (the orchestrator) - but the scan keeps listing the git directories
-of the snapshot, never the new target, and a file below a git directory the snapshot did not have is reported and never
-removed. A restore also stops when the recorded git directory is now a link, no longer a directory, or no longer
-resolves to the real path it had. The temp file of a restore is created exclusively and never follows a link, so a
-hard link or symlink standing at its name is not written through.
+- **A worker's call, `block`:** the file is put back at once from the snapshot (not from git), a new file is removed,
+  the changed version is kept under `.act-local/protected-watch/kept/` for 30 days; the worker, the human and the
+  orchestrator are told. One exception: a change of `.claude/settings.local.json` that only adds entries to
+  `permissions.allow` is Claude Code writing the owner's "always allow" answer; it is reported, not put back (the
+  exact form is in `protected_watch.py`; any other change there is put back). Limit: an entry a worker adds to
+  `permissions.allow` itself is only reported too; the file does not tell it from the owner's answer.
+- **The orchestrator's call, or `warn`:** reported only, with the commands that put the previous version back; the new
+  state becomes the reference.
 
-Whether a git directory may be restored at all is decided from real paths. A snapshot taken at session start, or in
-an orchestrator's call that found none, is trusted, so the git directories it finds (also one outside the project
-root, such as a linked worktree's directory below the main repository's `.git`) are restorable. A snapshot taken
-during a worker's call (the snapshot was missing or deleted) is not: there a git directory is restorable only when it
-lies below the project root in fact - written below it, no link on the way from the root down to it, and its real
-path below the root's real path. A `.git` file that names a path inside the root which reaches outside through a
-linked folder therefore makes nothing outside a place the watcher may delete or write; the directory is watched and
-its changes are reported "not restored" until a session start takes a trusted snapshot.
-
-It is cheap: one directory listing of the project root and the watched folders, one stat per file, and a file is
-read and hashed (sha256) only when its size or modification time differs from the snapshot. A call that changed
-nothing costs a few milliseconds on top of the interpreter start (about 3 ms for 76 files, measured).
-
-What happens when a file really changed (its hash differs; for `.git/config` a code-starting key):
-
-- **A worker's call** (the payload carries `agent_id`), key `block`: the file is put back at once from the
-  snapshot taken before the call, not blindly from git — a versioned file can carry the orchestrator's wanted,
-  uncommitted edit, and `.git/hooks` and `.git/config` are never versioned. A file that appeared is removed, a
-  file that vanished is restored. For `.git/config` only the changed keys are reset with `git config --file`; the
-  rest of the file stays as git left it. The changed version is kept as a file under
-  `.act-local/protected-watch/kept/` (30 days). The worker gets the report as `additionalContext`, the human a
-  `systemMessage` that starts with the warning sign, and the orchestrator a note with its next tool call.
-- **One exception in a worker's call, key `block`:** a change of the project's `.claude/settings.local.json` that only
-  adds entries to the list `permissions.allow` is reported and never put back — it is Claude Code writing the
-  owner's "always allow" answer, which arrives during the worker's call. Exactly this form qualifies: the file
-  parses as strict JSON before and after (a repeated key, `NaN`, a byte order mark or an unparsable file do not),
-  every key outside `permissions` and every key of `permissions` except `allow` is equal, `allow` is a list of
-  strings in which every earlier entry is still there (as often as before, in any order) and at least one entry is
-  new. A missing `permissions` or `allow` in the old file counts as empty. Everything else in that file is put back
-  as above: a hook, `env`, `permissions.deny`, `defaultMode` or any other key, a removed or altered entry, a
-  reordering or reformatting that adds nothing, a file that did not exist before, one that does not parse, one that
-  became a link; the same addition in `.claude/settings.json` too. The report names the added entries and says
-  "not put back"; the previous version is kept under `kept/`, the changed file becomes the reference, and the
-  orchestrator gets a note. The judgement reads two copies the watcher itself holds (the snapshot's copy and the
-  file as read) and writes nothing, so it adds no place the watcher acts below.
-- **The orchestrator's call**, or key `warn`: reported only, to the model and to the human, with the commands that
-  put the previous version back (the previous version is kept under `kept/` so the command stays valid; the
-  assistant's own writes to hooks and git config are refused, so the human runs them). The new state becomes the
-  reference, so the next call is quiet. The commands name the file (`git config --file <path> ...`, also for
-  `config.worktree` and a submodule's config), end git's options with `--` before the key and value (a value that
-  begins with `-` is a value, not an option), and are written so that no shell expands anything in a key, a value
-  or a path: an argument with a character other than letters, digits, space, comma and `_./:@+=-` is given as a
-  Python string literal with `\xNN` escapes, in one `python -c` call, and an argument that begins with `@`
-  (splatting in PowerShell) or `-`, or that holds a comma (PowerShell reads a bare `a,b` as an array), is put in
-  double quotes.
-- **A restore that fails** (a read-only file, a path through a link, no copy of the old version): the snapshot entry
-  stays the reference, so the next call reports the change again, and a temp file the write left behind is removed.
-
-Switch: `protected-watch` in `docs/ai/config.md` § Checks — `block` (default; restores a worker's change), `warn`
-(reports every change, restores nothing), `off` (no snapshot, no comparison); `ACT_PROTECTED_WATCH` in the
-environment overrides the value for one run.
-
-Limits:
-
-- It reports after the call and prevents nothing; a hook runs at the next git command, which can be the next call
-  of another worker.
-- A change made between two calls by someone else — the human in an editor, Claude Code writing
-  `.claude/settings.local.json` when a permission is granted, another session in the same project (it shares the
-  snapshot) — is attributed to the next call. A worker call that ends just after the orchestrator changed a
-  protected file is attributed to the worker and the change is put back: the kept copy and the command in the
-  message undo that. A permission the human grants in a prompt during a worker's call is written to
-  `.claude/settings.local.json` by Claude Code: as a pure addition to `permissions.allow` it is only reported
-  (see above), any other change there is put back. An entry a worker adds to that list on its own is only
-  reported too: the report names the entries, so it is visible, but the file does not tell it from the
-  owner's answer.
-- Stat first: a write that leaves size and modification time as they were is not seen (a file modified within two
-  seconds before the snapshot is hashed once more at the next call, so a write in the same clock tick is not
-  missed). A file over 2 MB is hashed but has no copy and cannot be restored. At most 4000 files are listed.
-  `*.sample` files in a hooks folder are left out; git never runs them.
-- A worker that deletes the snapshot itself makes the next call take a new one; its write scope normally keeps it
-  out of `.act-local/`. Two sessions in one project share the snapshot.
-- A `.git` file above the project root (the project lies inside a linked worktree or a separate git directory whose
-  pointer is outside the root) is outside the root and not watched: the git directories it named at snapshot time
-  stay watched, but a rewrite of that pointer is not seen.
-- A git directory that is first seen in a snapshot taken during a worker's call (the snapshot was missing or deleted)
-  and does not lie below the project root in fact - by its real path, with no link between the root and it - is
-  watched and its changes are reported, but not restored, because that snapshot cannot be trusted as a reference for
-  it; the next session start takes a trusted one. A pointer that names a path inside the root which reaches outside
-  through a linked folder is such a case.
-- Who is blamed: a worker's change that is first seen in the orchestrator's own call — calls that run in
-  parallel, a background command that ends late, a worker call that finds the lock taken and returns — is reported
-  as the orchestrator's, is not put back, and becomes the reference. The report names the call it was seen in, not
-  who wrote.
-- A watched folder that was a link when the snapshot was taken (a shared `.claude/skills` linked in on purpose) is
-  watched as that link only, not what lies behind it. A link is checked at the moment of the write, not held: one
-  planted between the check and the write by a process running at that very instant is not caught.
-- Not watched: `~/.claude` (other projects share it and Claude Code writes there itself; it stays with the static
-  check), `*.code-workspace` files.
-- Nothing runs where hooks do not run (other tools stay with the static check). An error in the watcher is one line
-  on stderr and never blocks a call.
+Limits: it reports after the call and prevents nothing. A change made between two calls by someone else (the human,
+Claude Code, another session) is attributed to the next call; a worker's change first seen in the orchestrator's call
+is reported as the orchestrator's and not put back. A write that leaves size and modification time unchanged is not
+seen; a file over 2 MB cannot be restored; at most 4000 files are listed. `~/.claude`, `*.code-workspace` files and a
+`.git` file above the project root are not watched. A git directory first seen in a snapshot taken during a worker's
+call and not below the project root in fact is reported, not restored. Nothing runs where hooks do not run. The
+remaining limits and the rules for links are in the header of `protected_watch.py`.
 
 ## `R-work-throwaway` — Throwaway material under `.act-local/tmp/`
 
 Checks: act-local-tidy.
 
-Throwaway material (probes, scratch projects, clones, output files, scratch files) goes into
-`.act-local/tmp/<task-id>-<slug>/`, never into the system temp directory and never directly under
-`.act-local/`. The orchestrator removes a task's folders when it commits the task
-(`python .act/scripts/act_local_tidy.py --task <id>`); whoever made a folder removes it earlier, once
-it has served. The template's own scripts keep to the same place: their short-lived folders are
-`.act-local/tmp/act-<purpose>-*`, removed when the script ends (outside a project they use the system
-temp directory), and the hooks' compiled-module cache is `.act-local/pyc/`. Such a folder lies inside the project's work tree: git run in a subfolder that is not a
-repository of its own finds the project's repository and acts on it, so set `GIT_CEILING_DIRECTORIES`
-to the folder above it, `.act-local/tmp` (git never climbs into a ceiling folder, so a throwaway
-repository still finds itself), or call git only on a repository of its own. A deny entry on Windows can
-lock out the owner too (`(RX)` also denies `READ_CONTROL` and `SYNCHRONIZE`): deny only the one right
-the probe needs, such as `(RD)`, and run `icacls <path> /reset` in the `finally`.
+Throwaway material (probes, scratch projects, clones, output files) goes into `.act-local/tmp/<task-id>-<slug>/`, never
+into the system temp directory and never directly under `.act-local/`. The orchestrator removes a task's folders when
+it commits the task (`python .act/scripts/act_local_tidy.py --task <id>`); whoever made a folder removes it earlier.
+Git run in a subfolder that is not a repository of its own acts on the project's repository: set
+`GIT_CEILING_DIRECTORIES` to `.act-local/tmp`, or call git only on a repository of its own. A deny entry on Windows can
+lock out the owner too (`(RX)` also denies `READ_CONTROL`): deny only the one right the probe needs, such as `(RD)`,
+and run `icacls <path> /reset` in the `finally`. A throwaway project below `.act-local/tmp/` carries a `.act/` of its own;
+the template's `.act/` write-guard lets a write into it pass (conditions in `write_guard.py`).
 
-A throwaway project below `.act-local/tmp/` carries a `.act/` of its own, which is no part of the project's
-template tree: the template's `.act/` write-guard lets a write into it pass, also where the text of the target
-cannot be resolved (a variable in front of it, `$ROOT/.act-local/tmp/job/proj/.act/x`). Allow-list: the
-project root is known and does not itself lie below `.act-local/tmp/`, the text holds `.act-local/tmp/` as
-whole segments with no `.act` segment before them, the part before them is empty or made of plain segments
-with at most one variable, written `$NAME`, `${NAME}` or `$env:NAME` and standing alone as the very first
-segment, and every segment behind them is plain too. A plain segment holds no `..`, variable (`$NAME`, cmd's `%NAME%`), command
-substitution, backtick, glob, brace, `~`, parenthesis, quote or white space. `$ROOT/.act/x`,
-`.act-local/tmp/$job/.act/x`, `$ROOT/.act-local/tmp/../../.act/x`, `$ROOT/.act-local-tmp/job/.act/x`,
-`$A$B/.act-local/tmp/job/.act/x`, a substitution that begins before the marker and ends behind it
-(`$(cd $ROOT/.act-local/tmp/job; cd ...)/x`) and a segment with a space or a quote stay refused. For a
-project that itself lies below `.act-local/tmp/` (a throwaway project run as a project; the root is compared
-without regard to case, `.ACT-LOCAL/TMP/` counts) every text naming
-`.act/` stays refused, since its own `.act/` can then be spelled through `.act-local/tmp/` behind a variable
-or an administrative share (`${U}//localhost/D$/.../.act-local/tmp/job/.act/x`). Limit: a leading variable is
-trusted to stand for a place outside `.act/`; one that holds `.act` itself (`D=.act; echo x >
-$D/.act-local/tmp/a/.act/b`, `$PWD` from inside `.act/`) reaches only new files below
-`.act/.act-local/tmp/`, no file of the template. `.act` is recognised in any spelling of case in the text of a target that cannot be placed
-(`$D/.ACT/x`, `.Act`): Windows and macOS do not tell the spellings apart, so the file is the same. The marker
-`.act-local/tmp/` in that text only counts as typed in lower case, so `$ROOT/.ACT-LOCAL/TMP/job/.act/x` stays
-refused. A target that can be placed is resolved: on Windows the comparison already ignored case, on macOS it now
-does too (a lower-cased comparison, not run on a Mac in the build), on Linux a differently spelled name is a
-different file.
-
-Checked mechanically by `act-local-tidy` (`docs/ai/config.md` § Checks), once a day at session start in a
-detached process; the next start reports the result in one line. It removes: `.act-local/tmp/` entries
-older than 7 days that belong to no open task; all but the newest 5 folders in `.act-local/backup/`;
-folders of the compiled cache in `.act-local/pyc/` whose source folder no longer exists (a moved project, a
-replaced Python) and that hold nothing newer than 7 days; every other entry directly under `.act-local/`
-that no template script creates. Age is the newest change of
-anything inside an entry, so an entry still written to stays. An entry belongs to an open task when its
-name equals the task's id or starts with it followed by a non-digit (`<id>-x` belongs to the task,
-`<id>0-x` does not). Links are removed as links, never followed; if `.act-local` itself is a link, nothing is touched.
-`act-local-keep` lists patterns relative to `.act-local/` (`exports, tmp/long-*`) that are never removed;
-a pattern naming a folder keeps its contents (`tmp` keeps `tmp/x`), and one naming something inside an
-entry keeps that whole entry (`mydata/important` keeps `mydata`). `act-local-tidy: warn` only reports
-what would go, `off` skips the check. Report first: removal starts only on a calendar day after the day a
-report-only result was shown (by the session start, or by `--apply` on a hand run), so the first result in
-a project is a report with the date the next start may remove; until a report was shown a run only reports.
-`python .act/scripts/act_local_tidy.py` lists the plan without removing anything. Limits: an entry that a
-parallel session uses for more than 7 days without an open task id in its name is removed - name it with the
-task id or list it in `act-local-keep`; a task file without an `id:` line (team mode before `assign`)
-protects no folder.
+`act-local-tidy` (switch `act-local-tidy`; `warn` only reports what would go, `off` skips) runs once a day at session
+start in a detached process; the next start reports the result in one line. It removes `.act-local/tmp/` entries older
+than 7 days that belong to no open task (name equals the task's id or starts with it and a non-digit), all but the
+newest 5 folders in `.act-local/backup/`, stale folders of the compiled cache in `.act-local/pyc/`, and every other
+entry directly under `.act-local/` that no template script creates. `act-local-keep` lists patterns relative to
+`.act-local/` (`exports, tmp/long-*`) that are never removed. Report first: removal starts only on a calendar day
+after a report-only result was shown, so the first result in a project is a report with the date the next start may
+remove. `python .act/scripts/act_local_tidy.py` lists the plan without removing anything. Limits: an entry that a
+parallel session uses for more than 7 days without an open task id in its name is removed — name it with the task id
+or list it in `act-local-keep`; a task file without an `id:` line protects no folder.
 
 ## `R-cost-delegate` — Name the tier, the estimate, and the cap
 
