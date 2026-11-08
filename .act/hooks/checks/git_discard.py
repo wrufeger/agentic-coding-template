@@ -59,18 +59,15 @@ from typing import Callable, Iterator, Optional
 
 import actlib
 
-from .command_words import _git_invocations_with_prefix, _stripped_word_lists
+from .command_parse import Parse, parse_for
 from .common import _check_mode, _shell_command
 from .shell_targets import _command_name, _to_native_path
 from .worker_git_write import (
-    _CD_LIKE_NAMES,
-    _CD_UNKNOWN_NAMES,
     _branch_lists_only,
-    _first_operand,
+    _leading_cd_directory,
     _parse_git_invocation,
     _prefix_has_dir_override,
     _resolve_dash_c_chain,
-    _resolve_dir,
 )
 
 __all__ = ["check_git_discard", "_resolve_cwd_after_leading_cd", "_resolve_target_dir"]
@@ -237,16 +234,19 @@ def _prefix_changes_directory(prefix: list[str]) -> bool:
     return any(word in ("-C", "--chdir") or word.startswith("--chdir=") for word in prefix)
 
 
-def _has_find_execdir(command: str) -> bool:
+def _has_find_execdir(command: str, parse: Optional[Parse] = None) -> bool:
     """True if any `find` in `command` carries `-execdir`/`-okdir`, which run their command inside
     whichever directory find happens to match -- one this check cannot pin down. Judged for the
     whole command rather than the one exec tail (command_words.py hands that tail back as a simple
     command of its own, without saying where it came from), so a `reset --hard` anywhere in such a
     command is refused as "not determinable" -- over-refusing a `find -execdir` that has nothing to
-    do with the git call is the accepted price."""
+    do with the git call is the accepted price. `parse` is the dispatcher's reading of `command`;
+    without it the command is read here."""
+    if parse is None:
+        parse = Parse("Bash", command)
     return any(
         _command_name(words[0]) == "find" and any(arg in ("-execdir", "-okdir") for arg in words[1:])
-        for words in _stripped_word_lists(command)
+        for words in parse.stripped()
     )
 
 
@@ -262,7 +262,9 @@ def _has_hard_flag(sub_args: list[str]) -> bool:
     return False
 
 
-def _resolve_cwd_after_leading_cd(command: str, base_cwd: Optional[str]) -> tuple[Optional[str], bool]:
+def _resolve_cwd_after_leading_cd(
+    command: str, base_cwd: Optional[str], parse: Optional[Parse] = None,
+) -> tuple[Optional[str], bool]:
     """The effective cwd a `git reset --hard` invocation in `command` runs against, after a
     possible leading `cd`-family command -- (effective_cwd, determinable). No leading cd at all:
     (base_cwd, True), unchanged. A literal leading cd with a literal directory operand, and no
@@ -270,29 +272,16 @@ def _resolve_cwd_after_leading_cd(command: str, base_cwd: Optional[str]) -> tupl
     a leading cd could mean (a dynamic operand, a later cd-like/`popd`-like command anywhere) is
     not determinable: (None, False) -- the caller then refuses the call outright rather than
     falling back to the unchanged `cwd`, since `cwd` is exactly what pinning down the leading cd
-    was supposed to override."""
+    was supposed to override. `parse` is the dispatcher's reading of `command`; without it the
+    command is read here."""
     if base_cwd is None:
         return None, True
-    commands = _stripped_word_lists(command)
-    if not commands:
-        return base_cwd, True
-    first = commands[0]
-    first_is_cd = _command_name(first[0]) in _CD_LIKE_NAMES
-    # A directory-change form anywhere else in the same command -- not only after a leading cd --
-    # already makes the target impossible to pin down: `true && cd ../other && git reset --hard`
-    # is exactly as "not determinable" as a leading `cd` followed by a second one.
-    for later in commands[1:]:
-        if _command_name(later[0]) in _CD_LIKE_NAMES | _CD_UNKNOWN_NAMES:
-            return None, False
-    if not first_is_cd:
-        return base_cwd, True
-    directory = _first_operand(first[1:])
-    if directory is None:
+    if parse is None:
+        parse = Parse("Bash", command)
+    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd)
+    if not determinable:
         return None, False
-    resolved = _resolve_dir(directory, base_cwd)
-    if resolved is None:
-        return None, False
-    return str(resolved), True
+    return (base_cwd if directory is None else str(directory)), True
 
 
 def _resolve_target_dir(
@@ -796,9 +785,10 @@ def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tu
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
     budget = _Budget(payload.get("_act_hook_started"))
-    find_execdir = _has_find_execdir(command)
+    parse = parse_for(payload, command)
+    find_execdir = _has_find_execdir(command, parse)
     resolved_cwd: list[tuple[Optional[str], bool]] = []  # the same for every invocation of the command
-    for prefix, args in _git_invocations_with_prefix(command):
+    for prefix, args in parse.git_invocations_with_prefix():
         if budget.expired():
             yield None, _TIMEOUT_MESSAGE
             return
@@ -824,7 +814,7 @@ def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tu
         target = None
         if subcommand != "stash":  # a stash drop is refused wherever it runs
             if not resolved_cwd:
-                resolved_cwd.append(_resolve_cwd_after_leading_cd(command, base_cwd))
+                resolved_cwd.append(_resolve_cwd_after_leading_cd(command, base_cwd, parse))
             effective_cwd, determinable = resolved_cwd[0]
             if determinable and not find_execdir:
                 target = _resolve_target_dir(prefix, dash_c_dirs, has_dir_override, effective_cwd)

@@ -98,6 +98,14 @@ class Parse:
         return self._once(
             "git_invocations", lambda: _command_words._git_invocations(self._command), _copy_lists)
 
+    def git_invocations_with_prefix(self) -> list:
+        """command_words._git_invocations_with_prefix(command): (prefix words, git argv) pairs, both lists
+        copied."""
+        return self._once(
+            "git_invocations_with_prefix",
+            lambda: _command_words._git_invocations_with_prefix(self._command),
+            lambda found: [(list(prefix), list(args)) for prefix, args in found])
+
     def chain_tokens(self) -> Optional[list]:
         """shell_targets._tokenize_chain(command): the token stream of the whole command, or None when
         it does not tokenize (a result, not an error). Only this pure reading is shared by the commit

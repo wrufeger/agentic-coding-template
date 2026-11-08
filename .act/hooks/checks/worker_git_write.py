@@ -59,7 +59,7 @@ from typing import Optional
 
 import actlib
 
-from .command_words import _git_invocations_with_prefix, _stripped_word_lists
+from .command_parse import Parse, parse_for
 from .common import _check_mode, _is_worker, _shell_command
 from .shell_targets import (
     _GIT_GLOBAL_VALUE_FLAGS,
@@ -72,7 +72,7 @@ __all__ = [
     "_GIT_WRITE_SUBCOMMANDS", "_branch_lists_only", "_CD_LIKE_NAMES", "_CD_UNKNOWN_NAMES",
     "_parse_git_invocation", "_is_git_write_subcommand", "_resolve_dir", "_is_outside_root",
     "_resolve_dash_c_chain", "_prefix_has_dir_override", "_first_operand",
-    "_leading_cd_outside_project", "_worker_git_write_message", "check_worker_git_write",
+    "_leading_cd_directory", "_leading_cd_outside_project", "_worker_git_write_message", "check_worker_git_write",
 ]
 
 # Every git subcommand that changes the tree or history for this check's purposes. "init" is
@@ -230,27 +230,46 @@ def _first_operand(args: list[str]) -> Optional[str]:
     return None
 
 
-def _leading_cd_outside_project(command: str, base_cwd: Optional[str], root: Optional[Path]) -> bool:
+def _leading_cd_directory(commands: list[list[str]], base_cwd: str) -> tuple[bool, Optional[Path]]:
+    """How a leading `cd` decides the directory a command runs in, read from `commands` (the
+    prefix-stripped argv of every simple command, in order) -- (determinable, directory).
+    (True, None): no leading cd (nothing, or a first command that is not cd-like) and no later one.
+    (True, path): the first simple command is `cd`-like (_CD_LIKE_NAMES) with a literal operand
+    resolving to `path` (against `base_cwd`) and no later simple command changes directory again
+    (_CD_LIKE_NAMES or _CD_UNKNOWN_NAMES). (False, None): not determinable -- a later directory
+    change anywhere, a leading cd without an operand or with a dynamic or unresolvable one. Each
+    caller maps these three answers to its own verdict: git_discard.py refuses on not determinable,
+    this module's exemption is simply not granted."""
+    for later in commands[1:]:
+        # A directory-change form anywhere after the first command already makes the directory
+        # impossible to pin down: `true && cd ../other && git reset --hard` is exactly as unknown as
+        # a leading `cd` followed by a second one.
+        if _command_name(later[0]) in _CD_LIKE_NAMES | _CD_UNKNOWN_NAMES:
+            return False, None
+    if not commands or _command_name(commands[0][0]) not in _CD_LIKE_NAMES:
+        return True, None
+    directory = _first_operand(commands[0][1:])
+    resolved = None if directory is None else _resolve_dir(directory, base_cwd)
+    if resolved is None:
+        return False, None
+    return True, resolved
+
+
+def _leading_cd_outside_project(
+    command: str, base_cwd: Optional[str], root: Optional[Path], parse: Optional[Parse] = None,
+) -> bool:
     """True only when the whole command's very first simple command is a `cd`-family invocation
     (_CD_LIKE_NAMES) with a literal directory operand resolving outside `root`, AND no later
-    simple command changes directory again (_CD_LIKE_NAMES or _CD_UNKNOWN_NAMES) — see this
+    simple command changes directory again (_CD_LIKE_NAMES or _CD_UNKNOWN_NAMES) -- see this
     module's Known limits for why a second directory change anywhere disables the exemption
-    entirely rather than tracking which git call comes after which cd."""
+    entirely rather than tracking which git call comes after which cd. `parse` is the dispatcher's
+    reading of `command`; without it the command is read here."""
     if base_cwd is None or root is None:
         return False
-    commands = _stripped_word_lists(command)
-    if not commands:
-        return False
-    for later in commands[1:]:
-        if _command_name(later[0]) in _CD_LIKE_NAMES | _CD_UNKNOWN_NAMES:
-            return False
-    first = commands[0]
-    if _command_name(first[0]) not in _CD_LIKE_NAMES:
-        return False
-    directory = _first_operand(first[1:])
-    if directory is None:
-        return False
-    return _is_outside_root(_resolve_dir(directory, base_cwd), root)
+    if parse is None:
+        parse = Parse("Bash", command)
+    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd)
+    return determinable and directory is not None and _is_outside_root(directory, root)
 
 
 def _worker_git_write_message(subcommand: str) -> str:
@@ -281,9 +300,10 @@ def check_worker_git_write(payload: dict) -> int:
 
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
-    leading_cd_outside = _leading_cd_outside_project(command, base_cwd, root)
+    parse = parse_for(payload, command)
+    leading_cd_outside = _leading_cd_outside_project(command, base_cwd, root, parse)
 
-    for prefix, args in _git_invocations_with_prefix(command):
+    for prefix, args in parse.git_invocations_with_prefix():
         subcommand, sub_args, dash_c_dirs, has_dir_override, alias_defined = _parse_git_invocation(args)
         if subcommand is None:
             continue
