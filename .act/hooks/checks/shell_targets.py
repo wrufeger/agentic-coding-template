@@ -186,6 +186,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import inline_code as _inline_code
+from .common import MAX_NESTING
 
 __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
@@ -237,8 +238,11 @@ _LINE_CONTINUATION_RE = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 _JOIN_SPECIAL_RE = re.compile(r"[\\'\"#<\n]")
 # Inside a `$(...)` the parentheses count too: the substitution ends at the `)` that closes it.
 _JOIN_NESTED_SPECIAL_RE = re.compile(r"[\\'\"#<\n()]")
-# `$(...)` inside double quotes inside `$(...)` ...: deeper than this the rest is copied unjoined.
-_JOIN_MAX_NESTING = 8
+# How deep `$(`/`${`/`$[` constructs may nest inside one word before the walk gives up with a
+# ValueError. An explicit bound, so the walk never depends on Python raising RecursionError (which
+# would not be a ValueError and would escape every caller that handles a tokenizing failure).
+_MAX_EXPANSION_DEPTH = 64
+_TOO_DEEP_MESSAGE = f"expansions nested deeper than {_MAX_EXPANSION_DEPTH} levels"
 # A `#` starts a comment after one of these (or at the very start), as the tokenizer reads it.
 _JOIN_WORD_END = " \t\r\n;&|()<>"
 
@@ -362,7 +366,7 @@ def _join_line_continuations(command: str) -> str:
     tokenizer reads it — an unquoted `$` is literal, `quoted` turns only on real quoting — so a mixed
     delimiter like `<<'E'$x` counts as a quoted heredoc in both passes and its body is left alone.
     Not modelled: a `)` that is part of a `case` pattern inside such a `$(...)` ends it early, and a
-    backtick span or a `$(...)` nested deeper than _JOIN_MAX_NESTING is copied with its pairs left in
+    backtick span or a `$(...)` nested deeper than _MAX_EXPANSION_DEPTH is copied with its pairs left in
     — there the tokenizers read the pair for themselves, and the scan of that nested text joins again."""
     if "\\\n" not in command:
         return command
@@ -421,7 +425,7 @@ def _join_scan(command: str, index: int, level: int) -> tuple[str, int, bool]:
                     cursor += 1
                     break
                 elif inner == "$" and command.startswith("$(", cursor):
-                    if level >= _JOIN_MAX_NESTING:
+                    if level >= _MAX_EXPANSION_DEPTH:
                         piece.append(command[cursor:])
                         cursor = size
                         break
@@ -495,7 +499,7 @@ def _join_scan(command: str, index: int, level: int) -> tuple[str, int, bool]:
 _RAW_REDIRECT_RE = re.compile(r"(?:&>>|&>|>>|>\||>&|<>|>)\s*([^\s;&|()<>]+)")
 # The word right after a heredoc operator in the raw line (not `<<<`), to see whether it was quoted.
 _HEREDOC_OPEN_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(\S*)")
-_MAX_SCAN_DEPTH = 4
+_MAX_SCAN_DEPTH = MAX_NESTING
 
 # A Git-Bash-style absolute path ("/c/work/...", the MSYS form a worker's own Bash commands often
 # use on Windows) rewritten to the native drive form ("C:/work/...") so Path() and glob matching
@@ -929,10 +933,6 @@ def _closed_backtick_spans(text: str) -> list[str]:
 
 
 _EXPANSION_CLOSERS = {"(": ")", "{": "}", "[": "]"}
-# How deep `$(`/`${`/`$[` constructs may nest inside one word before the walk gives up with a
-# ValueError. An explicit bound, so the walk never depends on Python raising RecursionError (which
-# would not be a ValueError and would escape every caller that handles a tokenizing failure).
-_MAX_EXPANSION_DEPTH = 64
 
 
 def _skip_squote(text: str, index: int) -> int:
@@ -1030,7 +1030,7 @@ def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0
     caller's unclosed-quote fallback takes over). Constructs nested deeper than
     _MAX_EXPANSION_DEPTH raise ValueError (`depth` counts the nesting this walk is already at)."""
     if depth > _MAX_EXPANSION_DEPTH:
-        raise ValueError(f"expansions nested deeper than {_MAX_EXPANSION_DEPTH} levels")
+        raise ValueError(_TOO_DEEP_MESSAGE)
     opener = text[index]
     closer = _EXPANSION_CLOSERS[opener]
     arithmetic = opener == "[" or (opener == "(" and index + 1 < len(text) and text[index + 1] == "(")
@@ -1871,7 +1871,6 @@ class _AnsiCFound(Exception):
     a way the scan does not model — either way the caller must assume the worst."""
 
 
-_QUOTE_SCAN_MAX_DEPTH = 32
 _QS_CMD_SPECIAL_RE = re.compile(r"[\\'\"`$#<()\n]")
 _QS_DQ_SPECIAL_RE = re.compile(r"[\\\"`$]")
 _QS_BACKTICK_SPECIAL_RE = re.compile(r"[\\`]")
@@ -1894,7 +1893,7 @@ class _QuoteScan:
     comment that holds a quote, escape, expansion, `<` or `(`, a backtick span that holds `$'`, an
     unterminated quote or span, an unterminated `$(`, a heredoc
     delimiter built from an expansion, a heredoc opened while a quoted string runs across lines, nesting
-    deeper than _QUOTE_SCAN_MAX_DEPTH. A heredoc is only recognized where the line-mode tokenizer
+    deeper than _MAX_EXPANSION_DEPTH. A heredoc is only recognized where the line-mode tokenizer
     recognizes one too (_heredoc_delimiters: no `((`, `[`, `${`, `$[` or backtick on its line) and only
     skipped up to a terminator line that matches exactly (bash's own rule, stricter than the tokenizer's
     stripped comparison, so the tokenizer never skips more than this scan). An unquoted heredoc body is
@@ -1914,7 +1913,7 @@ class _QuoteScan:
     def _commands(self, i: int, closer: Optional[str], depth: int) -> int:
         """Scan command text from `text[i]`; with `closer` == ")" up to and including the `)` that closes
         the `$(` this text belongs to. Returns the index after it."""
-        if depth > _QUOTE_SCAN_MAX_DEPTH:
+        if depth > _MAX_EXPANSION_DEPTH:
             raise _AnsiCFound("nested too deep")
         text = self.text
         size = len(text)
@@ -3922,6 +3921,11 @@ def _scan_heredocs_for_inline_code(command: str, bases: _Bases, git_writes: froz
         _scan_tokens(tokens, bases, git_writes, depth)
 
 
+# A single quote in the word of a parameter expansion inside double quotes (`"${x:-it's}"`): bash and dash/`sh`/
+# `bash --posix` read it differently (text or a quote that opens), so what follows in a nested shell text is unknown.
+_PARAM_WORD_QUOTE_RE = re.compile(r"""\"[^\"]*\$\{[^}\"]*[-=+?][^}\"]*'""")
+
+
 def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """All write targets of `command` (steps 1-4 of the section comment). Recursion depth is capped
     for nested `sh -c`/`eval`/`$(...)`; beyond it only the raw-text search runs. When neither
@@ -3940,12 +3944,14 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
     found: list[_Target] = []
     tokens: Optional[list[_Token]] = None
     prefixes: list[list[_Token]] = []  # what came before the word that broke a tokenizing attempt
+    too_deep = False  # a construct nested deeper than the tokenizer follows: what comes after it is unknown
     ansi_c_quoting = _may_use_ansi_c_quoting(command) if quote_model else "$'" in command
     if not ansi_c_quoting:
         try:
             tokens = _line_mode_tokens(command, with_spans)
         except ValueError as error:
             tokens = None
+            too_deep = too_deep or _TOO_DEEP_MESSAGE in str(error)
             prefixes.append(getattr(error, "partial", []))
     if tokens is None:
         # The whole-command fallback skips no heredoc itself: the bodies of quoted-delimiter heredocs,
@@ -3957,6 +3963,7 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
             tokens = _shell_tokens(whole, newline_is_operator=True)
         except ValueError as error:
             tokens = None
+            too_deep = too_deep or _TOO_DEEP_MESSAGE in str(error)
             prefixes.append(getattr(error, "partial", []))
         if tokens is None or ansi_c_quoting:
             found.extend((target, None) for target in _raw_redirect_targets(whole))
@@ -3974,6 +3981,8 @@ def _scan_command(command: str, bases: _Bases, git_writes: frozenset, depth: int
             if prefix and prefix not in scanned:
                 scanned.append(prefix)
                 found.extend(_scan_tokens(prefix, bases, git_writes, depth))
+    if too_deep or (depth > 0 and _PARAM_WORD_QUOTE_RE.search(command)):
+        found.append((f"$({command})", None))  # like the nesting limit above: a write nobody can place
     if depth > 0:
         # The text of a nested shell (`sh -c`, which may be dash with no brace expansion at all, or a
         # bash started with `+B`), of an `eval` or of a `$(...)`/backtick span is read again by a parser
@@ -4063,12 +4072,14 @@ def _with_inline_writes(targets: list[_Target], command: str, base_cwd: str) -> 
     a heredoc fed to `python -`, `node -e`): each path a write call of the code names, once per directory the
     call may run in. A path of the code is not a shell word, so a rooted one without a drive takes the drive
     of that directory on Windows (as the interpreter resolves it) and is not mapped to a Git Bash place. The
-    reading is best effort and never costs the targets found without it: an error of the reader leaves them as
-    they are (the worker write scope, which reads the same code on its own, reports it)."""
+    reading is best effort and never costs the targets found without it: an error of the scan leaves them as
+    they are; a ReaderFailure (a program error of the reader) is raised, and the call is refused."""
     if not _inline_code.mentions_interpreter(command):
         return targets
     try:
         inline = _bash_inline_write_targets(command, base_cwd)
+    except _inline_code.ReaderFailure:
+        raise  # a program error of the reader: the call is not let through unread, every check refuses it (dispatch.py)
     except Exception:  # noqa: BLE001 - see the docstring
         return targets
     merged = list(targets)

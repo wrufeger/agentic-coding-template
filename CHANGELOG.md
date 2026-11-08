@@ -425,6 +425,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- A write check that cannot identify its target refuses instead of evaluating in part. Inline Python or Node code with a
+  write call whose path the text does not show (a name bound twice, a loop variable, `sys.argv`, a join or f-string with a
+  variable part) is refused by the `.act/` write guard and the worker write scope; a path the text shows is
+  judged: a name bound once to a literal, a join of literals, `Path('docs').glob('*.md')` and `glob.glob('docs/*.md')` (somewhere under `docs`), Node
+  `const dir = "out"`. `Image.open(x)`, `tarfile.open(name)` and `gzip.open(fn)` are reads; command text nested deeper than the readers follow (`$(...)` or `$(( ))` past 64
+  levels, `sh -c`, `eval` or PowerShell `-Command` past 4) and a closed deep nesting such as `echo "$("$(...)")"; cp a .act/y`
+  no longer slip past the tokenizer. `outside-root` refuses a command that may run in more than 8 directories or touches a path
+  of more than 200 segments, with one message, instead of judging only the first 8 or cutting the path; it judges the program
+  a quoted heredoc feeds to python or node like `-c`/`-e` code and leaves an unknown inline write to the write guards in
+  every mode. A program error of the reader of inline code refuses the call in every check that reads write targets.
+- Fewer limits: the inline-code write-target resolver and its eight limits are gone, and one nesting depth (4, in
+  `hooks/checks/common.py`) replaces the separate ones of the Bash, PowerShell, git-metadata and secret scans.
 - `outside-root` and the write guard see more write targets in shell commands: the folder `pushd` enters, the
   destination of `git clone` (also the default folder when none is named), `robocopy`, `perl -i`, targets fed
   through `xargs`, `Move-Item` from outside the project, files written by `python -c`/`node -e` code and by a

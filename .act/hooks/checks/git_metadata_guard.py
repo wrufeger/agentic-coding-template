@@ -141,7 +141,7 @@ import actlib
 
 from . import inline_code as _inline_code
 from .command_words import _git_invocations_with_prefix
-from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
+from .common import MAX_NESTING, _TOOL_PATH_FIELDS, _check_mode, _is_worker
 from .git_discard import _resolve_cwd_after_leading_cd, _resolve_target_dir
 from .powershell_targets import (
     _powershell_write_targets, _ps_command_name, _strip_literal_call, _strip_program_assignment,
@@ -1172,7 +1172,7 @@ def _copy_effective_targets(
 # How deep a program inside a command line of inline Python is read as a program again: the program a
 # Bash command hands to `python` is depth 0, a `python -c` inside its `os.system(...)` depth 1; at
 # _MAX_PROGRAM_DEPTH a command line is read as shell text only, and an `exec` of a literal is not read again.
-_MAX_PROGRAM_DEPTH = 2
+_MAX_PROGRAM_DEPTH = MAX_NESTING
 _FREED_TEXT = "__act_inline_python__"
 
 
@@ -1236,6 +1236,8 @@ def _python_program_reason(
                 )
                 if reason:
                     return reason, True, False
+        elif call.values:
+            return f"runs Python text nested deeper than {MAX_NESTING} levels (from {where})", True, False
     return None, True, program.harmless
 
 

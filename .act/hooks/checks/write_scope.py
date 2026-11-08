@@ -70,7 +70,7 @@ import actlib
 
 from . import inline_code as _inline_code
 from .brace_expand import literal_brace_variants
-from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode
+from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _is_unplaced_target
 from .powershell_targets import (
     _powershell_inline_code_targets,
     _powershell_write_targets,
@@ -1013,7 +1013,7 @@ def _inline_target_offends(raw: str, base: Optional[str], root: Path, scope: dic
     so does a relative one without a known directory. A literal is judged as written: see
     _inline_literal_path for the one Windows case where that takes a drive."""
     raw = _inline_literal_path(raw, base, root)
-    dynamic = _INLINE_DYNAMIC_RE.search(raw) is not None
+    dynamic = _INLINE_DYNAMIC_RE.search(raw) is not None or _is_unplaced_target(raw)
     if scope.get("mode") == "none" or dynamic or (base is None and not _is_absolute_target(raw)):
         return True
     rel = _normalize_candidate_path(raw, root, base if base is not None else str(root))
@@ -1055,7 +1055,12 @@ def _inline_hint(
     )
     if in_heredoc and scope.get("mode") != "none":
         hint += "; " + _HEREDOC_WAY_OUT
-    if _INLINE_DYNAMIC_RE.search(raw):
+    if _is_unplaced_target(raw):
+        hint = (
+            f"inline {language} code with a write call names a path its text does not show: write the path out "
+            "as a literal, or write the file with Write/Edit"
+        )
+    elif _INLINE_DYNAMIC_RE.search(raw):
         hint += "; a path with `$` or a backtick in the code cannot be checked, write it out"
     way_out = _throwaway_way_out(scope, in_throwaway_place)
     return f"{hint}; {way_out}" if way_out else hint

@@ -23,7 +23,34 @@ __all__ = [
     "_SHELL_TOOL_NAMES", "_shell_command", "_is_worker",
     "_HARNESS_MESSAGE_PREFIXES", "_is_harness_message",
     "_load_pending_notes", "_queue_pending_note", "_pop_pending_notes",
+    "MAX_NESTING", "_unplaced_target", "_is_unplaced_target", "_unplaced_reason",
 ]
+
+
+# How many levels of command text inside command text (`sh -c`, `eval`, `$(...)`, a program's command line,
+# PowerShell's `-Command`) any check follows. The one search depth of the write, delete and secret checks: text
+# nested deeper is unknown to them, and what a check cannot read it refuses (an unplaced target, below).
+MAX_NESTING = 4
+
+# The target that stands for a write the scan could not place or read to the end (deeper than MAX_NESTING, past
+# a work budget, code whose path the text does not show). It is no path: every check that reads write targets
+# refuses a command that holds one, and none resolves it against the directory the command started in.
+_UNPLACED_PREFIX = "<unplaced write: "
+
+
+def _unplaced_target(reason: str) -> str:
+    """The target no check may place, carrying the reason (_UNPLACED_PREFIX)."""
+    return f"{_UNPLACED_PREFIX}{reason}>"
+
+
+def _is_unplaced_target(target: object) -> bool:
+    """True for a target of _unplaced_target."""
+    return isinstance(target, str) and target.startswith(_UNPLACED_PREFIX) and target.endswith(">")
+
+
+def _unplaced_reason(target: str) -> str:
+    """The reason an _unplaced_target carries, for the message of the check that refuses it."""
+    return target[len(_UNPLACED_PREFIX):-1] if _is_unplaced_target(target) else target
 
 
 def _read_payload() -> dict:

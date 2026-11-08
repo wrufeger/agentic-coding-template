@@ -188,7 +188,7 @@ from typing import Optional
 import actlib
 import feedback_privacy
 
-from .common import _check_mode, _shell_command
+from .common import MAX_NESTING, _check_mode, _shell_command
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
     _ASSIGNMENT_RE,
@@ -258,7 +258,7 @@ _TIME_BUDGET = 4.5
 _HOOK_BUDGET = 8.0
 _GIT_TIMEOUT = 3.0
 _ALIAS_TIMEOUT = 1.5
-_MAX_NESTED_DEPTH = 3
+_MAX_NESTED_DEPTH = MAX_NESTING
 _NOTES_DIRNAME = "secret-scan-notes"
 # A session_id becomes an entry's filename (see _pending_file) — validated first, same reasoning
 # as checks/encoding_hint.py's own _SAFE_SESSION_ID_RE for the same kind of harness-supplied id.

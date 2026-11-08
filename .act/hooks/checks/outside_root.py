@@ -120,6 +120,7 @@ import actlib
 
 from .brace_expand import expand_braces
 from .command_words import _command_word_lists_new, _strip_command_prefix, _stripped_word_lists
+from .inline_code import UNKNOWN_WRITE, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
 from .powershell_targets import (
     _extract_ps_command_flag, _is_unplaced_target, _powershell_write_targets, _ps_raw_redirect_targets,
@@ -153,13 +154,17 @@ _ENV_OVERRIDE = "ACT_OUTSIDE_ROOT"
 _ENTRY_TTL = timedelta(hours=24)
 _MARKER_PARTS = (".act-local", "outside-allow")
 _MARKER_FILE = "adopt.json"
-_MAX_BASES = 8
-_MAX_NAMED = 3
+_MAX_BASES = 8  # directories one command may run in; more is unknown and refused (_Judge.capped)
 # More `cd`-like statements than this and the shared write-target scanners are not run (see _shell_findings).
 _MAX_CD_FOR_TARGET_SCAN = 150
 _CD_WORD_RE = re.compile(r"(?<![\w./-])(?:cd|chdir|pushd|set-location|sl|push-location)(?![\w./-])", re.IGNORECASE)
-# Paths with more segments than this are cut lexically, not resolved (symlinks are not followed there).
-_MAX_RESOLVE_SEGMENTS = 40
+# A path with more segments than this is not resolved (the walk costs a file system call per segment) and the call
+# is refused as unknown (_UnknownPath).
+_MAX_RESOLVE_SEGMENTS = 200  # above the most a chain of _MAX_CD_FOR_TARGET_SCAN directory changes reaches
+
+
+class _UnknownPath(ValueError):
+    """A path the check does not follow to the end (_MAX_RESOLVE_SEGMENTS)."""
 # A key that no real directory key can contain: a POSIX-rooted path on Windows has no drive, so it
 # lies outside every place without being comparable to one.
 _POSIX_PREFIX = "\0posix:"
@@ -452,8 +457,8 @@ def _resolve_text(raw: str, base: Optional[str], bash: bool, mode: str = "shell"
     if candidate and len(_SEGMENT_SPLIT_RE.split(candidate)) > _MAX_RESOLVE_SEGMENTS:
         # Resolving walks every segment of the path and costs O(depth) file system calls; a chain of
         # `cd sub &&` a thousand times makes that quadratic. Far past any real directory depth the
-        # path is cut lexically instead.
-        return os.path.normpath(candidate)
+        # path is unknown, and so is what the command touches.
+        raise _UnknownPath(f"a path with more than {_MAX_RESOLVE_SEGMENTS} segments")
     resolved = _resolve_path(text, base)
     return str(resolved) if resolved is not None else None
 
@@ -676,14 +681,26 @@ class _Judge:
         # scanners follow): the call is refused for them, see check_outside_root.
         self.unchecked: list[str] = []
 
+    def capped(self, bases: list) -> list:
+        """The directories a command may run in, at most _MAX_BASES; more is unknown and refuses the call."""
+        if len(bases) > _MAX_BASES:
+            reason = f"it may run in more than {_MAX_BASES} different directories"
+            if reason not in self.unchecked:
+                self.unchecked.append(reason)
+        return bases[:_MAX_BASES]
+
     def judge(self, raw: str, write: bool, bases: list[Optional[str]], mode: str = "shell") -> None:
         keys: list[str] = []
         texts: list[str] = []
-        for base in (bases or [None])[:_MAX_BASES]:
-            text = _resolve_text(raw, base, self.bash, mode)
-            if text:
-                keys.append(_key(text))
-                texts.append(text)
+        try:
+            for base in self.capped(bases or [None]):
+                text = _resolve_text(raw, base, self.bash, mode)
+                if text:
+                    keys.append(_key(text))
+                    texts.append(text)
+        except _UnknownPath as unknown:
+            self.unchecked.append(f"it holds {unknown}, more than the check follows")
+            return
         if not keys:
             return
         locked = write and any(_under(key, self.lock_key) for key in keys)
@@ -693,7 +710,10 @@ class _Judge:
 
     def scanner_failed(self, exc: Exception) -> None:
         """A scanner raised on this command: what it would have found is unknown, so the call counts as not checked."""
-        reason = f"a scanner of the check failed on it ({type(exc).__name__})"
+        reason = (
+            f"it holds {exc}, more than the check follows" if isinstance(exc, _UnknownPath)
+            else f"a scanner of the check failed on it ({type(exc).__name__})"
+        )
         if reason not in self.unchecked:
             self.unchecked.append(reason)
 
@@ -1129,7 +1149,7 @@ def _lock_scan(judge: _Judge, name: str, args: list[str], bases: list[Optional[s
             return
         sources, destination, recursive = plan
         recursive = recursive or _COPY_COMMANDS[name]
-        for base in bases[:_MAX_BASES]:
+        for base in judge.capped(bases):
             dest_text = _resolve_text(destination, base, judge.bash)
             if not dest_text or dest_text.startswith(_POSIX_PREFIX):
                 continue
@@ -1157,7 +1177,7 @@ def _lock_scan(judge: _Judge, name: str, args: list[str], bases: list[Optional[s
     else:
         return
     for destination in destinations:
-        for base in bases[:_MAX_BASES]:
+        for base in judge.capped(bases):
             if destination is None:
                 # No explicit destination: the shell's own directory, but only `.act-local` itself.
                 if base and _resolve_key(base, None, judge.bash) == judge.lock_parent_key:
@@ -1220,11 +1240,11 @@ def _scan_wsl(judge: _Judge, args: list[str], bases: list[Optional[str]], depth:
         if _DRIVE_RE.match(moved) or _UNC_RE.match(moved):
             judge.judge(moved, False, bases)
             texts = [
-                text for base in bases[:_MAX_BASES]
+                text for base in judge.capped(bases)
                 for text in [_resolve_text(moved, base, judge.bash)]
                 if text and not text.startswith(_POSIX_PREFIX)
             ]
-            bases = list(dict.fromkeys(texts))[:_MAX_BASES] if texts else [None]
+            bases = list(dict.fromkeys(texts)) if texts else [None]
         else:
             bases = [None]
     lists: list[list[str]] = []
@@ -1278,12 +1298,12 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
             index = _positional_after(args)
             if index is not None and args[index] not in ("-", "--"):
                 moved = [
-                    text for base in bases[:_MAX_BASES]
+                    text for base in judge.capped(bases)
                     for text in [_resolve_text(args[index], base, judge.bash)]
                     if text and not text.startswith(_POSIX_PREFIX)
                 ]
                 if moved:
-                    bases = list(dict.fromkeys(moved))[:_MAX_BASES]
+                    bases = list(dict.fromkeys(moved))
 
 
 _QUOTED_HEREDOC_RE = re.compile(r"""<<(-?)\s*(?:'([^'\s]+)'|"([^"\s]+)"|\\(\w+))""")
@@ -1532,6 +1552,7 @@ def _without_url_loop_words(command: str) -> str:
 
 def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     powershell = tool == "PowerShell"
+    whole = command  # the write scan below reads the program a quoted heredoc feeds to an interpreter, like `-c`/`-e`
     # The text of a quoted heredoc is never run; cut out first, so that a line of the command that
     # does not tokenize cannot push a scanner into reading the body as commands (`<id>` in a commit
     # message would be a redirection). A body a shell may run (`bash <<'EOF'`) stays.
@@ -1561,6 +1582,8 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
             if targets is None:
                 targets = _ps_raw_redirect_targets(command)
             for target in sorted(targets):
+                if target == UNKNOWN_WRITE:
+                    continue  # inline code whose path the text does not show: refused by the write guards, in every mode
                 if _is_unplaced_target(target):
                     # The scanner could not place this write (a relative one behind more directory changes than
                     # it tracks, a command larger than its budget): not checked in full, refused like a scanner
@@ -1571,7 +1594,12 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
                     continue
                 judge.judge(target, True, [cwd])
         else:
-            for target, base in _bash_write_targets(command, cwd, _GIT_WRITES_WORKER_SCOPE):
+            for target, base in _bash_write_targets(whole if mentions_interpreter(whole) else command, cwd, _GIT_WRITES_WORKER_SCOPE):
+                if target == UNKNOWN_WRITE:
+                    continue  # inline code whose path the text does not show: refused by the write guards, in every mode
+                if _is_unplaced_target(target):
+                    judge.unchecked.append(f"it holds a write the scanner could not place ({_unplaced_reason(target)})")
+                    continue
                 judge.judge(str(target), True, [base if base is not None else cwd])
     except Exception as exc:  # noqa: BLE001 - the read scan below still runs, the call is refused
         judge.scanner_failed(exc)
@@ -1635,11 +1663,7 @@ def _message(findings: list[_Finding], tool: str, mode: str) -> str:
         )
     more = ""
     if len(findings) > 1:
-        named = ", ".join(
-            f"`{item.raw}` ({'write' if item.write else 'read'})" for item in findings[1:_MAX_NAMED]
-        )
-        rest = len(findings) - _MAX_NAMED
-        more = f" Also outside: {named}" + (f" and {rest} more." if rest > 0 else ".")
+        more = f" {len(findings) - 1} more path(s) outside, the same way."
     return f"{lead} {what}{more} {ways}"
 
 

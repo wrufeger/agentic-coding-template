@@ -141,6 +141,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from . import inline_code as _inline_code
+from .common import MAX_NESTING, _is_unplaced_target, _unplaced_reason, _unplaced_target  # noqa: F401 - re-exported
 from . import shell_targets as _shell_targets  # the module itself, for the rsync flag it holds while scanning
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
@@ -262,31 +263,13 @@ _MAX_TRACKED_DIRECTORIES = 24
 # checked only in part.
 _RESOLUTION_BUDGET = 100_000
 _RESOLUTION_COST = 5
-# The target that stands for a write the scan could not place (see _MAX_TRACKED_DIRECTORIES and
-# _RESOLUTION_BUDGET). Every check that reads this module's targets refuses it (_is_unplaced_target); it is no
-# path, and no check resolves it against the directory the command started in.
-_UNPLACED_PREFIX = "<unplaced write: "
+_TOO_DEEP = f"command text nested deeper than {MAX_NESTING} levels"
 _LOST_DIRECTORY = "a directory the shell may be in was dropped past the cap of tracked directories"
 _BUDGET_USED_UP = "the command is larger than the scan follows (its resolution budget is used up)"
 _IEX_WORDS = frozenset({"invoke-expression", "iex"})
 
 # (path literal, the directory it resolves against or None when unknown, interpreter language)
 _PsInlineTarget = tuple[str, Optional[str], str]
-
-
-def _unplaced_target(reason: str) -> str:
-    """The target no check may place, carrying the reason (_UNPLACED_PREFIX)."""
-    return f"{_UNPLACED_PREFIX}{reason}>"
-
-
-def _is_unplaced_target(target: object) -> bool:
-    """True for a target of _unplaced_target — what every check that reads this module's targets refuses."""
-    return isinstance(target, str) and target.startswith(_UNPLACED_PREFIX) and target.endswith(">")
-
-
-def _unplaced_reason(target: str) -> str:
-    """The reason an _unplaced_target carries, for the message of the check that refuses it."""
-    return target[len(_UNPLACED_PREFIX):-1] if _is_unplaced_target(target) else target
 
 
 class _ScanLimit(RuntimeError):
@@ -384,7 +367,7 @@ _HERE_STRING_PREFIXES = ("@'", '@"')
 # cmd/cmd.exe /c "..." recurse into shell_targets' Bash scanner as a close-enough approximation.
 _PS_INTERP_NAMES = frozenset({"pwsh", "powershell"})
 _CMD_NAMES = frozenset({"cmd"})
-_PS_MAX_SCAN_DEPTH = 4
+_PS_MAX_SCAN_DEPTH = MAX_NESTING
 
 # Last-resort raw-text scan (see _ps_raw_redirect_targets), the PowerShell twin of
 # shell_targets._RAW_REDIRECT_RE: every word right after a redirect-style operator anywhere in the
@@ -1208,7 +1191,9 @@ def _flush_ps_statement(
             # corrupting a Windows path; 2026-09-23 review fix). Recursed with this same scanner
             # for both, not shell_targets' Bash one — once, from the whole tracked set.
             inner = _extract_cmd_c(args) if name in _CMD_NAMES else _extract_ps_command_flag(args)
-            if inner is not None and depth < _PS_MAX_SCAN_DEPTH:
+            if inner is not None and depth >= _PS_MAX_SCAN_DEPTH:
+                result.add(_unplaced_target(_TOO_DEEP))
+            elif inner is not None:
                 inner_targets = _powershell_write_targets(inner, base_cwd, git_writes, broad, depth + 1, tracked)
                 if inner_targets:
                     result.update(inner_targets)
@@ -1322,7 +1307,7 @@ def _piped_script_targets(
     name = _ps_command_name(statement[0])
     if name in _PS_INTERP_NAMES and _ps_reads_stdin(statement[1:]):
         if depth >= _PS_MAX_SCAN_DEPTH:
-            return set(_ps_raw_redirect_targets(piped))
+            return {*_ps_raw_redirect_targets(piped), _unplaced_target(_TOO_DEEP)}
         found = _powershell_write_targets(piped, base_cwd, git_writes, broad, depth + 1, tracked)
         return set(_ps_raw_redirect_targets(piped)) if found is None else found
     if name in ("bash", "sh") and _reads_script_from_stdin(statement):

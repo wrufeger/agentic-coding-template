@@ -861,7 +861,14 @@ def _note_check_outcome(module_name: str, payload: dict, result: int, printed: s
         _note_incident("check-slow", module_name, payload)
 
 
-def _check_failed(module_name: str, reason: str, payload: dict) -> int:
+def _is_reader_failure(exc: BaseException) -> bool:
+    """True for the failure of the reader of inline interpreter code (checks.inline_code.ReaderFailure): a command
+    it could not read to the end is refused by every check that reads write targets, fail-closed guard or not."""
+    reader_failure = getattr(sys.modules.get("checks.inline_code"), "ReaderFailure", None)
+    return isinstance(reader_failure, type) and isinstance(exc, reader_failure)
+
+
+def _check_failed(module_name: str, reason: str, payload: dict, reader_failure: bool = False) -> int:
     tool_name = payload.get("tool_name")
     if module_name == "mcp_ide":
         # mcp_ide is only ever this check's business for an actual `mcp__...` call (see
@@ -878,7 +885,7 @@ def _check_failed(module_name: str, reason: str, payload: dict) -> int:
         applies = tool_name in _FAIL_CLOSED_TOOLS
     reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
     _note_incident("check-error", module_name, payload, reason.split(":")[0])  # the exception class only, never its text
-    if module_name in _FAIL_CLOSED and applies:
+    if (module_name in _FAIL_CLOSED or reader_failure) and applies:
         print(f"[act] check {module_name} failed ({reason}) — refusing to be safe; "
               f"{tool_name} stays refused until the check works again, ask the owner to run "
               ".act/scripts/doctor.py (with the `!` prefix)", file=sys.stderr)
@@ -911,7 +918,7 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
                 result = func(checked_payload)
             except Exception as exc:  # noqa: BLE001
                 failed = True  # _check_failed has logged check-error; a refusal row on top would double it
-                result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload)
+                result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload, _is_reader_failure(exc))
             finally:
                 sys.stdout = real_stdout
             sys.stdout.write(printed.getvalue())

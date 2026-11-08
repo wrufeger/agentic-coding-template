@@ -94,7 +94,8 @@ refused by all three as a write they cannot place (any mode short of `off`): spl
 
 Limits: the shell check is best effort. A program that opens files itself (`python script.py`, `docker run -v`) is
 invisible; an MCP tool that takes a path is checked only if it is a read tool of the IDE server's known list. A command
-line with more than 150 `cd`-like statements is refused: split it. A word of only slashes (`//`), and a lone `/` as a
+line with more than 150 `cd`-like statements, one that may run in more than 8 directories, or a path of more than
+200 segments is refused as unknown: split it. A word of only slashes (`//`), and a lone `/` as a
 shell word of its own (`ls /`, `du -sh /`), is the file system root and refused; as text, an option value, a
 delimiter or the operator of an arithmetic expression it is not (allow-list in `outside_root.py`; in PowerShell
 `Get-ChildItem $dir / 2` passes).
@@ -342,38 +343,38 @@ call, the same statement, a list built from parts, `args=` - a `/c` or `/deny` s
 a switch that names a file (`/LOG:out.txt`). Limits: a file in the root of a drive named like a switch is
 not judged in that list; `from subprocess import run` used bare is not seen as a start.
 
-Python inline code in which that reading finds a write call gets one more step: the target of a write call that
-is built from string literals is resolved and judged like a literal. A tightening only: the literals stay judged
-as before, and the step runs only where the literal reading already sees a write call (`m = 'w'` and
-`open('src/x.py', m)` alone are not read, as before). For the targets it resolves, the write calls are `open` (also
-`io.open`, `codecs.open` and `.open(<mode>)` on a path) with a writing mode - a mode held in a name bound once is
-read through it, one that is not seen counts as writing -, `os.open` with flags naming `O_WRONLY`, `O_RDWR`,
-`O_CREAT`, `O_APPEND` or `O_TRUNC` (or flags that are not seen), `os.remove`, `unlink`, `rmdir`, `removedirs`,
-`mkdir`, `makedirs`, `truncate`, `chmod`, `chown`, `utime`, `rename`, `replace`, `symlink`, `link`, `shutil.copy`,
-`copy2`, `copyfile`, `copytree`, `move`, `rmtree`, and the `Path` methods `write_text`, `write_bytes`, `touch`,
-`mkdir`, `unlink`, `rmdir`, `chmod`, `lchmod`, `rename`, `link_to`, `symlink_to`, `hardlink_to` (for the last two
-the receiver is resolved, not the link target; a link target or a read-only `os.open` target written as a literal
-is still reported by the literal reading, as before). The target is built with `os.path.join`, `Path(...)` and `/`,
-`+`, an f-string, a name bound exactly once (also as the variable of a `for` loop over a list of literals), and
-`glob.glob`, `glob.iglob`, `Path(...).glob` and `.rglob`, whose pattern is judged as the target (a loop over
-`glob.glob('i18n/*.json')` writes to `i18n/*.json`, which must lie inside the scope). A value the resolver does
-not reach - a name bound twice or by a tuple, a parameter, a call, an alias, `getattr` - stays unjudged, as before:
-the check does not fail closed on it, and it makes no attempt to follow a program that hides its targets.
-Unjudged too is what lies beyond the resolver's limits, which bound its work by the length of the program: a
-program longer than 32,768 characters is not resolved at all; an expression standing for more than 256 strings,
-a string longer than 1,024 characters, a list of more than 256 items and a nesting deeper than 64 are not
-resolved; every string built, and every resolved mode judged once, costs from a work budget of two units per
-character of the program (a mode that no longer fits counts as writing); and the targets
-reported are at most one per string literal of the program, at most 256, and together at most 8,192 characters
-and two per character of the program - past any of these, nothing more is resolved.
+A write call of inline code is judged by the path its text shows. Shown is: a string literal; `Path(...)`,
+`os.path.join(...)` (Node `path.join(...)`) of such parts, put together with `+`, `/` or an f-string field; a name bound
+exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used unchanged - not a
+parameter, loop target, import, `with ... as`, `global` or `nonlocal`, and the program calls none of `exec`, `eval`,
+`compile`, `globals`, `locals`, `vars`, `setattr`, `getattr`, `__import__`, `sys._getframe`, `cProfile.run`, `runpy`,
+`os.chdir`, touches no `f_globals`, `f_locals`, `__dict__`, stores no attribute on a module (`os.path.join = ...`) -
+and, as the iterable of a `for` loop, `<such a path>.glob('<literal>')` or `.rglob(...)`, or `glob.glob('<literal>')` /
+`glob.iglob(...)` (also `recursive=True`; the folder is the literal part before the first wildcard): the files are
+somewhere under that folder when neither the folder nor the pattern holds `..` and the folder is relative. The check judges the
+folder (the guard of the template's own files refuses a folder that is or lies in `.act/`, the worker write scope
+allows it only where the scope covers all of the folder, outside-root asks whether it lies outside); for the project's
+own root (`Path('.')`, a pattern without a folder) and for `.git` it also judges the protected places below it the pattern can reach (`rglob`, a pattern with `/` or
+`**`, or one that matches such a name, as `*` matches `.act`). Anything else is not shown - a name that is bound twice,
+a loop variable, a parameter, `sys.argv`, a join or f-string with a variable part, `glob.glob(root_dir=...)`, a call's result, in Node
+a name or join with such a part - and the call is refused, not guessed at, by the write guard and the worker write scope
+alike (outside-root leaves it to them in every mode, for a `-c`/`-e` text as for a heredoc body; a Python program that
+cannot be read as Python while the literal reading sees a write call in it is refused too). The write calls are `open`
+(also `io.open`, `codecs.open`) with a writing mode or one that is not seen, `.open(<mode>)` on a path only with a
+writing mode written out (`Image.open(x)`, `tarfile.open(name)` and `gzip.open(fn)` read), `os.open` (not with
+`os.O_RDONLY` alone), `os.remove`, `unlink`, `rmdir`, `removedirs`, `mkdir`, `makedirs`, `truncate`, `chmod`, `chown`,
+`utime`, `rename`, `replace`, `symlink`, `link`, `shutil.copy`, `copy2`, `copyfile`, `copytree`, `move`, `rmtree`, and the
+`Path` methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`, `chmod`, `lchmod`, `rename`,
+`link_to`, `symlink_to`, `hardlink_to`. A reader failure (a program error of it, not a text it does not understand)
+refuses the call in every check that reads write targets. Way out: write the path out in the code, or write the file
+with a file tool.
 
 Limits of that reading (what stays unseen; it catches the common form, not every form):
 - the program is not in the command: a script file run by path (`python /tmp/x.py`), code held in a
   shell variable or read from a file (`cat x.py | python`);
-- the path is not a literal that tells it: built at run time and not resolved (`os.environ[...]`, a name
-  bound twice, a function parameter, a call such as `p.name`; see the paragraph above); a name without extension and without
-  separator (`open('out', 'w')`), which includes dotfiles such as `.envrc` (a leading dot is no extension:
-  `open('.envrc', 'w')` is not judged); a glob- or regex-looking literal (`*?[]^|()<>`);
+- the path is not a literal that tells it: a write call with such a path is refused (see the paragraph above); a
+  name without extension and without separator in a path literal (`open('out', 'w')`; a dot name such as `.act` or
+  `.envrc` is judged where a write call names it); a glob- or regex-looking literal (`*?[]^|()<>`);
 - the write is not in the list: writes through `subprocess`, `os.system` or `child_process`; a bare
   `.write(` such as `sys.stdout.write`, `str.replace` and `Path.replace`, `print(..., file=...)`,
   `fs.openSync`; a name imported under another one;

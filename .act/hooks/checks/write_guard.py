@@ -21,7 +21,8 @@ from typing import Optional
 import actlib
 
 from .common import _TOOL_PATH_FIELDS, _check_mode
-from .powershell_targets import _is_unplaced_target, _powershell_write_targets, _unplaced_reason
+from .common import _is_unplaced_target, _unplaced_reason
+from .powershell_targets import _powershell_write_targets
 from .shell_targets import (
     _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_dynamic_target, _resolve_path,
 )
@@ -120,8 +121,8 @@ def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:
     return _resolve_path(raw, base_cwd)
 
 
-def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> bool:
-    """True if a Bash command writes to a path under `root`'s own .act/ — judged from the write
+def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
+    """The refusal message if a Bash command writes to a path under `root`'s own .act/ — judged from the write
     targets the shared scanner finds (_bash_write_targets), not from a mere mention: `cat .act/x >
     /tmp/y`, `python .act/scripts/doctor.py 2>&1 | tail` and `grep -rn x .act/ 2>/dev/null` are
     reads and pass. Of the git subcommands only `git mv`/`git rm` count here
@@ -131,18 +132,21 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
     that contains a variable, or whose own project `root` could not be determined is denied only
     if its own text names .act/ — everything else about it cannot be decided here (a
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
-    the raw text — a sibling checkout's .act/ is not this project's to protect)."""
+    the raw text — a sibling checkout's .act/ is not this project's to protect). A write the scan could
+    not place (inline code whose path the text does not show, _is_unplaced_target) is refused as such."""
     for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
+        if _is_unplaced_target(raw):
+            return _unplaced_message(raw)
         if base is None or _is_dynamic_target(raw) or root is None:
             if _names_protected_path(raw, root):
-                return True
+                return _WRITE_GUARD_MESSAGE
             continue
         resolved = _resolve_path(raw, base)
         if resolved is None:
-            return True  # cannot place it — fail closed, see the module docstring
+            return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
         if _is_under_project_act(resolved, root):
-            return True
-    return False
+            return _WRITE_GUARD_MESSAGE
+    return None
 
 
 _WRITE_GUARD_MESSAGE = (
@@ -152,12 +156,12 @@ _WRITE_GUARD_MESSAGE = (
 
 
 def _unplaced_message(target: str) -> str:
-    """The refusal of a PowerShell command whose write the scanner could not place
-    (powershell_targets._unplaced_target): the reason the target carries, and the way out."""
+    """The refusal of a command whose write the scanner could not place (common._unplaced_target): the
+    reason the target carries, and the way out."""
     return (
-        "[act] write-guard refused -- the PowerShell command could not be checked to the end: "
+        "[act] write-guard refused -- the command could not be checked to the end: "
         f"{_unplaced_reason(target)}, so where it writes is unknown and .act/ (the template's own files) "
-        "may be among it. Split it into shorter commands with fewer directory changes."
+        "may be among it. Split it into shorter commands, or write the path out in the code as a literal."
     )
 
 
@@ -209,9 +213,7 @@ def _targets_protected_path(
     _is_under_project_act."""
     if tool_name == "Bash":
         command = tool_input.get("command")
-        if isinstance(command, str) and _bash_targets_protected_path(command, base_cwd, root):
-            return _WRITE_GUARD_MESSAGE
-        return None
+        return _bash_targets_protected_path(command, base_cwd, root) if isinstance(command, str) else None
     if tool_name == "PowerShell":
         command = tool_input.get("command")
         return _powershell_targets_protected_path(command, base_cwd, root) if isinstance(command, str) else None

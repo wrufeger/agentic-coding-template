@@ -56,14 +56,18 @@
 # (`/LOG:out.txt`) stay paths. The cost: a switch-like literal in the tool's own list is never judged
 # as a file in the root of a drive.
 #
-# Python targets built from literals (`os.path.join`, `Path(...) / x`, an f-string, a loop over
-# `glob.glob(...)`) are resolved separately by _resolved_python_targets - only for a program in which
-# the reading above sees a write call, and within limits set by the length of the program - see the
-# section below write_paths.
+# A write call whose path the text does not show is not resolved and not guessed at: the code is refused
+# (UNKNOWN_WRITE, an unplaced target that every check which reads write targets turns into a refusal). What the text
+# shows is a short allow-list (_Env for Python, _node_write_targets for Node): a string literal, `Path(...)` /
+# `os.path.join(...)` / `path.join(...)` of such parts, a name bound exactly once to such a value and used unchanged
+# (nothing in the program rebinds names, _REBINDING_NAMES), and `Path('<literal>').glob('<literal>')` / `.rglob(...)`
+# on a relative folder without `..`, and `glob.glob` / `glob.iglob` of a literal pattern (somewhere under that folder, _Under).
+# A name bound twice, a loop variable, a parameter, `sys.argv`, a join or f-string with such a part, a call's result
+# is not shown. So is Python
+# code that cannot be read as Python while the literal reading sees a write call in it. The way out is the same
+# everywhere: write the path out in the code, or write the file with a file tool.
 #
-# Known limits (a path missed here is simply not checked): a path built at run time that the resolver
-# does not read either (`os.environ[...]`, a name bound twice, a function parameter, more than the
-# resolver's limits allow); a bare name without an extension (`open('out', 'w')`), which includes a dotfile such as
+# Known limits (a path missed here is simply not checked): a bare name without an extension (`open('out', 'w')`), which includes a dotfile such as
 # `.envrc` (a leading dot is no extension); a script file run by path; writes
 # through `subprocess`/`os.system`/`child_process`; a write call that is not in the list (`.write(`,
 # `Path.replace`, `fs.openSync`, `from shutil import rmtree` used bare); a string the lexer reads
@@ -77,12 +81,15 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import os
 import re
 import shlex
 import sys
 import unicodedata
 from typing import Callable, NamedTuple, Optional
+
+from .common import _unplaced_target
 
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
@@ -817,417 +824,147 @@ def _without_switches(language: str, literals: list[_Literal], skeleton: str) ->
             result.extend(replaced.get(index, [literal]))
     return result
 
+# The target a write call stands for when the text of the code does not show its path (a name that is not bound
+# once to a literal, a join with a variable part, an f-string with such a field, a call's result): no part of it
+# is resolved, the call that holds it is refused.
+UNKNOWN_WRITE = _unplaced_target("inline interpreter code writes to a path its text does not show")
+_NODE_TWO_PATHS_RE = re.compile(r"(?:copyFile|cp|rename|symlink)")
+_NODE_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*")
+_NODE_JOIN_RE = re.compile(r"(?<![\w$.])path\s*\.\s*join\s*\(")
+# What may follow the literal of `const NAME = "literal"` so that the literal is the whole value: the end of the
+# statement, or a line break not continued by an operator, a call or a member access.
+_NODE_INITIALIZER_END_RE = re.compile(r"[ \t]*(?:[;,]|$|\r?\n\s*(?![.(\[+\-*/%?:|&<>=]))")
+_NODE_REBINDING_RE = re.compile(r"(?<![\w$])(?:eval|Function|vm)(?![\w$])")
+
+
+def _node_const_ok(skeleton: str, name: str) -> bool:
+    """True if `name` is declared once in the skeleton of Node code and is not bound or assigned any other way:
+    no second declaration, destructuring, parameter, `catch` binding or assignment (a `const` cannot change, but
+    an inner scope can hide it)."""
+    word = re.escape(name)
+    before = r"(?<![\w$.])"
+    declarations = len(re.findall(before + r"(?:const|let|var)\s+" + word + r"(?![\w$])", skeleton))
+    hidden = (
+        before + r"(?:const|let|var)\s*[\[{][^=;]*?(?<![\w$.])" + word + r"(?![\w$])",
+        r"\bfunction\b[^(]*\([^)]*(?<![\w$.])" + word + r"(?![\w$])",
+        r"\([^()]*(?<![\w$.])" + word + r"(?![\w$])[^()]*\)\s*(?:=>|\{)",
+        before + word + r"\s*=>",
+        r"\bcatch\s*\(\s*" + word + r"(?![\w$])",
+        before + word + r"\s*(?:\+\+|--)",
+        r"(?:\+\+|--)\s*" + word + r"(?![\w$])",
+    )
+    assigns = len(re.findall(before + word + r"\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|&&|\|\|)?=(?!=)", skeleton))
+    return declarations == 1 and assigns == 1 and not any(re.search(pattern, skeleton) for pattern in hidden)
+
+
+def _node_write_targets(literals: list[_Literal], skeleton: str) -> tuple[list[str], bool]:
+    """(the paths the write calls of Node code name when the text shows them, whether one does not): a path is a
+    string literal, a name declared once as `const NAME = "literal"` (and not hidden or assigned again), or
+    `path.join(...)` of such parts; the first two paths of a copy, move or link. Code that holds `eval`, `Function`
+    or `vm` shows no name."""
+    spans = _literal_spans(NODE, skeleton)
+    if len(spans) != len(literals):
+        return [], _NODE_WRITE_RE.search(skeleton) is not None
+    by_span = {span: index for index, span in enumerate(spans)}
+    names: dict[str, str] = {}
+    if _NODE_REBINDING_RE.search(skeleton) is None:
+        for match in re.finditer(r"(?<![\w$.])const\s+([A-Za-z_$][\w$]*)\s*=\s*(?=['\"`])", skeleton):
+            index = next((i for i, span in enumerate(spans) if span[0] == match.end()), None)
+            if index is None or literals[index].interpolated or not _node_const_ok(skeleton, match.group(1)):
+                continue
+            if _NODE_INITIALIZER_END_RE.match(skeleton, spans[index][1]):
+                names[match.group(1)] = literals[index].value
+
+    def path_of(span: tuple[int, int], depth: int = 0) -> Optional[str]:
+        start, end = span
+        while start < end and skeleton[start].isspace():
+            start += 1
+        while end > start and skeleton[end - 1].isspace():
+            end -= 1
+        text = skeleton[start:end]
+        if (start, end) in by_span:
+            literal = literals[by_span[(start, end)]]
+            return None if literal.interpolated else literal.value
+        if _NODE_IDENTIFIER_RE.fullmatch(text):
+            return names.get(text)
+        join = _NODE_JOIN_RE.match(text)
+        if join is None or not text.endswith(")") or depth > _LITERAL_FOLD_DEPTH:
+            return None
+        parts = _argument_spans(skeleton, start + join.end())
+        if parts[-1][1] != end - 1:
+            return None
+        values = [path_of(part, depth + 1) for part in parts]
+        return None if None in values else os.path.join(*[value for value in values if value is not None])
+
+    found: list[str] = []
+    unknown = False
+    for match in _NODE_WRITE_RE.finditer(skeleton):
+        count = 2 if _NODE_TWO_PATHS_RE.match(match.group()) else 1
+        arguments = _argument_spans(skeleton, match.end())
+        values = [path_of(span) for span in arguments[:count]]
+        if len(arguments) < count or None in values:
+            unknown = True
+        found.extend(value for value in values if value is not None and _resolved_is_path(value))
+    return found, unknown
+
+
 def write_paths(language: str, code: str) -> list[str]:
-    """The path literals of `code` when it contains a write call, else []: the paths a check judges as
-    possible write targets. The switches of a Windows tool the code starts are not paths (_without_switches).
-    For Python, the write targets built from literals (_resolved_python_targets, bounded by the length of
-    the program) are added to the literals; a program without a write call in the literal reading is not
-    resolved at all."""
+    """The paths a check judges as possible write targets of `code`: the path literals when it contains a write
+    call (the switches of a Windows tool the code starts are no paths, _without_switches), the paths the write
+    calls name (write_targets) and UNKNOWN_WRITE when a write call's path is not shown by the text."""
     literals, skeleton = _scan(language, code)
-    if not _skeleton_has_write_call(language, skeleton):
-        return []
     found: dict[str, None] = {}
-    for literal in _without_switches(language, literals, skeleton):
-        candidate = _path_candidate(literal)
-        if candidate is not None:
-            found[candidate] = None
+    if _skeleton_has_write_call(language, skeleton):
+        for literal in _without_switches(language, literals, skeleton):
+            candidate = _path_candidate(literal)
+            if candidate is not None:
+                found[candidate] = None
     if language == PYTHON:
-        for target in _resolved_python_targets(code):
-            found[target] = None
+        if _skeleton_has_write_call(language, skeleton):
+            found.update(dict.fromkeys(write_targets(language, code)))
+    else:
+        named, unknown = _node_write_targets(literals, skeleton)
+        found.update(dict.fromkeys(named))
+        if unknown:
+            found[UNKNOWN_WRITE] = None
     return list(found)
 
 
 def write_targets(language: str, code: str) -> list[str]:
     """The paths a write call of `code` names as literals - what a check judges that must not refuse a program
-    for a path it only mentions (the guard of the template's own files, the outside-root check). Python: the
-    path literals of the write calls the program reading reports (read_python_program: `open(<path>, 'w')`,
-    `Path(<path>).write_text(...)`, `os.remove`, `shutil.copy` to its destination ...), with the shape rule of a
-    literal (a separator, or a bare file name with an extension); a path built at run time is not seen, the
-    resolver of write_paths is not used here. Node: write_paths (its path literals when a write call is
-    there)."""
+    for a path it only mentions (the guard of the template's own files, the outside-root check) - and
+    UNKNOWN_WRITE when a write call names a path the text does not show, or the program cannot be read as Python
+    and the literal reading sees a write call in it. Python: the write calls the program reading reports
+    (read_python_program: `open(<path>, 'w')`, `Path(<path>).write_text(...)`, `os.remove`, `shutil.copy` to its
+    destination ...), the path being what the text shows (the allow-list in the header). Node: write_paths."""
     if language != PYTHON:
         return write_paths(language, code)
     found: dict[str, None] = {}
     program = read_python_program(code)
-    if program is not None:
-        for call in program.calls:
-            if call.kind == CALL_WRITE:
-                for value in call.values:
-                    if _resolved_is_path(value):
-                        found[value] = None
+    if program is None:
+        if _skeleton_has_write_call(PYTHON, _scan(PYTHON, code)[1]):
+            found[UNKNOWN_WRITE] = None
+        return list(found)
+    for call in program.calls:
+        if call.kind == CALL_WRITE:
+            found.update((value, None) for value in call.values if _resolved_is_path(value))
+            if call.unknown_path:
+                found[UNKNOWN_WRITE] = None
     return list(found)
 
 
-# --- Write targets of Python built from literals ------------------------------------------------------
-#
-# A small, static resolver for the write targets the literal reading above cannot see: the argument (or
-# receiver) of a write call that is built from string literals by `os.path.join`, `Path(...)` and `/`,
-# `+`, an f-string whose fields are all resolvable, a name bound exactly once (`x = ...`, or the target
-# of a `for` loop), and the matches of `glob.glob` / `glob.iglob` / `Path(...).glob` / `.rglob`, which are
-# taken as the glob pattern itself (a loop over `glob.glob('i18n/*.json')` writes to `i18n/*.json`).
-# It runs only for a program in which the literal reading already sees a write call (write_paths), and it
-# only ever adds to what that reading reports: a resolved target is judged like a literal, and the
-# literals stay judged as before. Which calls write, and which of their arguments: `open` (also `io.open`,
-# `codecs.open`, `<path>.open`) with a writing mode - a mode held in a name bound once is read through
-# it, a mode that is still not seen counts as writing -, `os.open` unless its flags are a plain `|` of
-# `O_*` names without a writing one, the `os.` / `shutil.` functions and the `Path` methods the regex
-# reading names; the link target of `symlink_to` / `hardlink_to` is read, not written, so only the
-# receiver is resolved. (The literal reading knows none of these distinctions and keeps reporting every
-# path literal of such a program, as it did before.)
-#
-# What is not resolved is left unjudged, as before: a name bound twice or by a tuple, a function
-# parameter, a call, `.name`, `os.environ`, a comprehension, an alias, `getattr` - not a wall, no attempt
-# to follow a program that hides its targets. Not resolved either is what lies beyond the limits below.
-# They bound the work of this reading, and of the judging of what it reports, by the length of the
-# program - by construction rather than by case (the hook has a time limit, and the checks after this
-# one must still run):
-#   - a program longer than _RESOLVE_PROGRAM_LIMIT is not resolved at all (parsing it is the one cost
-#     here that is not linear in practice), so parsing and walking cost a bounded, small amount;
-#   - every expression is worked out at most once, whatever the outcome (_TargetResolver remembers
-#     successes and failures by node), so the walk is linear in the size of the program;
-#   - the size of a product (an f-string, `+`, `/`, `os.path.join` over parts that stand for several
-#     strings) is known from the sizes of its parts before it is built: more than _RESOLVE_LIMIT strings,
-#     or a string longer than _RESOLVE_TEXT, is not built, and a list of more than _RESOLVE_LIMIT items
-#     is not read;
-#   - every string built or handed on costs units (one, plus one per _RESOLVE_UNIT_CHARS characters),
-#     paid before the work is done; a program has _RESOLVE_UNITS_PER_CHAR units per character of its
-#     text, and what does not fit is not resolved - so the strings built for a program are at most a
-#     small multiple of its length;
-#   - the targets reported are at most one per string literal of the program and at most
-#     _RESOLVE_LIMIT, and together at most _RESOLVE_REPORT characters and _RESOLVE_REPORT_PER_CHAR per
-#     character of the program: no more targets, and no more characters of them, than the literal
-#     reading could report for a program of that size - the check that judges each target (whose cost
-#     grows with the segments of a path) keeps its cost in the order it had before.
-
-_RESOLVE_PROGRAM_LIMIT = 32_768  # characters of a program that is resolved at all; a longer one is read as before
-_RESOLVE_LIMIT = 256             # strings one expression may stand for; also the targets one program may report
-_RESOLVE_TEXT = 1024             # characters one string may have
-_RESOLVE_DEPTH = 64              # nesting followed through names, operators and calls (bounds the recursion)
-_RESOLVE_UNITS_PER_CHAR = 2      # work units a program may spend per character of its text
-_RESOLVE_UNIT_CHARS = 256        # characters of one string that cost one more unit
-_RESOLVE_REPORT = 8192           # characters all targets reported for one program may have together, at most ...
-_RESOLVE_REPORT_PER_CHAR = 2     # ... and no more than this many per character of the program
-
-_RESOLVE_WRITE_FUNCTIONS: dict[tuple[str, str], tuple[int, ...]] = {
-    ("os", "remove"): (0,), ("os", "unlink"): (0,), ("os", "rmdir"): (0,), ("os", "removedirs"): (0,),
-    ("os", "mkdir"): (0,), ("os", "makedirs"): (0,), ("os", "truncate"): (0,), ("os", "open"): (0,),
-    ("os", "chmod"): (0,), ("os", "chown"): (0,), ("os", "utime"): (0,), ("os", "symlink"): (1,),
-    ("os", "link"): (1,), ("os", "rename"): (0, 1), ("os", "replace"): (0, 1),
-    ("shutil", "copy"): (1,), ("shutil", "copy2"): (1,), ("shutil", "copyfile"): (1,),
-    ("shutil", "copytree"): (1,), ("shutil", "move"): (0, 1), ("shutil", "rmtree"): (0,),
-}
-_RESOLVE_WRITE_METHODS: dict[str, tuple[int, ...]] = {
-    "write_text": (), "write_bytes": (), "touch": (), "mkdir": (), "unlink": (), "rmdir": (),
-    "chmod": (), "lchmod": (), "rename": (0,), "link_to": (0,), "symlink_to": (), "hardlink_to": (),
-}
-_RESOLVE_OPEN_MODULES = frozenset({"io", "codecs"})
-_RESOLVE_ROOTED = ("/", "\\")
-_OS_WRITE_FLAGS = frozenset({"O_WRONLY", "O_RDWR", "O_CREAT", "O_APPEND", "O_TRUNC"})
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f]")
-
-
-class _Unresolved(Exception):
-    """An expression the resolver does not read to literals (within its limits)."""
-
-
-def _joined(head: str, part: str) -> str:
-    """`head` and `part` joined the way `os.path.join` / `Path` join: a rooted part restarts."""
-    if not head or part.startswith(_RESOLVE_ROOTED):
-        return part
-    return head + part if head.endswith(_RESOLVE_ROOTED) else f"{head}/{part}"
-
-
-def _mode_string_writes(mode: str) -> bool:
-    """True if `mode` is a valid `open` mode that writes (w, a, x or +)."""
-    return _PY_MODE_RE.match(f"'{mode}'") is not None and any(char in "wax+" for char in mode)
-
-
-def _plain_call(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Call) and not node.keywords
-        and not any(isinstance(argument, ast.Starred) for argument in node.args)
-    )
-
-
-def _resolve_callee(func: ast.expr) -> Optional[str]:
-    """What a call resolves as: join (`Path(...)`, `os.path.join`), str, wrap (`sorted`, `list` ...), glob
-    (`glob.glob`), pathglob / pathrglob (`<path>.glob(...)` / `.rglob(...)`), else None."""
-    if isinstance(func, ast.Name):
-        if func.id in _PATH_CLASSES:
-            return "join"
-        if func.id == "str":
-            return "str"
-        if func.id in ("sorted", "list", "tuple", "set", "reversed"):
-            return "wrap"
-        if func.id in ("glob", "iglob"):
-            return "glob"
-        return None
-    if isinstance(func, ast.Attribute):
-        base = func.value
-        if func.attr in _PATH_CLASSES:
-            return "join"
-        if func.attr == "join" and isinstance(base, ast.Attribute) and base.attr == "path":
-            return "join"
-        if func.attr in ("glob", "iglob") and isinstance(base, ast.Name) and base.id == "glob":
-            return "glob"
-        if func.attr == "glob":
-            return "pathglob"
-        if func.attr == "rglob":
-            return "pathrglob"
-    return None
-
-
-class _TargetResolver:
-    """The names a program binds exactly once (by `x = ...` or as the target of a `for`), and the strings an
-    expression stands for - within the limits of the section comment, paid from `budget` units."""
-
-    def __init__(self, tree: ast.AST, budget: int) -> None:
-        self._tree = tree  # keeps every node alive, so a node id names one node for as long as this lives
-        stores: dict[str, int] = {}
-        self.assigned: dict[str, ast.expr] = {}
-        self.looped: dict[str, ast.expr] = {}
-        self.literals = 0  # string constants in the program, f-string pieces included
-        self.calls: list[ast.Call] = []  # every call of the program, in the order of the walk
-
-        def store(name: str, times: int = 1) -> None:
-            stores[name] = stores.get(name, 0) + times
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant):
-                if isinstance(node.value, str):
-                    self.literals += 1
-            elif isinstance(node, ast.Name):
-                if isinstance(node.ctx, ast.Store):
-                    store(node.id)
-            elif isinstance(node, ast.Call):
-                self.calls.append(node)
-            elif isinstance(node, ast.arg):
-                store(node.arg)
-            elif isinstance(node, ast.alias):
-                store((node.asname or node.name).split(".")[0])
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                store(node.name)
-            elif isinstance(node, ast.ExceptHandler) and node.name:
-                store(node.name)
-            elif isinstance(node, (ast.Global, ast.Nonlocal)):
-                for name in node.names:
-                    store(name, 2)
-            elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                self.assigned[node.targets[0].id] = node.value
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
-                self.assigned[node.target.id] = node.value
-            elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
-                self.looped[node.target.id] = node.iter
-        self.once = frozenset(name for name, count in stores.items() if count == 1)
-        self._left = budget
-        # What a node was worked out to, by id: a list of strings, or None for a failure. Set to None
-        # before the node is worked out, so a cycle back to it (`a = f"{a}"`) fails instead of recursing.
-        self._values: dict[int, Optional[list[str]]] = {}
-        self._items: dict[int, Optional[list[str]]] = {}
-        # The verdict of mode_writes on a list of modes from _values, by the id of that list (kept alive
-        # there), so many calls with the same mode name judge its strings once.
-        self._mode_verdicts: dict[int, bool] = {}
-
-    def spend(self, units: int) -> None:
-        """Pays `units` of the program's budget, or raises _Unresolved when they do not fit (the budget
-        is left as it is: a smaller value may still fit later)."""
-        if units > self._left:
-            raise _Unresolved
-        self._left -= units
-
-    def values(self, node: ast.expr, depth: int = 0) -> list[str]:
-        """The strings `node` stands for, or raises _Unresolved."""
-        return self._remembered(self._values, self._work_out_values, node, depth)
-
-    def items(self, node: ast.expr, depth: int = 0) -> list[str]:
-        """The strings iterating over `node` yields (a list of literals, a glob), or raises _Unresolved."""
-        return self._remembered(self._items, self._work_out_items, node, depth)
-
-    def _remembered(self, cache: dict, work_out: "Callable[[ast.expr, int], list[str]]", node: ast.expr, depth: int) -> list[str]:
-        key = id(node)
-        if key in cache:
-            known = cache[key]
-            if known is None:
-                raise _Unresolved
-            return known
-        if depth > _RESOLVE_DEPTH:
-            raise _Unresolved  # not remembered: the same node may be met again higher up
-        cache[key] = None
-        found = work_out(node, depth + 1)  # raises _Unresolved: the node stays a failure
-        cache[key] = found
-        return found
-
-    def mode_writes(self, call: ast.Call, position: int) -> bool:
-        """Like `_mode_writes`, but a mode held in a name bound once is read through it; a mode that is
-        still not seen is taken as writing. The strings of a resolved mode are judged once per list and
-        paid from the budget like any other built string; when they do not fit, the mode counts as
-        writing."""
-        node = _argument(call, position, "mode")
-        if node is None:
-            return False
-        modes = _fold_string(node)
-        if modes is not None:
-            return _mode_string_writes(modes)  # a literal at this call: its length is part of the program
-        try:
-            found = self.values(node)
-        except _Unresolved:
-            return True
-        key = id(found)
-        if key not in self._mode_verdicts:
-            longest = max((len(mode) for mode in found), default=0)
-            try:
-                self.spend(len(found) * (1 + longest // _RESOLVE_UNIT_CHARS))
-                verdict = any(_mode_string_writes(mode) for mode in found)
-            except _Unresolved:
-                verdict = True
-            self._mode_verdicts[key] = verdict
-        return self._mode_verdicts[key]
-
-    def _combined(self, parts: list[list[str]], join: bool) -> list[str]:
-        """Every combination of one string from each of `parts`, concatenated - or, with `join`, joined the
-        way `os.path.join` / `Path` join. Nothing is built before its size is known and paid for: the
-        count is the product of the parts' sizes, the longest result is at most the sum of their longest
-        strings (plus a separator per part when joining)."""
-        count = 1
-        for options in parts:
-            count *= len(options)
-            if count > _RESOLVE_LIMIT:
-                raise _Unresolved
-        if count == 0:
-            return []  # a part that stands for nothing (a loop over an empty list)
-        self.spend(count)  # pays for the look at every part below too: those with several strings hold at most count together
-        longest = sum(max(len(text) for text in options) for options in parts) + (len(parts) if join else 0)
-        if longest > _RESOLVE_TEXT:
-            raise _Unresolved
-        self.spend(count * (longest // _RESOLVE_UNIT_CHARS))
-        result = [""]
-        for options in parts:
-            if join:
-                result = [_joined(head, part) for head in result for part in options]
-            else:
-                result = [head + part for head in result for part in options]
-        return result
-
-    def _work_out_values(self, node: ast.expr, depth: int) -> list[str]:
-        if isinstance(node, ast.Constant):
-            if not isinstance(node.value, str) or len(node.value) > _RESOLVE_TEXT:
-                raise _Unresolved
-            self.spend(1 + len(node.value) // _RESOLVE_UNIT_CHARS)
-            return [node.value]
-        if isinstance(node, ast.Name):
-            if node.id in self.once:
-                if node.id in self.assigned:
-                    return self.values(self.assigned[node.id], depth)
-                if node.id in self.looped:
-                    return self.items(self.looped[node.id], depth)
-            raise _Unresolved
-        if isinstance(node, ast.JoinedStr):
-            parts: list[list[str]] = []
-            for piece in node.values:
-                if isinstance(piece, ast.Constant) and isinstance(piece.value, str):
-                    parts.append([piece.value])
-                elif isinstance(piece, ast.FormattedValue) and piece.conversion == -1 and piece.format_spec is None:
-                    parts.append(self.values(piece.value, depth))
-                else:
-                    raise _Unresolved
-            return self._combined(parts, join=False)
-        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
-            parts = [self.values(node.left, depth), self.values(node.right, depth)]
-            return self._combined(parts, join=isinstance(node.op, ast.Div))
-        if _plain_call(node):
-            kind = _resolve_callee(node.func)
-            if kind == "join" and node.args:
-                return self._combined([self.values(argument, depth) for argument in node.args], join=True)
-            if kind == "str" and len(node.args) == 1:
-                return self.values(node.args[0], depth)
-            if kind in ("glob", "pathglob", "pathrglob"):
-                return self.items(node, depth)
-        raise _Unresolved
-
-    def _work_out_items(self, node: ast.expr, depth: int) -> list[str]:
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            if len(node.elts) > _RESOLVE_LIMIT:
-                raise _Unresolved
-            self.spend(len(node.elts))
-            found: list[str] = []
-            for element in node.elts:
-                found.extend(self.values(element, depth))
-                if len(found) > _RESOLVE_LIMIT:
-                    raise _Unresolved
-            self.spend(len(found))
-            return found
-        if isinstance(node, ast.Name):
-            if node.id in self.once and node.id in self.assigned:
-                return self.items(self.assigned[node.id], depth)
-            raise _Unresolved
-        if _plain_call(node):
-            kind = _resolve_callee(node.func)
-            if kind == "wrap" and len(node.args) == 1:
-                return self.items(node.args[0], depth)
-            if kind == "glob" and len(node.args) == 1:
-                return self.values(node.args[0], depth)
-            if kind in ("pathglob", "pathrglob") and len(node.args) == 1 and isinstance(node.func, ast.Attribute):
-                parts = [self.values(node.func.value, depth)]
-                if kind == "pathrglob":
-                    parts.append(["**"])
-                parts.append(self.values(node.args[0], depth))
-                return self._combined(parts, join=True)
-        raise _Unresolved
-
-
-def _flags_write(node: Optional[ast.expr]) -> bool:
-    """Whether the flags of `os.open` write: they name one of _OS_WRITE_FLAGS, or are not a plain `|` of
-    `os.O_*` / `O_*` names (a number, a variable, a call), or are missing."""
-    if node is None:
-        return True
-    names: list[str] = []
-    pending = [node]
-    while pending:
-        part = pending.pop()
-        if isinstance(part, ast.BinOp) and isinstance(part.op, ast.BitOr):
-            pending.extend((part.left, part.right))
-        elif isinstance(part, ast.Attribute) and part.attr.startswith("O_"):
-            names.append(part.attr)
-        elif isinstance(part, ast.Name) and part.id.startswith("O_"):
-            names.append(part.id)
-        else:
-            return True
-    return any(name in _OS_WRITE_FLAGS for name in names)
-
-
-def _write_call_targets(call: ast.Call, resolver: _TargetResolver) -> list[ast.expr]:
-    """The expressions a write call (see the section comment) takes as the path it writes."""
-    func = call.func
-    if isinstance(func, ast.Name):
-        if func.id == "open" and call.args and resolver.mode_writes(call, 1):
-            return [call.args[0]]
-        return []
-    if not isinstance(func, ast.Attribute):
-        return []
-    base = func.value
-    if isinstance(base, ast.Name):
-        if base.id in _RESOLVE_OPEN_MODULES and func.attr == "open" and call.args and resolver.mode_writes(call, 1):
-            return [call.args[0]]
-        if (base.id, func.attr) == ("os", "open") and not _flags_write(_argument(call, 1, "flags")):
-            return []
-        positions = _RESOLVE_WRITE_FUNCTIONS.get((base.id, func.attr))
-        if positions is not None:
-            return [call.args[index] for index in positions if index < len(call.args)]
-    if func.attr == "open" and resolver.mode_writes(call, 0):
-        return [base]
-    if func.attr in _RESOLVE_WRITE_METHODS:
-        return [base] + [call.args[index] for index in _RESOLVE_WRITE_METHODS[func.attr] if index < len(call.args)]
-    return []
 
 
 def _resolved_is_path(value: str) -> bool:
     """Whether a resolved value is judged as a path: the same shape rule as a literal (a separator, or a
-    bare file name with an extension; no URL, no control character), but glob characters are allowed."""
+    bare file name with an extension; no URL, no control character), but glob characters and a bare name that
+    starts with a dot are allowed."""
     if not value.strip("/\\") or _CONTROL_CHAR_RE.search(value) is not None:
         return False
     if "://" in value and _URL_RE.match(value):  # the cheap test first: the regex backtracks over a long value
         return False
-    if "/" in value or "\\" in value:
+    if "/" in value or "\\" in value or re.match(r"\.[^.]", value):  # a dot name (`.act`, `.envrc`) is a path too
         return True
     if "." not in value[-10:]:
         return False  # no extension of up to 8 characters at the end: not a bare file name (same reason)
@@ -1235,51 +972,16 @@ def _resolved_is_path(value: str) -> bool:
     return bare is not None and not bare.group(1).isdigit()
 
 
-def _resolved_python_targets(code: str) -> list[str]:
-    """The write targets of `code` that are built from literals (see the section comment): paths and glob
-    patterns, each once - at most one per string literal of the program and at most _RESOLVE_LIMIT, together
-    at most _RESOLVE_REPORT characters and _RESOLVE_REPORT_PER_CHAR per character of the program; past
-    that, nothing more is reported. [] when the code is longer than _RESOLVE_PROGRAM_LIMIT or not Python."""
-    if len(code) > _RESOLVE_PROGRAM_LIMIT:
-        return []
-    try:
-        tree = ast.parse(code)
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return []
-    resolver = _TargetResolver(tree, _RESOLVE_UNITS_PER_CHAR * len(code))
-    cap = min(_RESOLVE_LIMIT, resolver.literals)
-    characters_left = min(_RESOLVE_REPORT, _RESOLVE_REPORT_PER_CHAR * len(code))
-    found: dict[str, None] = {}
-    try:
-        for call in resolver.calls:
-            for target in _write_call_targets(call, resolver):
-                try:
-                    values = resolver.values(target)
-                    resolver.spend(len(values))  # handing the strings on to the judging costs like building them
-                except _Unresolved:
-                    continue
-                for value in values:
-                    if value in found or not _resolved_is_path(value):
-                        continue
-                    characters_left -= len(value)
-                    if len(found) >= cap or characters_left < 0:
-                        return list(found)
-                    found[value] = None
-    except (RecursionError, MemoryError):
-        pass  # what was resolved up to here is reported; the rest stays unjudged
-    return list(found)
-
-
 # --- A Python program read as Python: the calls that run a command or write a file -------------------
 #
 # For a check that must know what a program DOES with a string rather than which strings it holds (the
 # git-metadata guard reads a program handed to `python` this way): the program is parsed with `ast`,
 # nothing of it runs, and every call of the families below is reported with the LITERAL values that go
-# into it. A value the reading cannot see - a variable, an expression, a call, a starred argument, a
-# non-literal receiver - is simply not reported: nothing follows a name, joins a path or expands a glob,
-# and a call whose value is not written out is not judged (a static reading of Python is a guard rail
-# against slips, not a wall). A program that does not parse as Python, is larger than _PROGRAM_SIZE_LIMIT
-# or nests deeper than the interpreter can walk is not read at all (None back).
+# into it (a command line or Python text only when it is written out; the path of a write call as the allow-list
+# in the header of this file shows it). A value the reading cannot see is not reported, and a CALL_WRITE call with
+# such a path says so (ProgramCall.unknown_path): the write checks refuse it, write_targets. A program that does not
+# parse as Python, is larger than _PROGRAM_SIZE_LIMIT or nests deeper than the interpreter can walk is not read at
+# all (None back).
 #
 # Families (the callee is looked up through the program's own imports: `import subprocess as sp`,
 # `from os import system as run`, `from os import *`; a dotted chain whose root is not a plain name -
@@ -1297,13 +999,12 @@ def _resolved_python_targets(code: str) -> list[str]:
 #     `replace`, `shutil.copy`, `copy2`, `copyfile`, `copymode`, `copystat`, `copytree`, `move`, `rmtree`,
 #     `chown`, and on any receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`,
 #     `rmdir`, `chmod`, `lchmod`, `rename`, `symlink_to`, `hardlink_to`, `link_to`, `open` (writing mode):
-#     the receiver is the path when it is `Path(...)` of string literals, anything else is not reported.
+#     the receiver is the path when the text shows it (`Path(...)` of literals, a name bound once), else unknown.
 #     For a copy the destination is the path, for a move, rename or link both operands are.
 #   - CALL_CODE, Python text: builtin `exec` and `eval` with a literal; the caller reads that text again.
 # A literal is a string constant, bytes (decoded), several of them joined with `+`, an f-string without
 # fields, or a list/tuple of those. Not seen (a limit, the same as the string-literal reading above): a
-# value that comes from a name, `os.path.join(...)`, `Path(...) / x`, an f-string with fields or a glob
-# (writing through a variable is the limit the rules name for script files too), a callee reached through
+# command line or Python text that comes from a name, a join or an f-string with fields, a callee reached through
 # `getattr`, a subscript or a lambda, `.write(` on a stream, `str.replace` and `Path.replace` (left out on
 # purpose), `runpy`, `importlib` loading a file, code built at run time.
 
@@ -1311,7 +1012,7 @@ CALL_RUN = "run"      # a command line the program hands to a shell or a program
 CALL_WRITE = "write"  # a path the program writes, creates, moves, links or deletes
 CALL_CODE = "code"    # Python text the program runs itself (`exec`, `eval`)
 
-_PROGRAM_SIZE_LIMIT = 200_000  # characters of one program read as Python; a larger one is not read
+_PROGRAM_SIZE_LIMIT = 32_768   # characters of one program read as Python (parsing costs ~3 ms per KB); a larger one is not read, and refused when it holds a write call
 _LITERAL_FOLD_DEPTH = 64       # `"a" + "b" + ...` chains folded this deep; deeper is not a literal
 
 # (module, function) -> how the arguments are read: "line" (the first argument is a command line),
@@ -1364,6 +1065,7 @@ class ProgramCall(NamedTuple):
     directory: Optional[str]   # a literal `cwd=` of the call, else None
     directory_known: bool      # False when `cwd=` is given but is no literal: the directory is unknown
     line: int
+    unknown_path: bool = False  # CALL_WRITE: a path of the call is no literal (the call is not judged by its values)
 
 
 class _Aliases(NamedTuple):
@@ -1487,7 +1189,7 @@ def _argument(call: ast.Call, position: int, keyword: Optional[str]) -> Optional
     return None
 
 
-def _mode_writes(call: ast.Call, position: int) -> bool:
+def _mode_writes(call: ast.Call, position: int, env: "_Env") -> bool:
     """True if the `mode` of an open-like call (positional `position` or `mode=`) writes: a mode-shaped
     literal (`rwaxbt+U` only) holding `w`, `a`, `x` or `+`, or a mode the reading cannot see (a variable).
     No mode at all is the default `r`; a literal that is no mode (`webbrowser.open(url)`, `tarfile.open(name)`)
@@ -1495,10 +1197,21 @@ def _mode_writes(call: ast.Call, position: int) -> bool:
     node = _argument(call, position, "mode")
     if node is None:
         return False
-    mode = _fold_string(node)
+    mode = env.text(node)
     if mode is None:
         return True
     return _PY_MODE_RE.match(f"'{mode}'") is not None and any(char in "wax+" for char in mode)
+
+
+def _is_read_only_flag(node: Optional[ast.expr]) -> bool:
+    """True for the flags `os.O_RDONLY` of an `os.open` call, written out as that and as nothing else."""
+    return isinstance(node, ast.Attribute) and node.attr == "O_RDONLY" and isinstance(node.value, ast.Name)
+
+
+def _literal_writing_mode(node: Optional[ast.expr], env: "_Env") -> bool:
+    """True if `node` is a mode written out (a name bound once to one included) that writes."""
+    mode = env.text(node)
+    return mode is not None and _PY_MODE_RE.match(f"'{mode}'") is not None and any(char in "wax+" for char in mode)
 
 
 def _command_values(call: ast.Call, how: str) -> tuple[str, ...]:
@@ -1545,33 +1258,220 @@ def _directory_of(call: ast.Call) -> tuple[Optional[str], bool]:
 
 
 _PATH_CLASSES = frozenset({"Path", "PurePath", "PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath"})
+_JOIN_MODULES = {"os": ["path", "join"], "os.path": ["join"], "posixpath": ["join"], "ntpath": ["join"]}
+
+# What the text of a program shows about a path (the allow-list; everything else is unknown):
+#   - a string literal, or `Path(...)` / `PurePath(...)` / `os.path.join(...)` of such parts;
+#   - a name bound exactly once, by a plain assignment, to such a value, and used unchanged: not a parameter, a loop
+#     target, an import, a `with ... as` or a `global`, and the program rebinds nothing behind the text
+#     (_REBINDING_NAMES, _REBINDING_ATTRIBUTES, an attribute stored on a module): else every name is unknown;
+#   - those parts joined with `+`, `/` or put into an f-string field;
+#   - `<such a path>.glob('<literal>')` / `.rglob(...)` as the iterable of a `for` loop: the files are somewhere
+#     under that folder (_Under), when neither the folder nor the pattern holds `..` and the folder is relative.
+_REBINDING_NAMES = frozenset({
+    "exec", "eval", "compile", "globals", "locals", "vars", "setattr", "getattr", "delattr", "__import__",
+    "_getframe", "currentframe", "f_globals", "f_locals", "__dict__", "__setattr__", "__builtins__", "runpy",
+    "cProfile", "importlib", "chdir", "fchdir",
+})
+_REBINDING_ATTRIBUTES = frozenset({"modules"})  # `sys.modules`
+_MODULE_ROOTS = frozenset({"os", "sys", "builtins", "pathlib", "shutil", "posixpath", "ntpath"})
+# Where a glob that may reach it is also judged (the first segment of each, matched against the pattern; a deep
+# pattern reaches all of them): the places the guards of the template's own and of the git metadata files protect.
+_PROTECTED_PROBES = (
+    ".act/", ".git/hooks/", ".git/config", ".claude/settings.json", ".mcp.json", ".vscode/tasks.json",
+    ".devcontainer/devcontainer.json", ".envrc",
+)
+_ANY_FILE = "(any file here)"
 
 
-def _path_literal(node: Optional[ast.expr], aliases: _Aliases) -> Optional[str]:
-    """The path a path argument or receiver names when it is written out: a string literal as
-    _fold_string reads it, or `Path(...)` of such literals (joined as `os.path.join` joins them). None
-    for anything else - a variable, an f-string with fields, `os.path.join(...)`, `Path(...) / x` -, which
-    is not judged."""
-    if node is None:
-        return None
-    text = _fold_string(node)
-    if text is not None:
-        return text
-    if isinstance(node, ast.Call) and node.args and not node.keywords:
-        func = node.func
-        if isinstance(func, ast.Name):
-            name = aliases.functions.get(func.id, ("", func.id))[1]
-        elif isinstance(func, ast.Attribute):
-            name = func.attr
+class _Under(NamedTuple):
+    """The files a glob on a literal folder yields: somewhere under `base`."""
+
+    base: str
+    pattern: str
+    recursive: bool
+
+
+def _under_paths(under: _Under) -> list[str]:
+    """The paths a check judges for `under`: a file in the folder and, for each protected place at or below the
+    folder that the glob can reach (a deep pattern reaches every one, a single-segment one those its pattern
+    matches), one in that place - `.act/` from the project root, `hooks` and `config` from `.git`. Below any other
+    folder the glob stays inside that folder: only the folder is judged."""
+    base = os.path.normpath(under.base.replace("\\", "/")).replace("\\", "/")
+    prefix = "./" if base == "." else f"{base}/"
+    deep = under.recursive or "**" in under.pattern or "/" in under.pattern or "\\" in under.pattern
+    found = [prefix + _ANY_FILE]
+    for probe in _PROTECTED_PROBES:
+        if base == ".":
+            rel = probe
+        elif probe.startswith(base.lower() + "/"):
+            rel = probe[len(base) + 1:]
         else:
+            continue
+        if rel and (deep or fnmatch.fnmatchcase(rel.split("/")[0].lower(), under.pattern.lower())):
+            found.append(prefix + rel + (_ANY_FILE if rel.endswith("/") else ""))
+    return found
+
+
+def _relative_without_parent(text: str) -> bool:
+    """True for a path that is relative (no root, drive or `~`) and climbs nowhere (no `..` segment)."""
+    if not text or text[0] in "/\\~" or re.match(r"[A-Za-z]:", text) or "$" in text:
+        return False
+    return ".." not in re.split(r"[\\/]+", text)
+
+
+class _Env:
+    """What the text of a program shows about the paths it writes (see the allow-list above)."""
+
+    def __init__(self, tree: ast.AST, aliases: _Aliases) -> None:
+        self.aliases = aliases
+        self.bound, star = _bindings(tree)
+        self.imports: dict[str, int] = {}
+        self.assigned: dict[str, ast.expr] = {}
+        self.looped: dict[str, ast.expr] = {}
+        self.memo: dict[str, Optional[str]] = {}
+        self.active = not star
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    name = alias.asname or alias.name.split(".")[0]
+                    self.imports[name] = self.imports.get(name, 0) + 1
+            elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                self.assigned[node.targets[0].id] = node.value
+            elif isinstance(node, ast.AnnAssign) and node.value is not None and isinstance(node.target, ast.Name):
+                self.assigned[node.target.id] = node.value
+            elif isinstance(node, (ast.For, ast.AsyncFor)) and isinstance(node.target, ast.Name):
+                self.looped[node.target.id] = node.iter
+            if self.active and self._rebinds(node):
+                self.active = False
+
+    def _rebinds(self, node: ast.AST) -> bool:
+        """True if `node` can change what a name or a function stands for behind the text of the call."""
+        if isinstance(node, ast.Name):
+            return node.id in _REBINDING_NAMES
+        if not isinstance(node, ast.Attribute):
+            return False
+        if node.attr in _REBINDING_NAMES or node.attr in _REBINDING_ATTRIBUTES:
+            return True
+        if isinstance(node.ctx, ast.Load):
+            return False
+        root, _names = _dotted_root(node)
+        return root in self.aliases.modules or root in self.aliases.functions or root in _MODULE_ROOTS
+
+    def _imported_only(self, name: str) -> bool:
+        """True if every binding of `name` in the program is an import (or it is not bound at all)."""
+        return len(self.bound.get(name, ())) == self.imports.get(name, 0)
+
+    def _is_path_class(self, func: ast.expr) -> bool:
+        if isinstance(func, ast.Name):
+            module, function = self.aliases.functions.get(func.id, ("pathlib", func.id))
+            return module == "pathlib" and function in _PATH_CLASSES and self._imported_only(func.id)
+        if isinstance(func, ast.Attribute) and func.attr in _PATH_CLASSES and isinstance(func.value, ast.Name):
+            return self.aliases.modules.get(func.value.id) == "pathlib" and self._imported_only(func.value.id)
+        return False
+
+    def _is_join(self, func: ast.expr) -> bool:
+        if isinstance(func, ast.Name):
+            module, function = self.aliases.functions.get(func.id, ("", ""))
+            return function == "join" and module in ("os.path", "posixpath", "ntpath") and self._imported_only(func.id)
+        root, names = _dotted_root(func)
+        module = self.aliases.modules.get(root) if root is not None else None
+        return module in _JOIN_MODULES and names == _JOIN_MODULES[module] and self._imported_only(root or "")
+
+    def text(self, node: Optional[ast.expr], depth: int = 0) -> Optional[str]:
+        """The text `node` stands for when the program shows it, else None."""
+        if node is None or depth > _LITERAL_FOLD_DEPTH:
             return None
-        parts = [_fold_string(argument) for argument in node.args]
-        if name in _PATH_CLASSES and None not in parts:
-            return os.path.join(*parts)
-    return None
+        if isinstance(node, ast.Constant):
+            return _fold_string(node)
+        if isinstance(node, ast.JoinedStr):
+            parts: list[Optional[str]] = []
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue):
+                    clean = self.active and value.conversion == -1 and value.format_spec is None
+                    parts.append(self.text(value.value, depth + 1) if clean else None)
+                else:
+                    parts.append(self.text(value, depth + 1))
+            return None if None in parts else "".join(part for part in parts if part is not None)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+            if isinstance(node.op, ast.Div) and not self.active:
+                return None
+            left, right = self.text(node.left, depth + 1), self.text(node.right, depth + 1)
+            if left is None or right is None:
+                return None
+            return left + right if isinstance(node.op, ast.Add) else os.path.join(left, right)
+        if isinstance(node, ast.Name) and self.active:
+            return self._name_text(node.id, depth)
+        if isinstance(node, ast.Call) and node.args and not node.keywords:
+            if self._is_path_class(node.func) or (self.active and self._is_join(node.func)):
+                parts = [self.text(argument, depth + 1) for argument in node.args]
+                return None if None in parts else os.path.join(*[part for part in parts if part is not None])
+        return None
+
+    def _name_text(self, name: str, depth: int) -> Optional[str]:
+        if name not in self.memo:
+            self.memo[name] = None  # a name that refers to itself is unknown
+            if len(self.bound.get(name, ())) == 1 and name in self.assigned:
+                self.memo[name] = self.text(self.assigned[name], depth + 1)
+        return self.memo[name]
+
+    def _is_glob_function(self, func: ast.expr) -> bool:
+        """`glob.glob` / `glob.iglob` (also `from glob import glob`)."""
+        if isinstance(func, ast.Name):
+            module, function = self.aliases.functions.get(func.id, ("", ""))
+            return module == "glob" and function in ("glob", "iglob") and self._imported_only(func.id)
+        root, names = _dotted_root(func)
+        return (root is not None and self.aliases.modules.get(root) == "glob" and len(names) == 1
+                and names[0] in ("glob", "iglob") and self._imported_only(root))
+
+    def glob(self, node: ast.expr) -> Optional[_Under]:
+        """`<path>.glob('<pattern>')` / `.rglob(...)` on a folder the program shows, or `glob.glob('<pattern>')` /
+        `glob.iglob(...)` (the folder is the literal part of the pattern before its first wildcard), also inside
+        `sorted(...)` / `list(...)` when those names are not rebound, else None."""
+        if not self.active or not isinstance(node, ast.Call):
+            return None
+        while (isinstance(node.func, ast.Name) and node.func.id in ("sorted", "list") and len(node.args) == 1
+               and not node.keywords and not self.bound.get(node.func.id) and isinstance(node.args[0], ast.Call)):
+            node = node.args[0]
+        if self._is_glob_function(node.func):
+            recursive = False
+            for item in node.keywords:
+                if item.arg != "recursive" or not isinstance(item.value, ast.Constant):
+                    return None  # `root_dir=`, `include_hidden=` and the rest move or widen the search: not shown
+                recursive = bool(item.value.value)
+            pattern = self.text(node.args[0]) if len(node.args) == 1 else None
+            if pattern is None or not _relative_without_parent(pattern):
+                return None
+            parts = re.split(r"[\\/]+", pattern)
+            cut = next((index for index, part in enumerate(parts) if re.search(r"[*?\[]", part)), len(parts) - 1)
+            base, rest = "/".join(parts[:cut]) or ".", "/".join(parts[cut:])
+            return _Under(base, rest, recursive and "**" in rest)
+        if not isinstance(node.func, ast.Attribute):
+            return None
+        if node.func.attr not in ("glob", "rglob") or len(node.args) != 1 or node.keywords:
+            return None
+        base, pattern = self.text(node.func.value), self.text(node.args[0])
+        if base is None or pattern is None or not _relative_without_parent(base) or not _relative_without_parent(pattern):
+            return None
+        return _Under(base, pattern, node.func.attr == "rglob")
+
+    def path_value(self, node: Optional[ast.expr]) -> "Optional[str | _Under]":
+        """The path a write call's path argument or receiver names: its text, the glob folder of a `for` loop's
+        target (`for f in Path('docs').glob('*.md'): f.write_text(...)`), or None - not shown, so not judged."""
+        text = self.text(node)
+        if text is not None:
+            return text
+        if not self.active:
+            return None
+        if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords and self._is_path_class(node.func):
+            node = node.args[0]  # `Path(f)` of a loop variable is that variable
+        if isinstance(node, ast.Name) and len(self.bound.get(node.id, ())) == 1:
+            iterable = self.looped.get(node.id)
+            return self.glob(iterable) if iterable is not None else None
+        return None
 
 
-def _read_call(call: ast.Call, aliases: _Aliases) -> Optional[ProgramCall]:
+def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[ProgramCall]:
     found = _callee(call.func, aliases)
     if found is None:
         return None
@@ -1587,15 +1487,31 @@ def _read_call(call: ast.Call, aliases: _Aliases) -> Optional[ProgramCall]:
         directory, known = _directory_of(call)
         return ProgramCall(name, CALL_RUN, values, directory, known, line)
     if module == "":
-        if function == "open" and not _mode_writes(call, 0):
-            return None
         nodes = [receiver]
-        if _WRITE_METHODS.get(function, False):
+        if function == "open":
+            # A method `.open` writes only with a mode written out: `p.open('w')` opens the receiver,
+            # `gzip.open(name, 'wb')` / `x.open(name, mode='w')` the first argument. `Image.open(x)`,
+            # `tarfile.open(name)` and `webbrowser.open(url)` hold none and are no writes - unless the receiver is
+            # a path the program shows and the mode is a value it does not (`Path('x').open(sys.argv[1])`).
+            first, second = _argument(call, 0, None), _argument(call, 1, None)
+            keyword = next((item.value for item in call.keywords if item.arg == "mode"), None)
+            if _literal_writing_mode(first, env):
+                pass
+            elif _literal_writing_mode(second, env) or _literal_writing_mode(keyword, env):
+                nodes = [first] if first is not None else nodes
+            elif env.path_value(receiver) is not None and any(
+                    item is not None and env.text(item) is None for item in (first, keyword)):
+                pass  # the receiver's path is shown and the mode is not: it may write the receiver
+            else:
+                return None
+        elif _WRITE_METHODS.get(function, False):
             nodes.append(_argument(call, 0, "target"))
     else:
         positions = _WRITE_FUNCTIONS[(module, function)]
+        if (module, function) == ("os", "open") and _is_read_only_flag(_argument(call, 1, "flags")):
+            return None
         if positions == ("mode",):
-            if not _mode_writes(call, 1):
+            if not _mode_writes(call, 1, env):
                 return None
             positions = (0,)
         nodes = []
@@ -1604,8 +1520,14 @@ def _read_call(call: ast.Call, aliases: _Aliases) -> Optional[ProgramCall]:
             if node is None and position == 0:
                 node = _argument(call, 0, "file") or _argument(call, 0, "path")
             nodes.append(node)
-    paths = (_path_literal(node, aliases) for node in nodes)
-    return ProgramCall(name, CALL_WRITE, tuple(path for path in paths if path is not None), None, True, line)
+    paths = [env.path_value(node) for node in nodes]
+    values: list[str] = []
+    for path in paths:
+        if isinstance(path, _Under):
+            values.extend(_under_paths(path))
+        elif path is not None:
+            values.append(path)
+    return ProgramCall(name, CALL_WRITE, tuple(values), None, True, line, None in paths)
 
 
 # --- A harmless program: the allow-list -------------------------------------------------------------
@@ -1804,10 +1726,11 @@ def read_python_program(code: str) -> Optional[PythonProgram]:
     try:
         tree = ast.parse(code)
         aliases = _module_aliases(tree)
+        env = _Env(tree, aliases)
         found: list[ProgramCall] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
-                call = _read_call(node, aliases)
+                call = _read_call(node, aliases, env)
                 if call is not None:
                     found.append(call)
         blocker = _harmless_blocker(tree)
