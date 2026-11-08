@@ -105,7 +105,7 @@ from .shell_targets import _command_name, _to_native_path
 
 __all__ = [
     "SECRET_EXCEPTIONS", "check_secret_read", "secret_label", "_READ_COMMANDS", "_home_roots",
-    "_ps_word_lists",  # moved to powershell_targets; other checks still import it from here
+    "_ps_word_lists",  # moved to powershell_targets; kept as a re-export for callers outside the checks
 ]
 
 SECRET_EXCEPTIONS = frozenset({".env.example", ".env.sample", ".env.template"})

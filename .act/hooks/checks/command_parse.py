@@ -7,8 +7,8 @@ answer. No parsing logic lives here.
 
 Rules the accessors keep:
   * lazy: a reader runs only when a check asks for its result;
-  * memoized per accessor and, for `write_targets`, per argument key (checks pass different working
-    directories, git-write sets and flags);
+  * memoized per accessor and, for `write_targets`, `bash_write_targets` and `ps_words`, per argument
+    key (checks pass different working directories, git-write sets, flags and depths);
   * a reader that raises has its exception stored and the same exception re-raised on every later ask,
     the reader not called again, so its type stays (the dispatcher recognizes `inline_code.ReaderFailure`);
   * every result is returned as a fresh copy, so one check cannot change what the next one sees;
@@ -87,11 +87,16 @@ class Parse:
         """command_words._stripped_word_lists(command)."""
         return self._once("stripped", lambda: _command_words._stripped_word_lists(self._command), _copy_lists)
 
-    def ps_words(self) -> list:
-        """powershell_targets._ps_word_lists(command) at depth 0: the word lists read with PowerShell's
-        own tokenizer, the text behind a nested `pwsh -Command` included; empty when the line does not
-        tokenize (a result, not an error). Nested calls read their own text and are not kept here."""
-        return self._once("ps_words", lambda: _powershell_targets._ps_word_lists(self._command), _copy_lists)
+    def ps_words(self, depth: int = 0) -> list:
+        """powershell_targets._ps_word_lists(command, depth): the word lists read with PowerShell's own
+        tokenizer, at depth 0 the text behind a nested `pwsh -Command` included, at depth 2 the command
+        line only; empty when the line does not tokenize (a result, not an error). One reader call per
+        depth; nested calls read their own text and are not kept here."""
+        if depth == 0:
+            return self._once(
+                "ps_words", lambda: _powershell_targets._ps_word_lists(self._command), _copy_lists)
+        return self._once(
+            ("ps_words", depth), lambda: _powershell_targets._ps_word_lists(self._command, depth), _copy_lists)
 
     def git_invocations(self) -> list:
         """command_words._git_invocations(command)."""
@@ -119,7 +124,7 @@ class Parse:
             lambda found: None if found is None else list(found))
 
     def write_targets(
-        self, base_cwd: str, git_writes: frozenset, inline: bool = True, broad: bool = False,
+        self, base_cwd: Optional[str], git_writes: frozenset, inline: bool = True, broad: bool = False,
     ) -> Optional[Any]:
         """The write targets of the command for this tool: a list for Bash (_bash_write_targets), a set
         or None for PowerShell (_powershell_write_targets). One reader call per argument key."""
@@ -134,7 +139,7 @@ class Parse:
             return self._once(key, read_ps, lambda found: None if found is None else set(found))
         return self.bash_write_targets(base_cwd, git_writes, inline)
 
-    def bash_write_targets(self, base_cwd: str, git_writes: frozenset, inline: bool = True) -> list:
+    def bash_write_targets(self, base_cwd: Optional[str], git_writes: frozenset, inline: bool = True) -> list:
         """The Bash reading of the write targets whatever the tool: for a PowerShell call it is the reading
         of the native programs the command starts, asked on top of write_targets. Its key names the Bash
         reader, so it never meets a PowerShell key; a Bash call's write_targets is this same call."""

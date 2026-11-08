@@ -119,11 +119,12 @@ from urllib.parse import unquote
 import actlib
 
 from .brace_expand import expand_braces
-from .command_words import _command_word_lists, _strip_command_prefix
+from .command_parse import Parse, parse_for
+from .command_words import _strip_command_prefix
 from .inline_code import UNKNOWN_WRITE, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
 from .powershell_targets import (
-    _extract_ps_command_flag, _is_unplaced_target, _powershell_write_targets, _ps_raw_redirect_targets,
+    _extract_ps_command_flag, _is_unplaced_target, _ps_raw_redirect_targets,
     _unplaced_reason,
 )
 from .secret_read import (
@@ -133,11 +134,9 @@ from .secret_read import (
     _LITERAL_RE,
     _candidate_words,
     _grep_pattern_index,
-    _ps_word_lists,
 )
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
-    _bash_write_targets,
     _command_name,
     _heredoc_may_feed_shell,
     _operands,
@@ -1226,7 +1225,8 @@ def _scan_wsl(judge: _Judge, args: list[str], bases: list[Optional[str]], depth:
     if exec_mode:
         lists.append(_Words(str(_wsl_native_word(word)) for word in rest))
     else:
-        for words in _shell_word_lists(" ".join(str(word) for word in rest)):
+        nested = Parse("Bash", " ".join(str(word) for word in rest))  # the nested text: its own reading
+        for words in _shell_word_lists(nested):
             item = _Words(str(_wsl_native_word(word)) for word in words)
             item.feeds_xargs = bool(getattr(words, "feeds_xargs", False))
             lists.append(item)
@@ -1255,7 +1255,7 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
             flag = next((i for i, arg in enumerate(args) if arg.lower() in ("/c", "/k", "/r")), None)
             if flag is not None:
                 try:
-                    inner = _ps_word_lists(" ".join(args[flag + 1:]))
+                    inner = Parse("PowerShell", " ".join(args[flag + 1:])).ps_words()  # the nested text: its own reading
                 except Exception as exc:  # noqa: BLE001 - the command counts as not checked
                     judge.scanner_failed(exc)
                     inner = []
@@ -1377,13 +1377,22 @@ def _leading_assignments(words: list[str]) -> list[str]:
     return found
 
 
-def _shell_word_lists(command: str) -> list[list[str]]:
-    """The simple commands of `command` as word lists, read the way every other check reads them
-    (`_command_word_lists`); a coarse split only when the lexer fails. An assignment in front of a
+def _parse_of(parse: Parse, text: str) -> Parse:
+    """`parse` when it is the reading of `text`, else a fresh reading of `text` for the same tool: the
+    read scan gets the command with its arithmetic, quoted heredocs and URL loop words taken out, the
+    Bash write scan the whole text when it hands code to an interpreter and the cut text otherwise, the
+    PowerShell write scan the command as it is, so only the same text may be read from the dispatcher's
+    object."""
+    return parse if parse.command == text else Parse(parse.tool_name, text)
+
+
+def _shell_word_lists(parse: Parse) -> list[list[str]]:
+    """The simple commands of `parse.command` as word lists, read the way every other check reads them
+    (`Parse.words`); a coarse split only when the lexer fails. An assignment in front of a
     command is returned as the arguments of its own `export`; the command that feeds `xargs` is
     marked (`_Words`)."""
     try:
-        raw = _command_word_lists(command)
+        raw = parse.words()
         lists: list[list[str]] = []
         for index, (words, _separator) in enumerate(raw):
             assigned = _leading_assignments(words)
@@ -1399,25 +1408,25 @@ def _shell_word_lists(command: str) -> list[list[str]]:
             lists.append(item)
         return lists
     except Exception:  # noqa: BLE001 - a scanner bug must not turn into a silent allow
-        return _coarse_word_lists(command)
+        return _coarse_word_lists(parse.command)
 
 
 # Programs whose `-c` text is code of a language, not a command line.
 _CODE_INTERPRETERS = _INTERPRETERS - {"pwsh", "powershell"}
 
 
-def _ps_lists(command: str, depth: int = 0) -> list[list[str]]:
-    """`_ps_word_lists` with one change: in the `-c` text of a language interpreter (`python -c "print(7
+def _ps_lists(parse: Parse, depth: int = 0) -> list[list[str]]:
+    """`Parse.ps_words(2)` with one change: in the `-c` text of a language interpreter (`python -c "print(7
     // 2)"`) a word of only slashes is an operator or a comment of that language, not a path, so it is
     left out. The text of a nested shell or PowerShell (`pwsh -c "ls //"`) is a command line and keeps
     every word."""
     lists: list[list[str]] = []
-    for words in _ps_word_lists(command, 2):  # 2: the nested text is read here, not there
+    for words in parse.ps_words(2):  # 2: the nested text is read here, not there
         lists.append(words)
         inner = _extract_ps_command_flag(words[1:]) if depth < 2 else None
         if not inner:
             continue
-        nested = _ps_lists(inner, depth + 1)
+        nested = _ps_lists(Parse(parse.tool_name, inner), depth + 1)  # the nested text: its own reading
         if _command_name(words[0]) in _CODE_INTERPRETERS:
             trimmed = ([word for word in item if not _BARE_SLASHES_RE.match(word)] for item in nested)
             nested = [item for item in trimmed if item]
@@ -1520,7 +1529,7 @@ def _without_url_loop_words(command: str) -> str:
     return command
 
 
-def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
+def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Parse) -> None:
     powershell = tool == "PowerShell"
     whole = command  # the write scan below reads the program a quoted heredoc feeds to an interpreter, like `-c`/`-e`
     # The text of a quoted heredoc is never run; cut out first, so that a line of the command that
@@ -1548,7 +1557,7 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
             if "outside-allow" in command.lower():
                 judge.lock(".act-local/outside-allow", judge.lock_dir)
         elif powershell:
-            targets = _powershell_write_targets(command, cwd, _GIT_WRITES_WORKER_SCOPE)
+            targets = _parse_of(parse, command).write_targets(cwd, _GIT_WRITES_WORKER_SCOPE)
             if targets is None:
                 targets = _ps_raw_redirect_targets(command)
             for target in sorted(targets):
@@ -1564,7 +1573,8 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
                     continue
                 judge.judge(target, True, [cwd])
         else:
-            for target, base in _bash_write_targets(whole if mentions_interpreter(whole) else command, cwd, _GIT_WRITES_WORKER_SCOPE):
+            scanned = _parse_of(parse, whole if mentions_interpreter(whole) else command)
+            for target, base in scanned.bash_write_targets(cwd, _GIT_WRITES_WORKER_SCOPE):
                 if target == UNKNOWN_WRITE:
                     continue  # inline code whose path the text does not show: refused by the write guards, in every mode
                 if _is_unplaced_target(target):
@@ -1576,12 +1586,13 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
     groups: list[list[list[str]]] = []
     if powershell:
         try:
-            groups.append(_ps_lists(command))
+            groups.append(_ps_lists(_parse_of(parse, command)))
         except Exception as exc:  # noqa: BLE001
             judge.scanner_failed(exc)
     try:
         # The inside of a shell arithmetic expression is no command line (PowerShell has none of that syntax).
-        groups.append(_shell_word_lists(command if powershell else _without_url_loop_words(_without_arithmetic(command))))
+        groups.append(_shell_word_lists(_parse_of(
+            parse, command if powershell else _without_url_loop_words(_without_arithmetic(command)))))
     except Exception as exc:  # noqa: BLE001
         judge.scanner_failed(exc)
     for lists in groups:
@@ -1676,7 +1687,7 @@ def check_outside_root(payload: dict) -> int:
     places = _build_places(root, payload, config)
     judge = _Judge(root, places, bash=tool != "PowerShell")
     if shell is not None:
-        _shell_findings(judge, shell[0], shell[1], cwd)
+        _shell_findings(judge, shell[0], shell[1], cwd, parse_for(payload, shell[1]))
     else:
         _file_tool_findings(judge, payload, cwd)
     if shell is not None and judge.unchecked:
