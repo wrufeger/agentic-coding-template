@@ -5,66 +5,42 @@ description: Use to start a new project from this one, or to adopt another proje
 
 # Adopt an existing project's material
 
-Every structure a project can already have — a previous version of this template, a different
-template, or something the project made up on its own — goes through the same eight steps. Use
-this **instead of** running `init.py --target <dir>` alone whenever the project already has docs
-or AI tooling of its own: `adopt.py --apply` (step 4) runs `init.py` itself once the table is
-approved, so running it separately first would only mean redoing that step.
+A project that already has docs or AI tooling of its own goes through the steps below, a plan and an apply per
+script, on branch `act-adopt`. Use this **instead of** `init.py --target <dir>` alone: `adopt.py --apply` runs
+`init.py` itself. Every writing script has `--plan` (validates, changes nothing) and `--help` (actions per class, refusals,
+what each mode does); the script's output, not this text, is the list. Nothing changes before the owner has
+approved the table once (step 3); no script commits (step 8).
 
-**How to start it.** The skill runs from two places, against the folder `<dir>`:
-
-- **A project** (it has `docs/ai/config.md` and `.act-lock.json`): called by name, e.g. `/act-adopt`.
-  Every command below runs from the project root; `<dir>` must lie outside this project, never the
-  project itself or a folder inside it (also not through a symlink or junction): `init.py` and
-  `adopt.py` refuse that.
-- **The template checkout** (no `.claude/skills/` and no root `AGENTS.md`, so it cannot be called by
-  name): open the checkout in the assistant and have it follow `.act/skills/act-adopt/SKILL.md` for
-  the project path. Every command runs from the checkout root.
-
-Nothing changes before the owner has approved a table once (step 3); no script commits anything (step 8).
+**Where it runs, against `<dir>`:** in a project (has `docs/ai/config.md` and `.act-lock.json`), called as
+`/act-adopt`, from the project root; `<dir>` lies outside it, never the project or a folder inside it (also not via
+symlink or junction). Or in the template checkout (no `.claude/skills/`, no root `AGENTS.md`): the assistant follows
+`.act/skills/act-adopt/SKILL.md`, commands from the checkout root.
 
 ## 0. Which case, and what to carry
 
-1. **Decide by `<dir>`.** It does not exist, or is an empty folder (nothing but `.git`) → **new project**:
-   `python .act/scripts/init.py --target <dir>` (from a project add `--carry <list>` from 2 below; from the
-   template checkout there is nothing to carry; add `--non-interactive` when no terminal;
-   `--plan` first), then skip to "New project: after the run" below. A folder with any other content
-   → **adoption**: steps 1-8 below, on branch `act-adopt`. Say which case it is before running anything.
-2. **Only in a project: what to carry over.** Show the list first, then ask once per category, default
-   yes; the answers become `--carry` (names joined by commas; all yes = leave `--carry` out; all no =
-   `--carry none`; the owner's profile is separate, `--no-profile`). Build the list from this project:
-
-   | Category | Carries | Look at |
-   | :--- | :--- | :--- |
-   | `skills` | own skills | `docs/ai/local/skills/<name>/` that is no template skill |
-   | `rules` | own rules | `## Own rules` in `docs/ai/rules.md`, `docs/project/coding_rules.md` |
-   | `exceptions` | rule groups and rule sets switched off, with their reason (` — <reason>` after the group or the `use:` path); one switched off without a reason is a stack default and stays behind | unchecked boxes in those two files |
-   | `overrides` | `replaces` lines and every other file of `docs/ai/local/` (rules, roles, scripts, checklists, an override of a template skill) | `## Overrides`, `docs/ai/local/` |
-   | `topics` | own topic rules and overrides of template topics | `docs/ai/local/rules/topics/` |
-
-   Only committed content (HEAD) travels, never `.env*`, symlinks or untracked files; what the new
-   project cannot take (a group or rule set it does not list) goes to its inbox. From the template checkout there
-   is nothing to ask: it has no project-specific content.
-3. **The new project gets this project's `.act/`, not the newest template.** Its first
-   `act-update` brings the current one.
-
-**New project: after the run.** Report what `init.py` printed (step 6 names what was carried) and
-suggest `act-update` inside `<dir>`. The folder is the owner's to keep or delete; nothing else was
-touched. When the harness asks to run a command outside the project, the owner starts it themselves
-with the `!` prefix.
+1. **Decide by `<dir>`** and say which case before running anything. Missing, or empty (nothing but `.git`) → **new
+   project**: `python .act/scripts/init.py --target <dir>` (`--plan` first; `--non-interactive` without a terminal;
+   from a project add `--carry <list>`; outside the project the owner starts it with the `!` prefix, as in
+   step 1), then report what it printed and suggest `act-update` inside `<dir>`; the
+   folder is the owner's. Any other content → **adoption**, steps 1-8.
+2. **In a project only, what to carry over.** Ask once per category, default yes, after showing what this project
+   has: `skills` (own skills in `docs/ai/local/skills/`), `rules` (`## Own rules`, `docs/project/coding_rules.md`),
+   `exceptions` (rule groups switched off with a reason after ` — `; one without a reason is a stack default and
+   stays behind), `overrides` (`replaces` lines and other files of `docs/ai/local/`), `topics`
+   (`docs/ai/local/rules/topics/`). Answers become `--carry` (comma list; all yes = leave out; all no =
+   `--carry none`; the owner's profile is separate, `--no-profile`). Only committed content travels, never `.env*`,
+   symlinks or untracked files; what the new project cannot take goes to its inbox. The template checkout has nothing
+   to ask. The new project gets this project's `.act/`, not the newest; its first `act-update` brings that.
 
 **Three rules for every step:**
 
-- **Who writes.** The orchestrator runs every script and writes every file under `<dir>/docs/ai/`
-  and elsewhere in the project. A worker only reads the old material and writes batch, body and
-  draft files under `<dir>/.act-local/adopt/` — nowhere else.
-- **The human's wording stays.** A title is the old heading verbatim with only its bullet/heading
-  marker, bold markers, a status emoji and the old id stripped (step 6 says what counts as the
-  heading where an item has none); a body is the old text verbatim. Never summarized, translated
-  or reworded.
-- **Local files stay local.** `CLAUDE.local.md`, `.mcp.json`, `.cursor/mcp.json`,
-  `.claude/settings.json` and `.claude/settings.local.json` are `keep`, and nothing from them is
-  copied into a versioned file — no proposal, no inbox entry, no `body_file` cut from them.
+- **Who writes.** The orchestrator runs every script and writes every file in the project. A worker only reads the
+  old material and writes batch, body and draft files under `<dir>/.act-local/adopt/`, nowhere else.
+- **The human's wording stays.** Titles and bodies are the old text verbatim (step 6); never summarized, translated or
+  reworded.
+- **Local files stay local.** `CLAUDE.local.md`, `.mcp.json`, `.cursor/mcp.json`, `.claude/settings.json` and
+  `.claude/settings.local.json` are `keep`; nothing from them is copied into a versioned file (no proposal, inbox
+  entry or `body_file`).
 
 ## 1. Sight (read-only)
 
@@ -72,128 +48,84 @@ with the `!` prefix.
 python .act/scripts/adopt_scan.py --target <dir>
 ```
 
-Classifies every documentation and AI-tool source into `ai-config`, `ai-machinery`, `work`, `log`,
-`project-doc`, `predecessor` or `unknown` (exact allow-list in the script's own `--help`), writes
-`<dir>/.act-local/adopt/scan.json`, and prints a human-readable table (`--json` prints that
-payload instead — the file is written either way). Changes nothing. An existing skeleton-like
-structure found here (a previous run of this template) is a source to sight like any other, not a
-shortcut around the rest of the steps.
+Prints the table (`--json` the payload; `<dir>/.act-local/adopt/scan.json` is written either way) with each row's
+class, `proposed` action and, for a project made from the previous template, `origin`. An existing structure of this
+template is a source like any other, no shortcut.
 
-The `outside-root` guard (`docs/ai/config.md` § Checks) only runs where the template's hooks are installed,
-that is in a project; a plain checkout of the template has no `.claude/` and no hooks, so it does not apply
-there. Where it does, a target outside the project root is protected: the owner starts the first scan
-themselves with the `!` prefix (`! python .act/scripts/adopt_scan.py --target <dir>`). Claude Code runs
-PreToolUse only when Claude calls a tool, and a `!` command is not such a call. The scan leaves a marker,
-`.act-local/outside-allow/adopt.json`, which opens the target for 24 hours or until `--abort`, also past
-`--finish`, so steps 7-8 (`doctor.py --target <dir>`, `harvest.md`, `git -C <dir> commit`) still reach it.
-`--apply` only refreshes a valid marker for the same target and never creates one. The model's own call of
-the scan is reported beforehand as an access outside the project.
+A target outside the project root is protected by the `outside-root` guard (only where the hooks are installed): the
+owner starts this first scan with the `!` prefix (`! python .act/scripts/adopt_scan.py --target <dir>`), since a `!`
+command is no tool call. It leaves `.act-local/outside-allow/adopt.json`, which opens the target for 24 hours or until
+`--abort`, also past `--finish` (steps 7-8 still reach it); `--apply` only refreshes a valid marker and never creates
+one. The model's own call of the scan is reported beforehand as an access outside the project.
 
-Rows carry `proposed` (the action the table starts from) and, for a project made from the previous
-template, an `origin`. **Before step 2**, when the sighting printed `-- … --` info lines, a row with an
-`origin` or a `.claude/template.json` first line, read `references/sighting.md` (origins, the predecessor
-template's files, and the hints to read out to the owner).
+**Before step 2**, read out to the owner every `-- … --` info line, and read `references/sighting.md` when there is an
+`origin`, a `.claude/template.json` or such a line.
 
 ## 2. Propose the table
 
-Build `<dir>/.act-local/adopt/table.json`: `{"rows": [...]}`, exactly one row per `scan.json` row
-(`adopt.py` refuses on a mismatch, in either direction), each row `path` and `class` as in
-`scan.json`, `action` from the row's `proposed`, plus `target`/`done`/`confirmed`/`note` where
-needed. `proposed` is where the table starts, not the decision: check it against the rules below
-and put the reason for every row that deviates into its `note`.
+Build `<dir>/.act-local/adopt/table.json`: `{"rows": [...]}`, one row per `scan.json` row (`path`, `class`, `action`
+from `proposed`, plus `target`/`done`/`confirmed`/`note`). `proposed` is the start, not the decision: check each row
+against `references/table-rules.md` (read it first), put the reason of every deviation into `note`. Actions are fixed
+once `--apply` has run: a wrong action means `--abort` and a new table.
 
-For the rules behind each proposed action, the own-or-predecessor check of every `origin` row, foreign
-ids with this template's prefixes, fixed targets and which rows need `"confirmed": true`, read
-`references/table-rules.md` before filling the table. Actions are fixed once `--apply` has run: a wrong
-action means `--abort` and a new table.
-
-**Validate before asking for approval, not after:**
+Validate before asking, as a **separate tool call** after writing `table.json` (one command doing both was refused by
+the auto-mode classifier as a blind apply):
 
 ```bash
 python .act/scripts/adopt.py --target <dir> --apply --plan
 ```
 
-It checks the whole table (plus what needs the disk: existence, links, untracked files, a stale
-scan, and on Windows the length of every legacy path) and changes nothing. Fix what it refuses,
-then present the table for step 3 — as a table with the origin column, not the raw JSON. Write
-`table.json` and run this dry run as two separate tool calls: one command doing both was refused
-by Claude Code's auto-mode safety classifier as a blind apply.
-
-**Windows: long paths.** A legacy path is the old path plus `docs/ai/work/archive/legacy/`; at 260
-characters or more Git fails on it unless the repository sets `core.longpaths`. `--apply --plan`
-refuses then and names the longest paths. Setting it is a change to the owner's repository
-config, so ask with the table in step 3, and only on a yes:
-
-```bash
-git -C <dir> config core.longpaths true
-```
+Fix what it refuses, then show the table with the origin column, not the raw JSON. When it refuses long legacy paths
+on Windows (260 characters, Git fails without it), `git -C <dir> config core.longpaths true` changes the owner's
+repository config: ask with the table, only on a yes.
 
 ## 3. Owner approves once
 
-The whole table, one pass — no partial start. If `--apply --plan` warned about `adopt` rows without
-a target, name those rows in the same approval and ask whether to go on without targets for them. The owner may change any number of rows; nothing
-runs until the table is accepted as it stands (or after those corrections, validated again).
-`core.longpaths` (step 2) is part of the same answer where it is needed.
-
+The whole table in one pass, no partial start; the owner may change any row, then validate again. Name every `adopt`
+row without a target the plan warned about and ask whether to go on without targets; `core.longpaths` is part of the
+same answer where needed. Nothing runs until the table is accepted as it stands.
 
 ## 4. Apply
 
-**Settle the language first.** `init.py` writes `docs/ai/config.md` in the docs language and
-gives its own todos (`dependency-check` under `once`, `security-check-deps`, `init-notes`) titles in it (their
-bullet points stay English), and a `translate-scaffold` note is only written for a language other than English — so the language has
-to be known before `--apply`, not after step 5. Take it from the sighting's `language hint: …` line
-(an old `AI-CONFIG.md`); with no such line, propose the owner's language after `R-human-language`
-(the chat language, remembered per machine, else recognized from the owner's own messages) and
-let the owner confirm or choose another one. The chat language is normally `auto`. Then pass both:
+**Settle the language first**: `init.py` writes the docs and its todos in it, so it must be known before `--apply`.
+Take it from the sighting's `language hint: …` line; else propose the owner's language and let the owner confirm or
+choose (chat language normally `auto`). Both options are recorded as fixed by the owner: step 5 never overrides them.
 
 ```bash
 python .act/scripts/adopt.py --target <dir> --apply --plan --language-docs <code> --language-chat <code|auto>
 python .act/scripts/adopt.py --target <dir> --apply --language-docs <code> --language-chat <code|auto>
 ```
 
-Run from a project, add `--carry <list>` from step 0 to both (left out = everything).
+From a project add `--carry <list>` to both. `--confirm-no-targets` only if the owner agreed in step 3, never on your
+own. `mode` has no option (`init.py` derives it from the Git authors). `--apply` refuses a dirty tree, an existing
+`act-adopt` branch and a detached HEAD, and records `<dir>/.act-local/adopt/state.json` (`moved`, `created`,
+`dirty_after_apply`, …). After `stage-failed` or `init-failed` a second `--apply` is refused: fix the cause and
+`--abort`.
 
-`--plan` first, changes nothing. Pass `--confirm-no-targets` only
-if the owner agreed to it in step 3, never on your own. Both options go straight to `init.py --target` and are recorded in
-`state.json` as fixed by the owner: step 5 never overrides them, whatever the old `AI-CONFIG.md` says
-(its report row reads "kept: set at --apply"). Without them `init.py` writes English, and step 5 can
-still set `language-docs` from an old `AI-CONFIG.md`. The `mode`
-has no option here: `init.py` derives it from the Git authors (step 5).
+## 5. Settings
 
-
-When `--apply` refuses or fails, or to see what `state.json` records, read
-`references/apply-details.md`.
-
-## 5. Settings — check `docs/ai/config.md` before anything else
-
-`init.py` ran non-interactively, so `docs/ai/config.md` holds its defaults: `name` the folder
-name, `owner` the Git `user.name` (else `unknown`), `language-chat`/`language-docs` what step 4
-passed (else `auto`/`en`), `stack` `unspecified`, empty `commands`, `tools` `claude-code`, `mode`
-`solo` or `team` from the number of distinct real author e-mails (placeholder and test identities
-left out). It says so in `docs/ai/inbox/U<n>-init-notes.md` ("Project config uses
-defaults for: ..."); `adopt_config.py` takes every key it sets out of that line afterwards, and
-removes the note when nothing is left in it.
+`init.py` wrote `docs/ai/config.md` with defaults and said so in `docs/ai/inbox/U<n>-init-notes.md`.
 
 ```bash
-python .act/scripts/adopt_config.py --target <dir> --plan   # show the report, write nothing
+python .act/scripts/adopt_config.py --target <dir> --plan   # the report, writes nothing
 python .act/scripts/adopt_config.py --target <dir>          # write
 ```
 
-Read `references/config-adoption.md` when the project has an old `AI-CONFIG.md` or `.claude/template.json`,
-and for the hand comparison of `docs/ai/config.md` (`tools`, `language-chat`, `language-docs`, `stack`,
-`commands`, `owner`, `mode`) that has to be right before steps 6 and 7.
+It sets a key from an old `AI-CONFIG.md` or `.claude/template.json` only where the value is still a default; the rest goes
+to `.act-local/adopt/config-report.md`. Then compare `docs/ai/config.md` with the old project by hand
+and correct it: `tools`, `language-chat`, `language-docs`, `stack`, `commands`, `owner`, `mode`. It must be right
+before steps 6 and 7: `--finish` chooses bridges by `tools` (no `claude-code` there removes an adopted `CLAUDE.md`),
+and `mode` decides whether an entry without a kept id gets a new one (`solo`) or none yet (`team`). A command that names
+a path the adoption removes is flagged: settle it with the owner. An old `AI-CONFIG.md` without a language row is
+assumed `de`: confirm it with the owner.
 
 ## 6. Fill the content — one worker per target, never "all the docs at once"
 
-While reading every old source, harvest what would help someone who never sees this project; then cut
-(never retype) each body from the old source, and write open items, board approvals and rule prose as
-one batch file per worker for `adopt_entries.py` (`--plan` first, one call at a time).
-
-- Harvest, where to read, cutting bodies, titles and batch kinds: `references/content-entries.md`.
-- Passages into `docs/project/coding_rules.md` and `docs/README.md`, rules as overrides or own rules
-  (a guideline file is sorted by place and proposed part by part, never taken whole into "Own rules"),
-  moved docs, own skills and agents, and recording `target` and `"done": true` in `table.json`:
-  `references/content-files.md`.
+While reading each old source, harvest what would help someone who never sees this project, cut (never retype) each
+body, and write open items, board approvals and rule prose as one batch per worker for `adopt_entries.py`
+(`--plan` first, one call at a time). Entries, titles, batches, harvest, ids: `references/content-entries.md`; passages
+into `coding_rules.md` and `docs/README.md`, rules as overrides, moved docs, own skills and agents, recording `target`
+and `"done": true`: its second half.
 
 ## 7. Finish
 
@@ -202,92 +134,63 @@ python .act/scripts/adopt.py --target <dir> --finish --plan
 python .act/scripts/adopt.py --target <dir> --finish
 ```
 
-Refuses while an `adopt` row is not `done`, has no target, a target is missing, any recorded
-target is still unchanged since `--apply`, or an action differs from `--apply`'s. Then: adopted
-`ai-config` files `init.py` has a bridge for become that bridge (`AGENTS.md` always, `CLAUDE.md`
-with `claude-code` in `tools`); other adopted sources and every `delete` row are removed
-(`git rm`); an own skill or agent under `docs/ai/local/` gets its tool copies/role bridge as
-`act-load-settings` writes them; until the next `update.py` run the tool copy stays the template's version. A failing Git call stops it with the state left at `applied`;
-fix the cause and run the same `--finish` again. A second `--finish` after success says "already
-finished".
+It refuses while an `adopt` row is not `done`, has no target, a target is missing or unchanged, or an action differs
+from `--apply`'s. It bridges adopted `ai-config` files, removes the other adopted sources and every `delete` row
+(`git rm`), bends dead links, prunes settings entries on removed scripts, runs `doctor.py` and writes
+`docs/ai/inbox/report-<timestamp>-adoption-report.md`. A failing Git call leaves state `applied`: fix the cause and rerun.
 
-Read `references/finish-details.md` for what `--finish` does after that (settings entries on removed
-scripts, the `act:default` mark, dead references) and for the check of the result with
-`doctor.py --target <dir>`. When `--finish` names `<dir>/.act-local/adopt/harvest.md`, read
-`references/harvest.md` — the owner's consent comes now, not before.
+- **References:** the full list is `<dir>/.act-local/adopt/references.txt`. A path in backticks is text and is never
+  changed; the orchestrator goes through every "mention in text" with the owner and changes it only on the owner's say.
+- **Settings:** the report's own heading ("Remove it by hand, or check") lists entries it did not remove; the
+  orchestrator settles them with the owner and edits `.claude/settings.json` in place; `settings.local.json` is the
+  owner's to clean. Afterwards `python .act/scripts/doctor.py --target <dir>` reports 0 findings.
+- **Harvest:** when `--finish` names `harvest.md`, read `references/harvest.md`; the owner's consent comes now.
+- **Translate the scaffold in this same run** when `language-docs` is not `en`: translate every file listed in
+  `docs/ai/inbox/U<n>-translate-scaffold.md` that still has `<!-- act:default -->` on line 1 (what carries it is pure
+  scaffold), following the todo (`R-work-language`), drop that line, set the todo `status: done` and move it to
+  `docs/ai/work/archive/`. Adopted content is never translated here.
 
-**Then translate the scaffold, in this same run.** With a `language-docs` other than `en`,
-`docs/ai/inbox/U<n>-translate-scaffold.md` lists the scaffold files `init.py` wrote in English. It
-is only the fallback for a run without this skill, never something to hand to the owner. Translate
-every listed file that still has `<!-- act:default -->` on line 1 — `--finish` took the mark off
-every target holding adopted content, so what still carries it is pure scaffold — following the
-todo's own instructions (`R-work-language`), and drop that line. Then set the todo to
-`status: done` and move it to `docs/ai/work/archive/`. Adopted content is never translated here
-(`references/config-adoption.md`).
-
-## 7b. Baseline check — the commit checks, once, before the first commit
-
-The existing code has never been through this template's commit checks, so the first commit would be held for
-patterns that were there long before, and a secret in the code would only show up then. Look once first:
+## 7b. Baseline check — once, before the first commit
 
 ```bash
 python .act/scripts/adopt_baseline.py --target <dir>
 ```
 
-Read-only. It prints (1) the secret-file patterns missing from `<dir>/.gitignore` (`.env` variants, private keys,
-keystores; the `.env.example` family stays tracked) as lines to add, (2) the findings of the secret scan and the
-dangerous-pattern scan over the tracked and the untracked-but-not-ignored files, and of files whose name is a secret
-file — file, line and rule, never a value — and (3) the backlog entries it would create. With nothing to report it
-says `baseline: nothing to report`.
-
-Show the owner the three parts, then, on the owner's yes (it appends to `.gitignore` and creates entries):
+Read-only; it prints what it would add and book. Show the owner all of it; on the owner's yes:
 
 ```bash
 python .act/scripts/adopt_baseline.py --target <dir> --write-gitignore --book
 ```
 
-`--write-gitignore` and `--book` can also be given separately. Booking creates one backlog entry per file for a secret
-(rotate, remove) and one per rule for a dangerous pattern (every place listed); running it again creates nothing
-twice. Count `<dir>/.gitignore` to the template layer commit (step 8, group 2) and the new backlog entries to a commit
-of their own (step 8, group 6: "baseline findings of the adopted code").
-
-What the first commit does afterwards: a booked dangerous-pattern finding goes through without a hold (`--book`
-lists its file and rule in `<dir>/.act-local/danger-scan-hints/baseline.json`, which the commit check reads); a
-pattern in a file or of a rule not booked is held once as usual. A **secret finding keeps holding every attempt** until the value is removed
-(and rotated), the line carries `act:allow-secret`, or the line is listed in `docs/ai/local/secret-accepted.md` (the
-hold message prints the finished entry) — booking does not silence it, by design: tell the owner which of the three
-applies per file, and never accept a real secret.
-
-The booking stays in force after the first commit, with no expiry: a new hit of a booked rule in a booked file
-passes from then on. It ends by removing its `<file>|<rule>` key from the list in `<dir>/.act-local/danger-scan-hints/baseline.json`
-(or deleting the file).
+Count `<dir>/.gitignore` to commit group 2 and the new backlog entries to group 6 (step 8). A booked dangerous pattern
+passes the first commit; **a secret finding keeps holding every attempt** until the value is removed (and rotated), the
+line carries `act:allow-secret`, or it is listed in `docs/ai/local/secret-accepted.md` (the hold message prints the
+entry). Tell the owner which applies per file; never accept a real secret. 
 
 ## 8. Commit — the orchestrator, by pathspec, on `act-adopt`
 
-`adopt.py` never commits. Commit by pathspec on `act-adopt`, one `git add -- <paths>` (only paths that exist)
-and one `git commit -m "<message>" -- <paths>` per group, never adding a git-ignored file (nothing under `.act-local/`).
-Read `references/commit-groups.md` for the six groups in their order (legacy moves, template layer, one commit per
-target, what `--finish` did, references and the docs index, baseline findings), what belongs in each, and the
-check that every line of `git status --porcelain --untracked-files=all` falls under exactly one group before the first commit.
-Afterwards `git status` shows nothing but git-ignored files; the owner reviews `act-adopt` and merges it.
-Last, when this ran from a project, suggest `act-update` in the adopted project: it got that project's `.act/`.
+Commit by pathspec, one `git add -- <paths>` (existing paths only) and one `git commit -m "<message>" -- <paths>` per
+group, never a git-ignored file (nothing under `.act-local/`). Read `references/commit-groups.md` for the six groups in
+order and the check that every line of `git status --porcelain --untracked-files=all` falls under exactly one. Then
+`git status` shows only git-ignored files; the owner reviews and merges `act-adopt`. From a project, suggest `act-update`
+in the adopted one.
 
 ## Abort
 
 ```bash
-python .act/scripts/adopt.py --target <dir> --abort --plan     # what it would do, or why it refuses
-python .act/scripts/adopt.py --target <dir> --abort            # after --apply
-python .act/scripts/adopt.py --target <dir> --abort --force    # saves changed files first
+python .act/scripts/adopt.py --target <dir> --abort --plan   # what it would do, or why it refuses
+python .act/scripts/adopt.py --target <dir> --abort          # after --apply
+python .act/scripts/adopt.py --target <dir> --abort --force  # saves changed files to .act-local/adopt/aborted/ first
 ```
 
-When `--abort` refuses, or files were written after `--apply`, read `references/abort-details.md`. There
-is no `--abort` once `--finish` has run — undo means checking out the base branch and deleting
-`act-adopt` by hand, after reviewing it.
+A commit on `act-adopt` other than `init.py`'s refuses it even with `--force`: take those commits off first, the
+refusal says how. It does not remove what was written after `--apply` by anything but `init.py` (entries, proposals,
+copies under `docs/ai/local/`, the translate-scaffold todo): they are listed as "left in place"; move them to
+`.act-local/adopt/aborted/` or delete them, and move `table.json` and `entries-map.json` aside, before a new attempt at
+step 1. After `--finish` there is no `--abort`: check out the base branch and delete `act-adopt` by hand, after review.
 
 ## When not
 
-The owner declines the rebuild: stop after step 1 (the read-only sight only) and run
-`init.py --target <dir>` alone. **Gap:** `docs/ai/config.md` has no key today for "the project's
-docs live at `<old location>`, not `docs/project/`" — until one exists, note that decision by hand
-(a line in `docs/ai/config.md`'s free text, or an inbox entry) rather than pointing at a setting
-that isn't there.
+The owner declines the rebuild: stop after step 1 and run `init.py --target <dir>` alone. There is no `docs/ai/config.md`
+key for "the docs live at `<old location>`, not `docs/project/`": note that decision by hand (a line in the file's free
+text, or an inbox entry), not as a setting that does not exist.

@@ -147,6 +147,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- The `act-adopt` skill is about half as long (63 700 to about 30 000 characters): the steps keep every decision and safety stop, and point to the script's `--plan` output and `--help` instead of repeating what they list.
 - The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
   assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
   case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works

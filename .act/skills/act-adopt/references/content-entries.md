@@ -1,110 +1,108 @@
-# Content as entries (step 6)
+# Filling the content (step 6)
 
-Read from step 6 of `SKILL.md`: harvest, cutting bodies, titles and the batch files for `adopt_entries.py`.
+Read from step 6 of `SKILL.md`. Part A: entries by batch. Part B: files outside the entry system and recording targets.
 
 ## Contents
 
-- Harvest for the template, alongside reading
-- Where to read
-- Cut, don't retype
-- What counts as the heading
-- Open items, board approvals, proposals — one batch file per worker, one call at a time
+- A. Entries
+- B. Files outside the entry system
 
-**Harvest for the template, alongside reading.** Every old source in this step is read
-anyway — while reading it, judge each rule, skill, doc/form convention or code convention against
-one question: **does this help someone who will never see this project?** (the scope
-reaches rule files, skills, and doc/form/code conventions alike; a code convention need not become
-a `.act/coding/` bundle of its own, project directory layouts differ too much for that, but a
-transferable idea from one is still worth a line.) A hit gets one line in
-`<dir>/.act-local/adopt/harvest.md` (create it on the first hit): source as `<path>:<line>`, what
-it is, why it would help a stranger — the wording never copied verbatim from the old project, no
-project name, no code, no numbers, same bar as `.act/rules/topics/feedback.md`'s "Privacy check"
-and its "What a good entry looks like" table. This file is local only (`.act-local/` is
-gitignored) and judgment only — nothing here is sent yet; step 7 asks consent and only then turns
-lines into outbox entries or discards them.
+## A. Entries
 
-**Where to read.** The old content of a row that `--apply` moved is no longer at its `path` (at a
-place `init.py` writes itself, the file there is now the template's version): `state.json`'s
-`moved` map says where it is (`docs/ai/work/archive/legacy/<old path>`, byte-identical, same line
-numbers). Everything else is still at its `path`.
+**Harvest while reading.** Judge each rule, skill, doc/form or code convention against one question: does this help someone
+who will never see this project? A hit is one line in `<dir>/.act-local/adopt/harvest.md`: source `<path>:<line>`, what it
+is, why it helps a stranger; wording never copied from the old project, no project name, code or numbers (the bar of
+`.act/rules/topics/feedback.md`, "Privacy check"). Local and judgment only; nothing is sent before step 7.
 
-**Cut, don't retype.** Every `body` goes in as `body_file`, a file cut mechanically from the old
-source — never text written out by the model, which is retyping however it is done:
+**Where to read.** A row `--apply` moved is at `state.json`'s `moved` path (`docs/ai/work/archive/legacy/<old path>`,
+byte-identical, same line numbers); the rest is still at its `path`.
+
+**Cut, don't retype.** Every `body` is a `body_file` cut mechanically, never text the model wrote out:
 
 ```bash
 mkdir -p <dir>/.act-local/adopt/bodies
 sed -n '<first>,<last>p' <dir>/<source file> > <dir>/.act-local/adopt/bodies/<name>.md
 ```
 
-(or a byte slice in Python; several spans of the same file may go into one body, in their
-order). A cut that starts at line 1 must leave out a leading BOM (U+FEFF), which `sed` would copy
-along: slice the bytes from after `EF BB BF` instead. The `--plan` run below prints every title;
-compare them with the old headings before writing.
+Several spans of one file may go into one body, in order. A cut from line 1 leaves out a leading BOM (slice bytes after
+`EF BB BF`). The `--plan` run prints every title: compare with the old headings.
 
-**What counts as the heading.** Title and body per shape of the old item — the body never loses
-text, so where the title line holds more than the title, the body starts with that line:
+**Title and body per old item** (the body never loses text; where the title line holds more, the body starts with it):
 
 | Old item | Title | Body |
 | :--- | :--- | :--- |
-| a heading or a bold line (`### T12 · …`, `**Q3 · …**`) | its text | the lines below it, up to the next item |
-| a bullet or checkbox without a heading (`- [ ] **T12 · …** — …`, a board list) | the bold lead, else the text up to the first ` — ` or `: `; where either is only a label or the start of a sentence without a statement (fewer than four words — a bold lead like "Release" counts too), the whole logical line (the item's first line joined with the lines it wraps onto, by single spaces) | the whole bullet with its indented continuation lines |
-| a backlog table row | the cell of the title column (`Titel`, `Title`) | the table's header and separator line, the row, then its detail section (`### B12 …` with the heading, up to the next heading of the same or a higher level) where the file has one |
-| rule prose without a heading of its own | its first sentence, up to `. `, `: ` or the line end | the passage |
+| heading or bold line | its text | the lines below, up to the next item |
+| bullet or checkbox without heading | the bold lead, else text up to the first ` — ` or `: `; if that has fewer than four words, the whole logical line | the whole bullet with continuation lines |
+| backlog table row | the title-column cell | table header and separator, the row, then its detail section if any |
+| rule prose without heading | its first sentence | the passage |
 
-A title longer than 80 characters is shortened by `adopt_entries.py` itself: its first sentence, else a cut at a
-word boundary with "…"; the full old text then opens the entry's body.
+A title never carries the old id, bold markers, a status emoji or a closing colon; no two titles of a batch are equal (take
+the next sentence). A link into the old file stays as it is. `adopt_entries.py` shortens a title over 80 characters itself.
 
-A title never carries the old id, bold markers, a status emoji (🔴, 🟡, ✅, ⏳, ⚠️, …) or a
-closing colon — the emoji and the space next to it go, a colon at the very end goes, every other
-character stays. No two items of a batch get the
-same title: where a passage starts with a sentence that is already a title, its next sentence is
-the title. A link into the old file (`[Details](#b12)`) stays as it is in the body: rewriting it
-would change the human's text, and a detail section cut into the same body brings its heading,
-and so its anchor, along.
-
-**Open items, board approvals, proposals — one batch file per worker, one call at a time:** each
-worker writes its own `<dir>/.act-local/adopt/batch-<source>.json` (e.g. `batch-tasks.json`,
-`batch-claude.json`), never a shared file; the orchestrator runs them one after the other, each
-first with `--plan` (the map collects every run's files):
+**One batch file per worker, one call at a time** (`<dir>/.act-local/adopt/batch-<source>.json`, never shared):
 
 ```bash
 python .act/scripts/adopt_entries.py --target <dir> --from <dir>/.act-local/adopt/batch-<source>.json --plan
 python .act/scripts/adopt_entries.py --target <dir> --from <dir>/.act-local/adopt/batch-<source>.json
 ```
 
-Batch items (a JSON list): `kind` (`task`|`backlog`|`question`|`inbox`|`proposal`|`reserved`), `title`,
-`source` (`"<table path>:<line>"` — the row's own `path` and the heading's line; for a moved row
-the line in the legacy copy is the same), and optionally `id`, `formerly`, `body_file`, `status`
-(question/inbox), `for` (inbox). `for` is the recipient: the person who has to act on the entry
-— answer, decide or carry it out —, not the one waiting for the result; `all` when no single
-person is meant. Per kind:
+Items: `kind` (`task`|`backlog`|`question`|`inbox`|`proposal`|`reserved`), `title`, `source` (`"<table path>:<line>"`), and
+optionally `id`, `formerly`, `body_file`, `status`, `for` (the person who has to act, `all` when none). A batch is refused
+whole on one problem; a rerun skips items already written. `entries-map.json` lists every written file.
 
-- **Open tasks, backlog items, questions** from `work` rows: `id` keeps the old `T`/`B`/`Q` id
-  (an id that only survives in the legacy copy is free to reuse); an old number from another
-  scheme goes into `formerly` instead. Done items are not entries — they stay in the legacy copy.
-- **Tasks only the owner may do** (the old tasks file's section "Aufgaben nur für …", "Tasks only
-  for …"): each item becomes `kind: "inbox"`, `for: "<owner>"`, `status: "open"`,
-  `formerly: "<old id>"` — never `task` (an assistant would pick it up) and never `id` (an inbox
-  entry takes none). The body keeps its `Antwort:` line.
-- **A board approval or other open point without an entry shape of its own**: `kind: "inbox"`,
-  `status: "open"`, `for: "<owner>"` where the owner has to decide or act, `for: "all"` where
-  anyone may. Not a separate `entries.py new inbox` call — that has no `--target` and would write
-  into this checkout.
-- **Rule prose** from the old `CLAUDE.md`/`AGENTS.md`, and any `AI-CONFIG.md` free-text passage
-  that is a rule of its own: `kind: "proposal"`, `target` one of `rules`|`coding`|`checklists`|
-  `config` (the proposal's header, not the table's `target`), `author` optional. Every project
-  built on an earlier generation of this template carries such prose — plan for it. Only the
-  project's own passages become proposals, not the predecessor template's text (step 2, "Own or
-  the predecessor's").
-- **Old ids that get no live entry and no legacy copy** (they sat in a file `--finish` deletes):
-  `kind: "reserved"`, `id` the old id, `title` a short reason. Nothing is written but the id, so
-  `entries.py` never hands out that number again.
-- **The config report** from step 5: one `inbox` item, title `Config adoption report`,
-  `body_file` `.act-local/adopt/config-report.md`, `source` the old `AI-CONFIG.md`, `for: "all"`,
-  so nothing of it stays outside the entry system.
+- **Open tasks, backlog items, questions** from `work` rows: `id` keeps the old id; a number from another scheme goes into
+  `formerly`. Done items are no entries.
+- **Tasks only the owner may do**: `kind: "inbox"`, `for: "<owner>"`, `status: "open"`, `formerly`; never `task`, never `id`.
+  The body keeps its `Antwort:` line.
+- **A board approval or open point without entry shape**: `kind: "inbox"`, `status: "open"`, `for` the owner or `all`; not
+  `entries.py new inbox` (no `--target`).
+- **Rule prose** of the old `CLAUDE.md`/`AGENTS.md`/`AI-CONFIG.md`: `kind: "proposal"`, `target` one of `rules`|`coding`|
+  `checklists`|`config`. Only the project's own passages, not the predecessor's text.
+- **Old ids with no live entry and no legacy copy** (in a file `--finish` deletes): `kind: "reserved"`, `id`, short reason.
+- **The config report** of step 5: one `inbox` item, title `Config adoption report`, `body_file`
+  `.act-local/adopt/config-report.md`, `source` the old `AI-CONFIG.md`, `for: "all"`.
 
-`ledger` is not a kind: a journal is a `log` row, always `legacy`, never a new entry. A batch is
-refused as a whole on any single problem; nothing partial. A rerun after an interrupted write
-skips the items already written unchanged instead of refusing them. After each successful run,
-`<dir>/.act-local/adopt/entries-map.json` lists every written file under `entries`, each with its
-`source_path`, `source_line` and `file`.
+A journal is a `log` row, always `legacy`, never an entry.
+
+## B. Files outside the entry system
+
+The orchestrator writes them; a worker drafts under `.act-local/adopt/drafts/<same path>`.
+
+- **`docs/project/coding_rules.md` and `docs/README.md`** (adopted into themselves): only the project's own passages, found
+  with the `origin` diff, cut byte-identical like a body; the predecessor's scaffold prose (its `Datenstand` line, the
+  section "Vorgefertigte Regelsätze") stays out. Where in the file is your call; the helper fixes heading levels and line
+  endings (`--into coding`: end of `## Own rules`, old top level becomes `###`; `--into readme`: end of the file, `##`):
+
+  ```bash
+  python .act/scripts/adopt_passages.py --target <dir> --into coding|readme --from <cut file> --plan
+  python .act/scripts/adopt_passages.py --target <dir> --into coding|readme --from <cut file>
+  ```
+
+  One run per target, several passages in one cut file in original order. In the old index table of `docs/README.md` leave
+  out by hand a row whose file is gone and a footnote only such rows use; every other row stays.
+- **Rules are adopted so that they are loaded and followed**, decided per rule before the cut file is made:
+  - It matches a template rule or group (`python .act/scripts/rules.py --list`, `rules.py <id>`; for `R-…` ids `--area core`):
+    an **override**, one line ``- replaces `<ID>`: <the project's wording>`` under `## Overrides` after the
+    `<!-- act:overrides -->` mark, written by hand. It replaces the **whole text** of the rule or group: if the old rule covers
+    only part, adopt it as an own rule instead, or the override carries the complete adapted group text.
+  - It matches none: never take a whole guideline file into "Own rules" (loaded every session). Sort its parts by the table in
+    `.act/bridges/coding_rules.md` and propose a place per part; the human decides: every coding session → own rule, one
+    imperative line; only some paths → `.claude/rules/<area>.md` with `paths:`; tied to a framework version → its own rule
+    set; origin, incident, evidence → project docs; derivable from code → dropped or `stack`; doubles a template rule →
+    dropped. Own rules go through `adopt_passages.py --into coding`, or for `docs/ai/rules.md` as a ``- `ID`: text`` line.
+  - Check: `rules.py --list` and `--area core --list` show overrides `[~]` and own rules `[+]`; `--validate` must not name a
+    `note:` or an `unclosed code fence` there (that text is not read: rewrite as bullets). A rule in neither list is not in force.
+  - Record the decision per rule in the `note` of its table row.
+- **A doc moving into `docs/project/`**: `mkdir -p <dir>/docs/project && cp <dir>/<old path> <dir>/docs/project/<name>`,
+  byte-identical, and a line in `docs/README.md` (`--finish` writes none).
+- **An own skill or agent**, byte-identical:
+
+  ```bash
+  mkdir -p <dir>/docs/ai/local/skills && cp -r <dir>/.claude/skills/<name> <dir>/docs/ai/local/skills/
+  mkdir -p <dir>/docs/ai/local/agents && cp <dir>/.claude/agents/<name>.md <dir>/docs/ai/local/agents/
+  ```
+
+**Record it in `table.json`.** For every `adopt` row set `target` to the files its content reached (for entries and
+proposals the `file` values of `entries-map.json` with the row's `path` as `source_path`, never `proposal_target`) and
+`"done": true`. `legacy` rows get no target. A recorded target the content did not change (`docs/ai/config.md` with every
+value already right) comes out of `target`; never touch a file to make it look changed.
