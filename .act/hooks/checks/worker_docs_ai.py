@@ -30,8 +30,8 @@
 #     child would over-block; accepted as the safe-side tradeoff, same as write_guard.py's. This
 #     text-only match is also the fallback used whenever a target's base/root cannot be
 #     determined at all (fail toward blocking, same as write_guard.py).
-#   - PowerShell commands go through powershell_targets._powershell_write_targets (as in
-#     write_guard.py) and, as well, through shell_targets._bash_write_targets, which Bash commands
+#   - PowerShell commands go through the PowerShell write-target reading (as in
+#     write_guard.py) and, as well, through the Bash one (Parse.bash_write_targets), which Bash commands
 #     use alone: refused if either finds a target. What neither scanner knows as a write stays
 #     invisible: a cmdlet or program outside both tables, and a write made by a program the command
 #     starts (see the next item). A PowerShell command the PowerShell scanner cannot
@@ -49,11 +49,9 @@ from typing import Iterable, Optional
 
 import actlib
 
+from .command_parse import Parse, parse_for
 from .common import _TOOL_PATH_FIELDS, _check_mode, _is_worker
-from .powershell_targets import _powershell_write_targets
-from .shell_targets import (
-    _GIT_WRITES_WORKER_SCOPE, _bash_write_targets, _is_absolute_target, _is_dynamic_target, _resolve_path,
-)
+from .shell_targets import _GIT_WRITES_WORKER_SCOPE, _is_absolute_target, _is_dynamic_target, _resolve_path
 from .write_guard import _guard_root, _resolve_against
 from .write_scope import _within_scratchpad
 
@@ -85,10 +83,10 @@ def _is_under_project_docs_ai(resolved: Path, root: Path) -> bool:
 
 
 def _bash_targets_docs_ai(
-    command: str, base_cwd: str, root: Optional[Path], scratchpad_dir: object,
+    command: str, base_cwd: str, root: Optional[Path], scratchpad_dir: object, parse: Optional[Parse] = None,
 ) -> bool:
     """True if a Bash/PowerShell command writes into `root`'s own docs/ai/, judged from the write
-    targets the shared scanner finds (_bash_write_targets) — a mere mention (`cat docs/ai/x`, `grep
+    targets the shared scanner finds (Parse.bash_write_targets) — a mere mention (`cat docs/ai/x`, `grep
     -r x docs/ai/`) is a read and passes. git_writes is _GIT_WRITES_WORKER_SCOPE (mv/rm/checkout/
     restore, the same set checks/write_scope.py uses): those git subcommands' own operands are
     themselves paths worth checking here; a worker's `git add`/`git commit`/... is blocked outright
@@ -100,29 +98,35 @@ def _bash_targets_docs_ai(
     or whose own project `root` could not be determined is judged denied only if its own text
     names docs/ai — mirrors checks/write_guard.py's _bash_targets_protected_path exactly (a
     *determinable* target is resolved and checked against `root`'s own docs/ai/ only,
-    never against the raw text — a sibling checkout's docs/ai/ is not this project's to protect)."""
+    never against the raw text — a sibling checkout's docs/ai/ is not this project's to protect). `parse` is
+    the dispatcher's reading of `command`; without it the command is read here."""
+    if parse is None:
+        parse = Parse("Bash", command)
     return _pairs_target_docs_ai(
-        _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE), root, scratchpad_dir,
+        parse.bash_write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE), root, scratchpad_dir,
     )
 
 
 def _powershell_targets_docs_ai(
-    command: str, base_cwd: str, root: Optional[Path], scratchpad_dir: object,
+    command: str, base_cwd: str, root: Optional[Path], scratchpad_dir: object, parse: Optional[Parse] = None,
 ) -> bool:
     """True if a PowerShell command writes into `root`'s own docs/ai/: when **either** scanner finds
-    such a target. The Bash scanner (shell_targets._bash_write_targets) knows the Unix and native
+    such a target. The Bash scanner (Parse.bash_write_targets) knows the Unix and native
     programs a PowerShell command can start just as well (`| tee`, `curl.exe -o`, `tar -C`,
     `sed -i`, `touch`, `dd of=`, `rsync` ...); the PowerShell scanner
-    (powershell_targets._powershell_write_targets, the one write_guard.py uses) knows the write
+    (Parse.write_targets of a PowerShell call, the one write_guard.py uses) knows the write
     cmdlets (Set-Content, Out-File, Add-Content, New-Item, ...) as well as `>`/`>>` and the aliases.
     Each judges its targets as _bash_targets_docs_ai says. The PowerShell scanner resolves a target
     to an absolute path itself where it can; one left relative or dynamic (a variable, or the
     directory unknown after an unresolvable Set-Location) is judged by its own text. None back from
     it (Invoke-Expression/iex, an unterminated quote or here-string) denies if docs/ai is named
-    anywhere in the command, same as write_guard.py's own fallback."""
-    if _bash_targets_docs_ai(command, base_cwd, root, scratchpad_dir):
+    anywhere in the command, same as write_guard.py's own fallback. `parse` is the dispatcher's reading of
+    `command`; without it the command is read here."""
+    if parse is None:
+        parse = Parse("PowerShell", command)
+    if _bash_targets_docs_ai(command, base_cwd, root, scratchpad_dir, parse):
         return True
-    targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+    targets = parse.write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE)
     if targets is None:
         return bool(_DOCS_AI_PATH_RE.search(command))
     return _pairs_target_docs_ai(
@@ -156,6 +160,7 @@ def _pairs_target_docs_ai(pairs: Iterable[tuple[str, Optional[str]]], root: Opti
 
 def _targets_docs_ai(
     tool_name: str, tool_input: dict, base_cwd: str, root: Optional[Path], scratchpad_dir: object,
+    payload: Optional[dict] = None,
 ) -> bool:
     """True if this tool call's write target lands under `root`'s own docs/ai/. Unknown tools
     never match — same convention as write_guard.py's _targets_protected_path. A target inside the
@@ -165,13 +170,17 @@ def _targets_docs_ai(
     does it (_resolve_against) — falling back to a plain, normcase/normpath'd regex search
     (review, 2026-09-23: `Docs/AI/x` on Windows' case-insensitive filesystem, or `docs/./ai/x`
     built by joining pieces, would otherwise slip past the regex unmatched) whenever `root` is
-    unknown or the path cannot be resolved at all."""
+    unknown or the path cannot be resolved at all. `payload` is the hook payload carrying the dispatcher's
+    parse of a shell command; without it the command is read here."""
+    shared = payload or {"tool_name": tool_name}
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return isinstance(command, str) and _bash_targets_docs_ai(command, base_cwd, root, scratchpad_dir)
+        return isinstance(command, str) and _bash_targets_docs_ai(
+            command, base_cwd, root, scratchpad_dir, parse_for(shared, command))
     if tool_name == "PowerShell":
         command = tool_input.get("command")
-        return isinstance(command, str) and _powershell_targets_docs_ai(command, base_cwd, root, scratchpad_dir)
+        return isinstance(command, str) and _powershell_targets_docs_ai(
+            command, base_cwd, root, scratchpad_dir, parse_for(shared, command))
     for field in _TOOL_PATH_FIELDS.get(tool_name, ()):
         value = tool_input.get(field)
         if not isinstance(value, str) or not value:
@@ -216,7 +225,7 @@ def check_worker_docs_ai(payload: dict) -> int:
         except RuntimeError:
             root = None  # base_cwd is not inside any template-managed project either
     scratchpad_dir = payload.get("scratchpad_dir")
-    if not _targets_docs_ai(tool_name, tool_input, base_cwd, root, scratchpad_dir):
+    if not _targets_docs_ai(tool_name, tool_input, base_cwd, root, scratchpad_dir, payload):
         return 0
 
     if mode == "warn":

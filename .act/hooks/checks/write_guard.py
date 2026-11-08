@@ -20,12 +20,10 @@ from typing import Optional
 
 import actlib
 
+from .command_parse import Parse, parse_for
 from .common import _TOOL_PATH_FIELDS, _check_mode
 from .common import _is_unplaced_target, _unplaced_reason
-from .powershell_targets import _powershell_write_targets
-from .shell_targets import (
-    _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_dynamic_target, _resolve_path,
-)
+from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _is_dynamic_target, _resolve_path
 
 __all__ = [
     "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_bash_targets_protected_path",
@@ -121,9 +119,11 @@ def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:
     return _resolve_path(raw, base_cwd)
 
 
-def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
+def _bash_targets_protected_path(
+    command: str, base_cwd: str, root: Optional[Path], parse: Optional[Parse] = None,
+) -> Optional[str]:
     """The refusal message if a Bash command writes to a path under `root`'s own .act/ — judged from the write
-    targets the shared scanner finds (_bash_write_targets), not from a mere mention: `cat .act/x >
+    targets the shared scanner finds (Parse.write_targets), not from a mere mention: `cat .act/x >
     /tmp/y`, `python .act/scripts/doctor.py 2>&1 | tail` and `grep -rn x .act/ 2>/dev/null` are
     reads and pass. Of the git subcommands only `git mv`/`git rm` count here
     (_GIT_WRITES_TEMPLATE_GUARD): `git checkout`/`git restore` stay allowed, since the orchestrator
@@ -133,8 +133,11 @@ def _bash_targets_protected_path(command: str, base_cwd: str, root: Optional[Pat
     if its own text names .act/ — everything else about it cannot be decided here (a
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
     the raw text — a sibling checkout's .act/ is not this project's to protect). A write the scan could
-    not place (inline code whose path the text does not show, _is_unplaced_target) is refused as such."""
-    for raw, base in _bash_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
+    not place (inline code whose path the text does not show, _is_unplaced_target) is refused as such.
+    `parse` is the dispatcher's reading of `command`; without it the command is read here."""
+    if parse is None:
+        parse = Parse("Bash", command)
+    for raw, base in parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
         if _is_unplaced_target(raw):
             return _unplaced_message(raw)
         if base is None or _is_dynamic_target(raw) or root is None:
@@ -165,10 +168,12 @@ def _unplaced_message(target: str) -> str:
     )
 
 
-def _powershell_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
+def _powershell_targets_protected_path(
+    command: str, base_cwd: str, root: Optional[Path], parse: Optional[Parse] = None,
+) -> Optional[str]:
     """The message to refuse a PowerShell command with, or None when it passes. _WRITE_GUARD_MESSAGE when
     it writes to a path under `root`'s own .act/ — same judgment as _bash_targets_protected_path, via
-    powershell_targets._powershell_write_targets with `broad=True` (only git mv/rm count,
+    Parse.write_targets with `broad=True` (only git mv/rm count,
     _GIT_WRITES_TEMPLATE_GUARD, same split as the Bash side; `broad` is check 1's own deliberately
     over-inclusive extra pass, see that module's docstring). None back from that scanner
     (Invoke-Expression/iex, an unterminated quote/here-string) denies outright if .act/ is mentioned
@@ -180,8 +185,11 @@ def _powershell_targets_protected_path(command: str, base_cwd: str, root: Option
     more directory changes than it tracks, a command larger than its budget) refuses with _unplaced_message
     — where that write lands is unknown, so it is never resolved against `base_cwd` like a plain relative
     name. A *determinable* target (already resolved to an absolute path by the scanner) is checked against
-    `root`'s own .act/ only, same as the Bash side."""
-    targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
+    `root`'s own .act/ only, same as the Bash side. `parse` is the dispatcher's reading of `command`; without
+    it the command is read here."""
+    if parse is None:
+        parse = Parse("PowerShell", command)
+    targets = parse.write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
     if targets is None:
         return _WRITE_GUARD_MESSAGE if _PROTECTED_PATH_RE.search(command) else None
     for target in targets:
@@ -201,7 +209,7 @@ def _powershell_targets_protected_path(command: str, base_cwd: str, root: Option
 
 
 def _targets_protected_path(
-    tool_name: str, tool_input: dict, base_cwd: str, root: Optional[Path],
+    tool_name: str, tool_input: dict, base_cwd: str, root: Optional[Path], payload: Optional[dict] = None,
 ) -> Optional[str]:
     """The message this tool call is refused with, or None when it passes: _WRITE_GUARD_MESSAGE when it
     writes somewhere under `root`'s own .act/, based on the write-target field(s) that specific tool uses;
@@ -210,13 +218,19 @@ def _targets_protected_path(
     `base_cwd` is the directory a relative Bash/PowerShell/file-tool target is resolved against
     (the tool's own cwd); `root` is the project whose .act/ this check protects (None when it
     could not be determined, e.g. `base_cwd` sits outside any template-managed project) — see
-    _is_under_project_act."""
+    _is_under_project_act. `payload` is the hook payload carrying the dispatcher's parse of a shell command;
+    without it the command is read here."""
+    shared = payload or {"tool_name": tool_name}
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return _bash_targets_protected_path(command, base_cwd, root) if isinstance(command, str) else None
+        if not isinstance(command, str):
+            return None
+        return _bash_targets_protected_path(command, base_cwd, root, parse_for(shared, command))
     if tool_name == "PowerShell":
         command = tool_input.get("command")
-        return _powershell_targets_protected_path(command, base_cwd, root) if isinstance(command, str) else None
+        if not isinstance(command, str):
+            return None
+        return _powershell_targets_protected_path(command, base_cwd, root, parse_for(shared, command))
     for field in _TOOL_PATH_FIELDS.get(tool_name, ()):
         value = tool_input.get(field)
         if not isinstance(value, str):
@@ -281,7 +295,7 @@ def check_write_guard(payload: dict) -> int:
             root = actlib.repo_root(Path(base_cwd))
         except RuntimeError:
             root = None  # base_cwd is not inside any template-managed project either
-    message = _targets_protected_path(tool_name, tool_input, base_cwd, root)
+    message = _targets_protected_path(tool_name, tool_input, base_cwd, root, payload)
     if message is None:
         return 0
 

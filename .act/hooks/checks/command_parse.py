@@ -132,6 +132,13 @@ class Parse:
                     self._command, base_cwd, git_writes, broad=broad)
 
             return self._once(key, read_ps, lambda found: None if found is None else set(found))
+        return self.bash_write_targets(base_cwd, git_writes, inline)
+
+    def bash_write_targets(self, base_cwd: str, git_writes: frozenset, inline: bool = True) -> list:
+        """The Bash reading of the write targets whatever the tool: for a PowerShell call it is the reading
+        of the native programs the command starts, asked on top of write_targets. Its key names the Bash
+        reader, so it never meets a PowerShell key; a Bash call's write_targets is this same call."""
+        git_writes = frozenset(git_writes)
         key = ("write_targets", "Bash", base_cwd, git_writes, bool(inline))
 
         def read_bash() -> Any:

@@ -70,17 +70,13 @@ import actlib
 
 from . import inline_code as _inline_code
 from .brace_expand import literal_brace_variants
+from .command_parse import parse_for
 from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _is_unplaced_target
-from .powershell_targets import (
-    _powershell_inline_code_targets,
-    _powershell_write_targets,
-    _ps_raw_redirect_targets,
-)
+from .powershell_targets import _powershell_inline_code_targets, _ps_raw_redirect_targets
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _Word,
     _bash_inline_code_targets,
-    _bash_write_targets,
     _is_absolute_target,
     _is_dynamic_target,
     _resolve_path,
@@ -1117,14 +1113,15 @@ def check_worker_write_scope(payload: dict) -> int:
         if isinstance(command, str):
             cwd_raw = payload.get("cwd")
             base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-            write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE, inline=False)
+            write_targets = parse_for(payload, command).write_targets(
+                base_cwd, _GIT_WRITES_WORKER_SCOPE, inline=False)
             inline_source = (tool_name, command, base_cwd)
     elif tool_name == "PowerShell":
         command = tool_input.get("command")
         if isinstance(command, str):
             cwd_raw = payload.get("cwd")
             base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-            ps_targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+            ps_targets = parse_for(payload, command).write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE)
             if ps_targets is None:
                 ps_targets = _ps_raw_redirect_targets(command)
             # powershell_targets already resolves what it can to an absolute path itself (a

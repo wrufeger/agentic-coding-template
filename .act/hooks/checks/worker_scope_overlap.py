@@ -76,17 +76,12 @@ from typing import Optional
 import actlib
 
 from . import inline_code as _inline_code
-from .command_words import _stripped_word_lists
+from .command_parse import Parse, parse_for
 from .common import MODES_SEEN, _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _pop_pending_notes, _queue_pending_note
-from .powershell_targets import (
-    _powershell_inline_code_targets,
-    _powershell_write_targets,
-    _ps_raw_redirect_targets,
-)
+from .powershell_targets import _powershell_inline_code_targets, _ps_raw_redirect_targets
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_inline_code_targets,
-    _bash_write_targets,
     _command_name,
     _is_absolute_target,
     _is_dynamic_target,
@@ -395,11 +390,12 @@ def _main_write_paths(
             return [], []
         cwd_raw = payload.get("cwd")
         base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+        parse = parse_for(payload, command)
         if tool_name == "Bash":
-            pairs = list(_bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE))
+            pairs = list(parse.bash_write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE))
             inline = _bash_inline_code_targets(command, base_cwd)
         else:
-            ps_targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+            ps_targets = parse.write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE)
             if ps_targets is None:
                 ps_targets = _ps_raw_redirect_targets(command)
             pairs = [(target, None) for target in ps_targets]
@@ -476,13 +472,18 @@ def _runs_test_command(words: list[str], test: list[str]) -> bool:
     return True
 
 
-def _test_run_trees(command: str, cwd: str, root: Path, test: list[str]) -> list[tuple[str, bool]]:
+def _test_run_trees(
+    command: str, cwd: str, root: Path, test: list[str], parse: Optional[Parse] = None,
+) -> list[tuple[str, bool]]:
     """(path, is a directory) of the tree each run of the test command in `command` reads: the directory it
     runs in (the call's cwd, moved by a literal `cd` in front of it) and every word of the run that names an
-    existing file or directory. Paths are in the form write_scope._normalize_candidate_path gives."""
+    existing file or directory. Paths are in the form write_scope._normalize_candidate_path gives. `parse` is
+    the dispatcher's reading of `command`; without it the command is read here."""
+    if parse is None:
+        parse = Parse("Bash", command)
     trees: list[tuple[str, bool]] = []
     current = cwd
-    for words in _stripped_word_lists(command):
+    for words in parse.stripped():
         if not words:
             continue
         if _command_name(str(words[0])) in _CD_NAMES:
@@ -612,7 +613,7 @@ def check_main_session_overlap(payload: dict) -> int:
     if test:
         cwd_raw = payload.get("cwd")
         cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-        for tree, is_dir in _test_run_trees(command, cwd, root, test):
+        for tree, is_dir in _test_run_trees(command, cwd, root, test, parse_for(payload, command)):
             for worker_id, entry in running:
                 shown = _tree_meets_scope(tree, is_dir, entry)
                 if shown is None:
