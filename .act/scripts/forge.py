@@ -234,8 +234,7 @@ def parse_remote_url(url: str, name: str = "origin") -> Remote:
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=30)
+        return actlib.git_run(root, args, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise ForgeError(f"cannot run git in {root}: {exc}") from exc
 

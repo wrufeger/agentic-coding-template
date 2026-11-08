@@ -1529,16 +1529,11 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
                 copy_data = init.skill_copy_bytes(root, copy_key, src, skill_tiers, skill_overrides)
                 message, created = init._write_copy_file(src, copy_dest, False, root, data=copy_data)
                 messages.append(f"skills: {message}")
-                if created:
-                    copies[copy_key] = {
-                        "source": src.relative_to(root).as_posix(),
-                        "sha256": actlib.lock_hash(copy_dest.read_bytes()),
-                    }
-                elif copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == copy_data:
-                    # A hand-placed copy already sitting there, byte-identical to what this import
-                    # just wrote as the own skill's source — not created just now, but legitimate:
-                    # tracked in the lock the same as init.py/update.py would for one of theirs, so
-                    # a later `update`/doctor.py does not flag it as an untracked duplicate.
+                # Created just now, or a hand-placed copy already sitting there, byte-identical to what
+                # this import just wrote as the own skill's source: tracked in the lock the same as
+                # init.py/update.py would for one of theirs, so a later `update`/doctor.py does not
+                # flag it as an untracked duplicate.
+                if created or (copy_key not in copies and copy_dest.is_file() and copy_dest.read_bytes() == copy_data):
                     copies[copy_key] = {
                         "source": src.relative_to(root).as_posix(),
                         "sha256": actlib.lock_hash(copy_dest.read_bytes()),

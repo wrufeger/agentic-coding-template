@@ -96,14 +96,6 @@ class Finding(NamedTuple):
     message: str
 
 
-def _security_check_level(config: dict[str, str]) -> str:
-    """Same normalization as checks/danger_scan.py._security_check_level (not imported from
-    there - that module lives under .act/hooks/checks/, a separate package this standalone script
-    has no reason to depend on): falls back to "local" for a missing/unrecognized value."""
-    value = config.get("security-check", "").strip().lower()
-    return value if value in ("off", "local", "deps", "full") else "local"
-
-
 def _run_git(args: list[str], cwd: Path) -> Optional[str]:
     try:
         result = subprocess.run(
@@ -314,7 +306,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return EXIT_RUN_FAILED
 
     config = actlib.read_config(root)
-    level = _security_check_level(config)
+    level = actlib.security_check_level(config)
     if level != "full" and not args.force:
         print(
             f"[act] security_deep: security-check is '{level}', not 'full' - skipping "

@@ -4,7 +4,7 @@ Detail page announced by the session-start topic line. "ideas" is active when th
 own ideas file — `docs/ai/concept/ideas-<identity>.md`, rules for the human in that folder's
 `README.md` — has entries that are new or changed since they were last processed; the session
 start names them in an `[act] ideas:` note. Mechanism: `.act/scripts/ideas.py`, called from
-`.act/hooks/checks/session.py`.
+`.act/hooks/checks/session_context.py`.
 
 `<identity>` is the short name in `.act-local/identity.json` (gitignored). The session start creates
 that file from `git config user.name` when a checkout lacks it (fresh clone, second machine) and says

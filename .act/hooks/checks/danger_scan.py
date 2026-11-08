@@ -111,8 +111,8 @@ from .secret_scan import (
 )
 
 __all__ = [
-    "_ALLOW_MARK", "_HINTS_DIRNAME", "_MAX_FINDINGS", "_SECURITY_CHECK_LEVELS", "_DOC_EXTENSIONS",
-    "DangerPattern", "DANGER_PATTERNS", "_without_tagged_sql", "_security_check_level", "_enabled_coding_sets",
+    "_ALLOW_MARK", "_HINTS_DIRNAME", "_MAX_FINDINGS", "_DOC_EXTENSIONS",
+    "DangerPattern", "DANGER_PATTERNS", "_without_tagged_sql", "_enabled_coding_sets",
     "_is_scannable_path", "_active_patterns", "_match_line", "_scan_diff_text", "_scan_new_file", "_scan_commit",
     "_hints_file", "_load_noted", "_baseline_file", "_load_baseline", "_note_findings", "_format_finding", "_build_message",
     "check_danger_scan",
@@ -124,7 +124,6 @@ _BASELINE_NAME = "baseline.json"
 _MAX_BASELINE_BYTES = 4_000_000
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a Windows junction or symlink in st_file_attributes
 _MAX_FINDINGS = 5
-_SECURITY_CHECK_LEVELS = ("off", "local", "deps", "full")
 # Prose, not code — a doc explaining `shell=True` or `eval()` is not a call to either, and holding
 # it up on the same footing as source would only train everyone to reach for act:allow-danger
 # without reading it. Extensions only (no content sniffing), same cheap-and-simple stance the
@@ -379,14 +378,6 @@ DANGER_PATTERNS: dict[str, tuple[DangerPattern, ...]] = {
 }
 # Nuxt templates are Vue templates - reuse the Vue group rather than a near-duplicate list.
 DANGER_PATTERNS[".act/coding/nuxt.md"] = DANGER_PATTERNS[".act/coding/vue.md"]
-
-
-def _security_check_level(config: dict[str, str]) -> str:
-    """`security-check` from docs/ai/config.md, normalized to one of _SECURITY_CHECK_LEVELS -
-    falls back to "local" (the concept's own default) for a missing or unrecognized
-    value, same fail-toward-the-default stance _check_mode takes for the block/warn/off checks."""
-    value = config.get("security-check", "").strip().lower()
-    return value if value in _SECURITY_CHECK_LEVELS else "local"
 
 
 def _enabled_coding_sets(root: Path) -> set[str]:
@@ -650,7 +641,7 @@ def check_danger_scan(payload: dict) -> int:
     dangerous coming from a worker). A finding whose exact `file|rule-id` key is listed in
     .act-local/danger-scan-hints/baseline.json (booked by the adoption baseline check) is not held."""
     config = actlib.read_config()
-    level = _security_check_level(config)
+    level = actlib.security_check_level(config)
     if level == "off":
         return 0
 

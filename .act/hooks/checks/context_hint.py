@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import time
 from pathlib import Path
 
 import actlib
 
 from .common import _is_harness_message
+from .state_files import write_json_atomic
 
 __all__ = ["observe"]
 
@@ -50,20 +50,7 @@ def _prune(sessions: dict) -> dict:
 
 def _write_state(root: Path, state: dict) -> None:
     path = _state_path(root)
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=".context-hint-", suffix=".tmp", dir=str(path.parent))
-    except OSError:
-        return
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
-        actlib.replace_file(tmp_name, path)
-    except OSError:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
+    write_json_atomic(path, state, prefix=".context-hint-", sort_keys=True)
 
 
 def observe(event: str, payload: dict) -> None:

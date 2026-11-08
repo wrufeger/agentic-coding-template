@@ -326,14 +326,6 @@ def _write_json(root: Path, path: Path, data: dict) -> bool:
     return True
 
 
-def _read_json(path: Path) -> Optional[dict]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
 def write_running_marker(root: Path, state_hash: str, stale_after: float) -> bool:
     """Marks a scan of <state_hash> as in flight; `stale_after` (epoch seconds) is when a reader
     may treat it as dead -- the writer derives it from `scan_time_limit`, the reader only compares.
@@ -347,7 +339,7 @@ def write_running_marker(root: Path, state_hash: str, stale_after: float) -> boo
 def read_running_marker(root: Path, state_hash: str) -> Optional[dict]:
     """{"started": float, "stale_after": float} for a scan of <state_hash> still marked as running,
     None when there is no (readable, well-formed) marker."""
-    data = _read_json(running_marker_path(root, state_hash))
+    data = actlib._read_json(running_marker_path(root, state_hash))
     if data is None:
         return None
     started = data.get("started")
@@ -411,7 +403,7 @@ def read_result_cache(root: Path, state_hash: str) -> Optional[dict]:
     """The raw record `write_result_cache` stored for <state_hash>, shape-checked (`day` str,
     `written` number, `cacheable` bool, `result` dict), or None -- the caller decides whether it is
     still current (`result_from_dict` turns its `result` back into a `ScanResult`)."""
-    data = _read_json(result_cache_path(root, state_hash))
+    data = actlib._read_json(result_cache_path(root, state_hash))
     if data is None:
         return None
     if not isinstance(data.get("day"), str) or not isinstance(data.get("written"), (int, float)):

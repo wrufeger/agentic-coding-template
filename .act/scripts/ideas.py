@@ -87,13 +87,6 @@ def own_file(root: Path, identity_name: Optional[str] = None) -> Optional[Path]:
     return root / IDEAS_DIR / f"ideas-{actlib.identity_slug(name)}.md"
 
 
-def _rel(root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 # ---------------------------------------------------------------------------
 # Entries and their hashes
 # ---------------------------------------------------------------------------
@@ -232,7 +225,7 @@ def pending(root: Path) -> tuple[Optional[Path], list[str]]:
     text = _read(path)
     if text is None:
         return path, []
-    return path, _new_or_changed(sections(text), _load_state(root, _rel(root, path)))
+    return path, _new_or_changed(sections(text), _load_state(root, actlib.rel_posix(path, root)))
 
 
 def mark_seen(root: Path) -> tuple[list[str], int]:
@@ -245,7 +238,7 @@ def mark_seen(root: Path) -> tuple[list[str], int]:
     text = _read(path)
     if text is None:
         return [], 0
-    rel = _rel(root, path)
+    rel = actlib.rel_posix(path, root)
     pairs = sections(text)
     processed = _new_or_changed(pairs, _load_state(root, rel))
     files = _load_all_state(root)
@@ -379,12 +372,12 @@ def _run_cli(root: Path, mode: str) -> int:
     if mode == "ensure":
         made = ensure(root)
         for path, _kind in made:
-            print(f"ideas: created {_rel(root, path)}")
+            print(f"ideas: created {actlib.rel_posix(path, root)}")
         if not made:
             print("ideas: nothing to create")
         return 0
     path = own_file(root)
-    rel = _rel(root, path) if path else ""
+    rel = actlib.rel_posix(path, root) if path else ""
     if path is None or not path.is_file():
         print(f"ideas: {rel} — no such file (python .act/scripts/ideas.py --ensure creates it)")
         return 0 if mode == "check" else 1

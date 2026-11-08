@@ -281,11 +281,7 @@ _LOCK_POLL = 0.05
 # Small helpers
 # ---------------------------------------------------------------------------
 
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
+_rel = actlib.rel_posix
 
 
 _UMLAUT_MAP = str.maketrans({

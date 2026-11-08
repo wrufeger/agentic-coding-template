@@ -70,13 +70,6 @@ def short_title(text: str) -> str:
     return (cut[:space] if space > _TITLE_WIDTH // 2 else first[:_TITLE_WIDTH]).rstrip(" ,;:-")
 
 
-def _rel(root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 def capture(root: Path, payload: dict) -> Optional[str]:
     """File every prefixed entry of payload["prompt"]; the reason text to show, or None."""
     prompt = payload.get("prompt")
@@ -102,13 +95,13 @@ def capture(root: Path, payload: dict) -> Optional[str]:
                 body = "" if text.strip() == title else text
                 if kind == "idea":
                     path = ideas.append_section(root, title, body)
-                    lines.append(f"[act] captured idea -> {_rel(root, path)}")
+                    lines.append(f"[act] captured idea -> {actlib.rel_posix(path, root)}")
                     continue
                 path, entry_id = entries.create_entry(
                     root, kind, title, recipient=identity, body=f"{body}\n" if body else "",
                     extra_header=[("triage", "open")], lock_timeout=_LOCK_WAIT)
                 label = f"{kind} {entry_id}" if entry_id else kind
-                lines.append(f"[act] captured {label} -> {_rel(root, path)} (triage pending)")
+                lines.append(f"[act] captured {label} -> {actlib.rel_posix(path, root)} (triage pending)")
             except Exception as exc:  # one failed entry must not hide the ones already filed
                 print(f"[act] quick-capture: filing {kind} failed ({exc!r})", file=sys.stderr)
                 failed.append(f"[act] filing failed for {kind}: {exc}\n{text}")

@@ -1851,15 +1851,8 @@ def read_rule_paths(text: str) -> Optional[list[str]]:
     """The `paths:` patterns from a rules file's frontmatter: None when there is no frontmatter or no
     `paths:` key (the file loads at every start), else the listed patterns (block list, inline list or a
     single value; possibly empty)."""
-    lines = text.lstrip("\ufeff").splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    front: list[str] = []
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        front.append(line)
-    else:
+    front = actlib.frontmatter_lines(text)
+    if front is None:
         return None
     for index, line in enumerate(front):
         match = re.match(r"paths\s*:\s*(.*)$", line)

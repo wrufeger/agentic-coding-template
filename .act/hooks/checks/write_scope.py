@@ -401,19 +401,9 @@ def _worker_scope_file(root: Path, tool_use_id: str) -> Optional[Path]:
 
 
 def _read_json_object(path: Path) -> Optional[dict]:
-    """Local, minimal twin of actlib._read_json — kept in this module rather than imported since
-    that helper is private to actlib.py. Same contract: None for missing/unreadable/non-object.
-    A file that is not valid UTF-8 (UnicodeDecodeError, and only that error from decoding) counts
-    as malformed JSON: None. Any other exception is not caught here.
-    The read is retried briefly on Windows (actlib.read_text_retrying): a scanner holding a
-    just-renamed entry open must not make a worker's own scope or cap entry look absent."""
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(actlib.read_text_retrying(path))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
+    """actlib._read_json with the short Windows retry: a scanner holding a just-renamed entry open
+    must not make a worker's own scope or cap entry look absent."""
+    return actlib._read_json(path, retry=True)
 
 
 def _entry_is_fresh(entry: dict) -> bool:

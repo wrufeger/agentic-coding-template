@@ -277,11 +277,7 @@ def _kind_label(kind: str, language: str) -> str:
     return actlib.localized(language, KIND_LABELS[kind], KIND_LABELS_DE[kind])
 
 
-def _rel(path: Path, root: Path) -> str:
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
+_rel = actlib.rel_posix
 
 
 # ---------------------------------------------------------------------------

@@ -45,15 +45,8 @@ def _project_root(payload: dict) -> Path:
 
 
 def _frontmatter_lines(path: Path) -> list[str]:
-    lines = path.read_text(encoding="utf-8").lstrip("﻿").splitlines()
-    if not lines or lines[0].strip() != "---":
-        return []
-    out: list[str] = []
-    for line in lines[1:]:
-        if line.strip() == "---":
-            break
-        out.append(line)
-    return out
+    import actlib
+    return actlib.frontmatter_lines(path.read_text(encoding="utf-8")) or []
 
 
 def _frontmatter_says_omit(path: Path) -> bool:

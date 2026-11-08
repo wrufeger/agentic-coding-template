@@ -97,10 +97,7 @@ def _secret_patterns() -> list[tuple[str, tuple[str, ...]]]:
 
 def _git(target: Path, args: list[str], check_ok: tuple[int, ...] = (0,)) -> Optional[subprocess.CompletedProcess]:
     try:
-        done = subprocess.run(
-            ["git", "-c", "core.quotePath=false", "-C", str(target), *args],
-            capture_output=True, timeout=60,
-        )
+        done = actlib.git_run(target, args, timeout=60, config=("core.quotePath=false",), text=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return done if done.returncode in check_ok else None
@@ -166,7 +163,7 @@ def scan_tree(target: Path) -> tuple[list[dict], list[str]]:
     toplevel = str(target)
     accepted = secret_scan._LazyAccepted(toplevel, None)
 
-    level = danger_scan._security_check_level(actlib.read_config(target))
+    level = actlib.security_check_level(actlib.read_config(target))
     patterns = () if level == "off" else danger_scan._active_patterns(danger_scan._enabled_coding_sets(target))
     if not patterns:
         notes.append(

@@ -36,7 +36,7 @@ import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, NamedTuple, Optional
+from typing import Any, Iterator, NamedTuple, Optional, Sequence
 
 
 # Pauses between the replace attempts below, in seconds: about 0.35 s in all, so a hook stays fast.
@@ -384,7 +384,7 @@ def resolve(path: str) -> Optional[tuple[Path, str]]:
 # JSON state files — shared read/write helpers
 # ---------------------------------------------------------------------------
 
-def _read_json(path: Path) -> Optional[dict]:
+def _read_json(path: Path, retry: bool = False) -> Optional[dict]:
     """Read a JSON object from `path`. Returns None if the file is missing, unreadable, not valid
     UTF-8, or not a JSON object (never raises for those cases — callers fall back to a default).
     `ValueError` covers both `json.JSONDecodeError` and `UnicodeDecodeError` (both are subclasses
@@ -393,11 +393,12 @@ def _read_json(path: Path) -> Optional[dict]:
     `UnicodeDecodeError` uncaught, which made update.py abort mid-run and left `.act/` already
     replaced). A leading BOM (a file saved by Windows PowerShell 5) is read as UTF-8 too, not
     treated as unreadable — otherwise write_lock() would rewrite the lock from an empty object and
-    drop every key it held."""
+    drop every key it held. With `retry` the read is repeated briefly on Windows
+    (read_text_retrying), for a file another process has just renamed into place."""
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json.loads(read_text_retrying(path, "utf-8-sig") if retry else path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -427,6 +428,39 @@ def _write_json_merged(path: Path, data: dict, atomic: bool = False,
     else:
         write_text_lf(path, text)
     return merged
+
+
+def rel_posix(path: Path, root: Path) -> str:
+    """`path` relative to `root` with forward slashes; `path` itself (forward slashes) when it is not below `root`."""
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def git_run(root: Path, args: "Sequence[str]", *, timeout: Optional[float] = None,
+            config: "Sequence[str]" = (), text: bool = True) -> "subprocess.CompletedProcess":
+    """`git [-c <config>...] -C <root> <args>` with output captured (UTF-8 with replacement characters
+    when `text`, bytes otherwise). Returns the finished process whatever its exit code; OSError (no git)
+    and subprocess.TimeoutExpired are the caller's to handle, each caller decides what a failed call means."""
+    command = ["git"]
+    for entry in config:
+        command += ["-c", entry]
+    command += ["-C", str(root), *args]
+    if text:
+        return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout)
+    return subprocess.run(command, capture_output=True, timeout=timeout)
+
+
+SECURITY_CHECK_LEVELS = ("off", "local", "deps", "full")
+
+
+def security_check_level(config: dict[str, str]) -> str:
+    """`security-check` from docs/ai/config.md, normalized to one of SECURITY_CHECK_LEVELS - falls back to
+    "local" (the concept's own default) for a missing or unrecognized value."""
+    value = config.get("security-check", "").strip().lower()
+    return value if value in SECURITY_CHECK_LEVELS else "local"
 
 
 # ---------------------------------------------------------------------------
@@ -2157,6 +2191,18 @@ def split_header(text: str) -> tuple[str, str]:
             count += 1
     head_length = start + sum(len(line) + 1 for line in lines[:count])
     return text[:head_length], text[head_length:]
+
+
+def frontmatter_lines(text: str) -> Optional[list[str]]:
+    """The lines between the opening `---` (the first line; a leading BOM is ignored) and the next
+    `---` line, without either; None when the text has no frontmatter or the block never closes."""
+    lines = text.lstrip("\ufeff").splitlines()
+    if not lines or lines[0].strip() != FRONTMATTER_DELIMITER:
+        return None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == FRONTMATTER_DELIMITER:
+            return lines[1:index]
+    return None
 
 
 def is_frontmatter(head: str) -> bool:

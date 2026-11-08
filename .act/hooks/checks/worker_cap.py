@@ -99,7 +99,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -110,6 +109,7 @@ from typing import Optional
 import actlib
 
 from .common import _WORKER_TOOL_NAMES, _check_mode, _is_worker
+from .state_files import write_json_atomic
 from .write_scope import (
     _SAFE_ID_RE, _agent_assignment_text, _entry_is_fresh, _read_json_object, _scope_file_is_prunable,
 )
@@ -238,22 +238,7 @@ def _atomic_write_json(path: Path, data: dict) -> bool:
     _prune_stale_entries glob (before this replace lands), which could delete it out from under
     us (2026-09-23 review, referenced there as t26_race.py). Best-effort: a failed write here
     only weakens the cap/count bookkeeping, never raises into the caller."""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".tmp", dir=str(path.parent))
-    except OSError:
-        return False
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-        actlib.replace_file(tmp_name, path)
-    except OSError:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        return False
-    return True
+    return write_json_atomic(path, data)
 
 
 def _prune_stale_entries(dir_path: Path, skip: Path) -> None:

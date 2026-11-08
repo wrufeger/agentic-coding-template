@@ -27,10 +27,6 @@ from typing import Callable, Optional
 import actlib
 
 
-def _fold(data: bytes) -> bytes:
-    return data if b"\x00" in data else data.replace(b"\r\n", b"\n")
-
-
 def _tools(config_tools: str) -> list[str]:
     """The tools to write copies for: the lock's `applied.tools` (what the project's copies were last
     synced for), else docs/ai/config.md § Project `tools`."""
@@ -200,7 +196,7 @@ def ensure_own_unit_copies(
             data = init.skill_copy_bytes(root, key, src, tiers_data, overrides)
             entry = {"source": src.relative_to(root).as_posix(), "sha256": actlib.lock_hash(data)}
             if dest.is_file():
-                if _fold(dest.read_bytes()) == _fold(data):
+                if actlib.fold_crlf(dest.read_bytes()) == actlib.fold_crlf(data):
                     recorded[key] = entry  # identical, hand-placed: taken over
                 else:
                     messages.append(f"{key}: present with other content, kept, not taken over")

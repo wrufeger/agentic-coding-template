@@ -436,8 +436,7 @@ def _git(root: Path, *args: str) -> str:
     """A git call that never disturbs the caller: if it fails (no repo, no git, timeout), there
     are simply no numbers."""
     try:
-        result = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True,
-                                 encoding="utf-8", errors="replace", timeout=20)
+        result = actlib.git_run(root, args, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return ""
     return result.stdout if result.returncode == 0 else ""

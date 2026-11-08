@@ -3,9 +3,8 @@
 #
 # Purpose: Check — dependency-vulnerability scan before a commit (PreToolUse), the "deps"/"full"
 #          part of the security check (a decided concept): "Art B" of three. Runs only with
-#          `security-check: deps` or `full` in docs/ai/config.md (`danger_scan.py`'s own
-#          `_security_check_level`, reused rather than a second parser here — R-work-override: one
-#          place decides the level), and only when this commit's own diff actually touches a lock
+#          `security-check: deps` or `full` in docs/ai/config.md (`actlib.security_check_level`:
+#          one place decides the level), and only when this commit's own diff actually touches a lock
 #          file (`.act/scripts/security_scan.py`'s `LOCK_FILE_NAMES`) — a commit that never
 #          touches
 #          one costs nothing beyond the same `git commit`-detection walk
@@ -145,7 +144,6 @@ from . import session
 from .board_refresh import _base_cwd, _targets_own_project
 from .command_words import _command_word_lists, _strip_command_prefix
 from .common import _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command
-from .danger_scan import _security_check_level
 from .secret_scan import (
     _check_deadline,
     _git_commit_invocations,
@@ -711,7 +709,7 @@ def check_deps_scan(payload: dict) -> int:
     it -- see the module docstring for why (reached through checks/mcp_ide.py's own shell-reuse
     path, an uncaught exception here would make an unrelated call fail *closed* instead)."""
     config = actlib.read_config()
-    level = _security_check_level(config)
+    level = actlib.security_check_level(config)
     if level not in ("deps", "full"):
         return 0
 
@@ -914,7 +912,7 @@ def _take_recorded_heads(root: Path, tool_use_id: object) -> "dict[str, str]":
     path = _heads_file(root, tool_use_id)
     if path is None:
         return {}
-    data = security_scan._read_json(path)
+    data = actlib._read_json(path)
     if actlib.local_write_ok(root, path):  # nothing is removed through a link
         try:
             path.unlink()
@@ -1158,7 +1156,7 @@ def _scan_after_integration(payload: dict) -> None:
     command = shell[1]
     if "git" not in command or not any(word in command for word in _INTEGRATION_SUBCOMMANDS):
         return
-    if _security_check_level(actlib.read_config()) not in ("deps", "full"):
+    if actlib.security_check_level(actlib.read_config()) not in ("deps", "full"):
         return
     try:
         root = actlib.repo_root().resolve()

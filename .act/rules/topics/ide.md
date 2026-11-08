@@ -2,7 +2,7 @@
 
 Detail page for a rule that references it as `topics/ide.md`. Loaded only when a session start
 detects a connected IDE MCP server (JetBrains `idea` and similar names in `.mcp.json`, the Claude
-settings or `~/.claude.json`, or Claude Code's own `ide` server — see `checks/session.py`'s
+settings or `~/.claude.json`, or Claude Code's own `ide` server — see `checks/session_context.py`'s
 `_ide_mcp_connected`). Not loaded otherwise; nothing here applies to a project without one.
 Claude Code's `ide` server offers `getDiagnostics` (read, fine for anyone) and `executeCode`
 (orchestrator only, like every tool that runs code).
