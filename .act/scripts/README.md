@@ -766,17 +766,19 @@ options:
 Call: skill `act-check-translations`
 
 ```text
-usage: i18n_check.py [-h] [--root ROOT] [--base BASE] [--json] [--no-code]
+usage: i18n_check.py [-h] [--root ROOT] [--base BASE] [--json] [--no-code] [--no-namespace]
 
 Check translation files for missing, extra, empty and mismatching keys and for keys used in code
 but not defined.
 
 options:
-  -h, --help   show this help message and exit
-  --root ROOT  project root (default: current directory)
-  --base BASE  base locale (default: en, else the largest)
-  --json       print the report as JSON
-  --no-code    skip the used/unused key check against source code
+  -h, --help      show this help message and exit
+  --root ROOT     project root (default: current directory)
+  --base BASE     base locale (default: en, else the largest)
+  --json          print the report as JSON
+  --no-code       skip the used/unused key check against source code
+  --no-namespace  merge the files of one locale folder without a file-name prefix (Nuxt i18n
+                  reading; detected on its own from nuxt.config.* with i18n and files)
 ```
 
 ## `id_links_install.py`

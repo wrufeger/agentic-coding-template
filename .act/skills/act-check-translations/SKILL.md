@@ -12,7 +12,9 @@ browser, no running app — what a translated page looks like in the browser is 
    `--base <locale>` if the source language is not `en`, `--no-code` to skip the code scan, `--root`
    for a sub-project). It finds JSON and simple YAML files in folders named `locales`, `i18n`, `lang`,
    `messages`, `translations` or `l10n`, one file per locale or one folder per locale. No translation
-   files found: say so and stop — do not guess other places.
+   files found: say so and stop — do not guess other places. Files of one locale folder are read as i18next
+   namespaces (`common.json` gives `common.<key>`); when `nuxt.config.*` mentions `i18n` and `files` (a plain
+   text scan) they are merged without that prefix instead — `--no-namespace` forces this reading by hand.
 2. **Confirm the base locale.** The script takes `en`, else the largest file. If the project's source
    language is another one, re-run with `--base`; a wrong base turns every finding around.
 3. **Judge the findings**, heaviest first:

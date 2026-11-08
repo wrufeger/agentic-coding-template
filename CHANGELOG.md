@@ -342,6 +342,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- `i18n_check.py` no longer puts the file name in front of every key for a Nuxt i18n setup (`nuxt.config.*` with `i18n`
+  and `files`): the files of one language are merged as they are, so `used-undefined` and `unused` stop reporting every
+  key. Other projects keep the i18next namespace reading; `--no-namespace` forces the merge by hand. The code scan
+  also no longer skips the scan root itself when `--root` points at a folder named like a locale folder (`i18n`,
+  `locales`, ...).
 - `write-guard` no longer refuses ordinary inline Python whose write targets the text shows: a loop over a list or
   tuple of literals (also `for name, ans in [("a", "b"), ...]`), a path or glob pattern built from its variable,
   `next(<glob on a literal folder>)`, the path parameter of a function used only as `onerror=` / `onexc=` of

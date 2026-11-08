@@ -9,7 +9,12 @@
 #          a directory named locales, locale, i18n, lang, languages, messages, translations or l10n
 #          (anywhere below the root, vendored and build folders skipped). Two layouts are read:
 #          one file per locale (`locales/en.json`) and one folder per locale with namespace files
-#          (`locales/en/common.json`, keys become `common.<key>`).
+#          (`locales/en/common.json`, keys become `common.<key>`, the i18next namespace reading).
+#          Nuxt i18n: when `nuxt.config.ts|js|mjs` in the root mentions `i18n` and `files`, the files
+#          of one locale are merged without a file-name prefix (each file carries its own top-level
+#          key); `--no-namespace` forces that reading. The detection is a plain text scan, no JS
+#          parsing: it does not follow imports, layers or other config files, and a config that merely
+#          contains both words counts. Use `--no-namespace` where it guesses wrong.
 #
 # Findings (type, severity):
 #   missing               warning  key in the base locale, absent in another locale
@@ -22,7 +27,7 @@
 #   parse-error           error    a translation file could not be read
 #
 # Usage:
-#   python .act/scripts/i18n_check.py [--root DIR] [--base LOCALE] [--json] [--no-code]
+#   python .act/scripts/i18n_check.py [--root DIR] [--base LOCALE] [--json] [--no-code] [--no-namespace]
 #
 # Exit code: 0 no finding above info, 1 at least one warning or error, 2 usage problem.
 
@@ -194,7 +199,23 @@ def locale_of(stem: str) -> Optional[str]:
     return tail if "." in stem and LOCALE_NAME.match(tail) else None
 
 
-def detect_groups(root: Path, findings: list[Finding]) -> list[Group]:
+NUXT_CONFIGS = ("nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs")
+
+
+def has_nuxt_i18n(root: Path) -> bool:
+    """Plain text scan: a Nuxt config that mentions `i18n` and `files` (no JS parsing)."""
+    for name in NUXT_CONFIGS:
+        try:
+            text = read_bounded(root / name, errors="replace")
+        except (OSError, ValueError):
+            continue
+        if re.search(r"\bi18n\b", text) and re.search(r"\bfiles['\"]?\s*:", text):
+            return True
+    return False
+
+
+def detect_groups(root: Path, findings: list[Finding], no_namespace: bool = False) -> list[Group]:
+    merge = no_namespace or has_nuxt_i18n(root)
     groups: dict[str, Group] = {}
 
     def add(directory: Path, locale: str, path: Path, prefix: str) -> None:
@@ -234,7 +255,7 @@ def detect_groups(root: Path, findings: list[Finding]) -> list[Group]:
                     path = inner / name
                     if path.suffix.lower() in (".json", ".yml", ".yaml"):
                         relative = path.relative_to(sub).with_suffix("")
-                        add(current, sub.name, path, ".".join(relative.parts) + ".")
+                        add(current, sub.name, path, "" if merge else ".".join(relative.parts) + ".")
     return [g for g in groups.values() if g.locales]
 
 
@@ -287,7 +308,7 @@ def scan_code(root: Path) -> tuple[dict[str, str], list[str], int]:
     prefixes: list[str] = []
     count = 0
     for current, files in walk(root):
-        if current.name.lower() in LOCALE_DIR_NAMES:
+        if current != root and current.name.lower() in LOCALE_DIR_NAMES:
             continue
         for name in files:
             path = current / name
@@ -374,9 +395,9 @@ def render(report: dict) -> str:
     return "\n".join(lines)
 
 
-def run(root: Path, base: Optional[str], use_code: bool) -> dict:
+def run(root: Path, base: Optional[str], use_code: bool, no_namespace: bool = False) -> dict:
     findings: list[Finding] = []
-    groups = detect_groups(root, findings)
+    groups = detect_groups(root, findings, no_namespace)
     source_files = 0
     summary: list[dict] = []
     scan: tuple[dict[str, str], list[str], int] = scan_code(root) if use_code and groups else ({}, [], 0)
@@ -398,12 +419,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--base", default=None, help="base locale (default: en, else the largest)")
     parser.add_argument("--json", action="store_true", help="print the report as JSON")
     parser.add_argument("--no-code", action="store_true", help="skip the used/unused key check against source code")
+    parser.add_argument("--no-namespace", action="store_true",
+                        help="merge the files of one locale folder without a file-name prefix (Nuxt i18n reading; "
+                        "detected on its own from nuxt.config.* with i18n and files)")
     args = parser.parse_args(argv)
     root = Path(args.root).resolve()
     if not root.is_dir():
         print(f"Not a directory: {root}", file=sys.stderr)
         return 2
-    report = run(root, args.base, not args.no_code)
+    report = run(root, args.base, not args.no_code, args.no_namespace)
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
