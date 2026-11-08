@@ -28,6 +28,7 @@
 #   python .act/scripts/update.py --source <path-or-url> --ref <tag-or-commit>
 #   python .act/scripts/update.py --channel release|latest   # for this run; else `update-channel` in docs/ai/config.md, else release
 #   python .act/scripts/update.py --versions [--all]     # installed version, channel, source's releases and tip; git ls-remote only
+#   python .act/scripts/update.py --versions --short     # the same in three lines (what /act-version shows), with dates
 #   python .act/scripts/update.py --plan                 # show steps 1-3, describe 5-10; writes only the local update-check files
 #   python .act/scripts/update.py --allow-downgrade       # accept a fetched state older than (or unrelated to) the installed commit
 #   python .act/scripts/update.py --yes               # skip the interactive consent prompt (step 4)
@@ -480,14 +481,115 @@ def _tip_result(root: Path, tip_commit: str, installed_commit: str, tip_fallback
     return result
 
 
+def _day_text(root: Path, day: str) -> str:
+    """`day` (YYYY-MM-DD) as the project's docs language writes dates: DD.MM.YYYY for German."""
+    year, month, date_ = day.split("-")
+    return actlib.localized(actlib.docs_language(root), day, f"{date_}.{month}.{year}")
+
+
+def _lock_update_day(root: Path) -> str:
+    """Committer date (YYYY-MM-DD) of the last commit that touched .act-lock.json: when the template
+    was last brought in. "" when git cannot say (no repository, lock never committed)."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%cs", "--", ".act-lock.json"], cwd=root, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=5, stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    day = result.stdout.strip()
+    return day if result.returncode == 0 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+
+
+_DAY_FETCH_TIMEOUT = 4
+
+
+def _source_commit_day(root: Path, source: str, commit: str) -> str:
+    """Committer date (YYYY-MM-DD) of `commit` in the template source: read locally when the source
+    is a directory or the project already holds the commit, otherwise from the commit object alone
+    (a depth-1 fetch without trees or blobs into a scratch repository; nothing is checked out or
+    run). "" when it cannot be had within the time limit."""
+    for repo in (Path(root, source), root):
+        day = actlib.commit_day(repo, commit)
+        if day:
+            return day
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit) or Path(root, source).is_dir():
+        return ""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    env["GIT_NO_LAZY_FETCH"] = "1"
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=3")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    with actlib.scratch_dir("day", root) as tmp_dir:
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp_dir.parent)
+        repo = tmp_dir / "r"
+        repo.mkdir()
+        # Output goes to files, not pipes: a git-remote child can hold a pipe open past the timeout.
+        out_path = tmp_dir / "out.txt"
+        err_path = tmp_dir / "err.txt"
+        steps = (["init", "-q"],
+                 ["fetch", "-q", "--depth=1", "--filter=tree:0", "--", source, commit],
+                 ["log", "-1", "--no-walk", "--format=%cs", commit, "--"])
+        try:
+            for args in steps:
+                with open(out_path, "wb") as out_file, open(err_path, "wb") as err_file:
+                    step = subprocess.run(["git", *args], cwd=repo, stdout=out_file, stderr=err_file, env=env,
+                                          timeout=_DAY_FETCH_TIMEOUT, stdin=subprocess.DEVNULL, creationflags=flags)
+                if step.returncode != 0:
+                    return ""
+            day = out_path.read_text(encoding="utf-8", errors="replace").strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+
+
+def _versions_short(root: Path, source: str, channel: str, version: str, commit: str, tag_of_installed: str,
+                    refs: Optional[RemoteRefs], reason: str, take: str, tip_fallback: bool) -> list[str]:
+    """The three lines `/act-version` shows: what is installed and when it came in, the newest state
+    of the source in the channel with its date, and whether an update is available. `take` is the
+    decision text of _versions_report; `refs` None when the source could not be read (`reason`)."""
+    commit_text = f"commit {commit[:7]}" + (f" = {tag_of_installed}" if tag_of_installed else "") if commit else "commit unknown"
+    day = _lock_update_day(root)
+    line1 = f"Installed: ACT {version or 'unknown'} ({commit_text})" + (f", updated {_day_text(root, day)}" if day else "")
+    if refs is None:
+        line2 = "Source: no git source, nothing to compare" if reason == "no git source" else f"Source: could not read it ({reason})"
+        return [line1, line2] + ([f"Update: {take}"] if take else [])
+    newest = refs.newest_release()
+    if channel == "release" and not tip_fallback:
+        if newest is None:
+            line2 = "Source, channel release: no release tag (use --ref or --channel latest)"
+            shown_commit = ""
+        else:
+            line2, shown_commit = f"Source, channel release: {newest[1]}", newest[2]
+    else:
+        branch = refs.head_branch or "HEAD"
+        shown_commit = refs.head_commit
+        line2 = (f"Source, channel {channel}: {branch} {shown_commit[:7]}" if shown_commit
+                 else f"Source, channel {channel}: no default branch tip")
+        if channel == "release":
+            line2 = line2.replace("channel release:", "channel release (no release tag, follows the tip):", 1)
+    source_day = _source_commit_day(root, source, shown_commit) if shown_commit else ""
+    if source_day:
+        line2 += f" ({_day_text(root, source_day)})"
+    if take.startswith(("nothing", "unknown")):
+        line3 = "Update: none" + take.removeprefix("nothing") if take.startswith("nothing") else f"Update: {take}"
+    else:
+        line3 = f"Update: {take} available"
+    return [line1, line2, line3]
+
+
 def _versions_report(root: Path, source: str, channel: str, origin: str, show_all: bool,
-                     falls_back: bool = False, record: bool = False) -> tuple[int, list[str]]:
+                     falls_back: bool = False, record: bool = False, short: bool = False) -> tuple[int, list[str]]:
     """Lines for `--versions`: the installed version, the channel, the releases and the default
     branch tip of the source, and what act-update would take. Reads refs only (git ls-remote),
     never clones; the only thing it writes is the local update note (actlib.record_update_result),
     and only with `record` (the project's own channel and source, not a one-off override). Returns
     (exit code, lines); a source that cannot be read still shows the installed state, with the reason. `falls_back`: the release channel follows the tip
-    of a source without release tags, as act-update does then (_release_falls_back)."""
+    of a source without release tags, as act-update does then (_release_falls_back). `short`: three
+    lines (_versions_short) instead of the full list; the long lines stay as they are, a project's
+    tooling may read them."""
     version, commit = _installed_state(root)
     refs, reason = _read_remote_refs(source, root) if source else (None, "no source recorded in .act-lock.json")
     tag_of_installed = ""
@@ -506,9 +608,13 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
     if refs is None:
         message = "no git source, nothing to list" if reason == "no git source" else f"could not read the source: {reason}"
         lines.append(message)
+        fallback_take = ""
         if reason == "no git source" and channel == "release" and falls_back:
-            lines.append("act-update would take: the source as it is (no release tag to follow, "
-                         "channel release falls back to it)")
+            fallback_take = "the source as it is (no release tag to follow, channel release falls back to it)"
+            lines.append(f"act-update would take: {fallback_take}")
+        if short:
+            return 0, _versions_short(root, source, channel, version, commit, tag_of_installed, None, reason,
+                                      fallback_take, False)
         return 0, lines
 
     installed_tuple = _parse_version(version)
@@ -562,6 +668,9 @@ def _versions_report(root: Path, source: str, channel: str, origin: str, show_al
         else:
             take = f"{branch} {refs.head_commit[:7]}"
     lines.append(f"act-update would take: {take}")
+    if short:
+        lines = _versions_short(root, source, channel, version, commit, tag_of_installed, refs, reason, take,
+                                on_tip and channel == "release")
     if record:
         # the same decision as `take`, kept for the status line and the board
         if not on_tip:
@@ -3075,6 +3184,10 @@ def main(argv: list[str]) -> int:
         "update would take (git ls-remote only, no clone; writes only the local update note under .act-local/)"
     ))
     parser.add_argument("--all", action="store_true", help="with --versions: list every release, not the five newest")
+    parser.add_argument("--short", action="store_true", help=(
+        "with --versions: three lines only -- installed version and update date, newest state of the source "
+        "in the channel with its date, whether an update is available (what /act-version shows); with --all "
+        "the full list wins"))
     parser.add_argument("--allow-downgrade", action="store_true", help=(
         "apply the fetched state even when it is older than the installed template commit, or when "
         "the installed commit is not in the source's history (default: refuse, --plan only warns)"
@@ -3099,9 +3212,14 @@ def main(argv: list[str]) -> int:
         source = args.source or _default_source(root)
         # only the project's own channel and source say whether it is behind
         code, lines = _versions_report(root, source, channel, origin, args.all, _release_falls_back(origin, problem),
-                                       record=not (args.channel or args.source))
+                                       record=not (args.channel or args.source),
+                                       short=args.short and not args.all)
         if problem:
-            lines.append(f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies")
+            note = f"note: {problem}; the default '{DEFAULT_CHANNEL}' applies"
+            if args.short and not args.all:
+                lines[-1] += f" ({note})"  # still three lines
+            else:
+                lines.append(note)
         print("\n".join(lines))
         return code
 

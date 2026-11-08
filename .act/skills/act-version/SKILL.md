@@ -7,5 +7,6 @@ disable-model-invocation: true
 # Show the template version
 
 The session hook answers `/act-version [--all]` before the model sees it. If you see this anyway, run
-`python .act/scripts/update.py --versions [--all]` and show its output unchanged. For "a newer release is
-available" or "main differs", offer `act-update`; do not start it unasked.
+`python .act/scripts/update.py --versions --short` (`--all` instead of `--short` for the full list) and show its
+(at most three) lines unchanged. When the last line reads
+`Update: … available`, offer `act-update`; on `Update: none, …` offer nothing. Do not start it unasked.

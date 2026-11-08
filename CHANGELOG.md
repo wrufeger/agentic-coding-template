@@ -148,6 +148,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Changed
 
+- `/act-version` shows three lines instead of six: the installed version with the date of the last update, the newest
+  state of the source in your channel (newest release tag, or branch and short commit) with its date, and whether an
+  update is available. The long list (releases, tip, what `act-update` would take) stays: `/act-version --all`, and
+  `update.py --versions` without options prints it unchanged; `update.py --versions --short` prints the short form.
+  The date of a remote commit is read from the commit object alone (a depth-1 fetch without files, 4 s limit) and left out when that fails.
 - `topics/checks.md` keeps, per mechanically checked rule, what the check blocks, its switch and the limits an owner
   must know (the whole page about 67 000 to 41 000 characters); how a command
   is read (parser allow-lists, time budgets, failure handling) is documented in the header comments of the check

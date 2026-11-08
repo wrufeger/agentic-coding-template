@@ -1290,8 +1290,8 @@ Call: skill `act-update` (`--plan` and `--versions` alone are direct (skill `act
 
 ```text
 usage: update.py [-h] [--source SOURCE] [--ref REF] [--channel {release,latest}] [--versions]
-                 [--all] [--allow-downgrade] [--on-local-changes {rescue,discard,abort}] [--yes]
-                 [--plan] [--no-commit] [--non-interactive] [--catch-up]
+                 [--all] [--short] [--allow-downgrade] [--on-local-changes {rescue,discard,abort}]
+                 [--yes] [--plan] [--no-commit] [--non-interactive] [--catch-up]
 
 Pull a newer state of the template into this project.
 
@@ -1310,6 +1310,9 @@ options:
                         branch tip, and what an update would take (git ls-remote only, no clone;
                         writes only the local update note under .act-local/)
   --all                 with --versions: list every release, not the five newest
+  --short               with --versions: three lines only -- installed version and update date,
+                        newest state of the source in the channel with its date, whether an update
+                        is available (what /act-version shows); with --all the full list wins
   --allow-downgrade     apply the fetched state even when it is older than the installed template
                         commit, or when the installed commit is not in the source's history
                         (default: refuse, --plan only warns)

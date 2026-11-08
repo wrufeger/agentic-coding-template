@@ -6,7 +6,7 @@ description: Use to check for or apply a newer template version, or when asked w
 # Update the template
 
 Wrapper around `python .act/scripts/update.py` (options and the ten steps: `--help` and its header). Nothing
-fetched runs before consent. Asked which version is installed or newest, run `update.py --versions` (the
+fetched runs before consent. Asked which version is installed or newest, run `update.py --versions --short` (the
 `/act-version` shortcut) — never answer from memory.
 
 ## Channel

@@ -503,8 +503,8 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
         sys.exit(0)  # a worker's own payload — nothing to do here
     # `/act-config ...`: answered by .act/scripts/config.py without a model turn. The cheap start
     # test decides before config is imported; `/act-configure` and every other prompt do not match.
-    # `/act-info [--limit N]` and `/act-version [--all]` are shortcuts the same way: the script's own output,
-    # run as a child process (a timeout or failure passes the prompt on, like a failure of config).
+    # `/act-info [--limit N]` and `/act-version [--all]` are shortcuts the same way: the script's own output
+    # (`/act-version` the three-line form, `--all` the full list), run as a child process (a timeout or failure passes the prompt on, like a failure of config).
     _config_match = (_re.match(r"\s*/act-(config|info|version)(?=\s|$)", _prompt2) if isinstance(_prompt2, str) else None)
     if _config_match is not None:
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -518,7 +518,7 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
                 import shlex as _shlex
                 import subprocess as _subprocess
                 _script5, _lead5 = (("info.py", []) if _config_match.group(1) == "info"
-                                    else ("update.py", ["--versions"]))
+                                    else ("update.py", ["--versions", "--short"]))
                 _run5 = _subprocess.run(
                     [sys.executable, str(_root5 / ".act" / "scripts" / _script5), *_lead5, *_shlex.split(_rest5)],
                     cwd=str(_root5), capture_output=True, timeout=8, stdin=_subprocess.DEVNULL)

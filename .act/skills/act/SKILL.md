@@ -17,8 +17,8 @@ The skills `act-config`, `act-info` and `act-version` only carry their commands 
 | `/act <name>` | `python .act/scripts/skills.py <name>` (that `SKILL.md` in full; `act-` may be left out) |
 | `/act-config [<key> [<value>]]` | `python .act/scripts/config.py [<key> [<value>]]` (settings of `docs/ai/config.md`) |
 | `/act-info [--limit N]` | `python .act/scripts/info.py` (local files and git only, no network) |
-| `/act-version [--all]` | `python .act/scripts/update.py --versions` (`git ls-remote` only; writes the local update note) |
+| `/act-version [--all]` | `python .act/scripts/update.py --versions --short` (three lines; with `--all` no `--short`, the full list; `git ls-remote` only; writes the local update note) |
 
 Put the stdout, unchanged, in a code block; nothing else: no commentary, no summary, no skill started. A value
 is written with `config.py` only where the human asked for exactly that key and value. After `/act-version`:
-for "a newer release is available" or "main differs" offer `act-update`, never start it unasked.
+when line 3 reads `Update: … available` offer `act-update`; on `Update: none, …` offer nothing. Never start it unasked.
