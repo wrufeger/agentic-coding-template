@@ -12,6 +12,8 @@ Rules the accessors keep:
   * a reader that raises has its exception stored and the same exception re-raised on every later ask,
     the reader not called again, so its type stays (the dispatcher recognizes `inline_code.ReaderFailure`);
   * every result is returned as a fresh copy, so one check cannot change what the next one sees;
+  * nothing time-dependent is kept: the commit scans' git alias lookups run under each check's own
+    deadline and stay with the check, only the pure token stream (`chain_tokens`) is shared;
   * only these top-level reader calls are memoized, never the scanners' nested calls: the rsync
     variable-name flag in shell_targets is a module global set and restored around each top-level call.
 
@@ -89,6 +91,18 @@ class Parse:
         """command_words._git_invocations(command)."""
         return self._once(
             "git_invocations", lambda: _command_words._git_invocations(self._command), _copy_lists)
+
+    def chain_tokens(self) -> Optional[list]:
+        """shell_targets._tokenize_chain(command): the token stream of the whole command, or None when
+        it does not tokenize (a result, not an error). Only this pure reading is shared by the commit
+        scans; their alias lookups run under each check's own deadline and are never kept here.
+
+        The copy is a list copy: the tokens are (text, is_operator) tuples whose text is a str or a
+        `_Word`; no reader assigns to a token or its word (the `_Word` attributes are set in the
+        tokenizer before it returns)."""
+        return self._once(
+            "chain_tokens", lambda: _shell_targets._tokenize_chain(self._command),
+            lambda found: None if found is None else list(found))
 
     def write_targets(
         self, base_cwd: str, git_writes: frozenset, inline: bool = True, broad: bool = False,

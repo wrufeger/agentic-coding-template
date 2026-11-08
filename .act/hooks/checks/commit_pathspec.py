@@ -13,11 +13,12 @@
 #          `git add ./<path>` also stay free — only the exact catch-all markers below trigger this
 #          check, not "add"/"stage" or "commit" as such.
 #
-#          Command decomposition reuses checks/command_words.py's `_git_invocations`, shared with
-#          checks/worker_git_write.py and checks/recursive_delete.py (review, 2026-09-23 — see
-#          command_words.py's own header for why the first version's plain operator-character
-#          regex split was wrong). Skipping git's own global options ahead of the subcommand
-#          reuses checks/worker_git_write.py's `_parse_git_invocation`.
+#          Command decomposition reads command_words._git_invocations through the dispatcher's
+#          shared parse (checks/command_parse.py, `Parse.git_invocations`), the one reading every
+#          check of a call shares (review, 2026-09-23 — see command_words.py's own header for why
+#          the first version's plain operator-character regex split was wrong). Skipping git's own
+#          global options ahead of the subcommand reuses checks/worker_git_write.py's
+#          `_parse_git_invocation`.
 #
 # Known limits:
 #   - `git commit`'s catch-all short-flag cluster (`-am`, `-ma`, ...) is recognized through a
@@ -47,7 +48,7 @@ import sys
 
 import actlib
 
-from .command_words import _git_invocations
+from .command_parse import parse_for
 from .common import _check_mode, _shell_command
 from .worker_git_write import _parse_git_invocation
 
@@ -101,7 +102,7 @@ def check_commit_pathspec(payload: dict) -> int:
         return 0
     _, command = shell
 
-    for args in _git_invocations(command):
+    for args in parse_for(payload, command).git_invocations():
         subcommand, sub_args, _, _, _ = _parse_git_invocation(args)
         if subcommand in ("add", "stage") and (
             _add_is_catchall(sub_args) or _RAW_TOP_MAGIC_RE.search(command)

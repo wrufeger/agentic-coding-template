@@ -655,7 +655,9 @@ def _check(payload: dict, root: Path, command: str) -> int:
     if deadline - time.monotonic() < _MIN_DETECTION_SECONDS:
         _note(payload, "[act] security-check (deps): no time left in this hook call -- not checked this time")
         return 0
-    invocations = _git_commit_invocations(command, base_cwd, deadline, {})
+    invocations = _git_commit_invocations(
+        command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+    )
     if not invocations:
         return 0
 

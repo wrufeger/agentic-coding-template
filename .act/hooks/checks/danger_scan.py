@@ -94,6 +94,7 @@ from typing import Callable, NamedTuple, Optional
 
 import actlib
 
+from .command_parse import parse_for
 from .common import _shell_command
 from .encoding_hint import _reader_key
 from .secret_scan import (
@@ -665,7 +666,9 @@ def check_danger_scan(payload: dict) -> int:
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    invocations = _git_commit_invocations(command, base_cwd, deadline, {})
+    invocations = _git_commit_invocations(
+        command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+    )
     if not invocations:
         return 0
 

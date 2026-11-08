@@ -204,7 +204,7 @@ __all__ = [
     "_EXPANSION_CLOSERS", "_skip_squote", "_collect_dq_nested", "_collect_dq_expansion", "_read_word",
     "_split_operator_run", "_shell_tokens", "_heredoc_delimiters", "_heredoc_shell_flags",
     "_heredoc_may_feed_shell", "_command_prefix_end", "_heredoc_terminator", "_body_substitutions",
-    "_line_mode_tokens", "_may_use_ansi_c_quoting", "_quote_model_applies",
+    "_line_mode_tokens", "_may_use_ansi_c_quoting", "_quote_model_applies", "_tokenize_chain",
     "_without_quoted_heredoc_bodies",
     "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
@@ -2193,6 +2193,26 @@ def _quote_model_applies(command: str) -> bool:
     backslash-newline in the same command, the previous plain rule stands — any `$'` counts as live
     and no body is cut."""
     return not ("<<" in command and _LINE_CONTINUATION_RE.search(command))
+
+
+def _tokenize_chain(command: str) -> Optional[list]:
+    """The tokenizer for a whole chain (line mode first, whole-command fallback), None if neither
+    manages (an unclosed quote, or `$'...'` ANSI-C quoting, which that tokenizer does not know)."""
+    # The same quote pass the shell checks use (_may_use_ansi_c_quoting): a `$'` that is only
+    # text (in quotes, escaped, in a comment, in a quoted heredoc body) no longer defeats the tokenizer;
+    # whatever the pass cannot tell counts as a live ANSI-C quote. With a heredoc and a backslash-newline
+    # in one command the pass does not apply and any `$'` counts, as in the shell checks.
+    if "$'" in command:
+        if not _quote_model_applies(command) or _may_use_ansi_c_quoting(_LINE_CONTINUATION_RE.sub(r"\1", command)):
+            return None
+    try:
+        return _line_mode_tokens(command)
+    except ValueError:
+        pass
+    try:
+        return _shell_tokens(command, newline_is_operator=True)
+    except ValueError:
+        return None
 
 
 def _raw_redirect_targets(command: str) -> list[str]:

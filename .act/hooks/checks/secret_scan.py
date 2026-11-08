@@ -188,6 +188,7 @@ from typing import Optional
 import actlib
 import feedback_privacy
 
+from .command_parse import parse_for
 from .common import MAX_NESTING, _check_mode, _shell_command
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
@@ -199,16 +200,12 @@ from .shell_targets import (
     _SIMPLE_DIR_RE,
     _WRAPPER_ARG_RE,
     _WRAPPER_COMMANDS,
-    _LINE_CONTINUATION_RE,
     _cd_bases,
     _command_name,
     _is_dynamic_target,
-    _line_mode_tokens,
-    _may_use_ansi_c_quoting,
     _operands,
-    _quote_model_applies,
-    _shell_tokens,
     _to_native_path,
+    _tokenize_chain,
 )
 
 __all__ = [
@@ -1296,24 +1293,7 @@ def _with_span_commands(commands: list[list[str]], depth: int = 0) -> list[list[
     return expanded
 
 
-def _tokenize_chain(command: str) -> Optional[list]:
-    """shell_targets' own tokenizer (line mode first, whole-command fallback), None if neither
-    manages (an unclosed quote, or `$'...'` ANSI-C quoting, which that tokenizer does not know)."""
-    # The same quote pass the shell checks use (shell_targets._may_use_ansi_c_quoting): a `$'` that is only
-    # text (in quotes, escaped, in a comment, in a quoted heredoc body) no longer defeats the tokenizer;
-    # whatever the pass cannot tell counts as a live ANSI-C quote. With a heredoc and a backslash-newline
-    # in one command the pass does not apply and any `$'` counts, as in the shell checks.
-    if "$'" in command:
-        if not _quote_model_applies(command) or _may_use_ansi_c_quoting(_LINE_CONTINUATION_RE.sub(r"\1", command)):
-            return None
-    try:
-        return _line_mode_tokens(command)
-    except ValueError:
-        pass
-    try:
-        return _shell_tokens(command, newline_is_operator=True)
-    except ValueError:
-        return None
+_TOKENIZE_HERE: object = object()  # "no tokens handed in": None is a valid handed-in result
 
 
 def _git_commit_invocations(
@@ -1322,6 +1302,7 @@ def _git_commit_invocations(
     deadline: Optional[float] = None,
     alias_cache: Optional[dict] = None,
     depth: int = 0,
+    chain_tokens: object = _TOKENIZE_HERE,
 ) -> list[dict]:
     """Every `git commit`/continued-operation call in `command`, in order, read with the word lexer
     (backtick spans included; an exception in it propagates), as {"cwd", "all",
@@ -1338,10 +1319,15 @@ def _git_commit_invocations(
 
     Falls back to a coarse raw-text search when the chain cannot be tokenized at all: a bare
     "git ... commit" mention is treated as a `-a`-style commit with no known add-paths —
-    over-inclusive on purpose (shell_targets takes the same stance for its own fallback)."""
+    over-inclusive on purpose (shell_targets takes the same stance for its own fallback).
+
+    `chain_tokens` is the result of `_tokenize_chain(command)` for the top-level call when the caller
+    already has it (the dispatcher's shared parse hands it to the three commit-reading checks; None
+    is a result too: the text does not tokenize). Left out, the chain is tokenized here, as are all
+    nested texts. Only this pure reading is shared -- alias lookups and their cache stay per call."""
     if alias_cache is None:
         alias_cache = {}
-    tokens = _tokenize_chain(command)
+    tokens = _tokenize_chain(command) if chain_tokens is _TOKENIZE_HERE else chain_tokens
     if tokens is None:
         if _GIT_COMMIT_FALLBACK_RE.search(command):
             return [{"cwd": base_cwd, "all": True, "add_paths": []}]
@@ -1575,7 +1561,10 @@ def check_secret_scan(payload: dict) -> int:
         # contains the literal substring "commit" itself, so the filter can only be this broad
 
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    invocations = _git_commit_invocations(command, _base_cwd(payload), deadline, {})
+    invocations = _git_commit_invocations(
+        command, _base_cwd(payload), deadline, {},
+        chain_tokens=parse_for(payload, command).chain_tokens(),
+    )
     if not invocations:
         return 0
 
