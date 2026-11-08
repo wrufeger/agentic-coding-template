@@ -35,6 +35,16 @@ def _copy_lists(lists: list) -> list:
     return [list(words) for words in lists]
 
 
+def parse_for(payload: dict, command: str) -> "Parse":
+    """The dispatcher's parse of this call when payload["_act_parse"] is a Parse of the same command and
+    tool, else a fresh one: a check called outside the dispatcher or on another event reads as before."""
+    tool_name = payload.get("tool_name")
+    shared = payload.get("_act_parse")
+    if isinstance(shared, Parse) and shared.command == command and shared.tool_name == tool_name:
+        return shared
+    return Parse(tool_name, command)
+
+
 class Parse:
     """The reading of one command for one tool call. Read-only: no public setters."""
 

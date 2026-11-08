@@ -142,7 +142,8 @@ import security_scan
 
 from . import session
 from .board_refresh import _base_cwd, _targets_own_project
-from .command_words import _command_word_lists, _strip_command_prefix
+from .command_parse import parse_for
+from .command_words import _strip_command_prefix
 from .common import _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command
 from .secret_scan import (
     _check_deadline,
@@ -803,12 +804,12 @@ class _IntegrationCall:
     target: Optional[Path]
 
 
-def _integration_calls(command: str, base_cwd: str) -> "list[_IntegrationCall]":
+def _integration_calls(command: str, base_cwd: str, payload: Optional[dict] = None) -> "list[_IntegrationCall]":
     """Every `git merge|pull|cherry-pick` in `command`. Found through the shared command-word
     tokenizer, never by a regex over the raw string."""
     calls: "list[_IntegrationCall]" = []
     cwd: Optional[str] = base_cwd
-    for words, _separator in _command_word_lists(command):
+    for words, _separator in parse_for(payload or {}, command).words():
         stripped = _strip_command_prefix(words)
         if not stripped:
             continue
@@ -888,7 +889,7 @@ def _record_integration_heads(payload: dict, root: Path, command: str) -> None:
     path = _heads_file(root, payload.get("tool_use_id"))
     if path is None:
         return
-    calls = _integration_calls(command, _base_cwd(payload))
+    calls = _integration_calls(command, _base_cwd(payload), payload)
     if not calls:
         return
     deadline = time.monotonic() + _RECORD_TIME_BUDGET
@@ -1163,7 +1164,7 @@ def _scan_after_integration(payload: dict) -> None:
     except (RuntimeError, OSError):
         return
     recorded = _take_recorded_heads(root, payload.get("tool_use_id"))
-    calls = _integration_calls(command, _base_cwd(payload))
+    calls = _integration_calls(command, _base_cwd(payload), payload)
     if not calls or not security_scan.available_tools():
         return
     own = [call for call in calls if call.target is not None and _targets_own_project(call.target, root)]
