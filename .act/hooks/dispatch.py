@@ -897,6 +897,21 @@ def _check_failed(module_name: str, reason: str, payload: dict, reader_failure: 
     return 0
 
 
+def _build_parse(payload: dict) -> "object | None":
+    """The checks.command_parse.Parse of a Bash or PowerShell call, else None. A module that cannot be
+    imported or a construction that raises gives None: the checks then read the command themselves."""
+    tool_name = payload.get("tool_name")
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if tool_name not in ("Bash", "PowerShell") or not isinstance(command, str):
+        return None
+    try:
+        module = importlib.import_module("checks.command_parse")
+        return module.Parse(tool_name, command)
+    except Exception:  # noqa: BLE001 - never fails the dispatcher
+        return None
+
+
 def _run_checks(payload: dict) -> "tuple[int, str | None]":
     """(exit code, denying module's name) — the name is None on allow (exit code 0), and passed on
     to _run_pre_tool_use_observers so checks.event_log.observe can name the check that denied
@@ -904,6 +919,9 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
     # a copy, never the caller's own dict (same stance as _run_pre_tool_use_observers): the checks
     # see the hook's own start for their shared time budget, the observers and the log do not
     checked_payload = dict(payload, _act_hook_started=_HOOK_STARTED)
+    parse = _build_parse(payload)
+    if parse is not None:
+        checked_payload["_act_parse"] = parse  # one reading of the command for all checks of this call
     for module_name, func_name in _PRE_TOOL_USE_CHECKS:
         func, reason = _load(module_name, func_name)
         if func is None:
