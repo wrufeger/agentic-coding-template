@@ -945,11 +945,13 @@ def _has_answer_label(body: str) -> bool:
 def cmd_new(
     root: Path, kind: str, title_words: list[str], entry_id: Optional[str] = None,
     formerly: Optional[str] = None, status: Optional[str] = None, recipient: Optional[str] = None,
-    body_file: Optional[str] = None,
+    body_file: Optional[str] = None, triage: bool = False,
 ) -> int:
     kind = _canonical_kind(kind)
     title = " ".join(title_words).strip()
     problems = validate_entry(root, kind, title, entry_id, formerly, status, recipient)
+    if triage and kind not in ("todo", "note"):
+        problems.append("--triage: only a todo or note entry takes it (a captured chat message)")
     body = ""
     if body_file is not None:
         try:
@@ -967,7 +969,8 @@ def cmd_new(
     # label already, keeps its text as it was — never a second label.
     open_question = kind == "question" and status != "answered" and not _has_answer_label(body)
     dest, assigned_id = create_entry(root, kind, title, entry_id, formerly, status, recipient, body,
-                                     answer_block=open_question)
+                                     answer_block=open_question,
+                                     extra_header=[("triage", "open")] if triage else None)
     if kind == "ledger":
         label = "no id — journal entries aren't numbered"
     elif kind in ("report", "note"):
@@ -2266,6 +2269,9 @@ def build_parser() -> argparse.ArgumentParser:
                        help="body below the heading, copied verbatim (UTF-8); a question ends with an "
                             "empty answer label below it, unless --status answered or the text has "
                             "one already")
+    p_new.add_argument("--triage", action="store_true",
+                       help="todo/note entry: write `triage: open` (a chat message captured by hand, "
+                            "to be processed right after the answered entries)")
 
     sub.add_parser("assign", help="hand out ids still missing ('team' mode: only on the default branch)")
 
@@ -2336,7 +2342,7 @@ def main(argv: list[str]) -> int:
 
     if args.command == "new":
         return cmd_new(root, args.kind, args.title, args.entry_id, args.formerly, args.status,
-                       args.recipient, args.body_file)
+                       args.recipient, args.body_file, args.triage)
     if args.command == "assign":
         return cmd_assign(root)
     if args.command == "state":

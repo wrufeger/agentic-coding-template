@@ -11,6 +11,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- `entries.py new todo|note --triage` writes `triage: open` into the header, so a chat capture filed by hand needs no manual edit afterwards.
 - Incident log: what no one is told at the moment it happens is noted in `.act-local/incidents.jsonl` (per machine,
   identifiers only, never a command's text) and arrives at the next session start as one inbox report "Incident log
   <date>" with counts per kind on top (a second start the same day appends to it; the session start names the file in one
@@ -152,6 +153,9 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   is read (parser allow-lists, time budgets, failure handling) is documented in the header comments of the check
   modules. The topic `worker-rules.md` is gone; its content stands in the header of `.act/scripts/rules.py`
   (`--worker`).
+- The daily loaded core rules are about 8 000 characters shorter (44 300 to 36 200 in the seven files under `.act/rules/shared/` and `.act/rules/orchestrator/`), every rule id and duty kept: questions are described in one place (`R-human-ask`), their form only in the inbox README; summaries are shorter; duplicates of worker write bans, language and dev-server text became references.
+- Assignment header: only `Write scope:`, `Cap:` and (where something runs) `Tests:` are mandatory. The tier follows from the worker's role (a `Tier:` line only names a deviation), the estimate is given from `standard` up, `Depends on:` only for a real dependency. Without a `Cap:` or `Tier:` line the `worker-cap` check now uses the default of the worker's role (`quick-check` 10, `reviewer` 60, `expert-solver` 80, others 40).
+- `R-safe-git-reset` and `R-safe-git-discard` are one rule now (the second id stays as a pointer); projects keep both lines in `docs/ai/rules.md`.
 - The `act-adopt` skill is about half as long (63 700 to about 30 000 characters): the steps keep every decision and safety stop, and point to the script's `--plan` output and `--help` instead of repeating what they list.
 - `init` sets the scope profile by the detected stack: `full` for a web project (a frontend framework, CSS or HTML
   in the folder, or named in the stack), `standard` for any other; `--scope minimal|standard|full` decides

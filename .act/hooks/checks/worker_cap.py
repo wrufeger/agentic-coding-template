@@ -7,7 +7,9 @@
 # in every assignment, mechanically checked the same way `Write scope:` is (checks/write_scope.py)
 # — this module is that check. Without a `Cap:` line, the cap falls back to the default for the
 # tier named in a `Tier: <tier>` line (`light` 10, `standard` 40, `elevated` 60, `high`/`expert`
-# 80); with neither line, `standard` (40). See _parse_cap_and_tier.
+# 80); without a `Tier:` line, to the default for the worker's role (_ROLE_TIERS: `quick-check`
+# `light`, `reviewer` `elevated`, `expert-solver` `expert`, every other role `standard`); with
+# neither, `standard` (40). See _parse_cap_and_tier.
 #
 # Binding a worker's tool call back to the cap its assignment named reuses the same mechanism as
 # write_scope.py (see that module's docstring for the full rationale: meta.json's "toolUseId"
@@ -23,7 +25,7 @@
 # is imported (`_agent_assignment_text`), so it covers agents started by a workflow script too:
 # those have no Agent/Task start (nothing recorded, no meta.json "toolUseId"), their transcript
 # lives under `subagents/workflows/<run>/`, and the assignment is read from the "computed task"
-# record only (see write_scope.py's header). Without that record the standard default applies.
+# record only (see write_scope.py's header). Without that record the role's default applies.
 # See _meta_tool_use_id / _transcript_first_prompt.
 #
 # Storage lives in its own directory, `.act-local/worker-caps/` (not write_scope's
@@ -114,7 +116,7 @@ from .write_scope import (
 
 __all__ = [
     "_WORKER_CAPS_DIRNAME", "_TIER_DEFAULT_CAPS", "_DEFAULT_TIER", "_DEFAULT_CAP",
-    "_KEY_BOUNDARY", "_CAP_LINE_RE", "_TIER_LINE_RE", "_LOCK_TIMEOUT", "_LOCK_POLL",
+    "_ROLE_TIERS", "_KEY_BOUNDARY", "_CAP_LINE_RE", "_TIER_LINE_RE", "_LOCK_TIMEOUT", "_LOCK_POLL",
     "_LOCK_STALE_SECONDS", "_parse_cap_and_tier", "_worker_caps_dir", "_cap_assignment_file",
     "_count_file", "_atomic_write_json", "_prune_stale_entries", "_record_worker_cap",
     "_read_cap_assignment_entry", "_meta_tool_use_id", "_transcript_first_prompt",
@@ -132,6 +134,14 @@ _TIER_DEFAULT_CAPS = {
     "elevated": 60,
     "high": 80,
     "expert": 80,
+}
+# The tier a role runs at when its assignment names no `Tier:` line (the roles' own tier, as the
+# agent bridges set it); a role not listed here, or none, runs at `_DEFAULT_TIER`. A "-high"
+# variant (`builder-high`) counts as its base role, like a "standard-high" tier word.
+_ROLE_TIERS = {
+    "quick-check": "light",
+    "reviewer": "elevated",
+    "expert-solver": "expert",
 }
 _DEFAULT_TIER = "standard"
 _DEFAULT_CAP = _TIER_DEFAULT_CAPS[_DEFAULT_TIER]
@@ -170,12 +180,21 @@ _LOCK_POLL = 0.02
 _LOCK_STALE_SECONDS = 10.0
 
 
-def _parse_cap_and_tier(prompt: str) -> int:
+def _role_tier(role: object) -> str:
+    """The default tier of a role name ("plugin:builder-high" -> "standard"); an unknown or
+    missing role gets the standard tier."""
+    name = role.split(":", 1)[-1].strip().lower() if isinstance(role, str) else ""
+    if name.endswith("-high"):
+        name = name[: -len("-high")]
+    return _ROLE_TIERS.get(name, _DEFAULT_TIER)
+
+
+def _parse_cap_and_tier(prompt: str, role: object = None) -> int:
     """The tool-call cap for one assignment prompt: an explicit `Cap: <n>` line wins outright;
     otherwise the default for the tier a `Tier: <tier>` line names (a "-high"/... suffix on the
     tier word, e.g. "standard-high", is stripped before the lookup — it selects a reasoning
-    variant of the role, not a different cap); with neither line, or an unrecognized tier word,
-    the standard default."""
+    variant of the role, not a different cap); with no `Tier:` line, the default for the tier of
+    `role` (_role_tier); with neither, or an unrecognized tier word, the standard default."""
     cap_match = _CAP_LINE_RE.search(prompt)
     if cap_match:
         try:
@@ -185,8 +204,9 @@ def _parse_cap_and_tier(prompt: str) -> int:
         if value is not None and value > 0:
             return value
     tier_match = _TIER_LINE_RE.search(prompt)
-    tier_word = tier_match.group(1).strip().lower() if tier_match else ""
-    tier_base = tier_word.split("-", 1)[0]
+    if not tier_match:
+        return _TIER_DEFAULT_CAPS[_role_tier(role)]
+    tier_base = tier_match.group(1).strip().lower().split("-", 1)[0]
     return _TIER_DEFAULT_CAPS.get(tier_base, _DEFAULT_CAP)
 
 
@@ -313,7 +333,7 @@ def _transcript_first_prompt(transcript_path: object, agent_id: str) -> Optional
 def _resolve_worker_cap(root: Path, payload: dict) -> int:
     """The cap that applies to this worker's tool call: the cap recorded for its Agent/Task start
     (via meta.json's toolUseId), else a fresh parse of its own first transcript line, else the
-    standard default when neither binds ("worker not bindable -> tier default standard")."""
+    default of the worker's role when neither binds ("worker not bindable -> role default")."""
     agent_id = payload.get("agent_id")
     if not isinstance(agent_id, str) or not agent_id:
         return _DEFAULT_CAP
@@ -333,9 +353,9 @@ def _resolve_worker_cap(root: Path, payload: dict) -> int:
     except Exception:  # noqa: BLE001
         prompt = None
     if isinstance(prompt, str) and prompt:
-        return _parse_cap_and_tier(prompt)
+        return _parse_cap_and_tier(prompt, payload.get("agent_type"))
 
-    return _DEFAULT_CAP
+    return _TIER_DEFAULT_CAPS[_role_tier(payload.get("agent_type"))]
 
 
 def _clear_if_orphaned(lock_dir: Path, stale_after: float) -> bool:
@@ -466,7 +486,8 @@ def check_worker_cap(payload: dict) -> int:
                     root = actlib.repo_root()
                 except RuntimeError:
                     return 0
-                _record_worker_cap(root, tool_use_id, _parse_cap_and_tier(prompt))
+                _record_worker_cap(
+                    root, tool_use_id, _parse_cap_and_tier(prompt, tool_input.get("subagent_type")))
         return 0
 
     try:

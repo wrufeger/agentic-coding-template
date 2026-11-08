@@ -184,24 +184,30 @@ remove. `python .act/scripts/act_local_tidy.py` lists the plan without removing 
 parallel session uses for more than 7 days without an open task id in its name is removed — name it with the task id
 or list it in `act-local-keep`; a task file without an `id:` line protects no folder.
 
-## `R-cost-delegate` — Name the tier, the estimate, and the cap
+## `R-cost-delegate` — Delegate where it pays off; the assignment header
 
 Checks: worker-cap, worker-write-scope, worker-scope-overlap.
 
-In the estimate, `fresh` = input, cache-writing and output tokens, `cache` = cache-read tokens; base
-it on `python .act/scripts/usage.py --estimates` where it has measured runs of that role/tier, not on
-memory. `builder-high` and `reviewer-high` are the same tier one reasoning step further; the other
+The assignment header's mandatory lines are `Write scope:`, `Cap:` and, where something runs, `Tests:`.
+The tier follows from the role; a `Tier: <tier>` line is only needed for a deviation (`usage.py --outcome`
+records the role's tier otherwise). The estimate (`~<n> min · ~<n> tkn fresh · ~<n> tkn cache`) is given from
+`standard` up: `fresh` = input, cache-writing and output tokens, `cache` = cache-read tokens; base it on
+`python .act/scripts/usage.py --estimates` where it has measured runs of that role/tier, not on memory.
+`Depends on: <whose result>` is only for an assignment that reads another worker's result.
+`builder-high` and `reviewer-high` are the same tier one reasoning step further; the other
 template roles have no such variant (`docs/ai/config.md` § Roles for a permanent override). About
 10–12 units (a verdict per entry or per file) per judgment worker because with more, the verdicts turn shallow while every further tool
 call re-reads a growing context. Only the orchestrator starts workers: a worker's proposal to split its
 task comes back, and the orchestrator cuts and starts the new assignments.
 
 `Cap:` is recognized either on its own line or right after a `·`/`|`/`;`/`,` further into a line, so
-a compact header works too, e.g.
+a compact header works too (`Write scope:` and `Tests:` are read only at the start of a line), e.g.
 
 `Tier: standard · Estimate: ~30 min · ~400k tkn fresh · ~8M tkn cache · Cap: 95.` Leaving the line
-out falls back to the tier's own default: `light` 10, `standard` 40, `elevated` 60, `high`/`expert`
-80; with neither a `Cap:` nor a `Tier:` line, `standard`.
+out falls back to the default of the tier a `Tier:` line names (`light` 10, `standard` 40, `elevated`
+60, `high`/`expert` 80), else of the worker's role: `quick-check` `light`, `reviewer` `elevated`,
+`expert-solver` `expert`, every other role (`builder`, `explorer`, `doc-writer` …) `standard`; a `-high`
+variant counts as its base role. With neither, `standard`.
 
 The worker gets one note on reaching the cap ("cap reached — deliver your current state now") and is
 refused from 1.5× the cap onward — wrap up and report rather than push past it.
