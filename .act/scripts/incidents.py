@@ -3,12 +3,15 @@
 #
 # Purpose: The incident log. Hooks and scripts note what the human should see later but that no one
 #          is told about at the moment it happens: a check in `warn` mode that fired, a check that
-#          crashed or ran out of time, a worker outcome `escalated`, a refusal of the main session.
+#          crashed or ran out of time, a worker outcome `escalated`, a refusal that made the session or
+#          a worker switch model. A check's refusal is not an incident: the caller sees it at once.
 #          One line per event is appended to .act-local/incidents.jsonl (per machine, never
 #          versioned); the next session start delivers the new ones as one inbox report
 #          "Incident log <YYYY-MM-DD>" (kind: report, for: all) and says so in one line.
 # Library: record(root, kind, source, message, role) -- append one event, never raises.
 #          deliver(root) -- turn the events not delivered yet into the day's inbox report.
+# Switch:  ACT_INCIDENT_LOG=off in the environment: both write and deliver nothing for that run
+#          (a test suite that drives the hooks keeps the project's own log clean).
 # Safety:  a line holds identifiers only (a check's module name, a tool name, a role/tier, the first
 #          word of a command when it is a plain word) -- never a command, a path or a value that
 #          could be a secret; message and source are cut and stripped of anything but plain text.
@@ -32,6 +35,7 @@ import actlib
 INCIDENTS_FILE = Path(".act-local") / "incidents.jsonl"
 OFFSET_FILE = Path(".act-local") / "incidents.offset"
 KEEP_DAYS = 30
+OFF_ENV = "ACT_INCIDENT_LOG"  # "off" turns the log off for one run
 _LOCK_WAIT = 1.0  # seconds to wait for entries.lock: SessionStart has a hard time limit
 TITLE_PREFIX = "Incident log "
 _WORD_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_.-]{0,30}\Z")  # a plain command word: no `=`, path or quote
@@ -51,9 +55,17 @@ def _clean(text: object, limit: int) -> str:
     return re.sub(r"[|`\x00-\x1f]", "/", folded)[:limit]
 
 
+def _off() -> bool:
+    """True when ACT_INCIDENT_LOG=off is set for this run."""
+    return os.environ.get(OFF_ENV, "").strip().lower() == "off"
+
+
 def record(root: Path, kind: str, source: str, message: str = "", role: str = "") -> None:
-    """Append one event. Never raises and writes nothing through a linked .act-local."""
+    """Append one event. Never raises and writes nothing through a linked .act-local or with
+    ACT_INCIDENT_LOG=off."""
     try:
+        if _off():
+            return
         path = root / INCIDENTS_FILE
         if not actlib.local_write_ok(root, path.parent):
             return
@@ -123,9 +135,10 @@ def deliver(root: Path) -> Optional[tuple[Path, int]]:
     """Put the events not delivered yet into the inbox report of today ("Incident log <date>"): an
     open one of the same day gets the rows appended (counts recomputed), else a new one is created
     the way `entries.py new report` does. Returns (entry, number of new events), or None when there
-    was nothing to deliver or the inbox cannot be written. Marks the events delivered afterwards."""
+    was nothing to deliver, the inbox cannot be written or ACT_INCIDENT_LOG=off. Marks the events
+    delivered afterwards."""
     path = root / INCIDENTS_FILE
-    if not path.is_file() or actlib.link_problem(root, path):
+    if _off() or not path.is_file() or actlib.link_problem(root, path):
         return None
     data = path.read_bytes()
     offset = _read_offset(root)

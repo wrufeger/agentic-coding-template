@@ -8,11 +8,12 @@ a command (parser allow-lists, time budgets, failure handling) is documented at 
 
 **Incident log.** What a check does without stopping the call is noted in `.act-local/incidents.jsonl` (time, kind,
 source, role, a short message; never a command or a path): a `warn` message that was printed, a check that crashed or
-ran past 8 s of the hook's 10 s limit, a refusal of the main session (a worker's refusals are routine), a refusal that
-made the session or a worker switch model, and `usage.py --outcome <role> <tier> escalated`. The next session start
-puts the new lines into the inbox report `Incident log <date>` (`kind: report`, `for: all`; an open report of the same
-day is extended), counts per kind on top, and is silent when nothing is new. Delivered lines are kept 30 days. It is
-written by `session-start-refresh: block`; there is no switch of its own.
+ran past 8 s of the hook's 10 s limit, a refusal that made the session or a worker switch model, and `usage.py
+--outcome <role> <tier> escalated`. A check's refusal is not logged: whoever made the call sees it at once. The next
+session start puts the new lines into the inbox report `Incident log <date>` (`kind: report`, `for: all`; an open
+report of the same day is extended), counts per kind on top, and is silent when nothing is new. Delivered lines are
+kept 30 days. It is written by `session-start-refresh: block`; there is no config row of its own, but
+`ACT_INCIDENT_LOG=off` in the environment writes and delivers nothing for one run (a test suite that drives the hooks).
 
 **When a check itself fails.** `secret-read` and `outside-root` fail closed for the shell: if the module cannot be
 imported or raises on a call, Bash and PowerShell are refused and the failure is named on standard error, so a broken

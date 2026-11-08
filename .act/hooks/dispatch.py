@@ -845,12 +845,9 @@ def _modes_seen() -> "dict[str, str]":
 
 
 def _note_check_outcome(module_name: str, payload: dict, result: int, printed: str, modes: "dict[str, str]") -> None:
-    """Incident log entries for one finished check: a refusal of the main session (a worker's refusals are
-    routine), a plain-text note from a check whose row was `warn`, a check that ended past 8 s of the
-    harness' 10 s hook limit."""
+    """Incident log entries for one finished check: a plain-text note from a check whose row was `warn`, a
+    check that ended past 8 s of the harness' 10 s hook limit. A refusal is not an incident: the caller sees it at once."""
     if result != 0:
-        if not payload.get("agent_id"):
-            _note_incident("refusal", module_name, payload)
         return
     text = printed.strip()
     if text and not text.startswith("{") and "warn" in modes.values():

@@ -517,7 +517,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     branch = _current_branch(root)
 
-    # The incident log (warn hits, crashed checks, escalated workers, refusals of the main session) goes
+    # The incident log (warn hits, crashed or slow checks, escalated workers, model switches) goes
     # into the inbox as one report of the day before the inbox is counted below.
     if mode == "block":
         try:
