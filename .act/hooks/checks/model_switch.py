@@ -316,6 +316,14 @@ def run(event: str, payload: dict) -> None:
     except OSError:
         return None
     note = _messages(event, payload, scanned)
+    if scanned["refusals"] and scanned["switches"]:
+        # a refusal that made the model change is a severe event: one row in the incident log (model name only)
+        try:
+            import incidents  # noqa: E402 -- .act/scripts/ is on sys.path, as for actlib
+            incidents.record(root, "model-switch", "model_switch", scanned["switches"][-1][1],
+                             "worker" if event == "SubagentStop" else "main")
+        except Exception:  # noqa: BLE001 -- the log must never break the check
+            pass
     if note is not None:
         # queued before the offset is saved: when queuing raises, the offset stays and the next Stop reports it
         protected_watch.queue_orchestrator_note(str(root).replace("\\", "/"), note)

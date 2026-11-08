@@ -75,6 +75,7 @@ SCRIPT_INFO: dict[str, dict[str, str]] = {
     "feedback_privacy.py": {"kind": "library"},
     "forge.py": {"kind": "skill", "skill": "act-pr, act-issue, act-integrations", "note": "reads are direct; every write shows a preview and needs `--apply` after the human's \"yes\" (`topics/live-systems.md`)"},
     "frontmatter.py": {"kind": "library"},
+    "incidents.py": {"kind": "library"},
     "i18n_check.py": {"kind": "skill", "skill": "act-check-translations"},
     "id_links_install.py": {"kind": "direct", "note": "optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`"},
     "id_links_lsp.py": {"kind": "direct", "note": "language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand"},

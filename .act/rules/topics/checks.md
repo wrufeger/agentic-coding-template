@@ -6,6 +6,15 @@ syntax it expects stands here, one section per rule. The block messages of the c
 syntax and point here. The checks are switched in `docs/ai/config.md` § Checks (`block`, `warn` or
 `off`). The sentences below are the former text of the rules, moved here unchanged.
 
+**Incident log.** What a check does without stopping the call is noted for later: a check in `warn` mode that
+printed its message, a check that crashed or ran past 8 s of the hook's 10 s limit, a refusal of the main session
+(a worker's refusals are routine), a refusal that made the session or a worker switch model, and `usage.py --outcome <role> <tier> escalated`. One line each goes to
+`.act-local/incidents.jsonl` (time, kind, source, role, a short identifier message; never a command or a path — a
+shell command is cut to its first word when that is a plain word). The next session start puts the new lines into the
+inbox report `Incident log <date>` (`kind: report`, `for: all`; an open report of the same day is extended), counts
+per kind on top, and names the file in one line; it stays silent when there is nothing new. Delivered lines are kept
+30 days. It is written by `session-start-refresh: block` only; there is no switch of its own.
+
 ## `R-safe-no-secret-read` — Never read a secret file into the context
 
 Checks: secret-read.

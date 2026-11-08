@@ -11,6 +11,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Added
 
+- Incident log: what no one is told at the moment it happens is noted in `.act-local/incidents.jsonl` (per machine,
+  identifiers only, never a command's text) and arrives at the next session start as one inbox report "Incident log
+  <date>" with counts per kind on top (a second start the same day appends to it; the session start names the file in one
+  line): a check in `warn` mode that fired, a check that crashed or ran past 8 s of the hook limit, a worker outcome
+  recorded as `escalated`, every refusal of the main session (a worker's refusals are routine and not logged), and a refusal that made a session or worker switch model.
+  Delivered lines are dropped after 30 days; no new setting.
 - Rule `R-work-process-error`: a fault in how the work itself runs (workers getting in each other's way, a run
   checking the wrong state, a step against a rule) is reported the first time it shows, as an inbox question with
   proposed fixes, and the process changes before the work goes on; a workaround alone is not enough, and a cause in

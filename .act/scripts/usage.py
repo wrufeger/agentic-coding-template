@@ -808,6 +808,9 @@ def cmd_outcome(root: Path, role: str, tier: str, outcome: str) -> int:
               else "usage: could not acquire the consolidation lock in time — try again",
               file=sys.stderr)
         return 1
+    if outcome == "escalated":
+        import incidents  # the incident log: delivered to the inbox at the next session start
+        incidents.record(root, "escalated", "usage.py", f"{role}/{tier or '-'}")
     print(f"usage: {role}/{tier or '(no tier)'} outcome recorded: {outcome}")
     return 0
 

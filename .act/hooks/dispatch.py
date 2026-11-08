@@ -801,6 +801,50 @@ def _load(module_name: str, func_name: str):
     return func, None
 
 
+def _note_incident(kind: str, source: str, payload: dict, detail: str = "") -> None:
+    """Append one event to the incident log (.act/scripts/incidents.py), delivered to the inbox at the next
+    session start. Identifiers only: the tool name, a shell command's first word when it is a plain word.
+    Never raises."""
+    try:
+        import incidents  # noqa: E402 -- .act/scripts/ is on sys.path
+        tool = payload.get("tool_name")
+        parts = [detail, tool if isinstance(tool, str) else ""]
+        if tool in _SHELL_TOOLS:
+            tool_input = payload.get("tool_input")
+            parts.append(incidents.command_word(tool_input.get("command") if isinstance(tool_input, dict) else None))
+        role = "worker" if payload.get("agent_id") else "main"
+        incidents.record(actlib.repo_root(), kind, source, " ".join(part for part in parts if part), role)
+    except Exception:  # noqa: BLE001 -- the log must never change a verdict
+        pass
+
+
+_SLOW_NOTED = False
+
+
+def _modes_seen() -> "dict[str, str]":
+    """checks.common.MODES_SEEN, or an empty dict while that module is not loaded or lacks it (a new
+    dispatch.py next to an old common.py in the middle of an update). Never raises."""
+    modes = getattr(sys.modules.get("checks.common"), "MODES_SEEN", None)
+    return modes if isinstance(modes, dict) else {}
+
+
+def _note_check_outcome(module_name: str, payload: dict, result: int, printed: str, modes: "dict[str, str]") -> None:
+    """Incident log entries for one finished check: a refusal of the main session (a worker's refusals are
+    routine), a plain-text note from a check whose row was `warn`, a check that ended past 8 s of the
+    harness' 10 s hook limit."""
+    if result != 0:
+        if not payload.get("agent_id"):
+            _note_incident("refusal", module_name, payload)
+        return
+    text = printed.strip()
+    if text and not text.startswith("{") and "warn" in modes.values():
+        _note_incident("warn", module_name, payload)
+    global _SLOW_NOTED
+    if not _SLOW_NOTED and time.monotonic() - _HOOK_STARTED > 8.0:
+        _SLOW_NOTED = True  # one row per hook call: the first check that ends past 8 s is the one named
+        _note_incident("check-slow", module_name, payload)
+
+
 def _check_failed(module_name: str, reason: str, payload: dict) -> int:
     tool_name = payload.get("tool_name")
     if module_name == "mcp_ide":
@@ -817,6 +861,7 @@ def _check_failed(module_name: str, reason: str, payload: dict) -> int:
     else:
         applies = tool_name in _FAIL_CLOSED_TOOLS
     reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
+    _note_incident("check-error", module_name, payload, reason.split(":")[0])  # the exception class only, never its text
     if module_name in _FAIL_CLOSED and applies:
         print(f"[act] check {module_name} failed ({reason}) — refusing to be safe; "
               f"{tool_name} stays refused until the check works again, ask the owner to run "
@@ -841,10 +886,21 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
         if func is None:
             result = _check_failed(module_name, reason or "check not available", payload)
         else:
+            import io
+            failed = False
+            _modes_seen().clear()
+            real_stdout, printed = sys.stdout, io.StringIO()
+            sys.stdout = printed  # what the check prints is passed on below, and looked at for a `warn` hit
             try:
                 result = func(checked_payload)
             except Exception as exc:  # noqa: BLE001
+                failed = True  # _check_failed has logged check-error; a refusal row on top would double it
                 result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload)
+            finally:
+                sys.stdout = real_stdout
+            sys.stdout.write(printed.getvalue())
+            if not failed:
+                _note_check_outcome(module_name, payload, result, printed.getvalue(), dict(_modes_seen()))
         if result != 0:
             return result, module_name
     return 0, None

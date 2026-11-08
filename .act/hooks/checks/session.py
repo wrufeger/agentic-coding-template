@@ -2460,6 +2460,17 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     branch = _current_branch(root)
 
+    # The incident log (warn hits, crashed checks, escalated workers, refusals of the main session) goes
+    # into the inbox as one report of the day before the inbox is counted below.
+    if mode == "block":
+        try:
+            import incidents
+            delivered = incidents.deliver(root)
+            if delivered:
+                print(f"[act] incident log: {delivered[1]} new event(s) in {delivered[0].relative_to(root).as_posix()}")
+        except Exception:
+            pass  # informational only, must never block the session
+
     waiting = 0
     try:
         waiting = _count_inbox_waiting(root)

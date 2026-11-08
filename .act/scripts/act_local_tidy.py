@@ -70,6 +70,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "feedback",                 # feedback.py: state, outbox entries, sent protocol
     "learn",                    # act-teach skill: learning record per topic
     "usage",                    # hooks/checks/usage.py: event files
+    "incidents.*",              # incidents.py: the incident log (events and the delivered offset)
     "update-channel-hint",      # update.py: marker for the release-channel hint
     "done-entries-hint",        # retired marker of an old session-start note; stays known so old files are not "unknown"
     "*.template.md",            # init.py: rescue copies of root entry files (<stem>.template.md)

@@ -49,12 +49,17 @@ def _read_payload() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+MODES_SEEN: dict[str, str] = {}
+
+
 def _check_mode(config: dict[str, str], key: str, default: str) -> str:
     """Look up one row of the Checks table in docs/ai/config.md ("block" | "warn" | "off").
     Falls back to `default` for a missing key or an unrecognized value: default deny means
     an unrecognized value is treated the same as an absent row."""
     value = config.get(key, "").strip().lower()
-    return value if value in ("block", "warn", "off") else default
+    mode = value if value in ("block", "warn", "off") else default
+    MODES_SEEN[key] = mode  # dispatch.py reads which row a check consulted, to tell a `warn` hit from a plain note
+    return mode
 
 
 # Which tool_input field holds the write target, per tool. Bash has no single target field —
