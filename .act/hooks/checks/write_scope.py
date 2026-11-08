@@ -1122,7 +1122,7 @@ def check_worker_write_scope(payload: dict) -> int:
         if isinstance(command, str):
             cwd_raw = payload.get("cwd")
             base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-            write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE)
+            write_targets = _bash_write_targets(command, base_cwd, _GIT_WRITES_WORKER_SCOPE, inline=False)
             inline_source = (tool_name, command, base_cwd)
     elif tool_name == "PowerShell":
         command = tool_input.get("command")

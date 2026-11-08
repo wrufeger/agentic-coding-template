@@ -15,8 +15,10 @@
 #          Bash's _bash_write_targets returns (raw, base) pairs because a Bash command can leave
 #          several *possible* current directories active at the same point (an `||` list, a `cd`
 #          inside a subshell) — resolution is deferred to the caller. A PowerShell script runs one
-#          statement after another with exactly one current directory at any point, so this module
-#          tracks it itself (Set-Location/cd/Push-Location) and resolves every target it can to an
+#          statement after another, but a directory change may fail and the script goes on, so this
+#          module tracks the small set of directories the shell may be in itself (Set-Location/cd/
+#          Push-Location/pushd/chdir, Pop-Location/popd; see _follow_cd and _TrackedDirs) and resolves
+#          every target it can, against each of them, to an
 #          absolute, forward-slash path before returning it; a target it cannot resolve (still
 #          carries a variable/sub-expression, or its base directory turned unknown after an
 #          unresolvable Set-Location) is returned as its own literal text instead — a caller can
@@ -45,11 +47,14 @@
 #     _ps_is_ignorable (`2>&1`, `2>$null`, `*> $null`, `> NUL`, `> nul:`);
 #   - Set-Content/sc, Add-Content/ac, Clear-Content/clc, Set-Item/si, Rename-Item/ren/rni,
 #     Export-Csv, Export-Clixml (-Path/-LiteralPath or 1st positional);
-#   - Out-File, Tee-Object (-FilePath/-Path or 1st positional);
+#   - Out-File, Tee-Object and its alias `tee` (-FilePath/-Path/-LiteralPath or 1st positional; the value
+#     of `-Variable` is no file);
 #   - New-Item/ni/mkdir/md (-Path and/or -Name, joined; 1st positional is -Path);
 #   - Copy-Item/cp/copy/cpi, Move-Item/mv/move/mi (-Destination, or the 2nd positional — the 1st is
 #     the source, never itself a target, unless -Path named the source explicitly, in which case
-#     the sole remaining positional is the destination);
+#     the sole remaining positional is the destination). Move-Item also counts its source (-Path/
+#     -LiteralPath, else the first positional; every positional when -Destination is named): the move
+#     removes it, as Bash `mv` counts its sources;
 #   - Remove-Item/rm/del/ri/rd/rmdir/erase (every -Path/-LiteralPath value plus every positional);
 #   - Expand-Archive (-DestinationPath); Invoke-WebRequest/iwr (-OutFile);
 #   - [System.IO.File]/[IO.File]/[global::System.IO.File]::WriteAllText/WriteAllLines/
@@ -66,8 +71,31 @@
 #     (still PowerShell syntax), up to _PS_MAX_SCAN_DEPTH deep;
 #   - `wsl`/`wsl.exe [options] [--] <command line>`, scanned with shell_targets._wsl_targets: the line
 #     runs inside WSL, where `/mnt/<x>/...` is drive <X>: (nowhere else in the command);
-#   - Set-Location/cd/sl/Push-Location updates the tracked current directory for what follows;
-#     an unresolvable target (a variable, or nothing findable) makes it unknown from there on.
+#   - Set-Location/cd/sl/chdir/Push-Location/pushd update the tracked current directories for what follows
+#     (_follow_cd): a move to a literal directory that exists moves each tracked directory; a move to one
+#     that does not exist (yet — an earlier statement may create it) or to a dynamic target keeps the old
+#     directory next to the new one (or next to "unknown"), since a failed move only reports an error and
+#     the script goes on; Pop-Location/popd and `Set-Location -`/`+` make every directory seen so far
+#     possible again. A directory at or below a target collected earlier in the same command (removed,
+#     moved, copied over) counts as missing too: the move may fail. A directory made earlier in the command by
+#     a literal `New-Item -ItemType Directory`/`mkdir`/`md` that certainly runs (first in the command or behind
+#     `;`/a line break, outside any script block or condition) counts as existing (_ps_directory_creation,
+#     _TrackedDirs.note_created) and is no written place; a removal or move after it still wins. The set stays small
+#     (_MAX_TRACKED_DIRECTORIES): past the cap the followed directory, "unknown", the directories confirmed
+#     to exist and the shortest paths are kept, and from then on every relative target also comes back as
+#     the one target no check may place (_unplaced_target, refused by every check that reads this module).
+#     Next to the set, the one directory this module followed before it tracked a set (cd/sl/Set-Location/
+#     Push-Location, moved whether the target exists or not) is still followed and is never dropped, so no
+#     target found that way is lost (_TrackedDirs). A nested PowerShell scan (`pwsh -c`, a script piped in)
+#     runs once, from the tracked set; the work of one command, nested scans included, is bounded
+#     (_RESOLUTION_BUDGET) — past the bound the whole command is that one unplaceable target.
+#   - native programs of the Bash table (`touch`, `sed -i`, `tar -x`, `find -delete`, `chmod`, `curl.exe -o`,
+#     `git clone` ...), read by their arguments with shell_targets._simple_command_targets; a name that is also
+#     a cmdlet alias keeps its cmdlet reading, and `curl`/`wget` without `.exe` (Invoke-WebRequest aliases in
+#     Windows PowerShell 5.1) add the file of `-OutFile` as well;
+#   - inline interpreter code (`python -c`, a literal piped into `python -`): its write calls are read once and
+#     resolved against every directory the call may run in; a crash of that reader comes back as one dynamic
+#     target holding the command text, never as an empty answer.
 #   - check 1 only (`broad=True`, see _broad_guard_candidates): additionally, every word of a
 #     Start-Process/Invoke-Command/python(3)/py invocation (their own write behaviour is opaque —
 #     this is a literal-text net, not a resolved target), every word after `& $sb`/`& { ... }`
@@ -104,20 +132,34 @@
 
 from __future__ import annotations
 
+import functools
+import os
 import re
-from typing import Optional
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Optional
 
 from . import inline_code as _inline_code
 from . import shell_targets as _shell_targets  # the module itself, for the rsync flag it holds while scanning
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
+    _creation_keys,
     _git_targets,
+    _attribute_targets,
     _is_absolute_target,
+    _ALL_OPERAND_WRITERS,
+    _LAST_OPERAND_WRITERS,
     _is_dynamic_target,
+    _is_remote_unc,
+    _perl_inplace_targets,
     _ps_reads_stdin,
     _reads_script_from_stdin,
     _resolve_path,
+    _robocopy_targets,
+    _simple_command_targets,
+    _to_native_path,
     _wsl_targets,
 )
 
@@ -132,9 +174,12 @@ __all__ = [
     "_ps_command_name", "_ps_split_args", "_target_from_flags", "_target_destination",
     "_target_new_item", "_targets_remove", "_cmdlet_targets", "_extract_dash_c",
     "_extract_ps_command_flag", "_extract_cmd_c", "_ps_is_ignorable", "_is_here_string_word",
-    "_broad_guard_candidates", "_resolve_ps_target", "_resolve_cd_target", "_flush_ps_statement",
+    "_broad_guard_candidates", "_resolve_ps_target", "_resolve_ps_targets", "_resolve_cd_target",
+    "_join_directory", "_directory_exists", "_place_key", "_TrackedDirs", "_follow_cd", "_flush_ps_statement",
     "_scan_ps_tokens", "_ps_raw_redirect_targets", "_powershell_write_targets",
-    "_PsInlineTarget", "_powershell_inline_code_targets",
+    "_PsInlineTarget", "_powershell_inline_code_targets", "_MAX_TRACKED_DIRECTORIES", "_RESOLUTION_BUDGET",
+    "_unplaced_target", "_is_unplaced_target", "_unplaced_reason", "_ScanLimit", "_ScanBudget", "_InlineSink",
+    "_collect_ps_inline", "_inline_sink_targets", "_scan_ps_inline",
 ]
 
 _Token = tuple[str, bool]  # (text, is_operator) — same shape as shell_targets._Token
@@ -159,7 +204,7 @@ _PS_SEPARATOR_OPS = frozenset({";", "|", "&&", "||", "\n"})
 _PS_VALUE_FLAGS = frozenset({
     "path", "literalpath", "destination", "filepath", "name", "newname", "value", "itemtype",
     "encoding", "delimiter", "width", "filter", "include", "exclude", "stream", "credential",
-    "destinationpath", "outfile", "argumentlist", "scriptblock", "type",
+    "destinationpath", "outfile", "argumentlist", "scriptblock", "type", "variable",
 })
 
 # lower-cased cmdlet/alias name -> extraction kind, dispatched in _cmdlet_targets.
@@ -171,17 +216,109 @@ _ALIASES = {
     "rename-item": "path_target", "ren": "path_target", "rni": "path_target",
     "export-csv": "path_target", "export-clixml": "path_target",
     "out-file": "outfile",
-    "tee-object": "outfile",
+    "tee-object": "outfile", "tee": "outfile",
     "new-item": "newitem", "ni": "newitem", "mkdir": "newitem", "md": "newitem",
     "copy-item": "destination2nd", "cp": "destination2nd", "copy": "destination2nd", "cpi": "destination2nd",
-    "move-item": "destination2nd", "mv": "destination2nd", "move": "destination2nd", "mi": "destination2nd",
+    "move-item": "move", "mv": "move", "move": "move", "mi": "move",
+    "robocopy": "robocopy", "perl": "perl_inplace", "ruby": "perl_inplace",
+    "chmod": "attribute", "chown": "attribute", "chgrp": "attribute",
     "remove-item": "all_operands", "rm": "all_operands", "del": "all_operands", "ri": "all_operands",
     "rd": "all_operands", "rmdir": "all_operands", "erase": "all_operands",
     "expand-archive": "flag_only",
     "invoke-webrequest": "flag_only", "iwr": "flag_only",
 }
-_CD_ALIASES = frozenset({"cd", "set-location", "sl", "push-location"})
+# `pushd` and `chdir` are PowerShell aliases of Push-Location and Set-Location. The scan tracks the directories the
+# shell may be in (_follow_cd, _TrackedDirs): a move to a literal directory that exists moves them; a move to a
+# missing or dynamic one keeps the old directory next to the new one, since the move may fail (a missing directory
+# is a non-terminating error and the script goes on); Pop-Location/`popd`/`Set-Location -`/`+` add every
+# directory seen so far back.
+# Native programs (Git for Windows ships them, `curl.exe` and `tar.exe` come with Windows) that write files and
+# that the Bash scanner reads by their arguments: the same table serves here, so `touch f`, `sed -i s/a/b/ f`,
+# `curl.exe -o f url`, `tar -xf a.tar -C d` give the same targets under PowerShell as under Bash. A name that is
+# also a cmdlet alias (`cp`, `mv`, `rm`, `mkdir`, `rmdir`) keeps its cmdlet reading (_ALIASES).
+_NATIVE_WRITERS = (
+    (_ALL_OPERAND_WRITERS | _LAST_OPERAND_WRITERS | frozenset({"sed", "dd", "tar", "unzip", "find", "curl", "wget"}))
+    - frozenset(_ALIASES)
+)
+_CD_ALIASES = frozenset({"cd", "chdir", "set-location", "sl", "push-location", "pushd"})
+# The names this module followed as one current directory before it tracked a set (`pushd` and `chdir` were not
+# among them, and a move counted whether the target existed or not). That one directory is still followed the same
+# way next to the set (_TrackedDirs.followed), so nothing found before is lost.
+_CD_ALIASES_FOLLOWED = frozenset({"cd", "set-location", "sl", "push-location"})
+# Windows PowerShell 5.1 aliases of Invoke-WebRequest (`curl.exe` and `wget.exe` are the programs).
+_WEB_ALIASES = frozenset({"curl", "wget"})
+_POP_ALIASES = frozenset({"pop-location", "popd"})
+# The most directories tracked at once (_follow_cd). Every target of a statement is resolved against each of
+# them, so the cap bounds the cost of a long chain of directory changes; past it the followed directory,
+# "unknown" (None), the directories confirmed to exist and the shortest paths stay, the rest is dropped — and
+# from then on every relative target also comes back as the one target no check may place (_unplaced_target),
+# since the directory it is relative to may be a dropped one (_TrackedDirs.capped).
+_MAX_TRACKED_DIRECTORIES = 24
+# How much work one scan of a command may do — statements, resolutions of a target against a directory,
+# directory changes followed, nested scans — counted by _ScanBudget in units and shared with every nested scan:
+# a step that only looks something up costs one unit, a file-system round trip (_TrackedDirs.resolve,
+# _TrackedDirs.followed_after) _RESOLUTION_COST. Past the budget the command comes back as the one target no
+# check may place, the way a scanner crash is refused: a command no one writes by hand is refused rather than
+# checked only in part.
+_RESOLUTION_BUDGET = 100_000
+_RESOLUTION_COST = 5
+# The target that stands for a write the scan could not place (see _MAX_TRACKED_DIRECTORIES and
+# _RESOLUTION_BUDGET). Every check that reads this module's targets refuses it (_is_unplaced_target); it is no
+# path, and no check resolves it against the directory the command started in.
+_UNPLACED_PREFIX = "<unplaced write: "
+_LOST_DIRECTORY = "a directory the shell may be in was dropped past the cap of tracked directories"
+_BUDGET_USED_UP = "the command is larger than the scan follows (its resolution budget is used up)"
 _IEX_WORDS = frozenset({"invoke-expression", "iex"})
+
+# (path literal, the directory it resolves against or None when unknown, interpreter language)
+_PsInlineTarget = tuple[str, Optional[str], str]
+
+
+def _unplaced_target(reason: str) -> str:
+    """The target no check may place, carrying the reason (_UNPLACED_PREFIX)."""
+    return f"{_UNPLACED_PREFIX}{reason}>"
+
+
+def _is_unplaced_target(target: object) -> bool:
+    """True for a target of _unplaced_target — what every check that reads this module's targets refuses."""
+    return isinstance(target, str) and target.startswith(_UNPLACED_PREFIX) and target.endswith(">")
+
+
+def _unplaced_reason(target: str) -> str:
+    """The reason an _unplaced_target carries, for the message of the check that refuses it."""
+    return target[len(_UNPLACED_PREFIX):-1] if _is_unplaced_target(target) else target
+
+
+class _ScanLimit(RuntimeError):
+    """One scan used up its budget (_RESOLUTION_BUDGET): _powershell_write_targets turns it into the target
+    no check may place (_unplaced_target); a nested scan lets it through to the top-level one."""
+
+
+@dataclass
+class _ScanBudget:
+    """The work one scan of a command may still do (_RESOLUTION_BUDGET), shared by every state the scan
+    goes through, nested scans included."""
+
+    left: int = _RESOLUTION_BUDGET
+
+    def charge(self, cost: int = 1) -> None:
+        self.left -= cost
+        if self.left < 0:
+            raise _ScanLimit(_BUDGET_USED_UP)
+
+
+@dataclass
+class _InlineSink:
+    """Where the walk of the statements puts the path literals of inline interpreter code (_collect_ps_inline).
+    `precise` chooses the reader (the paths of the write calls, or every path literal next to a write call);
+    `swallow` says what a failure of the reader does: noted in `failed` and the walk goes on (the targets scan,
+    which then reports one dynamic target for the command), or it propagates (the worker write scope's own
+    reading, which reports it)."""
+
+    precise: bool = False
+    swallow: bool = False
+    failed: bool = False
+    found: list[_PsInlineTarget] = field(default_factory=list)
 
 # kind == "flag_only": the target is exactly this flag's value, no positional fallback at all (an
 # Expand-Archive/Invoke-WebRequest call with none named simply writes nowhere this module can name).
@@ -210,7 +347,7 @@ _BROAD_EXCLUDE_VALUE_FLAGS = {"rename-item": {"newname"}, "ren": {"newname"}, "r
 # check 1 only (`broad`): kinds whose *precise* extraction already picks the one real target out
 # of two "positional-shaped" candidates (Copy-Item/Move-Item: source then destination) — widening
 # to "every positional" here would turn the source (being read, not written) into a false positive.
-_BROAD_SKIP_KINDS = frozenset({"destination2nd"})
+_BROAD_SKIP_KINDS = frozenset({"destination2nd", "robocopy", "perl_inplace"})
 
 _IO_FILE_WRITE_RE = re.compile(
     r"\[(?:global::)?(?:System\.)?IO\.File\]::"
@@ -455,6 +592,19 @@ def _ps_split_args(args: list[str]) -> tuple[list[str], dict[str, list[str]]]:
     return positionals, values
 
 
+def _expand_outfile_flag(args: list[str]) -> list[str]:
+    """`args` with every abbreviation of `-OutFile` (`-o`, `-Out`, `-OutF:x`) written out in full, as PowerShell
+    reads a unique prefix of a parameter name; over-inclusive for `-o` (ambiguous in PowerShell itself)."""
+    expanded: list[str] = []
+    for arg in args:
+        if arg.startswith("-") and len(arg) > 1:
+            key, separator, value = arg[1:].partition(":")
+            if key and "outfile".startswith(key.lower()):
+                arg = f"-outfile{separator}{value}"
+        expanded.append(arg)
+    return expanded
+
+
 def _target_from_flags(
     positionals: list[str], values: dict[str, list[str]], flag_keys: tuple[str, ...],
     allow_positional_fallback: bool = True,
@@ -479,6 +629,21 @@ def _target_destination(positionals: list[str], values: dict[str, list[str]]) ->
     return positionals[1] if len(positionals) >= 2 else None
 
 
+def _targets_move(positionals: list[str], values: dict[str, list[str]]) -> list[str]:
+    """Move-Item: the destination (as Copy-Item reads it) and the source, which the move changes too -
+    Bash `mv` counts its sources the same way. The source is -Path/-LiteralPath, else the first positional
+    (every positional when -Destination names the destination)."""
+    destination = _target_destination(positionals, values)
+    named = list(values.get("path", [])) + list(values.get("literalpath", []))
+    if values.get("destination"):
+        sources = positionals
+    elif named:
+        sources = positionals[1:]
+    else:
+        sources = positionals[:1]
+    return ([destination] if destination else []) + named + list(sources)
+
+
 def _target_new_item(positionals: list[str], values: dict[str, list[str]]) -> list[str]:
     path = (values.get("path") or [None])[0] or (positionals[0] if positionals else None)
     name = (values.get("name") or [None])[0]
@@ -495,6 +660,46 @@ def _targets_remove(positionals: list[str], values: dict[str, list[str]]) -> lis
     return list(values.get("path") or []) + list(values.get("literalpath") or []) + list(positionals)
 
 
+# A directory made by a `New-Item -ItemType Directory`/`mkdir`/`md` statement earlier in the same command counts as
+# existing for a later `cd` to the same place (_TrackedDirs.note_created): the scan runs before the command does,
+# so the folder is not on disk yet. An allowlist: exactly these creation commands with a literal path.
+_PS_CREATED_DIR_RE = re.compile(r"^(?:[A-Za-z]:)?[\w./\\ +@-]+$")
+_PS_CREATION_UNSAFE_WORDS = frozenset({
+    "if", "elseif", "else", "foreach", "for", "while", "until", "do", "switch", "try", "catch", "finally",
+    "function", "filter", "trap",
+})
+# `-WhatIf` and `-Confirm` (and every abbreviation PowerShell accepts) make the cmdlet create nothing, or ask first.
+_PS_NO_EFFECT_FLAGS = ("whatif", "confirm")
+
+
+def _ps_directory_creation(name: str, args: list[str]) -> Optional[tuple[list[str], bool]]:
+    """(the literal paths, whether the missing parents are made too) of a statement that creates directories:
+    `New-Item`/`ni` with `-ItemType`/`-Type` `Directory` (or `dir`), `mkdir`/`md`; None for anything else, a path
+    that is not a plain literal (a variable, a wildcard, a list `a,b`, a provider path `env:X`) and a call
+    with `-WhatIf`/`-Confirm`."""
+    if _ALIASES.get(name) != "newitem":
+        return None
+    for arg in args:
+        if arg.startswith("-") and len(arg) > 1:
+            flag = arg[1:].partition(":")[0].lower()
+            if flag and (any(word.startswith(flag) for word in _PS_NO_EFFECT_FLAGS) or flag in ("cf", "wi")):
+                return None
+    positionals, values = _ps_split_args(args)
+    kinds = [str(kind).lower() for kind in values.get("itemtype", []) + values.get("type", [])]
+    if name in ("mkdir", "md"):
+        if kinds:
+            return None
+        parents = sys.platform == "win32"  # the function makes the parents too; a native `mkdir` elsewhere does not
+    else:
+        if len(kinds) != 1 or kinds[0] not in ("directory", "dir"):
+            return None
+        parents = True
+    raws = _target_new_item(positionals, values)
+    if not raws or any(_is_dynamic_target(raw) or not _PS_CREATED_DIR_RE.match(raw) for raw in raws):
+        return None
+    return raws, parents
+
+
 def _cmdlet_targets(name: str, args: list[str]) -> list[str]:
     kind = _ALIASES.get(name)
     if kind is None:
@@ -504,13 +709,21 @@ def _cmdlet_targets(name: str, args: list[str]) -> list[str]:
         target = _target_from_flags(positionals, values, ("path", "literalpath"))
         return [target] if target else []
     if kind == "outfile":
-        target = _target_from_flags(positionals, values, ("filepath", "path"))
+        target = _target_from_flags(positionals, values, ("filepath", "path", "literalpath"))
         return [target] if target else []
     if kind == "newitem":
         return _target_new_item(positionals, values)
     if kind == "destination2nd":
         target = _target_destination(positionals, values)
         return [target] if target else []
+    if kind == "move":
+        return _targets_move(positionals, values)
+    if kind == "robocopy":
+        return _robocopy_targets(args)
+    if kind == "perl_inplace":
+        return _perl_inplace_targets(args, name)
+    if kind == "attribute":
+        return _attribute_targets(name, args)
     if kind == "all_operands":
         return _targets_remove(positionals, values)
     if kind == "flag_only":
@@ -666,7 +879,8 @@ def _resolve_ps_target(raw: Optional[str], cwd: Optional[str]) -> Optional[str]:
     """`raw` resolved to an absolute, forward-slash path against `cwd` — or `raw` itself,
     unresolved, when it is dynamic, `cwd` is unknown, or resolution fails outright (see the module
     docstring for how a caller tells the two apart). None for a falsy `raw`, or one that names a
-    stream duplication/the null device rather than a file (_ps_is_ignorable)."""
+    stream duplication/the null device rather than a file (_ps_is_ignorable). A file-system round trip
+    (_resolve_path): the scan asks it once per (target, directory) through _TrackedDirs.resolve."""
     if not raw or _ps_is_ignorable(raw):
         return None
     if _is_dynamic_target(raw):
@@ -677,10 +891,69 @@ def _resolve_ps_target(raw: Optional[str], cwd: Optional[str]) -> Optional[str]:
     return resolved.as_posix() if resolved is not None else raw
 
 
+def _resolve_ps_targets(raw: Optional[str], tracked: "_TrackedDirs", note: bool = True) -> set[str]:
+    """_resolve_ps_target for every directory the shell may be in (`tracked.possible`): a dynamic or
+    absolute `raw` is resolved once (no directory takes part), a relative one against each of them
+    (itself, unresolved, for the unknown directory None) — and, once a tracked directory was dropped at
+    the cap (`tracked.capped`), also as the target no check may place (_unplaced_target), since the
+    directory it is relative to may be a dropped one. Empty for a falsy or ignorable `raw`. Every answer
+    is noted as a written place (_TrackedDirs.note_written) unless `note` is False (a directory a statement only
+    creates takes nothing away)."""
+    if not raw or _ps_is_ignorable(raw):
+        return set()
+    raw = str(raw)
+    found: set[str] = set()
+    if _is_dynamic_target(raw) or _is_absolute_target(raw):
+        resolved = tracked.resolve(raw, None)
+        if resolved:
+            found.add(str(resolved))
+    else:
+        for cwd in tracked.possible:
+            resolved = tracked.resolve(raw, cwd)
+            if resolved:
+                found.add(str(resolved))
+        if tracked.capped:
+            found.add(_unplaced_target(_LOST_DIRECTORY))
+    if note:
+        tracked.note_written(found)
+    return found
+
+
+def _add_resolved_pairs(
+    pairs: Iterable[tuple[str, Optional[str]]], result: set[str], tracked: "_TrackedDirs"
+) -> None:
+    """Add the (raw target, base directory) pairs a shell_targets helper returns to `result`, each resolved
+    against its base — the raw text itself for a dynamic target or an unknown base; a relative target also
+    as the target no check may place once a tracked directory was dropped at the cap (_resolve_ps_targets)."""
+    found: set[str] = set()
+    for raw, base in pairs:
+        text = str(raw)
+        if base is None or _is_dynamic_target(text):
+            tracked.budget.charge()
+            resolved: Optional[str] = text
+        else:
+            resolved = tracked.resolve(text, base)
+        if resolved:
+            found.add(str(resolved))
+        if tracked.capped and not _is_dynamic_target(text) and not _is_absolute_target(text):
+            found.add(_unplaced_target(_LOST_DIRECTORY))
+    tracked.note_written(found)
+    result.update(found)
+
+
+def _effective_bases(cwds: frozenset, base_cwd: str) -> list[str]:
+    """The distinct directories a nested Bash scan (`bash -c`, a script piped into `bash`) runs in: each tracked
+    directory, `base_cwd` standing in for the unknown one (None), sorted so the scan order is stable. A nested
+    PowerShell scan does not take this road: it starts from the tracked set itself (_powershell_write_targets
+    with `start`)."""
+    return sorted({cwd if cwd is not None else base_cwd for cwd in cwds})
+
+
 def _resolve_cd_target(target: Optional[str], cwd: Optional[str]) -> Optional[str]:
     """The new tracked current directory after Set-Location/cd/Push-Location to `target` — an
     absolute native path string, or None if it cannot be pinned down (no/dynamic target, or a
-    relative one while `cwd` is already unknown) — see _flush_ps_statement."""
+    relative one while `cwd` is already unknown) — the reading of the one followed directory, see
+    _follow_cd."""
     if not target or _is_dynamic_target(target):
         return None
     if not _is_absolute_target(target) and cwd is None:
@@ -689,64 +962,280 @@ def _resolve_cd_target(target: Optional[str], cwd: Optional[str]) -> Optional[st
     return str(resolved) if resolved is not None else None
 
 
+@functools.lru_cache(maxsize=8192)
+def _join_directory(target: Optional[str], cwd: Optional[str]) -> Optional[str]:
+    """`target` joined onto `cwd` as one absolute native path, lexically (`.`/`..` collapsed, no file-system
+    round trip — the write targets read against it are resolved for real later, see _resolve_ps_target),
+    or None when it cannot be placed (no or dynamic target, a relative one while `cwd` is unknown). The
+    cheap reading _follow_cd uses for the set of possible directories, where every statement may add
+    many of them; a pure function of its arguments, so its answers are kept."""
+    if not target or _is_dynamic_target(target):
+        return None
+    try:
+        candidate = Path(_to_native_path(target))
+        if not candidate.is_absolute():
+            if cwd is None:
+                return None
+            candidate = Path(_to_native_path(cwd)) / candidate
+        return os.path.normpath(str(candidate))
+    except (OSError, ValueError):
+        return None
+
+
+def _directory_exists(path: str, known: dict[str, bool]) -> bool:
+    """True when `path` is a directory on this machine now; `known` keeps the answers of one scan (nothing
+    runs between them: a command is scanned before it runs), and a path below a directory known to be
+    missing is missing too, without asking. A UNC path to another host is never asked (a network round
+    trip from a hook, see shell_targets._is_remote_unc) and counts as not known to exist. Whether an
+    earlier statement of the same command took the directory away is a separate question
+    (_TrackedDirs.is_written)."""
+    answer = known.get(path)
+    if answer is not None:
+        return answer
+    parent = os.path.dirname(path)
+    if parent and parent != path and known.get(parent) is False:
+        answer = False
+    else:
+        try:
+            answer = not _is_remote_unc(Path(path)) and os.path.isdir(path)
+        except (OSError, ValueError):
+            answer = False
+    known[path] = answer
+    return answer
+
+
+def _place_key(target: str) -> Optional[str]:
+    """`target` (an absolute path in any spelling) as the key a written place is kept under: native, `.`/`..`
+    collapsed, case folded as this file system folds it; None for a relative or dynamic target, which names no
+    place of its own."""
+    if not target or _is_dynamic_target(target) or not _is_absolute_target(target):
+        return None
+    try:
+        return os.path.normcase(os.path.normpath(_to_native_path(target)))
+    except (OSError, ValueError):
+        return None
+
+
+@dataclass(frozen=True)
+class _TrackedDirs:
+    """The directories a PowerShell script may be in at one point of the scan. `possible` is the set every
+    target is resolved against (None = unknown); `followed` is the one directory this module followed before
+    it tracked a set (cd/sl/Set-Location/Push-Location, moved whether the target exists or not, None once a
+    move could not be placed) and is always in `possible`, so no target found that way is lost; `seen` is
+    every directory that was possible so far, what Pop-Location and `Set-Location -` go back to; `confirmed`
+    is every directory a move found existing (and not written earlier in the command) — what the cap keeps
+    first; `capped` says that a directory was dropped at the cap, from then on every relative target also
+    comes back as the one no check may place (_unplaced_target). `known` (the existence answers,
+    _directory_exists), `moves` (where the followed directory went from where), `written` (the places the
+    targets collected so far name, see is_written), `resolved` (the answers of _resolve_ps_target, see
+    resolve) and `budget` (the work left to this scan, _ScanBudget) are shared by every state the scan goes
+    through, nested scans included: the file system does not change in between."""
+
+    followed: Optional[str]
+    possible: frozenset
+    seen: frozenset
+    confirmed: frozenset = frozenset()
+    capped: bool = False
+    known: dict[str, bool] = field(default_factory=dict, compare=False, repr=False)
+    moves: dict[tuple[Optional[str], Optional[str]], Optional[str]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
+    written: set[str] = field(default_factory=set, compare=False, repr=False)
+    resolved: dict[tuple[str, Optional[str]], Optional[str]] = field(default_factory=dict, compare=False, repr=False)
+    budget: _ScanBudget = field(default_factory=_ScanBudget, compare=False, repr=False)
+    created: set[str] = field(default_factory=set, compare=False, repr=False)
+
+    @classmethod
+    def start(cls, base_cwd: str) -> "_TrackedDirs":
+        return cls(base_cwd, frozenset({base_cwd}), frozenset({base_cwd}), frozenset({base_cwd}))
+
+    def followed_after(self, target: Optional[str]) -> Optional[str]:
+        """Where the followed directory is after a move to `target` (_resolve_cd_target, a file-system
+        round trip per path segment on Windows), asked once per (target, directory) in this scan."""
+        key = (target, self.followed)
+        if key not in self.moves:
+            self.budget.charge(_RESOLUTION_COST)
+            self.moves[key] = _resolve_cd_target(target, self.followed)
+        return self.moves[key]
+
+    def resolve(self, raw: str, cwd: Optional[str]) -> Optional[str]:
+        """_resolve_ps_target, asked once per (target, directory) in this scan: the same target is resolved
+        against the same directory many times while the shell may be in several directories, and the file
+        system does not change while a command is scanned. A round trip costs the budget _RESOLUTION_COST,
+        a kept answer one unit."""
+        key = (raw, cwd)
+        if key in self.resolved:
+            self.budget.charge()
+            return self.resolved[key]
+        self.budget.charge(_RESOLUTION_COST)
+        answer = _resolve_ps_target(raw, cwd)
+        self.resolved[key] = answer
+        return answer
+
+    def moved_to(
+        self, followed: Optional[str], possible: Iterable[Optional[str]], confirmed: Iterable[str] = ()
+    ) -> "_TrackedDirs":
+        """The state after a move: `possible` plus `followed`, capped at _MAX_TRACKED_DIRECTORIES — past the
+        cap the followed directory and the unknown one (None, when it is there) stay in any case, then the
+        directories confirmed to exist, shortest first, then the shortest of the rest; dropping any marks
+        the state `capped` for good. `seen` grows by everything that was possible, `confirmed` by what
+        this move confirmed."""
+        merged = frozenset(possible) | {followed}
+        confirmed_dirs = self.confirmed | frozenset(confirmed)
+        capped = self.capped
+        if len(merged) > _MAX_TRACKED_DIRECTORIES:
+            pinned = frozenset({followed}) | (merged & frozenset({None}))
+            rest = sorted(
+                (p for p in merged if p not in pinned), key=lambda p: (p not in confirmed_dirs, len(p), p)
+            )
+            merged = pinned | frozenset(rest[:_MAX_TRACKED_DIRECTORIES - len(pinned)])
+            capped = True
+        return _TrackedDirs(
+            followed, merged, self.seen | merged, confirmed_dirs, capped,
+            self.known, self.moves, self.written, self.resolved, self.budget, self.created,
+        )
+
+    def note_written(self, targets: Iterable[str]) -> None:
+        """Remember the places the absolute targets among `targets` name (is_written)."""
+        for target in targets:
+            key = _place_key(target)
+            if key is not None:
+                self.written.add(key)
+
+    def note_created(self, raws: Iterable[str], parents: bool) -> None:
+        """Remember the places a statement that certainly runs and creates the directories `raws` makes in each
+        directory the shell may be in (is_created): those among them _directory_creatable accepts."""
+        self.created.update(_creation_keys(list(raws), parents, self.possible, self.is_created, _to_native_path))
+
+    def is_created(self, directory: str) -> bool:
+        """True when `directory` (an absolute native path) is a place a creation noted (note_created) makes, or a
+        parent of one: it counts as existing for a move there, unless is_written says it is taken away again."""
+        if not self.created:
+            return False
+        key = os.path.normcase(os.path.normpath(directory))
+        prefix = key.rstrip("\\/") + os.sep
+        return any(made == key or made.startswith(prefix) for made in self.created)
+
+    def is_written(self, directory: str) -> bool:
+        """True when `directory` (an absolute native path) is at or below a place a target collected so far
+        names: a removal, a move or a copy earlier in the same command may have taken it away or changed it,
+        so a move there may fail and the shell stay where it was — the directory counts as missing then
+        (_follow_cd keeps the old directory next to the new one)."""
+        key = os.path.normcase(os.path.normpath(directory))
+        while True:
+            if key in self.written:
+                return True
+            parent = os.path.dirname(key)
+            if not parent or parent == key:
+                return False
+            key = parent
+
+
+def _follow_cd(statement: list[str], tracked: _TrackedDirs) -> Optional[_TrackedDirs]:
+    """What a statement does to the directories the shell may be in: the state after it, or None when it moves
+    nothing. A move (`cd`, `Set-Location`, `Push-Location`, `pushd`, `chdir`) to a literal directory that exists
+    or that a directory-creating statement earlier in the command certainly makes (_TrackedDirs.is_created) — and
+    that no target collected earlier in the command names or contains (_TrackedDirs.is_written: a
+    removal before the move) — moves each possible directory there; to one that does not exist (an earlier
+    statement may create it) or to a dynamic target it keeps the old directory next to the new one (or next
+    to unknown), since a failed move is a non-terminating error and the script goes on. `Pop-Location`,
+    `popd` and `Set-Location -`/`+` go back to a directory of an earlier statement (or nowhere): every
+    directory seen so far is possible again. The followed directory (_TrackedDirs) moves as it always did:
+    on cd/sl/Set-Location/Push-Location, whether the target exists or not, `-` and `+` read as names."""
+    if not statement:
+        return None
+    name = _ps_command_name(statement[0])
+    if name in _POP_ALIASES:
+        return tracked.moved_to(tracked.followed, tracked.possible | tracked.seen)
+    if name not in _CD_ALIASES:
+        return None
+    positionals, values = _ps_split_args(statement[1:])
+    target = _target_from_flags(positionals, values, ("path", "literalpath"))
+    tracked.budget.charge()
+    followed = tracked.followed_after(target) if name in _CD_ALIASES_FOLLOWED else tracked.followed
+    if target in ("-", "+"):
+        return tracked.moved_to(followed, tracked.possible | tracked.seen)
+    possible: set[Optional[str]] = set()
+    confirmed: set[str] = set()
+    for cwd in tracked.possible:
+        tracked.budget.charge()
+        joined = _join_directory(target, cwd)
+        if joined is None:
+            possible.update((cwd, None))
+        elif (
+            (_directory_exists(joined, tracked.known) or tracked.is_created(joined)) and not tracked.is_written(joined)
+        ):
+            possible.add(joined)
+            confirmed.add(joined)
+        else:
+            possible.update((cwd, joined))
+    return tracked.moved_to(followed, possible, confirmed)
+
+
 def _flush_ps_statement(
-    words: list[str], redirect_targets: list[str], cwd: Optional[str], base_cwd: str,
-    git_writes: frozenset, result: set[str], broad: bool, depth: int,
-) -> Optional[str]:
-    """Handle one statement (its words and any redirection targets collected for it), add every
-    write target it names to `result`, and return the (possibly changed) current directory for the
-    statement after it. See the module docstring for which cmdlets/constructs are recognized, and
-    for what `broad`/`depth` do."""
+    words: list[str], redirect_targets: list[str], tracked: _TrackedDirs, base_cwd: str,
+    git_writes: frozenset, result: set[str], broad: bool, depth: int, creation_certain: bool = False,
+) -> None:
+    """Handle one statement (its words and any redirection targets collected for it) and add every write
+    target it names to `result`. The statement is read once; each relative target is resolved against every
+    directory the shell may be in (`tracked.possible`, None = unknown, see _TrackedDirs). A nested PowerShell
+    scan (`pwsh -c`, `cmd /c`) runs once, from the tracked set itself; a nested Bash scan (`bash -c`) once per
+    distinct directory (the Bash scanner takes one). A directory change is followed by the caller (_follow_cd).
+    `creation_certain` says that the statement runs for sure (the caller's reading), so a directory it creates
+    is noted for a later move there (_TrackedDirs.note_created).
+    See the module docstring for which cmdlets/constructs are recognized, and for what `broad`/`depth` do."""
+    cwds = tracked.possible
     for raw in redirect_targets:
-        resolved = _resolve_ps_target(raw, cwd)
-        if resolved:
-            result.add(resolved)
+        result.update(_resolve_ps_targets(raw, tracked))
     words, assigned_candidates = _strip_program_assignment(_strip_literal_call(words))
     if words:
         name = _ps_command_name(words[0])
         args = words[1:]
-        if name in _CD_ALIASES:
-            positionals, values = _ps_split_args(args)
-            target = _target_from_flags(positionals, values, ("path", "literalpath"))
-            cwd = _resolve_cd_target(target, cwd)
+        if name in _CD_ALIASES or name in _POP_ALIASES:
+            pass  # moves the tracked directories: _scan_ps_tokens does that for every statement (_follow_cd)
         elif name == "git":
-            for raw, base in _git_targets(args, frozenset({cwd}), git_writes):
-                resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
-                if resolved:
-                    result.add(resolved)
+            _add_resolved_pairs(_git_targets(args, cwds, git_writes), result, tracked)
         elif name in ("bash", "sh"):
             inner = _extract_dash_c(args)
             if inner is not None:
-                for raw, base in _bash_write_targets(inner, cwd if cwd is not None else base_cwd, git_writes):
-                    resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
-                    if resolved:
-                        result.add(resolved)
+                for where in _effective_bases(cwds, base_cwd):
+                    tracked.budget.charge()
+                    _add_resolved_pairs(_bash_write_targets(inner, where, git_writes), result, tracked)
         elif name in _CMD_NAMES or name in _PS_INTERP_NAMES:
             # cmd.exe's own quoting/variable syntax is not identical to PowerShell's, but its
             # redirect operators and backslash-as-separator convention are — much closer to this
             # module's own tokenizer than to Bash's (which reads "\x" as an escaped "x", silently
             # corrupting a Windows path; 2026-09-23 review fix). Recursed with this same scanner
-            # for both, not shell_targets' Bash one.
+            # for both, not shell_targets' Bash one — once, from the whole tracked set.
             inner = _extract_cmd_c(args) if name in _CMD_NAMES else _extract_ps_command_flag(args)
             if inner is not None and depth < _PS_MAX_SCAN_DEPTH:
-                inner_targets = _powershell_write_targets(
-                    inner, cwd if cwd is not None else base_cwd, git_writes, broad, depth + 1
-                )
+                inner_targets = _powershell_write_targets(inner, base_cwd, git_writes, broad, depth + 1, tracked)
                 if inner_targets:
                     result.update(inner_targets)
         elif name == "wsl":
             # `wsl [options] [--] <command line>`: the line runs inside WSL and is read by the Bash
             # scanner (shell_targets._wsl_targets), where `/mnt/<x>/...` is drive <X>:; the words are
             # PowerShell's, their quoting already applied.
-            for raw, base in _wsl_targets([str(arg) for arg in args], frozenset({cwd}), git_writes, depth):
-                resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
-                if resolved:
-                    result.add(resolved)
+            _add_resolved_pairs(_wsl_targets([str(arg) for arg in args], cwds, git_writes, depth), result, tracked)
+        elif name in _NATIVE_WRITERS:
+            _add_resolved_pairs(
+                _simple_command_targets([name] + [str(arg) for arg in args], cwds, git_writes, depth)[0],
+                result, tracked,
+            )
+            if name in _WEB_ALIASES and not words[0].lower().endswith(".exe"):
+                # Windows PowerShell 5.1: `curl` and `wget` are aliases of Invoke-WebRequest, whose `-OutFile`
+                # (also abbreviated: `-Out`) names the file. The reading of the program above stays as well.
+                for raw in _cmdlet_targets("invoke-webrequest", _expand_outfile_flag(args)):
+                    result.update(_resolve_ps_targets(raw, tracked))
         else:
+            creation = _ps_directory_creation(name, args)
             for raw in _cmdlet_targets(name, args):
-                resolved = _resolve_ps_target(raw, cwd)
-                if resolved:
-                    result.add(resolved)
+                if creation is not None and raw in creation[0]:
+                    result.update(_resolve_ps_targets(raw, tracked, note=False))  # making a directory takes nothing away
+                else:
+                    result.update(_resolve_ps_targets(raw, tracked))
+            if creation is not None and creation_certain:
+                tracked.note_created(creation[0], creation[1])
         if broad:
             for raw in _broad_guard_candidates(words) + assigned_candidates:
                 candidate = raw.strip()
@@ -755,20 +1244,29 @@ def _flush_ps_statement(
     joined = " ".join(words + redirect_targets)
     for pattern in (_IO_FILE_WRITE_RE, _IO_FILE_COPY_MOVE_RE, _IO_STREAMWRITER_RE):
         for match in pattern.finditer(joined):
-            resolved = _resolve_ps_target(match.group(1).strip(), cwd)
-            if resolved:
-                result.add(resolved)
-    return cwd
+            result.update(_resolve_ps_targets(match.group(1).strip(), tracked))
 
 
 def _scan_ps_tokens(
-    tokens: list[_Token], base_cwd: str, git_writes: frozenset, broad: bool, depth: int
+    tokens: list[_Token], base_cwd: str, git_writes: frozenset, broad: bool, depth: int,
+    start: Optional[_TrackedDirs] = None, inline: Optional[_InlineSink] = None,
 ) -> set[str]:
+    """The write targets of a tokenized command, every statement read once against the directories the shell
+    may be in (_follow_cd, from `start` or `base_cwd` alone) — see _flush_ps_statement. With `inline`, the
+    same walk also collects the path literals of inline interpreter code (_collect_ps_inline), so both
+    readings follow the directory changes the same way. Raises _ScanLimit once the scan's budget is used up."""
     result: set[str] = set()
-    cwd: Optional[str] = base_cwd
+    tracked = start if start is not None else _TrackedDirs.start(base_cwd)
     words: list[str] = []
     redirect_targets: list[str] = []
     piped: Optional[str] = None  # the literal text the previous stage of a pipeline sends down
+    # A directory-creating statement is certain to run (and so to have made its directory) when it starts the
+    # command or follows `;` or a line break, at the top level, in a command without a script block or a
+    # construct whose body may not run.
+    creation_stream_ok = depth == 0 and not any(
+        "{" in text or "}" in text or (not is_op and text.lower() in _PS_CREATION_UNSAFE_WORDS) for text, is_op in tokens
+    )
+    previous_op: Optional[str] = None
     index = 0
     n = len(tokens)
     while True:
@@ -787,43 +1285,51 @@ def _scan_ps_tokens(
             continue
         produced: Optional[str] = None
         if words or redirect_targets:
+            tracked.budget.charge()
             statement = _strip_literal_call(words)
             if piped is not None:
-                result.update(_piped_script_targets(piped, statement, cwd, base_cwd, git_writes, broad, depth))
-            cwd = _flush_ps_statement(words, redirect_targets, cwd, base_cwd, git_writes, result, broad, depth)
+                result.update(_piped_script_targets(piped, statement, tracked, base_cwd, git_writes, broad, depth))
+            _flush_ps_statement(
+                words, redirect_targets, tracked, base_cwd, git_writes, result, broad, depth,
+                creation_stream_ok and previous_op in (None, ";", "\n"),
+            )
+            if inline is not None and statement:
+                _collect_ps_inline(statement, piped, tracked, inline)
+            moved = _follow_cd(_strip_program_assignment(statement)[0], tracked)
+            if moved is not None:
+                tracked = moved
             produced = _ps_literal_output(statement)
             words = []
             redirect_targets = []
         if at_end:
             return result
         piped = produced if text == "|" else None
+        previous_op = text
         index += 1
 
 
 def _piped_script_targets(
-    piped: str, statement: list[str], cwd: Optional[str], base_cwd: str, git_writes: frozenset, broad: bool,
+    piped: str, statement: list[str], tracked: _TrackedDirs, base_cwd: str, git_writes: frozenset, broad: bool,
     depth: int,
 ) -> set[str]:
     """The write targets of a text a pipeline sends into a shell that runs it as its script: `powershell`
     or `pwsh` reading standard input (`'cmd' | powershell -`, a here-string piped in), `bash` or `sh` doing
-    so (`'cmd' | bash`). The text is read like the one behind `-Command`; a text that cannot be evaluated that
-    way (Invoke-Expression in it, an unterminated quote) counts with its raw redirections. Empty for any
-    other receiver."""
+    so (`'cmd' | bash`). The text is read like the one behind `-Command` — a PowerShell script once, from the
+    tracked set, a Bash script once per directory; a text that cannot be evaluated that way (Invoke-Expression
+    in it, an unterminated quote) counts with its raw redirections. Empty for any other receiver."""
     if not statement:
         return set()
     name = _ps_command_name(statement[0])
-    where = cwd if cwd is not None else base_cwd
     if name in _PS_INTERP_NAMES and _ps_reads_stdin(statement[1:]):
         if depth >= _PS_MAX_SCAN_DEPTH:
             return set(_ps_raw_redirect_targets(piped))
-        found = _powershell_write_targets(piped, where, git_writes, broad, depth + 1)
+        found = _powershell_write_targets(piped, base_cwd, git_writes, broad, depth + 1, tracked)
         return set(_ps_raw_redirect_targets(piped)) if found is None else found
     if name in ("bash", "sh") and _reads_script_from_stdin(statement):
         result: set[str] = set()
-        for raw, base in _bash_write_targets(piped, where, git_writes):
-            resolved = raw if (base is None or _is_dynamic_target(raw)) else _resolve_ps_target(raw, base)
-            if resolved:
-                result.add(resolved)
+        for where in _effective_bases(tracked.possible, base_cwd):
+            tracked.budget.charge()
+            _add_resolved_pairs(_bash_write_targets(piped, where, git_writes), result, tracked)
         return result
     return set()
 
@@ -838,9 +1344,63 @@ def _ps_raw_redirect_targets(command: str) -> set[str]:
     return {match.group(1).strip("'\"") for match in _PS_RAW_REDIRECT_RE.finditer(command)}
 
 
+def _collect_ps_inline(
+    statement: list[str], piped: Optional[str], tracked: _TrackedDirs, sink: _InlineSink
+) -> None:
+    """The path literals of one statement's inline interpreter code (`python -c '<code>'`, `node -e "..."`, a
+    literal piped into `python -` / `python` / `node`), each once per directory the statement may run in
+    (`tracked.possible`), appended to `sink.found`; a relative one also as the target no check may place once
+    a tracked directory was dropped at the cap. A failure of the reader is noted in `sink.failed` when the
+    sink swallows (the walk goes on, the caller reports one dynamic target), else it propagates."""
+    language = _inline_code.interpreter_language(_ps_command_name(statement[0]))
+    if language is None:
+        return
+    kind, code = _inline_code.code_source(language, statement[1:])
+    if kind == _inline_code.SOURCE_STDIN:
+        code = piped
+    elif kind == _inline_code.SOURCE_CODE and code is not None:
+        code = _unwrap_here_string(code)
+    if kind == _inline_code.SOURCE_NONE or code is None:
+        return
+    reader = _inline_code.write_targets if sink.precise else _inline_code.write_paths
+    try:
+        paths = list(reader(language, code))
+    except Exception:  # noqa: BLE001 - the fail-closed path: a crash of the reader ends as one dynamic target, never as an allow
+        if not sink.swallow:
+            raise
+        sink.failed = True
+        return
+    cwds = sorted(tracked.possible, key=lambda cwd: (cwd is None, cwd or ""))
+    for path in paths:
+        tracked.budget.charge()
+        sink.found.extend((path, cwd, language) for cwd in cwds)
+        if tracked.capped and not _is_dynamic_target(path) and not _is_absolute_target(path):
+            sink.found.append((_unplaced_target(_LOST_DIRECTORY), None, language))
+
+
+def _inline_sink_targets(sink: _InlineSink, base_cwd: str, command: str, tracked: _TrackedDirs) -> set[str]:
+    """The files the inline interpreter code of a scanned command writes, from what the walk put into `sink`,
+    resolved like any other target; a rooted path without a drive takes the drive of the directory the program
+    runs in on Windows, as the interpreter reads it. A failure of the reader is no silent allow: the command text
+    comes back as one dynamic target (`$(inline code: ...)`), which the worker write scope refuses and which the
+    guard of the template's own files reads by its text."""
+    if sink.failed:
+        return {f"$(inline code: {command})"}
+    found: set[str] = set()
+    for path, cwd, _language in sink.found:
+        if sys.platform == "win32" and path.startswith(("/", "\\")) and path[1:2] not in ("/", "\\"):
+            drive = Path(cwd if cwd is not None else base_cwd).drive
+            path = f"{drive}{path}" if drive else path
+        resolved = tracked.resolve(path, cwd)
+        if resolved:
+            found.add(str(resolved))
+    tracked.note_written(found)
+    return found
+
+
 def _powershell_write_targets(
     command: str, base_cwd: str, git_writes: frozenset = _GIT_WRITES_WORKER_SCOPE,
-    broad: bool = False, depth: int = 0,
+    broad: bool = False, depth: int = 0, start: Optional[_TrackedDirs] = None,
 ) -> Optional[set[str]]:
     """The paths a PowerShell command writes to, each already resolved to an absolute forward-slash
     path where possible (see the module docstring for what an unresolved entry looks like instead),
@@ -848,28 +1408,41 @@ def _powershell_write_targets(
     unterminated quote or here-string) — see the module docstring for what each caller does then.
     `git_writes` is the same choice of git subcommands shell_targets._bash_write_targets takes
     (_GIT_WRITES_TEMPLATE_GUARD for check 1, _GIT_WRITES_WORKER_SCOPE for check 1c); `broad` and
-    `depth` are documented in the module docstring's `broad` paragraph. A `bash -c` text inside the
+    `depth` are documented in the module docstring's `broad` paragraph. `start` is given by a nested
+    scan only (`pwsh -c`, a script piped into `pwsh`): the command then starts from the directories the
+    outer one may be in and shares its budget, and a crash or the end of the budget goes up to the top-level
+    scan, which answers for the whole command: None for a crash (the caller's own fallback), the one target
+    no check may place (_unplaced_target) once the budget is used up — a command no one writes by hand is
+    refused rather than checked only in part. A `bash -c` text inside the
     command is scanned by shell_targets._bash_write_targets, which drops an rsync destination on another
     machine only while the PowerShell line as a whole is nothing but one rsync call with plain words
     (`$env:RSYNC_RSH = ...; bash -c 'rsync ...'` keeps the destination a local path): the flag
     shell_targets._RSYNC_ENV_NAMED is set here for the whole scan, a True from an outer scan kept."""
+    nested = start is not None
     previous_named = _shell_targets._RSYNC_ENV_NAMED
     _shell_targets._RSYNC_ENV_NAMED = bool(previous_named) or _shell_targets._names_rsync_variable(command)
     try:
         tokens = _ps_tokens(command)
         if tokens is None or _uses_invoke_expression(tokens):
             return None
-        return _scan_ps_tokens(tokens, base_cwd, git_writes, broad, depth)
+        tracked = start if start is not None else _TrackedDirs.start(base_cwd)
+        sink = _InlineSink(precise=True, swallow=True) if _inline_code.mentions_interpreter(command) else None
+        result = _scan_ps_tokens(tokens, base_cwd, git_writes, broad, depth, tracked, sink)
+        if sink is not None:
+            result |= _inline_sink_targets(sink, base_cwd, command, tracked)
+        return result
+    except _ScanLimit as limit:
+        if nested:
+            raise
+        return {_unplaced_target(str(limit))}
     except Exception:
         # A bug in this scanner must never turn into a silent allow (dispatch.py's docstring,
         # "when in doubt, deny"): None makes the caller fall back to its own raw-text search.
+        if nested:
+            raise
         return None
     finally:
         _shell_targets._RSYNC_ENV_NAMED = previous_named
-
-
-# (path literal, the directory it resolves against or None when unknown, interpreter language)
-_PsInlineTarget = tuple[str, Optional[str], str]
 
 
 def _unwrap_here_string(word: str) -> str:
@@ -896,50 +1469,17 @@ def _ps_literal_output(words: list[str]) -> Optional[str]:
     return None
 
 
-def _scan_ps_inline(tokens: list[_Token], base_cwd: str) -> list[_PsInlineTarget]:
-    """Walk the statements the way _scan_ps_tokens does (one current directory, followed through
-    Set-Location/cd/Push-Location) and collect the path literals of inline interpreter code: `python -c
-    '<code>'`, `node -e "..."`, and a literal piped into `python -` / `python` / `node`."""
-    found: list[_PsInlineTarget] = []
-    cwd: Optional[str] = base_cwd
-    words: list[str] = []
-    piped: Optional[str] = None
-    index = 0
-    size = len(tokens)
-    while True:
-        at_end = index >= size
-        text, is_op = tokens[index] if not at_end else ("", True)
-        if not at_end and not is_op:
-            words.append(text)
-            index += 1
-            continue
-        if not at_end and text in _PS_REDIRECT_OPS:
-            index += 2 if index + 1 < size and not tokens[index + 1][1] else 1
-            continue
-        produced: Optional[str] = None
-        statement = _strip_literal_call(words)
-        if statement:
-            name = _ps_command_name(statement[0])
-            args = statement[1:]
-            language = _inline_code.interpreter_language(name)
-            if name in _CD_ALIASES:
-                positionals, values = _ps_split_args(args)
-                cwd = _resolve_cd_target(_target_from_flags(positionals, values, ("path", "literalpath")), cwd)
-            elif language is not None:
-                kind, code = _inline_code.code_source(language, args)
-                if kind == _inline_code.SOURCE_STDIN:
-                    code = piped
-                elif kind == _inline_code.SOURCE_CODE and code is not None:
-                    code = _unwrap_here_string(code)
-                if kind != _inline_code.SOURCE_NONE and code is not None:
-                    for path in _inline_code.write_paths(language, code):
-                        found.append((path, cwd, language))
-            produced = _ps_literal_output(statement)
-        if at_end:
-            return found
-        piped = produced if text == "|" else None
-        words = []
-        index += 1
+def _scan_ps_inline(
+    tokens: list[_Token], base_cwd: str, precise: bool = False, start: Optional[_TrackedDirs] = None
+) -> list[_PsInlineTarget]:
+    """The path literals of inline interpreter code in a tokenized command, collected by the one walk of the
+    statements (_scan_ps_tokens with an _InlineSink, from `start` or `base_cwd` alone): `python -c '<code>'`,
+    `node -e "..."`, and a literal piped into `python -` / `python` / `node`. A literal comes once per directory
+    it may run in. A failure of the reader propagates (the worker write scope reports it)."""
+    sink = _InlineSink(precise=precise)
+    tracked = start if start is not None else _TrackedDirs.start(base_cwd)
+    _scan_ps_tokens(tokens, base_cwd, _GIT_WRITES_WORKER_SCOPE, False, 0, tracked, sink)
+    return sink.found
 
 
 def _powershell_inline_code_targets(command: str, base_cwd: str) -> list[_PsInlineTarget]:
@@ -947,7 +1487,8 @@ def _powershell_inline_code_targets(command: str, base_cwd: str) -> list[_PsInli
     only: the path literals that inline interpreter code names next to a write call, each with the
     directory a relative one resolves against (None when a Set-Location target could not be followed)
     and the language. Empty when the command is not safely evaluable (an unterminated quote or
-    here-string, Invoke-Expression) or does not mention an interpreter."""
+    here-string, Invoke-Expression), is larger than the scan follows (the targets scan refuses it then,
+    see _powershell_write_targets) or does not mention an interpreter."""
     if not _inline_code.mentions_interpreter(command):
         return []
     try:
@@ -955,8 +1496,8 @@ def _powershell_inline_code_targets(command: str, base_cwd: str) -> list[_PsInli
         if tokens is None or _uses_invoke_expression(tokens):
             return []
         return list(dict.fromkeys(_scan_ps_inline(tokens, base_cwd)))
-    except (ValueError, RecursionError) as error:
-        # What the PowerShell tokenizer and the scan raise on text they cannot read: the inline part
-        # ends here. Another kind of error is a bug and propagates to the dispatcher.
+    except (ValueError, RecursionError, _ScanLimit) as error:
+        # What the PowerShell tokenizer and the scan raise on text they cannot read, and the end of the scan's
+        # budget: the inline part ends here. Another kind of error is a bug and propagates to the dispatcher.
         _inline_code.report_skipped("PowerShell scan", error)
         return []

@@ -122,7 +122,8 @@ from .brace_expand import expand_braces
 from .command_words import _command_word_lists_new, _strip_command_prefix, _stripped_word_lists
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
 from .powershell_targets import (
-    _extract_ps_command_flag, _powershell_write_targets, _ps_raw_redirect_targets,
+    _extract_ps_command_flag, _is_unplaced_target, _powershell_write_targets, _ps_raw_redirect_targets,
+    _unplaced_reason,
 )
 from .secret_read import (
     _GREP_FAMILY,
@@ -1560,6 +1561,14 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str) -> None:
             if targets is None:
                 targets = _ps_raw_redirect_targets(command)
             for target in sorted(targets):
+                if _is_unplaced_target(target):
+                    # The scanner could not place this write (a relative one behind more directory changes than
+                    # it tracks, a command larger than its budget): not checked in full, refused like a scanner
+                    # failure — never resolved against the directory the command started in.
+                    reason = f"it holds a write the scanner could not place ({_unplaced_reason(target)})"
+                    if reason not in judge.unchecked:
+                        judge.unchecked.append(reason)
+                    continue
                 judge.judge(target, True, [cwd])
         else:
             for target, base in _bash_write_targets(command, cwd, _GIT_WRITES_WORKER_SCOPE):

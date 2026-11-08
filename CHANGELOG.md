@@ -420,6 +420,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `outside-root` and the write guard see more write targets in shell commands: the folder `pushd` enters, the
+  destination of `git clone` (also the default folder when none is named), `robocopy`, `perl -i`, targets fed
+  through `xargs`, `Move-Item` from outside the project, files written by `python -c`/`node -e` code and by a
+  here-string piped to `python -`, and a heredoc opened inside an arithmetic expression. A write whose target
+  folder cannot be placed is refused instead of being judged against the starting folder.
 - `outside-root` reads a `file:` URL as the path it names (`file:///home/u/x` is `/home/u/x`, `file://host/share/x`
   the UNC path, percent-decoded, query and fragment cut), also as a shell word (`curl file:///etc/passwd`); before,
   the slashes were dropped and the path counted as inside the project. A `file:` entry in `outside-root-allow` is

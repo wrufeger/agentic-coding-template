@@ -21,14 +21,14 @@ from typing import Optional
 import actlib
 
 from .common import _TOOL_PATH_FIELDS, _check_mode
-from .powershell_targets import _powershell_write_targets
+from .powershell_targets import _is_unplaced_target, _powershell_write_targets, _unplaced_reason
 from .shell_targets import (
     _GIT_WRITES_TEMPLATE_GUARD, _bash_write_targets, _is_dynamic_target, _resolve_path,
 )
 
 __all__ = [
     "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_bash_targets_protected_path",
-    "_powershell_targets_protected_path", "_targets_protected_path", "_is_under_project_act",
+    "_powershell_targets_protected_path", "_unplaced_message", "_targets_protected_path", "_is_under_project_act",
     "_resolve_against", "_guard_root", "check_write_guard",
 ]
 
@@ -151,66 +151,86 @@ _WRITE_GUARD_MESSAGE = (
 )
 
 
-def _powershell_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> bool:
-    """True if a PowerShell command writes to a path under `root`'s own .act/ — same judgment as
-    _bash_targets_protected_path, via powershell_targets._powershell_write_targets with
-    `broad=True` (only git mv/rm count, _GIT_WRITES_TEMPLATE_GUARD, same split as the Bash side;
-    `broad` is check 1's own deliberately over-inclusive extra pass, see that module's docstring).
-    None back from that scanner (Invoke-Expression/iex, an unterminated quote/here-string) denies
-    outright if .act/ is mentioned anywhere in the raw command text — "when in doubt, deny"
-    (2026-09-23 review, BLOCK): unlike check 1c's own None fallback (_ps_raw_redirect_targets, the
-    same operator-based approximation Bash's own scanner falls back to), check 1 cannot afford to
-    miss a write it could not parse, since a false allow here survives until the next template
-    update silently overwrites it. A *determinable* target (already resolved to an absolute path
-    by the scanner) is checked against `root`'s own .act/ only, same as the Bash side."""
+def _unplaced_message(target: str) -> str:
+    """The refusal of a PowerShell command whose write the scanner could not place
+    (powershell_targets._unplaced_target): the reason the target carries, and the way out."""
+    return (
+        "[act] write-guard refused -- the PowerShell command could not be checked to the end: "
+        f"{_unplaced_reason(target)}, so where it writes is unknown and .act/ (the template's own files) "
+        "may be among it. Split it into shorter commands with fewer directory changes."
+    )
+
+
+def _powershell_targets_protected_path(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
+    """The message to refuse a PowerShell command with, or None when it passes. _WRITE_GUARD_MESSAGE when
+    it writes to a path under `root`'s own .act/ — same judgment as _bash_targets_protected_path, via
+    powershell_targets._powershell_write_targets with `broad=True` (only git mv/rm count,
+    _GIT_WRITES_TEMPLATE_GUARD, same split as the Bash side; `broad` is check 1's own deliberately
+    over-inclusive extra pass, see that module's docstring). None back from that scanner
+    (Invoke-Expression/iex, an unterminated quote/here-string) denies outright if .act/ is mentioned
+    anywhere in the raw command text — "when in doubt, deny" (2026-09-23 review, BLOCK): unlike check 1c's
+    own None fallback (_ps_raw_redirect_targets, the same operator-based approximation Bash's own scanner
+    falls back to), check 1 cannot afford to miss a write it could not parse, since a false allow here
+    survives until the next template update silently overwrites it. The one target that scanner hands
+    back for a write it could not place (powershell_targets._is_unplaced_target: a relative write behind
+    more directory changes than it tracks, a command larger than its budget) refuses with _unplaced_message
+    — where that write lands is unknown, so it is never resolved against `base_cwd` like a plain relative
+    name. A *determinable* target (already resolved to an absolute path by the scanner) is checked against
+    `root`'s own .act/ only, same as the Bash side."""
     targets = _powershell_write_targets(command, base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
     if targets is None:
-        return bool(_PROTECTED_PATH_RE.search(command))
+        return _WRITE_GUARD_MESSAGE if _PROTECTED_PATH_RE.search(command) else None
+    for target in targets:
+        if _is_unplaced_target(target):
+            return _unplaced_message(target)
     for target in targets:
         if _is_dynamic_target(target) or root is None:
             if _names_protected_path(target, root):
-                return True
+                return _WRITE_GUARD_MESSAGE
             continue
         resolved = _resolve_path(target, base_cwd)
         if resolved is None:
-            return True  # cannot place it — fail closed, see the module docstring
+            return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
         if _is_under_project_act(resolved, root):
-            return True
-    return False
+            return _WRITE_GUARD_MESSAGE
+    return None
 
 
 def _targets_protected_path(
     tool_name: str, tool_input: dict, base_cwd: str, root: Optional[Path],
-) -> bool:
-    """True if this tool call writes somewhere under `root`'s own .act/, based on the
-    write-target field(s) that specific tool uses. Unknown tools never match — this guard only
-    needs to understand the tools named in the PreToolUse matcher in settings.hooks.json.
+) -> Optional[str]:
+    """The message this tool call is refused with, or None when it passes: _WRITE_GUARD_MESSAGE when it
+    writes somewhere under `root`'s own .act/, based on the write-target field(s) that specific tool uses;
+    _unplaced_message for a PowerShell write the scanner could not place. Unknown tools never match — this
+    guard only needs to understand the tools named in the PreToolUse matcher in settings.hooks.json.
     `base_cwd` is the directory a relative Bash/PowerShell/file-tool target is resolved against
     (the tool's own cwd); `root` is the project whose .act/ this check protects (None when it
     could not be determined, e.g. `base_cwd` sits outside any template-managed project) — see
     _is_under_project_act."""
     if tool_name == "Bash":
         command = tool_input.get("command")
-        return isinstance(command, str) and _bash_targets_protected_path(command, base_cwd, root)
+        if isinstance(command, str) and _bash_targets_protected_path(command, base_cwd, root):
+            return _WRITE_GUARD_MESSAGE
+        return None
     if tool_name == "PowerShell":
         command = tool_input.get("command")
-        return isinstance(command, str) and _powershell_targets_protected_path(command, base_cwd, root)
+        return _powershell_targets_protected_path(command, base_cwd, root) if isinstance(command, str) else None
     for field in _TOOL_PATH_FIELDS.get(tool_name, ()):
         value = tool_input.get(field)
         if not isinstance(value, str):
             continue
         if root is None:
             if _names_protected_path(value, root):
-                return True
+                return _WRITE_GUARD_MESSAGE
             continue
         resolved = _resolve_against(base_cwd, value)
         if resolved is None:
             if _names_protected_path(value, root):
-                return True
+                return _WRITE_GUARD_MESSAGE
             continue
         if _is_under_project_act(resolved, root):
-            return True
-    return False
+            return _WRITE_GUARD_MESSAGE
+    return None
 
 
 def _guard_root() -> Optional[Path]:
@@ -259,12 +279,13 @@ def check_write_guard(payload: dict) -> int:
             root = actlib.repo_root(Path(base_cwd))
         except RuntimeError:
             root = None  # base_cwd is not inside any template-managed project either
-    if not _targets_protected_path(tool_name, tool_input, base_cwd, root):
+    message = _targets_protected_path(tool_name, tool_input, base_cwd, root)
+    if message is None:
         return 0
 
     if mode == "warn":
-        print(_WRITE_GUARD_MESSAGE)
+        print(message)
         return 0
 
-    print(_WRITE_GUARD_MESSAGE, file=sys.stderr)
+    print(message, file=sys.stderr)
     return 2

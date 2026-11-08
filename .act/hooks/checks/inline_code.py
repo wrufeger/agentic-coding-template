@@ -86,7 +86,8 @@ from typing import Callable, NamedTuple, Optional
 
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
-    "interpreter_language", "code_source", "code_source_at", "write_paths", "path_literals", "has_write_call",
+    "interpreter_language", "code_source", "code_source_at", "write_paths", "write_targets", "path_literals",
+    "has_write_call",
     "mentions_interpreter", "report_skipped", "ReaderFailure",
     "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
@@ -833,6 +834,27 @@ def write_paths(language: str, code: str) -> list[str]:
     if language == PYTHON:
         for target in _resolved_python_targets(code):
             found[target] = None
+    return list(found)
+
+
+def write_targets(language: str, code: str) -> list[str]:
+    """The paths a write call of `code` names as literals - what a check judges that must not refuse a program
+    for a path it only mentions (the guard of the template's own files, the outside-root check). Python: the
+    path literals of the write calls the program reading reports (read_python_program: `open(<path>, 'w')`,
+    `Path(<path>).write_text(...)`, `os.remove`, `shutil.copy` to its destination ...), with the shape rule of a
+    literal (a separator, or a bare file name with an extension); a path built at run time is not seen, the
+    resolver of write_paths is not used here. Node: write_paths (its path literals when a write call is
+    there)."""
+    if language != PYTHON:
+        return write_paths(language, code)
+    found: dict[str, None] = {}
+    program = read_python_program(code)
+    if program is not None:
+        for call in program.calls:
+            if call.kind == CALL_WRITE:
+                for value in call.values:
+                    if _resolved_is_path(value):
+                        found[value] = None
     return list(found)
 
 

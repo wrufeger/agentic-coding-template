@@ -43,19 +43,34 @@
 #      `sh -c "..."`, `eval`, `$(...)` and backtick spans (the words' own `subs`) scanned
 #      recursively.
 #
-# One reading: the public result, _bash_write_targets, is this lexer's scan alone (command_words.py and
-# secret_scan.py read the same way). An exception of any kind or a recursion bound propagates; the write
+# One reading: the public result, _bash_write_targets, is this lexer's scan (command_words.py and
+# secret_scan.py read the same way), plus the files inline interpreter code writes (below). An exception of any kind or a recursion bound propagates; the write
 # guards fail closed on it.
+#
+# A `<<` inside an arithmetic - `(( ... ))`, `$(( ... ))`, the old `$[ ... ]`, an arithmetic that began on an
+# earlier line included - is no heredoc: bash ends the arithmetic with a syntax error and runs the lines that
+# follow (_arithmetic_line_state). A lone `-` that `<<- 'EOF'` leaves as the delimiter opens no heredoc either.
 #
 # Known limits (a target missed here is simply not checked — resolved toward over-blocking wherever
 # the command itself is ambiguous):
-#   - writes made from inside a program are invisible to _bash_write_targets: `python -c "open(...)"`,
-#     a script file, `find -exec`, `xargs` fed from stdin, an alias or shell function. Only the worker
-#     write scope reads inline interpreter code on top of that, through _bash_inline_code_targets (a
-#     second walk of the same scan with a side channel, _INLINE_SINK; reading and limits in
-#     inline_code.py), and the git-metadata guard reads the program text of inline Python through
-#     _bash_inline_code (_INLINE_CODE_SINK, with the span where a top-level program stands, _SPAN_TEXT);
-#     what _bash_write_targets returns is not changed by either;
+#   - writes made from inside a program are invisible to _bash_write_targets, except the ones named in
+#     the next entries: a script file, `find -exec`, an alias or shell function, `tar`/`zip` writing an
+#     archive. Inline interpreter code (`python -c "open(...)"`, a heredoc fed to `python -`, `node -e`) is
+#     read on top of the scan, through _bash_inline_write_targets (a second walk of the same scan with a side
+#     channel, _INLINE_SINK; reading and limits in inline_code.py): the paths a write call of the code names
+#     are added to the result of _bash_write_targets (_with_inline_writes, `inline=True`), once per directory the call may
+#     run in. The worker write scope asks without them (`inline=False`) and reads the same code on its own, through
+#     _bash_inline_code_targets (every path literal of a program that holds a write call), and the git-metadata guard reads the program
+#     text of inline Python through _bash_inline_code (_INLINE_CODE_SINK, with the span where a top-level
+#     program stands, _SPAN_TEXT);
+#   - programs that write on their own are read by their arguments (_simple_command_targets): `git clone`
+#     (its destination, the folder named by the URL when none is given), `git init`, `worktree add`,
+#     `submodule add`, `archive -o`, `bundle create`, `format-patch -o`; `robocopy` (destination, source with
+#     /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `chmod`/`chown`/`chgrp` (the files,
+#     not the mode or owner word); and `xargs`, whose input words are operands of the command it runs: the
+#     literal output of the previous stage (`echo`, `printf`, a heredoc) is read, any other input is one
+#     placeholder operand (_XARGS_INPUT with the directories the command runs in and the text of the stages
+#     or the redirection that feed it, quoted as one word: _xargs_placeholder), a dynamic target;
 #   - the command line of `wsl`/`wsl.exe` runs inside WSL and is read as such (_wsl_targets): without
 #     `--exec` as the one text wsl hands to the distribution's shell (like `eval`), with `--exec` as the
 #     words as they stand; `/mnt/<x>/...` found there is drive <X>: on win32 (_wsl_native_word), and
@@ -68,8 +83,10 @@
 #     names .act/;
 #   - an fd number glued to a redirection (`2>`) cannot be told apart from a separate word (`echo
 #     2 > f`) once tokenized, so a bare number right before a redirection is dropped as fd;
-#   - only the directory changes listed in _scan_tokens are followed; anything else there makes
-#     the base unknown rather than guessed;
+#   - only the directory changes listed in _scan_tokens are followed (`cd`, `pushd` and the `popd` back to
+#     it, while the stack is certain); anything else there makes the base unknown rather than guessed. A
+#     folder name with blanks or parentheses counts as literal (_LITERAL_DIR_RE: only quoting can put them
+#     there);
 #   - not recognized as writers at all: `patch`, a `tar`/`unzip` extraction into the
 #     implicit current directory (no explicit `-C`/`-d`), `find -delete` with no leading path
 #     operand, `git apply`/`stash`/`reset --hard`/`clean`. `tar -x -C <dir>`, `unzip -d <dir>` and
@@ -162,6 +179,7 @@ import functools
 import ipaddress
 import os
 import re
+import shlex
 import socket
 import sys
 from pathlib import Path
@@ -189,7 +207,8 @@ __all__ = [
     "_without_quoted_heredoc_bodies",
     "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
-    "_scan_command", "_bash_write_targets_new", "_bash_write_targets",
+    "_scan_command", "_bash_write_targets_new", "_bash_write_targets", "_bash_inline_write_targets",
+    "_attribute_targets", "_perl_inplace_targets", "_robocopy_targets", "_LITERAL_DIR_RE",
     "_HeredocOperand", "_InlineTarget", "_bash_inline_code_targets",
     "_InlineCode", "_bash_inline_code",
     "_WSL_VALUE_OPTIONS", "_WSL_FLAG_OPTIONS", "_WSL_MOUNT_RE", "_wsl_native_word", "_wsl_command_line",
@@ -527,6 +546,10 @@ _IGNORABLE_TARGETS = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty", "nu
 _DYNAMIC_TARGET_RE = re.compile(r"[$`{]|^~")
 # A literal directory operand for `cd`/`git -C` — anything else leaves the base unknown.
 _SIMPLE_DIR_RE = re.compile(r"^[\w./:-]+$")
+# The same for the base directory the write scan follows (`cd`, `pushd`, `git -C`): also a name with blanks and
+# parentheses (`Program Files (x86)`), which can only come from quoting, so it is a literal. Never a `$`,
+# backtick, glob character, brace or `~`.
+_LITERAL_DIR_RE = re.compile(r"^[\w./: ()+@,-]+$")
 
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
 _RESERVED_PREFIXES = frozenset(
@@ -599,6 +622,35 @@ _GIT_GLOBAL_VALUE_FLAGS = frozenset({"-c", "--git-dir", "--work-tree", "--namesp
 # with checkout/restore on purpose), check 1c also checkout/restore (a worker never needs them).
 _GIT_WRITES_TEMPLATE_GUARD = frozenset({"mv", "rm"})
 _GIT_WRITES_WORKER_SCOPE = frozenset({"mv", "rm", "checkout", "restore"})
+# Programs that write files of their own accord, with no redirection and no write verb of the list above:
+# the file operands of `chmod`/`chown`/`chgrp` (the first operand is the mode or owner, unless `--reference`),
+# the destination of `robocopy`, the files of an in-place `perl`/`ruby`/`gawk` edit, `git clone` and its kin.
+_ATTRIBUTE_WRITERS = frozenset({"chmod", "chown", "chgrp"})
+# chmod accepts a mode that starts with `-` (`-x`, `-rwx`): it is no option, the file operands follow it.
+_NEGATIVE_MODE_RE = re.compile(r"^-[ugoarwxXst]+$")
+# A Windows tool's switch (`/MIR`, `/R:3`, `/LOG+:file`): one segment of letters and digits, an optional value.
+_WINDOWS_SWITCH_RE = re.compile(r"^/[A-Za-z?][A-Za-z0-9?+]{0,15}(?::.*)?$")
+_PERL_PLAIN_LETTERS = frozenset("pnalwWsStTuUcvV0123456789")
+_PERL_LIKE = frozenset({"perl", "ruby"})
+_GIT_CLONE_VALUE_FLAGS = frozenset({
+    "-b", "--branch", "-o", "--origin", "--depth", "-c", "--config", "--reference", "--reference-if-able",
+    "--template", "--separate-git-dir", "-j", "--jobs", "--filter", "--server-option", "-u", "--upload-pack",
+    "--shallow-since", "--shallow-exclude", "--ref-format", "--bundle-uri", "--revision",
+})
+# The `git` subcommands that create files or directories of their own, other than clone: (subcommand, the
+# word after it that must match or None) -> value flags of the rest of the line.
+_GIT_CREATORS = {
+    "init": (None, frozenset({"-b", "--initial-branch", "--template", "--separate-git-dir", "--object-format"})),
+    "worktree": ("add", frozenset({"-b", "-B", "--reason"})),
+    "submodule": ("add", frozenset({"-b", "--branch", "--name", "--depth", "--reference"})),
+    "bundle": ("create", frozenset()),
+    "archive": (None, frozenset({"-o", "--output", "--format", "--prefix", "--remote", "--exec"})),
+    "format-patch": (None, frozenset({"-o", "--output-directory", "--start-number", "--subject-prefix"})),
+}
+# `xargs` input that is not literal stands as one word of this form, followed by the text of the command that
+# feeds it, so a check that reads a dynamic target by its text (the guard of the template's own files) sees
+# what the input is made from.
+_XARGS_INPUT = "$(xargs input"
 
 _Token = tuple[str, bool]  # (text, is_operator)
 _Target = tuple[str, Optional[str]]  # (raw target, base directory for a relative one; None = unknown)
@@ -785,6 +837,9 @@ _INLINE_SINK: Optional[list] = None
 # The program texts themselves, (language, code, directory, source, span), for a check that reads such
 # a program on its own (see _bash_inline_code); None outside that scan, same rule.
 _INLINE_CODE_SINK: Optional[list] = None
+# True while _bash_inline_write_targets walks the command: the inline reader then reports the paths a write
+# call names (inline_code.write_targets) instead of every path literal of a program that holds one.
+_INLINE_PRECISE = False
 # The top-level command text of a _bash_inline_code scan, after line continuations are joined: the one
 # text whose words get a `span` (_Word.span) and whose heredoc bodies get a `body_span`. _scan_command
 # compares the text it tokenizes against it, so a nested text (`sh -c`, `eval`, a `$(...)`, a heredoc
@@ -1229,6 +1284,125 @@ def _shell_tokens(text: str, newline_is_operator: bool, with_spans: bool = False
 _NO_HEREDOC_MARKERS = ("$[", "${", "[", "`")
 
 
+# Where `<<` is no heredoc: inside an arithmetic expansion `$(( ... ))`, an arithmetic command `(( ... ))` or
+# the old `$[ ... ]`, which can begin on an earlier line than the `<<` (bash ends the arithmetic with a
+# syntax error and runs the lines that follow, the "body" among them). The scan follows quotes, escapes and
+# comments, and keeps what an earlier line left open.
+_ARITH_COMMAND_START_RE = re.compile(r"(?:^|[;&|({!]|\b(?:do|then|else|elif|if|while|until|for|time))\s*$")
+
+
+def _double_close_may_follow(line: str, start: int) -> bool:
+    """Whether a `((` whose opener ends before `start` can be an arithmetic command: its matching
+    parenthesis must be a real `))`. A `)` that closes the outer level (parenthesis depth would drop
+    below 0) and is not followed by a second `)` means nested subshells, as in `((cat <<X) ; ...)`.
+    A line that ends before the matching close may continue on the next line: that stays arithmetic."""
+    size = len(line)
+    depth = 0
+    index = start
+    while index < size:
+        char = line[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "'":
+            end = line.find("'", index + 1)
+            if end < 0:
+                return True
+            index = end + 1
+            continue
+        if char == '"':
+            end = index + 1
+            while end < size and line[end] != '"':
+                end += 2 if line[end] == "\\" else 1
+            index = end + 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                return line.startswith("))", index)
+            depth -= 1
+        index += 1
+    return True
+
+
+def _arithmetic_line_state(line: str, stack: str) -> tuple[str, Optional[list[bool]]]:
+    """Follow the arithmetic contexts through one line. `stack` is what the earlier lines left open, one
+    character per level: `A` an arithmetic `((`/`$((`, `S` a `$[`, `P` a parenthesis inside either, `C` a
+    command substitution or subshell inside either. Returns the stack at the end of the line and, for every
+    `<<` operator of the line in order (not `<<<`), whether it stands where the innermost context is
+    arithmetic - None when no arithmetic is open at any point of the line (nothing to tell)."""
+    if not stack and "((" not in line and "$[" not in line:
+        return stack, None
+    state = list(stack)
+    flags: list[bool] = []
+    size = len(line)
+    index = 0
+    while index < size:
+        char = line[index]
+        if char == "\\":
+            index += 2
+        elif char == "'":
+            end = line.find("'", index + 1)
+            if end < 0:
+                break  # an unclosed quote: the line does not tokenize on its own, the caller gives up on it
+            index = end + 1
+        elif char == '"':
+            end = index + 1
+            while end < size and line[end] != '"':
+                end += 2 if line[end] == "\\" else 1
+            index = end + 1
+        elif char == "`":
+            end = line.find("`", index + 1)
+            if end < 0:
+                break
+            index = end + 1
+        elif char == "#" and not state and (index == 0 or line[index - 1] in " \t;&|()"):
+            break  # a comment
+        elif line.startswith("$((", index):
+            state.append("A")
+            index += 3
+        elif line.startswith("$[", index):
+            state.append("S")
+            index += 2
+        elif line.startswith("$(", index):
+            if state:
+                state.append("C")
+            index += 2
+        elif char == "(":
+            if state:
+                state.append("P" if state[-1] in "ASP" else "C")
+            elif line.startswith("((", index) and _ARITH_COMMAND_START_RE.search(line[:index]):
+                if _double_close_may_follow(line, index + 2):
+                    state.append("A")
+                # else nested subshells, not arithmetic: nothing to track
+                index += 1  # the second parenthesis belongs to the opener
+            index += 1
+        elif char == ")":
+            if state:
+                top = state[-1]
+                if top == "A" and line.startswith("))", index):
+                    index += 1
+                if top in "APC":
+                    state.pop()
+            index += 1
+        elif char == "]":
+            if state and state[-1] == "S":
+                state.pop()
+            index += 1
+        elif char == "<":
+            if line.startswith("<<<", index):
+                index += 3
+            elif line.startswith("<<", index):
+                flags.append(bool(state) and state[-1] in "ASP")
+                index += 2
+            else:
+                index += 1
+        else:
+            index += 1
+    return "".join(state), flags
+
+
 def _opens_no_heredoc(line: str) -> bool:
     """True for a line that opens no heredoc as far as the line-wise reading goes: `((` in it (arithmetic
     like `$((1<<2))`, where `<<` is a shift) or one of _NO_HEREDOC_MARKERS. _heredoc_delimiters and
@@ -1236,7 +1410,9 @@ def _opens_no_heredoc(line: str) -> bool:
     return "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS)
 
 
-def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str], bool]]:
+def _heredoc_delimiters(
+    tokens: list[_Token], line: str, arith_flags: Optional[list[bool]] = None
+) -> list[tuple[set[str], bool]]:
     """Every heredoc a line opens, in order, as (terminator candidates, whether its body is
     expanded). A line with `((` in it (arithmetic like `$((1<<2))`, where `<<` is a shift) or with
     one of _NO_HEREDOC_MARKERS opens none — skipping nothing is the safe side — unless every heredoc on
@@ -1244,27 +1420,42 @@ def _heredoc_delimiters(tokens: list[_Token], line: str) -> list[tuple[set[str],
     here as `<<` plus `-EOF`; both "EOF" and "-EOF" are accepted as the terminator, whichever comes first, since ending a body early only
     ever scans more. A body is expanded (so `$(...)` and backticks in it run) unless the delimiter
     was quoted; the tokens no longer show quoting, so that is read from the raw line, and if the two
-    do not line up the body is treated as expanded."""
+    do not line up the body is treated as expanded. A `<<` inside an arithmetic (`arith_flags`, see
+    _arithmetic_line_state) is no heredoc, and neither is any `<<` of a line whose delimiter is a lone `-`
+    that is not what stands there (`<<- 'EOF'`: the blanks put the real delimiter after the dash)."""
     marked = _opens_no_heredoc(line)
     delimiters = []
+    ordinals = []
+    operators = 0
     for index, (text, is_op) in enumerate(tokens[:-1]):
         next_text, next_is_op = tokens[index + 1]
-        if is_op and text == "<<" and not next_is_op:
-            candidates = {next_text}
-            if next_text.startswith("-") and len(next_text) > 1:
-                candidates.add(next_text[1:])
-            delimiters.append(candidates)
+        if is_op and text == "<<":
+            if not next_is_op:
+                candidates = {next_text}
+                if next_text.startswith("-") and len(next_text) > 1:
+                    candidates.add(next_text[1:])
+                delimiters.append(candidates)
+                ordinals.append(operators)
+            operators += 1
     raw_words = _HEREDOC_OPEN_RE.findall(line)
     aligned = len(raw_words) == len(delimiters)
+    if any(candidates == {"-"} and (not aligned or raw_words[position] != "-")
+           for position, candidates in enumerate(delimiters)):
+        return []
     found = [
         (candidates, not aligned or not any(char in raw_words[position] for char in "'\"\\"))
         for position, candidates in enumerate(delimiters)
     ]
+    if arith_flags is not None and len(arith_flags) != operators and any(arith_flags):
+        return []  # the two readings of the line disagree and one saw arithmetic: open none
     if marked and (not aligned or any(expands for _candidates, expands in found)):
         # On a marked line only a heredoc that is certain is opened: every delimiter quoted, so no body
         # is expanded and none can be a `<<` of arithmetic or of text inside an expansion. Any doubt
-        # keeps the old reading (no heredoc, the body is scanned as commands).
+        # keeps the old reading (no heredoc, the body is scanned as commands). This test comes first,
+        # on every `<<` of the line, so the arithmetic filter below only ever closes heredocs.
         return []
+    if arith_flags is not None and len(arith_flags) == operators:
+        found = [item for item, ordinal in zip(found, ordinals) if not arith_flags[ordinal]]
     return found
 
 
@@ -1618,6 +1809,7 @@ def _line_mode_tokens(command: str, with_spans: bool = False) -> list[_Token]:
         line_positions.setdefault(raw_line.strip(), []).append(position)
         line_starts.append(line_starts[-1] + len(raw_line) + 1)
     tokens: list[_Token] = []
+    arithmetic = ""  # the arithmetic contexts the lines so far left open (_arithmetic_line_state)
     index = 0
     while index < len(lines):
         line = lines[index]
@@ -1639,7 +1831,8 @@ def _line_mode_tokens(command: str, with_spans: bool = False) -> list[_Token]:
         tokens.extend(line_tokens)
         tokens.append(("\n", True))
         index += 1
-        delimiters = _heredoc_delimiters(line_tokens, line)
+        arithmetic, arith_flags = _arithmetic_line_state(line, arithmetic)
+        delimiters = _heredoc_delimiters(line_tokens, line, arith_flags)
         feeds_shell = _heredoc_shell_flags(line_tokens) if delimiters else []
         operand_positions = _heredoc_operand_positions(line_tokens) if delimiters and _INLINE_SINK is not None else []
         for position, (candidates, expands) in enumerate(delimiters):
@@ -2119,6 +2312,181 @@ def _joined_base(base: Optional[str], native: str) -> Optional[str]:
     return str(Path(_to_native_path(base)) / native)
 
 
+# A directory a `mkdir` earlier in the same command creates counts as existing for a later `cd` to the same place
+# (_WrittenPlaces.note_created): the scan runs before the command does, so the folder is not on disk yet. An
+# allowlist: a plain `mkdir` (no wrapper, no prefix word, only -p/-v/-m and their long forms) with literal operands.
+_CREATED_DIR_RE = re.compile(r"^[\w./: ()+@,-]+$")
+# Words that open a construct whose body may not run, run twice or run elsewhere (loops, `if`, `case`, a function
+# body, a `{ ...; }` group): a `mkdir` in a command that has one of them is never taken as certain.
+_CREATION_UNSAFE_WORDS = frozenset({"for", "while", "until", "if", "case", "select", "function", "{", "}"})
+
+
+def _mkdir_creation(words: list) -> Optional[tuple[list[str], bool]]:
+    """(the literal operands, whether `-p`/`--parents` was given) of a plain `mkdir` command made of exactly
+    `words`, or None when it is anything else: another command, a word that is not plain text, an option other
+    than -p/-v/-m (and --parents/--verbose/--mode), an operand that is not a literal directory name."""
+    if not words or str(words[0]) != "mkdir" or getattr(words[0], "subs", ()):
+        return None
+    parents = False
+    operands: list[str] = []
+    options_done = False
+    index = 1
+    while index < len(words):
+        word = words[index]
+        text = str(word)
+        if getattr(word, "subs", ()):
+            return None
+        if options_done or not text.startswith("-") or text == "-":
+            operands.append(text)
+        elif text == "--":
+            options_done = True
+        elif text == "--parents":
+            parents = True
+        elif text == "--verbose" or text.startswith("--mode="):
+            pass
+        elif text == "--mode":
+            index += 1
+        elif text.startswith("--"):
+            return None
+        else:
+            letters = text[1:]
+            for position, letter in enumerate(letters):
+                if letter == "p":
+                    parents = True
+                elif letter == "v":
+                    pass
+                elif letter == "m":
+                    if position + 1 == len(letters):
+                        index += 1  # the mode is the next word
+                    break  # (else the rest of the cluster is the mode)
+                else:
+                    return None
+        index += 1
+    if not operands or any(op.startswith("-") or not _CREATED_DIR_RE.match(op) for op in operands):
+        return None
+    return operands, parents
+
+
+def _creation_stream_ok(tokens: list) -> bool:
+    """False when the token stream holds a construct whose body may not run (_CREATION_UNSAFE_WORDS, a function
+    definition `name() ...`): a `mkdir` in it is not certain to have made its directory."""
+    for index, (text, is_op) in enumerate(tokens):
+        if is_op:
+            if text == "(" and index + 1 < len(tokens) and tokens[index + 1] == (")", True):
+                return False
+        elif text in _CREATION_UNSAFE_WORDS or text.endswith("()"):
+            return False
+    return True
+
+
+def _directory_creatable(path: str, parents: bool, is_created) -> bool:
+    """True when `mkdir` of `path` (absolute native, normalized) can make a directory there as the file system
+    stands now: the first part of it that exists is a directory (a file named like the folder makes `mkdir`
+    fail), and without `-p` the parent exists or `is_created` says an earlier `mkdir` makes it."""
+    parent = os.path.dirname(path)
+    if not parents and parent and parent != path and not (os.path.isdir(parent) or is_created(parent)):
+        return False
+    probe = path
+    while True:
+        if os.path.exists(probe):
+            return os.path.isdir(probe)
+        above = os.path.dirname(probe)
+        if not above or above == probe:
+            return False
+        probe = above
+
+
+def _creation_keys(operands: list[str], parents: bool, bases, is_created, to_native) -> list[str]:
+    """The places (the keys _WrittenPlaces keeps) a `mkdir` of `operands` run in each of `bases` makes: the
+    operand joined onto the base, `.`/`..` collapsed, case folded as this file system folds it; only those
+    _directory_creatable accepts. A base that is unknown and an operand with no knowable place name none."""
+    keys: list[str] = []
+    for base in bases:
+        for operand in operands:
+            try:
+                native = to_native(operand)
+                if not Path(native).is_absolute():
+                    if base is None or native.startswith(("/", "\\")):
+                        continue
+                    native = os.path.join(to_native(base), native)
+                path = os.path.normpath(native)
+                if _directory_creatable(path, parents, is_created):
+                    keys.append(os.path.normcase(path))
+            except (OSError, ValueError):
+                continue
+    return keys
+
+
+def _written_key(raw: str, base: Optional[str]) -> Optional[str]:
+    """The place a found target names, as the key _WrittenPlaces keeps it under: native, joined onto its base,
+    `.`/`..` collapsed, case folded as this file system folds it; None for a dynamic target or a relative one
+    with an unknown base, which name no place of their own."""
+    if _is_dynamic_target(raw):
+        return None
+    try:
+        native = _to_native_path(raw)
+        if not Path(native).is_absolute():
+            if base is None:
+                return None
+            native = os.path.join(_to_native_path(base), native)
+        return os.path.normcase(os.path.normpath(native))
+    except (OSError, ValueError):
+        return None
+
+
+class _WrittenPlaces:
+    """The places the targets found so far in a scan name, for the question whether a `cd` to a directory that
+    exists now can be sure to succeed: a directory at or below a target an earlier command of the same line
+    removed, moved or copied over may be gone (or new) by the time the `cd` runs, so it does not count as
+    existing and the shell may still be where it was (_scan_tokens keeps both directories). Reads the found
+    list incrementally, so a long command asks each target once."""
+
+    def __init__(self) -> None:
+        self._read = 0
+        self._keys: set[str] = set()
+        self._ignored: set[int] = set()  # positions in `found` that only create directories
+        self._created: set[str] = set()  # the places a certain `mkdir` makes (note_created)
+
+    def covers(self, found: list[_Target], directory: str) -> bool:
+        """True when `directory` (an absolute native path) is at or below a place a target in `found` names."""
+        while self._read < len(found):
+            raw, base = found[self._read]
+            self._read += 1
+            if self._read - 1 in self._ignored:
+                continue
+            key = _written_key(str(raw), base)
+            if key is not None:
+                self._keys.add(key)
+        if not self._keys:
+            return False
+        key = os.path.normcase(os.path.normpath(directory))
+        while True:
+            if key in self._keys:
+                return True
+            parent = os.path.dirname(key)
+            if not parent or parent == key:
+                return False
+            key = parent
+
+    def ignore(self, start: int, end: int) -> None:
+        """The targets at positions start..end-1 of the found list only create directories (a `mkdir`): they do
+        not make a place count as removed, moved or copied over."""
+        self._ignored.update(range(start, end))
+
+    def note_created(self, operands: list[str], parents: bool, bases) -> None:
+        """A `mkdir` of `operands` that certainly runs, in each of `bases`: the places it makes count as existing
+        for a later `cd` (created_at) - unless something removes or moves them first (covers)."""
+        self._created.update(_creation_keys(operands, parents, bases, self.created_at, _to_native_path))
+
+    def created_at(self, directory: str) -> bool:
+        """True when `directory` (an absolute native path) is a place a `mkdir` made, or a parent of one."""
+        if not self._created:
+            return False
+        key = os.path.normcase(os.path.normpath(directory))
+        prefix = key.rstrip("\\/") + os.sep
+        return any(made == key or made.startswith(prefix) for made in self._created)
+
+
 def _cd_bases(bases: _Bases, directory: str) -> _Bases:
     """The possible directories after `cd <directory>` from each of `bases`. A rooted path without
     a drive on Windows (`/tmp`, Git Bash's own mount points) has no knowable native location - except
@@ -2154,7 +2522,7 @@ def _git_targets(args: list[str], bases: _Bases, git_writes: frozenset) -> list[
         arg = args[index]
         if arg == "-C" and index + 1 < len(args):
             directory = args[index + 1]
-            simple = _SIMPLE_DIR_RE.match(directory) and not directory.startswith("-")
+            simple = _LITERAL_DIR_RE.match(directory) and not directory.startswith("-")
             target_bases = _cd_bases(target_bases, directory) if simple else frozenset({None})
             index += 2
         elif arg in _GIT_GLOBAL_VALUE_FLAGS:
@@ -2167,10 +2535,13 @@ def _git_targets(args: list[str], bases: _Bases, git_writes: frozenset) -> list[
             index += 1
         else:
             break
-    if index >= len(args) or args[index] not in git_writes:
+    if index >= len(args):
         return []
+    created = _git_creator_targets(args[index], args[index + 1:])
+    if args[index] not in git_writes:
+        return _pairs(created, target_bases)
     operands, _ = _operands(args[index + 1:], _VALUE_FLAGS.get(args[index], frozenset()))
-    return _pairs(operands, target_bases)
+    return _pairs(created + operands, target_bases)
 
 
 def _download_targets(name: str, args: list[str]) -> list[str]:
@@ -2206,15 +2577,242 @@ def _download_targets(name: str, args: list[str]) -> list[str]:
     return [target for target in targets if target != "-"]
 
 
+# A word that is a directory named `.act` (`.act`, `./.act`, `a/.act`), without its trailing separator.
+_ACT_DIR_WORD_RE = re.compile(r"(?:.*[\\/])?\.act", re.IGNORECASE)
+
+
+def _xargs_placeholder(source: str, bases: Optional[_Bases]) -> str:
+    """The one word that stands for the unknown input of an `xargs`: `$(xargs input`, the directories the
+    command may run in (so `cd .act/hooks && ls | xargs rm` names `.act/`), and the text of the command that
+    feeds it, as one quoted word (so a `>` or a quote in it is text, even where the placeholder is rescanned
+    inside `sh -c`). A word of the source that is the `.act` directory itself gets a trailing separator
+    (`find .act -name x` lists `.act/...`), because a check reads the placeholder by its text."""
+    text = _XARGS_INPUT
+    directories = sorted({str(base) for base in (bases or ()) if base})
+    if directories:
+        text += " in " + " ".join(shlex.quote(directory.rstrip("/\\") + "/") for directory in directories)
+    if source:
+        hinted = " ".join(f"{piece}/" if _ACT_DIR_WORD_RE.fullmatch(piece) else piece for piece in source.split(" "))
+        text += f": {shlex.quote(hinted)}"
+    return text + ")"
+
+
+def _xargs_commands(
+    options: list[str], command: list[str], stdin: Optional[str], source: str = "",
+    bases: Optional[_Bases] = None,
+) -> list[list[str]]:
+    """The command lines `xargs <options> <command...>` runs, as far as they can be told: the input words
+    (the literal `stdin`, split like xargs does) appended to the command, or - with a replace string
+    (`-I {}`, `-i`, `--replace`) - put in place of it, one line per input line. An input that is not
+    literal (a file, a pipe from a command whose output is unknown, `-a file`, `-0`, `-d`) adds one
+    placeholder word (_XARGS_INPUT, with the `source` text that feeds it) that stands for the unknown words:
+    a target made of it is dynamic, so a check treats it like any other target it cannot place. Empty when
+    the replace string has no input."""
+    replace: Optional[str] = None
+    unknown = stdin is None
+    index = 0
+    while index < len(options):
+        option = options[index]
+        index += 1
+        if option.startswith("--"):
+            name, has_value, value = option.partition("=")
+            if name in ("--null", "--delimiter", "--arg-file"):
+                unknown = True
+            elif name == "--replace":
+                replace = value or "{}"
+            if name in ("--delimiter", "--arg-file", "--max-args", "--max-lines", "--max-procs", "--max-chars",
+                        "--eof") and not has_value:
+                index += 1
+            continue
+        if not option.startswith("-") or option == "-":
+            continue
+        body = option[1:]
+        for position, letter in enumerate(body):
+            rest = body[position + 1:]
+            if letter == "0":
+                unknown = True
+            elif letter == "i":
+                replace = rest or "{}"
+                break
+            elif letter in "adEILnPs":
+                if letter in "ad":
+                    unknown = True
+                if letter == "I":
+                    replace = rest or (options[index] if index < len(options) else "{}")
+                if not rest:
+                    index += 1
+                break
+            elif letter in "el":
+                break
+    items: list[str] = []
+    if stdin is not None:
+        if replace is not None:
+            items = [line.strip() for line in stdin.splitlines() if line.strip()]
+        else:
+            try:
+                items = shlex.split(stdin)
+            except ValueError:
+                items = stdin.split()
+    if unknown:
+        items.append(_xargs_placeholder(source, bases))
+    if replace is None:
+        return [command + items]
+    return [[command[0]] + [arg.replace(replace, item) for arg in command[1:]] for item in items]
+
+
+def _attribute_targets(name: str, args: list[str]) -> list[str]:
+    """The files `chmod`/`chown`/`chgrp` change: every operand but the first (the mode, owner or group),
+    or every operand with `--reference`. A mode that starts with `-` (`chmod -x f`) is read as the mode."""
+    operands: list[str] = []
+    reference = False
+    options_done = False
+    for arg in args:
+        if not options_done and arg == "--":
+            options_done = True
+        elif not options_done and arg.startswith("-") and arg != "-" and not (
+            name == "chmod" and _NEGATIVE_MODE_RE.match(arg) and not operands
+        ):
+            reference = reference or arg.startswith("--reference")
+        else:
+            operands.append(arg)
+    return operands if reference else operands[1:]
+
+
+def _robocopy_targets(args: list[str]) -> list[str]:
+    """`robocopy <source> <destination> [files] [/switches]`: the destination, the source too when the call
+    moves (`/MOV`, `/MOVE`), and the files of a log switch (`/LOG:file`, `/UNILOG+:file`)."""
+    # Two readings, both kept: the first two words are source and destination whatever they look like (`robocopy
+    # src /tmp` copies to `/tmp`, which is no switch there), and a switch-looking word is skipped anywhere (a
+    # lax `robocopy /MIR src dst`). The destination of either reading counts.
+    positional = [arg for arg in args if not _WINDOWS_SWITCH_RE.match(arg)]
+    leading = args[:2]
+    targets = positional[1:2]
+    if len(leading) == 2 and leading[1] not in targets:
+        targets.append(leading[1])
+    if any(arg.upper() in ("/MOV", "/MOVE") for arg in args):
+        targets += positional[:1]
+        if leading[:1] and leading[0] not in targets:
+            targets.append(leading[0])
+    for arg in args:
+        if _WINDOWS_SWITCH_RE.match(arg) and arg.upper().startswith(("/LOG", "/UNILOG")) and ":" in arg:
+            targets.append(arg.split(":", 1)[1])
+    return targets
+
+
+def _inplace_script_targets(args: list[str], value_flags: frozenset) -> list[str]:
+    """The files `awk -i inplace` rewrites: the operands after the program text (all of them with `-f`/`-e`)."""
+    operands, values = _operands(args, value_flags)
+    if not any(
+        value.lower() == "inplace" or value.lower().endswith("inplace.awk") for value in values.get("-i", [])
+    ):
+        return []
+    named = any(flag in values for flag in ("-f", "--file", "-e", "--source"))
+    return operands if named else operands[1:]
+
+
+def _perl_inplace_targets(args: list[str], name: str = "perl") -> list[str]:
+    """The files `perl -i` / `ruby -i` edit in place (`-pi -e '...' f`, `-i.bak -pe '...' f`, `-lpi f`): read
+    option cluster by option cluster the way these interpreters do - `i` takes the rest of the cluster as the
+    backup suffix, `e`/`E` take the rest or the next word as the code (for ruby `E` is an encoding and `r`, `C`
+    take a word like `I`: `-I lib`). The options end at the first operand: the script (or, with `-e`, the first
+    file), so a `-i` after it belongs to the script. The operands are the files; the first one is the script when
+    no `-e` gives the code. [] without `-i`."""
+    inplace = False
+    has_code = False
+    operands: list[str] = []
+    options_done = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if options_done or not arg.startswith("-") or arg == "-":
+            operands.append(arg)
+            options_done = True
+        elif arg == "--":
+            options_done = True
+        elif not arg.startswith("--"):
+            body = arg[1:]
+            for position, letter in enumerate(body):
+                if letter in _PERL_PLAIN_LETTERS:
+                    continue
+                if letter == "i":
+                    inplace = True
+                elif letter in "eE" and not (name == "ruby" and letter == "E"):
+                    has_code = True
+                    if position == len(body) - 1:
+                        index += 1
+                elif letter == "I" or (name == "ruby" and letter in "rCE"):
+                    if position == len(body) - 1:
+                        index += 1  # `-I lib`: the directory is the next word, not a file
+                break
+    if not inplace:
+        return []
+    return operands if has_code else operands[1:]
+
+
+def _clone_directory(url: str, bare: bool) -> Optional[str]:
+    """The directory `git clone <url>` creates when none is given: the last segment of the URL without a
+    `.git` suffix (kept with `--bare`/`--mirror`), None for an URL that has none."""
+    last = url.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if last.endswith(".git") and not bare:
+        last = last[:-4]
+    return last or None
+
+
+def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
+    """What a git subcommand that creates files or directories of its own writes (the words after the
+    subcommand are `args`): the destination of `clone` (the one derived from the URL when none is
+    given) and `submodule add`, the directory of `init`, `worktree add` and `format-patch -o`, the file of
+    `bundle create` and `archive -o`. [] for any other subcommand."""
+    if sub == "clone":
+        operands, values = _operands(args, _GIT_CLONE_VALUE_FLAGS)
+        bare = any(arg in ("--bare", "--mirror") for arg in args)
+        targets = list(values.get("--separate-git-dir", []))
+        if len(operands) >= 2:
+            targets.append(operands[1])
+        elif operands:
+            implied = _clone_directory(str(operands[0]), bare)
+            if implied:
+                targets.append(implied)
+        return targets
+    spec = _GIT_CREATORS.get(sub)
+    if spec is None:
+        return []
+    word, value_flags = spec
+    if word is not None:
+        if not args or args[0] != word:
+            return []
+        args = args[1:]
+    operands, values = _operands(args, value_flags)
+    if sub == "init":
+        return list(values.get("--separate-git-dir", [])) + operands[:1]
+    if sub == "worktree":
+        return operands[:1]
+    if sub == "submodule":
+        if len(operands) >= 2:
+            return [operands[1]]
+        implied = _clone_directory(str(operands[0]), False) if operands else None
+        return [implied] if implied else []
+    if sub == "bundle":
+        return operands[:1]
+    return list(values.get("-o", [])) + list(values.get("--output", [])) + list(values.get("--output-directory", []))
+
+
 def _simple_command_targets(
-    words: list[str], bases: _Bases, git_writes: frozenset, depth: int
-) -> tuple[list[_Target], Optional[tuple[Optional[str], bool]]]:
+    words: list[str], bases: _Bases, git_writes: frozenset, depth: int, stdin: Optional[str] = None,
+    stdin_source: str = "",
+) -> tuple[list[_Target], Optional[tuple[Optional[str], bool, str]]]:
     """Write targets of one simple command (its words, redirections already taken out), and — for
     `cd`/`pushd`/`popd` — the directory change as (literal directory or None if unknown, whether a
-    prefix like `if`/`{`/`env` made it conditional)."""
+    prefix like `if`/`{`/`env` made it conditional, the command: `cd`, `pushd` or `popd`; a plain `popd`
+    has the empty string as its directory). `stdin` is the literal text the command's standard input
+    holds (the output of the previous stage of a pipeline, a heredoc), None when it is not known: it
+    matters for `xargs`, whose input words become operands of the command it runs; `stdin_source` is the
+    text of the command that feeds it when the input is not literal."""
     index = 0
     prefixed = False
     bases_unknown = False
+    xargs_at: Optional[int] = None  # where the first `xargs` stands among the words
     while index < len(words):
         word = words[index]
         if _ASSIGNMENT_RE.match(word):
@@ -2229,6 +2827,8 @@ def _simple_command_targets(
             wrapper_name = _command_name(word)
             wrapper_value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper_name, frozenset())
             prefixed = True
+            if wrapper_name == "xargs" and xargs_at is None:
+                xargs_at = index
             index += 1
             while index < len(words):
                 arg = words[index]
@@ -2259,6 +2859,14 @@ def _simple_command_targets(
     name = _command_name(words[index])
     args = words[index + 1:]
 
+    if xargs_at is not None:
+        # `... | xargs rm`: the input words are operands of the command (_xargs_commands). The cd family and a
+        # wrapper's own effects are not followed through xargs.
+        found: list[_Target] = []
+        for line in _xargs_commands(words[xargs_at + 1:index], words[index:], stdin, stdin_source, bases):
+            found.extend(_simple_command_targets(line, bases, git_writes, depth)[0])
+        return found, None
+
     if name == "cd":
         # A backtick span glued to the command name (`` `echo x`cd ``) makes bash run a *different*
         # command (`xcd`), not `cd` — the span's output is concatenated onto `cd` before the word
@@ -2269,11 +2877,20 @@ def _simple_command_targets(
         # is still caught by its text (check 1) and denied as unplaceable (check 1c).
         if not getattr(words[index], "subs", ()):
             operands, _ = _operands(args)
-            if len(operands) == 1 and _SIMPLE_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
-                return [], (operands[0], prefixed)
-        return [], (None, prefixed)
-    if name in ("pushd", "popd"):
-        return [], (None, prefixed)
+            if len(operands) == 1 and _LITERAL_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
+                return [], (operands[0], prefixed, "cd")
+        return [], (None, prefixed, "cd")
+    if name == "pushd":
+        # Like `cd` for the directory: `pushd <literal dir>` with no option of its own (`-n` moves nowhere,
+        # `+1` rotates the stack). The stack is kept by _scan_tokens for a later `popd`.
+        if not getattr(words[index], "subs", ()):
+            operands, _ = _operands(args)
+            options = [arg for arg in args if arg.startswith(("-", "+")) and arg != "--"]
+            if len(operands) == 1 and not options and _LITERAL_DIR_RE.match(operands[0]):
+                return [], (operands[0], prefixed, "pushd")
+        return [], (None, prefixed, "pushd")
+    if name == "popd":
+        return [], (("" if not args and not getattr(words[index], "subs", ()) else None), prefixed, "popd")
 
     raw_targets: list[str] = []
     if name in _ALL_OPERAND_WRITERS:
@@ -2318,6 +2935,16 @@ def _simple_command_targets(
             operands, values = _operands(args, _VALUE_FLAGS["sed"])
             has_script = any(flag in values for flag in ("-e", "--expression", "-f", "--file"))
             raw_targets = operands if has_script else operands[1:]
+    elif name in _ATTRIBUTE_WRITERS:
+        raw_targets = _attribute_targets(name, args)
+    elif name == "robocopy":
+        raw_targets = _robocopy_targets(args)
+    elif name in _PERL_LIKE:
+        raw_targets = _perl_inplace_targets(args, name)
+    elif name in ("awk", "gawk"):
+        raw_targets = _inplace_script_targets(
+            args, frozenset({"-F", "-v", "-f", "-i", "-e", "-E", "-l", "--file", "--source", "--include"})
+        )
     elif name == "dd":
         raw_targets = [arg[3:] for arg in args if arg.startswith("of=")]
     elif name == "tar":
@@ -2529,7 +3156,7 @@ def _collect_inline_code(
                 code_sink.append((language, code, base, kind, span))
         if sink is None:
             return
-        paths = _inline_code.write_paths(language, code)
+        paths = (_inline_code.write_targets if _INLINE_PRECISE else _inline_code.write_paths)(language, code)
         for path in paths:
             if _WSL_DEPTH:
                 path = str(_wsl_native_word(path))
@@ -3045,17 +3672,47 @@ def _ssh_local_effects(words: list[str]) -> tuple[list[str], Optional[str]]:
     return logs, None
 
 
+# Words that open a construct whose body runs zero, one or many times (loops, `if`, `case`, a function body).
+_REPEATING_CONSTRUCT_WORDS = frozenset({"for", "while", "until", "if", "case", "select", "function"})
+
+
+def _dir_stack_unreliable(tokens: list[_Token]) -> bool:
+    """Whether the directory stack of `pushd`/`popd` cannot be followed through this token stream: `dirs`
+    (`dirs -c` empties it) or an assignment to / `unset` of `DIRSTACK` changes it behind the scanner's back,
+    and a `pushd`/`popd` inside a loop, an `if`, a `case` or a function body may run any number of times or
+    not at all. Any such word anywhere is enough: dropping the stack only ever makes a `popd` unknown."""
+    for index, (text, is_op) in enumerate(tokens):
+        if is_op:
+            if text == "(" and index + 1 < len(tokens) and tokens[index + 1] == (")", True):
+                return True  # `name() { ...; }`
+        elif text in _REPEATING_CONSTRUCT_WORDS or text == "dirs" or text.startswith("DIRSTACK") or text.endswith("()"):
+            return True
+    return False
+
+
 def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """Walk a token stream command by command (step 4 of the section comment). Directory tracking,
     as a set of possible directories (None = unknown):
-      - `cd <literal dir>` as the first command of a list, into a directory that exists, replaces
+      - `cd <literal dir>` as the first command of a list, into a directory that exists (and that no
+        target found earlier in the command names or contains — a directory removed, moved or copied
+        over by an earlier command may be gone when the `cd` runs, _WrittenPlaces), replaces
         the set; after `&&`/`||` or a prefix (`if`, `{`, ...) it is conditional, so the commands
         after it in the same `&&` chain see only the new directory, but after the list ends both
         old and new remain possible; a `||` makes everything seen in that list possible;
-      - `cd` without a literal directory (`cd`, `cd -`, `cd $X`, `cd ~`), `pushd`/`popd`, any `cd`
-        inside a subshell or `$(...)`, and a `cd` next to a pipe or `&` add "unknown";
+      - `pushd <literal dir>` moves like `cd` and remembers the directories it left; a plain `popd` goes
+        back to them (a stack, kept only while every `pushd` was certain: first in its list, not behind
+        a prefix, outside a subshell and a pipe, and the command has no `dirs`, no `DIRSTACK`, no loop,
+        `if`, `case` or function body: _dir_stack_unreliable);
+      - `cd` without a literal directory (`cd`, `cd -`, `cd $X`, `cd ~`), a `pushd`/`popd` of any other
+        form or without a certain stack, any `cd`/`pushd` inside a subshell or `$(...)`, and one next
+        to a pipe or `&` add "unknown";
+      - a folder a plain `mkdir` with literal operands made earlier in the line (first in its list, outside a
+        subshell, a pipe, a construct whose body may not run) counts as existing for a `cd` to it, unless a
+        file is in the way or a later command removes or moves it (_WrittenPlaces.note_created);
       - `( ... )` restores the outer directories when it closes."""
     found: list[_Target] = []
+    written = _WrittenPlaces()  # the places `found` names so far, asked before a `cd` counts as certain
+    creation_stream_ok = _creation_stream_ok(tokens)
     bases = start_bases
     list_start = start_bases
     after_list = start_bases
@@ -3068,11 +3725,19 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     # the previous stage of its pipeline, the outputs of the statements of each open `{ }` / `( )` group
     # (None for one that is not literal), and the output of the group that closed just before.
     stdin_redirected = False
+    stdin_fed = False  # an input redirection is on the segment (set in the plain walk too, see its use)
     stdin_text: Optional[str] = None
     stdin_span: Optional[tuple[int, int]] = None
     pipe_input: Optional[str] = None
+    pipe_source = ""  # the words of the stages of the pipeline so far, for an `xargs` whose input is not literal
     group_outputs: list[list[Optional[str]]] = []
     closed_group: Optional[str] = None
+    dir_stack: list[_Bases] = []  # the directories `pushd` left, for a later `popd`
+    # False once a `pushd`/`popd` was not followed: a `popd` is then unknown. It is false from the start when the
+    # command can change the stack by other means or run a `pushd`/`popd` a different number of times than it
+    # is written (_dir_stack_unreliable).
+    dir_stack_known = not _dir_stack_unreliable(tokens)
+    chain_dirty = False           # a `pushd`/`popd` behind `&&` in this list: sure inside the chain, not after it
     index = 0
     while True:
         at_end = index >= len(tokens)
@@ -3092,8 +3757,10 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     redirect_targets.append(word)
                 else:
                     other_redirect_words.append(word)  # an input redirect has no target, a span in it still runs
+                redirect_input = _stdin_redirect(text, word)
+                if redirect_input is not None:
+                    stdin_fed = True  # in the plain walk too: an `xargs` then names this input as its source
                 if _INLINE_SINK is not None:
-                    redirect_input = _stdin_redirect(text, word)
                     if redirect_input is not None:
                         stdin_redirected = True
                         stdin_text = redirect_input if isinstance(redirect_input, str) else None
@@ -3143,8 +3810,21 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             for word in words + redirect_targets + other_redirect_words:
                 for span in getattr(word, "subs", ()):
                     found.extend(_scan_command(span, bases, git_writes, depth + 1))
-            targets, cd_change = _simple_command_targets(words, bases, git_writes, depth)
+            targets, cd_change = _simple_command_targets(
+                words, bases, git_writes, depth,
+                stdin_text if stdin_fed else pipe_input,  # (stdin_text stays None in the plain walk: not literal)
+                " ".join(other_redirect_words) if stdin_fed else pipe_source,
+            )
+            before = len(found)
             found.extend(targets)
+            creation = _mkdir_creation(words)
+            if creation is not None:
+                written.ignore(before, len(found))  # making a directory takes nothing away
+                if (
+                    creation_stream_ok and not saved and prev_sep not in _PIPE_OPS and separator not in _PIPE_OPS
+                    and separator != "&" and (prev_sep is None or prev_sep in _LIST_END_OPS)
+                ):
+                    written.note_created(creation[0], creation[1], bases)
             if _INLINE_SINK is not None:
                 _collect_inline_code(words, bases, stdin_redirected, stdin_text, pipe_input, stdin_span)
             produced = _literal_output(words, stdin_text if stdin_redirected else pipe_input)
@@ -3152,15 +3832,40 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                 # `echo 'cmd' | bash`: the text the previous stage prints is the shell's script.
                 found.extend(_scan_command(pipe_input, bases, git_writes, depth + 1))
             if cd_change is not None:
-                directory, prefixed = cd_change
+                directory, prefixed, kind = cd_change
                 near_pipe = prev_sep in _PIPE_OPS or separator in _PIPE_OPS or separator == "&"
-                if directory is None or saved or near_pipe:
+                first_in_list = prev_sep is None or prev_sep in _LIST_END_OPS or prev_sep == "("
+                certain = first_in_list and not prefixed and not saved and not near_pipe
+                # Behind `&&` the command runs only when the one before succeeded, so for the rest of that chain
+                # the stack is what it says; once the list ends, whether it ran is not known (chain_dirty).
+                chained = prev_sep == "&&" and not prefixed and not saved and not near_pipe
+                if kind == "popd" and directory == "" and (certain or chained) and dir_stack_known and dir_stack:
+                    new_bases = dir_stack.pop()
+                    if certain:
+                        after_list = new_bases
+                    else:
+                        after_list = after_list | new_bases
+                        chain_dirty = True
+                    bases = new_bases
+                elif directory is None or directory == "" or saved or near_pipe:
                     bases = bases | {None}
                     after_list = after_list | {None}
+                    if kind != "cd":
+                        dir_stack_known = False
                 else:
                     new_bases = _cd_bases(bases, directory)
-                    first_in_list = prev_sep is None or prev_sep in _LIST_END_OPS or prev_sep == "("
-                    exists = all(base is None or Path(base).is_dir() for base in new_bases)
+                    # A directory an earlier command of this line removed (or moved, or copied over) may be
+                    # gone when the `cd` runs, whatever the file system says now: not certain, both stay.
+                    exists = all(
+                        base is None or ((Path(base).is_dir() or written.created_at(base)) and not written.covers(found, base))
+                        for base in new_bases
+                    )
+                    if kind == "pushd":
+                        if (certain or chained) and dir_stack_known and exists:
+                            dir_stack.append(bases)
+                            chain_dirty = chain_dirty or not certain
+                        else:
+                            dir_stack_known = False
                     if first_in_list and not prefixed and exists:
                         after_list = new_bases
                     else:
@@ -3171,16 +3876,24 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         # passes what it got to the first command inside.
         if separator in _PIPE_OPS:
             pipe_input = produced
+            stage = " ".join(str(word) for word in words)
+            pipe_source = f"{pipe_source} | {stage}" if pipe_source else stage
         elif not (separator == "(" and not words):
             pipe_input = None
+            pipe_source = ""
         words = []
         redirect_targets = []
         other_redirect_words = []
         stdin_redirected = False
+        stdin_fed = False
         stdin_text = None
         stdin_span = None
         if separator is None:
             return found
+        if separator == "||" or separator in _LIST_END_OPS:
+            if chain_dirty:
+                dir_stack_known = False
+                chain_dirty = False
         if separator == "||":
             bases = bases | list_start | after_list
         elif separator in _LIST_END_OPS:
@@ -3314,7 +4027,7 @@ def _without_remote_targets(command: str, base_cwd: str, git_writes: frozenset, 
     return local if remote else current
 
 
-def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
+def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset, inline: bool = True) -> list[_Target]:
     """The paths a Bash command writes to, each paired with the directory a relative one resolves
     against (`base_cwd`, the Bash tool's own cwd, moved by any `cd` the scanner can follow) or None
     where that directory is unknown — see the module docstring for how and its known limits. A
@@ -3327,7 +4040,8 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
     (_without_remote_targets) and an rsync destination on another machine are no local targets; the
     latter is dropped only while the command line (and the PowerShell line above it, when this is a
     `bash -c` text of one) is nothing but one rsync call with plain words (_RSYNC_ENV_NAMED, see
-    there)."""
+    there). With `inline` the files that inline interpreter code writes are added (_with_inline_writes); the
+    worker write scope judges that code on its own, with its own wording, and asks without."""
     global _RSYNC_ENV_NAMED
     previous_named = _RSYNC_ENV_NAMED
     # True from an outer scan stays True; otherwise this command line decides for itself and what it nests.
@@ -3339,9 +4053,36 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
                 current = _without_remote_targets(command, base_cwd, git_writes, current)
             except Exception:  # noqa: BLE001 — current stays as it is, the over-blocking side
                 pass
-        return current
+        return _with_inline_writes(current, command, base_cwd) if inline else current
     finally:
         _RSYNC_ENV_NAMED = previous_named
+
+
+def _with_inline_writes(targets: list[_Target], command: str, base_cwd: str) -> list[_Target]:
+    """`targets` plus the files that inline interpreter code in `command` writes (`python -c "open('f', 'w')"`,
+    a heredoc fed to `python -`, `node -e`): each path a write call of the code names, once per directory the
+    call may run in. A path of the code is not a shell word, so a rooted one without a drive takes the drive
+    of that directory on Windows (as the interpreter resolves it) and is not mapped to a Git Bash place. The
+    reading is best effort and never costs the targets found without it: an error of the reader leaves them as
+    they are (the worker write scope, which reads the same code on its own, reports it)."""
+    if not _inline_code.mentions_interpreter(command):
+        return targets
+    try:
+        inline = _bash_inline_write_targets(command, base_cwd)
+    except Exception:  # noqa: BLE001 - see the docstring
+        return targets
+    merged = list(targets)
+    seen = {_pair_key(pair) for pair in merged}
+    for path, base, _language in inline:
+        raw = path
+        if sys.platform == "win32" and raw.startswith(("/", "\\")) and raw[1:2] not in ("/", "\\"):
+            drive = Path(base if base is not None else base_cwd).drive
+            raw = f"{drive}{raw}" if drive else raw
+        pair = (raw, base)
+        if not _is_ignorable_write_target(raw) and _pair_key(pair) not in seen:
+            seen.add(_pair_key(pair))
+            merged.append(pair)
+    return merged
 
 
 def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget]:
@@ -3372,6 +4113,19 @@ def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget
         _INLINE_SINK = previous
         _SSH_REMOTE_IS_REMOTE = previous_remote
     return list(dict.fromkeys(found))
+
+
+def _bash_inline_write_targets(command: str, base_cwd: str) -> list[_InlineTarget]:
+    """Like _bash_inline_code_targets, but only the paths a write call of the inline code names
+    (inline_code.write_targets), not every path literal of a program that holds one: for the checks that
+    refuse a write and must not refuse a program for a path it only reads."""
+    global _INLINE_PRECISE
+    previous = _INLINE_PRECISE
+    _INLINE_PRECISE = True
+    try:
+        return _bash_inline_code_targets(command, base_cwd)
+    finally:
+        _INLINE_PRECISE = previous
 
 
 # (interpreter language, program text, the directory the call runs in - None = unknown, where the text
