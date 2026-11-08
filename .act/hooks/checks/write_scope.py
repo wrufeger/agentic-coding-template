@@ -50,7 +50,7 @@
 # A Bash target's quoting travels with it up to the judgment (shell_targets._Word.live): a glob
 # character bash takes literally - quoted or escaped - expands nothing, so `mkdir -p 'server/api/[id]'`
 # is the folder `[id]` and is not refused for a neighbour the unquoted word would hit; the unquoted
-# word, and a word whose quoting is not known (a nested shell, `eval`, `$(...)`, the legacy scanner,
+# word, and a word whose quoting is not known (a nested shell, `eval`, `$(...)`,
 # PowerShell), is expanded as before (_live_glob_pattern, _shell_expansion_escapes).
 
 from __future__ import annotations
@@ -837,7 +837,7 @@ def _live_glob_pattern(raw: str) -> Optional[str]:
     literally too (`'server/api/[id]'` -> `server/api/[[]id]`); None when nothing is left for the shell
     to expand - no glob character at all, or every one of them quoted (`mkdir -p 'server/api/[id]'`
     creates the folder `[id]`, whatever neighbours exist). A word without `live` (one from a nested
-    shell, `eval` or `$(...)`, the legacy scanner's, a PowerShell target) keeps every glob character
+    shell, `eval` or `$(...)`, a PowerShell target) keeps every glob character
     live, as before."""
     text = str(raw)
     if not any(char in text for char in "*?["):

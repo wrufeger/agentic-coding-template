@@ -43,13 +43,9 @@
 #      `sh -c "..."`, `eval`, `$(...)` and backtick spans (the words' own `subs`) scanned
 #      recursively.
 #
-# Safety net: the lexer is newer than the scanner it replaced, and a blocking check must never be
-# weaker than before. So the public result, _bash_write_targets, is the union of this scan and the
-# previous scanner kept verbatim in shell_targets_legacy.py (command_words.py does the same with
-# command_words_legacy.py for its word lists, secret_scan.py with its commit detection). Anything
-# this lexer reads differently or fails on (an exception of any kind, a recursion bound) therefore
-# costs nothing: the legacy half still reports what it always did. The known limits below describe
-# the lexer's half; the union only ever adds to them.
+# One reading: the public result, _bash_write_targets, is this lexer's scan alone (command_words.py and
+# secret_scan.py read the same way). An exception of any kind or a recursion bound propagates; the write
+# guards fail closed on it.
 #
 # Known limits (a target missed here is simply not checked — resolved toward over-blocking wherever
 # the command itself is ambiguous):
@@ -123,7 +119,7 @@
 #     out makes the whole word count as before - also one that ends later than its first `)` can (a
 #     `case` pattern, a comment, a here-document: any `#`, `<<`, line break or `case` inside it, or a
 #     `)` left over in the rest of the word that closes nothing). Such a word is read whole and
-#     nothing of it is taken out of the legacy half. The command text of an ssh call without a `$(`
+#     nothing of it is taken out. The command text of an ssh call without a `$(`
 #     was never read. An alias in an ssh configuration that points at this machine cannot be seen.
 #     A line
 #     tokenized on its own that ends inside an unquoted span does not tokenize at all (bash ends the
@@ -146,7 +142,7 @@
 #     span's own content is still scanned. Resolved toward over-blocking only when some other,
 #     determinable part of the command names a target;
 #   - ANSI-C quoting `$'...'` is told from a `$'` that is only text by a pass over the whole command
-#     (shell_targets_legacy._QuoteScan, shared by both halves) that follows bash's quoting. Wherever
+#     (_QuoteScan) that follows bash's quoting. Wherever
 #     that pass does not model something it gives up and counts the `$'` as live, so the answer errs
 #     toward the raw-redirect search: arithmetic `((`/`$((`/`$[`, a `${...}` beyond a plain name, a
 #     `$(...)` in a command that also has a `case`, a comment holding any quote/expansion character,
@@ -172,12 +168,6 @@ from pathlib import Path
 from typing import Optional
 
 from . import inline_code as _inline_code
-from . import shell_targets_legacy as _legacy_targets
-# The `$'` / quoted-heredoc pass is shared with the legacy half: one definition of what bash reads as
-# ANSI-C quoting, so the two halves of the union never disagree on it.
-from .shell_targets_legacy import (
-    _may_use_ansi_c_quoting, _quote_model_applies, _without_quoted_heredoc_bodies,
-)
 
 __all__ = [
     "_SHELL_OPERATOR_CHARS", "_SHELL_OPERATORS", "_LIST_END_OPS", "_PIPE_OPS", "_SEPARATOR_OPS",
@@ -922,6 +912,42 @@ def _collect_dq_nested(text: str, index: int, subs: list[str], depth: int = 0) -
     return index
 
 
+_HEREDOC_WORD_RE = re.compile(r"(?<!<)<<(?!<)(-?)[ \t]*([^\s;&|()<>]*)")
+
+
+def _skip_dq_heredoc_bodies(text: str, newline: int, pending: list[tuple[str, bool]], subs: list[str]) -> int:
+    """The index of the newline that ends the last body of the heredocs opened on the line that ends at
+    `text[newline]`, inside a `$(...)` that is inside double quotes: bash reads each body up to its
+    terminator line as text, so a quote character in it opens nothing. `pending` holds the delimiters
+    (word, whether `<<-` strips tabs) in the order they were opened. A backtick span in a body is still
+    collected into `subs`, as before (over-reading, never under-reading). A body without its terminator
+    line runs to the end of `text`."""
+    pos = newline + 1
+    last = newline
+    for word, strip_tabs in pending:
+        body_start = pos
+        while pos < len(text):
+            end = text.find("\n", pos)
+            line = text[pos:] if end < 0 else text[pos:end]
+            if (line.lstrip("\t") if strip_tabs else line) == word:
+                break
+            pos = len(text) if end < 0 else end + 1
+        body = text[body_start:pos]
+        scan = 0
+        while scan < len(body):
+            if body[scan] == "`":
+                content, scan, _closed = _backtick_span(body, scan + 1, in_double=False)
+                subs.append(content)
+            else:
+                scan += 2 if body[scan] == "\\" else 1
+        end = text.find("\n", pos)
+        if end < 0:
+            return len(text)
+        last = end
+        pos = end + 1
+    return last
+
+
 def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0) -> int:
     """Walk a `$(...)`, `$((...))`, `${...}` or `$[...]` expansion whose opener is at `text[index]`
     (one of `([{`) to its matching closer, appending to `subs` the contents of every backtick span
@@ -932,9 +958,14 @@ def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0
     Two quoting regimes inside:
       - command substitution `$(...)` and parameter expansion `${...}`: a single-quoted run is
         literal (a backtick in it runs nothing), so it is skipped whole (_skip_squote);
-      - arithmetic `$((...))` and `$[...]`: a single quote is an ordinary character, so a backtick
-        inside what looks like `'...'` IS a live command substitution and must be collected — not
-        skipped (a `$(( '` + backtick + `> .act/x` + backtick + `' ))` really writes `.act/x`).
+      - arithmetic `$((...))` and `$[...]`: a backtick inside what looks like `'...'` IS a live
+        command substitution and must be collected — not skipped (a `$(( '` + backtick + `> .act/x`
+        + backtick + `' ))` really writes `.act/x`); a bracket or parenthesis inside such a pair is
+        not counted, though, as bash finds the end of the construct that way (`$[ '[' ]` ends at
+        its `]`).
+
+    A `#` that starts a word inside `$(...)` is a comment to the end of the line: a quote character in it
+    opens nothing.
 
     Nested `"..."` runs are followed (_collect_dq_nested) and nested expansions of the same kind
     (`$(( ))`) and of another kind (`${x:-$(...)}`) are followed too. A `$(...)` command is not
@@ -949,10 +980,28 @@ def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0
     closer = _EXPANSION_CLOSERS[opener]
     arithmetic = opener == "[" or (opener == "(" and index + 1 < len(text) and text[index + 1] == "(")
     same_depth = 0
+    in_squote = False  # arithmetic only: between a pair of single quotes, which hide brackets from the count
+    command = opener == "(" and not arithmetic
+    pending: list[tuple[str, bool]] = []  # heredocs opened on the current line of a command substitution
     j = index + 1
     while j < len(text):
         char = text[j]
-        if char == opener:
+        if char == "\n" and pending:
+            j = _skip_dq_heredoc_bodies(text, j, pending, subs) + 1
+            pending = []
+        elif char == "<" and command and text.startswith("<<", j):
+            opening = _HEREDOC_WORD_RE.match(text, j)
+            if opening is not None and opening.group(2):
+                pending.append((re.sub(r"['\"\\]", "", opening.group(2)), bool(opening.group(1))))
+                j = opening.end()
+            else:
+                j += 1
+        elif char == "'" and arithmetic:
+            in_squote = not in_squote
+            j += 1
+        elif in_squote and char in (opener, closer):
+            j += 1
+        elif char == opener:
             same_depth += 1
             j += 1
         elif char == closer:
@@ -962,6 +1011,10 @@ def _collect_dq_expansion(text: str, index: int, subs: list[str], depth: int = 0
             j += 1
         elif char == "'" and not arithmetic:
             j = _skip_squote(text, j)
+        elif char == "#" and opener == "(" and not arithmetic and (j == index + 1 or text[j - 1] in " \t\n;&|("):
+            # a comment of the substitution: to the end of its line, whatever quote characters it holds
+            end = text.find("\n", j)
+            j = len(text) if end < 0 else end
         elif char == '"':
             j = _collect_dq_nested(text, j + 1, subs, depth + 1)
         elif char == "`":
@@ -1618,6 +1671,336 @@ def _line_mode_tokens(command: str, with_spans: bool = False) -> list[_Token]:
     return tokens
 
 
+class _AnsiCFound(Exception):
+    """Raised inside _QuoteScan the moment a `$'` may be live ANSI-C quoting, or the text is built in
+    a way the scan does not model — either way the caller must assume the worst."""
+
+
+_QUOTE_SCAN_MAX_DEPTH = 32
+_QS_CMD_SPECIAL_RE = re.compile(r"[\\'\"`$#<()\n]")
+_QS_DQ_SPECIAL_RE = re.compile(r"[\\\"`$]")
+_QS_BACKTICK_SPECIAL_RE = re.compile(r"[\\`]")
+# `case ... in pat) ...` has a `)` that closes no `$(`; a command substitution next to a `case` is
+# not followed any further (bash itself needs a special rule for it).
+_QS_CASE_RE = re.compile(r"(?<![\w$./-])case(?![\w./-])")
+_QS_PLAIN_BRACE_RE = re.compile(r"\{[#!]?[A-Za-z_]\w*(?:\[[\w@*]+\])?\}|\{[#!]?\d+\}|\{[@*#?$!-]\}")
+_QS_SPECIAL_PARAMS = "#?$!-@*0123456789"
+_QS_WORD_END = " \t\r\n;&|()<>"
+
+
+class _QuoteScan:
+    """One pass over a whole command that follows the quoting bash applies — single quotes, double
+    quotes with their nested `$(...)`, backslashes, comments, backtick spans, `<<` heredocs — to answer
+    two questions the tokenizers cannot answer line by line: is there a `$'` that bash reads as ANSI-C
+    quoting (`run` raises _AnsiCFound), and which heredoc bodies belong to a quoted delimiter (`bodies`,
+    character ranges that bash never runs). It is built to err toward "assume the worst": everything it
+    does not model on purpose raises _AnsiCFound instead of guessing — arithmetic `((`, `$((`, `$[`,
+    a `${...}` that is not a plain parameter name, a `$(...)` in a command that also has a `case`, a
+    comment that holds a quote, escape, expansion, `<` or `(`, a backtick span that holds `$'`, an
+    unterminated quote or span, an unterminated `$(`, a heredoc
+    delimiter built from an expansion, a heredoc opened while a quoted string runs across lines, nesting
+    deeper than _QUOTE_SCAN_MAX_DEPTH. A heredoc is only recognized where the line-mode tokenizer
+    recognizes one too (_heredoc_delimiters: no `((`, `[`, `${`, `$[` or backtick on its line) and only
+    skipped up to a terminator line that matches exactly (bash's own rule, stricter than the tokenizer's
+    stripped comparison, so the tokenizer never skips more than this scan). An unquoted heredoc body is
+    never inspected beyond a `$'` in it, which counts as live (the body's own `$(...)` may use it)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.has_case = _QS_CASE_RE.search(text) is not None
+        self.bodies: list[tuple[int, int]] = []
+        self._missing: set[tuple[str, bool]] = set()
+        self._line_starts: Optional[dict[str, list[int]]] = None
+        self._tab_line_starts: Optional[dict[str, list[int]]] = None
+
+    def run(self) -> None:
+        self._commands(0, None, 0)
+
+    def _commands(self, i: int, closer: Optional[str], depth: int) -> int:
+        """Scan command text from `text[i]`; with `closer` == ")" up to and including the `)` that closes
+        the `$(` this text belongs to. Returns the index after it."""
+        if depth > _QUOTE_SCAN_MAX_DEPTH:
+            raise _AnsiCFound("nested too deep")
+        text = self.text
+        size = len(text)
+        paren = 0
+        pending: list[tuple[str, bool, bool]] = []  # heredocs opened on the current line
+        while i < size:
+            match = _QS_CMD_SPECIAL_RE.search(text, i)
+            if match is None:
+                i = size
+                break
+            i = match.start()
+            char = text[i]
+            if char == "\\":
+                i += 2
+            elif char == "'":
+                end = text.find("'", i + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated single quote")
+                self._no_pending_across_lines(pending, i, end)
+                i = end + 1
+            elif char == '"':
+                end = self._double_quoted(i + 1, depth)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "`":
+                end = self._backtick(i + 1)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "$":
+                end = self._dollar(i, depth, in_double=False)
+                self._no_pending_across_lines(pending, i, end)
+                i = end
+            elif char == "#":
+                if i == 0 or text[i - 1] in _QS_WORD_END:
+                    end = text.find("\n", i)
+                    end = size if end < 0 else end
+                    # Only a comment of plain words is skipped: whatever structure a wrongly read
+                    # comment could hide (a quote, an escape, an expansion, a redirection, a
+                    # parenthesis) is a reason to give up instead — a `#` after an escaped blank
+                    # (`a\ #x`) is no comment in bash, and it must not hide a live `$'`.
+                    if any(mark in text[i:end] for mark in "'\"`\\$<("):
+                        raise _AnsiCFound("quoting or expansion characters in a comment")
+                    i = end
+                else:
+                    i += 1
+            elif char == "(":
+                if text.startswith("((", i):
+                    raise _AnsiCFound("arithmetic command")
+                paren += 1
+                i += 1
+            elif char == ")":
+                if paren > 0:
+                    paren -= 1
+                    i += 1
+                elif closer == ")":
+                    return i + 1
+                else:
+                    i += 1
+            elif char == "<":
+                i = self._redirect(i, pending)
+            else:  # a newline: the bodies of the heredocs opened on the line just ended start here
+                i = self._heredoc_bodies(i, pending) if pending else i + 1
+        if closer is not None:
+            raise _AnsiCFound("unterminated command substitution")
+        return size
+
+    def _no_pending_across_lines(self, pending: list, start: int, end: int) -> None:
+        if pending and self.text.find("\n", start, end) >= 0:
+            raise _AnsiCFound("heredoc line continues inside a quoted string")
+
+    def _double_quoted(self, i: int, depth: int) -> int:
+        text = self.text
+        while True:
+            match = _QS_DQ_SPECIAL_RE.search(text, i)
+            if match is None:
+                raise _AnsiCFound("unterminated double quote")
+            i = match.start()
+            char = text[i]
+            if char == '"':
+                return i + 1
+            if char == "\\":
+                i += 2
+            elif char == "`":
+                i = self._backtick(i + 1)
+            else:
+                i = self._dollar(i, depth, in_double=True)
+
+    def _backtick(self, i: int) -> int:
+        """Index after the backtick span whose opening backtick sits just before `text[i]`. A span holding
+        a `$'` is not followed (its own quoting is bash's, not this scan's)."""
+        text = self.text
+        start = i
+        while True:
+            match = _QS_BACKTICK_SPECIAL_RE.search(text, i)
+            if match is None:
+                raise _AnsiCFound("unterminated backtick span")
+            if text[match.start()] == "`":
+                if text.find("$'", start, match.start()) >= 0:
+                    raise _AnsiCFound("$' inside a backtick span")
+                return match.end()
+            i = match.start() + 2
+
+    def _dollar(self, i: int, depth: int, in_double: bool) -> int:
+        """Index after the construct that starts with the `$` at `text[i]`."""
+        text = self.text
+        following = text[i + 1:i + 2]
+        if following == "'":
+            if in_double:
+                return i + 2  # `"$'"`: inside double quotes it is two literal characters
+            raise _AnsiCFound("ANSI-C quoting")
+        if following == "(":
+            if text.startswith("$((", i) or self.has_case:
+                raise _AnsiCFound("arithmetic expansion or case next to a command substitution")
+            return self._commands(i + 2, ")", depth + 1)
+        if following == "{":
+            match = _QS_PLAIN_BRACE_RE.match(text, i + 1)
+            if match is None:
+                raise _AnsiCFound("parameter expansion with an operator")
+            return match.end()
+        if following == "[":
+            raise _AnsiCFound("arithmetic expansion")
+        if following and following in _QS_SPECIAL_PARAMS:
+            return i + 2
+        return i + 1
+
+    def _redirect(self, i: int, pending: list) -> int:
+        """At a `<`: skip a here-string, or read the delimiter of a heredoc and queue it. Returns the index
+        after what was read."""
+        text = self.text
+        size = len(text)
+        if text.startswith("<<<", i):
+            return i + 3
+        if not text.startswith("<<", i):
+            return i + 1
+        j = i + 2
+        dash = j < size and text[j] == "-"
+        if dash:
+            j += 1
+        while j < size and text[j] in " \t":
+            j += 1
+        parts: list[str] = []
+        quoted = False
+        while j < size and text[j] not in _QS_WORD_END:
+            char = text[j]
+            if char == "'":
+                end = text.find("'", j + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated single quote")
+                parts.append(text[j + 1:end])
+                quoted = True
+                j = end + 1
+            elif char == '"':
+                end = text.find('"', j + 1)
+                if end < 0:
+                    raise _AnsiCFound("unterminated double quote")
+                if any(mark in text[j + 1:end] for mark in "\\$`"):
+                    raise _AnsiCFound("heredoc delimiter with an expansion")
+                parts.append(text[j + 1:end])
+                quoted = True
+                j = end + 1
+            elif char == "\\":
+                if j + 1 >= size:
+                    raise _AnsiCFound("trailing backslash")
+                parts.append(text[j + 1])
+                quoted = True
+                j += 2
+            elif char in "$`":
+                raise _AnsiCFound("heredoc delimiter with an expansion")
+            else:
+                parts.append(char)
+                j += 1
+        delimiter = "".join(parts)
+        if not delimiter:
+            return i + 2
+        line_start = text.rfind("\n", 0, i) + 1
+        line_end = text.find("\n", i)
+        line = text[line_start:size if line_end < 0 else line_end]
+        if "((" in line or any(marker in line for marker in _NO_HEREDOC_MARKERS):
+            # The line-mode tokenizer opens no heredoc here, but bash does: reading the body as
+            # commands would let a quote in it shift every later line, so this is not modelled.
+            raise _AnsiCFound("heredoc on a line the scan does not place")
+        pending.append((delimiter, quoted, dash))
+        return j
+
+    def _line_index(self, dash: bool) -> dict[str, list[int]]:
+        """Every line's text (leading tabs dropped for `<<-`) mapped to the start offsets of the lines
+        that read so — built once, so many heredocs never rescan the text."""
+        cached = self._tab_line_starts if dash else self._line_starts
+        if cached is None:
+            cached = {}
+            offset = 0
+            for line in self.text.split("\n"):
+                cached.setdefault(line.lstrip("\t") if dash else line, []).append(offset)
+                offset += len(line) + 1
+            if dash:
+                self._tab_line_starts = cached
+            else:
+                self._line_starts = cached
+        return cached
+
+    def _heredoc_bodies(self, i: int, pending: list) -> int:
+        """The newline at `text[i]` ends a line that opened `pending` heredocs: read their bodies in turn.
+        Returns the index where ordinary scanning goes on. A heredoc without a terminator line is none
+        (the lines stay text, and so do the ones of the heredocs after it)."""
+        text = self.text
+        start = i + 1
+        entries = list(pending)
+        pending.clear()
+        for delimiter, quoted, dash in entries:
+            key = (delimiter, dash)
+            end: Optional[int] = None
+            if key not in self._missing:
+                positions = self._line_index(dash).get(delimiter, [])
+                at = bisect.bisect_left(positions, start)
+                if at < len(positions):
+                    end = positions[at]
+                else:
+                    self._missing.add(key)  # no such line from here on, so none from any later start either
+            if end is None:
+                return start
+            body = text[start:end]
+            if quoted:
+                self.bodies.append((start, end))
+            elif "$'" in body:
+                raise _AnsiCFound("$' in an unquoted heredoc body")
+            line_end = text.find("\n", end)
+            start = len(text) if line_end < 0 else line_end + 1
+        return start
+
+
+def _quote_scan(command: str) -> Optional[_QuoteScan]:
+    """The finished _QuoteScan of `command`, or None when it could not tell (_AnsiCFound, or any other
+    failure — never an exception)."""
+    scan = _QuoteScan(command)
+    try:
+        scan.run()
+    except Exception:  # noqa: BLE001 — "could not tell" is the answer, whatever the reason
+        return None
+    return scan
+
+
+def _may_use_ansi_c_quoting(command: str) -> bool:
+    """True if `command` may hold a `$'...'` that bash reads as ANSI-C quoting, which neither tokenizer
+    knows (`\\'` inside it does not end the string). A `$'` that is only text — inside single or
+    double quotes, backslash-escaped, in a comment, in a quoted heredoc body — is not: that is
+    what keeps `grep -v '$' f` and `python - <<'EOF'` with a `$'` in its text from being read as
+    ANSI-C. Whatever _QuoteScan cannot tell counts as ANSI-C (the previous test was the plain
+    substring `$'`)."""
+    if "$'" not in command:
+        return False
+    return _quote_scan(command) is None
+
+
+def _without_quoted_heredoc_bodies(command: str) -> str:
+    """`command` without the bodies of the heredocs that have a quoted delimiter (`<<'EOF'`, `<<"EOF"`,
+    `<<\\EOF`) — text bash never runs, kept apart from the commands even when an earlier line of the
+    command did not tokenize and the whole-command fallback, which skips no heredoc, has to be used. The
+    terminator lines stay. `command` itself when the scan could not tell or there is nothing to cut."""
+    scan = _quote_scan(command)
+    if scan is None or not scan.bodies:
+        return command
+    pieces: list[str] = []
+    position = 0
+    for start, end in sorted(scan.bodies):
+        if start < position:
+            return command
+        pieces.append(command[position:start])
+        position = end
+    pieces.append(command[position:])
+    return "".join(pieces)
+
+
+def _quote_model_applies(command: str) -> bool:
+    """False when the quote model must not decide for `command`: it reads the text after
+    backslash-newlines are joined, but bash keeps them literally inside a quoted heredoc body, so
+    joining can hide that body's terminator line and move the cut. With a heredoc and a
+    backslash-newline in the same command, the previous plain rule stands — any `$'` counts as live
+    and no body is cut."""
+    return not ("<<" in command and _LINE_CONTINUATION_RE.search(command))
+
+
 def _raw_redirect_targets(command: str) -> list[str]:
     """Coarse last resort: every word after a `>`-style operator anywhere in the raw text, quotes
     stripped off its ends, fd duplications (`>&2`) left out. Over-inclusive by design."""
@@ -1682,10 +2065,8 @@ def _raw_target_word(text: str, start: int) -> str:
 def _command_name(word: str) -> str:
     """The command a word names, lower-case, directory and `.exe` dropped. A backtick span in the
     word is cut out first (`getattr(word, "bare", ...)`): `` `;`rm `` and `` `true`rm `` run `rm`,
-    the span itself expanding to nothing. Leading backticks of what is left are dropped as the
-    previous scanner did (a plain `str` word, as shell_targets_legacy and command_words_legacy hand
-    them back, has no `bare`), so a word either lexer produced is named at least as the previous
-    scanner named it."""
+    the span itself expanding to nothing. Leading backticks of what is left are dropped (a plain
+    `str` word has no `bare`)."""
     text = getattr(word, "bare", word).lstrip("`")
     name = text.replace("\\", "/").rsplit("/", 1)[-1].lower()
     return name[:-4] if name.endswith(".exe") else name
@@ -1695,8 +2076,7 @@ def _is_span_word(word: str) -> bool:
     """True for a word that is nothing but backtick spans (and quotes around nothing): `` `echo "` ``,
     `` `true` ``. In front of a command it prints nothing or something this scanner cannot know, so
     the command is read as the word behind it — over-reading when the span prints a real command name,
-    never under-reading. A plain `str` word (the legacy scanners hand those back) has no `bare` and is
-    never one."""
+    never under-reading. A plain `str` word has no `bare` and is never one."""
     return "`" in word and getattr(word, "bare", None) == ""
 
 
@@ -1924,7 +2304,7 @@ def _simple_command_targets(
                 name == "rsync" and _RSYNC_ENV_NAMED is False and _is_remote_rsync_operand(str(operands[-1]))
                 and _rsync_options_stay_remote([str(arg) for arg in args])
             ):
-                _RSYNC_REMOTE_TEXTS.add(str(operands[-1]))
+                pass  # on the other machine: no local target
             else:
                 raw_targets = [operands[-1]]
         elif len(operands) == 1 and name == "ln":
@@ -2310,10 +2690,6 @@ def _simple_substitutions(word: str) -> Optional[list[str]]:
 # receives the targets that text used to produce (read whole as a local command, as before).
 _SSH_REMOTE_IS_REMOTE = False
 _REMOTE_SINK: Optional[list] = None
-# The destination operands of rsync calls that name another machine (`host:path`), collected while a command
-# is scanned: _bash_write_targets drops what the legacy half made of them, unless the same text is a local
-# target elsewhere in the command.
-_RSYNC_REMOTE_TEXTS: set[str] = set()
 # Whether a remote rsync destination may NOT be dropped for the command line being scanned. rsync reads its
 # own environment variables (`RSYNC_RSH`, `RSYNC_CONNECT_PROG`, ...) and runs a local program from them, and
 # a line can set one in more spellings than any text search finds (the shell removes quotes and escapes
@@ -2754,7 +3130,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     if _REMOTE_SINK is not None and _arithmetic_parts(word) is not None:
                         # Not easy to cut apart, but _rescan_word reads only the body of an arithmetic
                         # expansion, never the text around it: that text is the remote one. Any other
-                        # word is read whole below, and nothing of it is taken out of the legacy half.
+                        # word is read whole below, and nothing of it is taken out.
                         _REMOTE_SINK.extend(_scan_command(word, bases, git_writes, depth + 1))
                 found.extend(_rescan_word(word, bases, git_writes, depth))
             local_text = _ssh_local_effects(words)[1]
@@ -2901,8 +3277,8 @@ def _without_live(target: str) -> str:
 
 
 def _bash_write_targets_new(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
-    """The write targets the word lexer's scan finds — one half of what _bash_write_targets returns.
-    Any exception propagates: the caller drops this half then and keeps the legacy half alone."""
+    """The write targets the word lexer's scan finds — what _bash_write_targets returns.
+    Any exception propagates."""
     pairs = _scan_command(command, frozenset({base_cwd}), git_writes, depth=0)
     result: list[_Target] = []
     seen: set[tuple] = set()
@@ -2921,15 +3297,11 @@ def _pair_key(pair: _Target) -> tuple:
     return (str(pair[0]), pair[1], getattr(pair[0], "live", None))
 
 
-def _without_remote_targets(
-    command: str, base_cwd: str, git_writes: frozenset, current: list[_Target], legacy: list[_Target]
-) -> tuple[list[_Target], list[_Target]]:
-    """Both halves of _bash_write_targets without the targets that only the command text of a remote
-    `ssh` call produced (see _ssh_remote_start). The lexer is walked a second time with that text left
-    out, and the targets that text used to produce are collected (_REMOTE_SINK). The legacy half cannot
-    be told to skip it, so its pairs of such a text and directory are dropped — unless the second walk
-    found the same target elsewhere in the command (a local one), which then stays. `current` comes back
-    as the second walk's result."""
+def _without_remote_targets(command: str, base_cwd: str, git_writes: frozenset, current: list[_Target]) -> list[_Target]:
+    """`current` without the targets that only the command text of a remote `ssh` call produced (see
+    _ssh_remote_start). The lexer is walked a second time with that text left out; the second walk's
+    result replaces `current` when the text produced anything (_REMOTE_SINK collects it), so a target
+    the command names elsewhere, as a local one, stays."""
     global _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK
     remote: list[_Target] = []
     _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK = True, remote
@@ -2937,12 +3309,7 @@ def _without_remote_targets(
         local = _bash_write_targets_new(command, base_cwd, git_writes)
     finally:
         _SSH_REMOTE_IS_REMOTE, _REMOTE_SINK = False, None
-    if not remote:
-        return current, legacy
-    local_places = {(str(pair[0]), pair[1]) for pair in local}
-    remote_only = {(str(pair[0]), pair[1]) for pair in remote} - local_places
-    kept = [pair for pair in legacy if (str(pair[0]), pair[1]) not in remote_only]
-    return local, kept
+    return local if remote else current
 
 
 def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
@@ -2953,68 +3320,26 @@ def _bash_write_targets(command: str, base_cwd: str, git_writes: frozenset) -> l
     and standard streams are dropped. `git_writes` names the git subcommands that count as writes
     for the calling check (_GIT_WRITES_TEMPLATE_GUARD / _GIT_WRITES_WORKER_SCOPE).
 
-    The result is the UNION of two scanners: shell_targets_legacy's (the previous, shlex-based one,
-    first and in its own order) and this module's word lexer (_bash_write_targets_new), each target
-    pair once. The union is what keeps the lexer from ever weakening a check: whatever the previous
-    scanner reported is still reported, however the lexer reads the same text. An exception in the
-    lexer's half — ValueError, RecursionError, a bug — is swallowed and the legacy half alone
-    returned; one in the legacy half propagates, exactly as it did before the lexer existed (the
-    legacy function itself falls back to the raw-text search on its own failures).
-
-    An rsync destination on another machine is dropped from both halves only while the command line
-    (and the PowerShell line above it, when this is a `bash -c` text of one) is nothing but one rsync call
-    with plain words (_RSYNC_ENV_NAMED, see there)."""
+    One reading: the word lexer's (_bash_write_targets_new), each target pair once. An exception in
+    it propagates; the write guards fail closed on it. The command text of a remote `ssh` call
+    (_without_remote_targets) and an rsync destination on another machine are no local targets; the
+    latter is dropped only while the command line (and the PowerShell line above it, when this is a
+    `bash -c` text of one) is nothing but one rsync call with plain words (_RSYNC_ENV_NAMED, see
+    there)."""
     global _RSYNC_ENV_NAMED
     previous_named = _RSYNC_ENV_NAMED
     # True from an outer scan stays True; otherwise this command line decides for itself and what it nests.
     _RSYNC_ENV_NAMED = bool(previous_named) or _names_rsync_variable(command)
     try:
-        return _bash_write_targets_union(command, base_cwd, git_writes)
+        current = _bash_write_targets_new(command, base_cwd, git_writes)
+        if _ssh_may_run_remote(command):
+            try:
+                current = _without_remote_targets(command, base_cwd, git_writes, current)
+            except Exception:  # noqa: BLE001 — current stays as it is, the over-blocking side
+                pass
+        return current
     finally:
         _RSYNC_ENV_NAMED = previous_named
-
-
-def _bash_write_targets_union(command: str, base_cwd: str, git_writes: frozenset) -> list[_Target]:
-    """The body of _bash_write_targets: the union of the legacy scanner's and the word lexer's targets, with
-    the texts of a remote `ssh` command and of an rsync destination on another machine taken out, as that
-    docstring says. Separate only so that _bash_write_targets can hold _RSYNC_ENV_NAMED around all of it."""
-    legacy = _legacy_targets._bash_write_targets(command, base_cwd, git_writes)
-    _RSYNC_REMOTE_TEXTS.clear()
-    try:
-        current = _bash_write_targets_new(command, base_cwd, git_writes)
-    except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
-        return legacy
-    if _ssh_may_run_remote(command):
-        try:
-            current, legacy = _without_remote_targets(command, base_cwd, git_writes, current, legacy)
-        except Exception:  # noqa: BLE001 — both halves stay as they are, the over-blocking side
-            pass
-    if _RSYNC_REMOTE_TEXTS:
-        # An rsync destination on another machine is no local file: the legacy half cannot be told, so what it
-        # made of that text is dropped - unless the lexer's half reports the same text as a local target too.
-        local_texts = {str(pair[0]) for pair in current}
-        remote_only = _RSYNC_REMOTE_TEXTS - local_texts
-        legacy = [pair for pair in legacy if str(pair[0]) not in remote_only]
-    # A target both scanners report appears once, as the lexer's word: only that one knows which of its
-    # characters were quoted (`_Word.live`). The legacy half still adds everything the lexer missed,
-    # as plain text with no such knowledge.
-    by_text: dict[tuple, list[_Target]] = {}
-    for pair in current:
-        by_text.setdefault((str(pair[0]), pair[1]), []).append(pair)
-    merged: list[_Target] = []
-    seen: set[tuple] = set()
-    for pair in legacy:
-        for candidate in by_text.get((str(pair[0]), pair[1]), [pair]):
-            key = _pair_key(candidate)
-            if key not in seen:
-                seen.add(key)
-                merged.append(candidate)
-    for pair in current:
-        key = _pair_key(pair)
-        if key not in seen:
-            seen.add(key)
-            merged.append(pair)
-    return merged
 
 
 def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget]:

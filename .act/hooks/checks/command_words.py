@@ -34,11 +34,8 @@
 # contents are recursed into like any other nested command (shell_targets.py's "Known limits" say
 # what is still approximated).
 #
-# Safety net: the public `_command_word_lists` is the union of this module's word-lexer reading
-# (`_command_word_lists_new`) and the previous reading kept verbatim in command_words_legacy.py —
-# the legacy entries first, in their own order, then whatever only the lexer found. The lexer can
-# therefore only add commands for the checks to look at, never drop one the previous reading had; if
-# it raises, the legacy list stands alone. Everything below describes the lexer's reading.
+# One reading: the public `_command_word_lists` is the word lexer's reading (`_command_word_lists_new`)
+# alone; an exception in it propagates and the calling check decides what that means.
 #
 # Contract: `_command_word_lists(command)` returns one (words, separator) pair per simple command
 # found at any recursion depth — words is that command's own argv (its own name included as
@@ -66,7 +63,7 @@
 #     mis-tokenize. `pwsh`/`powershell -Command`/`cmd /c` recursion is still recognized by name.
 #   - recursion depth is capped at shell_targets._MAX_SCAN_DEPTH, same cap and same reasoning as
 #     shell_targets.py's own write-target scanner: nothing here is unbounded. At the cap the nested
-#     text is not tokenized any further but read coarsely (command_words_legacy._coarse_word_lists:
+#     text is not tokenized any further but read coarsely (_coarse_word_lists:
 #     quote characters are blanks, every separator cuts, every word that opens a nested command starts
 #     a piece of its own): it used to be dropped, which let a command pass that only nested its
 #     `eval`/`sh -c` or a backtick span one level deeper than the cap. The cost is a false hit for
@@ -88,11 +85,6 @@ from __future__ import annotations
 
 import shlex
 from typing import Optional
-
-from . import command_words_legacy as _legacy_words
-# The coarse reading of text nested beyond the cap is shared with the legacy half: both halves must
-# fail the same way there.
-from .command_words_legacy import _coarse_word_lists
 
 from .shell_targets import (
     _join_line_continuations,
@@ -170,10 +162,44 @@ def _strip_command_prefix(words: list[str]) -> list[str]:
     return words[index:]
 
 
+_UNQUOTE = {ord(char): " " for char in "'\"\\"} | {ord("`"): ";"}  # a backtick span is a command of its own
+_NESTED_FLAG_WORDS = frozenset({"-c", "-command", "/c", "-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _coarse_word_lists(text: str) -> list[tuple[list[str], Optional[str]]]:
+    """The remainder of a command nested deeper than _MAX_SCAN_DEPTH, read without any further tokenizing
+    or recursion and without trusting a single thing in it: quote characters are blanks, a backtick is a
+    separator, the text is cut at every separator (`_SEGMENT_SPLIT_RE_FALLBACK`, keeping which one), each piece's
+    words are one command, and a piece is also read again from every word that opens a nested command
+    (`eval`, a shell's `-c`, `find -exec`) — so `eval eval rm -rf d` still yields `rm -rf d`. The checks
+    that consume the lists look at the command names and flags only, so a quoted `rm` in this text is
+    seen as a command: a false hit for a nesting depth nobody legitimately uses, never a miss."""
+    result: list[tuple[list[str], Optional[str]]] = []
+    pieces = _re.split(r"(&&|\|\||[;&|()\n])", text.translate(_UNQUOTE))
+    separator: Optional[str] = None
+    for position, piece in enumerate(pieces):
+        if position % 2:
+            separator = None if piece == "\n" else piece
+            continue
+        words = piece.split()
+        if not words:
+            continue
+        result.append((words, separator))
+        for index, word in enumerate(words[:-1]):
+            lowered = word.lower()
+            if (
+                _command_name(word) in ("eval", "iex", "invoke-expression")
+                or lowered in _NESTED_FLAG_WORDS
+                or (lowered.startswith("-") and not lowered.startswith("--") and "c" in lowered[1:])
+            ):
+                result.append((words[index + 1:], None))
+    return result
+
+
 def _nested_word_lists(text: str, depth: int) -> list[tuple[list[str], Optional[str]]]:
     """The commands of a nested command text found at nesting `depth`: scanned one level further down
     by the word lexer, or — at _MAX_SCAN_DEPTH, where the previous code stopped looking and let the
-    rest pass — read coarsely (command_words_legacy._coarse_word_lists), which fails toward seeing
+    rest pass — read coarsely (_coarse_word_lists), which fails toward seeing
     too much."""
     if depth >= _MAX_SCAN_DEPTH:
         return _coarse_word_lists(text)
@@ -303,15 +329,14 @@ def _piped_script_texts(previous: list[str], words: list[str]) -> list[str]:
 
 
 def _command_word_lists_new(
-    command: str, depth: int = 0, quoted_text: Optional[list[tuple[str, int]]] = None,
+    command: str, depth: int = 0, print_only_text: bool = False,
 ) -> list[tuple[list[str], Optional[str]]]:
-    """The word lexer's half of _command_word_lists: every simple command in `command`, as (argv,
-    preceding-separator) pairs — see this module's docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
+    """Every simple command in `command`, as (argv, preceding-separator) pairs — see this module's
+    docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
     `pwsh|powershell -Command ...`, `cmd /c ...`, `eval ...`, `$(...)`, `` `...` `` and
-    `find ... -exec ... ;|+`. The text behind a single-quoted `$(` of an `echo` or `printf` on a top-level
-    command line that prints and does nothing else (_print_only_line) is not read as commands; with
-    `quoted_text` given, each such (text, depth) is appended to it, so that _command_word_lists can drop the
-    entries the previous scanner made of it."""
+    `find ... -exec ... ;|+`. With `print_only_text`, the text behind a single-quoted `$(` of an `echo` or
+    `printf` on a top-level command line that prints and does nothing else (_print_only_line) is not read
+    as commands."""
     command = _join_line_continuations(command)
     tokens = None
     for attempt in (lambda: _line_mode_tokens(command), lambda: _shell_tokens(command, True)):
@@ -361,7 +386,7 @@ def _command_word_lists_new(
     # Only the top-level command line, and only when the whole of it prints and does nothing else, keeps a
     # single-quoted `$(` as text (_print_only_line); judged once for the line, since every command on such a
     # line is a printing one.
-    print_only = quoted_text is not None and depth == 0 and _print_only_line(tokens, pairs)
+    print_only = print_only_text and depth == 0 and _print_only_line(tokens, pairs)
 
     result: list[tuple[list[str], Optional[str]]] = []
     for pair_index, (words, sep, redirected, plain) in enumerate(pairs):
@@ -376,7 +401,6 @@ def _command_word_lists_new(
         for word in words:
             if "$(" in word:
                 if print_only and _is_quoted_text_substitution(word):
-                    quoted_text.append((word[word.index("$(") + 2:], depth))
                     continue
                 nested.append(word[word.index("$(") + 2:])
         for word in words:
@@ -454,53 +478,11 @@ def _command_word_lists_new(
     return result
 
 
-def _word_key(words: list[str]) -> tuple:
-    """What makes two word lists the same for _command_word_lists' union: the words' text AND the
-    lexer facts a plain `str` lacks (`bare`, `subs`), so an entry the lexer annotated is never
-    dropped as a duplicate of the legacy entry with the same text."""
-    key = []
-    for word in words:
-        bare = getattr(word, "bare", None)
-        key.append((str(word), None if bare == word else bare, getattr(word, "subs", None) or None))
-    return tuple(key)
-
-
 def _command_word_lists(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
     """Every simple command in `command`, as (argv, preceding-separator) pairs — the contract and
-    known limits are in this module's docstring.
-
-    The result is the UNION of command_words_legacy's (the previous scanner, kept verbatim: its
-    entries come first and in its own order, so anything that reads a position — the first command,
-    a pipeline neighbour — sees what it always saw) and the word lexer's (_command_word_lists_new),
-    whose entries not already present follow. The union is what keeps the lexer from ever weakening
-    a check: whatever the previous scanner found is still found. An exception in the lexer's half
-    — ValueError, RecursionError, a bug — is swallowed and the legacy half returned alone; one in
-    the legacy half propagates, exactly as it did before the lexer existed."""
-    legacy = _legacy_words._command_word_lists(command, depth)
-    quoted_text: list[tuple[str, int]] = []
-    try:
-        current = _command_word_lists_new(command, depth, quoted_text)
-    except Exception:  # noqa: BLE001 — the legacy half stands alone, see the docstring
-        return legacy
-    if quoted_text:
-        # The one place the union drops a legacy entry: what the previous scanner read out of a single-quoted
-        # `$(` of a printing command (`echo $'$(git config ...)'`), which the lexer knows to be text. Only an
-        # entry the lexer's own reading does not have as well.
-        kept = {(_word_key(words), sep) for words, sep in current}
-        dropped = {
-            (_word_key(words), sep)
-            for text, text_depth in quoted_text
-            for words, sep in _legacy_words._nested_word_lists(text, text_depth)
-        } - kept
-        legacy = [entry for entry in legacy if (_word_key(entry[0]), entry[1]) not in dropped]
-    merged = list(legacy)
-    seen = {(_word_key(words), sep) for words, sep in legacy}
-    for words, sep in current:
-        key = (_word_key(words), sep)
-        if key not in seen:
-            seen.add(key)
-            merged.append((words, sep))
-    return merged
+    known limits are in this module's docstring. One reading, the word lexer's, with the text of a
+    single-quoted `$(` of a printing command left alone (_command_word_lists_new)."""
+    return _command_word_lists_new(command, depth, print_only_text=True)
 
 
 def _stripped_word_lists(command: str) -> list[list[str]]:

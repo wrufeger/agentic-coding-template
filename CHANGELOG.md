@@ -307,6 +307,12 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Removed
 
+- The two older shell scanners next to the new one (`hooks/checks/shell_targets_legacy.py`,
+  `hooks/checks/command_words_legacy.py`, together 1 541 lines): a Bash command is read once, by the word lexer.
+  The checks that look at a command's write targets, command words or `git commit` calls (write guard, worker write
+  scope, recursive delete, commit path spec, secret scan, worker git writes) block on that one reading, and there
+  is no second parser to keep in step. A single-quoted backtick or `$(` that is only text
+  (``git commit -m 'fix `rm x` bar'``) no longer blocks.
 - The config key `done-entries` (`delete` | `keep`): every project behaves as `keep` did; a row left in
   `docs/ai/config.md` is ignored.
 - `entries.py purge` is retired: it prints `entries: purge is retired - archived entries stay until act-compact folds
@@ -318,6 +324,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 - `git-discard` no longer refuses a listing-only `git branch` (`--show-current`, `--list`, `-a`, `-v` …) whose
   `-C` target is a variable.
+- The shell reading follows bash more closely where the older scanner used to catch what it missed: inside
+  `"$(...)"` a `#` comment holding an apostrophe and a heredoc body holding an apostrophe (with `<<`, `<<-`, quoted
+  or unquoted delimiter) no longer open a quote that hides a following write, and a quoted bracket inside `$[ ... ]`
+  no longer swallows the rest of the command. A write to `.act/` after such a construct is refused as before.
 - `git restore <file>` and `git checkout -- <file>` of a tracked file that was deleted in the work tree are no
   longer refused by `git-discard`: git must know the path as exactly one tracked file (also read
   case-insensitively); a deleted folder, a pattern, `:(…)` magic, a trailing `/` and an unknown path are judged
