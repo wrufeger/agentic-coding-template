@@ -60,7 +60,7 @@ summary: an addition that fits a running worker goes to it; stop and reassign if
 
 An addition from the human that concerns a running worker's assignment goes to that worker at once,
 where the tool can message a running worker. If it changes the assignment so far that one new run
-costs less than finishing the current one and starting a second, stop it and assign anew (`TaskStop`),
+costs less than finishing the current one and starting a second, stop it and assign anew,
 passing on what it found. Only an addition that does not touch the running assignment waits and
 becomes its own assignment. One that needs a wider `Write scope:` or a higher `Cap:` always means
 stop and reassign: both are read once, at the start.

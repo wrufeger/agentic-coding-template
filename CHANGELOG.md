@@ -347,6 +347,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   key. Other projects keep the i18next namespace reading; `--no-namespace` forces the merge by hand. The code scan
   also no longer skips the scan root itself when `--root` points at a folder named like a locale folder (`i18n`,
   `locales`, ...).
+- `worker-cap`: the default cap without a `Cap:` line now follows the role's tier including an override in
+  `docs/ai/config.md` § Roles (e.g. `builder | high` gives 80); an unknown `Tier:` word falls back to the role's
+  default instead of 40. `entries.py new --triage` with `--status answered|done` is refused (`triage:` means the
+  entry still needs processing). The cost rule on amending a running worker no longer names a Claude Code tool.
 - `write-guard` no longer refuses ordinary inline Python whose write targets the text shows: a loop over a list or
   tuple of literals (also `for name, ans in [("a", "b"), ...]`), a path or glob pattern built from its variable,
   `next(<glob on a literal folder>)`, the path parameter of a function used only as `onerror=` / `onexc=` of

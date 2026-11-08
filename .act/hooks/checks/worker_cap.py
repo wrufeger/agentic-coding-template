@@ -8,8 +8,9 @@
 # — this module is that check. Without a `Cap:` line, the cap falls back to the default for the
 # tier named in a `Tier: <tier>` line (`light` 10, `standard` 40, `elevated` 60, `high`/`expert`
 # 80); without a `Tier:` line, to the default for the worker's role (_ROLE_TIERS: `quick-check`
-# `light`, `reviewer` `elevated`, `expert-solver` `expert`, every other role `standard`); with
-# neither, `standard` (40). See _parse_cap_and_tier.
+# `light`, `reviewer` `elevated`, `expert-solver` `expert`, every other role `standard`, replaced by
+# the tier docs/ai/config.md § Roles sets for the role); an unknown `Tier:` word also falls back to
+# the role's default; with neither, `standard` (40). See _parse_cap_and_tier.
 #
 # Binding a worker's tool call back to the cap its assignment named reuses the same mechanism as
 # write_scope.py (see that module's docstring for the full rationale: meta.json's "toolUseId"
@@ -181,12 +182,24 @@ _LOCK_STALE_SECONDS = 10.0
 
 
 def _role_tier(role: object) -> str:
-    """The default tier of a role name ("plugin:builder-high" -> "standard"); an unknown or
-    missing role gets the standard tier."""
+    """The default tier of a role name ("plugin:builder-high" -> "standard"): the tier the project's
+    docs/ai/config.md § Roles gives the role (the source the role bridges' `tier:` comes from),
+    else the built-in table; an unknown or missing role gets the standard tier. An unreadable
+    config keeps the built-in default."""
     name = role.split(":", 1)[-1].strip().lower() if isinstance(role, str) else ""
     if name.endswith("-high"):
         name = name[: -len("-high")]
-    return _ROLE_TIERS.get(name, _DEFAULT_TIER)
+    default = _ROLE_TIERS.get(name, _DEFAULT_TIER)
+    if not name:
+        return default
+    try:
+        import tiers  # .act/scripts/ is on sys.path, as for actlib
+
+        override = tiers.read_role_overrides(actlib.repo_root()).get(name, {}).get("tier", "")
+    except Exception:  # noqa: BLE001 — fail safe: keep today's default
+        return default
+    base = override.strip().lower().split("-", 1)[0]
+    return base if base in _TIER_DEFAULT_CAPS else default
 
 
 def _parse_cap_and_tier(prompt: str, role: object = None) -> int:
@@ -194,7 +207,7 @@ def _parse_cap_and_tier(prompt: str, role: object = None) -> int:
     otherwise the default for the tier a `Tier: <tier>` line names (a "-high"/... suffix on the
     tier word, e.g. "standard-high", is stripped before the lookup — it selects a reasoning
     variant of the role, not a different cap); with no `Tier:` line, the default for the tier of
-    `role` (_role_tier); with neither, or an unrecognized tier word, the standard default."""
+    `role` (_role_tier); with neither, or an unrecognized tier word, that same role default."""
     cap_match = _CAP_LINE_RE.search(prompt)
     if cap_match:
         try:
@@ -207,7 +220,9 @@ def _parse_cap_and_tier(prompt: str, role: object = None) -> int:
     if not tier_match:
         return _TIER_DEFAULT_CAPS[_role_tier(role)]
     tier_base = tier_match.group(1).strip().lower().split("-", 1)[0]
-    return _TIER_DEFAULT_CAPS.get(tier_base, _DEFAULT_CAP)
+    if tier_base in _TIER_DEFAULT_CAPS:
+        return _TIER_DEFAULT_CAPS[tier_base]
+    return _TIER_DEFAULT_CAPS[_role_tier(role)]
 
 
 def _worker_caps_dir(root: Path) -> Path:

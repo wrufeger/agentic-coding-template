@@ -948,6 +948,9 @@ def cmd_new(
     problems = validate_entry(root, kind, title, entry_id, formerly, status, recipient)
     if triage and kind not in ("todo", "note"):
         problems.append("--triage: only a todo or note entry takes it (a captured chat message)")
+    if triage and status in ("answered", "done"):
+        problems.append(f"--triage with --status {status}: `triage:` means the assistant still has to "
+                        "process the entry, so it cannot be filed as already handled")
     body = ""
     if body_file is not None:
         try:

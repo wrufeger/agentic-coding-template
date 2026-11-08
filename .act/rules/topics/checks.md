@@ -216,7 +216,8 @@ a compact header works too (`Write scope:` and `Tests:` are read only at the sta
 out falls back to the default of the tier a `Tier:` line names (`light` 10, `standard` 40, `elevated`
 60, `high`/`expert` 80), else of the worker's role: `quick-check` `light`, `reviewer` `elevated`,
 `expert-solver` `expert`, every other role (`builder`, `explorer`, `doc-writer` …) `standard`; a `-high`
-variant counts as its base role. With neither, `standard`.
+variant counts as its base role. A tier set for the role in `docs/ai/config.md` § Roles replaces that
+role default, and an unknown `Tier:` word falls back to the role default too. With neither, `standard`.
 
 The worker gets one note on reaching the cap ("cap reached — deliver your current state now") and is
 refused from 1.5× the cap onward — wrap up and report rather than push past it.
