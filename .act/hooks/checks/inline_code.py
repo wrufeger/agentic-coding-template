@@ -89,14 +89,13 @@ import shlex
 import sys
 import unicodedata
 from pathlib import PurePosixPath, PureWindowsPath
-from typing import Callable, NamedTuple, Optional
+from typing import NamedTuple, Optional
 
 from .common import _unplaced_target
 
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
-    "interpreter_language", "code_source", "code_source_at", "write_paths", "write_targets", "path_literals",
-    "has_write_call",
+    "interpreter_language", "code_source", "code_source_at", "write_paths", "write_targets",
     "mentions_interpreter", "report_skipped", "ReaderFailure",
     "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
@@ -608,21 +607,6 @@ def _path_candidate(literal: _Literal) -> Optional[str]:
 
 def _scan(language: str, code: str) -> tuple[list[_Literal], str]:
     return _python_scan(code) if language == PYTHON else _javascript_scan(code)
-
-
-def has_write_call(language: str, code: str) -> bool:
-    """True if `code` contains a write call of its language (see the header)."""
-    return _skeleton_has_write_call(language, _scan(language, code)[1])
-
-
-def path_literals(language: str, code: str) -> list[str]:
-    """Every path literal of `code` (see the header), in source order, each once."""
-    found: dict[str, None] = {}
-    for literal in _scan(language, code)[0]:
-        candidate = _path_candidate(literal)
-        if candidate is not None:
-            found[candidate] = None
-    return list(found)
 
 
 # Windows command-line tools whose switches start with a slash (`icacls d /deny x`, `robocopy a b /MIR`,

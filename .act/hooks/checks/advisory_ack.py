@@ -19,10 +19,8 @@ from typing import Optional
 
 from .common import _is_harness_message
 
-__all__ = ["START_RE", "match_acknowledgement", "handle"]
+__all__ = ["match_acknowledgement", "handle"]
 
-# The cheap start test dispatch.py applies to the raw prompt before it imports this module (same pattern).
-START_RE = re.compile(r"\s*(?:warnung|hinweis|warning|notice)\s", re.IGNORECASE)
 _PHRASES = ("warnung akzeptiert", "warnung quittiert", "hinweis gelesen",
             "warning accepted", "warning acknowledged", "notice read")
 _ID = r"A[1-9][0-9]{0,3}"

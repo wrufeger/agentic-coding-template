@@ -56,8 +56,10 @@
 #     (.claude/agents/<type>.md, else ~/.claude/agents/<type>.md) says `omitClaudeMd: true`; any other agent loads
 #     CLAUDE.md itself. Claude Code moves a hook string over 10,000 characters into a file, hence the parts (at file
 #     boundaries, a long file at `## ` headings); parts beyond the twelfth are not delivered, entry 12 names their
-#     source files in one line instead (this script and doctor.py warn). Limits: Claude Code before 2.1.271 ignores
-#     `omitClaudeMd`, so the worker gets the rules twice (costs tokens only); without Python 3.9+ the hook prints
+#     source files in one line instead (this script and doctor.py warn). The rest of docs/ai/rules.md stays as it is,
+#     and a rule the project switched off (unchecked, or its import removed) stays off for the worker too.
+#     Limits: Claude Code before 2.1.271 ignores `omitClaudeMd`, so the worker gets the rules twice (costs
+#     tokens only); without Python 3.9+ the hook prints
 #     nothing and the mechanical checks are inactive too; on any exception the first entry prints one fixed sentence
 #     telling the worker to read CLAUDE.md, docs/ai/rules.md and the shared rule files itself, and the hook never
 #     exits non-zero; CLAUDE.md files in parent folders and .claude/rules/ are not assembled. Off: remove

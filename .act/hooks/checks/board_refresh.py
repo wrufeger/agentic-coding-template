@@ -54,7 +54,7 @@ from .common import _check_mode, _is_worker, _shell_command
 from .worker_git_write import _parse_git_invocation, _resolve_dash_c_chain
 
 __all__ = [
-    "_REFRESH_SUBCOMMANDS", "_BOARD_TIMEOUT_SECONDS", "_command_changes_tree", "_find_project_root",
+    "_REFRESH_SUBCOMMANDS", "_BOARD_TIMEOUT_SECONDS", "_command_changes_tree",
     "_own_project_root", "_targets_own_project", "_target_dirs", "observe",
 ]
 
@@ -80,18 +80,6 @@ def _command_changes_tree(command: str, tool_name: str = "Bash") -> "list[list[s
             if action in _STASH_REFRESH_ACTIONS:
                 found.append(dash_c_dirs)
     return found
-
-
-def _find_project_root(start: Path) -> Optional[Path]:
-    """The nearest directory at or above `start` that holds docs/ai/config.md, else None."""
-    try:
-        current = start.resolve()
-    except (OSError, ValueError):
-        return None
-    for candidate in (current, *current.parents):
-        if (candidate / "docs" / "ai" / "config.md").is_file():
-            return candidate
-    return None
 
 
 def _own_project_root() -> Optional[Path]:

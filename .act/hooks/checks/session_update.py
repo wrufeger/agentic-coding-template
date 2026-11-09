@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 import threading
-from datetime import date
 from pathlib import Path
 from typing import Optional
 

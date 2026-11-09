@@ -93,7 +93,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 import time
@@ -108,7 +107,7 @@ from .state_files import write_json_atomic
 
 __all__ = [
     "session_line", "observe", "is_feedback_due",
-    "_eval_when", "_is_older_than", "_load_tips", "_read_reminders",
+    "_eval_when", "_load_tips", "_read_reminders",
     "_read_state", "_write_state", "_due_tip", "_due_reminder", "_prompt_reminder_line",
 ]
 
@@ -276,10 +275,6 @@ def _path_older_verdict(root: Path, path_str: str, months: int) -> Optional[bool
     last_touched = commit_time if commit_time is not None else mtime
     age_days = (time.time() - last_touched) / 86400.0
     return age_days > months * 30  # stdlib-only approximation, documented in this module's header
-
-
-def _is_older_than(root: Path, path_str: str, months: int) -> bool:
-    return bool(_path_older_verdict(root, path_str, months))
 
 
 def _eval_when(root: Path, config: dict, condition: str) -> bool:

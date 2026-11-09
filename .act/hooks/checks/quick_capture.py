@@ -8,7 +8,7 @@
 #            idea: -> new `## <title>` section at the end of docs/ai/concept/ideas-<identity>.md
 #          Every further line that starts with a prefix opens another entry; lines in between belong
 #          to the entry above. Text before the first prefix means: no capture, the message goes on
-#          to the model unchanged. dispatch.py checks the cheap prefix pattern (PREFIX_START_RE) on
+#          to the model unchanged. dispatch.py checks a cheap prefix pattern on
 #          the raw prompt before it imports this module, so a normal prompt never pays for it.
 #
 #          capture() returns the text for the hook's {"decision": "block", "reason": ...} answer, or
@@ -27,10 +27,8 @@ from typing import Optional
 
 from .common import _is_harness_message
 
-__all__ = ["PREFIX_START_RE", "parse_entries", "short_title", "capture"]
+__all__ = ["parse_entries", "short_title", "capture"]
 
-# Cheap test dispatch.py applies to the raw prompt: the first non-blank line starts with a prefix.
-PREFIX_START_RE = re.compile(r"\s*(?:todo|note|idea):", re.IGNORECASE)
 _LINE_PREFIX_RE = re.compile(r"[ \t]*(todo|note|idea):[ \t]*", re.IGNORECASE)
 _TITLE_WIDTH = 60
 # Seconds to wait for entries.lock per entry: the hook's own limit is 10 s for the whole message.
