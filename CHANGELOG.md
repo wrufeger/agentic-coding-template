@@ -511,6 +511,22 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   in the command makes relative folders unknown. A project wide rename in any of these forms could change the
   template's own files without anything reporting it. Lists the guard does not follow (a variable filled by an
   assignment, a `Get-Content` list file in PowerShell) are judged as before.
+- `write-guard` also follows the remaining ways a list over the project root reached a write: a `mapfile` or
+  `readarray` array (`mapfile -t a < <(grep -rl x .); sed -i ... "${a[@]}"`, also a loop over `"${a[@]}"`), a pipe at
+  the end of a line (`grep -rl x . |` and `while read -r f; do ...` on the next line, also for `xargs`), `find ...
+  -delete` with a folder that is not fixed (`find . -name '*.pyc' -delete`; another check refuses recursive deletes
+  too, this one holds the line when that switch is off), and in PowerShell `Get-Item` as a list (`Get-Item * |
+  Remove-Item`), the methods of an item (`$_.Delete()`, `MoveTo`, `CopyTo`, `Create`) and `[IO.File]`/`[IO.Directory]`
+  calls with the item's path (`gci -r | % { [IO.File]::WriteAllText($_.FullName, 'x') }`). They pass only when the list
+  names fixed folders that are not the project root or `.act`, like the other lists. `[IO.File]::Delete`,
+  `CreateText`, `AppendText`, `OpenWrite` and `[IO.Directory]::Delete`, `CreateDirectory`, `Move` with a literal path
+  under `.act` are now read as writes by every check that reads write targets.
+- The write checks no longer take a `mkdir` or `New-Item -ItemType Directory` for sure on a name an earlier command of
+  the same line made a file at (`mv a.txt out; mkdir out; cd out; touch .act/x`, `Set-Content out x; mkdir out`):
+  the `cd` after the failing `mkdir` stays where it was, so a write after it is also placed there. A name that was only
+  removed or the source of a move still counts as made again.
+- `uniq <input> -` no longer counts `-` as an output file (it is the standard output), so a worker's write scope no
+  longer refuses it.
 - `sort -o <file>` (also `-uo`, `--output=`) and the output operand of `uniq <input> <output>` are read as writes to
   that file, by every check that reads write targets (the template's own files, a worker's write scope, outside root).
   `seq` with plain numbers counts as a list that names no file, so `for i in $(seq 1 3); do touch f$i; done` stays free.

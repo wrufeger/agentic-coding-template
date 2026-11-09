@@ -58,7 +58,8 @@
 #   - Remove-Item/rm/del/ri/rd/rmdir/erase (every -Path/-LiteralPath value plus every positional);
 #   - Expand-Archive (-DestinationPath); Invoke-WebRequest/iwr (-OutFile);
 #   - [System.IO.File]/[IO.File]/[global::System.IO.File]::WriteAllText/WriteAllLines/
-#     AppendAllText/AppendAllLines/WriteAllBytes/Copy/Move/Create(...) (1st argument), and
+#     AppendAllText/AppendAllLines/WriteAllBytes/CreateText/AppendText/OpenWrite/Create/Delete(...) (1st argument),
+#     File::Copy/Move and Directory::Move (2nd argument), Directory::Delete/CreateDirectory (1st argument), and
 #     [...IO.StreamWriter]::new(...) (1st argument) — matched against the statement's words
 #     rejoined with a single space each, so whitespace right after the opening "(" does not split
 #     the match across two words;
@@ -335,14 +336,24 @@ _BROAD_SKIP_KINDS = frozenset({"destination2nd", "robocopy", "perl_inplace"})
 
 _IO_FILE_WRITE_RE = re.compile(
     r"\[(?:global::)?(?:System\.)?IO\.File\]::"
-    r"(?:WriteAllText|WriteAllLines|AppendAllText|AppendAllLines|WriteAllBytes|Create)"
+    r"(?:WriteAllText|WriteAllLines|AppendAllText|AppendAllLines|WriteAllBytes|CreateText|AppendText|OpenWrite|Create|Delete)"
     r"\(\s*([^,)]+)",
     re.IGNORECASE,
 )
-# File.Copy(sourceFileName, destFileName)/File.Move(...): the *2nd* argument is the target, unlike
+# Directory.Delete(path[, recursive])/Directory.CreateDirectory(path): the 1st argument.
+_IO_DIRECTORY_WRITE_RE = re.compile(
+    r"\[(?:global::)?(?:System\.)?IO\.Directory\]::(?:Delete|CreateDirectory)\(\s*([^,)]+)",
+    re.IGNORECASE,
+)
+# File.Copy(sourceFileName, destFileName)/File.Move(...) and Directory.Move: the *2nd* argument is the target, unlike
 # every other File method above (1st argument) — a separate pattern, not a shared capture group.
+# File.Move and Directory.Move also take the 1st argument away (the source), like Move-Item.
+_IO_MOVE_SOURCE_RE = re.compile(
+    r"\[(?:global::)?(?:System\.)?IO\.(?:File|Directory)\]::Move\(\s*([^,)]+)",
+    re.IGNORECASE,
+)
 _IO_FILE_COPY_MOVE_RE = re.compile(
-    r"\[(?:global::)?(?:System\.)?IO\.File\]::(?:Copy|Move)\(\s*[^,]+,\s*([^,)]+)",
+    r"\[(?:global::)?(?:System\.)?IO\.(?:File\]::(?:Copy|Move)|Directory\]::Move)\(\s*[^,]+,\s*([^,)]+)",
     re.IGNORECASE,
 )
 _IO_STREAMWRITER_RE = re.compile(
@@ -981,6 +992,7 @@ def _add_resolved_pairs(
         if tracked.capped and not _is_dynamic_target(text) and not _is_absolute_target(text):
             found.add(_unplaced_target(_LOST_DIRECTORY))
     tracked.note_written(found)
+    tracked.note_filed(found)
     result.update(found)
 
 
@@ -1103,6 +1115,7 @@ class _TrackedDirs:
     budget: _ScanBudget = field(default_factory=_ScanBudget, compare=False, repr=False)
     created: set[str] = field(default_factory=set, compare=False, repr=False)
     recreated: set[str] = field(default_factory=set, compare=False, repr=False)  # created again after a target
+    filed: set[str] = field(default_factory=set, compare=False, repr=False)  # places a command may have made a file at
 
     @classmethod
     def start(cls, base_cwd: str) -> "_TrackedDirs":
@@ -1152,6 +1165,7 @@ class _TrackedDirs:
         return _TrackedDirs(
             followed, merged, self.seen | merged, confirmed_dirs, capped,
             self.known, self.moves, self.written, self.resolved, self.budget, self.created, self.recreated,
+            self.filed,
         )
 
     def note_written(self, targets: Iterable[str]) -> None:
@@ -1169,7 +1183,17 @@ class _TrackedDirs:
         named before (a removal, a move) is made again then: it exists (is_written leaves it out)."""
         made = _creation_keys(list(raws), parents, self.possible, self.is_created, _to_native_path)
         self.created.update(made)
-        self.recreated.update(key for key in made if key in self.written)
+        # A place a command made a file at (a move or copy to it, a redirection, `Set-Content`) is not made again:
+        # the creation fails there and a move after it stays where it was.
+        self.recreated.update(key for key in made if key in self.written and key not in self.filed)
+
+    def note_filed(self, targets: Iterable[str], removal: bool = False) -> None:
+        """The absolute `targets` of one statement: places it may have made a file at, or (`removal`) took away, so
+        that an earlier file there no longer stands in the way of a creation."""
+        for target in targets:
+            key = _place_key(target)
+            if key is not None:
+                self.filed.discard(key) if removal else self.filed.add(key)
 
     def is_created(self, directory: str) -> bool:
         """True when `directory` (an absolute native path) is a place a creation noted (note_created) makes, or a
@@ -1267,7 +1291,9 @@ def _flush_ps_statement(
     See the module docstring for which cmdlets/constructs are recognized, and for what `broad`/`depth` do."""
     cwds = tracked.possible
     for raw in redirect_targets:
-        result.update(_resolve_ps_targets(raw, tracked))
+        resolved_targets = _resolve_ps_targets(raw, tracked)
+        result.update(resolved_targets)
+        tracked.note_filed(resolved_targets)
     words, assigned_candidates = _strip_program_assignment(_strip_literal_call(words))
     if words:
         name = _ps_command_name(words[0])
@@ -1317,11 +1343,16 @@ def _flush_ps_statement(
                     result.update(_resolve_ps_targets(raw, tracked))
         else:
             creation = _ps_directory_creation(name, args)
+            kind = _ALIASES.get(name)
+            destination = _target_destination(*_ps_split_args(args)) if kind == "move" else None
             for raw in _cmdlet_targets(name, args):
                 if creation is not None and raw in creation[0]:
                     result.update(_resolve_ps_targets(raw, tracked, note=False))  # making a directory takes nothing away
                 else:
-                    result.update(_resolve_ps_targets(raw, tracked))
+                    resolved_targets = _resolve_ps_targets(raw, tracked)
+                    result.update(resolved_targets)
+                    # What the statement may have made a file at, and what it took away (a move takes its sources).
+                    tracked.note_filed(resolved_targets, removal=kind == "all_operands" or (kind == "move" and raw != destination))
             if creation is not None and creation_certain:
                 tracked.note_created(creation[0], creation[1])
         if broad:
@@ -1330,7 +1361,8 @@ def _flush_ps_statement(
                 if candidate and not _ps_is_ignorable(candidate):
                     result.add(candidate)
     joined = " ".join(words + redirect_targets)
-    for pattern in (_IO_FILE_WRITE_RE, _IO_FILE_COPY_MOVE_RE, _IO_STREAMWRITER_RE):
+    for pattern in (_IO_FILE_WRITE_RE, _IO_DIRECTORY_WRITE_RE, _IO_FILE_COPY_MOVE_RE, _IO_MOVE_SOURCE_RE,
+                    _IO_STREAMWRITER_RE):
         for match in pattern.finditer(joined):
             result.update(_resolve_ps_targets(match.group(1).strip(), tracked))
 

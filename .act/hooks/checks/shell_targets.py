@@ -2348,6 +2348,8 @@ _CREATED_DIR_RE = re.compile(r"^[\w./: ()+@,-]+$")
 # Words that open a construct whose body may not run, run twice or run elsewhere (loops, `if`, `case`, a function
 # body, a `{ ...; }` group): a `mkdir` in a command that has one of them is never taken as certain.
 _CREATION_UNSAFE_WORDS = frozenset({"for", "while", "until", "if", "case", "select", "function", "{", "}"})
+# Commands whose targets are only taken away (a place named by one is free for a `mkdir` again).
+_REMOVERS = frozenset({"rm", "unlink", "shred"})  # not `rmdir`: it fails on a file and takes nothing away
 
 
 def _mkdir_creation(words: list) -> Optional[tuple[list[str], bool]]:
@@ -2481,6 +2483,7 @@ class _WrittenPlaces:
         self._ignored: set[int] = set()  # positions in `found` that only create directories
         self._created: set[str] = set()  # the places a certain `mkdir` makes (note_created)
         self._recreated: set[str] = set()  # of those, the ones a target named before (made again after it)
+        self._filed: set[str] = set()  # the places a command may have made a file at and nothing took away (note_filed)
 
     def _absorb(self, found: list[_Target]) -> None:
         """Read the targets of `found` not read yet; a target that names a place again takes back that it was
@@ -2526,7 +2529,17 @@ class _WrittenPlaces:
         self._absorb(found)
         made = _creation_keys(operands, parents, bases, self.created_at, _to_native_path)
         self._created.update(made)
-        self._recreated.update(key for key in made if key in self._keys)
+        # A place a command made a file at (a move or copy to it, a redirection, `touch`) is not made again: the
+        # `mkdir` fails there and a `cd` after it stays where it was.
+        self._recreated.update(key for key in made if key in self._keys and key not in self._filed)
+
+    def note_filed(self, targets: list[_Target], removal: bool) -> None:
+        """The `targets` of one command: the places it may have made a file at, or (`removal`) took away, so that
+        an earlier file there no longer stands in the way of a `mkdir`."""
+        for raw, base in targets:
+            key = _written_key(str(raw), base)
+            if key is not None:
+                self._filed.discard(key) if removal else self._filed.add(key)
 
     def created_at(self, directory: str) -> bool:
         """True when `directory` (an absolute native path) is a place a `mkdir` made, or a parent of one."""
@@ -3101,7 +3114,8 @@ def _simple_command_targets(
     elif name == "sort":
         raw_targets = _sort_output_targets(args)
     elif name == "uniq":
-        raw_targets = _operands(args, _UNIQ_VALUE_FLAGS)[0][1:2]  # `uniq [INPUT [OUTPUT]]`
+        # `uniq [INPUT [OUTPUT]]`; an OUTPUT of `-` is the standard output, no file
+        raw_targets = [operand for operand in _operands(args, _UNIQ_VALUE_FLAGS)[0][1:2] if operand != "-"]
     elif name == "tar":
         # Only the explicit-directory case is worth the cheap detection here — `tar -x`
         # into the implicit current directory is still invisible (see the module's Known limits).
@@ -3964,8 +3978,13 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             index += 2 if has_word else 1
             continue
 
+        if (not at_end and text == "\n" and prev_sep in _PIPE_OPS
+                and not (words or redirect_targets or other_redirect_words)):
+            index += 1  # a pipe at the end of a line goes on in the next one: its stage and what it carries stay
+            continue
         separator = None if at_end else text
         produced: Optional[str] = None
+        statement_start = len(found)
         if words or redirect_targets or other_redirect_words:
             found.extend(_pairs(redirect_targets, bases))
             remote_start = _ssh_remote_start(words) if _SSH_REMOTE_IS_REMOTE else None
@@ -4008,7 +4027,19 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             before = len(found)
             found.extend(targets)
             creation = _mkdir_creation(words)
-            if creation is not None:
+            if creation is None:
+                # What this statement may have made a file at, and what it removed (a `mv` removes its sources).
+                command = os.path.basename(str(words[0])) if words else ""
+                made = found[before:]
+                written.note_filed(found[statement_start:before], removal=False)
+                if command in _REMOVERS and not {"--help", "--version"} & set(map(str, words)):
+                    written.note_filed(made, removal=True)
+                elif command == "mv":
+                    written.note_filed(made[:-1], removal=True)
+                    written.note_filed(made[-1:], removal=False)
+                else:
+                    written.note_filed(made, removal=False)
+            else:
                 written.ignore(before, len(found))  # making a directory takes nothing away
                 if (
                     creation_stream_ok and not saved and prev_sep not in _PIPE_OPS and separator not in _PIPE_OPS

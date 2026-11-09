@@ -128,10 +128,11 @@ def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:
 # allow-list of list commands, each with the operands it may take.
 _LIST_MESSAGE = (
     "[act] write-guard refused -- this write takes its files from a list (an xargs input, $(...) or backticks, a "
-    "loop or read variable, the hits of find -exec, a PowerShell pipeline) whose source does not name the folders "
-    "it reads, so .act/ (the template's own files, replaced on update) may be among them. Name the folders in the "
-    "list command (`grep -rl x docs src | xargs sed -i ...`, `for f in $(find docs -name '*.md'); do ...`, "
-    "`find docs -exec ...`, `Get-ChildItem docs -Recurse | Remove-Item`): a list over the project root, `.`, "
+    "loop, read or mapfile variable, the hits of find -exec or find -delete, a PowerShell pipeline) whose source "
+    "does not name the folders it reads, so .act/ (the template's own files, replaced on update) may be among them. "
+    "Name the folders in the list command (`grep -rl x docs src | xargs sed -i ...`, `for f in $(find docs -name "
+    "'*.md'); do ...`, `find docs -exec ...`, `find docs -delete`, `Get-ChildItem docs -Recurse | Remove-Item`): a "
+    "list over the project root, `.`, "
     "`..`, `git ls-files` or a list file cannot be vouched for, and a list cannot leave .act/ out. A change to a "
     "file of .act/ goes to docs/ai/local/<same path>."
 )
@@ -465,7 +466,23 @@ def _bash_targets_protected_path(
                 message = _find_run_refusal(run, source, command, base_cwd, root)
                 if message is not None:
                     return message
+            if _find_deletes(words) and not (
+                source and _source_is_shown(source, _command_base(command, base_cwd), root)
+            ):
+                return _LIST_MESSAGE  # `find . -delete` removes whatever it visits, and its folders are not fixed
     return None
+
+
+# The find primaries whose next word is a pattern or a name, not an action (`-name -delete`).
+_FIND_VALUE_PRIMARIES = frozenset({
+    "-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-lname", "-ilname",
+    "-newer", "-user", "-group", "-type", "-xtype", "-perm", "-size", "-links", "-inum", "-samefile",
+})
+
+
+def _find_deletes(words: list[str]) -> bool:
+    """True when the words of a `find` stage hold the `-delete` action."""
+    return any(word == "-delete" and words[index - 1] not in _FIND_VALUE_PRIMARIES for index, word in enumerate(words) if index)
 
 
 def _judge_target(

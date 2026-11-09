@@ -134,7 +134,9 @@ a `-c`/`-e` interpreter argument opens for writing; not a path built at run time
 refused by all three as a write they cannot place (any mode short of `off`): split the command. A folder made again
 after something took it away (`mv build old; mkdir build; cd build`, `Remove-Item build; New-Item -ItemType Directory
 build; Set-Location build`) counts as existing again, what lies below it does not, and a removal or move after the
-creation wins. The shell may be in two places after `cd .act && ls && cd ..; echo x > out.txt` (and with `pushd`/`popd`): a
+creation wins. A name a command made a file at (a move or copy to it, `ln`, `touch`, a redirection, `Set-Content`)
+does not count so: the `mkdir` fails there, the `cd` after it stays where it was, and the write is also placed in the
+old folder (`mv a.txt out; mkdir out; cd out; touch .act/x`). The shell may be in two places after `cd .act && ls && cd ..; echo x > out.txt` (and with `pushd`/`popd`): a
 failing `ls` skips the `cd ..` while the `;` goes on, so the write is also placed in `.act`, and the guard refuses it. That
 is a limit, not a bug: write the command with `;` between the steps, or as two calls.
 

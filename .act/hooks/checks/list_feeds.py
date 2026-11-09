@@ -5,17 +5,20 @@
 #          `find -exec` supplies them. They only read a command and name the sources; write_guard.py decides
 #          whether a source is shown (names fixed folders) and refuses otherwise.
 #
-#          Bash: a loop variable (`for f in <words>`) or a `read` variable fed by a pipe, a process
-#          substitution, a here-string or a file is bound to the list that feeds it (shell_facts); the words of a
+#          Bash: a loop variable (`for f in <words>`), a `read` variable or a `mapfile`/`readarray` array fed by a
+#          pipe (also one at the end of a line), a process substitution, a here-string or a file is bound to the
+#          list that feeds it, and a loop over such a variable takes its list (shell_facts); the words of a
 #          `find` stage give the source (the folders it names) and the commands its `-exec`/`-execdir`/`-ok`/
 #          `-okdir` run on every hit (find_hits).
 #          PowerShell: a write or delete cmdlet that takes its item from the pipeline, from `$_`, from a
 #          variable a loop or an assignment filled, or from a sub-expression, together with the list commands
-#          (`Get-ChildItem`, `Resolve-Path`, `git ls-files` ...) that can feed it (ps_fed_writes).
+#          (`Get-ChildItem`, `Get-Item`, `Resolve-Path`, `git ls-files` ...) that can feed it; a `[IO.File]`/`[IO.Directory]`
+#          call and a method of an item (`$_.Delete()`) count as such writers (ps_fed_writes).
 #
-# Known limits: a list kept in a variable of a Bash assignment (`files=$(grep -rl x .)`), a function or script
-#          body, `sudo -u user find`, a loop over a variable (`for f in $LIST`) and a PowerShell list from a file
-#          (`Get-Content list.txt`) are not followed: such a write is judged as before. Variables are bound by
+# Known limits: a list kept in a variable of a Bash assignment (`files=$(grep -rl x .)`, `a=($(grep -rl x .))`,
+#          `a+=(...)`), a function or script body, `sudo -u user find`, a loop over a variable no `read`/`mapfile`
+#          filled (`for f in $LIST`) and a PowerShell list from a file (`Get-Content list.txt`) are not followed: such
+#          a write is judged as before. A property write on an item (`$_.Attributes = ...`) is no write here. Variables are bound by
 #          name for the whole command, not per loop: a name used by two loops (or a loop and a later assignment)
 #          carries the lists of both.
 
@@ -47,6 +50,8 @@ _ASSIGNMENT_RE = re.compile(r"\w+=")
 _DOT_GLOB_RE = re.compile(r"(?:^|[\\/])\.[^\\/]*[*?\[]")
 _ACT_RE = re.compile(r"\.act(?:[\\/]|$)", re.IGNORECASE)
 _READ_VALUE_OPTIONS = "pdnNtu"
+_MAPFILE_VALUE_OPTIONS = "dnOsuCc"
+_VARIABLE_RE = re.compile(r"\$(?:\{(\w+)|(\w+))")
 
 
 @dataclass
@@ -57,6 +62,7 @@ class Binding:
     sources: list[str] = field(default_factory=list)
     names_act: bool = False
     unshown: bool = False
+    refs: list[str] = field(default_factory=list)  # variables a loop word names (`for f in "${a[@]}"`): their lists too
 
 
 @dataclass
@@ -129,6 +135,7 @@ def _strip_prefix(words: list[str]) -> list[str]:
 def _loop_binding(items: list[str]) -> Binding:
     binding = Binding()
     for item in items:
+        binding.refs += [one or two for one, two in _VARIABLE_RE.findall(item)]
         if _ACT_RE.search(item):
             binding.names_act = True
         found = _substitution_texts(item)
@@ -187,6 +194,22 @@ def _read_names(args: list[str]) -> list[str]:
     return names or ["REPLY"]
 
 
+def _mapfile_names(args: list[str]) -> list[str]:
+    """The array `mapfile`/`readarray <args>` fills (`MAPFILE` without a name)."""
+    index = 0
+    while index < len(args):
+        word = args[index]
+        index += 1
+        if word.startswith("-") and len(word) > 1:
+            for position, letter in enumerate(word[1:], 1):
+                if letter in _MAPFILE_VALUE_OPTIONS:
+                    index += not word[position + 1:]  # the value is the rest of the word, else the next word
+                    break
+        else:
+            return [word]
+    return ["MAPFILE"]
+
+
 def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
     """The loop and `read` bindings and the `find` stages of the token stream of a Bash command
     (Parse.chain_tokens), a text handed to `sh -c` included."""
@@ -199,6 +222,7 @@ def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
     closed: Optional[_Frame] = None  # a compound the last `)` closed, for the redirections behind it
     groups: dict[str, list[str]] = {}  # a closed subshell as a pipe stage: its name and the pipelines it ran
     last_group = ""  # the subshell the last `)` closed, for the `|` right behind it
+    after_pipe = False  # the last token was a `|`: a line break behind it does not end the pipe
 
     def finish() -> str:
         """Read the stage that ended; its text for the pipe."""
@@ -235,6 +259,8 @@ def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
             name = os.path.basename(words[0]).lower()
             if name == "read":
                 reads.append((_read_names(words[1:]), list(frames), list(feeds)))
+            elif name in ("mapfile", "readarray"):
+                reads.append((_mapfile_names(words[1:]), list(frames), list(feeds)))
             elif name == "find":
                 facts.finds.append(words)
             elif name in _SHELLS and _depth < _MAX_DEPTH:
@@ -258,6 +284,7 @@ def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
         if not is_op:
             stage.append(str(text))
             closed = None
+            after_pipe = False
             continue
         if text not in _SEPARATOR_OPS:  # a redirection
             following = tokens[index] if index < len(tokens) else None
@@ -288,6 +315,9 @@ def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
             stage[-1] += "(" + _tokens_text(tokens[index:end]) + ")"
             index = end + 1
             continue
+        if text == "\n" and after_pipe and not stage:
+            continue  # a pipe at the end of a line goes on in the next one: the pipe so far stays
+        after_pipe = text in ("|", "|&")
         closed = None
         group, last_group = last_group, ""
         stage_text = finish()
@@ -330,7 +360,23 @@ def shell_facts(tokens: list, _depth: int = 0) -> ShellFacts:
                 binding.names_act = binding.names_act or bool(_ACT_RE.search(value))
         for name in names:
             facts.bindings.setdefault(name, []).append(binding)
+    if _depth == 0:
+        _follow_refs(facts.bindings)
     return facts
+
+
+def _follow_refs(bindings: dict[str, list[Binding]]) -> None:
+    """A loop whose words name variables (`for f in "${a[@]}"`) takes over the lists of the bindings of those
+    variables (a `read`, `mapfile` or another loop), to a depth of a few steps."""
+    for _ in range(_MAX_DEPTH + 1):
+        for listed in bindings.values():
+            for binding in listed:
+                for ref in binding.refs:
+                    for other in bindings.get(ref, ()):
+                        if other is not binding:
+                            binding.sources += [text for text in other.sources if text not in binding.sources]
+                            binding.names_act = binding.names_act or other.names_act
+                            binding.unshown = binding.unshown or other.unshown
 
 
 def find_hits(words: list[str]) -> tuple[Optional[str], list[list[str]]]:
@@ -363,7 +409,7 @@ def find_hits(words: list[str]) -> tuple[Optional[str], list[list[str]]]:
 
 # --- PowerShell -------------------------------------------------------------------------------------------------
 
-_PS_LISTERS = frozenset({"get-childitem", "gci", "ls", "dir", "resolve-path", "rvpa"})
+_PS_LISTERS = frozenset({"get-childitem", "gci", "ls", "dir", "get-item", "gi", "resolve-path", "rvpa"})
 # Switches of the listers, and the options that take a value (their value is no folder).
 _PS_LIST_SWITCHES = frozenset({
     "recurse", "r", "force", "file", "directory", "name", "hidden", "readonly", "system", "followsymlink",
@@ -540,6 +586,57 @@ def _enclosing_blocks(pieces: _Pieces, index: int) -> list[int]:
     return found
 
 
+# .NET calls and methods of an item that change or remove a file or folder: `[IO.File]::WriteAllText($_.FullName, 'x')`,
+# `[IO.Directory]::Delete($f, $true)`, `$_.Delete()`, `(Get-ChildItem x).MoveTo('y')`. A call of `[IO.File]`/`[IO.Directory]`
+# takes its item in its arguments; a method takes the object in front of the dot (`Replace` is left out: it is a string
+# method as often as a file one).
+_PS_STATIC_RE = re.compile(r"\[(?:global::)?(?:System\.)?IO\.(?:File|Directory)\]::(\w+)", re.IGNORECASE)
+_PS_STATIC_WRITES = frozenset({
+    "create", "createtext", "appendtext", "openwrite", "open", "delete", "copy", "move", "replace", "encrypt",
+    "decrypt", "createdirectory", "createsubdirectory",
+})
+_PS_METHOD_WRITES = frozenset({
+    "delete", "moveto", "copyto", "create", "createtext", "appendtext", "openwrite", "open", "encrypt", "decrypt",
+    "createsubdirectory",
+})
+
+
+def _group_start(pieces: _Pieces, end: int) -> int:
+    """The index of the opener of the closer at pieces[end]; 0 when it does not open."""
+    depth = 0
+    for index in range(end, -1, -1):
+        depth += (pieces[index][0] == "close") - (pieces[index][0] == "open")
+        if depth == 0:
+            return index
+    return 0
+
+
+def _ps_call_writer(pieces: _Pieces, index: int) -> Optional[tuple[str, int, str]]:
+    """For the word at pieces[index], when it is a .NET write call or a write method followed by its arguments in
+    parentheses: (its name, the index behind the call, the text of the item it works on - the arguments of a .NET
+    call, the object in front of the dot of a method); None otherwise."""
+    after = index + 1
+    if after >= len(pieces) or pieces[after] != ("open", "(") or after not in pieces.glued:
+        return None
+    stop = _group_end(pieces, after) + 1
+    text = pieces[index][1]
+    static = _PS_STATIC_RE.fullmatch(text)
+    if static:
+        name = static.group(1).lower()
+        if name in _PS_STATIC_WRITES or (name.startswith(("writeall", "appendall", "set")) and name != "setcurrentdirectory"):
+            return f"[IO]::{static.group(1)}", stop, " ".join(piece[1] for piece in pieces[after + 1:stop - 1])
+        return None
+    method = re.fullmatch(r"(.*)\.(\w+)", text, re.DOTALL)
+    if method is None or method.group(2).lower() not in _PS_METHOD_WRITES:
+        return None
+    if method.group(1):
+        return method.group(2), stop, method.group(1)
+    if index > 0 and index in pieces.glued and pieces[index - 1] == ("close", ")"):  # `(Get-ChildItem x).Delete()`
+        start = _group_start(pieces, index - 1)
+        return method.group(2), stop, pieces[start][1] + " ".join(piece[1] for piece in pieces[start + 1:index])
+    return None
+
+
 def ps_fed_writes(
     command: str, native_operands: Callable[[str, list[str]], Optional[list[str]]],
 ) -> Optional[list[PsFed]]:
@@ -577,22 +674,16 @@ def ps_fed_writes(
             assigned.setdefault(pieces[index + 2][1][1:].lower(), []).extend(
                 operands for at, operands in listers_at if index < at < close)
     found: list[PsFed] = []
-    for index, (kind, text) in enumerate(pieces):
-        name = _ps_command_name(text)
-        writer = _ALIASES.get(name)
-        if kind != "word" or writer not in _PS_ITEM_WRITERS or not _starts_command(pieces, index):
-            continue
-        args, stop = _ps_args(pieces, index + 1)
-        positionals, values = _ps_split_args(args)
-        targets = _cmdlet_targets(name, args)
-        from_pipe = (writer in _PS_PIPE_FED and index > 0 and pieces[index - 1] == ("op", "|")
-                     and not (positionals or values.get("path") or values.get("literalpath")))
+
+    def judge(index: int, stop: int, name: str, targets: list[str], from_pipe: bool) -> None:
+        """Add the write at pieces[index] (its item texts `targets`, the statement it holds ending at `stop`) when
+        something feeds it: the pipeline in front of it, `$_`, a variable a list filled, or a sub-expression."""
         variables = {variable.lower() for target in targets for variable in re.findall(r"\$\{?(\w+)", target)}
         filled = [variable for variable in variables if variable in assigned]
         sub = any(re.search(r"\$\(|@\(|^\(", target) for target in targets)
         current = any(re.search(r"\$_|\$PSItem", target, re.IGNORECASE) for target in targets)
         if not (from_pipe or sub or current or filled):
-            continue
+            return
         begin = _local_start(pieces, index)
         regions = [(begin, stop)]
         if current:  # `$_` is an item of the pipeline in front of each script block around the cmdlet
@@ -603,6 +694,23 @@ def ps_fed_writes(
         for variable in filled + sorted(before & set(assigned) - set(filled)):
             listers += assigned[variable]
         found.append(PsFed(name, listers))
+
+    for index, (kind, text) in enumerate(pieces):
+        if kind != "word":
+            continue
+        call = _ps_call_writer(pieces, index)
+        if call is not None:  # a .NET call or a method on an item (`[IO.File]::Delete($_.FullName)`, `$_.Delete()`)
+            judge(index, call[1], call[0], [call[2]], False)
+            continue
+        name = _ps_command_name(text)
+        writer = _ALIASES.get(name)
+        if writer not in _PS_ITEM_WRITERS or not _starts_command(pieces, index):
+            continue
+        args, stop = _ps_args(pieces, index + 1)
+        positionals, values = _ps_split_args(args)
+        from_pipe = (writer in _PS_PIPE_FED and index > 0 and pieces[index - 1] == ("op", "|")
+                     and not (positionals or values.get("path") or values.get("literalpath")))
+        judge(index, stop, name, _cmdlet_targets(name, args), from_pipe)
     return found
 
 
