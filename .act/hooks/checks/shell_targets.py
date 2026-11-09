@@ -2688,15 +2688,18 @@ def _xargs_placeholder(source: str, bases: Optional[_Bases]) -> str:
     inside `sh -c`). A word of the source that is the `.act` directory itself gets a trailing separator
     (`find .act -name x` lists `.act/...`), because a check reads the placeholder by its text."""
     text = _XARGS_INPUT
+    # The source comes first, so a reader that wants it back (the guard of the template's own files, which lets
+    # a list through only when its source names folders) finds it at a fixed place: ` of <quoted>`, then
+    # ` in <quoted> ...`.
+    if source:
+        hinted = " ".join(f"{piece}/" if _ACT_DIR_WORD_RE.fullmatch(piece) else piece for piece in source.split(" "))
+        text += f" of {shlex.quote(hinted)}"
     # Normalised, so a round trip (`cd .act/scripts; cd ../..`) names the directory the command really runs in
     # and not the `.act` it passed through; a `..` only ever removes a segment, so nothing is hidden that the
     # directory itself does not leave.
     directories = sorted({os.path.normpath(str(base)) for base in (bases or ()) if base})
     if directories:
         text += " in " + " ".join(shlex.quote(directory.rstrip("/\\") + "/") for directory in directories)
-    if source:
-        hinted = " ".join(f"{piece}/" if _ACT_DIR_WORD_RE.fullmatch(piece) else piece for piece in source.split(" "))
-        text += f": {shlex.quote(hinted)}"
     return text + ")"
 
 
@@ -2748,6 +2751,8 @@ def _xargs_commands(
             elif letter in "el":
                 break
     items: list[str] = []
+    if isinstance(stdin, _ExpandedText):
+        stdin, unknown = None, True  # the words do not show what the feeding `echo`/`printf` prints
     if stdin is not None:
         if replace is not None:
             items = [line.strip() for line in stdin.splitlines() if line.strip()]
@@ -3168,6 +3173,8 @@ _InlineTarget = tuple[str, Optional[str], str]
 _ECHO_FLAGS_RE = re.compile(r"^-[neE]+$")
 # A printf format that prints its arguments and nothing else.
 _PRINTF_ARGS_ONLY_RE = re.compile(r"^(?:%[sb]|\\n| )+$")
+# A character the shell expands in a word of its own (glob, brace, variable, command substitution), or an escape.
+_SHELL_EXPANDED_RE = re.compile(r"[*?\[{$`\\]")
 
 
 def _stdin_redirect(operator: str, word: str) -> Optional[str | bool]:
@@ -3205,6 +3212,38 @@ def _literal_output(words: list[str], stdin_text: Optional[str]) -> Optional[str
         if _PRINTF_ARGS_ONLY_RE.match(args[0]):
             return " ".join(args[1:]) + "\n"
     return None
+
+
+class _ExpandedText(str):
+    """A literal output (_literal_output) of which _output_is_expanded holds: the same text, marked so that the
+    reading of an `xargs` list (_xargs_commands) does not take it as the list."""
+
+
+def _output_is_expanded(words: list[str]) -> bool:
+    """True when `words` is an `echo`/`printf` whose printed text is not the text its words show: an argument the
+    shell still expands (a glob, a brace, a variable, a substitution), a text the command itself turns into other
+    characters (`echo -e`, a backslash escape, `%b`) or a format that joins its arguments (`%s%s`). Only the
+    reading of an `xargs` list uses it (_xargs_commands); _literal_output keeps the text as written, which a
+    shell that reads it as its script (`echo '...' | bash`) is scanned with."""
+    at = _command_prefix_end(words)
+    if at >= len(words):
+        return False
+    name = _command_name(words[at])
+    args = [_ansi_c_unquote(word) for word in words[at + 1:]]
+    if name == "echo":
+        while args and _ECHO_FLAGS_RE.match(args[0]):
+            if "e" in args[0]:
+                return True
+            args = args[1:]
+        return any(_SHELL_EXPANDED_RE.search(arg) for arg in args)
+    if name != "printf" or not args:
+        return False
+    if re.search(r"[*?\[{$`]", args[0]) or any(_SHELL_EXPANDED_RE.search(arg) for arg in args[1:]):
+        return True
+    if "%" not in args[0]:
+        return bool(re.search(r"\\(?![n0](?!\d))", args[0]))
+    return not (re.fullmatch(r"(?:%s|\\n|\n| )+", args[0]) and args[0].count("%") == 1
+                and (len(args) <= 2 or any(separator in args[0] for separator in ("\\n", "\n", " "))))
 
 
 def _collect_inline_code(
@@ -3312,7 +3351,8 @@ def _joined_group_output(parts: list[Optional[str]]) -> Optional[str]:
     (or the group has no statement at all)."""
     if not parts or any(part is None for part in parts):
         return None
-    return "".join(part for part in parts if part is not None)
+    joined = "".join(part for part in parts if part is not None)
+    return _ExpandedText(joined) if any(isinstance(part, _ExpandedText) for part in parts) else joined
 
 
 def _arithmetic_parts(text: str) -> Optional[tuple[list[str], str]]:
@@ -3931,6 +3971,8 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
             if _INLINE_SINK is not None:
                 _collect_inline_code(words, bases, stdin_redirected, stdin_text, pipe_input, stdin_span)
             produced = _literal_output(words, stdin_text if stdin_redirected else pipe_input)
+            if produced is not None and _output_is_expanded(words):
+                produced = _ExpandedText(produced)  # the text as written (a shell script is scanned with it), not xargs's list
             if pipe_input is not None and not stdin_redirected and _reads_script_from_stdin(words):
                 # `echo 'cmd' | bash`: the text the previous stage prints is the shell's script.
                 found.extend(_scan_command(pipe_input, bases, git_writes, depth + 1))

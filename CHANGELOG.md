@@ -486,6 +486,19 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `write-guard` no longer lets a write through that takes its files from a list it cannot read: an `xargs` input
+  (`grep -rl x . | xargs sed -i ...`, `xargs -I{} cp ...`) or a `$(...)` / backtick span (`sed -i ... $(git ls-files)`).
+  Such a write passes only when the command that makes the list is shown and names fixed folders that are not the
+  project root, a parent of it, the repository top (`:/`) or `.act` (`grep -rl x docs src`, `rg --files docs`,
+  `find docs -name '*.md'` without `-exec`/`-printf`, `git ls-files docs`, `git diff --name-only -- docs`, then only
+  `head`/`tail`/`sort`/`uniq`/`grep` stages); a list over `.`, `..`, nothing (`grep -r x`, `find`, `rg -l`,
+  `git ls-files`), a list file (`grep x docs/list.txt` prints its lines, so it counts as a list file), `echo`/`printf`
+  words the shell expands (a glob, a brace, a variable) or that join into another name, or any other command is
+  refused with a message that says to name the folders. `echo` and `printf` output that the shell or the command
+  itself expands is no longer read as a literal list either. An unquoted `$(pwd)`, `$(dirname ...)` or
+  `$(git rev-parse ...)` target in a command that names `.act` is refused. A project wide rename could change the
+  template's own files and the code of the checks without anything reporting it. Reads (`wc -l $(git ls-files)`,
+  `xargs` into a non-writing command) and a single path such as `$(mktemp)` stay free.
 - A heredoc body that is a shell script is read again when an earlier line of the same command holds an arithmetic
   `<<` (`(( x = 1 +` / `2 << 3 )); bash <<'EOF'` with `rm -f .act/a.md` in the body): the arithmetic shift no longer
   shifts which heredoc is judged. Inline Python that only changes file metadata (`os.chmod`, `os.chown`, `os.utime`,
