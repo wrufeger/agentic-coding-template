@@ -66,8 +66,9 @@
 #   - programs that write on their own are read by their arguments (_simple_command_targets): `git clone`
 #     (its destination, the folder named by the URL when none is given), `git init`, `worktree add`,
 #     `submodule add`, `archive -o`, `bundle create`, `format-patch -o`; `robocopy` (destination, source with
-#     /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `chmod`/`chown`/`chgrp` (the files,
-#     not the mode or owner word); and `xargs`, whose input words are operands of the command it runs: the
+#     /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `sort -o` (its output file) and the
+#     output operand of `uniq`; `chmod`/`chown`/`chgrp` (the files, not the mode or owner word); and `xargs`,
+#     whose input words are operands of the command it runs: the
 #     literal output of the previous stage (`echo`, `printf`, a heredoc) is read, any other input is one
 #     placeholder operand (_XARGS_INPUT with the directories the command runs in and the text of the stages
 #     or the redirection that feed it, quoted as one word: _xargs_placeholder), a dynamic target;
@@ -2768,6 +2769,48 @@ def _xargs_commands(
     return [[command[0]] + [arg.replace(replace, item) for arg in command[1:]] for item in items]
 
 
+_UNIQ_VALUE_FLAGS = frozenset({"-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"})
+_SORT_VALUE_LONG = frozenset({
+    "--key", "--field-separator", "--buffer-size", "--temporary-directory", "--files0-from", "--random-source",
+    "--parallel", "--batch-size", "--compress-program",
+})
+
+
+def _sort_output_targets(args: list[str]) -> list[str]:
+    """The file `sort -o FILE` (also `-oFILE`, `-uo FILE`, `--output=FILE`, `--output FILE`, an abbreviated
+    `--out`) writes its result to; empty without one."""
+    targets: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg == "--":
+            break
+        if arg.startswith("--"):
+            name, has_value, value = arg.partition("=")
+            if len(name) >= 3 and "--output".startswith(name):
+                if has_value:
+                    targets.append(value)
+                elif index < len(args):
+                    targets.append(args[index])
+                    index += 1
+            elif name in _SORT_VALUE_LONG and not has_value:
+                index += 1
+        elif arg.startswith("-") and len(arg) > 1:
+            for position, letter in enumerate(arg[1:], 1):
+                if letter in "kStT":  # takes a value: the rest of the word, else the next word
+                    index += position == len(arg) - 1
+                    break
+                if letter == "o":
+                    if arg[position + 1:]:
+                        targets.append(arg[position + 1:])
+                    elif index < len(args):
+                        targets.append(args[index])
+                        index += 1
+                    break
+    return targets
+
+
 def _attribute_targets(name: str, args: list[str]) -> list[str]:
     """The files `chmod`/`chown`/`chgrp` change: every operand but the first (the mode, owner or group),
     or every operand with `--reference`. A mode that starts with `-` (`chmod -x f`) is read as the mode."""
@@ -3055,6 +3098,10 @@ def _simple_command_targets(
         )
     elif name == "dd":
         raw_targets = [arg[3:] for arg in args if arg.startswith("of=")]
+    elif name == "sort":
+        raw_targets = _sort_output_targets(args)
+    elif name == "uniq":
+        raw_targets = _operands(args, _UNIQ_VALUE_FLAGS)[0][1:2]  # `uniq [INPUT [OUTPUT]]`
     elif name == "tar":
         # Only the explicit-directory case is worth the cheap detection here — `tar -x`
         # into the implicit current directory is still invisible (see the module's Known limits).

@@ -499,6 +499,21 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `$(git rev-parse ...)` target in a command that names `.act` is refused. A project wide rename could change the
   template's own files and the code of the checks without anything reporting it. Reads (`wc -l $(git ls-files)`,
   `xargs` into a non-writing command) and a single path such as `$(mktemp)` stay free.
+- `write-guard` holds the same line for the other common ways to hand a write a list of files. A loop or `read`
+  variable fed by a list (`for f in $(grep -rl x .); do sed -i ... "$f"; done`, `grep -rl x . | while read -r f; do
+  rm "$f"; done`, `done < <(find . ...)`, a list file, a here-string), the hits of `find ... -exec|-execdir|-ok|-okdir
+  <writer> {}` (also `sh -c '... "$1"' _ {}`), and a PowerShell write or delete that takes its item from a list
+  (`Get-ChildItem -Recurse | ForEach-Object { Set-Content $_.FullName ... }`, `... | Remove-Item`, `Remove-Item
+  (Get-ChildItem ...)`, `foreach ($f in Get-ChildItem ...)`, `$files = Get-ChildItem ...; Remove-Item $files`,
+  `Resolve-Path`, `git ls-files`) pass only when the list command names fixed folders that are not the project root,
+  `.act` or no folder at all (the same allow-list as for `xargs`); a loop over literal words (`for f in a b`, `docs/*.md`)
+  stays free, one that names `.act` or a glob that may match it (`.a*`) is refused, and a `cd` or `Set-Location`
+  in the command makes relative folders unknown. A project wide rename in any of these forms could change the
+  template's own files without anything reporting it. Lists the guard does not follow (a variable filled by an
+  assignment, a `Get-Content` list file in PowerShell) are judged as before.
+- `sort -o <file>` (also `-uo`, `--output=`) and the output operand of `uniq <input> <output>` are read as writes to
+  that file, by every check that reads write targets (the template's own files, a worker's write scope, outside root).
+  `seq` with plain numbers counts as a list that names no file, so `for i in $(seq 1 3); do touch f$i; done` stays free.
 - A heredoc body that is a shell script is read again when an earlier line of the same command holds an arithmetic
   `<<` (`(( x = 1 +` / `2 << 3 )); bash <<'EOF'` with `rm -f .act/a.md` in the body): the arithmetic shift no longer
   shifts which heredoc is judged. Inline Python that only changes file metadata (`os.chmod`, `os.chown`, `os.utime`,

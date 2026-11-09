@@ -14,15 +14,17 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import actlib
 
 from .command_parse import Parse, parse_for
 from .common import _TOOL_PATH_FIELDS, _check_mode
 from .common import _is_unplaced_target, _unplaced_reason
+from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, ps_fed_writes, shell_facts
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
 from .shell_targets import _resolve_path
 
@@ -120,17 +122,42 @@ def _resolve_against(base_cwd: str, raw: str) -> Optional[Path]:
     return _resolve_path(raw, base_cwd)
 
 
-# A write whose files come from a list the scan cannot read (an `xargs` input, a `$(...)` or backtick span) is
-# let through only when the command that makes the list is shown and names folders that are not the project
-# root, a parent of it or `.act`: an allow-list of list commands, each with the operands it may take.
+# A write whose files come from a list the scan cannot read (an `xargs` input, a `$(...)` or backtick span, a
+# loop or `read` variable, the hits of `find -exec`, a PowerShell pipeline) is let through only when the command
+# that makes the list is shown and names folders that are not the project root, a parent of it or `.act`: an
+# allow-list of list commands, each with the operands it may take.
 _LIST_MESSAGE = (
-    "[act] write-guard refused -- this write takes its files from a list (an xargs input, $(...) or backticks) "
-    "whose source does not name the folders it reads, so .act/ (the template's own files, replaced on update) "
-    "may be among them. Name the folders in the list command (`grep -rl x docs src | xargs sed -i ...`, "
-    "`sed -i ... $(find docs -name '*.md')`): a list over the project root, `.`, `..`, `git ls-files` or a "
-    "list file cannot be vouched for, and a list cannot leave .act/ out. A change to a file of .act/ goes to "
-    "docs/ai/local/<same path>."
+    "[act] write-guard refused -- this write takes its files from a list (an xargs input, $(...) or backticks, a "
+    "loop or read variable, the hits of find -exec, a PowerShell pipeline) whose source does not name the folders "
+    "it reads, so .act/ (the template's own files, replaced on update) may be among them. Name the folders in the "
+    "list command (`grep -rl x docs src | xargs sed -i ...`, `for f in $(find docs -name '*.md'); do ...`, "
+    "`find docs -exec ...`, `Get-ChildItem docs -Recurse | Remove-Item`): a list over the project root, `.`, "
+    "`..`, `git ls-files` or a list file cannot be vouched for, and a list cannot leave .act/ out. A change to a "
+    "file of .act/ goes to docs/ai/local/<same path>."
 )
+# A change of directory in the command: where a `find` or a PowerShell lister reads from is then not known.
+_CD_WORD_RE = re.compile(r"(?<![\w./\\-])(?:cd|chdir|pushd|popd|sl|set-location|push-location|pop-location)(?![\w-])",
+                         re.IGNORECASE)
+_BOUND_VARIABLE_RE = re.compile(r"\$(?:\{(\w+)|(\w+))")
+# The one directory change that keeps the base known: a single leading `cd <literal path>` (also `Set-Location`,
+# `-Path`/`-LiteralPath`) followed by `&&`, `;` or a line break.
+_LEADING_CD_RE = re.compile(
+    r"""^\s*(?:cd|chdir|sl|set-location)\s+(?:-(?:literal)?path\s+)?(?:"([^"$`]+)"|'([^']+)'|([^\s;&|<>"'$`*?\[\]{}()~-][^\s;&|<>"'$`*?\[\]{}()~]*))\s*(?:&&|;|\n)""",
+    re.IGNORECASE)
+
+
+def _command_base(command: str, base_cwd: str) -> Optional[str]:
+    """The directory a list command of `command` reads from: `base_cwd`, or the literal target of a single leading
+    `cd`/`Set-Location` (resolved against `base_cwd`); None when the command changes directory any other way (a
+    second `cd`, `pushd`, a variable, a subshell), so a relative folder is not known."""
+    words = _CD_WORD_RE.findall(command)
+    if not words:
+        return base_cwd
+    match = _LEADING_CD_RE.match(command)
+    if len(words) != 1 or match is None:
+        return None
+    resolved = _resolve_path(next(group for group in match.groups() if group), base_cwd)
+    return str(resolved) if resolved is not None else None
 _SINGLE_PATH_COMMANDS = frozenset({"mktemp", "pwd", "dirname", "basename", "date", "whoami", "hostname", "id", "uname"})
 _FILTER_COMMANDS = frozenset({"head", "tail", "sort", "uniq"})
 _GREP_LONG = frozenset({
@@ -181,8 +208,8 @@ def _listing_operands(words: list[str], first: bool) -> Optional[list[str]]:
     """The folders the list command `words` reads (the first stage of a source, else a later stage), or None
     when it is not a command of the allow-list or reads a place it does not name: `grep`/`rg` (a recursive one
     or the first stage needs a path), `find`, `ls`, `git ls-files`, `git grep -- <paths>`; `head`/`tail`/`sort`/
-    `uniq` as later stages; `echo`/`printf` and the commands that print one path (_SINGLE_PATH_COMMANDS) read
-    nothing."""
+    `uniq` as later stages; `echo`/`printf`, `seq` with numbers only and the commands that print one path
+    (_SINGLE_PATH_COMMANDS) read nothing."""
     name = os.path.basename(words[0]).lower().removesuffix(".exe")
     rest = words[1:]
     if first and name in ("echo", "printf"):
@@ -199,6 +226,8 @@ def _listing_operands(words: list[str], first: bool) -> Optional[list[str]]:
         return []
     if first and (name in _SINGLE_PATH_COMMANDS or (name == "git" and rest[:1] == ["rev-parse"])):
         return []
+    if first and name == "seq":  # numbers only: no option (`-f` takes a format), no name
+        return [] if all(re.fullmatch(r"\d+(?:\.\d+)?", word) for word in rest) else None
     if name in _FILTER_COMMANDS:
         return [] if not first and all(re.fullmatch(r"-[\w-]*|\d+", word) for word in rest) else None
     if name in ("grep", "egrep", "fgrep", "rg"):
@@ -409,25 +438,86 @@ def _bash_targets_protected_path(
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
     the raw text — a sibling checkout's .act/ is not this project's to protect). A dynamic target that is a
     list the scan cannot read (an `xargs` input, a `$(...)` or backtick span) passes only when its source
-    names fixed folders (_list_is_shown, an allow-list), else it is refused with _LIST_MESSAGE. A write the scan could
+    names fixed folders (_list_is_shown, an allow-list), else it is refused with _LIST_MESSAGE; so does a
+    target made of a loop or `read` variable fed by such a list (_bound_refusal; a literal loop word that names
+    `.act` or may match it is refused as a write to `.act`), and a command `find` runs on every hit
+    (-exec, -execdir, -ok, -okdir; _find_run_refusal) when its folders are not fixed. A write the scan could
     not place (inline code whose path the text does not show, _is_unplaced_target) is refused as such.
     `parse` is the dispatcher's reading of `command`; without it the command is read here."""
     if parse is None:
         parse = Parse("Bash", command)
+    read: list[ShellFacts] = []
+
+    def facts() -> ShellFacts:
+        if not read:
+            tokens = parse.chain_tokens()
+            read.append(shell_facts(tokens) if tokens is not None else ShellFacts())
+        return read[0]
+
     for raw, base in parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
-        if _is_unplaced_target(raw):
-            return _unplaced_message(raw)
-        if base is None or _is_dynamic_target(raw) or root is None:
-            if _names_protected_path(raw, root):
-                return _WRITE_GUARD_MESSAGE
-            if not _list_is_shown(raw, command, base, root):
-                return _LIST_MESSAGE
-            continue
-        resolved = _resolve_path(raw, base)
-        if resolved is None:
-            return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
-        if _is_under_project_act(resolved, root):
+        message = _judge_target(raw, base, root, command, facts)
+        if message is not None:
+            return message
+    if "find" in command.lower():
+        for words in facts().finds:
+            source, runs = find_hits(words)
+            for run in runs:
+                message = _find_run_refusal(run, source, command, base_cwd, root)
+                if message is not None:
+                    return message
+    return None
+
+
+def _judge_target(
+    raw: str, base: Optional[str], root: Optional[Path], command: str, facts: Optional[Callable[[], ShellFacts]],
+) -> Optional[str]:
+    """The refusal message for one write target of `command` (raw text, the directory it is relative to), or
+    None. `facts` reads the loop and `read` variables of the command (list_feeds.shell_facts) when asked for."""
+    if _is_unplaced_target(raw):
+        return _unplaced_message(raw)
+    if base is None or _is_dynamic_target(raw) or root is None:
+        if _names_protected_path(raw, root):
             return _WRITE_GUARD_MESSAGE
+        if not _list_is_shown(raw, command, base, root):
+            return _LIST_MESSAGE
+        return _bound_refusal(raw, facts().bindings, base, root) if facts and _BOUND_VARIABLE_RE.search(raw) else None
+    resolved = _resolve_path(raw, base)
+    if resolved is None:
+        return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
+    return _WRITE_GUARD_MESSAGE if _is_under_project_act(resolved, root) else None
+
+
+def _bound_refusal(
+    raw: str, bindings: dict[str, list[Binding]], base: Optional[str], root: Optional[Path],
+) -> Optional[str]:
+    """The refusal message when the dynamic target `raw` names a loop or `read` variable fed by a list that
+    names `.act` or whose source is not shown (_source_is_shown); a variable nothing in the command fills is
+    unknown and passes as before."""
+    for match in _BOUND_VARIABLE_RE.finditer(raw):
+        for binding in bindings.get(match.group(1) or match.group(2), ()):
+            if binding.names_act:
+                return _WRITE_GUARD_MESSAGE
+            if binding.unshown or not all(_source_is_shown(source, base, root) for source in binding.sources):
+                return _LIST_MESSAGE
+    return None
+
+
+def _find_run_refusal(
+    run: list[str], source: Optional[str], command: str, base_cwd: str, root: Optional[Path],
+) -> Optional[str]:
+    """The refusal message for a command line `find` runs on every hit (`run`, the hit written FIND_HIT; list_feeds.
+    find_hits) when a write target of it is under .act, or is made of the hit while `source` (`find <folders>`)
+    is not shown. A target of a shell the hit is handed to (`sh -c '... "$1"' _ {}`) counts as made of the hit."""
+    text = " ".join(shlex.quote(word) for word in run)
+    is_shell = os.path.basename(run[0]).lower() in ("sh", "bash", "zsh", "dash", "ksh")
+    base = _command_base(command, base_cwd)  # a `cd` moves where `find` reads from
+    for raw, where in Parse("Bash", text).bash_write_targets(base, _GIT_WRITES_TEMPLATE_GUARD):
+        message = _judge_target(raw, where, root, text, None)
+        if message is not None:
+            return message
+        listed = FIND_HIT in raw or (is_shell and _is_dynamic_target(raw))
+        if listed and not (source and _source_is_shown(source, where, root)):
+            return _LIST_MESSAGE
     return None
 
 
@@ -484,6 +574,22 @@ def _powershell_targets_protected_path(
             return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
         if _is_under_project_act(resolved, root):
             return _WRITE_GUARD_MESSAGE
+    return _ps_list_refusal(command, base_cwd, root)
+
+
+def _ps_list_refusal(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
+    """_LIST_MESSAGE when a write or delete cmdlet of the PowerShell `command` takes its item from a list
+    (list_feeds.ps_fed_writes: the pipeline, `$_`, a variable a loop or an assignment filled, a sub-expression) that
+    a list command of the allow-list does not show: `Get-ChildItem`/`gci`/`ls`/`dir`, `Resolve-Path`, `git ls-files`
+    ... must name fixed folders, not the project root, `.act` or no folder at all (_fixed_folder). A source that is
+    none of those (`Get-Content list.txt`, a literal list) is not judged, as before."""
+    fed = ps_fed_writes(command, lambda name, args: _listing_operands([name, *args], True))
+    base = _command_base(command, base_cwd)  # a `Set-Location` moves where a lister reads from
+    for item in fed or ():
+        for operands in item.listers:
+            # No folder named: the lister reads the current one (a leading `Set-Location` moved it, _command_base).
+            if operands is None or not all(_fixed_folder(operand, base, root) for operand in operands or ["."]):
+                return _LIST_MESSAGE
     return None
 
 
