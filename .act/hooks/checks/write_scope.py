@@ -872,8 +872,9 @@ def _write_scope_message(target: str, scope: dict, hint: str = "") -> str:
         allowed = "none (read-only assignment)"
     else:
         allowed = ", ".join(scope.get("patterns") or []) or "none"
+    shown = target if len(target) <= 200 else f"{target[:200]}..."  # a long command text stays out of the message
     message = (
-        f"[act] outside this assignment's write scope: {target} (allowed: {allowed}; "
+        f"[act] outside this assignment's write scope: {shown} (allowed: {allowed}; "
         "Write scope patterns are project-root-relative). The assignment names its scope as one line "
         "`Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: src/**, tests/*.py` (`dir/` means everything "
         "under dir, `none` means read-only); syntax: .act/rules/topics/checks.md"

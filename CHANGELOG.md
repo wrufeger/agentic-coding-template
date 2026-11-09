@@ -469,6 +469,16 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- PowerShell write targets are read more completely, so a write that went unseen is refused now: inline interpreter
+  code (`python -c`, `node -e`) inside a loop body, a script block, `$( )` or `( )`, or behind `$x =`, is read like the
+  same call on its own line (`foreach ($i in 1,2) { python -c "open('.act/x','w').write('y')" }` is refused by
+  `template-write-guard`, and by the worker write scope when the path is outside it); a nested `pwsh -c` / `powershell
+  -Command` whose text cannot be evaluated (`Invoke-Expression`, a quote that never closes) is no longer dropped but
+  counts as one write to an unknown place, which `template-write-guard` and `git-metadata-guard` refuse when its text
+  names a protected path and the worker write scope refuses always (`pwsh -c "Get-Date"` is unaffected); a `cd`,
+  `Set-Location`, `Push-Location` or `pushd` to a wildcard directory (`cd .ac*`, `Set-Location .\.a?t`, in Bash too) is
+  resolved against the folders that exist, so a write after it is judged in each of them (`-LiteralPath` keeps the
+  name as written).
 - `git-metadata-guard` reads the files a `cp`, `mv` or `Copy-Item` writes with the quotes in mind: a quoted name that
   holds a `;`, `&&` or `|` (`cp 'p;q/.envrc' .` as a worker) is one name, no longer torn apart so that the copy of a
   protected file such as `.envrc` went unseen. It also sees a copy inside `bash -c '...'`, `$(...)`, `( ... )`,

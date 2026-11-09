@@ -101,7 +101,7 @@
 #     this is a literal-text net, not a resolved target), every word after `& $sb`/`& { ... }`
 #     appearing anywhere in a statement, and every word to the right of `$var =`.
 #
-# Statement separators: `;`, `|`, a bare newline, `&&`/`||` (PS 7) — see _PS_SEPARATOR_OPS.
+# Statement separators: `;`, `|`, a bare newline, `&&`/`||` (PS 7) — see _ps_tokens.
 # Quoting: '...' verbatim except '' -> a literal '; "..." with a backtick as the escape character
 # and "" -> a literal " (both PowerShell rules); a backtick followed by a newline is a line
 # continuation (dropped, not a separator); an unquoted "#" starts a comment to the end of the
@@ -138,7 +138,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from . import inline_code as _inline_code
 from .common import MAX_NESTING, _is_unplaced_target, _unplaced_reason, _unplaced_target  # noqa: F401 - re-exported
@@ -147,6 +147,7 @@ from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
     _creation_keys,
+    _expand_directory_wildcard,
     _git_targets,
     _attribute_targets,
     _is_absolute_target,
@@ -166,7 +167,7 @@ from .shell_targets import (
 
 __all__ = [
     "_PS_OPERATORS_LEN3", "_PS_OPERATORS_LEN2", "_PS_OPERATORS_LEN2_GATED", "_PS_OPERATORS_LEN1",
-    "_PS_REDIRECT_OPS", "_PS_SEPARATOR_OPS", "_PS_VALUE_FLAGS", "_ALIASES", "_CD_ALIASES",
+    "_PS_REDIRECT_OPS", "_PS_VALUE_FLAGS", "_ALIASES", "_CD_ALIASES",
     "_FLAG_ONLY_KEYS", "_PS_INTERP_NAMES", "_CMD_NAMES", "_GUARD_OPAQUE_ALL_ARGS",
     "_GUARD_OPAQUE_DASH_C", "_BROAD_EXCLUDE_VALUE_FLAGS", "_BROAD_SKIP_KINDS", "_IEX_WORDS",
     "_IO_FILE_WRITE_RE", "_IO_FILE_COPY_MOVE_RE",
@@ -195,7 +196,6 @@ _PS_OPERATORS_LEN2 = (">>", "&&", "||")      # ungated
 _PS_OPERATORS_LEN2_GATED = ("*>", "2>")      # gated
 _PS_OPERATORS_LEN1 = (">", "|", ";")         # ungated
 _PS_REDIRECT_OPS = frozenset({">", ">>", "*>", "*>>", "2>", "2>>"})
-_PS_SEPARATOR_OPS = frozenset({";", "|", "&&", "||", "\n"})
 
 # Flags whose next word (space or ":" form) is a value, never a switch — see _ps_split_args.
 # 2026-09-23 review (BLOCK): a flag missing here shifts every later positional by one, which can
@@ -1004,6 +1004,21 @@ def _resolve_cd_target(target: Optional[str], cwd: Optional[str]) -> Optional[st
     return str(resolved) if resolved is not None else None
 
 
+# A directory operand PowerShell reads as a wildcard pattern: `-Path` (and a bare operand) does, `-LiteralPath` does not.
+_PS_WILDCARD_RE = re.compile(r"[*?\[]")
+
+
+def _wildcard_directories(target: str, cwd: Optional[str], budget: _ScanBudget) -> Optional[list[str]]:
+    """The directories (absolute native paths, sorted) a wildcard `target` names when `cwd` is the current
+    directory (shell_targets._expand_directory_wildcard); empty when none matches, None when it cannot be told
+    (a relative target while `cwd` is unknown, a share on another host, too many candidates)."""
+    joined = _join_directory(target, cwd)
+    if joined is None:
+        return None
+    budget.charge(_RESOLUTION_COST)
+    return _expand_directory_wildcard(joined)
+
+
 @functools.lru_cache(maxsize=8192)
 def _join_directory(target: Optional[str], cwd: Optional[str]) -> Optional[str]:
     """`target` joined onto `cwd` as one absolute native path, lexically (`.`/`..` collapsed, no file-system
@@ -1194,6 +1209,20 @@ def _follow_cd(statement: list[str], tracked: _TrackedDirs) -> Optional[_Tracked
     positionals, values = _ps_split_args(statement[1:])
     target = _target_from_flags(positionals, values, ("path", "literalpath"))
     tracked.budget.charge()
+    wildcard = target is not None and not values.get("literalpath") and bool(_PS_WILDCARD_RE.search(target))
+    if wildcard:
+        # PowerShell resolves the pattern itself: the shell may be in any directory it names now, or still in the
+        # old one (a move that fails, or one that matches several, goes on); a pattern that names none (or too many
+        # to follow) leaves the directory unknown next to the old one.
+        found = _wildcard_directories(target, tracked.followed, tracked.budget)
+        followed = (found[0] if found else None) if name in _CD_ALIASES_FOLLOWED else tracked.followed
+        possible_wild: set[Optional[str]] = set()
+        for cwd in tracked.possible:
+            tracked.budget.charge()
+            matches = _wildcard_directories(target, cwd, tracked.budget)
+            possible_wild.add(cwd)
+            possible_wild.update(matches if matches else (None,))
+        return tracked.moved_to(followed, possible_wild)
     followed = tracked.followed_after(target) if name in _CD_ALIASES_FOLLOWED else tracked.followed
     if target in ("-", "+"):
         return tracked.moved_to(followed, tracked.possible | tracked.seen)
@@ -1254,7 +1283,12 @@ def _flush_ps_statement(
                 result.add(_unplaced_target(_TOO_DEEP))
             elif inner is not None:
                 inner_targets = _powershell_write_targets(inner, base_cwd, git_writes, broad, depth + 1, tracked)
-                if inner_targets:
+                if inner_targets is None:
+                    # Not evaluable (Invoke-Expression, an open quote): where it writes is unknown. It stays one
+                    # dynamic target holding the inner text, which the checks refuse by that text (the guard of
+                    # the template's own files) or by definition (the worker write scope), never a silent pass.
+                    result.add(f"$(nested command: {inner})")
+                else:
                     result.update(inner_targets)
         elif name == "wsl":
             # `wsl [options] [--] <command line>`: the line runs inside WSL and is read by the Bash
@@ -1395,31 +1429,83 @@ def _collect_ps_inline(
     literal piped into `python -` / `python` / `node`), each once per directory the statement may run in
     (`tracked.possible`), appended to `sink.found`; a relative one also as the target no check may place once
     a tracked directory was dropped at the cap. A failure of the reader is noted in `sink.failed` when the
-    sink swallows (the walk goes on, the caller reports one dynamic target), else it propagates."""
-    language = _inline_code.interpreter_language(_ps_command_name(statement[0]))
-    if language is None:
-        return
-    kind, code = _inline_code.code_source(language, statement[1:])
-    if kind == _inline_code.SOURCE_STDIN:
-        code = piped
-    elif kind == _inline_code.SOURCE_CODE and code is not None:
-        code = _unwrap_here_string(code)
-    if kind == _inline_code.SOURCE_NONE or code is None:
-        return
-    reader = _inline_code.write_targets if sink.precise else _inline_code.write_paths
-    try:
-        paths = list(reader(language, code))
-    except Exception:  # noqa: BLE001 - the fail-closed path: a crash of the reader ends as one dynamic target, never as an allow
-        if not sink.swallow:
-            raise
-        sink.failed = True
-        return
-    cwds = sorted(tracked.possible, key=lambda cwd: (cwd is None, cwd or ""))
-    for path in paths:
-        tracked.budget.charge()
-        sink.found.extend((path, cwd, language) for cwd in cwds)
-        if tracked.capped and not _is_dynamic_target(path) and not _is_absolute_target(path):
-            sink.found.append((_unplaced_target(_LOST_DIRECTORY), None, language))
+    sink swallows (the walk goes on, the caller reports one dynamic target), else it propagates. A call can
+    start more than once in a statement: the scanner reads a `{ }` body as part of one statement, so the calls
+    in a loop or script block are found too (_inline_call_starts)."""
+    for start, program in _inline_call_starts(statement):
+        language = _inline_code.interpreter_language(_ps_command_name(program))
+        if language is None:
+            continue
+        kind, code = _inline_code.code_source(language, statement[start + 1:])
+        if kind == _inline_code.SOURCE_STDIN:
+            code = piped if start == 0 else None
+        elif kind == _inline_code.SOURCE_CODE and code is not None:
+            code = _unwrap_here_string(code)
+        if kind == _inline_code.SOURCE_NONE or code is None:
+            continue
+        reader = _inline_code.write_targets if sink.precise else _inline_code.write_paths
+        try:
+            if kind == _inline_code.SOURCE_CODE and (start > 0 or program != statement[0]):
+                paths = _read_with_glued_closers(reader, language, code)
+            else:
+                paths = list(reader(language, code))
+        except Exception:  # noqa: BLE001 - the fail-closed path: a crash of the reader ends as one dynamic target, never as an allow
+            if not sink.swallow:
+                raise
+            sink.failed = True
+            return
+        cwds = sorted(tracked.possible, key=lambda cwd: (cwd is None, cwd or ""))
+        for path in paths:
+            tracked.budget.charge()
+            sink.found.extend((path, cwd, language) for cwd in cwds)
+            if tracked.capped and not _is_dynamic_target(path) and not _is_absolute_target(path):
+                sink.found.append((_unplaced_target(_LOST_DIRECTORY), None, language))
+
+
+def _read_with_glued_closers(reader: Callable[[str, str], Iterable[str]], language: str, code: str) -> list[str]:
+    """The paths the inline code of a call inside `{ }` or `( )` writes. The tokenizer glues the closing `}` or `)`
+    to a quoted code word (`{python -c "..."}` is one word `...}`), and the text cannot tell that closer from one
+    the code itself ends with, so the code is read as it stands and with up to three trailing closers cut; the
+    paths of all readings are joined. A reading that could not place a write (an unplaced target) only counts when
+    no other reading found a path, and a crash only when no reading succeeded: a cut that does not belong to the
+    code breaks it, the one that does makes it readable."""
+    variants = [code]
+    for _ in range(3):
+        if not variants[-1].endswith((")", "}")):
+            break
+        variants.append(variants[-1][:-1])
+    found: list[str] = []
+    unplaced: list[str] = []
+    failure: Optional[Exception] = None
+    read_any = False
+    for variant in variants:
+        try:
+            paths = list(reader(language, variant))
+        except Exception as error:  # noqa: BLE001 - a cut that breaks the code; judged after all readings
+            failure = error
+            continue
+        read_any = True
+        found.extend(path for path in paths if not _is_unplaced_target(path))
+        unplaced.extend(path for path in paths if _is_unplaced_target(path))
+    if not read_any and failure is not None:
+        raise failure
+    return list(dict.fromkeys(found or unplaced))
+
+
+# What may stand in front of a program word that starts a call inside a statement: `{`, `(`, `$(`, `@(`.
+_PS_CALL_OPENER_RE = re.compile(r"^(?:\$\(|@\(|[{(])+")
+
+
+def _inline_call_starts(statement: list[str]) -> list[tuple[int, str]]:
+    """(index, program word) of every place a call can start in a statement: its first word and, in a body the
+    scanner reads as part of the statement, the word after `{`, `(`, `$(`, `&`, `.` or the `=` of an
+    assignment, or a word that carries such an opener itself (`{python`, `$(python`) — the opener cut off."""
+    starts: list[tuple[int, str]] = []
+    for index, word in enumerate(statement):
+        bare = _PS_CALL_OPENER_RE.sub("", word)
+        if index == 0 or bare != word or statement[index - 1].endswith(("{", "(")) or statement[index - 1] in ("&", ".", "="):
+            starts.append((index, bare))
+    return starts
 
 
 def _inline_sink_targets(sink: _InlineSink, base_cwd: str, command: str, tracked: _TrackedDirs) -> set[str]:

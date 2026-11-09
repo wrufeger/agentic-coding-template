@@ -175,6 +175,7 @@
 from __future__ import annotations
 
 import bisect
+import fnmatch
 import functools
 import ipaddress
 import os
@@ -210,6 +211,7 @@ __all__ = [
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
     "_scan_command", "_bash_write_targets_new", "_bash_write_targets", "_bash_inline_write_targets",
     "_attribute_targets", "_perl_inplace_targets", "_robocopy_targets", "_LITERAL_DIR_RE",
+    "_WILDCARD_DIR_RE", "_expand_directory_wildcard",
     "_HeredocOperand", "_InlineTarget", "_bash_inline_code_targets",
     "_InlineCode", "_bash_inline_code",
     "_WSL_VALUE_OPTIONS", "_WSL_FLAG_OPTIONS", "_WSL_MOUNT_RE", "_wsl_native_word", "_wsl_command_line",
@@ -554,6 +556,11 @@ _SIMPLE_DIR_RE = re.compile(r"^[\w./:-]+$")
 # parentheses (`Program Files (x86)`), which can only come from quoting, so it is a literal. Never a `$`,
 # backtick, glob character, brace or `~`.
 _LITERAL_DIR_RE = re.compile(r"^[\w./: ()+@,-]+$")
+# The same plus the wildcard characters `*`, `?` and `[ ]`: a `cd`/`pushd` operand the shell itself resolves against the
+# directories on disk (_wildcard_bases) instead of leaving the base unknown.
+_WILDCARD_DIR_RE = re.compile(r"^[\w./: ()+@,*?\[\]-]+$")
+_DIR_WILDCARD_RE = re.compile(r"[*?\[]")
+_DIR_WILDCARD_LIMIT = 16  # candidates followed at one step of a wildcard path
 
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
 _RESERVED_PREFIXES = frozenset(
@@ -2506,6 +2513,53 @@ class _WrittenPlaces:
         return any(made == key or made.startswith(prefix) for made in self._created)
 
 
+def _expand_directory_wildcard(joined: str) -> Optional[list[str]]:
+    """The existing directories (absolute native paths, sorted) an absolute path with wildcard characters in
+    some of its parts names, found by listing the directories on the way (hidden ones included); empty when none
+    matches, None when it cannot be told: a share on another host (never asked), more than _DIR_WILDCARD_LIMIT
+    candidates at a step."""
+    path = Path(joined)
+    if _is_remote_unc(path):
+        return None
+    current = [path.anchor]
+    for part in path.parts[1:]:
+        found: list[str] = []
+        for base in current:
+            if not _DIR_WILDCARD_RE.search(part):
+                found.append(os.path.join(base, part))
+                continue
+            try:
+                with os.scandir(base) as entries:
+                    found.extend(
+                        os.path.join(base, entry.name) for entry in entries
+                        if fnmatch.fnmatch(entry.name, part) and entry.is_dir()
+                    )
+            except OSError:
+                continue
+        if len(found) > _DIR_WILDCARD_LIMIT:
+            return None
+        current = found
+    return sorted(match for match in current if os.path.isdir(match))
+
+
+def _wildcard_bases(bases: _Bases, native: str) -> _Bases:
+    """The possible directories after `cd <native>` when the operand has wildcard characters: the shell goes to
+    a directory the pattern names now, or stays where it was (a pattern that matches nothing, or several), so
+    the old directories stay next to the matches; None (unknown) joins them when a pattern names nothing or
+    cannot be followed."""
+    found: set[Optional[str]] = set(bases)
+    for base in bases:
+        if Path(native).is_absolute():
+            joined = os.path.normpath(native)
+        elif base is None:
+            continue
+        else:
+            joined = os.path.normpath(str(Path(_to_native_path(base)) / native))
+        matches = _expand_directory_wildcard(joined)
+        found.update(matches if matches else (None,))
+    return frozenset(found)
+
+
 def _cd_bases(bases: _Bases, directory: str) -> _Bases:
     """The possible directories after `cd <directory>` from each of `bases`. A rooted path without
     a drive on Windows (`/tmp`, Git Bash's own mount points) has no knowable native location - except
@@ -2513,6 +2567,10 @@ def _cd_bases(bases: _Bases, directory: str) -> _Bases:
     if _WSL_DEPTH:
         directory = _wsl_native_word(directory)
     native = _to_native_path(directory)
+    if _DIR_WILDCARD_RE.search(directory):
+        if native.startswith(("/", "\\")) and not Path(native).is_absolute():
+            return frozenset(bases) | {None}
+        return _wildcard_bases(bases, native)
     if Path(native).is_absolute():
         return frozenset({native})
     if native.startswith(("/", "\\")):
@@ -2896,7 +2954,7 @@ def _simple_command_targets(
         # is still caught by its text (check 1) and denied as unplaceable (check 1c).
         if not getattr(words[index], "subs", ()):
             operands, _ = _operands(args)
-            if len(operands) == 1 and _LITERAL_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
+            if len(operands) == 1 and _WILDCARD_DIR_RE.match(operands[0]) and not operands[0].startswith("-"):
                 return [], (operands[0], prefixed, "cd")
         return [], (None, prefixed, "cd")
     if name == "pushd":
@@ -2905,7 +2963,7 @@ def _simple_command_targets(
         if not getattr(words[index], "subs", ()):
             operands, _ = _operands(args)
             options = [arg for arg in args if arg.startswith(("-", "+")) and arg != "--"]
-            if len(operands) == 1 and not options and _LITERAL_DIR_RE.match(operands[0]):
+            if len(operands) == 1 and not options and _WILDCARD_DIR_RE.match(operands[0]):
                 return [], (operands[0], prefixed, "pushd")
         return [], (None, prefixed, "pushd")
     if name == "popd":
