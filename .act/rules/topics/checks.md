@@ -399,6 +399,16 @@ call, the same statement, a list built from parts, `args=` - a `/c` or `/deny` s
 a switch that names a file (`/LOG:out.txt`). Limits: a file in the root of a drive named like a switch is
 not judged in that list; `from subprocess import run` used bare is not seen as a start.
 
+In Python code, a literal that only registers a folder for imports is no path either: the literal that is all of
+the second argument of `sys.path.insert(`, of the only argument of `sys.path.append(` or `site.addsitedir(`, or
+an element of the list or tuple that is all of the only argument of `sys.path.extend(` (whitespace around it and a
+string prefix allowed). A joined or interpolated literal, a name, a literal in a call nested in the argument
+(`os.path.join('out', 'x')`) and the same text elsewhere in the program stay paths, and a write call that names
+it (`open('lib/x', 'w')`) is judged as before. Nothing drops out where the program may read the folder back
+(`sys.path[0]`, `sys.modules`, `getattr`, `__import__`, `eval` ...): only a bare `import sys`, the registration
+calls and `sys.argv`, `sys.exit`, `sys.stdout` and the like are left. Limit: `import sys as s`, `from sys import path` and `from site
+import addsitedir` are not recognised, so their literal is still judged as a path.
+
 A write call of inline code is judged by the path its text shows. Shown is: a string literal; `Path(...)`,
 `os.path.join(...)` (Node `path.join(...)`) of such parts, put together with `+`, `/` or an f-string field; a name bound
 exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used unchanged - not a

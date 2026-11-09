@@ -38,6 +38,20 @@
 # `${...}`) is judged by its static prefix up to the last separator before the first interpolation;
 # without a separator there it is no path.
 #
+# Import folders: in Python code, a literal that only registers a folder for imports is no path (the wide
+# reading, write_paths, drops it; what a write call names stays, write_targets): the literal that is all of the
+# second argument of `sys.path.insert(`, of the only argument of `sys.path.append(` or `site.addsitedir(`, or an
+# element of the list or tuple that is all of the only argument of `sys.path.extend(` - whitespace around it and
+# a string prefix (r, b, u) allowed, nothing else (_without_path_registrations). A joined or interpolated
+# literal, a name, a literal in a call nested in the argument (`os.path.join('out', 'x')`) and the same text
+# somewhere else in the program (`open(<it>, 'w')`) stay paths. Nothing drops out where the folder can be read
+# back and handed to a write the program reading does not see (`subprocess.run(['touch', sys.path[0]])`): any
+# use of `sys` or `site` other than a bare `import`, a registration call or `sys.<attribute>` of a short list
+# (`argv`, `exit`, `stdout`, `executable` ...), and any dynamic name lookup (`getattr`, `__import__`, `eval`
+# ...) keep every literal (_import_folder_read_back). Not seen: `import sys as s`, `from sys import path`,
+# `from site import addsitedir` - their literal is still judged as a path. An import from the registered
+# folder may write `__pycache__` there; that was never refused on its own.
+#
 # Windows tools with `/` switches: a literal that is only a switch (`/deny`, `/c`, `/grant:r`, `/MIR`,
 # `/R:3`: one segment, at most 16 letters or digits, an optional `:value`) is no path in exactly one
 # place - among the arguments of a call that starts a program, when the tool that knows the switch (the
@@ -810,6 +824,97 @@ def _without_switches(language: str, literals: list[_Literal], skeleton: str) ->
             result.extend(replaced.get(index, [literal]))
     return result
 
+# The Python calls that only register a folder for imports: `sys.path.insert(<index>, <folder>)`,
+# `sys.path.append(<folder>)`, `sys.path.extend([<folder>, ...])`, `site.addsitedir(<folder>)`. No alias
+# (`import sys as s`, `from sys import path`) and no attribute chain in front (`os.sys.path`).
+_PY_PATH_CALL_RE = re.compile(
+    r"(?<![\w.])(?:sys\s*\.\s*path\s*\.\s*(?:(?P<insert>insert)|(?P<append>append)|(?P<extend>extend))"
+    r"|site\s*\.\s*(?P<site>addsitedir))\s*\("
+)
+
+# The uses of `sys` and `site` that cannot hand a registered folder on: a bare `import sys` / `import site`
+# (no `as`, no dotted name in the list), the registration calls above and `sys.<attribute>` of this list.
+# Every other use - `sys.path[0]`, `sys.modules`, `os.sys`, `sys = ...` - and every dynamic name lookup may
+# read the folder back (_import_folder_read_back).
+_PY_SYS_SITE_RE = re.compile(r"(?<!\w)(?:sys|site)(?!\w)")
+_PY_BARE_IMPORT_RE = re.compile(r"(?:^|;)[ \t]*import[ \t]+([\w \t,]+?)[ \t]*(?=;|$)", re.MULTILINE)
+_PY_IMPORT_NAME_RE = re.compile(r"[A-Za-z_]\w*")
+_PY_SYS_HARMLESS_RE = re.compile(
+    r"(?<![\w.])sys\s*\.\s*(?:argv|exit|stdout|stderr|stdin|platform|version|version_info|executable"
+    r"|maxsize|byteorder|getdefaultencoding|getfilesystemencoding|implementation)(?!\w)"
+)
+_PY_DYNAMIC_NAME_RE = re.compile(
+    r"(?<!\w)(?:getattr|__import__|importlib|eval|exec|compile|globals|vars|locals|__dict__|__builtins__)(?!\w)"
+)
+
+
+def _import_folder_read_back(skeleton: str) -> bool:
+    """True if the program may read a registered import folder back and hand it to a write the program
+    reading does not see: a use of `sys` or `site` other than a bare `import` of it, the start of a
+    registration call (_PY_PATH_CALL_RE) or a harmless `sys.<attribute>` (_PY_SYS_HARMLESS_RE), or a
+    dynamic name lookup anywhere in the skeleton."""
+    if _PY_DYNAMIC_NAME_RE.search(skeleton):
+        return True
+    allowed = {match.start() for match in _PY_PATH_CALL_RE.finditer(skeleton)}
+    allowed.update(match.start() for match in _PY_SYS_HARMLESS_RE.finditer(skeleton))
+    for match in _PY_BARE_IMPORT_RE.finditer(skeleton):
+        names = [name.strip() for name in match.group(1).split(",")]
+        if all(_PY_IMPORT_NAME_RE.fullmatch(name) for name in names):
+            allowed.update(match.start(1) + name.start() for name in _PY_SYS_SITE_RE.finditer(match.group(1)))
+    return any(match.start() not in allowed for match in _PY_SYS_SITE_RE.finditer(skeleton))
+
+
+def _without_path_registrations(literals: list[_Literal], skeleton: str) -> list[_Literal]:
+    """`literals` with the ones that only register an import folder emptied (an empty literal is no path): the
+    folder literal that is all of the second argument of `sys.path.insert(` (nothing but whitespace around it),
+    of the only argument of `sys.path.append(` or `site.addsitedir(`, or an element of the list or tuple that is
+    all of the only argument of `sys.path.extend(`. Exactly the argument of that very call: a literal in a call
+    nested inside it (`os.path.join('out', 'x')`), a joined or interpolated one, a name and every other literal
+    stay, as does everything when the literals cannot be matched to the skeleton or the call is not closed.
+    Each occurrence is judged on its own: the same text in a write call is still named by write_targets.
+    Nothing drops out where the program may read the folder back (_import_folder_read_back)."""
+    spans = _literal_spans(PYTHON, skeleton)
+    if len(spans) != len(literals) or _import_folder_read_back(skeleton):
+        return literals
+    by_span = {span: index for index, span in enumerate(spans)}
+
+    def trimmed(span: tuple[int, int]) -> tuple[int, int]:
+        start, end = span
+        while start < end and skeleton[start].isspace():
+            start += 1
+        while end > start and skeleton[end - 1].isspace():
+            end -= 1
+        return start, end
+
+    def literal_in(span: tuple[int, int]) -> Optional[int]:
+        index = by_span.get(trimmed(span))
+        return None if index is None or literals[index].interpolated else index
+
+    dropped: set[int] = set()
+    for match in _PY_PATH_CALL_RE.finditer(skeleton):
+        arguments = _argument_spans(skeleton, match.end())
+        close = arguments[-1][1]
+        if close >= len(skeleton) or skeleton[close] != ")":
+            continue  # the call is not closed (cut by the scan limit or by the end of the text)
+        if len(arguments) > 1 and not skeleton[slice(*arguments[-1])].strip():
+            arguments = arguments[:-1]  # a trailing comma
+        kind = match.lastgroup
+        found: Optional[int] = None
+        if kind == "insert":
+            found = literal_in(arguments[1]) if len(arguments) == 2 else None
+        elif len(arguments) == 1 and kind == "extend":
+            start, end = trimmed(arguments[0])
+            if end - start >= 2 and skeleton[start] in "[(" and skeleton[end - 1] in "])":
+                elements = _argument_spans(skeleton, start + 1)
+                if elements[-1][1] == end - 1:
+                    dropped.update(index for index in map(literal_in, elements) if index is not None)
+        elif len(arguments) == 1:
+            found = literal_in(arguments[0])
+        if found is not None:
+            dropped.add(found)
+    return [_Literal("", False) if index in dropped else literal for index, literal in enumerate(literals)]
+
+
 # The target a write call stands for when the text of the code does not show its path (a name that is not bound
 # once to a literal, a join with a variable part, an f-string with such a field, a call's result): no part of it
 # is resolved, the call that holds it is refused.
@@ -896,12 +1001,15 @@ def _node_write_targets(literals: list[_Literal], skeleton: str) -> tuple[list[s
 
 def write_paths(language: str, code: str) -> list[str]:
     """The paths a check judges as possible write targets of `code`: the path literals when it contains a write
-    call (the switches of a Windows tool the code starts are no paths, _without_switches), the paths the write
+    call (the switches of a Windows tool the code starts and the folder an import registers, `sys.path.insert(0,
+    '<folder>')`, are no paths, _without_switches, _without_path_registrations), the paths the write
     calls name (write_targets, for Python also where the call is no write call of the literal reading: a
     metadata change) and UNKNOWN_WRITE when a write call's path is not shown by the text."""
     literals, skeleton = _scan(language, code)
     found: dict[str, None] = {}
     if _skeleton_has_write_call(language, skeleton):
+        if language == PYTHON:
+            literals = _without_path_registrations(literals, skeleton)
         for literal in _without_switches(language, literals, skeleton):
             candidate = _path_candidate(literal)
             if candidate is not None:
