@@ -72,11 +72,9 @@ from . import inline_code as _inline_code
 from .brace_expand import literal_brace_variants
 from .command_parse import parse_for
 from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _is_unplaced_target
-from .powershell_targets import _powershell_inline_code_targets, _ps_raw_redirect_targets
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _Word,
-    _bash_inline_code_targets,
     _is_absolute_target,
     _is_dynamic_target,
     _resolve_path,
@@ -1123,7 +1121,7 @@ def check_worker_write_scope(payload: dict) -> int:
             base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
             ps_targets = parse_for(payload, command).write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE)
             if ps_targets is None:
-                ps_targets = _ps_raw_redirect_targets(command)
+                ps_targets = parse_for(payload, command).ps_raw_redirects()
             # powershell_targets already resolves what it can to an absolute path itself (a
             # PowerShell script has exactly one current directory at any point, unlike Bash's
             # possibly-several); pairing every target with base=None below still resolves
@@ -1145,12 +1143,9 @@ def check_worker_write_scope(payload: dict) -> int:
     # from the shell targets: (path, base directory or None, language).
     inline_targets: list[tuple[str, Optional[str], str]] = []
     if inline_source is not None:
-        source_tool, source_command, source_cwd = inline_source
+        _source_tool, source_command, source_cwd = inline_source
         try:
-            if source_tool == "Bash":
-                inline_targets = _bash_inline_code_targets(source_command, source_cwd)
-            else:
-                inline_targets = _powershell_inline_code_targets(source_command, source_cwd)
+            inline_targets = parse_for(payload, source_command).inline_targets(source_cwd)
         except _inline_code.ReaderFailure as failure:
             # A program error of the reader (not a text it cannot read): the inline code was not judged,
             # so the call is not let through as if it had no write call.

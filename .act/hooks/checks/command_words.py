@@ -196,14 +196,16 @@ def _coarse_word_lists(text: str) -> list[tuple[list[str], Optional[str]]]:
     return result
 
 
-def _nested_word_lists(text: str, depth: int) -> list[tuple[list[str], Optional[str]]]:
+def _nested_word_lists(
+    text: str, depth: int, plain_only: bool = False,
+) -> list[tuple[list[str], Optional[str]]]:
     """The commands of a nested command text found at nesting `depth`: scanned one level further down
     by the word lexer, or — at _MAX_SCAN_DEPTH, where the previous code stopped looking and let the
     rest pass — read coarsely (_coarse_word_lists), which fails toward seeing
     too much."""
     if depth >= _MAX_SCAN_DEPTH:
         return _coarse_word_lists(text)
-    return _command_word_lists_new(text, depth + 1)
+    return _command_word_lists_new(text, depth + 1, plain_only=plain_only)
 
 
 # A command whose arguments are only printed. Its single-quoted `$(...)` is then text, not a command to read -
@@ -329,14 +331,15 @@ def _piped_script_texts(previous: list[str], words: list[str]) -> list[str]:
 
 
 def _command_word_lists_new(
-    command: str, depth: int = 0, print_only_text: bool = False,
+    command: str, depth: int = 0, print_only_text: bool = False, plain_only: bool = False,
 ) -> list[tuple[list[str], Optional[str]]]:
     """Every simple command in `command`, as (argv, preceding-separator) pairs — see this module's
     docstring for the contract and known limits. Recurses into `sh|bash|zsh|dash|ksh -c ...`,
     `pwsh|powershell -Command ...`, `cmd /c ...`, `eval ...`, `$(...)`, `` `...` `` and
     `find ... -exec ... ;|+`. With `print_only_text`, the text behind a single-quoted `$(` of an `echo` or
     `printf` on a top-level command line that prints and does nothing else (_print_only_line) is not read
-    as commands."""
+    as commands. With `plain_only`, a command with a redirection comes back once, without the operands of its
+    redirections, not also as the lexer hands it back (for a reader that takes the operands of a command)."""
     command = _join_line_continuations(command)
     tokens = None
     for attempt in (lambda: _line_mode_tokens(command), lambda: _shell_tokens(command, True)):
@@ -395,7 +398,10 @@ def _command_word_lists_new(
         # (the operand among them, the way every earlier version read them) and without the operands.
         variants = [words]
         if redirected and plain and plain != words:
-            variants.append(plain)
+            if plain_only:
+                variants = [plain]
+            else:
+                variants.append(plain)
         result.extend((variant, sep) for variant in variants)
         nested: list[str] = []  # the texts of the commands this command runs, in the order found
         for word in words:
@@ -469,20 +475,22 @@ def _command_word_lists_new(
         for text in nested:
             if text not in seen_nested:
                 seen_nested.append(text)
-                result.extend(_nested_word_lists(text, depth))
+                result.extend(_nested_word_lists(text, depth, plain_only))
         result.extend((tail, None) for tail in found_exec)
         # The command behind -exec may itself run a command line (`-exec sh -c 'rm -rf {}' \;`): read
         # it again as text, so the same nesting rules (sh -c, eval, find -exec, ...) apply to it.
         for tail in found_exec:
-            result.extend(_nested_word_lists(shlex.join(tail), depth))
+            result.extend(_nested_word_lists(shlex.join(tail), depth, plain_only))
     return result
 
 
-def _command_word_lists(command: str, depth: int = 0) -> list[tuple[list[str], Optional[str]]]:
+def _command_word_lists(
+    command: str, depth: int = 0, plain_only: bool = False,
+) -> list[tuple[list[str], Optional[str]]]:
     """Every simple command in `command`, as (argv, preceding-separator) pairs — the contract and
     known limits are in this module's docstring. One reading, the word lexer's, with the text of a
-    single-quoted `$(` of a printing command left alone (_command_word_lists_new)."""
-    return _command_word_lists_new(command, depth, print_only_text=True)
+    single-quoted `$(` of a printing command left alone (_command_word_lists_new); `plain_only` as there."""
+    return _command_word_lists_new(command, depth, print_only_text=True, plain_only=plain_only)
 
 
 def _stripped_word_lists(command: str) -> list[list[str]]:

@@ -78,10 +78,8 @@ import actlib
 from . import inline_code as _inline_code
 from .command_parse import Parse, parse_for
 from .common import MODES_SEEN, _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _pop_pending_notes, _queue_pending_note
-from .powershell_targets import _powershell_inline_code_targets, _ps_raw_redirect_targets
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
-    _bash_inline_code_targets,
     _command_name,
     _is_absolute_target,
     _is_dynamic_target,
@@ -393,13 +391,13 @@ def _main_write_paths(
         parse = parse_for(payload, command)
         if tool_name == "Bash":
             pairs = list(parse.bash_write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE))
-            inline = _bash_inline_code_targets(command, base_cwd)
+            inline = parse.inline_targets(base_cwd)
         else:
             ps_targets = parse.write_targets(base_cwd, _GIT_WRITES_WORKER_SCOPE)
             if ps_targets is None:
-                ps_targets = _ps_raw_redirect_targets(command)
+                ps_targets = parse.ps_raw_redirects()
             pairs = [(target, None) for target in ps_targets]
-            inline = _powershell_inline_code_targets(command, base_cwd)
+            inline = parse.inline_targets(base_cwd)
     forms: list[tuple[str, Optional[str], bool]] = []
     seen: set[tuple] = set()
     for raw, base in pairs:

@@ -7,8 +7,9 @@ answer. No parsing logic lives here.
 
 Rules the accessors keep:
   * lazy: a reader runs only when a check asks for its result;
-  * memoized per accessor and, for `write_targets`, `bash_write_targets` and `ps_words`, per argument
-    key (checks pass different working directories, git-write sets, flags and depths);
+  * memoized per accessor and, for `write_targets`, `bash_write_targets`, `ps_words`, `inline_targets` and
+    `inline_code`, per argument key (checks pass different working directories, git-write sets, flags and
+    depths);
   * a reader that raises has its exception stored and the same exception re-raised on every later ask,
     the reader not called again, so its type stays (the dispatcher recognizes `inline_code.ReaderFailure`);
   * every result is returned as a fresh copy, so one check cannot change what the next one sees;
@@ -157,3 +158,38 @@ class Parse:
             return _shell_targets._bash_write_targets(self._command, base_cwd, git_writes, inline)
 
         return self._once(key, read_bash, list)
+
+    def inline_targets(self, base_cwd: str) -> list:
+        """The path literals of inline interpreter code that holds a write call, as (path, directory it
+        resolves against or None, language) triples: shell_targets._bash_inline_code_targets for a Bash call,
+        powershell_targets._powershell_inline_code_targets for a PowerShell call. One reader call per
+        working directory; a failure of the reader (inline_code.ReaderFailure) is replayed."""
+        if self._tool_name == "PowerShell":
+            return self._once(
+                ("inline_targets", "PowerShell", base_cwd),
+                lambda: _powershell_targets._powershell_inline_code_targets(self._command, base_cwd), list)
+        return self._once(
+            ("inline_targets", "Bash", base_cwd),
+            lambda: _shell_targets._bash_inline_code_targets(self._command, base_cwd), list)
+
+    def inline_code(self, base_cwd: Optional[str]) -> tuple:
+        """shell_targets._bash_inline_code(command, base_cwd) whatever the tool: (the program texts a Bash
+        command hands to an interpreter, the text their spans index into). One reader call per working
+        directory (None = unknown is a key of its own)."""
+        return self._once(
+            ("inline_code", base_cwd), lambda: _shell_targets._bash_inline_code(self._command, base_cwd),
+            lambda found: (list(found[0]), found[1]))
+
+    def ps_raw_redirects(self) -> set:
+        """powershell_targets._ps_raw_redirect_targets(command): the coarse operator-based reading of a
+        PowerShell command the write-target reader could not evaluate."""
+        return self._once(
+            "ps_raw_redirects", lambda: _powershell_targets._ps_raw_redirect_targets(self._command), set)
+
+    def plain_words(self) -> list:
+        """command_words._command_word_lists(command, plain_only=True), the argv of every simple command: a
+        command with a redirection once, without the operands of its redirections."""
+        return self._once(
+            "plain_words",
+            lambda: [words for words, _sep in _command_words._command_word_lists(self._command, plain_only=True)],
+            _copy_lists)

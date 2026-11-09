@@ -448,6 +448,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- `git-metadata-guard` reads the files a `cp`, `mv` or `Copy-Item` writes with the quotes in mind: a quoted name that
+  holds a `;`, `&&` or `|` (`cp 'p;q/.envrc' .` as a worker) is one name, no longer torn apart so that the copy of a
+  protected file such as `.envrc` went unseen. It also sees a copy inside `bash -c '...'`, `$(...)`, `( ... )`,
+  `x=$(...)` and `pwsh -Command "Copy-Item ..."` now. What the coarse reading refused before (a shell line inside a quoted
+  program text, a heredoc body a shell runs) is refused as before.
 - A write check that cannot identify its target refuses instead of evaluating in part. Inline Python or Node code with a
   write call whose path the text does not show (a name bound twice, a loop variable, `sys.argv`, a join or f-string with a
   variable part) is refused by the `.act/` write guard and the worker write scope; a path the text shows is

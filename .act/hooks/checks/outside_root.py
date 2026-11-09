@@ -124,7 +124,7 @@ from .command_words import _strip_command_prefix
 from .inline_code import UNKNOWN_WRITE, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
 from .powershell_targets import (
-    _extract_ps_command_flag, _is_unplaced_target, _ps_raw_redirect_targets,
+    _extract_ps_command_flag, _is_unplaced_target,
     _unplaced_reason,
 )
 from .secret_read import (
@@ -1548,9 +1548,10 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
             if "outside-allow" in command.lower():
                 judge.lock(".act-local/outside-allow", judge.lock_dir)
         elif powershell:
-            targets = parse.for_text(command).write_targets(cwd, _GIT_WRITES_WORKER_SCOPE)
+            reading = parse.for_text(command)
+            targets = reading.write_targets(cwd, _GIT_WRITES_WORKER_SCOPE)
             if targets is None:
-                targets = _ps_raw_redirect_targets(command)
+                targets = reading.ps_raw_redirects()
             for target in sorted(targets):
                 if target == UNKNOWN_WRITE:
                     continue  # inline code whose path the text does not show: refused by the write guards, in every mode
