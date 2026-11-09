@@ -65,6 +65,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- `outside-root` no longer refuses `node -e`, `deno eval` or `bun -e` code that only passes a string to `new URL(`,
+  `url.resolve(` or `path.normalize(`; code that names a file API (`fs`, `open(`) or a `file:` URL is still checked.
 - The safety checks refuse fewer harmless commands: `cd` round trips before `xargs`, URL loops, `rsync` to remote
   hosts, PowerShell loops and assignments, `echo '$(...)'`, a single-quoted `` `rm x` `` in a commit message.
 - The commit scans: `secret-scan` reads quoted file names, renames to `.env` and `$'` text correctly; `danger-scan`

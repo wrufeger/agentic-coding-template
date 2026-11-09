@@ -120,6 +120,13 @@ directory opens everything below it: name the program folder itself. A `file:` U
 of a command is no path (`"D:/Program Files/Browser/browser.exe" --headless` needs no entry); a `cd` into the folder,
 a path argument or a wrapper (`xvfb-run`, `bash -c`) does.
 
+Inline code of a JavaScript runtime (`node -e`, `deno eval`, `bun -e`): a string literal that is the direct argument of
+`new URL(`, `URL(`, `url.resolve(`, `path.normalize(` or `path.posix.normalize(` (also behind `require('path')`) is no
+read. Any other literal, one inside a call nested in such an argument, and a `file:` URL are still paths, and the whole
+exception is off when the command line names a file API (`fs`, `open(`, `readFile`, `fetch`, `import.meta`, a `file:`
+...).
+A file API the list does not know makes a literal look harmless.
+
 Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
 and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to
 `settings.md.bak-<stamp>`). `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix,

@@ -86,6 +86,18 @@
 #     message asks for shorter commands.
 #   - the `cd` tracking is lexical and best effort: a relative word counts only if it leaves the
 #     allowed places from every directory the scanner thinks the shell may be in.
+#   - a string literal that is the direct argument of a URL or path normalisation in the inline code of
+#     a JavaScript runtime (`node`, `nodejs`, `deno`, `bun`; `new URL(`, `URL(`, `url.resolve(`,
+#     `path.normalize(`, `path.posix.normalize(`, also behind `require('path')`) is no read
+#     (_url_argument_literals). Only that exact position: a
+#     literal in a call nested inside it, any other call, and a `file:` URL stay candidates. The whole
+#     exception is off as soon as the command line names a file API (_FILE_API_RE: `fs`, `open(`,
+#     `readFile`, `Path(`, `child_process`, `fetch`, `import.meta`, `Bun.`, a `file:` anywhere ...), since
+#     the normalised string could be read right after (`const p = path.normalize('/etc/passwd');
+#     fs.readFileSync(p)`). A file API the list does not know, or one reached through `eval` or an
+#     obfuscated name, makes the literal look harmless. Comments and regular-expression literals are read
+#     as code, so a call name inside one (`f(/* URL( */ '/x')`) can place a literal wrongly, and a call
+#     name more than _CALL_WINDOW characters before its `(` is not recognised (stricter, never looser).
 #   - heuristics against false alarms, all best effort: the program word, the text of `echo`/
 #     `printf`, the value of `-m`/`--message`/`--body`/`--title`, URLs, the search pattern of
 #     `grep`/`rg`, the script of `sed`/`awk`/`jq` and the value of `find -name` are not paths. A
@@ -956,6 +968,72 @@ def _is_separator_value(name: str, args: list[str], index: int) -> bool:
     return index > 0 and args[index - 1] in _SEPARATOR_VALUE_OPTIONS.get(name, frozenset())
 
 
+# A call whose argument list holds a string that is only normalised or resolved as text. The code before
+# the opening parenthesis must end in one of these, within _CALL_WINDOW characters. The calls are those of
+# JavaScript runtimes, so only their inline code gets the exception.
+_JS_INTERPRETERS = frozenset({"node", "nodejs", "deno", "bun"})
+_CALL_WINDOW = 120
+_NORMALISING_CALL_RE = re.compile(
+    r"""(?:
+        \bnew\s+URL
+      | (?<![\w$.])URL
+      | (?<![\w$.])url\.resolve
+      | \brequire\(\s*(?P<q1>['"])(?:node:)?url(?P=q1)\s*\)\s*\.resolve
+      | (?<![\w$.])path(?:\.posix)?\.normalize
+      | \brequire\(\s*(?P<q2>['"])(?:node:)?path(?P=q2)\s*\)(?:\s*\.posix)?\s*\.normalize
+    )\s*$""",
+    re.VERBOSE,
+)
+
+# Names of file APIs: when the inline code mentions one, no literal is exempt (see _read_candidates).
+_FILE_API_RE = re.compile(
+    r"""\bfs\b|\bfsp\b|\bopen\s*\(|\bopenSync\b|read[Ff]ile|write[Ff]ile|\bPath\s*\(|\bpathlib\b
+      |\bchild_process\b|\bos\.|\bshutil\b|\bio\.|\bDeno\.|\bBun\.|\bsubprocess\b
+      |\bfetch\b|\bimport\.meta\b|(?i:\bfile:)
+      |\bcreate(?:Read|Write)Stream\b|\breaddir|\bglob\b|\bimport\s*\(|\brequire\s*\(\s*[^'"\s)]
+      |\beval\s*\(|\bnew\s+Function\b|\bexec(?:Sync|File)?\s*\(|\bspawn""",
+    re.VERBOSE,
+)
+
+_OPENERS = {"(": ")", "[": "]", "{": "}"}
+
+
+def _url_argument_literals(code: str, starts: list[int]) -> set[int]:
+    """The members of `starts` (offsets of a quote that opens a string literal of `code`) whose literal is
+    a direct argument of a URL or path normalisation (_NORMALISING_CALL_RE): the innermost bracket open at
+    that point is the `(` of such a call. A literal inside a nested call, a bracket or a block, and one the
+    scan cannot place (it lies inside another string, or the brackets do not match) are left out. One pass
+    over `code`; the call name is matched once per `(`, within the _CALL_WINDOW characters before it, so
+    cost is linear. Whether the code names a file API (_FILE_API_RE) is for the caller."""
+    wanted = set(starts)
+    exempt: set[int] = set()
+    stack: list[tuple[str, bool]] = []  # (opening bracket, it opens a normalising call)
+    quote = ""
+    index = 0
+    while index < len(code):
+        char = code[index]
+        if quote:
+            if char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        else:
+            if index in wanted and stack and stack[-1][1] and char in "'\"":
+                exempt.add(index)
+            if char in "'\"`":
+                quote = char
+            elif char in _OPENERS:
+                normalising = char == "(" and bool(
+                    _NORMALISING_CALL_RE.search(code, max(0, index - _CALL_WINDOW), index))
+                stack.append((char, normalising))
+            elif char in ")]}":
+                if not stack or _OPENERS[stack[-1][0]] != char:
+                    return exempt  # unbalanced: nothing after this point is placed
+                stack.pop()
+        index += 1
+    return exempt
+
+
 def _read_candidates(
     name: str, args: list[str], feeds_xargs: bool = False, powershell: bool = False,
 ) -> list[tuple[str, bool]]:
@@ -978,9 +1056,17 @@ def _read_candidates(
             if _looks_like_path(candidate):
                 found.append((candidate, False))
         if name in _INTERPRETERS and (" " in word or '"' in word or "'" in word):
-            for literal in _LITERAL_RE.findall(word):
-                if _looks_like_path(literal, strict=True):
-                    found.append((literal, True))
+            matches = list(_LITERAL_RE.finditer(word))
+            plain: set[int] = set()
+            if matches and name in _JS_INTERPRETERS and not _FILE_API_RE.search(" ".join(args)):
+                plain = _url_argument_literals(word, [match.start() for match in matches])
+            for match in matches:
+                literal = match.group(1)
+                if not _looks_like_path(literal, strict=True):
+                    continue
+                if match.start() in plain and not _FILE_URL_RE.match(literal.strip()):
+                    continue  # the argument of a URL or path normalisation: text, no read
+                found.append((literal, True))
     return found
 
 
