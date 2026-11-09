@@ -72,6 +72,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 ### Fixed
 - `worker-write-scope` no longer refuses inline Python that only adds an import folder (`sys.path.insert(0, 'lib')`,
   `append`, `extend`, `site.addsitedir`) next to a write elsewhere; code that reads the folder back is still checked.
+- `outside-root` no longer refuses a URL route as an argument of a script call (`python x.py "/api/users"`,
+  `node x.js /api/users`, `npx tsx`) when no such folder exists.
 - `outside-root` no longer refuses `node -e`, `deno eval` or `bun -e` code that only passes a string to `new URL(`,
   `url.resolve(` or `path.normalize(`; code that names a file API (`fs`, `open(`) or a `file:` URL is still checked.
 - The safety checks refuse fewer harmless commands: `cd` round trips before `xargs`, URL loops, `rsync` to remote

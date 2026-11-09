@@ -127,6 +127,19 @@ exception is off when the command line names a file API (`fs`, `open(`, `readFil
 ...).
 A file API the list does not know makes a literal look harmless.
 
+A URL route handed to a script is no read either: a word with a leading `/` behind the script file of `python`, `node`,
+`deno run`, `bun`, `tsx`, `ts-node`, `ruby`, `php`, `perl`, `lua`, `bash`/`sh`/`zsh`/`dash`/`ksh`, behind the package of
+`npx`, `bunx`, `npm exec`/`x`, `pnpm exec`/`dlx` or `yarn exec`/`dlx`, or behind a relative program (`./run.sh`,
+`./.venv/bin/python`) is left out of the read scan when its first segment names nothing (`python scripts/replace.py
+"/api/users" "/api/v2/users"`). It stays a path when its first segment exists (`/etc`, `/usr`, `/home`), when it holds
+`..`, `~`, a variable, `%` or an expanding brace group (`{a,b}`), is a drive, `file:` or UNC form, follows a file option
+(`-o`, `-vo`, `--output`, `--file`, `--config`, `--out-dir`, `--save-to` ...), is the script itself, or belongs to inline
+code (`-c`, `-e`); a known file command (`cat "/api/users"`) is judged as ever, and so is everything inside `wsl`
+(the check cannot see the distribution's folders). On Windows the first segment counts as existing when any reading of
+it does: the drive form (`/q/x` as `Q:`), a folder of the working drive, a name every POSIX root has, or a folder of a
+Git for Windows root (looked up in its usual install places only). A script that opens such a path itself is not seen:
+the exception trades some safety for comfort and holds only while nothing lies at the first segment.
+
 Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
 and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to
 `settings.md.bak-<stamp>`). `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix,

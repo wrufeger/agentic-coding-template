@@ -98,6 +98,22 @@
 #     obfuscated name, makes the literal look harmless. Comments and regular-expression literals are read
 #     as code, so a call name inside one (`f(/* URL( */ '/x')`) can place a literal wrongly, and a call
 #     name more than _CALL_WINDOW characters before its `(` is not recognised (stricter, never looser).
+#   - a URL route is no read where a script is called: a word with a leading `/` behind the script file of
+#     `python` (also `py`, `pythonw`, versioned), `node`, `deno run`, `bun [run]`, `tsx`, `ts-node`, `ruby`,
+#     `php`, `perl`, `lua`, `bash`/`sh`/`zsh`/`dash`/`ksh`, behind the package of `npx`, `bunx`, `npm exec`/`x`,
+#     `pnpm exec`/`dlx` or `yarn exec`/`dlx`, or behind a relative program (`./run.sh`, `./.venv/bin/python`) is
+#     left out when its first segment names nothing (_script_arg_start). Not the script itself, not inline code
+#     (`-c`, `-e`; behind a package any such option takes the exception away), not a word with `..`, `~`, a
+#     variable, `%`, an expanding brace group (`{a,b}`, `{1..3}`; `{id}` is text), a drive, `file:` or a UNC
+#     form, not the value of a file option (`-o`, `-vo`, `--output`, `--file`, `--config`, `--save-to` ... in
+#     _FILE_OPTIONS and _FILE_OPTION_RE), and not a word whose first segment exists (`/etc`, `/usr`, `/home`).
+#     On Windows one existing reading of the first segment is enough: the drive form (`/q/x` as `Q:`), a folder
+#     of the drive of the base folder or of the process (a native program opens `/q/x` as `<drive>:/q/x`), a name
+#     every POSIX root has, a folder of a Git for Windows root taken from its usual install places (no PATH
+#     search). Inside `wsl` no route is left out: the check cannot see the distribution's `/`. A script that
+#     reads or writes such a path itself stays invisible: `python x.py /api/users` may open `/api/users` if it
+#     exists later, and a script call this list does not know, or one behind `sudo`/`env` that the shared command
+#     reading does not look through, is read as before. `python -m pkg` is no script call here.
 #   - heuristics against false alarms, all best effort: the program word, the text of `echo`/
 #     `printf`, the value of `-m`/`--message`/`--body`/`--title`, URLs, the search pattern of
 #     `grep`/`rg`, the script of `sed`/`awk`/`jq` and the value of `find -name` are not paths. A
@@ -119,13 +135,14 @@
 from __future__ import annotations
 
 import fnmatch
+import functools
 import os
 import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import unquote
 
 import actlib
@@ -838,6 +855,16 @@ def _non_path_positions(name: str, args: list[str]) -> set[int]:
     return skip
 
 
+def _program_word(words: list[str]) -> str:
+    """The program word of one simple command as written (`./run.sh`), where _command_split gives its name."""
+    words = [str(word) for word in words]
+    while len(words) > 2 and _PS_ASSIGN_RE.match(words[0]) and words[1] == "=":
+        words = words[2:]
+    if words and words[0] == "&" and len(words) > 1:
+        return words[1]
+    return words[0] if words else ""
+
+
 def _command_split(words: list[str]) -> Optional[tuple[str, list[str]]]:
     """(command name, its arguments) of one simple command's words, or None when there is none. A
     PowerShell assignment prefix (`$x = Get-Content ...`) and the call operator `&` are looked
@@ -1034,18 +1061,289 @@ def _url_argument_literals(code: str, starts: list[int]) -> set[int]:
     return exempt
 
 
+# --- a URL route as an argument of a script call ------------------------------------------------
+#
+# `python scripts/replace.py "/api/users" "/api/v2/users"`, `node scripts/rename-route.js /api/users`: the
+# program is a script of the project and the word is a URL route it works on, not a place it reads. Allow-list:
+# a word is left out of the read scan only when EVERY condition holds, anything else is read as before:
+#   - the command is a script call (_SCRIPT_CALLS, or a program word that is a relative path such as
+#     `./run.sh`), the word stands after the script (never the script itself) and the call runs no inline code
+#     (`-c`, `-e`, `--eval`, a `-` for standard input);
+#   - the word starts with one `/` and holds no `..`, `~`, backslash, quote, space or shell operator, and its
+#     first segment is plain text (_ROUTE_SEGMENT_RE: no drive, no variable, no glob, no `:`);
+#   - the word is not the value of an option that names a file (_FILE_OPTIONS, _FILE_OPTION_RE);
+#   - the first segment names nothing, looked up the way the check resolves any path (_root_entry_exists).
+# A known file command (`cat`, `cp`, `ls` ...) is no script call: `cat "/api/users"` is judged as ever.
+
+
+@dataclass(frozen=True)
+class _ScriptCall:
+    """How the words of one kind of script call are laid out, up to the first word after the script."""
+
+    extensions: tuple[str, ...] = ()  # the script file; empty: the word is a package (`npx tsx`)
+    subcommands: frozenset = frozenset()  # words between the program and the script (`deno run`)
+    subcommand_optional: bool = False
+    inline_letters: str = ""  # short options that make the next word code, also inside a group (`-uc`)
+    value_options: frozenset = frozenset()  # options whose next word is their value, not the script
+    script_options: frozenset = frozenset()  # options whose next word is the script (`php -f`)
+
+
+_JS_EXTENSIONS = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx")
+_TS_RUNNER = _ScriptCall(
+    _JS_EXTENSIONS, subcommands=frozenset({"watch"}), subcommand_optional=True, inline_letters="ep",
+    value_options=frozenset({"--tsconfig", "-P", "--project", "-r", "--require", "--import", "--env-file"}),
+)
+_SHELL_SCRIPT = _ScriptCall(
+    (".sh", ".bash", ".zsh"), inline_letters="c", value_options=frozenset({"-o", "-O", "--rcfile", "--init-file"}),
+)
+_PACKAGE_OPTIONS = frozenset({"-p", "--package", "--registry", "--userconfig", "--cache", "-C", "--dir", "--cwd",
+                              "--filter", "-F", "-w", "--workspace", "--prefix"})
+_SCRIPT_CALLS: dict[str, _ScriptCall] = {
+    "node": _ScriptCall(
+        _JS_EXTENSIONS, inline_letters="epci",
+        value_options=frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader", "--env-file",
+                                 "--conditions", "-C", "--input-type", "--title"}),
+    ),
+    "deno": _ScriptCall(
+        _JS_EXTENSIONS, subcommands=frozenset({"run"}),
+        value_options=frozenset({"-c", "--config", "--import-map", "--lock", "--cert", "--env-file", "--location",
+                                 "--v8-flags", "--seed"}),
+    ),
+    "bun": _ScriptCall(
+        _JS_EXTENSIONS, subcommands=frozenset({"run"}), subcommand_optional=True, inline_letters="ep",
+        value_options=frozenset({"--cwd", "-c", "--config", "--env-file", "--port", "--tsconfig-override"}),
+    ),
+    "tsx": _TS_RUNNER,
+    "ts-node": _TS_RUNNER,
+    "ts-node-esm": _TS_RUNNER,
+    "ts-node-script": _TS_RUNNER,
+    "ruby": _ScriptCall((".rb",), inline_letters="e", value_options=frozenset({"-r", "-I", "-C"})),
+    "php": _ScriptCall(
+        (".php",), inline_letters="rR", script_options=frozenset({"-f"}), value_options=frozenset({"-d", "-c", "-z"}),
+    ),
+    "perl": _ScriptCall((".pl", ".t"), inline_letters="eE", value_options=frozenset({"-I"})),
+    "lua": _ScriptCall((".lua",), inline_letters="e", value_options=frozenset({"-l"})),
+    "bash": _SHELL_SCRIPT,
+    "sh": _SHELL_SCRIPT,
+    "zsh": _SHELL_SCRIPT,
+    "dash": _SHELL_SCRIPT,
+    "ksh": _SHELL_SCRIPT,
+    "npx": _ScriptCall(inline_letters="c", value_options=_PACKAGE_OPTIONS),
+    "bunx": _ScriptCall(inline_letters="c", value_options=_PACKAGE_OPTIONS),
+    "pnpm": _ScriptCall(subcommands=frozenset({"exec", "dlx"}), inline_letters="c", value_options=_PACKAGE_OPTIONS),
+    "yarn": _ScriptCall(subcommands=frozenset({"exec", "dlx"}), inline_letters="c", value_options=_PACKAGE_OPTIONS),
+    "npm": _ScriptCall(subcommands=frozenset({"exec", "x"}), inline_letters="c", value_options=_PACKAGE_OPTIONS),
+}
+_PYTHON_CALL = _ScriptCall(
+    (".py", ".pyw"), inline_letters="cm", value_options=frozenset({"-W", "-X", "-Q", "--check-hash-based-pycs"}),
+)
+_PYTHON_NAME_RE = re.compile(r"^(?:python|py|pythonw)\d*(?:\.\d+)*$")
+# Long options that run inline code, and the same words after a package (`npx tsx -e ...`), where the program
+# behind the package is not known.
+_INLINE_LONG = frozenset({"--eval", "--print", "--command", "--call"})
+_INLINE_AFTER_PACKAGE = _INLINE_LONG | {"-e", "-c", "-p"}
+_RELATIVE_PROGRAM_RE = re.compile(r"^(?:\.[/\\]|[A-Za-z0-9_][A-Za-z0-9_.-]*[/\\])")
+_ROUTE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.@+-]+$")
+_ROUTE_BAD_CHARS_RE = re.compile(r"""[\s\\~'"`;&|<>()$%\x00]""")
+# A brace group the shell expands (`{a,b}`, `{1..3}`); `{id}` stays text.
+_ROUTE_BRACE_RE = re.compile(r"\{[^{}]*(?:,|\.\.)[^{}]*\}")
+# Options that name a file or a folder: what stands behind one is never read as a route. Matched on the option
+# name without its dashes, lower case; a name that ends in one of _FILE_OPTION_RE's words counts as well.
+_FILE_OPTIONS = frozenset({
+    "o", "f", "i", "c", "d", "e", "l", "r", "output", "out", "outdir", "outfile", "file", "files", "input", "in",
+    "infile", "config", "conf", "cfg", "cwd", "dir", "directory", "path", "paths", "root", "log", "cache", "dest",
+    "destination", "target", "source", "src", "template", "schema", "tsconfig", "project", "key", "cert", "ca", "pem",
+    "workdir", "base", "folder", "prefix", "data", "store", "db", "database", "to", "save", "save-to",
+})
+_FILE_OPTION_RE = re.compile(r"(?:file|dir|path|folder|directory|out|root|config|dest|target|save)s?$|(?:^|[-_])to$")
+# Names a POSIX root has, for a path of the POSIX side on Windows (`/etc` is no folder of any drive there, but the
+# shell the call runs in has it).
+_POSIX_ROOT_NAMES = frozenset({
+    "bin", "boot", "dev", "etc", "home", "lib", "lib32", "lib64", "mnt", "opt", "proc", "root", "run", "sbin", "srv",
+    "sys", "tmp", "usr", "var", "media", "mingw32", "mingw64", "ucrt64", "clang64", "clangarm64", "cygdrive",
+    "system", "users", "library", "applications", "volumes", "private",
+})
+
+
+def _bare(word: object) -> str:
+    return str(word).strip().strip("'\"")
+
+
+def _script_call_for(name: str) -> Optional[_ScriptCall]:
+    if _PYTHON_NAME_RE.match(name):
+        return _PYTHON_CALL
+    return _SCRIPT_CALLS.get("node" if name == "nodejs" else name)
+
+
+def _is_relative_program(program: str) -> bool:
+    text = _bare(program)
+    return bool(
+        text and _RELATIVE_PROGRAM_RE.match(text) and ".." not in _SEGMENT_SPLIT_RE.split(text)
+        and not _URL_RE.match(text)
+    )
+
+
+def _script_arg_start(name: str, program: str, args: list[str]) -> Optional[int]:
+    """Index in `args` of the first word after the script of a script call, or None when the command is none
+    (a known file command, an unknown program), runs inline code, or its script cannot be told."""
+    call = _script_call_for(name)
+    if call is None:
+        return 0 if _is_relative_program(program) else None  # `./run.sh /api/x`: the program is the script
+    index = 0
+    subcommand_done = not call.subcommands
+    after_dashes = False
+    while index < len(args):
+        word = _bare(args[index])
+        if not after_dashes and word == "--":
+            after_dashes = True
+            index += 1
+            continue
+        if not after_dashes and word.startswith("-") and len(word) > 1:
+            flag, equals, _value = word.partition("=")
+            if flag in _INLINE_LONG:
+                return None
+            if flag in call.script_options and not equals:
+                found = index + 1 < len(args) and _bare(args[index + 1]).lower().endswith(call.extensions)
+                return index + 2 if found else None
+            if not word.startswith("--") and not equals and any(letter in call.inline_letters for letter in word[1:]):
+                if not any(flag.startswith(option) and len(flag) > len(option) for option in call.value_options):
+                    return None  # `-c`, `-e`, `-uc`: the next word is code
+            index += 1 if equals or flag not in call.value_options else 2
+            continue
+        # A word that is no option.
+        if not subcommand_done:
+            if word in call.subcommands:
+                subcommand_done = True
+                index += 1
+                continue
+            if not call.subcommand_optional:
+                return None
+            subcommand_done = True
+        if not call.extensions:
+            # A package (`npx tsx`, `pnpm dlx tool`): what runs behind it is unknown, so code options after it
+            # take the exception away.
+            rest = [_bare(arg) for arg in args[index + 1:]]
+            if any(arg.split("=", 1)[0] in _INLINE_AFTER_PACKAGE for arg in rest):
+                return None
+            return index + 1
+        return index + 1 if word.lower().endswith(call.extensions) else None
+    return None
+
+
+def _names_a_file_option(word: str) -> bool:
+    """True when `word` is an option (without a value in the same word) that takes a file or a folder."""
+    text = _bare(word)
+    if not text.startswith("-") or len(text) < 2 or "=" in text:
+        return False
+    name = text.lstrip("-").lower()
+    if name in _FILE_OPTIONS or _FILE_OPTION_RE.search(name):
+        return True
+    # A bundle of short options ends in the one that takes the value (`-vo /backup/x`).
+    return not text.startswith("--") and len(name) > 1 and name.isalpha() and name[-1] in _FILE_OPTIONS
+
+
+def _route_first_segment(word: str) -> Optional[str]:
+    """The first segment of `word` when it has the shape of a URL route (one leading `/`, plain first segment, no
+    `..`, `~`, backslash, quote, space, shell operator, variable, `%` or expanding brace group anywhere), else
+    None."""
+    text = _bare(word)
+    if (
+        not text.startswith("/") or text.startswith("//") or _ROUTE_BAD_CHARS_RE.search(text)
+        or _ROUTE_BRACE_RE.search(text)
+    ):
+        return None
+    segments = text[1:].split("/")
+    if ".." in segments or not _ROUTE_SEGMENT_RE.match(segments[0]) or segments[0] == ".":
+        return None
+    return segments[0]
+
+
+def _is_route_argument(args: list[str], index: int, start: int) -> bool:
+    """True when `args[index]` (at or after `start`, the first word behind the script) has the shape of a route
+    and no file option stands in front of it."""
+    if _route_first_segment(args[index]) is None:
+        return False
+    return not (index > start and _names_a_file_option(args[index - 1]))
+
+
+_LOCAL_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+@functools.lru_cache(maxsize=1)
+def _git_bash_roots() -> tuple[str, ...]:
+    """The root folders of a Git for Windows shell (the `/` of its `/etc`), taken from the places the installer
+    uses and nothing else: no PATH search (an entry that points at an unreachable share can hang the hook). Only a
+    local drive form is looked at, and only a folder that holds `usr` and `etc` counts. Empty off Windows."""
+    if sys.platform != "win32":
+        return ()
+    candidates: list[str] = []
+    for variable, tail in (
+        ("GIT_INSTALL_ROOT", ""), ("ProgramFiles", "Git"), ("ProgramW6432", "Git"), ("ProgramFiles(x86)", "Git"),
+        ("LOCALAPPDATA", os.path.join("Programs", "Git")), ("USERPROFILE", os.path.join("scoop", "apps", "git", "current")),
+    ):
+        value = os.environ.get(variable)
+        if value:
+            candidates.append(os.path.join(value, tail) if tail else value)
+    candidates.append("C:/Program Files/Git")
+    roots: list[str] = []
+    for candidate in candidates:
+        if (
+            _LOCAL_DRIVE_RE.match(candidate) and candidate not in roots
+            and os.path.isdir(os.path.join(candidate, "usr")) and os.path.isdir(os.path.join(candidate, "etc"))
+        ):
+            roots.append(candidate)
+    return tuple(roots)
+
+
+def _root_entry_exists(first: str, base: Optional[str], bash: bool) -> bool:
+    """True when `/<first>` names something, or cannot be told: resolved the way the check resolves any path
+    (_resolve_text). On Windows a POSIX-rooted word has several readings and one existing reading is enough: the
+    drive form (`/q/x` is `Q:/x` in a Git shell), a folder of the drive the program runs on (a native program
+    opens `/q/x` as `<drive>:/q/x`; the drive of the base folder and of the process), a name every POSIX root has
+    (_POSIX_ROOT_NAMES), a folder of a Git shell's root (_git_bash_roots)."""
+    # Asked with one more segment: a one-segment word (`/api`) is a switch on Windows and resolves to nothing.
+    text = _resolve_text("/" + first + "/_", base, bash)
+    if text is None:
+        return True
+    if sys.platform != "win32":
+        return os.path.lexists(os.path.dirname(text))
+    if not text.startswith(_POSIX_PREFIX) and os.path.lexists(os.path.dirname(text)):
+        return True
+    if first.lower() in _POSIX_ROOT_NAMES:
+        return True
+    roots = list(_git_bash_roots())
+    try:
+        working = os.getcwd()
+    except OSError:
+        working = ""
+    for origin in (base or "", working):
+        drive = _LOCAL_DRIVE_RE.match(origin)
+        if drive and drive.group(0) + "\\" not in roots:
+            roots.append(drive.group(0) + "\\")
+    return any(os.path.lexists(os.path.join(root, first)) for root in roots)
+
+
 def _read_candidates(
     name: str, args: list[str], feeds_xargs: bool = False, powershell: bool = False,
+    program: str = "", route_absent: Optional[Callable[[str], bool]] = None,
 ) -> list[tuple[str, bool]]:
     """(word, strict) pairs of a simple command that may name a place; `strict` marks a string
-    literal of inline interpreter code, where a `..` is no path."""
+    literal of inline interpreter code, where a `..` is no path. With `route_absent` (does the first
+    segment of this word name nothing?) a URL route behind the script of a script call is left out
+    (_script_arg_start); `program` is the program word as written."""
     if name in _TEXT_COMMANDS and not feeds_xargs:
         return []
     skip = _non_path_positions(name, args)
     found: list[tuple[str, bool]] = []
+    route_from = _script_arg_start(name, program, args) if route_absent is not None else None
     for index, word in enumerate(args):
         if index in skip:
             continue
+        if (
+            route_from is not None and index >= route_from and _is_route_argument(args, index, route_from)
+            and route_absent is not None and route_absent(word)
+        ):
+            continue  # a URL route for a script: text it works on, no place it reads
         for position, candidate in enumerate(_candidate_words(word)):
             if candidate.strip().strip("'\"") == "/" and (
                 position or _is_division(name, args, index, powershell) or _is_separator_value(name, args, index)
@@ -1316,11 +1614,15 @@ def _scan_wsl(judge: _Judge, args: list[str], bases: list[Optional[str]], depth:
             item = _Words(str(_wsl_native_word(word)) for word in words)
             item.feeds_xargs = bool(getattr(words, "feeds_xargs", False))
             lists.append(item)
-    _scan_from(judge, lists, bases, depth + 1)
+    _scan_from(judge, lists, bases, depth + 1, in_wsl=True)
     return True
 
 
-def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[str]], depth: int) -> None:
+def _scan_from(
+    judge: _Judge, word_lists: list[list[str]], bases: list[Optional[str]], depth: int, in_wsl: bool = False,
+) -> None:
+    """Read the commands of `word_lists`. `in_wsl`: they run inside a WSL distribution, whose `/` is not any
+    folder the check can look at, so no URL route is left out there (_script_arg_start)."""
     for words in word_lists:
         split = _command_split(words)
         if split is None:
@@ -1329,7 +1631,15 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
         if name == "wsl" and depth < 2 and _scan_wsl(judge, args, bases, depth):
             continue  # the words of the wsl call itself are its options and the line read above
         feeds = bool(getattr(words, "feeds_xargs", False))
-        for text, _strict in _read_candidates(name, args, feeds, not judge.bash):
+        def route_absent(word: str, bases: list[Optional[str]] = bases) -> bool:
+            first = _route_first_segment(word)
+            return first is not None and not any(
+                _root_entry_exists(first, base, judge.bash) for base in judge.capped(bases or [None])
+            )
+
+        for text, _strict in _read_candidates(
+            name, args, feeds, not judge.bash, _program_word(words), None if in_wsl else route_absent,
+        ):
             judge.judge(text, False, bases)
         if len(words) > 2 and _PS_ASSIGN_RE.match(str(words[0])) and words[1] == "=":
             # `$t = "C:\\x"`: the value of an assignment is a word like any other.
@@ -1346,7 +1656,7 @@ def _scan_from(judge: _Judge, word_lists: list[list[str]], bases: list[Optional[
                     judge.scanner_failed(exc)
                     inner = []
                 if inner:
-                    _scan_from(judge, inner, bases, depth + 1)
+                    _scan_from(judge, inner, bases, depth + 1, in_wsl)
         try:
             _lock_scan(judge, name, args, bases)
         except Exception as exc:  # noqa: BLE001 - the plain read scan keeps its findings, the call is refused
