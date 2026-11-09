@@ -749,8 +749,9 @@ def build(root: Path, source: Optional[Path], template_json: Optional[Path], cfg
         parts = _split_commands(current) if current is not None else []
         if current is None:
             outcome = {i: "not set: config.md has no `commands` row" for i in command_parts}
-        elif len(parts) != 3:
-            outcome = {i: f"kept: project value {current!r} (not three parts)" for i in command_parts}
+        elif len(parts) not in (3, 4):
+            outcome = {i: f"kept: project value {current!r} (not three or four parts)"
+                       for i in command_parts}
         else:
             outcome = {}
             for i, (value, _row) in command_parts.items():

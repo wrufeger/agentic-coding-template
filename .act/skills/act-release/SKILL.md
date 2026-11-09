@@ -19,7 +19,7 @@ preset). **Where the changelog goes** is the switch `changelog` there: `file` (d
 Say which of the three applies when you start, so the human sees where the text will land.
 
 1. **Check preconditions** — `git status` clean; required checks green (`docs/ai/config.md` §
-   commands, plus E2E for UI-relevant changes); `docs/ai/work/backlog/` sighted for open critical
+   commands, the full or E2E suite included); `docs/ai/work/backlog/` sighted for open critical
    points, which go to the human, never passed over silently.
 2. **An automated release process exists:** stop here and trigger it.
 3. **`security-check: full` only — the deep scan (Art C, before tagging):**

@@ -15,8 +15,9 @@ secures the result.
 ## Steps
 
 1. **Check the evidence.** A test run, an outside call, or a commit hash — nothing gets accepted
-   without one. The project's required checks (`docs/ai/config.md` § commands) must be green; the
-   full suite runs once here (via `quick-check`), not again from builder and reviewer. File each
+   without one. The project's required checks (`docs/ai/config.md` § commands: lint, typecheck,
+   test) must be green; they run once here (via `quick-check`), not again from builder and reviewer.
+   A fourth entry there (full or E2E suite) runs once before a push, not before each commit. File each
    backlog case the `reviewer` listed (with its input) with `entries.py new backlog <title>`. If
    the `reviewer` returned `CONDITIONAL` (a named condition this step cannot check), file the
    condition now: `entries.py new todo <title>`, or `new question` if

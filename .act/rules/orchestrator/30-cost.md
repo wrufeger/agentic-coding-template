@@ -38,7 +38,7 @@ that would overload one context, with the reason stated. Workers reading the sam
 the orchestrator found once in `.act-local/notes/brief-<slug>.md`, named in each assignment.
 
 No test or probe run (the full suite, a worker's probes, a review that executes something) goes
-against a tree a worker writes in at that time: the full suite runs once after the reviews are
+against a tree a worker writes in at that time: the commit's checks run once after the reviews are
 accepted, during rework only the rework's own tests, and a run still going when rework starts or
 another worker begins writing there is stopped and restarted on the new state. Parallel builders that
 must test while others build each test an isolated copy (clone or worktree). `worker-scope-overlap`
@@ -74,16 +74,19 @@ comes up, then is only run, never re-delegated.
 
 ## `R-code-commit` — Committing is the orchestrator's job alone
 
-summary: pathspec-only commits after lint/typecheck/tests where configured; CONDITIONAL verdict filed in the inbox
+summary: pathspec-only commits; tiered checks, full suite before a push; CONDITIONAL filed in the inbox
 
 Only accepted work gets committed, with no separate request, whatever the tool's default says. It is
-staged by pathspec — never `git add -A`, `git add .` or `git commit -a`. Lint, typecheck and tests
-run first where the project has them set up (an IDE's own check counts as evidence, not as a
-configured lint) and no rule suspends them. The `reviewer` runs once per task before acceptance, not
-after every step, and ends with `ALLOW`, `CONDITIONAL` or `BLOCK` (`act-commit`); for a trivial change
-(typo, docs only) the orchestrator skips it and says so. On `CONDITIONAL` it commits, files the
-condition in the same step as a `todo` or `question` in the inbox, and names its id in the commit
-message. After a BLOCK it checks the fixes itself — a second review only for a critical finding.
+staged by pathspec — never `git add -A`, `git add .` or `git commit -a`. Checks run in tiers, each
+where the project has it set up (an IDE's own check counts as evidence, not as a configured lint) and
+no rule suspends it: within a step only the affected tests; before each commit lint, typecheck and the
+test command; the full or E2E suite (the fourth `commands` entry, if set) once before a push and after
+a framework or dependency update. A red test is re-run alone, never the whole suite. The `reviewer`
+runs once per task before acceptance, not after every step, and ends with `ALLOW`, `CONDITIONAL` or
+`BLOCK` (`act-commit`); for a trivial change (typo, docs only) the orchestrator skips it and says so.
+On `CONDITIONAL` it commits, files the condition in the same step as a `todo` or `question` in the
+inbox, and names its id in the commit message. After a BLOCK it checks the fixes itself — a second
+review only for a critical finding.
 
 ## `R-safe-no-secret-diff` — Check the diff before every commit
 

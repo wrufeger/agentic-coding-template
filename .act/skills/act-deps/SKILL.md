@@ -33,7 +33,8 @@ entry differently if it should not count as covering the whole check.
    search affected call sites first (`explorer` role) when there's more than one.
 5. Apply the step (`builder` role): bump the version, update the lockfile. A code change the
    update forces (e.g. a changed API) is its own commit after the version bump, never the same one.
-6. Check before the step counts as done (`R-code-commit`): red means revert or fix now, not later.
+6. Check before the step counts as done (`R-code-commit`), the full or E2E suite included: red means
+   revert or fix now, not later.
 7. `docs/ai/config.md` § Project → `commands` follows if a step changed the install/lint/typecheck/
    test command.
 8. Close each step via `act-commit` as it lands, not once at the end.

@@ -547,7 +547,7 @@ write that moves, copies or restores a parent folder of the tested tree (`mv tes
 glob class such as `tests/t24[8]/a.py` pass without a note.
 
 What the check cannot see stays with the orchestrator: a run does not start before the reviews are accepted (the
-full suite runs once on that state, during rework only the rework's own tests), and a run still going when rework
+commit's checks run once on that state, during rework only the rework's own tests), and a run still going when rework
 starts, or when another worker begins writing in the tested tree, is stopped and started again on the new state.
 Parallel builders that must test while others build each work in an isolated copy of their own.
 

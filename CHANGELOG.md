@@ -25,6 +25,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `changelog-length: off` in `docs/ai/config.md` § Checks.
 
 ### Added
+- Staged test cadence in `R-code-commit`: affected tests in a step, lint, typecheck and unit tests before a commit, the
+  full suite before a push; `commands` takes an optional fourth entry for it (three entries work as before).
 - `throwaway-place` check (`warn`|`off`, default `warn`): a note when a command or file write puts throwaway output
   in the system temp directory or directly under `.act-local/`; `off` in `docs/ai/config.md` § Checks silences it.
 - Incident log: real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox

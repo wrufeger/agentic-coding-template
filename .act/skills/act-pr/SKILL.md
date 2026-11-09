@@ -26,10 +26,11 @@ supported yet.
    until after the PR exists (a failure in between would leave it unrecorded). Then `git status`
    must be clean (else stop, `act-commit` first).
 4. **Pushed and current, no duplicate** — `git status -sb` shows the branch with an upstream and no
-   `ahead` (`git rev-parse @{u}` equal to `git rev-parse HEAD` also does). Not pushed or ahead: ask
-   "push `<branch>` to `<remote>`?" and push only after the human's own "yes" — only the
-   orchestrator pushes, never a worker. Then `python .act/scripts/forge.py prs` (`--json` for the
-   branches): when an open request for this branch exists already, show it and stop — no second one.
+   `ahead` (`git rev-parse @{u}` equal to `git rev-parse HEAD` also does). Not pushed or ahead: run the
+   full or E2E suite first (`R-code-commit`), then ask "push `<branch>` to `<remote>`?" and push
+   only after the human's own "yes" — only the orchestrator pushes, never a worker. Then
+   `python .act/scripts/forge.py prs` (`--json` for the branches): when an open request for this branch
+   exists already, show it and stop — no second one.
 5. **Draft** — `git fetch <remote> <target>` first, so the comparison uses the remote's target
    branch, not a stale local one; then `git log <remote>/<target>..HEAD` and `git diff
    <remote>/<target>...HEAD`, written to a file under `.act-local/` (never into the repo):

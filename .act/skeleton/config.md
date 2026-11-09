@@ -29,8 +29,9 @@ assistant writes under `docs/` and of the scaffold there; `.act/` stays English 
 (`R-work-language`). A config.md with the older single `language` key still works — the value
 counts for both.
 
-`commands` is lint, typecheck, test, in this order; `(not set)` means no command is set up for that
-slot, and the matching check is skipped (`R-code-commit`).
+`commands` is lint, typecheck, test, in this order, optionally followed by a fourth entry for the
+full or E2E suite (run once before a push; without it the test command takes that place); `(not set)`
+means no command is set up for that slot, and the matching check is skipped (`R-code-commit`).
 
 `run` is the command that starts the application; `(not set)` means none is recorded, and so does a
 config.md without the row.

@@ -32,11 +32,12 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 ## Before the report
 
 Run tests and probes only when the assignment has a `Tests:` line, in the tree it names (an isolated
-copy, when it names one) and not the whole suite unless it says so; the full suite runs once before the
-commit, from the orchestrator. Check first that the runner and test files exist (`docs/ai/config.md` §
-commands, `docs/project/testing.md`); if not, skip the run and report it instead of installing anything.
-A command running unusually long (e.g. `npx` waiting on input) is aborted and re-run narrower. Lint and
-typecheck (`docs/ai/config.md` § commands) run as the assignment says; state the result.
+copy, when it names one) and not the whole suite unless it says so; the commit's checks run once
+before the commit, from the orchestrator. Check first that the runner and test files exist
+(`docs/ai/config.md` § commands, `docs/project/testing.md`); if not, skip the run and report it instead
+of installing anything. A command running unusually long (e.g. `npx` waiting on input) is aborted and
+re-run narrower. Lint and typecheck (`docs/ai/config.md` § commands) run as the assignment says; state
+the result. A red test is re-run alone, never the whole suite.
 
 ## Report
 
