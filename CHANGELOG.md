@@ -70,6 +70,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- `write-guard` and the scope checks no longer refuse a `shutil.rmtree(..., onerror=h)` chmod helper that only calls
+  `func(path)`, also on absolute folders.
 - `worker-write-scope` no longer refuses inline Python that only adds an import folder (`sys.path.insert(0, 'lib')`,
   `append`, `extend`, `site.addsitedir`) next to a write elsewhere; code that reads the folder back is still checked.
 - `outside-root` no longer refuses a URL route as an argument of a script call (`python x.py "/api/users"`,
@@ -91,6 +93,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `act-local-tidy`, `act-doctor` and `rules.py` findings, rule-line moves in `rules.md`, the feedback link check.
 
 ### Security
+- The write guard refuses `shutil.rmtree` of the project root or a folder that holds it (passed before), and an
+  rmtree error helper that does more than `func(path)`.
 - The write guard no longer lets a write through that takes its files from a list it cannot read (`xargs`, `$(...)`,
   loops, `find -exec`, PowerShell pipes, `mapfile`); a list passes only if it names fixed folders other than the root.
 - Write checks see more targets (`sort -o`, `ssh -E`, `git clone`, `pushd`, `robocopy`), refuse one they cannot

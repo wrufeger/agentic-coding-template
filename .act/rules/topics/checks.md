@@ -249,7 +249,10 @@ Git run in a subfolder that is not a repository of its own acts on the project's
 `GIT_CEILING_DIRECTORIES` to `.act-local/tmp`, or call git only on a repository of its own. A deny entry on Windows can
 lock out the owner too (`(RX)` also denies `READ_CONTROL`): deny only the one right the probe needs, such as `(RD)`,
 and run `icacls <path> /reset` in the `finally`. A throwaway project below `.act-local/tmp/` carries a `.act/` of its own;
-the template's `.act/` write-guard lets a write into it pass (conditions in `write_guard.py`).
+the template's `.act/` write-guard lets a write into it pass (conditions in `write_guard.py`); a `shutil.rmtree` of the
+project root or of a folder that holds it is refused. Limit: a relative
+`.act/` target after `cd $VAR/...` (a variable, `P=<dir> cd $P/x` too) is judged against the project root and
+refused; `cd <literal folder> && cp ... .act/...` into such a project passes, so write the folder out.
 
 `act-local-tidy` (switch `act-local-tidy`; `warn` only reports what would go, `off` skips) runs once a day at session
 start in a detached process; the next start reports the result in one line. It removes `.act-local/tmp/` entries older

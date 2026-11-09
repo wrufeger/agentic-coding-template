@@ -22,6 +22,7 @@ from typing import Callable, Optional
 import actlib
 
 from .command_parse import Parse, parse_for
+from .inline_code import WHOLE_FOLDER
 from .common import _TOOL_PATH_FIELDS, _check_mode
 from .common import _is_unplaced_target, _unplaced_reason
 from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, ps_fed_writes, shell_facts
@@ -105,6 +106,17 @@ def _is_under_project_act(resolved: Path, root: Path) -> bool:
         act_root = (root / ".act").resolve()
     resolved, act_root = _folded(resolved), _folded(act_root)
     return resolved == act_root or act_root in resolved.parents
+
+
+def _removes_root(resolved: Path, root: Path) -> bool:
+    """True if `resolved` is the folder a recursive delete (inline code, `shutil.rmtree`) removes as a whole, named
+    as `<folder>/(whole folder)` (inline_code.WHOLE_FOLDER), and that folder is `root` or one of its parents: it holds
+    `root`'s own .act/, which the path does not show."""
+    if resolved.name != WHOLE_FOLDER:
+        return False
+    top = _folded(_resolve_path(str(root)) or root)
+    folder = _folded(resolved.parent)
+    return folder == top or folder in top.parents
 
 
 def _folded(path: Path) -> Path:
@@ -501,6 +513,8 @@ def _judge_target(
     resolved = _resolve_path(raw, base)
     if resolved is None:
         return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
+    if _removes_root(resolved, root):
+        return _ROOT_REMOVAL_MESSAGE
     return _WRITE_GUARD_MESSAGE if _is_under_project_act(resolved, root) else None
 
 
@@ -541,6 +555,10 @@ def _find_run_refusal(
 _WRITE_GUARD_MESSAGE = (
     "[act] .act/ belongs to the template and is replaced on update. Put your version in "
     "docs/ai/local/<same path> — it wins over the template."
+)
+_ROOT_REMOVAL_MESSAGE = (
+    "[act] this removes the project root or a folder that holds it, the template's .act/ included. "
+    "Remove only the folder below the project you mean."
 )
 
 
@@ -589,6 +607,8 @@ def _powershell_targets_protected_path(
         resolved = _resolve_path(target, base_cwd)
         if resolved is None:
             return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
+        if _removes_root(resolved, root):
+            return _ROOT_REMOVAL_MESSAGE
         if _is_under_project_act(resolved, root):
             return _WRITE_GUARD_MESSAGE
     return _ps_list_refusal(command, base_cwd, root)

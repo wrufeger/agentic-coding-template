@@ -109,7 +109,7 @@ from .common import _unplaced_target
 
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
-    "interpreter_language", "code_source", "code_source_at", "write_paths", "write_targets",
+    "interpreter_language", "code_source", "code_source_at", "write_paths", "write_targets", "WHOLE_FOLDER",
     "mentions_interpreter", "report_skipped", "ReaderFailure",
     "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
@@ -1369,7 +1369,8 @@ _JOIN_MODULES = {"os": ["path", "join"], "os.path": ["join"], "posixpath": ["joi
 #     one of them, and a path or glob pattern built from it is judged once for each (at most _LOOP_COMBINATIONS);
 #   - `<such a path>.with_suffix('<literal>')`, and `<file of a glob>.with_suffix(...)`: somewhere under the folder;
 #   - the path parameter of a function the program uses only as `onerror=` / `onexc=` of `shutil.rmtree` calls whose
-#     targets are shown: somewhere under those targets (when they are relative and hold no `..`).
+#     targets are shown: somewhere under those targets (when they hold no `..`), and only when the function uses its
+#     first parameter for nothing but `first(path)`.
 _REBINDING_NAMES = frozenset({
     "exec", "eval", "compile", "globals", "locals", "vars", "setattr", "getattr", "delattr", "__import__",
     "_getframe", "currentframe", "f_globals", "f_locals", "__dict__", "__setattr__", "__builtins__", "runpy",
@@ -1384,6 +1385,7 @@ _PROTECTED_PROBES = (
     ".devcontainer/devcontainer.json", ".envrc",
 )
 _ANY_FILE = "(any file here)"
+WHOLE_FOLDER = "(whole folder)"  # the folder a recursive delete removes as a whole: the guards judge it as a folder
 _LOOP_COMBINATIONS = 64  # a path built from loop variables is judged once for each combination, up to this many
 
 
@@ -1393,19 +1395,26 @@ class _Under(NamedTuple):
     base: str
     pattern: str
     recursive: bool
+    whole: bool = False  # the folder itself goes too (a recursive delete), not only files below it
 
 
 def _under_paths(under: _Under) -> list[str]:
     """The paths a check judges for `under`: a file in the folder and, for each protected place at or below the
     folder that the glob can reach (a deep pattern reaches every one, a single-segment one those its pattern
     matches), one in that place - `.act/` from the project root, `hooks` and `config` from `.git`. Below any other
-    folder the glob stays inside that folder: only the folder is judged."""
+    folder the glob stays inside that folder: only the folder is judged. An absolute folder may be the project root
+    itself, so its `.act/` is judged too (not the git places: those are matched by text anywhere and would refuse
+    every absolute folder). A folder that goes as a whole (`whole`) is also named as that, so a guard that knows the
+    project root can refuse the root and each of its ancestors, which hold `.act/` without the path showing it."""
     base = os.path.normpath(under.base.replace("\\", "/")).replace("\\", "/")
     prefix = "./" if base == "." else f"{base}/"
     deep = under.recursive or "**" in under.pattern or "/" in under.pattern or "\\" in under.pattern
     found = [prefix + _ANY_FILE]
-    for probe in _PROTECTED_PROBES:
-        if base == ".":
+    absolute = _absolute_without_parent(base)
+    if under.whole:
+        found.append(prefix + WHOLE_FOLDER)
+    for probe in (_PROTECTED_PROBES[:1] if absolute else _PROTECTED_PROBES):
+        if base == "." or absolute:
             rel = probe
         elif probe.startswith(base.lower() + "/"):
             rel = probe[len(base) + 1:]
@@ -1419,6 +1428,16 @@ def _under_paths(under: _Under) -> list[str]:
 def _relative_without_parent(text: str) -> bool:
     """True for a path that is relative (no root, drive or `~`) and climbs nowhere (no `..` segment)."""
     if not text or text[0] in "/\\~" or re.match(r"[A-Za-z]:", text) or "$" in text:
+        return False
+    return ".." not in re.split(r"[\\/]+", text)
+
+
+def _absolute_without_parent(text: str) -> bool:
+    """True for a path that starts at a drive or a root (not `~`, not a `\\\\server` or `//server` share) and climbs
+    nowhere (no `..` segment): where it lies is for the checks that resolve it against the project root."""
+    if not text or text[:2] in ("//", "\\\\") or "$" in text or "~" in text:
+        return False
+    if not (text[0] in "/\\" or re.match(r"[A-Za-z]:[\\/]", text)):
         return False
     return ".." not in re.split(r"[\\/]+", text)
 
@@ -1722,8 +1741,9 @@ class _Env:
 
     def _handler_targets(self, name: str) -> "Optional[list[str | _Under]]":
         """`path` of `def handler(function, path, excinfo)` when the program uses `handler` only as `onerror=` /
-        `onexc=` of `shutil.rmtree` calls: it lies under what those calls delete, which must be shown and relative
-        with no `..`. Any other use of the function (a call, a name, a decorator) leaves `path` unknown."""
+        `onexc=` of `shutil.rmtree` calls: it lies under what those calls delete, which must be shown, with no `..`.
+        Any other use of the function (a call, a name, a decorator), or a first parameter that the handler uses
+        for anything but `function(path)`, leaves `path` unknown."""
         if self.handlers is None:
             self.handlers = {}  # a handler whose target needs a handler is unknown
             self.handlers = self._find_handlers()
@@ -1733,6 +1753,17 @@ class _Env:
         """True if `func` is `shutil.rmtree` / `rmtree` and the program binds `shutil` (or `rmtree`) only by importing it."""
         root = func.id if isinstance(func, ast.Name) else _dotted_root(func)[0]
         return root is not None and self.imports.get(root, 0) > 0 and self._imported_only(root)
+
+    def _only_calls_first(self, first: str, second: str) -> bool:
+        """True when every load of the name `first` in the program is the callee of a call `first(second)`: one
+        positional argument, the name `second`, no keyword; it is not stored, passed on or called otherwise."""
+        callees: set[int] = set()
+        for node in ast.walk(self.tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == first
+                    and len(node.args) == 1 and not node.keywords and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == second and isinstance(node.args[0].ctx, ast.Load)):
+                callees.add(id(node.func))
+        return all(id(node) in callees for node in ast.walk(self.tree) if isinstance(node, ast.Name) and node.id == first)
 
     def _find_handlers(self) -> dict[str, list]:
         calls: dict[str, list[ast.Call]] = {}
@@ -1753,7 +1784,9 @@ class _Env:
             if definition is None or definition.decorator_list or len(self.bound.get(function, ())) != 1:
                 continue
             positional = definition.args.posonlyargs + definition.args.args
-            if len(positional) < 2 or len(self.bound.get(positional[1].arg, ())) != 1:
+            if len(positional) < 2 or any(len(self.bound.get(item.arg, ())) != 1 for item in positional[:2]):
+                continue
+            if not self._only_calls_first(positional[0].arg, positional[1].arg):
                 continue
             under: list = []
             for rmtree in rmtrees:
@@ -1764,8 +1797,8 @@ class _Env:
                 for target in targets:
                     if isinstance(target, _Under):
                         under.append(target)
-                    elif _relative_without_parent(target):
-                        under.append(_Under(target, "*", True))
+                    elif _relative_without_parent(target) or _absolute_without_parent(target):
+                        under.append(_Under(target, "*", True, True))
                     else:
                         under = []
                         break
@@ -1835,6 +1868,8 @@ def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[Progr
                 values.extend(_under_paths(item))
             else:
                 values.append(item)
+                if (module, function) == ("shutil", "rmtree"):
+                    values.append(item.rstrip("/\\") + "/" + WHOLE_FOLDER)  # the folder goes as a whole
     return ProgramCall(name, CALL_WRITE, tuple(values), None, True, line, None in paths)
 
 
