@@ -521,4 +521,7 @@ A worker reports back on its own when it is done; polling its status repeatedly 
 — it costs tokens on every call and clutters the chat (trigger: over forty consecutive idle status
 checks in one real case, none of them changing anything). Mechanically refused from the second
 status query in a row (`status-poll`, `docs/ai/config.md` § Checks) — any other tool use in between
-resets it.
+resets it. Limit (also for `worker-cap`, which counts a worker's tool calls the same way): both keep their count in
+a file below `.act-local/`, and where `.act-local` or its `status-poll` / `worker-caps` folder is a link or junction out
+of the project they write nothing and track nothing, so neither refuses a call there (they fail open: cost checks, no
+safety); the session start names the link.

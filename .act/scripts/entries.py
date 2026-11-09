@@ -113,7 +113,8 @@
 #     written percent-encoded (`My%20Concept.md`) is found like a plain one; one written in other letter
 #     case only where the file system ignores case (asked of the file system: does the name with its case
 #     swapped open the same file?). A moved file keeps its byte order mark and its line ends (CRLF when
-#     most lines use it), entry or concept.
+#     most lines use it), entry or concept. Limit: a file with mixed line ends (or a lone CR) comes out with the
+#     majority line end throughout (a tie counts as LF).
 #     Prints one "entries: archived|moved|copied|relinked|left ..." line per change, so a commit by
 #     pathspec can stage every path (a "relinked links to <name> in <path>" line names a file that
 #     links to a moved concept); exit 2 with the reason on stderr, nothing changed, for an unknown id or
@@ -152,6 +153,9 @@
 #     already holds it: the next run removes only such a source whose section stands in its collection
 #     file word for word (line "removed <path> - ... word for word"); one whose id or name is there with
 #     a different text stays and is reported, never removed (`check` and `doctor` still list a doubled id).
+#     Limit: when the run stopped while removing the single files, a source left behind that links to a sibling
+#     already removed counts as "a different text" (its link was rewritten in the collection file): it stays
+#     until compared and removed by hand; nothing is lost.
 #     `--plan` lists what would be merged and writes nothing. A second run changes nothing. Prints one
 #     "entries: compacted|would compact <id>: <old path> -> <collection>#<anchor>" line per entry, one
 #     "entries: relinked ..." line per rewritten file and a closing "entries: wrote ..." line.
@@ -1080,15 +1084,20 @@ def cmd_state(root: Path, raw_id: str, text_words: list[str], wait: bool = False
         print(f"entries: {problem} — nothing written", file=sys.stderr)
         return 2
     state_dir = root / STATE_DIR
-    state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / path.name
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    with open(state_path, "a", encoding="utf-8", newline="\n") as handle:
-        handle.write(f"State {stamp}{' (wait)' if wait else ''}: {text}\n")
+    link = actlib.link_problem(root, state_path)  # nothing is written through a link out of the project
+    if not link:
+        state_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        with open(state_path, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(f"State {stamp}{' (wait)' if wait else ''}: {text}\n")
     started = _mark_started(path)
     entry_id = _entry_id(_safe_read(path) or "") or _canonical_id(raw_id.strip())
     suffix = " — task marked started" if started else ""
-    print(f"entries: appended state for {entry_id} to {_rel(state_path, root)}{suffix}")
+    if link:
+        print(f"entries: state for {entry_id} not written ({link}){suffix}")
+    else:
+        print(f"entries: appended state for {entry_id} to {_rel(state_path, root)}{suffix}")
     return 0
 
 

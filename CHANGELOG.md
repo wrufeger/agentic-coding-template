@@ -357,6 +357,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   A folder that was moved or removed and made again by a `mkdir`/`New-Item -ItemType Directory` that certainly runs
   counts as existing for a later `cd` (`mv build old; mkdir build; cd build; ...; cd ..; echo x > out.txt` and the
   PowerShell form); a removal or move after the creation, and anything below the made folder, is judged as before.
+- The hint queues of the commit scans and the encoding and test-run hints, and the incident log's append lock: a lock
+  is removed only by the hook that made it (one that was broken as stale meanwhile is left to its new owner), a stale
+  lock is taken by one waiting hook at a time, no wait runs past the hook's own time limit, lock, temp and queue files
+  of hooks that died are cleared after a day, and a queue file that is not UTF-8 no longer stops the hook.
+- With `.act-local` (or the folder of one state file) a link or junction out of the project, the remaining writers no
+  longer write through it: the second-status-query and worker-cap bookkeeping (both then track nothing), the numbering
+  of started workers in `ai.log` (workers are logged unnumbered), the `act-local-tidy` state and result file,
+  `entries.py state` (it says so in one line and still marks the task started) and the marker of the dependency scan
+  after a merge (the report is made without it).
+- The orchestrator's test-run hint (`worker-scope-overlap`) also fires for `py -3 tests/run.py` and
+  `python -X utf8 tests/run.py`, not only for the plain program name, and the hint file of a call is removed when
+  the check was switched off between its PreToolUse and PostToolUse.
 - The prompt shortcuts `/act-version` and `/act-info`: on Windows a path argument such as `--source D:\dev\x` keeps its
   backslashes, a usage error of the script (`/act-info bitte`) lets the prompt through instead of blocking it, and the
   `git ls-remote` look-up of `/act-version` stops after 5 s (`ACT_LS_REMOTE_TIMEOUT` sets the limit of `update.py`), inside

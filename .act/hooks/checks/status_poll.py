@@ -119,7 +119,10 @@ _STREAK_TTL_SECONDS = 120
 def _state_file(root: Path, session_id: object) -> Optional[Path]:
     if not isinstance(session_id, str) or not _SAFE_ID_RE.match(session_id):
         return None
-    return root / ".act-local" / _STATUS_POLL_DIRNAME / f"{session_id}.json"
+    path = root / ".act-local" / _STATUS_POLL_DIRNAME / f"{session_id}.json"
+    # behind a link out of the project nothing is tracked or written (actlib.local_write_ok); the session
+    # start names the link
+    return path if actlib.local_write_ok(root, path) else None
 
 
 def _prune_stale_state(dir_path: Path, skip: Path) -> None:

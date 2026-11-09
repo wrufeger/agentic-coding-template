@@ -232,7 +232,8 @@ def _cap_assignment_file(root: Path, tool_use_id: str) -> Optional[Path]:
     write_scope._worker_scope_file (N parallel starts never race each other's file)."""
     if not isinstance(tool_use_id, str) or not _SAFE_ID_RE.match(tool_use_id):
         return None
-    return _worker_caps_dir(root) / f"{tool_use_id}.json"
+    path = _worker_caps_dir(root) / f"{tool_use_id}.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: not recorded
 
 
 def _count_file(root: Path, agent_id: str) -> Optional[Path]:
@@ -241,7 +242,8 @@ def _count_file(root: Path, agent_id: str) -> Optional[Path]:
     entry share _worker_caps_dir()/_prune_stale_entries() without ever colliding."""
     if not isinstance(agent_id, str) or not _SAFE_ID_RE.match(agent_id):
         return None
-    return _worker_caps_dir(root) / f"count-{agent_id}.json"
+    path = _worker_caps_dir(root) / f"count-{agent_id}.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: not counted
 
 
 def _atomic_write_json(path: Path, data: dict) -> bool:

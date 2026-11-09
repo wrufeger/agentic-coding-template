@@ -351,6 +351,8 @@ def start_subagent_label(
     parallel workers of the same type can fire close together."""
     now = now if now is not None else time.time()
     state_path, lock_path = _state_path(root), _lock_path(root)
+    if not (actlib.local_write_ok(root, state_path) and actlib.local_write_ok(root, lock_path)):
+        return agent_type  # `.act-local` or its state files are a link: nothing is numbered or written through it
     with _StateLock(lock_path):
         state = _load_state(state_path)
         session = _session_entry(state, session_id)

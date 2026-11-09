@@ -189,7 +189,7 @@ import actlib
 import feedback_privacy
 
 from .command_parse import Parse, parse_for
-from .common import MAX_NESTING, _check_mode, _shell_command
+from .common import _HOOK_BUDGET, MAX_NESTING, _check_mode, _hook_deadline, _shell_command
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
     _ASSIGNMENT_RE,
@@ -248,10 +248,9 @@ _MAX_COLLECTED = 500
 # Kept well under the hook's own ~10s timeout, shared across every subprocess call (diff, ls-files,
 # alias lookups) and file read this check makes for one PreToolUse invocation.
 _TIME_BUDGET = 4.5
-# Hook-wide cap, seconds after dispatch.py's own start (payload["_act_hook_started"]): the harness
-# kills a PreToolUse hook at 10 s, and this check, danger_scan and deps_scan run back to back in
-# that one process -- each caps its own deadline with _check_deadline() (2026-09-27 review 2, m5).
-_HOOK_BUDGET = 8.0
+# The hook-wide cap (_HOOK_BUDGET, common.py): the harness kills a PreToolUse hook at 10 s, and this
+# check, danger_scan and deps_scan run back to back in that one process -- each caps its own
+# deadline with _check_deadline() (2026-09-27 review 2, m5).
 _GIT_TIMEOUT = 3.0
 _ALIAS_TIMEOUT = 1.5
 _MAX_NESTED_DEPTH = MAX_NESTING
@@ -1041,17 +1040,6 @@ def _repo_toplevel(cwd: str, timeout: float) -> Optional[str]:
     return stripped or None
 
 
-def _hook_deadline(payload: dict) -> Optional[float]:
-    """The monotonic instant by which every check in this hook call must have answered --
-    dispatch.py's own start (payload["_act_hook_started"], set in its _run_checks) plus
-    _HOOK_BUDGET -- or None when the payload carries no start (a direct call from a probe, or a
-    check reused outside dispatch.py's PreToolUse run)."""
-    started = payload.get("_act_hook_started")
-    if isinstance(started, bool) or not isinstance(started, (int, float)):
-        return None
-    return float(started) + _HOOK_BUDGET
-
-
 def _check_deadline(payload: dict, budget: float) -> float:
     """now + `budget`, capped by `_hook_deadline(payload)` when there is one -- the deadline a
     check hands to its own git/file work. May already lie in the past when earlier checks used the
@@ -1522,7 +1510,8 @@ def _pending_file(root: Path, session_id: str) -> Optional[Path]:
     _queue_pending_note) are reused as-is."""
     if not _SAFE_SESSION_ID_RE.match(session_id):
         return None
-    return root / ".act-local" / _NOTES_DIRNAME / f"{session_id}.pending.json"
+    path = root / ".act-local" / _NOTES_DIRNAME / f"{session_id}.pending.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: nothing queued
 
 
 def _queue_note(payload: dict, note: str) -> None:
@@ -1537,7 +1526,7 @@ def _queue_note(payload: dict, note: str) -> None:
         return
     pending_path = _pending_file(root, session_id)
     if pending_path is not None:
-        _queue_pending_note(pending_path, note)
+        _queue_pending_note(pending_path, note, payload)
 
 
 def check_secret_scan(payload: dict) -> int:
@@ -1617,7 +1606,7 @@ def note_secret_scan(payload: dict) -> Optional[str]:
     pending_path = _pending_file(root, session_id)
     if pending_path is None:
         return None
-    notes = _pop_pending_notes(pending_path)
+    notes = _pop_pending_notes(pending_path, payload)
     if not notes:
         return None
     return "\n".join(notes)

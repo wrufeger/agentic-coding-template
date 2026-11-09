@@ -119,7 +119,8 @@ def _reader_key(payload: dict) -> Optional[str]:
 def _hints_file(root: Path, reader_key: str) -> Optional[Path]:
     if not _SAFE_ID_RE.match(reader_key):
         return None
-    return root / ".act-local" / _HINTS_DIRNAME / f"{reader_key}.json"
+    path = root / ".act-local" / _HINTS_DIRNAME / f"{reader_key}.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: no hint, nothing written
 
 
 def _pending_file(root: Path, tool_use_id: str) -> Optional[Path]:
@@ -133,7 +134,8 @@ def _pending_file(root: Path, tool_use_id: str) -> Optional[Path]:
     specific tool call)."""
     if not _SAFE_ID_RE.match(tool_use_id):
         return None
-    return root / ".act-local" / _HINTS_DIRNAME / "pending" / f"{tool_use_id}.json"
+    path = root / ".act-local" / _HINTS_DIRNAME / "pending" / f"{tool_use_id}.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: nothing queued
 
 
 def _load_noted_paths(path: Path) -> set:
@@ -254,7 +256,7 @@ def check_encoding_hint(payload: dict) -> int:
             if isinstance(tool_use_id, str) and tool_use_id:
                 pending_path = _pending_file(root, tool_use_id)
                 if pending_path is not None:
-                    _queue_pending_note(pending_path, _ENCODING_HINT_NOTE.format(path=raw, guess=guess))
+                    _queue_pending_note(pending_path, _ENCODING_HINT_NOTE.format(path=raw, guess=guess), payload)
             return 0
         print(_ENCODING_HINT_DENY.format(path=raw, guess=guess), file=sys.stderr)
         return 2
@@ -282,7 +284,7 @@ def note_encoding_hint(payload: dict) -> Optional[str]:
     pending_path = _pending_file(root, tool_use_id)
     if pending_path is None:
         return None
-    notes = _pop_pending_notes(pending_path)
+    notes = _pop_pending_notes(pending_path, payload)
     if not notes:
         return None
     return "\n".join(notes)

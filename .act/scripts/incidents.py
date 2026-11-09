@@ -37,6 +37,7 @@ import json
 import os
 import re
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -99,23 +100,49 @@ def is_off() -> bool:
 
 class _AppendLock:
     """A lock held for the instant of one append (an exclusively created file). Best effort: a lock that does
-    not come free within _APPEND_WAIT is ignored, a stale one is removed -- an event is never dropped for it."""
+    not come free within _APPEND_WAIT is ignored, a stale one is removed -- an event is never dropped for it.
+    The file holds its owner's token and only the owner removes it; a stale one is renamed away first, so only one
+    waiter takes it, and put back when what was taken is fresh (the same as the note lock in checks/common.py;
+    that one cannot be imported here)."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.held = False
+        self.token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+    def _break_stale(self) -> bool:
+        """True once the stale lock was renamed away (the caller tries to take the lock again at once); False
+        when it could not be, so that the caller's wait runs out as usual."""
+        claim = self.path.with_name(f"{self.path.name}.{uuid.uuid4().hex[:8]}.stale")
+        try:
+            os.rename(self.path, claim)
+        except OSError:
+            return False
+        try:
+            if time.time() - claim.stat().st_mtime <= _APPEND_STALE:
+                os.link(claim, self.path)  # fails when a new lock was made meanwhile: that one stays
+        except OSError:
+            pass
+        try:
+            claim.unlink()
+        except OSError:
+            pass
+        return True
 
     def __enter__(self) -> "_AppendLock":
         deadline = time.monotonic() + _APPEND_WAIT
         while True:
             try:
-                os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 self.held = True
+                try:
+                    os.write(fd, self.token.encode("ascii"))
+                finally:
+                    os.close(fd)
                 return self
             except FileExistsError:
                 try:
-                    if time.time() - self.path.stat().st_mtime > _APPEND_STALE:
-                        self.path.unlink()
+                    if time.time() - self.path.stat().st_mtime > _APPEND_STALE and self._break_stale():
                         continue
                 except OSError:
                     pass
@@ -128,7 +155,8 @@ class _AppendLock:
     def __exit__(self, *_exc: object) -> None:
         if self.held:
             try:
-                self.path.unlink()
+                if self.path.read_text(encoding="ascii", errors="replace") == self.token:
+                    self.path.unlink()
             except OSError:
                 pass
 

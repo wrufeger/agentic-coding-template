@@ -1125,6 +1125,7 @@ def _run_post_tool_use_notes(payload: dict) -> list[str]:
     stderr line and kept in _NOTE_FAILURES for the report to the model and the human — never blocks,
     never corrupts the stdout JSON main() builds from the list this returns."""
     notes: list[str] = []
+    timed = dict(payload, _act_hook_started=_HOOK_STARTED)  # the notes' waits stay inside the hook's own time
     for module_name, func_name in _POST_TOOL_USE_NOTES:
         func, reason = _load(module_name, func_name)
         if func is None:
@@ -1132,7 +1133,7 @@ def _run_post_tool_use_notes(payload: dict) -> list[str]:
                 _note_failed(module_name, reason)
             continue
         try:
-            note = func(payload)
+            note = func(timed)
         except Exception as exc:  # noqa: BLE001 — a broken note must never block or corrupt the JSON
             _note_failed(module_name, f"{type(exc).__name__}: {exc}")
             continue

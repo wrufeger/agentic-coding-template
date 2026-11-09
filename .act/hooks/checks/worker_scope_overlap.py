@@ -67,6 +67,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -452,14 +453,39 @@ def _test_command_words(config: dict) -> list[str]:
 
 def _normal_program(word: str) -> str:
     name = _command_name(word)
-    return "python" if name == "python3" else name
+    return "python" if name in ("python3", "py") else name
+
+
+# Interpreter options that do not change which script runs: `-u`, `-B`, `-I`, `-E`, `-O`, `-s`, `-S`, `-q`,
+# `-v`, `-X <opt>` / `-Xopt`, `-W <arg>` / `-Warg`, and the launcher's version `-3`, `-3.12`, `-3-64`.
+# Anything else (`-m`, `-c`, an unknown option) ends the list and counts as part of the command.
+_PYTHON_OPTION_RE = re.compile(r"-(?:[BEIOsSuqv]+|[XW].+|\d(?:\.\d+)?(?:-\d+)?)")
+
+
+def _without_python_options(words: list[str]) -> list[str]:
+    """`words` of a Python call with the options of _PYTHON_OPTION_RE between the program and the script
+    removed; any other command is returned as it is."""
+    if not words or _normal_program(str(words[0])) != "python":
+        return words
+    index = 1
+    while index < len(words):
+        word = str(words[index])
+        if word in ("-X", "-W") and index + 1 < len(words):
+            index += 2
+        elif _PYTHON_OPTION_RE.fullmatch(word):
+            index += 1
+        else:
+            break
+    return [words[0], *words[index:]]
 
 
 def _runs_test_command(words: list[str], test: list[str]) -> bool:
     """True if the simple command `words` starts with the words of the test command. The program is compared
     by name (`python3` = `python`, directory and `.exe` dropped); a later word of the test command that is a
     path (`tests/run.py`) also matches the same path spelled with a longer directory in front
-    (`D:/clone/tests/run.py`), since a run in a copy is the same run in another tree."""
+    (`D:/clone/tests/run.py`), since a run in a copy is the same run in another tree. Interpreter options in
+    front of the script (`py -3 tests/run.py`, `python -X utf8 tests/run.py`) do not change the run."""
+    words, test = _without_python_options(words), _without_python_options(test)
     if len(words) < len(test) or _normal_program(str(words[0])) != _normal_program(test[0]):
         return False
     for word, wanted in zip(words[1:], test[1:]):
@@ -537,13 +563,13 @@ def _hint_file(root: Path, tool_use_id: str) -> Optional[Path]:
     return _worker_scopes_dir(root) / _HINTS_DIRNAME / f"{tool_use_id}.json"
 
 
-def _queue_hint(root: Path, tool_use_id: object, text: str) -> None:
+def _queue_hint(root: Path, tool_use_id: object, text: str, payload: "dict | None" = None) -> None:
     """Owe `text` to this call's PostToolUse (note_main_session_overlap); old leftovers (a call refused by a later
     check never gets one) are removed on the way. Without a usable tool_use_id nothing is queued."""
     path = _hint_file(root, tool_use_id) if isinstance(tool_use_id, str) else None
     if path is None:
         return
-    _queue_pending_note(path, text)
+    _queue_pending_note(path, text, payload)
     try:
         limit = time.time() - _OVERLAP_ENTRY_TTL.total_seconds()
         for old in path.parent.glob("*.json"):
@@ -564,7 +590,7 @@ def _main_session_mode(config: dict) -> str:
 def _say(root: Path, payload: dict, text: str) -> None:
     """The note: on stdout like any warn check (transcript) and queued for the model."""
     print(text)
-    _queue_hint(root, payload.get("tool_use_id"), text)
+    _queue_hint(root, payload.get("tool_use_id"), text, payload)
 
 
 def check_main_session_overlap(payload: dict) -> int:
@@ -636,15 +662,14 @@ def note_main_session_overlap(payload: dict) -> Optional[str]:
     tool_use_id = payload.get("tool_use_id")
     if payload.get("agent_id") or not isinstance(tool_use_id, str):
         return None
-    if _main_session_mode(actlib.read_config()) == "off":
-        return None
     try:
         path = _hint_file(actlib.repo_root(), tool_use_id)
     except RuntimeError:
         return None
     if path is None or not path.is_file():
         return None
-    notes = _pop_pending_notes(path)
+    # a row switched off after the hint was queued: nothing is said, the file still goes
+    notes = [] if _main_session_mode(actlib.read_config()) == "off" else _pop_pending_notes(path, payload)
     try:
         path.unlink()
     except OSError:

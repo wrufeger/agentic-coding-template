@@ -543,8 +543,8 @@ def read_state(root: Path) -> dict:
 
 
 def write_state(root: Path, **fields: str) -> None:
-    if not _base_usable(root):
-        return
+    if not _base_usable(root) or not actlib.local_write_ok(root, state_path(root)):
+        return  # `.act-local` is no real folder, or the state file is a link: nothing is written through it
     data = read_state(root)
     data.update(fields)
     try:
@@ -820,7 +820,7 @@ def _run_daily_locked(root: Path, now: float, today: date, mode: str) -> dict:
     if is_first_run(root):
         fields["first_run"] = today.isoformat()
     write_state(root, **fields)
-    if result and (result["count"] or failures):
+    if result and (result["count"] or failures) and actlib.local_write_ok(root, result_path(root)):
         try:
             result_path(root).write_text(json.dumps(result, ensure_ascii=False) + "\n", encoding="utf-8")
         except OSError:

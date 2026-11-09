@@ -563,7 +563,8 @@ def _note_once(payload: dict, key: str, message: str) -> None:
 def _pending_file(root: Path, session_id: str) -> Optional[Path]:
     if not _SAFE_SESSION_ID_RE.match(session_id):
         return None
-    return root / ".act-local" / _NOTES_DIRNAME / f"{session_id}.pending.json"
+    path = root / ".act-local" / _NOTES_DIRNAME / f"{session_id}.pending.json"
+    return path if actlib.local_write_ok(root, path) else None  # behind a link out of the project: nothing queued
 
 
 def _queue_note(payload: dict, note: str) -> None:
@@ -579,7 +580,7 @@ def _queue_note(payload: dict, note: str) -> None:
         return
     pending_path = _pending_file(root, session_id)
     if pending_path is not None:
-        _queue_pending_note(pending_path, note)
+        _queue_pending_note(pending_path, note, payload)
 
 
 def _format_finding(finding: security_scan.Finding, accepted: "dict[str, str]") -> str:
@@ -755,7 +756,7 @@ def note_deps_scan(payload: dict) -> Optional[str]:
     pending_path = _pending_file(root, session_id)
     if pending_path is None:
         return None
-    notes = _pop_pending_notes(pending_path)
+    notes = _pop_pending_notes(pending_path, payload)
     if not notes:
         return None
     return "\n".join(notes)
@@ -1037,7 +1038,9 @@ def _report_result(root: Path, state_hash: str, result: security_scan.ScanResult
     if not findings and not unreadable:
         return False
     marker = _reported_marker(root, state_hash)
-    if marker.exists() or not _claim_reported_marker(marker):
+    # behind a link out of the project no marker is made (actlib.local_write_ok): the state is then reported
+    # without one, so it may be reported again after a later merge, never lost
+    if marker.exists() or (actlib.local_write_ok(root, marker) and not _claim_reported_marker(marker)):
         return False
     try:
         import entries  # deferred: only a run that has something to report needs it
@@ -1071,7 +1074,8 @@ def _report_result(root: Path, state_hash: str, result: security_scan.ScanResult
         )
     except Exception:  # noqa: BLE001 -- best effort: a failed report must never disturb the hook chain
         try:
-            marker.unlink()
+            if actlib.local_write_ok(root, marker):
+                marker.unlink()
         except OSError:
             pass
         return False
