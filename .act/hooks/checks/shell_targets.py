@@ -1419,9 +1419,11 @@ def _opens_no_heredoc(line: str) -> bool:
 
 def _heredoc_delimiters(
     tokens: list[_Token], line: str, arith_flags: Optional[list[bool]] = None
-) -> list[tuple[set[str], bool]]:
+) -> list[tuple[set[str], bool, int]]:
     """Every heredoc a line opens, in order, as (terminator candidates, whether its body is
-    expanded). A line with `((` in it (arithmetic like `$((1<<2))`, where `<<` is a shift) or with
+    expanded, its position among all the `<<` operators of the line that are followed by a word - the
+    index into what _heredoc_shell_flags and _heredoc_operand_positions return, which still count a `<<`
+    of arithmetic that is dropped here). A line with `((` in it (arithmetic like `$((1<<2))`, where `<<` is a shift) or with
     one of _NO_HEREDOC_MARKERS opens none — skipping nothing is the safe side — unless every heredoc on
     it has a quoted delimiter (its body is then plain text, never run by the line's own command). `<<-EOF` reaches
     here as `<<` plus `-EOF`; both "EOF" and "-EOF" are accepted as the terminator, whichever comes first, since ending a body early only
@@ -1450,12 +1452,12 @@ def _heredoc_delimiters(
            for position, candidates in enumerate(delimiters)):
         return []
     found = [
-        (candidates, not aligned or not any(char in raw_words[position] for char in "'\"\\"))
+        (candidates, not aligned or not any(char in raw_words[position] for char in "'\"\\"), position)
         for position, candidates in enumerate(delimiters)
     ]
     if arith_flags is not None and len(arith_flags) != operators and any(arith_flags):
         return []  # the two readings of the line disagree and one saw arithmetic: open none
-    if marked and (not aligned or any(expands for _candidates, expands in found)):
+    if marked and (not aligned or any(item[1] for item in found)):
         # On a marked line only a heredoc that is certain is opened: every delimiter quoted, so no body
         # is expanded and none can be a `<<` of arithmetic or of text inside an expansion. Any doubt
         # keeps the old reading (no heredoc, the body is scanned as commands). This test comes first,
@@ -1842,7 +1844,7 @@ def _line_mode_tokens(command: str, with_spans: bool = False) -> list[_Token]:
         delimiters = _heredoc_delimiters(line_tokens, line, arith_flags)
         feeds_shell = _heredoc_shell_flags(line_tokens) if delimiters else []
         operand_positions = _heredoc_operand_positions(line_tokens) if delimiters and _INLINE_SINK is not None else []
-        for position, (candidates, expands) in enumerate(delimiters):
+        for candidates, expands, position in delimiters:
             end = _heredoc_terminator(line_positions, candidates, index)
             if end is None:
                 break
@@ -2443,6 +2445,11 @@ def _creation_keys(operands: list[str], parents: bool, bases, is_created, to_nat
     return keys
 
 
+def _place_at_or_below(key: str, place: str) -> bool:
+    """True when the place `key` is `place` or lies below it (both as keys _creation_keys builds them)."""
+    return key == place or key.startswith(place.rstrip("\\/") + os.sep)
+
+
 def _written_key(raw: str, base: Optional[str]) -> Optional[str]:
     """The place a found target names, as the key _WrittenPlaces keeps it under: native, joined onto its base,
     `.`/`..` collapsed, case folded as this file system folds it; None for a dynamic target or a relative one
@@ -2472,9 +2479,11 @@ class _WrittenPlaces:
         self._keys: set[str] = set()
         self._ignored: set[int] = set()  # positions in `found` that only create directories
         self._created: set[str] = set()  # the places a certain `mkdir` makes (note_created)
+        self._recreated: set[str] = set()  # of those, the ones a target named before (made again after it)
 
-    def covers(self, found: list[_Target], directory: str) -> bool:
-        """True when `directory` (an absolute native path) is at or below a place a target in `found` names."""
+    def _absorb(self, found: list[_Target]) -> None:
+        """Read the targets of `found` not read yet; a target that names a place again takes back that it was
+        made again, at or below it (a removal after the `mkdir` wins)."""
         while self._read < len(found):
             raw, base = found[self._read]
             self._read += 1
@@ -2483,12 +2492,22 @@ class _WrittenPlaces:
             key = _written_key(str(raw), base)
             if key is not None:
                 self._keys.add(key)
+                if self._recreated:
+                    self._recreated = {place for place in self._recreated if not _place_at_or_below(place, key)}
+
+    def covers(self, found: list[_Target], directory: str) -> bool:
+        """True when `directory` (an absolute native path) is at or below a place a target in `found` names -
+        except a place a certain `mkdir` made again after that target (note_created): it exists, what lies
+        below it does not."""
+        self._absorb(found)
         if not self._keys:
             return False
         key = os.path.normcase(os.path.normpath(directory))
+        made_again = key in self._recreated
         while True:
-            if key in self._keys:
+            if key in self._keys and not made_again:
                 return True
+            made_again = False
             parent = os.path.dirname(key)
             if not parent or parent == key:
                 return False
@@ -2499,10 +2518,14 @@ class _WrittenPlaces:
         not make a place count as removed, moved or copied over."""
         self._ignored.update(range(start, end))
 
-    def note_created(self, operands: list[str], parents: bool, bases) -> None:
+    def note_created(self, operands: list[str], parents: bool, bases, found: list[_Target]) -> None:
         """A `mkdir` of `operands` that certainly runs, in each of `bases`: the places it makes count as existing
-        for a later `cd` (created_at) - unless something removes or moves them first (covers)."""
-        self._created.update(_creation_keys(operands, parents, bases, self.created_at, _to_native_path))
+        for a later `cd` (created_at) - unless something removes or moves them after it (covers); a target in
+        `found` (as far as it goes now) that named one of them before no longer counts against it."""
+        self._absorb(found)
+        made = _creation_keys(operands, parents, bases, self.created_at, _to_native_path)
+        self._created.update(made)
+        self._recreated.update(key for key in made if key in self._keys)
 
     def created_at(self, directory: str) -> bool:
         """True when `directory` (an absolute native path) is a place a `mkdir` made, or a parent of one."""
@@ -2665,7 +2688,10 @@ def _xargs_placeholder(source: str, bases: Optional[_Bases]) -> str:
     inside `sh -c`). A word of the source that is the `.act` directory itself gets a trailing separator
     (`find .act -name x` lists `.act/...`), because a check reads the placeholder by its text."""
     text = _XARGS_INPUT
-    directories = sorted({str(base) for base in (bases or ()) if base})
+    # Normalised, so a round trip (`cd .act/scripts; cd ../..`) names the directory the command really runs in
+    # and not the `.act` it passed through; a `..` only ever removes a segment, so nothing is hidden that the
+    # directory itself does not leave.
+    directories = sorted({os.path.normpath(str(base)) for base in (bases or ()) if base})
     if directories:
         text += " in " + " ".join(shlex.quote(directory.rstrip("/\\") + "/") for directory in directories)
     if source:
@@ -3901,7 +3927,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                     creation_stream_ok and not saved and prev_sep not in _PIPE_OPS and separator not in _PIPE_OPS
                     and separator != "&" and (prev_sep is None or prev_sep in _LIST_END_OPS)
                 ):
-                    written.note_created(creation[0], creation[1], bases)
+                    written.note_created(creation[0], creation[1], bases, found)
             if _INLINE_SINK is not None:
                 _collect_inline_code(words, bases, stdin_redirected, stdin_text, pipe_input, stdin_span)
             produced = _literal_output(words, stdin_text if stdin_redirected else pipe_input)

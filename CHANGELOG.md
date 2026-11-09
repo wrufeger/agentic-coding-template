@@ -352,6 +352,11 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- The write checks no longer refuse a round trip through a folder in front of a pipe into `xargs` (`cd .act/scripts &&
+  ...; cd ../..; grep -rl foo docs | xargs sed -i ...`): the folder text the input stands for is normalised first.
+  A folder that was moved or removed and made again by a `mkdir`/`New-Item -ItemType Directory` that certainly runs
+  counts as existing for a later `cd` (`mv build old; mkdir build; cd build; ...; cd ..; echo x > out.txt` and the
+  PowerShell form); a removal or move after the creation, and anything below the made folder, is judged as before.
 - The prompt shortcuts `/act-version` and `/act-info`: on Windows a path argument such as `--source D:\dev\x` keeps its
   backslashes, a usage error of the script (`/act-info bitte`) lets the prompt through instead of blocking it, and the
   `git ls-remote` look-up of `/act-version` stops after 5 s (`ACT_LS_REMOTE_TIMEOUT` sets the limit of `update.py`), inside
@@ -469,6 +474,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Security
 
+- A heredoc body that is a shell script is read again when an earlier line of the same command holds an arithmetic
+  `<<` (`(( x = 1 +` / `2 << 3 )); bash <<'EOF'` with `rm -f .act/a.md` in the body): the arithmetic shift no longer
+  shifts which heredoc is judged. Inline Python that only changes file metadata (`os.chmod`, `os.chown`, `os.utime`,
+  `shutil.copymode`, `copystat`, `chown`, `Path.chmod`) is judged against a worker's write scope like any other write.
 - PowerShell write targets are read more completely, so a write that went unseen is refused now: inline interpreter
   code (`python -c`, `node -e`) inside a loop body, a script block, `$( )` or `( )`, or behind `$x =`, is read like the
   same call on its own line (`foreach ($i in 1,2) { python -c "open('.act/x','w').write('y')" }` is refused by

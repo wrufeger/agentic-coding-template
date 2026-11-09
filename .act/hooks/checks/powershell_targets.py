@@ -147,6 +147,7 @@ from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _bash_write_targets,
     _creation_keys,
+    _place_at_or_below,
     _expand_directory_wildcard,
     _git_targets,
     _attribute_targets,
@@ -1101,6 +1102,7 @@ class _TrackedDirs:
     resolved: dict[tuple[str, Optional[str]], Optional[str]] = field(default_factory=dict, compare=False, repr=False)
     budget: _ScanBudget = field(default_factory=_ScanBudget, compare=False, repr=False)
     created: set[str] = field(default_factory=set, compare=False, repr=False)
+    recreated: set[str] = field(default_factory=set, compare=False, repr=False)  # created again after a target
 
     @classmethod
     def start(cls, base_cwd: str) -> "_TrackedDirs":
@@ -1149,7 +1151,7 @@ class _TrackedDirs:
             capped = True
         return _TrackedDirs(
             followed, merged, self.seen | merged, confirmed_dirs, capped,
-            self.known, self.moves, self.written, self.resolved, self.budget, self.created,
+            self.known, self.moves, self.written, self.resolved, self.budget, self.created, self.recreated,
         )
 
     def note_written(self, targets: Iterable[str]) -> None:
@@ -1158,11 +1160,16 @@ class _TrackedDirs:
             key = _place_key(target)
             if key is not None:
                 self.written.add(key)
+                if self.recreated:  # a removal after the creation wins again
+                    self.recreated.difference_update([place for place in self.recreated if _place_at_or_below(place, key)])
 
     def note_created(self, raws: Iterable[str], parents: bool) -> None:
         """Remember the places a statement that certainly runs and creates the directories `raws` makes in each
-        directory the shell may be in (is_created): those among them _directory_creatable accepts."""
-        self.created.update(_creation_keys(list(raws), parents, self.possible, self.is_created, _to_native_path))
+        directory the shell may be in (is_created): those among them _directory_creatable accepts. One a target
+        named before (a removal, a move) is made again then: it exists (is_written leaves it out)."""
+        made = _creation_keys(list(raws), parents, self.possible, self.is_created, _to_native_path)
+        self.created.update(made)
+        self.recreated.update(key for key in made if key in self.written)
 
     def is_created(self, directory: str) -> bool:
         """True when `directory` (an absolute native path) is a place a creation noted (note_created) makes, or a
@@ -1177,11 +1184,14 @@ class _TrackedDirs:
         """True when `directory` (an absolute native path) is at or below a place a target collected so far
         names: a removal, a move or a copy earlier in the same command may have taken it away or changed it,
         so a move there may fail and the shell stay where it was — the directory counts as missing then
-        (_follow_cd keeps the old directory next to the new one)."""
+        (_follow_cd keeps the old directory next to the new one). Not so for a place a certain creation made again
+        after that (note_created): it exists, what lies below it does not."""
         key = os.path.normcase(os.path.normpath(directory))
+        made_again = key in self.recreated
         while True:
-            if key in self.written:
+            if key in self.written and not made_again:
                 return True
+            made_again = False
             parent = os.path.dirname(key)
             if not parent or parent == key:
                 return False

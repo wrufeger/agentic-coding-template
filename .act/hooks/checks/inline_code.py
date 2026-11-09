@@ -897,7 +897,8 @@ def _node_write_targets(literals: list[_Literal], skeleton: str) -> tuple[list[s
 def write_paths(language: str, code: str) -> list[str]:
     """The paths a check judges as possible write targets of `code`: the path literals when it contains a write
     call (the switches of a Windows tool the code starts are no paths, _without_switches), the paths the write
-    calls name (write_targets) and UNKNOWN_WRITE when a write call's path is not shown by the text."""
+    calls name (write_targets, for Python also where the call is no write call of the literal reading: a
+    metadata change) and UNKNOWN_WRITE when a write call's path is not shown by the text."""
     literals, skeleton = _scan(language, code)
     found: dict[str, None] = {}
     if _skeleton_has_write_call(language, skeleton):
@@ -906,8 +907,9 @@ def write_paths(language: str, code: str) -> list[str]:
             if candidate is not None:
                 found[candidate] = None
     if language == PYTHON:
-        if _skeleton_has_write_call(language, skeleton):
-            found.update(dict.fromkeys(write_targets(language, code)))
+        # Also a program without a call of the list above: `os.chmod`, `os.chown`, `os.utime`, `shutil.copymode`,
+        # `copystat`, `chown` and `Path.chmod` write file metadata, which the program reading names as a write.
+        found.update(dict.fromkeys(write_targets(language, code)))
     else:
         named, unknown = _node_write_targets(literals, skeleton)
         found.update(dict.fromkeys(named))

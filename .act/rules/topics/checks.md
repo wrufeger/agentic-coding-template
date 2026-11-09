@@ -131,7 +131,12 @@ literal path makes counts as existing), `git clone` and the other git commands t
 source of a PowerShell move, `perl`/`ruby -i`, `chmod`/`chown`, `xargs` with literal input and the literal file names
 a `-c`/`-e` interpreter argument opens for writing; not a path built at run time, archives `tar`/`zip` create, or
 `find -exec`. A relative write behind more than 24 possible folders, or past the work bound of one command, is
-refused by all three as a write they cannot place (any mode short of `off`): split the command.
+refused by all three as a write they cannot place (any mode short of `off`): split the command. A folder made again
+after something took it away (`mv build old; mkdir build; cd build`, `Remove-Item build; New-Item -ItemType Directory
+build; Set-Location build`) counts as existing again, what lies below it does not, and a removal or move after the
+creation wins. The shell may be in two places after `cd .act && ls && cd ..; echo x > out.txt` (and with `pushd`/`popd`): a
+failing `ls` skips the `cd ..` while the `;` goes on, so the write is also placed in `.act`, and the guard refuses it. That
+is a limit, not a bug: write the command with `;` between the steps, or as two calls.
 
 Limits: the shell check is best effort. A program that opens files itself (`python script.py`, `docker run -v`) is
 invisible; an MCP tool that takes a path is checked only if it is a read tool of the IDE server's known list. A command
