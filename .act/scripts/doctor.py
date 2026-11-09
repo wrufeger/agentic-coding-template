@@ -98,6 +98,14 @@
 #               is no method name, a name no file backs (misspelled or removed), and a methods section in
 #               docs/project/coding_rules.md that does not match the row — with the command that enters it
 #               (rules.py --sync-methods).
+#          25. the length of the entries under `## [Unreleased]` in CHANGELOG.md (switch
+#               `changelog-length` in docs/ai/config.md § Checks: warn (default) | block (= warn) |
+#               off): one warning when an entry (a `- ` item, its continuation lines joined with one
+#               space, counted without the `- `) is over 250 characters, with the count and up to five
+#               entries (first words, line, length). Nothing without a CHANGELOG.md, with `changelog`
+#               set to `off` or `release-notes-only`, without an `[Unreleased]` section, or with the
+#               switch off. The template's own checkout has no docs/ai/config.md, so the defaults
+#               apply and its own CHANGELOG.md is checked too. Counted like any finding, never a block.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -226,6 +234,7 @@ KIND_LABELS: dict[str, str] = {
     "docs-link-dead": "Dead relative links and paths in the project docs",
     "docs-concept-decided": "Concepts whose questions are all answered (archive once built)",
     "own-rules-size": "Always-loaded own rules over the size budget (own-rules-budget)",
+    "changelog-length": "Changelog entries under [Unreleased] over the length limit (changelog-length)",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -271,6 +280,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "docs-link-dead": "Tote relative Verweise und Pfade in der Projektdoku",
     "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (archivieren, sobald gebaut)",
     "own-rules-size": "Immer geladene eigene Regeln über dem Größenbudget (own-rules-budget)",
+    "changelog-length": "Changelog-Einträge unter [Unreleased] über der Längengrenze (changelog-length)",
 }
 
 
@@ -1841,6 +1851,97 @@ def check_own_rules_size(root: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# 8d. Length of the changelog entries — an entry under `## [Unreleased]` in CHANGELOG.md is read by
+#     everyone who updates, so a long one costs. One warning when an entry is over 250 characters
+#     (switch `changelog-length` in docs/ai/config.md: warn (default) | block (= warn) | off), never a
+#     block. The template's own checkout has no docs/ai/config.md, so the defaults apply there.
+# ---------------------------------------------------------------------------
+
+CHANGELOG_ENTRY_MAX = 250
+CHANGELOG_SHOWN_MAX = 5
+CHANGELOG_WORDS_WIDTH = 40
+RE_UNRELEASED = re.compile(r"^##\s+\[unreleased\]", re.IGNORECASE)
+
+
+def _config_word(root: Path, key: str, default: str) -> str:
+    value = actlib.read_config(root).get(key, "").strip().strip("`").strip().lower()
+    return value or default
+
+
+def changelog_entries(lines: list[str]) -> list[tuple[int, str]]:
+    """[(line number, text)] of the list items under `## [Unreleased]`: an item runs from its `- `
+    line to the next item, a heading or a blank line; its continuation lines are stripped and joined
+    with one space; the text is what follows the `- `."""
+    start = None
+    for number, line in enumerate(lines):
+        if RE_UNRELEASED.match(line.strip()):
+            start = number + 1
+            break
+    if start is None:
+        return []
+    found: list[tuple[int, str]] = []
+    current: list[str] = []
+    first = 0
+    for number in range(start, len(lines)):
+        line = lines[number]
+        stripped = line.strip()
+        if line.startswith("## "):
+            break
+        if line.startswith("- "):
+            if current:
+                found.append((first, " ".join(current)))
+            current, first = [line[2:].strip()], number + 1
+        elif current and stripped and not stripped.startswith("#"):
+            current.append(stripped)
+        else:
+            if current:
+                found.append((first, " ".join(current)))
+            current = []
+    if current:
+        found.append((first, " ".join(current)))
+    return found
+
+
+def _first_words(text: str) -> str:
+    """The start of `text`, cut at a word boundary within about CHANGELOG_WORDS_WIDTH characters."""
+    if len(text) <= CHANGELOG_WORDS_WIDTH:
+        return text
+    cut = text[:CHANGELOG_WORDS_WIDTH]
+    if text[CHANGELOG_WORDS_WIDTH] != " " and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip() + "…"
+
+
+def check_changelog_length(root: Path) -> list[Finding]:
+    if _config_word(root, "changelog-length", "warn") == "off":
+        return []
+    if _config_word(root, "changelog", "file") in ("off", "release-notes-only"):
+        return []
+    path = root / "CHANGELOG.md"
+    if not path.is_file():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    long_ones = [(number, text) for number, text in changelog_entries(lines) if len(text) > CHANGELOG_ENTRY_MAX]
+    if not long_ones:
+        return []
+    shown = "; ".join(f"line {number}, {len(text)} characters: {_first_words(text)}"
+                      for number, text in long_ones[:CHANGELOG_SHOWN_MAX])
+    more = len(long_ones) - CHANGELOG_SHOWN_MAX
+    count = len(long_ones)
+    return [Finding(
+        path="CHANGELOG.md", line=long_ones[0][0], kind="changelog-length",
+        message=(f"{count} entr{'y' if count == 1 else 'ies'} under [Unreleased] "
+                 f"{'is' if count == 1 else 'are'} longer than {CHANGELOG_ENTRY_MAX} characters "
+                 f"(a list item with its lines joined) — {shown}"
+                 + (f"; {more} more" if more > 0 else "")
+                 + ". Shorten them; `changelog-length` in docs/ai/config.md set to `off` skips the check"),
+    )]
+
+
+# ---------------------------------------------------------------------------
 # 9. .act/MANIFEST.json drift — a project's .act/ hand-edited since the last update, or, in the
 #    template's own checkout, .act/ changed without re-running `manifest.py --write` before
 #    committing (the template ships its own MANIFEST.json now, so this same comparison
@@ -2828,6 +2929,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_revisit_dates(root)
     findings += check_docs_order(root)
     findings += check_own_rules_size(root)
+    findings += check_changelog_length(root)
     findings += check_manifest_drift(root)
     findings += check_script_docs(root)
     findings += check_skill_lint(root)

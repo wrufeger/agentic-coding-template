@@ -293,7 +293,7 @@ def _canonical(entry: Optional[actlib.ConfigKey], value: str) -> Optional[str]:
 
 
 # Checks that only ever note ("never refuses" in the scaffold's Checks table): `block` counts as `warn`.
-_NOTE_ONLY_CHECKS = ("update-branch-hint", "update-check", "docs-order", "model-switch")
+_NOTE_ONLY_CHECKS = ("update-branch-hint", "update-check", "docs-order", "model-switch", "changelog-length")
 
 
 def _check_effect(key: str, value: str, guards: str) -> str:

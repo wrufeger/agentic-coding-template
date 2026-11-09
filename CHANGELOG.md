@@ -1,1824 +1,306 @@
 <!-- act:template-changelog -->
 # Changelog
 
-Changes to the template itself. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions
-follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html); the sections up to 2.1.0 keep the headings of their
-release notes. A project set up from this template keeps its own
-changelog: `init` removes this file (step 8, recognized by the marker on its first line, like the template's own
-README), and `act-update` and `act-adopt` never bring it into a project.
+Changes to the template itself, newest first. Each release opens with a summary line, its highlights and what to do
+when upgrading; below that the changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions
+follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The longer wording of earlier entries stays in the
+Git history and in the release notes of each tag. A project set up from this template keeps its own changelog: `init`
+removes this file (step 8, recognized by the marker on its first line, like the template's own README), and
+`act-update` and `act-adopt` never bring it into a project.
 
 ## [Unreleased]
 
+### Upgrading
+- Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
+- An absolute `outside-root-allow` entry outside the project and home is read-only now; writes there are refused.
+- A commit touching a lock file is held while the scan cache folder is a link; the message names it, or set
+  `security-check: off`.
+- `act-update` skips new coding rule sets while `coding_rules.md` has uncommitted changes; commit, then run
+  `python .act/scripts/rules.py --add-new-coding`.
+- Fix what `act-doctor` and `rules.py` report: `docs/ai/local/` files whose template file is gone, shadowed rule files.
+- Optional: to change the default changelog handling, add the `changelog` row to `docs/ai/config.md` § Formats.
+- A project older than `v2.2.0` is no longer updated by `act-update`; it stops with a message naming `act-adopt`.
+- A `file:` entry in `outside-root-allow` is now ignored.
+- Shorten the `[Unreleased]` entries of your `CHANGELOG.md` that `act-doctor` names (over 250 characters), or set
+  `changelog-length: off` in `docs/ai/config.md` § Checks.
+
 ### Added
-
-- `entries.py new todo|note --triage` writes `triage: open` into the header, so a chat capture filed by hand needs no manual edit afterwards.
-- Incident log: only real faults are noted in `.act-local/incidents.jsonl` (per machine, identifiers only, never a
-  command's text or a path) and arrive at the next session start as one inbox report "Incident log <date>" with
-  counts per kind on top (a second start the same day appends to it, equal rows become one row with a count, text a
-  person added stays; the session start names the file in one line, or with `session-start-refresh: warn` says how many
-  events wait): a file `protected-watch` put back after a worker changed it (`restored`, and `restore-failed` when it
-  could not), a check in `warn` mode that let a call through that wrote, deleted or read a secret file (with a reason
-  class and a masked target class such as `outside-write home/d3`; the environment overrides of `outside-root` and
-  `secret-read` and `encoding-hint: warn` count too), a check that crashed or ran past 8 s of the hook limit, a worker
-  outcome recorded as `escalated`, and a refusal that made a session or worker switch model. Not logged: a refusal
-  (whoever made the call sees it at once), a read outside the project, an `ide-mcp` note, a hint to the main session.
-  Delivered lines are dropped after 30 days; no new setting, but `ACT_INCIDENT_LOG=off` in the environment leaves the
-  log alone for one run (a test suite that drives the hooks).
-- Every refusal of a check is counted silently per check, role and day in `.act-local/usage.json` (the check's name and
-  the role only, no command, no path; counting never changes a verdict). `doctor.py --inbox` files one question when the
-  same check refused workers at least 3 times within 7 days (not again while one is open, nor within 7 days of the
-  last one). The proposal never loosens the check: it offers one sentence for the worker's role file or the
-  assignment header that tells the worker beforehand what the check does not allow (the sentences are listed in
-  `.act/rules/topics/checks.md`), to adopt, reword or leave.
-- Rule `R-work-process-error`: a fault in how the work itself runs (workers getting in each other's way, a run
-  checking the wrong state, a step against a rule) is reported the first time it shows, as an inbox question with
-  proposed fixes, and the process changes before the work goes on; a workaround alone is not enough, and a cause in
-  the template is feedback too. A worker hands such a fault back with its result (`R-role-worker`). `act-update`
-  enters the new line in an existing project's `docs/ai/rules.md`.
-- An assignment that runs tests or probes names the tree it reads as its own line `Tests: <glob>[, <glob> ...]`
-  (same patterns as `Write scope:`). `worker-scope-overlap` refuses a worker start whose `Tests:` tree is written
-  by a running worker, and a writing worker whose `Write scope:` meets a running worker's `Tests:` tree; the
-  message names the other worker's line and the way out (wait, or test an isolated copy). A word on the line that
-  is no plausible path is ignored, a pattern outside the project is dropped on its own.
-- `worker-scope-overlap` also notes (never refuses) when the main session writes under a running worker's `Tests:` tree or
-  runs the test command in a tree a running worker writes in; the note names the worker's line and the way out.
-- `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
-
-- A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report reaches the assistant as a note with its next tool call. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.
-
-- A rule set line in `docs/project/coding_rules.md` takes an optional reason after the path, like a group line:
-  `- [ ] use: .act/coding/go.md — read-only service, no Go`. The reason is kept when the file is rewritten at session
-  start, by `rules.py --add-new-coding` and by an update.
-
-- The doctor reports a file under `docs/ai/local/` whose counterpart under `.act/` is gone (the template renamed or
-  removed it, so the override silently has no effect), with the most similar name under `.act/`. Rule overrides,
-  roles and a project's own skills are left out, and so is an own script or coding set unless its name is a strict
-  match for a template file (one name is the start of the other, or the same name with another extension). `update.py` shows the line in the report of its doctor run.
-- The doctor warns about a code block that is opened and never closed in an archive collection file
-  (`docs/ai/work/archive/<kind>-<YYYY-MM>.md`); anchors after it no longer count as found.
-
-- `update.py --plan` now previews the coding rule sets and groups an update would enter into `docs/project/coding_rules.md`, read from the fetched `.act/coding/` (with `--catch-up`, from the installed one); nothing is written.
-- `rules.py --add-new-coding` enters the rule sets and groups of `.act/coding/` that `docs/project/coding_rules.md` does not list yet (the step `update.py` runs itself).
-- Formats for the text the assistant writes: `.act/formats/` ships defaults for the commit message, the changelog,
-  the release notes and the README. A switch per subject in `docs/ai/config.md` § Formats (`commit-format`,
-  `changelog-format`, `release-notes-format`, `readme-format`) picks a preset; a file `docs/project/formats/<name>.md`
-  (`commit.md`, `changelog.md`, `release-notes.md`, `project-readme.md`) replaces the template's format for that
-  subject completely. `act-commit` and `act-pr` read the commit format, `act-release` the changelog and release notes
-  formats, `init`/`act-setup` and `act-audit-docs` the README format. `act-export-settings --with-formats` carries a
-  project's format files to another project, `act-load-settings` writes them back. `/act-config` and `act-doctor`
-  know and check the new keys.
-- `CHANGELOG.md` in the project root: `init` creates it with an empty `## [Unreleased]` section (switch `changelog:
-  file | release-notes-only | off` in § Formats, default `file`). A project from before is offered it at its next
-  `act-update` through the migration `007-changelog-file`. Neither ever writes over an existing file, and a project
-  that already keeps a changelog under another name or letter case (`changelog.md`, `CHANGES.md`, `HISTORY.md`,
-  `NEWS.md`) gets no second one. `act-release` says where the changelog goes and writes it there; with the default
-  format `act-commit` adds a line under `[Unreleased]` for every commit with a visible effect (the format `at-release`
-  leaves that to `act-release`). If your project has no § Formats yet, add the `changelog` row there to change the
-  default.
-- `act-release` publishes the release entry on GitHub or GitLab as its last step, only after an explicit yes and after
-  the tag is pushed; it is skipped when the project's pipeline already creates releases (semantic-release,
-  release-please, a tag workflow, a GitLab `release:` job). New `forge.py` commands: `create-release --tag T --title T
-  --body-file F [--prerelease] [--show-body] [--apply]` (preview without a request; with `--apply` a local `git
-  ls-remote` first checks that the tag is on the remote, without a token, and then exactly one request is sent; a tag
-  like `v1.2.0-rc.1` is a pre-release by itself, GitLab has no such flag and says so) and `releases` to check the
-  result.
-- `init` writes the README of a new project in the layout of the README format (`standard` sections by default;
-  `with-toc` adds a contents list, `minimal` keeps the short text); `act-audit-docs` compares a project's README with
-  its format.
-- A guide to project documents with short scaffolds (decision record, API spec, security checklist, deployment note)
-  under `.act/formats/documents/`; `act-audit-docs` points to it.
-- Working methods: optional rule sets for how the assistant works — `test-first` (a failing test before every behavior
-  change, a test per acceptance criterion), `spec-first` (a story with numbered, checkable criteria in
-  `docs/project/stories/` before the code) and `simple-changes` (the smallest change, only what was assigned,
-  assumptions named). Switch them on with the row `methods` in `docs/ai/config.md` § Scope, a comma-separated list or
-  `none` (the default); `init` asks once (`--methods <names>`; `act-setup` passes the answer). The sets live in
-  `.act/methods/` (a project's own in `docs/ai/local/methods/`) and are written into `docs/project/coding_rules.md` as
-  imports, so the orchestrator and every worker load them; a group can be unchecked there like in any rule set. The
-  session start, `act-update` and `python .act/scripts/rules.py --sync-methods` apply a changed row (`update --plan`
-  previews it); `act-doctor` reports a name without a file, a file it cannot read and a section that does not match the
-  row.
-- New check `protected-watch` (`docs/ai/config.md` § Checks, `block` | `warn` | `off`, default `block`): after every
-  tool call, in the orchestrator and in workers, the hook compares the files `R-safe-git-metadata` protects —
-  `.git/hooks/**`, `.git/config` (only the keys that start code), `.claude/settings*.json`, `.claude/agents/**`,
-  `.claude/skills/**`, `.claude/commands/**`, `.mcp.json`, `.envrc`, `.devcontainer/**`, `.vscode/tasks.json` — with a
-  snapshot taken at session start. It sees every way a file can change, also a script file or inline code that the
-  static check `git-metadata-guard` cannot read. A change made in a worker's call is put back at once from the
-  snapshot taken before the call, the changed version is kept under `.act-local/protected-watch/kept/`, and the
-  worker, the human (`systemMessage`) and the orchestrator (with its next tool call) are told. A change made by the
-  orchestrator is only reported, with the command that puts the previous version back. It costs a few milliseconds per
-  call (a file is hashed only when its size or modification time changed). It reports after the call and prevents
-  nothing; details and limits in `topics/checks.md`. It never follows a link: a watched folder or file that is a
-  symbolic link or a Windows junction is watched as that link only, nothing is deleted, created or written through
-  one (also not below `.act-local/protected-watch/`), and a link a worker put in place of a watched folder is removed
-  (the link, never its target). A restore that fails (read-only file, a path through a link) is reported again at
-  the next call instead of being forgotten. The commands the report gives for the orchestrator name the file
-  (`git config --file <path>`) and keep every character of a key, value or path, in bash, PowerShell and cmd.
-  A git config key whose danger depends on its value (`alias.*`, `remote.*.url`, `protocol.*.allow`) is restored to
-  its old, harmless value when a worker changed it to a dangerous one.
-  The places the watcher may delete, create or write are fixed when the snapshot is taken (the project root, the git
-  directories found then with their real paths, `.act-local/protected-watch/`); nothing it reads from the working
-  tree later can add one. The `.git` file at the project root and a git directory's `commondir` are watched as files
-  too, so a worker that points them elsewhere is put back or reported, and what lies at the new target is never
-  entered, removed or restored. A restore stops when the recorded git directory has become a link or no longer
-  resolves to its real path, and its temp file is created exclusively and never follows a link. Commands for the
-  orchestrator end git's options with `--` before key and value and put an argument that begins with `@`
-  (PowerShell splatting) or `-`, or that holds a comma (PowerShell reads a bare `a,b` as an array), in double quotes.
-  The `modules/` and `worktrees/` folders of a git directory, and the entries below them, are treated like every
-  other link: one that is a link is watched as that link only, and nothing behind it is listed, hashed or read.
-  Whether a git directory may be restored is decided from real paths: one first seen in a snapshot taken during a
-  worker's call (the snapshot was missing) is restored only when it lies below the project root in fact, with no
-  link between the root and it, so a `.git` file that names a path inside the root which reaches outside through a
-  linked folder makes nothing outside a place the watcher may delete or write. Limits: a `.git` file above the
-  project root is not watched, and a git directory that is first seen in such a snapshot and does not lie below the
-  root in fact is reported but not restored.
-- New check `model-switch` (`docs/ai/config.md` § Checks, `warn` | `off`, default `warn`): when a worker or the
-  session itself continues on another model — typically after the safety filter refused a request, which Claude Code
-  does not announce in a sub-agent — the hook reads the transcript at `SubagentStop` and `Stop`; the orchestrator gets
-  a note with its next tool call that names the role and the models, and tells you in chat. The hook itself shows you
-  nothing: a live probe showed that Claude Code records a `systemMessage` of these events but never displays it. New
-  `Stop` entry in the hooks that `init`/`update` write into `.claude/settings.json`. See `topics/safeguards.md`. The
-  refusal category in the note is cut to letters, digits, `_` and `-` (at most 40 characters), a worker id with other
-  characters finds no transcript, and a transcript that grew by more than 4 MB between two stops is read in blocks, so
-  a refusal in the middle is not skipped. A model name from the transcript is cut to letters, digits and `._:@/-` (at
-  most 64 characters) before it reaches the note or the state file; the state file is not written through a linked
-  `.act-local`, and its temp file is removed when the write fails.
-- `act-adopt` now ships in every project, not only in the template checkout. From a project it starts a new
-  project (empty or new folder, `init.py --target`) or adopts another one (folder with content, `adopt.py`, branch
-  `act-adopt`); it lists what would be carried over and asks once per category, then suggests `act-update` in the new
-  project.
-- `init.py --carry <list>` (and `adopt.py --apply --carry <list>`) chooses what `--target` takes over from the project
-  it runs from: `skills` (own skills), `rules` (`## Own rules`), `exceptions` (rule groups and rule sets switched
-  off with their reason; a set switched off without a reason is left to the new project's stack detection), `overrides` (`replaces` lines and the other files under `docs/ai/local/`), `topics`
-  (`docs/ai/local/rules/topics/`). Default is all; `none` or `--no-local` carries nothing; `--carry` without `--target`
-  is refused.
-- `adopt_baseline.py` (step 7b of `act-adopt`, before the first commit): checks an adopted project's existing code
-  once. It proposes the secret-file patterns missing from `.gitignore` (`--write-gitignore` appends them), runs the
-  secret scan and the dangerous-pattern scan over the existing tree, and books the findings as backlog entries
-  (`--book`: one per file for a secret, one per rule for a dangerous pattern, nothing twice; without it a dry run).
-  Prints file, line and rule, never a secret value.
+- Incident log: real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox
+  report per day at session start; no commands or paths are logged; `ACT_INCIDENT_LOG=off` pauses it.
+- Check refusals are counted per check and role; `doctor.py --inbox` asks once after 3 refusals of one check in 7 days.
+- Rule `R-work-process-error`: a fault in how the work runs is reported once as an inbox question, then fixed.
+- `protected-watch` (`block`|`warn`|`off`, default `block`) puts back protected files a worker changed (`.git/hooks`,
+  `.claude/settings*.json`, `.mcp.json`); changes by the orchestrator are only reported.
+- `model-switch` check (`warn`|`off`, default `warn`) tells you when a worker or session continues on another model.
+- Formats: `commit-format`, `changelog-format`, `release-notes-format`, `readme-format` in `docs/ai/config.md`;
+  `docs/project/formats/<name>.md` replaces a preset; `act-export-settings --with-formats` carries them over.
+- `CHANGELOG.md` for new projects (`changelog: file|release-notes-only|off`, default `file`); `act-update` offers it.
+- `act-release` publishes the release on GitHub or GitLab after an explicit yes and a pushed tag.
+- Working methods `test-first`, `spec-first`, `simple-changes`: the `methods` row in § Scope (default `none`).
+- `act-adopt` ships in every project; `--carry` picks what a new project takes over.
+- `outside-root-allow` takes a program folder such as `D:/Program Files/Browser`.
+- Small additions: `entries.py new --triage`, a reason after a rule set path.
+- `act-doctor` warns, never blocking, about an entry under `[Unreleased]` over 250 characters (`changelog-length`,
+  default `warn`).
 
 ### Changed
-
-- `/act-version` shows three lines instead of six: the installed version with the date of the last update, the newest
-  state of the source in your channel (newest release tag, or branch and short commit) with its date, and whether an
-  update is available. The long list (releases, tip, what `act-update` would take) stays: `/act-version --all`, and
-  `update.py --versions` without options prints it unchanged; `update.py --versions --short` prints the short form.
-  The date of a remote commit is read from the commit object alone (a depth-1 fetch without files, 4 s limit) and left out when that fails.
-- `topics/checks.md` keeps, per mechanically checked rule, what the check blocks, its switch and the limits an owner
-  must know (the whole page about 67 000 to 41 000 characters); how a command
-  is read (parser allow-lists, time budgets, failure handling) is documented in the header comments of the check
-  modules. The topic `worker-rules.md` is gone; its content stands in the header of `.act/scripts/rules.py`
-  (`--worker`).
-- The daily loaded core rules are about 8 000 characters shorter (44 300 to 36 200 in the seven files under `.act/rules/shared/` and `.act/rules/orchestrator/`), every rule id and duty kept: questions are described in one place (`R-human-ask`), their form only in the inbox README; summaries are shorter; duplicates of worker write bans, language and dev-server text became references.
-- Assignment header: only `Write scope:`, `Cap:` and (where something runs) `Tests:` are mandatory. The tier follows from the worker's role (a `Tier:` line only names a deviation), the estimate is given from `standard` up, `Depends on:` only for a real dependency. Without a `Cap:` or `Tier:` line the `worker-cap` check now uses the default of the worker's role (`quick-check` 10, `reviewer` 60, `expert-solver` 80, others 40).
-- `R-safe-git-reset` and `R-safe-git-discard` are one rule now (the second id stays as a pointer); projects keep both lines in `docs/ai/rules.md`.
-- The `act-adopt` skill is about half as long (63 700 to about 30 000 characters): the steps keep every decision and safety stop, and point to the script's `--plan` output and `--help` instead of repeating what they list.
-- `init` sets the scope profile by the detected stack: `full` for a web project (a frontend framework, CSS or HTML
-  in the folder, or named in the stack), `standard` for any other; `--scope minimal|standard|full` decides
-  otherwise. A project that already exists keeps its profile, `update` never changes it.
-- `act-update`, `act-doctor`, `act-export-settings` and `act-setup` no longer repeat what the script's `--help`
-  and output say; each names the command and the decisions that stay with the assistant (together about 11 000
-  characters shorter).
-- `/act-info` and `/act-version` are now answered by the session hook like `/act-config`: it runs `info.py` and
-  `update.py --versions` itself and shows their output unchanged. The three skills stay as short carriers (Claude Code
-  needs them to know the commands) and the `act` skill lists the commands.
-- The write flow for the repo host (access, preview, apply, verify, journal, token) stands once in `topics/live-systems.md`; `act-pr`, `act-issue`, `act-release`, `act-feedback`, `act-idea` and `act-prepare` refer to it and to the rules instead of repeating them, and `act-prepare` gains a short path for one task without an open question.
-- `git-reset-hard` and `git-discard` run as one check (both rows and their modes stay); `git branch -D` is let
-  through only for a branch HEAD contains (a cherry-picked one no longer is), and a worker's `git branch` is free
-  only when it lists.
-- The `reviewer` gives `BLOCK` only for an error reproducible on a path ordinary work reaches, a missing part of the
-  assignment, or a security hole a model can produce without intent; a constructed edge case is listed as a backlog
-  case with its input, and a known bug below that threshold is no longer an automatic `BLOCK`. The review works
-  within the assignment's `Cap:` (finishing at three quarters of it) instead of trying every change with every
-  conceivable input; in a derived project's application code, input from outside the trust boundary and a missing or
-  wrong auth or role check still count as ordinary paths. `act-commit` runs the full suite once, on the accepted state, and files the backlog
-  cases.
-- Worker roles run tests only when the assignment has a `Tests:` line; a worker's whole result goes into its return
-  (never "see above"), and the note on path-bound rules under `.claude/rules/` now stands once in `R-role-worker`
-  instead of in two roles.
-
-- `outside-root` no longer refuses the words of a literal `for p in /a /b; do curl "https://host$p"; done` loop,
-  which are only the tail of a URL: only this positive pattern is allowed (the variable's name occurs nowhere else in
-  the command, the body has no substitution, nested loop, `eval`, `source`, `.`, `export`, `local`, `set` or
-  indirection); everything else is judged as before.
-- With a linked security-scan cache folder, a commit that touches a lock file is held with a message naming the
-  link (or `security-check: off`) instead of going ahead unscanned.
-- Migration 008 keeps the file mode of `docs/ai/config.md`.
-- `R-work-handover` and the context hint: the closing line that proposes `/clear` names the current context size
-  as `ctx <n>k` (from `python .act/scripts/context_size.py`).
-- The Nuxt coding rules find the own test server's process on Windows with
-  `(Get-NetTCPConnection -LocalPort <port> | Where-Object RemotePort -eq 0).OwningProcess`, check its command line
-  before `Stop-Process -Id`, use `taskkill //PID <pid> //F` from Git Bash and check afterwards with a request to
-  `http://localhost:<port>/`; `-State Listen`, `netstat | findstr LISTENING` and `taskkill /PID` from Git Bash
-  fail on some Windows builds, on non-English Windows and in Git Bash.
-- The Java rules give the right versions (records final in 16, pattern matching for `switch` final in 21); the
-  README no longer counts the coding rule sets; `act-adopt` keeps its commit grouping in
-  `references/commit-groups.md`; `checks.md` names the two places outside the project that scripts write only on
-  your explicit request (`id_links_install.py`, `act-export-settings --profile`).
-- `R-cost-delegate`: a test or probe run never runs against a tree a worker writes in at the same time. The full
-  suite runs once after the reviews are accepted, rework runs only its own tests, and a run still going when
-  rework starts is restarted on the new state; parallel builders test isolated copies.
-- `secret-read` and `outside-root` now fail closed for Bash and PowerShell: if the check cannot be imported or raises while it looks at such a call, the call is refused and the failure is named, instead of letting the command through unchecked. Read, Write, Edit and the other tools stay possible, so the cause can be looked into. A check whose module file is missing counts as a failed check, like one that cannot be imported: the guards are refused, any other missing check, note or model-switch report is reported instead of being skipped silently.
-
-- An absolute `outside-root-allow` entry outside the project and the home directory is treated as read-only now, like one with `(read)`: the writes `outside-root` recognizes are refused there; before, such an entry (not documented) also allowed those writes. Writes the check does not recognize pass as before. Relative entries, `~` entries, entries with a glob character (writable unless `(read)`) and absolute entries inside the project or the home directory behave as before.
-
-- The Claude Code hook commands and the status line now try `py -3` (the Windows Python launcher) as a third
-  interpreter candidate after `python3` and `python`, with the same probe (it must really run Python 3.9 or newer).
-  On a Windows machine where only `py -3` works, the template's checks are no longer silently inactive. Existing
-  projects get the new commands with `act-update`; your own hooks are left alone.
-
-- The README and the `act-setup` skill name the three ways Python is found (`python3`, `python`, `py -3`).
-
-- `protected-watch` (mode `block`): when Claude Code itself writes the owner's "always allow" answer into
-  `.claude/settings.local.json` during a worker's call, the watcher no longer puts the file back. Only the exact form
-  "entries added to the list `permissions.allow`, everything else in the file equal, every earlier entry still there"
-  is reported (the report names the entries, the previous version is kept under `kept/`); any other change to that
-  file (hooks, `env`, other keys, a removed or altered entry, a file that does not parse or did not exist) and the
-  same addition in any other protected file are put back as before.
-
-- `worker-write-scope`: when it refuses a path found in the body of an interpreter heredoc (`python - <<'EOF'`,
-  `node - <<'EOF'`), the message now names the way out for code that only reads that path: write the helper script as a file inside
-  the write scope and run it, or use Write/Edit instead of a heredoc; a file outside the scope is never written, not
-  through a script either. Only the message changed; no call is refused or allowed differently.
-
-- The doctor's tier proposal is rarer: it looks at the last 30 outcomes of a role at a tier and proposes a higher tier
-  only once 30 are recorded and at least 60 % (18 of 30) were reworked or escalated; older outcomes drop out of the
-  window, and a declined proposal comes back at or after 30 more outcomes, if 60 % of the last 30 are still reworked or escalated. `usage.py --outcome` now also keeps the order of
-  the last 30 outcomes per role and tier (`roles.<name>.recent` in `.act-local/usage.json`); an existing file without
-  it keeps working, its sums stay, and the window fills with the next outcomes.
-- The inbox question the doctor writes for a tier proposal follows the form of the question rule: a blank line before,
-  between and after the options, no `Options:` label, and an effort named for each option.
-
-- `update.py` no longer enters new coding rule sets or groups into `docs/project/coding_rules.md` while that file has changes that are not committed (they would have gone into the update commit). It says so in step 6 and in the closing notes, with the command to run after committing.
-- `rules.py` reports, when following a rule the template moved to another file in `docs/ai/rules.md`: a rule that moved into a file your project shadows with its own copy under `docs/ai/local/rules/` that lacks the rule (the rule does not load), and an ID listed twice in one block (only the last line counts; `--validate` flags it too).
-
-- `doctor.py --inbox`: the question that proposes a higher tier for a role is short now. The numbers (the finding,
-  the table of outcomes per role and tier, the cost of a higher tier) moved into an inbox report of their own,
-  `report-<date>-<time>-tier-numbers-<role>-<tier>.md`, which `doctor.py` writes right before the question; the
-  question's hint is two sentences and names that report. The recommended option, "look at the cases first", is
-  now option a) and opens with the bold label `**Recommended:**` (`**Empfehlung:**` with `language-docs: de`);
-  raising the tier is option b), leaving it c). The proposal still comes back only after the same number of
-  further outcomes. `doctor.py` prints a `wrote` line for the report as well as for the question; if the
-  question cannot be written, the report is deleted again. `update.py` names it in the doctor step's summary as the
-  question's numbers report, not as a doctor report with findings.
-- Questions in the inbox (`R-human-ask`, `docs/ai/inbox/README.md`): a recommended option always comes first, as
-  a), and opens with the bold label `**Recommended:**` in `language-docs` (`**Empfehlung:**` for `de`), its reason
-  closing the line in one sentence. `act-idea` and `act-prepare` put their recommendation first the same way.
-
-- `write-guard`: a write into a throwaway project's own `.act/` below `.act-local/tmp/` (`$ROOT/.act-local/tmp/job/
-  proj/.act/x`) passes also where the start of the path is a variable. Allow-list: the project root is known and does
-  not itself lie below `.act-local/tmp/`, `.act-local/tmp/` stands as whole segments with no `.act` segment before
-  it, the part before it is empty or plain segments with at most one lone variable (`$NAME`, `${NAME}`, `$env:NAME`)
-  as the very first segment, and every segment behind it is plain too (no `..`, variable, substitution, backtick,
-  glob, brace, `~`, parenthesis, quote or space); every other path naming `.act/` stays refused, among them a
-  substitution that begins before `.act-local/tmp/` and ends behind it. A project that itself lies below
-  `.act-local/tmp/` (a throwaway project run as a project) gets no exemption at all, since its own `.act/` can be
-  spelled through `.act-local/tmp/` behind a variable or an administrative share. Limit: a leading variable that
-  holds `.act` itself reaches only new files below `.act/.act-local/tmp/`.
-- `worker-write-scope` and the other shell write checks: an `rsync` destination on another machine (`host:path`,
-  `user@host:path`, `host::module`, `rsync://host/...`) is no local file as long as every option acts on the remote
-  side alone (plain flags, `--exclude`/`--include`/`--filter`, `--bwlimit`, `--timeout`, `--port`, `--chmod`,
-  `--max-size`, `--min-size`, `--compress-level`, `--info`, `--debug`, a remote shell that is only `ssh`) and the
-  whole command line is nothing but that one rsync call with plain words (the first word is `rsync`; no prefix
-  assignment, `export`, `env`, other command or operator, no `$` or backtick outside single quotes, no unquoted
-  glob, brace or `~`).
-  rsync runs a local program from `RSYNC_RSH` or `RSYNC_CONNECT_PROG`, and a line can set one in spellings no text
-  search finds (`export RSYNC"_"RSH=...`), so any other line - `RSYNC_RSH=... rsync`, `env ... rsync`, a nested
-  `sh -c`, a PowerShell part before a `bash -c`, or `rsync ... && echo done` - keeps the destination a local path,
-  as does a line holding the text `rsync_` (a name such as `docs/rsync_notes/` too). `-e`/`--rsh` with another
-  program, `--rsync-path`, `--log-file`, `--write-batch`, `--only-write-batch`, `--backup-dir`, `--partial-dir`,
-  `--temp-dir`, `--link-dest` or an unknown option make it a local path again, as do a drive letter, a path with a
-  `/` before the colon, a variable, a glob, a tilde and this machine (`localhost:path`).
-- PowerShell: for `write-guard` and `git-metadata-guard`, `$name = <program> args` with `py`, `python`, `python3` or
-  `git` and plain arguments (no sub-expression, script block, escape, `;` or comma array) no longer treats every word
-  right of the `=` as a possible target: the script of `py|python|python3 [options] <script>` (never with `-m` or
-  `-c`) and the path and revision words of `git log|diff|show|status|blame|ls-files|rev-parse|grep` (without `-o`
-  or `--output*`) are left out, every other word still counts. `$x = py .act/scripts/board.py` passes;
-  `$x = python -m zipfile -e a.zip .act/`, `$x = git clone <url> .act/y` and `$x = py x.py, '.act/x'` are judged as
-  before. A cmdlet, string, expression or call operator on the right side is read as before.
-- A new project now starts with its own `CHANGELOG.md` (the template's own changelog is still removed by `init` as
-  before).
-- `act-commit` and `act-pr` take the message format from the commit format instead of always copying the repo's
-  style; the default `auto` keeps the old behaviour.
-- `topics/live-systems.md` names the release entry on GitHub/GitLab next to pull requests, issues and comments: its own
-  "yes", the way back is deleting it in the web interface, no backup needed.
-- The `PostToolUse` hook no longer ends early for every tool call of the orchestrator that cannot produce a note: the
-  protected-files watcher and queued notes run first (standard library only, so the common call stays cheap), and a
-  `TaskStop` call now reaches the observers instead of being dropped.
-- `init.py --target`, `adopt.py --target` and `adopt_scan.py --target` refuse a target that is the project they run
-  from or a folder inside it, also through a symlink or junction and in another spelling of the path's case on
-  Windows; the message names the target and the project root, and nothing is created or changed.
-- danger-scan: a finding whose exact `file|rule-id` key the adoption baseline booked
-  (`.act-local/danger-scan-hints/baseline.json`) passes without the first hold, so the first commit of an adopted
-  project is not held for patterns that were there before. Exact keys only; booked rules never hide an unbooked
-  finding (they are taken out before matching and do not count toward the limit of five); a malformed or linked list
-  counts as empty. The booking has no expiry: a new hit of a booked rule in a booked file passes too, until the key is
-  removed. Secrets keep holding.
-- Nothing leaves `docs/` before it stands in its monthly file. `entries.py archive` always moves a finished task,
-  backlog item or inbox entry to `docs/ai/work/archive/`, also when Git holds it; `entries.py compact` (`act-compact`)
-  always folds the archive and the journal into the monthly files (`Q-`, `T-`, `B-`, `U-`, `ledger-<YYYY-MM>.md`) with
-  the overview `<YYYY-MM>.md`, and only then is the single file gone. `act-commit` no longer runs `entries.py purge`.
-  A project that had `done-entries: delete` archives from now on: migration `008-done-entries-keep` removes the row
-  from `docs/ai/config.md` (any value, line endings kept); entries it deleted before stay in Git history, nothing is
-  reconstructed. `entries.py` no longer writes `docs/ai/work/reserved-ids.json` (`act-adopt` still does for old ids
-  that get no entry); an existing one is still read, so no id is handed out twice.
-- A decided or built concept file (`docs/ai/concept/*.md`, `docs/project/concepts/**/*.md`) is archived too:
-  `entries.py archive <path>` (or its unique file name) moves it with an `archived:` date (a file without front matter
-  also gets `file:` with its old path), rewrites links to it in other Markdown files, and `compact` folds it into
-  `other-<YYYY-MM>.md`. A folder, a concept folder's `README.md`, a name already in the archive, an ambiguous name and
-  a file outside the two folders are refused. `R-docs-order` and `topics/docs-order.md` say "into the monthly file
-  first, then deleted" instead of "deleted, not moved", and `doctor`'s `docs-concept-decided` asks to archive the
-  concept.
+- `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.
+- `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
+- Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.
+- `init` sets the scope profile from the stack (`full` for web, else `standard`); existing projects keep theirs.
+- `git-reset-hard` and `git-discard` are one check (both lines stay); `git branch -D` only for a branch HEAD contains.
+- Nothing leaves `docs/` before it is in its monthly file; `done-entries: delete` projects now archive (migration 008).
+- The recommended option of an inbox question comes first, as `**Recommended:**`; tier proposals are short.
+- Hooks also try `py -3`, so checks no longer go silent on Windows with only that launcher.
+- `protected-watch` leaves Claude Code's own "always allow" entries in `settings.local.json` and reports them.
+- A danger-scan finding booked in the baseline passes the first hold.
+- `init.py --target` refuses a target inside the project.
+- One changelog form (`.act/formats/changelog.md`): one line per entry, at most 250 characters, duties under
+  `### Upgrading`; a release adds a head line and 3–5 highlights.
+- The template's own `CHANGELOG.md` is rewritten in that form, about a sixth of its former length; the full old wording
+  stays in the Git history and the release notes of each tag.
 
 ### Removed
-
-- The two older shell scanners next to the new one (`hooks/checks/shell_targets_legacy.py`,
-  `hooks/checks/command_words_legacy.py`, together 1 541 lines): a Bash command is read once, by the word lexer.
-  The checks that look at a command's write targets, command words or `git commit` calls (write guard, worker write
-  scope, recursive delete, commit path spec, secret scan, worker git writes) block on that one reading, and there
-  is no second parser to keep in step. A single-quoted backtick or `$(` that is only text
-  (``git commit -m 'fix `rm x` bar'``) no longer blocks.
-- The config key `done-entries` (`delete` | `keep`): every project behaves as `keep` did; a row left in
-  `docs/ai/config.md` is ignored.
-- `entries.py purge` is retired: it prints `entries: purge is retired - archived entries stay until act-compact folds
-  them` and exits 0, so an old call does not fail. The header field `purge: after-commit` is no longer written; one
-  already in an archived file is carried into the monthly file like any other field.
-- The session-start note about files left in the archive and the journal-only compaction hint of projects on `delete`.
-- `act-update` no longer brings a project older than `v2.2.0` up to date: the format migrations `001-one-inbox`,
-  `002-todo-ids`, `003-inbox-frontmatter` and `004-work-frontmatter` (1 402 lines) and the recognition of the hook
-  command written before `v2.2.0` are gone. `update.py` stops such a project (installed version below 2.2.0) with one
-  message that names `act-adopt` as the way, and changes nothing; `--versions` still works. Migrations
-  `005` to `008` stay.
+- The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
+- Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
-
-- The write checks no longer refuse a round trip through a folder in front of a pipe into `xargs` (`cd .act/scripts &&
-  ...; cd ../..; grep -rl foo docs | xargs sed -i ...`): the folder text the input stands for is normalised first.
-  A folder that was moved or removed and made again by a `mkdir`/`New-Item -ItemType Directory` that certainly runs
-  counts as existing for a later `cd` (`mv build old; mkdir build; cd build; ...; cd ..; echo x > out.txt` and the
-  PowerShell form); a removal or move after the creation, and anything below the made folder, is judged as before.
-- The hint queues of the commit scans and the encoding and test-run hints, and the incident log's append lock: a lock
-  is removed only by the hook that made it (one that was broken as stale meanwhile is left to its new owner), a stale
-  lock is taken by one waiting hook at a time, no wait runs past the hook's own time limit, lock, temp and queue files
-  of hooks that died are cleared after a day, and a queue file that is not UTF-8 no longer stops the hook.
-- With `.act-local` (or the folder of one state file) a link or junction out of the project, the remaining writers no
-  longer write through it: the second-status-query and worker-cap bookkeeping (both then track nothing), the numbering
-  of started workers in `ai.log` (workers are logged unnumbered), the `act-local-tidy` state and result file,
-  `entries.py state` (it says so in one line and still marks the task started) and the marker of the dependency scan
-  after a merge (the report is made without it).
-- The orchestrator's test-run hint (`worker-scope-overlap`) also fires for `py -3 tests/run.py` and
-  `python -X utf8 tests/run.py`, not only for the plain program name, and the hint file of a call is removed when
-  the check was switched off between its PreToolUse and PostToolUse.
-- The prompt shortcuts `/act-version` and `/act-info`: on Windows a path argument such as `--source D:\dev\x` keeps its
-  backslashes, a usage error of the script (`/act-info bitte`) lets the prompt through instead of blocking it, and the
-  `git ls-remote` look-up of `/act-version` stops after 5 s (`ACT_LS_REMOTE_TIMEOUT` sets the limit of `update.py`), inside
-  the hook's own limit.
-- `act-setup`, `act-adopt` and `act-prepare` texts: moving the translation todo with `--no-commit`, the `--kind` values
-  and the bullet rule of `adopt_passages.py --into coding` are named again; the short path of `act-prepare` looks at
-  learnings and open `decision:` points.
-- `i18n_check.py` no longer puts the file name in front of every key for a Nuxt i18n setup (`nuxt.config.*` with `i18n`
-  and `files`): the files of one language are merged as they are, so `used-undefined` and `unused` stop reporting every
-  key. Other projects keep the i18next namespace reading; `--no-namespace` forces the merge by hand. The code scan
-  also no longer skips the scan root itself when `--root` points at a folder named like a locale folder (`i18n`,
-  `locales`, ...).
-- `worker-cap`: the default cap without a `Cap:` line now follows the role's tier including an override in
-  `docs/ai/config.md` § Roles (e.g. `builder | high` gives 80); an unknown `Tier:` word falls back to the role's
-  default instead of 40. `entries.py new --triage` with `--status answered|done` is refused (`triage:` means the
-  entry still needs processing). The cost rule on amending a running worker no longer names a Claude Code tool.
-- `write-guard` no longer refuses a PowerShell loop or script block (`foreach`, `ForEach-Object`, `$( ... )`) whose body only
-  runs a template script through an interpreter (`python .act/scripts/doctor.py --accept $id`): the script word is a read
-  there, as it is without the loop. Writing under `.act/` in the loop body (`Set-Content`, `>`, `Copy-Item`, a second
-  `.act/` word) is still refused.
-- `write-guard` no longer refuses ordinary inline Python whose write targets the text shows: a loop over a list or
-  tuple of literals (also `for name, ans in [("a", "b"), ...]`), a path or glob pattern built from its variable,
-  `next(<glob on a literal folder>)`, the path parameter of a function used only as `onerror=` / `onexc=` of
-  `shutil.rmtree` calls with shown targets (it lies under those targets), `<path>.with_suffix(..)` and
-  `from os import path; path.join(..)`. Each is judged against the folder or literal the text shows; a target under
-  `.act/`, a function used otherwise and any other unknown target are refused as before.
-- `outside-root` reads a command line the way the other checks do: a single-quoted `$(...)` in a line that only
-  prints (`echo '$(cat /x)'`) is text and no longer taken for a command that reads `/x`.
-- `git-discard` no longer refuses a listing-only `git branch` (`--show-current`, `--list`, `-a`, `-v` …) whose
-  `-C` target is a variable.
-- The shell reading follows bash more closely where the older scanner used to catch what it missed: inside
-  `"$(...)"` a `#` comment holding an apostrophe and a heredoc body holding an apostrophe (with `<<`, `<<-`, quoted
-  or unquoted delimiter) no longer open a quote that hides a following write, and a quoted bracket inside `$[ ... ]`
-  no longer swallows the rest of the command. A write to `.act/` after such a construct is refused as before.
-- `git restore <file>` and `git checkout -- <file>` of a tracked file that was deleted in the work tree are no
-  longer refused by `git-discard`: git must know the path as exactly one tracked file (also read
-  case-insensitively); a deleted folder, a pattern, `:(…)` magic, a trailing `/` and an unknown path are judged
-  as before.
-- The dependency scan no longer reports a tool failure for `pnpm audit` when every finding is ignored through
-  `auditConfig.ignoreGhsas`: exit 0 with an empty `advisories` object counts as clean whatever `metadata`
-  counts.
-- Migration temp files get exclusive, unique names and are removed on every path; the fixed name
-  `.<file>.migrating` is gone.
-- The release-tag lookup (`git ls-remote`) and the `semgrep` call of the deep security check keep their time
-  limit on Windows when a child process holds the output pipe open; the whole process tree is ended.
-- `init.py` and `init.py --profile` commit only the paths they wrote, with literal pathspecs; files already
-  staged in the target repository stay staged and are named in the output instead of landing in the init commit.
-- The feedback link check recognises IPv6 hosts: `[::1]`, `[fd00::1]`, `[fe80::1%25eth0]` and IPv4-mapped
-  addresses are refused as not publicly reachable, like `127.0.0.1`; documentation ranges stay allowed.
-- `act-doctor` docs-order reads an index entry only from the first cell of a table row, so content tables no
-  longer give `docs-index-stale`, and skips backtick paths inside `docs/project/decisions/` as it does for
-  `decisions.md`.
-- The hint buffer of the commit scans: concurrent hooks of one session no longer lose or half-write a pending
-  hint (short lock, atomic replace; the hook never blocks or fails).
-- `entries.py compact` writes its files atomically and finishes an interrupted run: a source that already stands
-  in its collection file word for word is removed, one with a different text is kept and reported; entries
-  without an id are no longer appended twice.
-- `entries.py archive` keeps the byte order mark and line ends of the moved file and rewrites links written
-  percent-encoded (`%20`) or, on case-insensitive file systems, in other letter case; a rewritten link to a
-  folded file whose name has a space stays a valid link.
-- `act-release` starts its security reviewer with `Write scope: none` on a line of its own; in the one-line
-  header before, the check did not read it and the reviewer ran without a write scope.
-- `rules.py` no longer drops a rule set line that has ` — reason` after the path (it was dropped with a format
-  finding, so the set was missing from the effective rules).
-
-- On Windows the dependency scan's time limit per tool (`security-check: deps`/`full`) now holds for a tool behind a batch wrapper (`npm.cmd`; `pnpm` and `composer` start the same way). The wrapper's child process kept the output open, so an `npm audit` that ran into the limit was only given up when its child ended on its own; the scan could outrun its "running" marker, and the commit then went through with "not checked". At the limit the tool's whole process tree is now ended, by its process id.
-- A Python bytecode cache (`__pycache__/`, `*.pyc`) inside a skill folder is no longer copied into a project's tool skill folders. The gitignored copy made `git add` refuse the path, so `init.py` stopped in its commit step and left the first commit unmade. The same holds for a project's own skills copied at session start.
-- A migration that creates scaffold (the project docs index, the resources list) now names the new file in the inbox entry `*-translate-scaffold.md` when `language-docs` is not English: an open entry is extended, otherwise (also when the old one is answered or done) a new one is created as `init.py` does; the migrations' plan text names this entry. Before, such a file stayed English with no hint to translate it.
-- A `docs/ai/config.md` that is not UTF-8 (for example saved as Windows-1252 or UTF-16) no longer ends the session start early with "session start stopped early (UnicodeDecodeError)". The start prints a note naming the file and its encoding (also in the one-line message shown to you), reads the file as UTF-16 (byte order mark), as UTF-8 with the stray bytes read as Windows-1252, or as Windows-1252, and runs the remaining steps. The hook checks now read such a config instead of refusing writes: `secret-read` and `git-metadata-guard` keep blocking, and a check set to `off` stays off.
-- With a template source that is a plain folder without git, a stale `MANIFEST.json` in that folder no longer reports "update is available" at every session start. `update.py` records a fingerprint of the source's own manifest in `.act-lock.json` (`template.source_fingerprint`; `init.py` records it too when it runs from such a folder), and the session start compares that; a lock without the field behaves as before.
-
-- `act-local-tidy` now also removes compiled-module files (`<name>.cpython-NNN.pyc`, including the `.opt-N`
-  form) under `.act-local/pyc/` that belong to another Python version than the running one and are older than 7
-  days. They used to stay forever after an interpreter upgrade, because only whole folders whose source folder was
-  gone were removed. Links are not followed, files of the running version are never touched, and nothing outside
-  `.act-local/pyc/` is affected; they show up in the existing count, size and kinds summary.
-
-- `danger-scan`: a plain `raise`, `print`, logger or `warnings.warn` line (Python) and an `echo`, `error_log`, `throw new` or logger line (PHP) that only holds string literals and simple operands is no longer read as SQL built from values, even when its message happens to contain `select ... from`, `update ... set` or `delete ... from` ("Cannot select a row from %s"). A literal that opens like a statement, a second statement or call on the line, or an assignment keeps the commit held as before.
-- `secret-scan`: a file name that git prints in quotes in the diff header (a directory with a tab, a quote or a control character in its name) is read as the real name, so a new `.env` there is held and a `.env.example` there is no longer held by mistake.
-- `secret-scan`: a rename or copy to a `.env` name (`env.txt` -> `.env`) is held like a new `.env` file, also when the rename carries no content change.
-- `secret-scan`: a `$'` that is only text in the commit command (inside quotes, in a heredoc with a quoted delimiter) no longer makes the commit scan treat the commit as `-a`; it uses the same quote pass the shell checks use. A live `$'...'` keeps the fallback, and so does any further `git ... commit` mention the token reading cannot see (inside `eval`, `bash <<<`, `| bash`, `source <(...)`).
-
-- A rule line moved to another file in `docs/ai/rules.md` is now written after the whole entry of the rule it follows, so a wrapped reason stays with its rule.
-- `settings_export.py` exports an unchecked box of a moved rule as switched off even before `update.py` has moved the line, instead of as on.
-
-- A critical template advisory whose inbox todo was done and deleted (`done-entries: delete`) was filed again on
-  every other workstation that had not seen it yet. `advisory.py` now also looks in the git history, read only, for
-  a deleted inbox or archive todo with the same heading and does not file a second one. It reads at most the
-  newest 2000 commits that touched the inbox or the archive, reads at most 3 candidate files, and stops starting git
-  calls once 4 seconds are spent (or less than half a second is left); the last call is cut at the budget. Measured
-  with a git that hangs: the session start waits about 5.8 seconds at most (4 seconds plus roughly 1.8 seconds that
-  Windows needs to end the hung process); without git, outside a repository or on any git error it behaves as
-  before and prints nothing.
-
-- `git-metadata-guard`: `echo '$(git config core.hooksPath x)'` and `echo $'$(...)'` (also `printf`) print text; they
-  are no longer read as a command substitution on a command line that prints and does nothing else: every command
-  of the line is a bare `echo` or `printf` (not `./echo`, no prefix; `printf` without `-v`), joined only by `;`,
-  `&&`, `||` or a line break, and every word is plain (a `$` or backtick only inside single quotes or as the `$'`
-  of ANSI-C quoting). Any other line - a pipe, a redirection, `&`, a group or process substitution, a loop or `if`,
-  `exec`, `trap`, an alias or function definition, `$_`, any other command next to the echo, in PowerShell
-  `Set-Alias`/`New-Alias`/`iex` - and a double-quoted or unquoted `$(...)` are judged as before.
-- Shell write checks: `git log -S'$(('` (a single-quoted `$((`) is text, no command substitution, and no longer
-  blocks.
-- `act-doctor` reports a rule set file that is not readable UTF-8 (a coding set, a working method or a rule file) as a
-  finding naming the file, instead of crashing with a `UnicodeDecodeError`; `rules.py --validate` does the same for a
-  `use:` target.
-- A worker that has ended and is continued with a message keeps its write scope: the scope registry marks the entry as
-  ended at the stop (instead of deleting it) and clears the mark when the worker starts again under the same agent id,
-  so its own writes are no longer refused by the fail-closed fallback after other workers with restricted scopes were
-  started in the meantime.
-- A worker the orchestrator stops with `TaskStop` no longer blocks the start of a worker with an overlapping write
-  scope: the stop frees its scope at once. The overlap message now names `TaskStop` as the way to free a scope.
-- `doctor`'s `docs-concept-decided` read a question folded into a monthly file as open (it took the collection's
-  header instead of the section's own `status:`), so a concept naming only such questions was never reported.
+- The safety checks refuse fewer harmless commands: `cd` round trips before `xargs`, URL loops, `rsync` to remote
+  hosts, PowerShell loops and assignments, `echo '$(...)'`, a single-quoted `` `rm x` `` in a commit message.
+- The commit scans: `secret-scan` reads quoted file names, renames to `.env` and `$'` text correctly; `danger-scan`
+  holds PHP `${name}` SQL and ignores messages that merely contain `select ... from`.
+- The dependency scan keeps its time limit on Windows (`npm.cmd`, `pnpm`, `composer`) and counts `pnpm audit` as
+  clean when all findings are ignored through `auditConfig.ignoreGhsas`.
+- Session start survives a `config.md` that is not UTF-8 and no longer reports "update is available" at every start
+  for a template source that is a plain folder without git.
+- `init.py` commits only the paths it wrote and no longer fails on a Python bytecode cache in a skill folder.
+- `i18n_check.py` reports no false missing or unused keys for a Nuxt i18n setup.
+- Hook locks, hint buffers and `entries.py` no longer lose data or block.
+- Smaller fixes: worker scope after a stop or continue, the default `worker-cap`, `/act-version`, `/act-info`,
+  `act-local-tidy`, `act-doctor` and `rules.py` findings, rule-line moves in `rules.md`, the feedback link check.
 
 ### Security
-
-- `write-guard` no longer lets a write through that takes its files from a list it cannot read: an `xargs` input
-  (`grep -rl x . | xargs sed -i ...`, `xargs -I{} cp ...`) or a `$(...)` / backtick span (`sed -i ... $(git ls-files)`).
-  Such a write passes only when the command that makes the list is shown and names fixed folders that are not the
-  project root, a parent of it, the repository top (`:/`) or `.act` (`grep -rl x docs src`, `rg --files docs`,
-  `find docs -name '*.md'` without `-exec`/`-printf`, `git ls-files docs`, `git diff --name-only -- docs`, then only
-  `head`/`tail`/`sort`/`uniq`/`grep` stages); a list over `.`, `..`, nothing (`grep -r x`, `find`, `rg -l`,
-  `git ls-files`), a list file (`grep x docs/list.txt` prints its lines, so it counts as a list file), `echo`/`printf`
-  words the shell expands (a glob, a brace, a variable) or that join into another name, or any other command is
-  refused with a message that says to name the folders. `echo` and `printf` output that the shell or the command
-  itself expands is no longer read as a literal list either. An unquoted `$(pwd)`, `$(dirname ...)` or
-  `$(git rev-parse ...)` target in a command that names `.act` is refused. A project wide rename could change the
-  template's own files and the code of the checks without anything reporting it. Reads (`wc -l $(git ls-files)`,
-  `xargs` into a non-writing command) and a single path such as `$(mktemp)` stay free.
-- `write-guard` holds the same line for the other common ways to hand a write a list of files. A loop or `read`
-  variable fed by a list (`for f in $(grep -rl x .); do sed -i ... "$f"; done`, `grep -rl x . | while read -r f; do
-  rm "$f"; done`, `done < <(find . ...)`, a list file, a here-string), the hits of `find ... -exec|-execdir|-ok|-okdir
-  <writer> {}` (also `sh -c '... "$1"' _ {}`), and a PowerShell write or delete that takes its item from a list
-  (`Get-ChildItem -Recurse | ForEach-Object { Set-Content $_.FullName ... }`, `... | Remove-Item`, `Remove-Item
-  (Get-ChildItem ...)`, `foreach ($f in Get-ChildItem ...)`, `$files = Get-ChildItem ...; Remove-Item $files`,
-  `Resolve-Path`, `git ls-files`) pass only when the list command names fixed folders that are not the project root,
-  `.act` or no folder at all (the same allow-list as for `xargs`); a loop over literal words (`for f in a b`, `docs/*.md`)
-  stays free, one that names `.act` or a glob that may match it (`.a*`) is refused, and a `cd` or `Set-Location`
-  in the command makes relative folders unknown. A project wide rename in any of these forms could change the
-  template's own files without anything reporting it. Lists the guard does not follow (a variable filled by an
-  assignment, a `Get-Content` list file in PowerShell) are judged as before.
-- `write-guard` also follows the remaining ways a list over the project root reached a write: a `mapfile` or
-  `readarray` array (`mapfile -t a < <(grep -rl x .); sed -i ... "${a[@]}"`, also a loop over `"${a[@]}"`), a pipe at
-  the end of a line (`grep -rl x . |` and `while read -r f; do ...` on the next line, also for `xargs`), `find ...
-  -delete` with a folder that is not fixed (`find . -name '*.pyc' -delete`; another check refuses recursive deletes
-  too, this one holds the line when that switch is off), and in PowerShell `Get-Item` as a list (`Get-Item * |
-  Remove-Item`), the methods of an item (`$_.Delete()`, `MoveTo`, `CopyTo`, `Create`) and `[IO.File]`/`[IO.Directory]`
-  calls with the item's path (`gci -r | % { [IO.File]::WriteAllText($_.FullName, 'x') }`). They pass only when the list
-  names fixed folders that are not the project root or `.act`, like the other lists. `[IO.File]::Delete`,
-  `CreateText`, `AppendText`, `OpenWrite` and `[IO.Directory]::Delete`, `CreateDirectory`, `Move` with a literal path
-  under `.act` are now read as writes by every check that reads write targets.
-- The write checks no longer take a `mkdir` or `New-Item -ItemType Directory` for sure on a name an earlier command of
-  the same line made a file at (`mv a.txt out; mkdir out; cd out; touch .act/x`, `Set-Content out x; mkdir out`):
-  the `cd` after the failing `mkdir` stays where it was, so a write after it is also placed there. A name that was only
-  removed or the source of a move still counts as made again.
-- `uniq <input> -` no longer counts `-` as an output file (it is the standard output), so a worker's write scope no
-  longer refuses it.
-- `sort -o <file>` (also `-uo`, `--output=`) and the output operand of `uniq <input> <output>` are read as writes to
-  that file, by every check that reads write targets (the template's own files, a worker's write scope, outside root).
-  `seq` with plain numbers counts as a list that names no file, so `for i in $(seq 1 3); do touch f$i; done` stays free.
-- A heredoc body that is a shell script is read again when an earlier line of the same command holds an arithmetic
-  `<<` (`(( x = 1 +` / `2 << 3 )); bash <<'EOF'` with `rm -f .act/a.md` in the body): the arithmetic shift no longer
-  shifts which heredoc is judged. Inline Python that only changes file metadata (`os.chmod`, `os.chown`, `os.utime`,
-  `shutil.copymode`, `copystat`, `chown`, `Path.chmod`) is judged against a worker's write scope like any other write.
-- PowerShell write targets are read more completely, so a write that went unseen is refused now: inline interpreter
-  code (`python -c`, `node -e`) inside a loop body, a script block, `$( )` or `( )`, or behind `$x =`, is read like the
-  same call on its own line (`foreach ($i in 1,2) { python -c "open('.act/x','w').write('y')" }` is refused by
-  `template-write-guard`, and by the worker write scope when the path is outside it); a nested `pwsh -c` / `powershell
-  -Command` whose text cannot be evaluated (`Invoke-Expression`, a quote that never closes) is no longer dropped but
-  counts as one write to an unknown place, which `template-write-guard` and `git-metadata-guard` refuse when its text
-  names a protected path and the worker write scope refuses always (`pwsh -c "Get-Date"` is unaffected); a `cd`,
-  `Set-Location`, `Push-Location` or `pushd` to a wildcard directory (`cd .ac*`, `Set-Location .\.a?t`, in Bash too) is
-  resolved against the folders that exist, so a write after it is judged in each of them (`-LiteralPath` keeps the
-  name as written).
-- `git-metadata-guard` reads the files a `cp`, `mv` or `Copy-Item` writes with the quotes in mind: a quoted name that
-  holds a `;`, `&&` or `|` (`cp 'p;q/.envrc' .` as a worker) is one name, no longer torn apart so that the copy of a
-  protected file such as `.envrc` went unseen. It also sees a copy inside `bash -c '...'`, `$(...)`, `( ... )`,
-  `x=$(...)` and `pwsh -Command "Copy-Item ..."` now. What the coarse reading refused before (a shell line inside a quoted
-  program text, a heredoc body a shell runs) is refused as before.
-- A `dir_fd=` argument (`dir_fd=`, `src_dir_fd=`, `dst_dir_fd=`) on a write call in inline Python (`shutil.rmtree`,
-  `os.remove`, `os.open`, `os.rename` ...) is no longer ignored: the path is judged against the directory it names when
-  the text shows it (`os.open('.act', os.O_RDONLY)`, directly or through a name bound once), and the write is refused as
-  one whose target is unknown when it does not. A call without `dir_fd` is read as before.
-- `worker-git-write` and `git-discard`: a `cd` inside `( ... )` ends with the group. `(cd <dir>) && git commit` and
-  `(cd <dir>); git reset --hard` no longer count as run in `<dir>` (a worker's commit got the outside-project exemption,
-  `git reset --hard` was judged against the wrong repository); a group that closes before the command ends makes the
-  directory not determinable, so `(cd <dir> && git commit); echo done` is no longer exempt either. `(cd <dir> && git commit)`
-  stays as before, and so does PowerShell, where `(cd <dir>)` keeps the location. `git-metadata-guard` keeps reading a
-  leading `cd` as applying to the whole line, so its copy-target judgment is as strict as before.
-- `worker-git-write` reads a git call behind a PowerShell assignment (`$r = git commit -m x`, `$null = git add x`) like
-  `git-metadata-guard` does; it passed before because the word reader took `$r` for the command.
-- A write check that cannot identify its target refuses instead of evaluating in part. Inline Python or Node code with a
-  write call whose path the text does not show (a name bound twice, a loop variable, `sys.argv`, a join or f-string with a
-  variable part) is refused by the `.act/` write guard and the worker write scope; a path the text shows is
-  judged: a name bound once to a literal, a join of literals, `Path('docs').glob('*.md')` and `glob.glob('docs/*.md')` (somewhere under `docs`), Node
-  `const dir = "out"`. `Image.open(x)`, `tarfile.open(name)` and `gzip.open(fn)` are reads; command text nested deeper than the readers follow (`$(...)` or `$(( ))` past 64
-  levels, `sh -c`, `eval` or PowerShell `-Command` past 4) and a closed deep nesting such as `echo "$("$(...)")"; cp a .act/y`
-  no longer slip past the tokenizer. `outside-root` refuses a command that may run in more than 8 directories or touches a path
-  of more than 200 segments, with one message, instead of judging only the first 8 or cutting the path; it judges the program
-  a quoted heredoc feeds to python or node like `-c`/`-e` code and leaves an unknown inline write to the write guards in
-  every mode. A program error of the reader of inline code refuses the call in every check that reads write targets.
-- Fewer limits: the inline-code write-target resolver and its eight limits are gone, and one nesting depth (4, in
-  `hooks/checks/common.py`) replaces the separate ones of the Bash, PowerShell, git-metadata and secret scans.
-- `outside-root` and the write guard see more write targets in shell commands: the folder `pushd` enters, the
-  destination of `git clone` (also the default folder when none is named), `robocopy`, `perl -i`, targets fed
-  through `xargs`, `Move-Item` from outside the project, files written by `python -c`/`node -e` code and by a
-  here-string piped to `python -`, and a heredoc opened inside an arithmetic expression. A write whose target
-  folder cannot be placed is refused instead of being judged against the starting folder.
-- `outside-root` reads a `file:` URL as the path it names (`file:///home/u/x` is `/home/u/x`, `file://host/share/x`
-  the UNC path, percent-decoded, query and fragment cut), also as a shell word (`curl file:///etc/passwd`); before,
-  the slashes were dropped and the path counted as inside the project. A `file:` entry in `outside-root-allow` is
-  ignored.
-- `outside-root`: a lone `/` followed by a number or variable (`ls -la / 2`, `du -sh / $X`) is the file system
-  root again; only `expr`, `let`, shell arithmetic and PowerShell expressions count as division. A `<<` inside
-  shell arithmetic no longer hides the following lines from the check.
-- `outside-root` and `secret-read` refuse a Bash or PowerShell command when one of their scanners crashes,
-  naming the exception class; `outside-root` also refuses a command with more than 150 `cd`-like statements
-  (split it).
-- The hook dispatcher no longer ends with a traceback and exit 1 when it cannot import one of its own modules:
-  it prints one line naming the module and exits 2 for PreToolUse (every tool refused until repaired, the `!`
-  prefix still runs) and 0 for other events.
-- Migrations 001–008 and the session start never write, move or remove through a symbolic link or Windows
-  junction (a linked `docs/ai/inbox`, work folder, file, `.act-local` or part of it); the skipped place is named
-  in one line. Hook processes write no compiled caches through a linked `.act-local`.
-- IDE MCP read tools (`read_file`, `list_directory_tree`, the `search_*` tools, `lint_files`, `git_status` …) hand
-  every path argument to `secret-read` and `outside-root`, including `file:` and `jar:` URLs, include globs such
-  as `**/.env*` and a `projectPath` outside the project; before, `.env`, `~/.ssh/id_rsa` or files outside the
-  project could be read through them unchecked.
-- `git-metadata-guard` refuses git calls that run code behind a PowerShell assignment
-  (`$null = git config core.hooksPath x`, `$x = git -c core.hooksPath=x status`).
-- `worker-docs-ai` sees PowerShell writes into `docs/ai/` (`Set-Content`, `Out-File`, `Add-Content`, `New-Item`)
-  as well as the Unix and native programs it saw before (`| tee`, `curl.exe -o`, `tar -C`, `sed -i`).
-- A broken `secret-read` or `outside-root` no longer lets a shell command through unchecked (`cat .env` with a failing `secret-read`).
-
-- `danger-scan`: PHP `"... ${name}"` interpolation inside a double-quoted statement is held like `$name` and `{$expr}`; the SQL checks for PHP now also cover the endings `.php3`, `.php4`, `.php5`, `.php7`, `.php8` and `.pht`.
-
-- `outside-root`: a shell word that is a single `/` (`ls /`, `find / -name x`, `cat /`, `du -sh /`), in Bash and in
-  PowerShell, is now read as the file system root, like `//`. A `/` in text (inline code behind `-c`/`-e`, a text
-  option such as `git log --grep=/`), the delimiter of `cut -d`, `paste -d`, `sort -t`, `join -t`, `awk -F` or
-  `column -s` (`cut -d / -f1 file`) and the division operator between two operands (`expr 6 / 2`, `$((6 / 2))`,
-  PowerShell `$size / 1MB`) are still no place. Limit: the operator is told by its neighbours alone, so a lone `/`
-  with an argument before it and a number or variable after it (`ls -la / 2`, `du -sh / $X`) still passes.
-- `worker-write-scope` and `git-metadata-guard`: an error of the inline-code reader's own program (a bug, not a text it
-  cannot parse) no longer lets the command pass as if it had no write call. In block mode the call is refused (in
-  warn mode the check only warns); the message names the error and points to `.act/scripts/doctor.py`. A text the
-  reader cannot read, or a program too large or too deep for it, is still skipped with a note on standard error.
-- Shell write targets: the file `ssh -E <file>` writes its log to is a write target (also glued, in a cluster like
-  `-vE`, and after other options). The command text of an `ssh localhost '... > f'` call (this machine, or a
-  destination the shell expands) runs here and is read as a local command line; the text for another machine stays
-  unread.
-- Shell write targets: `xargs -0I {} ...` (an option cluster with a digit) was not recognised, so the write that followed
-  it was missed; it is read like `xargs -I {} ...` now.
-- The shell checks (`git-metadata-guard`, `worker-write-scope`, `outside-root`, `write-guard`) now read text that a
-  pipeline hands to a shell as its script: `echo 'cmd' | bash`, `printf ... | sh -s`, a PowerShell string or
-  here-string piped into `powershell -` / `pwsh -` / `Invoke-Expression`. `eval $'...'`, `bash -c $'...'` and
-  `powershell -c $'...'` have their ANSI-C escapes resolved before the text is read as a command line (it was read
-  as the command `$git`).
-- When the raw-text fallback decides (a live ANSI-C quote the lexer cannot read), the target after a redirection is
-  reported whole, also where a quoted or escaped blank splits it (`> "src/a b/../../x"`); only its beginning up to
-  the first blank was judged before, so an absolute target could look like a path inside the scope.
-- `template-write-guard`: `.act` is recognised in any spelling of case in the text of a target that cannot be
-  placed (`$D/.ACT/x`); a project root below `.ACT-LOCAL/TMP/` in capitals gets no throwaway exemption, like one in
-  lower case; `%NAME%` (cmd) after `.act-local/tmp/` is no known path segment; on macOS a resolved target is
-  compared without regard to case.
+- The write guard no longer lets a write through that takes its files from a list it cannot read (`xargs`, `$(...)`,
+  loops, `find -exec`, PowerShell pipes, `mapfile`); a list passes only if it names fixed folders other than the root.
+- Write checks see more targets (`sort -o`, `ssh -E`, `git clone`, `pushd`, `robocopy`), refuse one they cannot
+  identify (inline code with an unseen path, `dir_fd=`, wildcard `cd`) and read `echo '...' | bash`.
+- `outside-root` reads a `file:` URL and a lone `/` as the paths they name, and refuses a command that crashes its
+  scanner or is too wide.
+- IDE MCP read tools (`.env`, `~/.ssh/id_rsa`, outside paths) now pass through `secret-read` and `outside-root`.
+- The git guards (`worker-git-write`, `git-discard`, `git-metadata-guard`) see git commands in subshells and
+  PowerShell assignments; `worker-docs-ai` sees PowerShell writes into `docs/ai/`.
+- `git-metadata-guard` sees copies of protected files with quoted names or inside `bash -c` and `pwsh -Command`.
+- The `.act/` write guard recognizes `.act` in any letter case.
+- Migrations, session start and hooks never write, move or remove through a link or junction (`docs/ai/inbox`,
+  `.act-local`).
+- `act-release` starts its security reviewer with `Write scope: none` again; it ran without a write scope.
+- A failing `secret-read` or `outside-root` no longer lets a command through; a hook that cannot load refuses the call.
 
 ## [2.5.0] - 2026-11-05
 
-Settings are shown and changed with `/act-config`, a project trims the template to what it uses with `profile` and
-`exclude`, finished entries are deleted under Git instead of archived, the new rule `R-docs-order` keeps the project
-docs ordered, `act-seo` becomes a full page check with crawl and Lighthouse, entry ids become clickable in VS Code and
-IntelliJ, an update enters new rules into an edited `docs/ai/rules.md`, and the worker write scope also checks the
-write targets that inline Python builds from literals. Projects on v2.4.0 update with `act-update`.
+Settings in one command, a slimmer template per project, tidier docs, stricter and quieter safety checks.
+
+### Highlights
+- **`/act-config`** lists every setting with allowed values and default, and changes one without a model turn.
+- **`profile` and `exclude`** in `config.md` leave out unused skills, roles and rule files; safety stays.
+- **Finished entries are deleted under Git** instead of archived; Git keeps their text, and their ids stay taken.
+- **`act-seo`** is now a full page check: build, crawl and Lighthouse (`--live`), or PageSpeed for a public URL,
+  which then goes to Google (key only from `PAGESPEED_API_KEY`).
 
 ### Upgrading from v2.4.0
-
-- Run `act-update` (or `python .act/scripts/update.py`), then start a new session. Two migrations run once:
-  `005-resources-file` adds `docs/ai/local/resources.md` and `006-docs-project-readme` adds `docs/project/README.md`;
-  neither overwrites a file that is there or brings back one you deleted. An edited `docs/ai/rules.md` gets the new
-  rule `R-docs-order` as a checkbox line; your own text stays.
-- The update adds no rows to an existing `docs/ai/config.md`. The new keys `done-entries`, `profile`, `exclude`,
-  `docs-order` and `own-rules-budget` take their default until you add the row under its section, copied from
-  `.act/skeleton/config.md`; `/act-config` changes only rows that exist. `feedback: local` is a new value of the
-  existing `feedback` row (`/act-config feedback local`).
-- Finished backlog items and inbox entries are now deleted when the project is under Git (`done-entries` defaults to
-  `delete` there); Git keeps their text and the ids stay reserved. The archive you already have stays: only what is
-  archived from now on is removed after its commit. The first session start names the old archive's file count;
-  `python .act/scripts/entries.py purge --all --plan` lists it and `purge --all` deletes it, if you want that. To
-  keep the old behaviour, add `done-entries: keep` under § Archive.
-- Without `profile` and `exclude` every skill, role and rule file stays as before (`full`).
-- `act-doctor` now checks the order of `docs/project/` (`docs-order` in § Checks, default `warn`, never blocking).
-  Right after the update it names every file and folder the new `docs/project/README.md` has no line for, and every
-  folder of five or more entries without a `README.md` of its own. Add the lines (`.act/scripts/move_doc.py` and the
-  step "Structure" of `act-audit-docs` help), or add `docs-order: off`.
-- An existing `docs/ai/inbox/README.md` is not replaced; the rule `R-human-ask` carries the new form of a question
-  either way, and `.act/skeleton/inbox/README.md` has the new text if you want it.
-- `act-doctor` now warns, never blocks, when the "Own rules" sections of `docs/ai/rules.md` and
-  `docs/project/coding_rules.md` together exceed 6000 characters; set `own-rules-budget` in § Checks to raise the
-  limit or switch it off. It also checks every setting that has a fixed list or format and may report a value it
-  passed over before. A value that ends in a backslash right before the next `|` needs a space before the `|`.
-- If the project overrides the `act-audit-docs` workflow script at
-  `docs/ai/local/skills/act-audit-docs/workflow.js`, rename that file to `workflow.js.txt`.
-- Optional: clickable entry ids are set up once per machine with `python .act/scripts/id_links_install.py`, and again
-  after each `act-update`.
+- Run `act-update`, then start a new session. It adds `docs/ai/local/resources.md` and `docs/project/README.md` once,
+  and the rule `R-docs-order` as a checkbox line in an edited `docs/ai/rules.md`.
+- New keys (`done-entries`, `profile`, `exclude`, `docs-order`, `own-rules-budget`) take their default until you copy
+  their row from `.act/skeleton/config.md`; `/act-config` changes only rows that exist.
+- To keep archiving finished entries, add `done-entries: keep` under § Archive; under Git the default is now `delete`.
+- Optional: your old archive stays; the first session start names its file count, `entries.py purge --all` deletes it.
+- `act-doctor` warns about `docs/project/` files and folders without index lines; add them or set `docs-order: off`.
+- `act-doctor` warns when "Own rules" exceed 6000 characters; raise the limit or set `own-rules-budget: off`. It
+  may also report setting values it passed over before.
+- A `config.md` value ending in `\` right before the next `|` now needs a space before the `|`.
+- If you override `docs/ai/local/skills/act-audit-docs/workflow.js`, rename it to `workflow.js.txt`.
+- Optional: `python .act/scripts/id_links_install.py` sets up clickable ids per machine, again after each update.
 
 ### Added
-
-- `feedback: local` in `docs/ai/config.md`: the project never sends anything to the template author.
-  `feedback.py --send` (also with `--force`), `--direct` and `--add` refuse and point to the backlog, and reminders
-  never fall due. A template bug, a hand-written `feedback: <text>` and the recurring findings become backlog entries
-  in the project instead (`entries.py new backlog`). `/act-config feedback local` and `feedback.py --enable --mode
-  local` accept the value.
-
-- Command `/act-config`: shows and sets the settings in `docs/ai/config.md` without a model turn. `/act-config`
-  lists every setting, `/act-config <key>` shows one with its allowed values, default, when a change takes effect
-  and the notes from your own `config.md`, `/act-config <key> <value>` writes the value into that one table cell
-  (every key, also the Checks and free text; the rest of the file stays byte for byte, nothing is committed). In
-  Claude Code the `UserPromptSubmit` hook answers it; elsewhere run `python .act/scripts/config.py [<key> [<value>]]`.
-  The Roles table is shown but edited by hand. The accepted values of every key are declared once in `actlib.py`.
-
-- Rule `R-docs-order` (details in `.act/rules/topics/docs-order.md`): the project docs stay ordered. `docs/README.md`
-  lists folders and top-level files only; every folder under `docs/project/` with five or more entries has a
-  `README.md` with one line per entry and its state; one topic per file; a concept is deleted once decided or built.
-  `doctor.py` reports `docs-index-missing`, `docs-index-stale`, `docs-link-dead` and `docs-concept-decided`, skips
-  Git-ignored paths and the backtick paths of `decisions.md`, and is switched with `docs-order` in `docs/ai/config.md`
-  § Checks (`warn`, `off`). New `.act/scripts/move_doc.py` moves a document and pulls links, paths and the index line
-  along, keeping BOM and line endings (plan without `--apply`); `act-audit-docs` gained a step "Structure",
-  `act-commit` and `doc-writer` keep the index lines. New scaffold `docs/project/README.md`, brought to existing
-  projects once by migration 006 (never overwritten, not recreated once deleted). An edited `docs/ai/rules.md` gets the
-  new rule through the update.
-- Script `seo_crawl.py` (used by `act-seo`): crawls a running site
-  from a base URL, same origin only, no cookies, no server started; a start page that redirects to the same host with
-  another scheme, port or `www.` continues there, any other target is refused. It reports status codes, redirect
-  chains and loops, TTFB (with the note that a local TTFB says nothing about the hosting), broken internal links with
-  the linking page and `<base href>` honoured, then runs the `seo_check.py` page checks on the rendered HTML in one
-  report by severity (`--json`). External links get throttled `HEAD` requests only (`--no-external` switches them
-  off). Limits: `--max-pages`, `--max-depth`, `--timeout`, `--max-bytes`, `--max-time`. User info in URLs is removed
-  and never printed. `--public` crawls a site on the internet read-only and throttled (default one request per second
-  to the site, also for links to its own host over another scheme, 100 pages) and also checks the HTTP headers (HSTS,
-  Content-Security-Policy, X-Content-Type-Options, Referrer-Policy), compression and caching of the start page and a
-  sample of assets, and whether plain http ends on https (same-host steps such as apex to `www` followed); TTFB is then
-  a real measurement. `--delay` sets the pause between requests for any crawl.
-  It also takes `hreflang` alternates and sitemap entries as start points, mapping the production address
-  (the `canonical` host) to the crawled origin, so translated pages behind a language `<select>` are reached, and
-  reports sitemap URLs it could not reach (`sitemap-not-reached`); URLs that differ only in the trailing slash and
-  return the same page are one `trailing-slash-variant` note instead of duplicate and orphan findings.
-- `seo_check.py` (`act-seo`) also checks `hreflang` sets, JSON-LD blocks, duplicate content between pages (main
-  content only, without header, nav, footer and sidebars; threshold via `--dup-threshold`, one finding per page against
-  the first original, large groups of near copies included), images without `width`/`height`, a missing viewport meta
-  tag, orphan pages (plain HTML only) and translation files through `i18n_check.py`. Viewport and image size are judged
-  on full HTML documents only, never on framework components, layouts or `_document` files; JSON-LD built by template
-  code and `hreflang` built in a template loop are not judged. Other scripts can call `check_documents({path_or_url:
-  html})` to run the page checks on rendered documents without reading files.
-- Script `seo_lighthouse.py` (used by `act-seo`): measures
-  given URLs with a pinned Lighthouse version through `npx`, reports the median of several runs per category
-  (Performance, Accessibility, Best Practices, SEO) and for LCP, CLS and TBT with the spread of every value, lists
-  failed axe audits as findings and sorts the report by severity, keeping score points apart from real defects.
-  `--from-json` evaluates existing Lighthouse reports. On Windows it starts npx through Node, never through cmd.exe, so
-  URLs with `&` or `%` are safe; a run past `--timeout` is ended with its whole process tree. Chrome profile, raw data
-  and temp files stay in a fresh subfolder of one work folder that is removed afterwards. It starts no server, fixes
-  nothing and exits with a clear message if Node, npx or Chrome is missing. `--pagespeed` measures a public URL with
-  Google PageSpeed Insights instead (no Node or Chrome needed) and evaluates it the same way, plus field data (CrUX)
-  where Google has it; the URL is sent to Google, and the script says so before the call. Only public hosts are
-  accepted (every address a name resolves to must be global). The API key is read only from `PAGESPEED_API_KEY`, never
-  from an argument, and never printed; without a key Google currently grants no quota, which the script reports on
-  HTTP 429.
-  Each failed audit shows its first entries (selector, address, text) in the report and all of them in `--json`.
-- `act-integrations` can allow the read-only tools of a catalog MCP server in one step, while setting it up or later.
-  Each entry in `.act/mcp-catalog.md` has a `read-tools` field with exact tool names (filled for `github`); after a
-  "yes", `python .act/scripts/integrations.py read-tools <id>` merges them as `mcp__<server>__<tool>` into
-  `.claude/settings.local.json` › `permissions.allow`, with the server name from `.mcp.json`. It saves a backup under
-  `.act-local/backup/`, refuses invalid JSON and server names that cannot form a single-tool rule, and
-  `--remove` takes out only those names again. Writing tools keep asking.
-- Entry ids such as `T12` are clickable in Markdown files of VS Code and IntelliJ: a link, go to definition and a hover
-  with title and status, for every id that has an entry file in the inbox, tasks, backlog or archive under `docs/ai/`.
-  Optional, set up once per machine with
-  `python .act/scripts/id_links_install.py` (details: `.act/rules/topics/id-links.md`). It copies a language server to
-  `~/.act/id-links/` and packs a VS Code extension (`.vsix`) and an IntelliJ template (plugin LSP4IJ) next to it; you
-  add them to the editor yourself with the command it prints. Both read only and use no network, and the editors start
-  only that copy, never a file inside the repository; after `act-update`, run the installer again.
-- `entries.py archive` writes `finished: <timestamp>` into an archived task's header, below `started:` (else below
-  `created:`), so a task records when it was created, started and finished. An existing `finished:` stays; backlog
-  items and inbox entries get no such field.
-- Open questions with an answer written under the `**Answer:**` line now show as answered in the board ("answer in
-  file, status still open").
-- `act-local-tidy` removes compiled-cache folders under `.act-local/pyc/` whose source folder no longer exists.
-- secret-scan finds a literal fallback split over two lines (`process.env.X ||` then the literal), Ruby
-  `ENV.fetch('X') { '<literal>' }`, and triple-quoted literals assigned to a credential-named key.
-- danger-scan: `sql-php-concat` and `sql-php-interpolation` (PHP files) and `sql-format` (`"..." % x`,
-  `"...".format(...)`) report SQL built from values; `LIKE '%…%'` operands and date formats such as
-  `strftime('%Y', d)` are not read as the `%` operator.
-- `docs/ai/local/resources.md`: the project's own reading list ("Own sources", "Private links"), pointing to the
-  maintained "Further reading" page of the documentation site. `init` creates it; existing projects get it once on
-  the next `act-update` (migration `005-resources-file`). A file that is already there is never touched, and one you
-  delete does not come back. The file is committed with the project like everything under `docs/`.
-- Config keys `profile` (`minimal` | `standard` | `full`) and `exclude` in the new section Scope of
-  `docs/ai/config.md` trim the template per project. The profile cuts skills and roles: `standard` leaves out the web,
-  design and teaching skills, `minimal` keeps only the core skills and roles. `exclude` names single skills, roles,
-  rule files (such as `orchestrator/30-cost.md`) and topics. The session start removes the copies, switches the
-  import line of an excluded rule file to a bare path in `docs/ai/rules.md` and names the cut in one line; `init` and
-  `act-update` do not write the skill copies and role bridges that are cut. A change takes effect from the next
-  session. `shared/10-safety.md` cannot be excluded, and the checks stay on whatever is
-  cut. A missing key means `full`, so nothing changes until you set one; back to `full` restores everything, except
-  a role bridge you deleted yourself. An unreadable `docs/ai/config.md` leaves the recorded cut as it is.
-- `act-doctor` warns when the always-loaded "Own rules" sections of `docs/ai/rules.md` and
-  `docs/project/coding_rules.md` together exceed `own-rules-budget` in `docs/ai/config.md` § Checks (default 6000
-  characters, `off` or `0` switches it off; comments on lines of their own do not count, as they are not loaded). The
-  warning names the size and up to five lines that look like history (dates, entry identifiers, "formerly … since
-  …"); it never blocks.
-- The "Own rules" section of the `coding_rules.md` scaffold carries a short table of where each kind of rule belongs
-  (own rule, path-bound rule file, own rule set, project docs, nowhere).
+- Rule `R-docs-order`: one topic per file, a `README.md` in every folder of five or more entries, decided concepts
+  removed; `move_doc.py` moves a document and its links.
+- `feedback: local`: the project never sends feedback; template bugs become backlog entries instead.
+- `act-integrations` allows the read-only tools of a catalog MCP server in one step; writing tools keep asking.
 
 ### Changed
-
-- `R-cost-delegate` names when a handover pays off: research across more than three files or in code whose spot
-  is not yet known, the evaluation of transcripts, logs or feedback and material past about 20k tokens that is not
-  needed afterwards go to `explorer`, which hands back only findings and numbers; a run of the test suite, a probe
-  or a smoke test named in the assignment goes to `quick-check`, which hands back the exit code, the failures and
-  the numbers. A known spot, an entry under `docs/ai/`, a commit or `git status` stay with the main session. Work
-  expected to run longer than about five minutes is first checked for independent parts (test and probe runs, case
-  catalogs, assignments over separate files, a review per checked spot) and, where it splits, runs in parallel with
-  separate write scopes, the saving measured before and after. Tasks that touch the same files are first checked for
-  one joint assignment (one write scope, a higher cap, one review, commits per task by path) and run one after the
-  other only with a stated reason. The `worker-scope-overlap` refusal names that joint assignment as a third way, next
-  to separate scopes and waiting.
-
-- `R-human-ask` and the inbox README give the form of a question: the question itself as the heading, a hint of
-  at most three sentences with no list, 2–5 options `- **a)** …` with effort and the recommendation at its own
-  option, a blank line before, between and after them; a question without sensible options stays free text. An
-  existing project's `docs/ai/inbox/README.md` is not replaced by an update; the rule carries the form either way.
-
-- `docs/ai/config.md` values may contain `\|` for a literal pipe: the settings reader (`actlib.read_config`) now
-  splits cells only at an unescaped `|`. A value that ends in a backslash right before the next `|`, with no space
-  in between, now reads differently; put a space before the `|`. `doctor.py` checks the value of every setting
-  that has a fixed list or format (not only the few it checked before), from the same declaration `/act-config`
-  uses, so it may report a value it passed over before.
-
-- `git-metadata-guard` reads Python code handed to `python` behind `-c`, in a heredoc, a here-string or a pipe as
-  Python instead of as shell text. A literal target (a string or `Path(...)` of strings) in a writing call and a
-  literal command line in an executing call are judged as before; `exec`/`eval` of a literal is read one level deep.
-  A program that only computes or prints is no longer refused for strings that merely look like commands (a list of
-  test commands it prints). A value that is no literal (a variable, `os.path.join`, an f-string, a glob) is not seen,
-  the same documented limit as for a script file.
-- `topics/checks.md` names two limits of every shell check that reads write targets from the command text: code that
-  becomes a script only at run time, and targets that depend on an earlier command or an alternative. The checks are
-  a guard rail against mistakes, not a wall against intent.
-- `act-seo` is now a full page check. The code check stays the default; on request it also builds the production
-  version, starts it on a test port, crawls it and measures it with Lighthouse (`--live`, steps in
-  `references/live-run.md`, the server stopped by PID after checking port and command line), or checks the public URL
-  (crawl with header checks, PageSpeed Insights; the skill says first that the URL goes to Google, the key comes from
-  `PAGESPEED_API_KEY` only). The report separates Lighthouse points from real defects; fixes follow approval and a
-  re-measure, until 100 or every deviation is justified. The live-run guide stops the test server by the root
-  process ID recorded at start and its whole process tree, then checks the port is free. `seo_crawl.py` and
-  `seo_lighthouse.py` are now listed under `act-seo` in the script reference.
-- The `act-audit-docs` workflow script is now `workflow.js.txt` (it was `workflow.js`). It needs a top-level `return`
-  that no module parser accepts, so `eslint .` failed on it in projects that do not exclude `.act/` and `.claude/`
-  from lint. `act-update` removes the old file from `.act/skills/` and from `.claude/skills/act-audit-docs/`. If your
-  project overrides the script at `docs/ai/local/skills/act-audit-docs/workflow.js`, rename that file to
-  `workflow.js.txt` too, or the override no longer applies. Should the template ship a `*.js`, `*.mjs` or `*.cjs` file
-  under `.act/` again, `init` and `act-update` end their report with a note naming the lint exclusion (`.act/**` and
-  `.claude/skills/act-*/**`).
-- The `act-local-tidy` line at session start and in the `update` summary gives count, size and kinds only, no
-  longer up to five entry names. A line that only reports what would go points to
-  `python .act/scripts/act_local_tidy.py`, which still lists every entry. Entries that could not be removed are
-  still named, since they need your attention.
-- The board's recent activity orders journal entries of one day by time, not by title.
-- `board.py --chat-language` refuses to overwrite an unreadable `identity.json` and says so; `identity.json` is
-  written in one step.
-- A worker never writes a file outside its `Write scope:` - with any tool, interpreter or detour, whether or not a
-  check refused it - and names the file and the change in its result.
-- Finished backlog items and inbox entries are deleted instead of archived when the project is under Git: new key
-  `done-entries: delete | keep` in `docs/ai/config.md` § Archive, default `delete` with Git and `keep` without (an
-  explicit `delete` without a repository counts as `keep`). `entries.py archive` deletes only an entry Git holds
-  unchanged (compared with the last commit by blob hash, so `assume-unchanged` and `skip-worktree` files count as
-  changed); anything else moves to the archive as before and gets the header field `purge: after-commit`. An
-  accepted task always moves to the archive with its `finished:` stamp and that field. `entries.py purge`, which
-  `act-commit` runs, deletes only files carrying the field once a commit holds them unchanged, plus a pasted file
-  that only they link to. Ids stay taken through `docs/ai/work/reserved-ids.json`, so `new` never hands one out twice.
-  Links to a deleted entry become its bare id; written-out paths do too, except inside fenced code blocks and in
-  `git show <commit>:<path>`. `act-compact` merges only the journal under `delete`. An existing archive stays until
-  you decide: the first session start under `delete` names its file count once, `entries.py purge --all --plan`
-  shows what would go, and `entries.py purge --all` deletes what Git holds unchanged; the assistant runs `--all`
-  only on your word. Journal files, `ledger-*.md`, `legacy/` and `proposals/` always stay. `done-entries: keep`
-  restores the old behaviour.
-- `act-bug`, `act-commit` and `act-adopt` keep "Own rules" to one-line rules: incident, evidence and identifiers go
-  to the project docs, and `act-adopt` proposes the parts of an existing guideline file by where they belong instead
-  of copying it whole.
-- Feedback sends write one journal entry per day (`<date>-feedback-sent.md`) with one line per send instead of one
-  journal file per send. Each line has the time, the kind of send, the entry count and each entry's kind and title;
-  an entry's text and a direct message's text are never recorded.
+- Inbox questions follow one form: question as heading, 2–5 options with effort, recommendation marked.
+- `act-update` adds new template rules to an edited `docs/ai/rules.md`; your own text and lines you removed stay.
 
 ### Fixed
-
-- The overview table of `.act/scripts/README.md` no longer cuts a row short at a `|` in a script's purpose:
-  `script_docs.py` writes a pipe in a table cell as `\|`.
-- Parallel worker starts no longer lose each other's recorded `Write scope:` or `Cap:`. On Windows a scanner or
-  indexer can hold a just-written bookkeeping file open for a moment; the cleanup pass of another start read that as a
-  damaged file and deleted it, so the worker then ran without its scope or with the tier's default cap. A file that
-  cannot be opened at that moment (held by another process) is now judged by its age alone and stays unless it is
-  older than 24 hours; the same holds for the per-session state of `status-poll`.
-- A worker no longer runs one call without its `Write scope:` or with the tier's default cap when a scanner holds its
-  just-written entry open on Windows at the moment the check reads it. `worker-write-scope`, `worker-cap` and the
-  other checks that read these entries retry a denied read a few times within about a third of a second, like the
-  rename does; an entry that stays unreadable is treated as before.
-- A file that is not valid UTF-8 no longer refuses every worker start until it is deleted by hand when it lies in
-  `.act-local/worker-scopes/`, and no longer switches `worker-cap` off when it lies in `.act-local/worker-caps/`. It is
-  treated like a file that is not JSON: the next start deletes it, and until then it counts as no entry. A bound
-  worker, and an unbound one next to a fresh entry that names a `Write scope:`, stay restricted as before.
-- A WSL path `/mnt/<x>/…` in a `wsl` command line (also after `--exec` or `--distribution-id`) is now the Windows
-  drive `<X>:` for write-guard, worker-write-scope and outside-root alike, read in the shared scanner. `cmd /c <line>`
-  is read like an `eval` of its words.
-- `worker-write-scope` no longer refuses `mkdir -p 'server/api/[id]'` while a sibling folder matches the brackets as a
-  glob: the quoting of each word travels to the check, so a quoted or escaped bracket names the literal folder.
-- After `git merge`, `git pull` or `git cherry-pick`, the dependency scan of the lock files the command brought in is
-  no longer skipped silently when the hook runs out of time listing them with git (a busy machine, or a merge with
-  hundreds of lock files). The hook now hands the listing to the detached background worker, which lists, scans and
-  reports the lock files within a time limit of its own.
-- `act-update` and the session start now enter rules and rule files the template added into a locally edited
-  `docs/ai/rules.md`: a checkbox line per new rule, a new rule file as an import block at the end of its section. Your
-  own text, unchecked boxes and imports you removed stay untouched, byte for byte including line endings; a layer you
-  import nothing from is left alone. `.act-lock.json` records what was offered (`rules_offered`), so a removed line or
-  import does not come back; a project without that record takes the state committed before the update as offered.
-  What cannot be entered safely is named with `python .act/scripts/rules.py --add-missing`; `rules.py --validate` and
-  `doctor` report rule files not yet imported and rules the template no longer has.
-- The `act-compact` skill said uncommitted archive changes "stay as they are"; `entries.py compact` actually stops
-  until they are committed. The skill now says so.
-- An anchor and heading pair inside a code block no longer counts as a section of an archive collection.
-- The status line hook no longer leaves `__pycache__` folders under `.act/`.
-- Removing a throwaway folder never follows a junction out of it.
-- `update` and the session-start rule sync keep the line endings (CRLF or LF) of `docs/project/coding_rules.md` and
-  `docs/ai/rules.md` when they add or move entries.
-- The session-start update check now reports a newer template when the recorded source is a plain folder without
-  git.
-- A rule that moved to another rule file now takes its wrapped reason along; a stale duplicate line under the old
-  file is dropped with a note, and a move that only reports ("does not load") is no longer summarised as
-  "followed".
-- secret-scan now checks text behind a form feed, vertical tab, NEL, U+2028/U+2029 or a lone carriage return inside
-  an added line (it was read as a context line and skipped); diffs are read as bytes, so a lone CR no longer splits
-  a line.
-- secret-scan: a git file name with trailing blanks is no longer stripped when read from a diff header.
-- Dependency scan: a tool that exits with its findings code but whose report parses to no finding (null, changed
-  schema, npm 6 `advisories`) now counts as an unreadable report instead of clean (osv-scanner, npm, pnpm,
-  composer). A pnpm report whose own counts say zero stays clean.
-- `git-metadata-guard` no longer reads a shell redirection behind `cp`/`mv`/`Copy-Item` (`2>/dev/null`, `&>`,
-  `*> $null`) as the copy destination.
-- `git-metadata-guard` no longer reads the body of a quoted heredoc as commands when the whole command is one text
-  reader that only stores it: `cat` (also into a file), `tee [-a] <file>`, `git commit -F -`, `git tag -F -`, with
-  nothing before or after it. Any other command, an unquoted heredoc, and a reader that writes to a protected path
-  are checked as before.
-- `outside-root` no longer reads a word made only of slashes (`//`, `///`) as a path where it is only a fragment of
-  text: a string literal or an operator in the `-c`/`-e` code of an interpreter, also under PowerShell, or a text
-  option. A word of its own (`ls //`, `cp x //`) is still the file system root and still refused.
-- A read-only command with an arithmetic expansion (`sed -n "1,$((n+3))p" file`, `echo $((n+3))`) is no longer
-  refused as a write by the worker write scope; a redirection next to it or a command inside the expansion is
-  still found.
-- The overlap check for parallel workers no longer reports sibling patterns such as `src/lib/alpha/**` and
-  `src/lib/beta*`, or `tests/probes/a-*/**` and `tests/probes/b-*/**`, as overlapping; patterns that can match a
-  common path still do.
-- `worker-write-scope`: a `$(...)` in the quoted command of an `ssh <host> '...'` call to another machine no longer
-  makes the whole text count as a local command; only the `$(...)` the local shell expands are read. This holds for
-  a call of a plain, known form only - `ssh` (or the system's own), in front of it at most the bare name of `sudo`,
-  `env`, `command`, `exec`, `nohup`, `nice`, `timeout`, `stdbuf` or `setsid`, options from
-  `-4 -6 -a -C -n -q -T -t -v -x`, `-p <port>`, `-l <name>`, `-i <file>`, a literal `[user@]host` that is not this
-  machine, a first command word starting with a plain character. Every other form (`-o ...`, `-F`, `-E`, `-J`,
-  `-W`, `-L`, `-R`, `-D`, `parallel` or `xargs` in front, a variable, glob, brace or backtick up to the host or at
-  the start of the command, `localhost`, `127.x`, `0`, `::1`, `ip6-*`, this computer's name, a `PATH=`,
-  `BASH_ENV`, an alias, `source` or a function `ssh` in the same command, a `$(...)` bash may end later than its
-  first `)`) is still read as before. Local redirections behind the call are still checked.
-- `worker-write-scope`: a switch of a Windows tool (`icacls /deny`, `robocopy /MIR`, `cmd /c`) in inline Python or
-  Node code is no longer read as a path outside the scope - only where the tool is the first element of the
-  argument list of the call that starts it (`subprocess.run`, `Popen`, `os.exec*`/`os.spawn*`, Node
-  `spawn`/`execFile`), or in a command line of one command that is the first argument of such a call, of
-  `os.system` or of Node `exec`. For `cmd` only the switches up to `/c` or `/k` count. The same literal anywhere
-  else (`shutil.copytree('cmd', '/c')`, `print('cmd')`) stays a path.
+- Parallel worker starts on Windows no longer lose each other's write scope or cap.
+- The safety checks refuse fewer harmless commands: heredocs, `ssh` calls, brackets in folder names.
+- The dependency scan after `git merge` or `git pull` is no longer skipped on a busy machine.
+- Updates keep the line endings of `rules.md` and `coding_rules.md`.
 
 ### Security
-
-- `worker-write-scope` now resolves the write targets of inline Python (a heredoc or `python -c`) that are built
-  from string literals and checks them against the `Write scope:`: `os.path.join`, `Path(...)` chains and `/`,
-  f-strings, names bound once (also as a `for` loop variable) and the patterns of `glob.glob` and
-  `Path(...).glob`. A worker limited to `docs/**` that loops over `glob.glob('i18n/*.json')` and rewrites the files
-  is now stopped. A tightening only: the path literals stay checked as before, and the step runs only where a write
-  call is already seen in the literals. A value that cannot be resolved, or lies beyond the resolver's limits (a
-  program over 32,768 characters, an expression standing for more than 256 strings, a string over 1,024 characters,
-  a work budget and an output budget set by the program's length), stays unchecked as before; see
-  `.act/rules/topics/checks.md`. For the resolved targets, a link target (`Path.symlink_to`, `hardlink_to`), a
-  read-only `os.open` and a mode name bound to `'r'` are not counted as writes.
-- The detached dependency-scan worker no longer trusts its list file: it ignores merge, pull and cherry-pick calls
-  aimed at another repository and accepts only full commit ids as recorded heads, and its `git diff` stops option
-  parsing before the revision (`--end-of-options`). The same commit-id check now applies to the heads the merge hook
-  records itself.
-- `git-metadata-guard` reads a copy source of any size within a time budget (the 2,000-file limit is gone); a source
-  that cannot be read in time is refused with a clear message. Links and junctions inside the source are followed the
-  way a recursive copy follows them, each directory once.
-- `git branch -D @{-1}` is judged by the branch it names; a branch name that exists in two spellings on a
-  case-insensitive file system is never released as cherry-picked.
-- `exec -a NAME cmd` and a cluster of wrapper options ending in one that takes a value (`exec -la NAME cmd`,
-  `sudo -nu NAME cmd`) no longer hide `cmd` from the write checks.
-
+- The worker write scope also checks files that inline Python writes, even with paths built by
+  `os.path.join`, f-strings or `glob`.
+- The background dependency scan ignores merges aimed at another repository and accepts only full commit ids.
+- Copies into protected paths such as `.git` are checked at any source size; a source that cannot be read in time
+  is refused.
+- `git branch -D @{-1}` is judged by the branch it names; a branch spelled two ways is never released as cherry-picked.
+- `exec -a NAME cmd` and `sudo -nu NAME cmd` no longer hide `cmd` from the write checks.
+- The write checks and `outside-root` read a WSL path `/mnt/<x>/...` as the Windows drive `<X>:`.
+- Removing a throwaway folder never follows a junction out of it.
+- secret-scan reads text behind a form feed or lone carriage return; an unreadable dependency report is not "clean".
 
 ## [2.4.0] - 2026-10-30
 
-Sessions carry their project's name and `/act-info` shows where one works, the template author can warn projects on a
-faulty version through advisories, throwaway material and the hooks' cache move from the system temp directory into
-`.act-local/`, which `act-local-tidy` keeps small, workers start with less rule text, and a pending update stays
-visible until it is installed. Projects on v2.3.0 update with `act-update`.
+Named sessions and `/act-info`, advisories for faulty versions, a tidy `.act-local/`, leaner worker rules.
+
+### Highlights
+- **Session title from the project** (`session-name`) shows which project a Remote Control session belongs to.
+- **Advisories** let the template author warn projects on a faulty version; a critical one shows at every start.
+- **Throwaway files and the hooks' cache move to `.act-local/`**, which `act-local-tidy` keeps small.
+- **A pending update stays visible** at session start, on the board and in the status line until installed.
 
 ### Upgrading from v2.3.0
-
-- Run `act-update` (or `python .act/scripts/update.py`), then start a new session so the new hooks take effect. No
-  new migration. The update sets `PYTHON_BASIC_REPL=1` under `env` in `.claude/settings.json`, removes the `-high`
-  variants of six roles (assignments that named one name the role itself, or `builder-high`/`reviewer-high`), and in
-  an edited `docs/ai/rules.md` moves the checkbox lines of `R-safe-no-secret-diff`, `R-safe-git-reset` and
-  `R-safe-git-discard` to `orchestrator/30-cost.md`, marks unchanged.
-- The session title now follows the project's name (`session-name`, default `project`). Set `session-name: auto` to
-  leave naming to Claude Code; a title set with `/rename` or `claude -n` is never overwritten.
-- A worker whose assignment has a `Write scope:` line can no longer write to the system temp directory or its
-  scratchpad. An assignment that needs throwaway material names `.act-local/tmp/<task-id>-<slug>/**` in its scope.
-- Advisories are on by default; `advisory-check: off` in `docs/ai/config.md` switches them off.
-- `act-local-tidy` only reports on its first run in a project; removal starts the day after that report was shown.
-  `act-local-keep` protects a project's own entries under `.act-local/`.
-- `act-version`, `act-export-settings` and `act-load-settings` now start only when typed as a slash command.
-- `archive-shorten` is no longer read and can go from `docs/ai/config.md`. Once every project on the machine is
-  updated, an old `act-pycache` folder in the system temp directory can be deleted.
+- Run `act-update`, then start a new session so the new hooks take effect; there is no new migration.
+- The update sets `PYTHON_BASIC_REPL=1` in `.claude/settings.json` and moves three rule lines in an edited `rules.md`.
+- Six roles lose their `-high` variant; an assignment naming one names the role, or `builder-high`/`reviewer-high`.
+- Set `session-name: auto` to leave titles to Claude Code; the default `project` uses the project's name.
+- A worker's `Write scope:` that needs throwaway files names `.act-local/tmp/<task-id>-<slug>/**`.
+- `advisory-check: off` in `docs/ai/config.md` switches advisories off; they are on by default.
+- `act-local-tidy` only reports on its first run and removes from the next day; `act-local-keep` protects own entries.
+- `act-version`, `act-export-settings` and `act-load-settings` start only as a slash command now.
+- Delete `archive-shorten` from `docs/ai/config.md`; it is no longer read.
+- Once every project on the machine is updated, delete the old `act-pycache` folder in the system temp directory.
+- The update adds `.act-local/` to the IDE excludes (`.idea/*.iml`, `.vscode/settings.json`) and replaces the old
+  worker-rule hook entries; your own hooks stay.
 
 ### Added
-
-- Session title from the project: new config key `session-name` (default `project`). At session
-  start, resume and fork the Claude Code session title is set to the project's `name` (else the
-  folder name), so a Remote Control session on the phone shows which project it is. `auto` leaves
-  naming to the tool, any other text becomes the title. A title set with `/rename` or `claude -n` is
-  never overwritten, and a named session keeps its title across `/clear`.
-- `/act-info` (`.act/scripts/info.py`) shows which project a session works in and its state:
-  folder, host, session title, branch, last commit, uncommitted changes, installed template version
-  and channel, open tasks and what waits for a human. Read-only and without network; the newest
-  available version stays with `/act-version`.
-- Advisories: the template author can warn projects on an affected template version. An orphan
-  branch `advisories` in the template source holds `advisories.json`. The daily background update
-  check also looks at that ref and, when it changed, fetches only that branch into
-  `.act-local/advisories.git` (never the project's `.git`, 5 s limit). Only validated JSON is used:
-  text limited in length and characters, a link shown but never opened, nothing executed. A
-  `critical` advisory that matches the installed version shows at every session start in a line of
-  its own, as `⚠ A<n>` in the status line, as a line below the board title and once as an inbox
-  todo; a `warning` shows at session start only (`once` or `every-start`). It stops when `act-update`
-  brings in a version outside the range, or when the human acknowledges it: say "Warnung quittiert"
-  or "warning acknowledged" (also "Warnung akzeptiert", "Hinweis gelesen", "warning accepted",
-  "notice read"), or run `python .act/scripts/advisory.py --ack A<n>`; either way the board is
-  rewritten at once. `advisory-check: off` in
-  `docs/ai/config.md` switches it off; `advisory.py --status` shows the state, `--refresh` checks at
-  once, `--check-file` validates a file. An advisory may list `files`: paths under `.act/`, each
-  with a literal snippet only the faulty version contains. When every listed file is missing or no
-  longer holds its snippet, the advisory counts as fixed; for a rule, topic, tip or skill a project
-  override under `docs/ai/local/` counts first, for scripts and hooks always the file under `.act/`.
-  A file that cannot be judged (unreadable, not a regular file, over 1 MiB, outside the project)
-  keeps the advisory. Fixed means: one line at the next session start, then silent in the session
-  line, status line and board, with no new todo. An invalid `files` field is ignored, and the advisory then
-  works by version range alone.
-- `/act <name>` also finds a template skill without its `act-` prefix: `/act version` shows
-  `act-version`. A skill whose name matches exactly still wins.
-- `R-work-throwaway`: throwaway material — probes, throwaway projects, clones, output files,
-  scratch files — has one place, `.act-local/tmp/<task-id>-<slug>/`: never the system temp
-  directory, where nothing tracked or removed it, and never directly under `.act-local/`. It is
-  made only when the work needs it and removed after use by whoever made it; a worker says so in
-  its result, and `act-commit` removes a task's folders after the commit (`act_local_tidy.py --task
-  <id>`). A probe never sets an access right its owner could not take back alone, and takes back
-  every right it set in a `finally`. `R-work-bounded-output` writes long output to the same place.
-- Session-start check `act-local-tidy` keeps `.act-local/` small in every project: once a day, in
-  a background process, it removes `tmp/` entries and unknown entries directly under
-  `.act-local/` that are older than 7 days and whose name does not start with an open task's id,
-  and all but the newest 5 backups of `update`. Entries the template's own scripts create are
-  never removed. The next session start reports count, size and names. The first run in a project
-  only reports what it would remove; removal starts the day after a session start has shown that
-  report. Nothing is removed when `.act-local/` itself is a link. `act-local-keep` in
-  `docs/ai/config.md` § Checks protects a project's own entries, `act-local-tidy: warn` only
-  reports, `off` skips it. `python .act/scripts/act_local_tidy.py` lists what would go.
-- `update` names in its summary what the next session start will remove from `.act-local/`.
-- `update` follows a rule that moved to another rule file in an edited `docs/ai/rules.md`: its
-  checkbox line moves, mark and reason unchanged, from the block of its old file to the block of
-  its new one, so a rule switched off stays off. A rule whose new file the project does not import
-  is only reported. An unedited `docs/ai/rules.md` is re-derived from the template as before.
-- `init` and `update` keep IDEs from indexing `.act-local/`: an `excludeFolder` in a JetBrains
-  `.idea/*.iml`, and `files.watcherExclude` in `.vscode/settings.json` where `.vscode/` exists.
-- The session start creates `.act-local/identity.json` when it is missing or has no `identity` (a
-  fresh clone, a second machine): the short name comes from `git config user.name`, as with `init`,
-  plus a new workspace id, and one `[act] identity` line in the start context names both. Other keys
-  in the file, such as `chat_language`, stay. Without a usable git name (unset, a placeholder, or no
-  letter or digit in it) nothing is guessed: the start context says so and names the command. An
-  unreadable file is never overwritten, the start context says that too; this also holds with
-  `session-start-refresh: warn` or `off`. `python .act/scripts/board.py --identity <name>` sets or
-  changes the identity, also over an unreadable file; files of a former identity are named, not
-  renamed.
+- `/act-info` shows folder, host, branch, last commit, changes, template version and open tasks; no network.
+- `act-local-tidy` removes throwaway entries in `.act-local/` older than 7 days; `act-local-tidy: warn` only reports,
+  `off` skips it.
 
 ### Changed
-
-- The hooks' compiled-module cache moved from `act-pycache` in the system temp directory, where it
-  grew with every project path and was never removed, to `.act-local/pyc/` in the project. In a
-  project path longer than about 76 characters the hooks write no cache (each hook call then takes
-  about 35 ms longer), so no cache path passes Windows' 260-character limit. An old `act-pycache`
-  folder in the system temp directory can be deleted once every project on the machine is updated.
-- The short-lived folders of the update check, `update.py`, `advisory.py` and `init.py` are created
-  under `.act-local/tmp/act-<purpose>-*` in the project now (outside a project still in the system
-  temp directory) and removed when the script ends.
-- At a task boundary once the context has reached `context-hint`, the assistant checks the handover
-  itself (`handover.py`, state lines that name each open task's next step) before its closing line says
-  "now `/clear`". There is no sentence to copy any more: after `/clear` a bare "continue" picks up from
-  the board. `act-handover` ends the same way and stays for the question whether the session can be
-  left (`R-work-handover`, `R-work-session-start`, the context-size note).
-- `CR-nuxt-root-folders` names `shared/utils/` as a fourth fixed folder, for code that the app and the
-  server both run, with Nuxt's limit (no Vue or Nitro imports there) and the Nuxt version it needs.
-  Types stay in `/types`; `shared/types/` is not used.
-- `git-discard` lets `git branch -D` (also `-d -f`, with `-r`) through for a branch taken over
-  by cherry-pick, as after taking over a worker's worktree branch: `git cherry HEAD <branch>`
-  shows only `-` lines, the branch has no merge and no empty commit of its own, and merging it
-  into HEAD would change nothing (`git merge-tree --write-tree`, git 2.38 or later). Any other
-  result, an error or a timeout still refuses; `-M`/`-C` over a branch are unchanged.
-- Shorter core rules (`.act/rules/shared/00-core.md`): `R-work-override`, `R-work-language` and
-  `R-role-worker` leave details that `.act/bridges/rules.md`, `topics/feedback.md` and the scaffold's
-  own inbox entry already state. No rule and no obligation is removed, here and in the six rule files
-  below; what moved stands on the topic pages.
-- Shorter code rules (`shared/20-code.md`): `R-code-language` names `language-docs` for prose,
-  `R-code-tools` and `R-code-version` drop their examples.
-- Shorter role rules (`orchestrator/00-role.md`): the role table becomes one sentence on the special
-  cases, and `R-role-outcome` leaves the threshold of the tier proposal to `act-doctor`. `act-commit`
-  points to `R-role-worker` and `R-code-commit` for who commits.
-- Shorter work rules (`orchestrator/10-work.md`): updating `config.md` moves from `R-work-record-now`
-  to `R-work-config`, and `R-work-handover` names `act-handover` before `/clear` or a restart.
-- Shorter human-facing rules (`orchestrator/20-human.md`): the threshold for a question mid-task
-  stands only in `R-human-ask`; `R-human-chat` and `R-human-capture` drop style sentences and the
-  hook's field list.
-- Shorter cost rules (`orchestrator/30-cost.md`): the estimate basis, `-high`, the reason for 10–12
-  units, the temp-directory exception and the brief-note details move to `topics/checks.md`, and
-  `R-code-commit` points to the `reviewer` role and `act-commit` for `CONDITIONAL`. `topics/checks.md`
-  also gains a section on what `secret-scan` looks for.
-- Shorter safety rules (`shared/10-safety.md`): `R-safe-no-secret-diff` points to the `secret-scan`
-  check instead of describing a hand check, the git rules name groups of commands instead of every
-  form, and `R-safe-git-metadata` and `R-safe-dev-server` drop examples.
-- `R-safe-no-secret-diff`, `R-safe-git-reset` and `R-safe-git-discard` move from `shared/10-safety.md`
-  to the end of `orchestrator/30-cost.md`, next to `R-code-commit`: only the main session commits or
-  changes the working tree, so workers no longer load them (about 1,600 characters less per worker).
-  IDs, wording and the checks `secret-scan`, `git-reset-hard` and `git-discard` stay as they were.
-- `act-version`, `act-export-settings` and `act-load-settings` start only when typed as a slash
-  command (`disable-model-invocation: true`): their descriptions no longer take up room in every
-  Claude Code session, and a request in plain words no longer starts them. Usage measured over a
-  month showed no call of any of them; the tips name the slash command.
-- `rules.py --imports` shows how much every always-loaded instruction file costs: each file it
-  reaches, and each file Claude Code loads on its own, ends with its size in characters (a CRLF
-  line end counts as one), and a last line gives the total, split into the template's share under
-  `.act/` and the project's. The `reached`/`unresolved` headers and the exit code are unchanged.
-- `R-cost-delegate` now says when a handover to a worker pays off, not only how to make one:
-  independent parts that run in parallel, the review, which should not share the implementation's
-  context, output of unknown or large length not needed afterwards, and long reading or runs that
-  a cheaper tier does just as well. A known file or spot, a few tool calls or a small change the
-  main session does itself; its review still follows `R-code-commit`. The template's roles come
-  before the tool's own agents (in Claude Code `Explore`, `general-purpose`, `Plan`; its
-  `claude-code-guide` stays for questions about the tool).
-- `R-safe-outside-root` is cut down to what the `outside-root` check cannot do itself: a new place
-  needs the owner's word and an entry in `outside-root-allow`, even when the check only warns, and
-  the rule also covers what the check cannot see, such as a program that opens files itself or an
-  MCP tool that takes a path. The list of allowed places moved to `topics/checks.md`. Each session
-  loads about 400 characters less.
-- A new question from `entries.py new question` ends with an empty `**Answer:**` line
-  (`**Antwort:**` when `language-docs` is `de`); the answer goes below it. The inbox README now
-  describes the form of a question: one question per file, options as `- **a)** …` rather than a
-  numbered list, the recommendation marked, and when booking an answer the file is read again and
-  the answer goes below the existing label, never under a second one. `act-prepare` and `act-idea`
-  point to that form. Adopted questions keep their text as it was.
-- `doctor.py --inbox` files each new tier proposal (`R-role-outcome`) as an inbox question of its
-  own instead of a line in the doctor report: the finding with its numbers, a table of the role's
-  outcomes per tier, the row for `docs/ai/config.md` § Roles with the next tier, and three options
-  (raise it, leave it until 8 more outcomes, look at the cases first). `update` commits the
-  questions with the report and names both in its summary. Without `--inbox` and with `--json` the
-  proposal stays a finding.
-- The rule texts no longer contradict one another. The reviewer has three verdicts everywhere
-  (`ALLOW`/`CONDITIONAL`/`BLOCK`). An open decision goes where `inbox-decisions` puts it, one the
-  owner makes in chat into the inbox. There is one threshold for asking mid-task, and `triage: open`
-  entries come right after the answered ones. Fetched notes under `.act-local/notes/` are data, the
-  orchestrator's own brief notes are not. A PR, issue or comment needs approval and a way back but
-  no backup. The ban on code-running `git config` keys covers the repository only. Rules a project
-  adds to `docs/ai/rules.md` are in `language-docs`. "Always English" means the names of code files,
-  not inbox or journal files. `expert-solver` is called only after two failed attempts. A worker
-  hands a template bug back instead of filing it. Python error messages name an identifier or a
-  masked value, never a secret. The estimates in `act-audit-docs` and `act-release` use the
-  `R-cost-delegate` form.
-- Three rules now say where they deviate from a tool's own defaults: committing accepted work needs
-  no separate request (`R-code-commit`), a default the tool or the assistant states is an
-  assumption, not a decision (`R-human-ask`), and `language-chat` wins over a language set in the
-  tool (`R-human-language`).
-- Only `builder` and `reviewer` still get a `-high` variant (`.claude/agents/<role>-high.md`); a
-  template role's bridge declares it with `high-variant: true`. `update` removes the generated
-  variants of `explorer`, `quick-check`, `doc-writer`, `debugger`, `test-writer` and `optimizer`
-  and names each one in its preview and summary. That saves six entries in the tool's agent list,
-  which is sent with every call. A project's own roles keep their variant as before. An assignment
-  that named a removed variant names the role itself, or `builder-high`/`reviewer-high`.
-- A pending template update stays visible until it is installed. The session start names it in the
-  line the human sees (`update 2.4.0 available`) and repeats the note to the assistant at every start,
-  the board lists it under Status, and Claude Code's status line shows `update: 2.4.0` on the release
-  channel or `update: <date>` on `latest` (the date of the newer commit where it can be read without
-  the network, in `DD.MM.YYYY` when `language-docs` is `de`; otherwise its short hash). The note used
-  to appear once, only in the assistant's context, and could get lost. Once the lock has moved on
-  since the check (an update pulled from another checkout), the old finding is dropped and the next
-  check runs at once. Every look at the source refreshes the note, not only the daily check:
-  `update.py --versions` (what `act-version` runs), `--plan` and an update run record what they
-  found, or clear the note when the project is up to date; `--channel`, `--source` and `--ref` aim
-  a single run elsewhere and leave it alone. `act-update` answers a question about the installed
-  or newest version with `update.py --versions`.
-- `act-compact` only merges: every entry goes into its collection word for word, and no worker
-  shortens sections any more. `entries.py compact` writes the monthly overview `archive/YYYY-MM.md`
-  itself, one line per Q, T, B and U entry with a link to its section, title and status; an existing
-  overview, also a hand-written one, only gets the lines of entries it does not list yet. The session
-  start's note names the entries to merge, no worker runs.
-
-### Removed
-
-- `archive-shorten` in `docs/ai/config.md` § Archive. A value left in a project is passed over.
-  `R-human-text` loses its exception for `act-compact`.
+- `act-commit` removes a task's throwaway folders; the hooks' cache lives in `.act-local/pyc/`, none in long paths.
+- Rules are shorter, no obligation removed; workers load 1,600 fewer characters.
+- `git branch -D` of a branch taken over by cherry-pick is allowed; `act-compact` only merges now.
 
 ### Fixed
-
-- In a checkout without `.act-local/identity.json`, the board no longer skips its per-person file,
-  new entries no longer get `unknown`, a new idea no longer aborts and quick capture works again,
-  since the session start now creates the identity. `init` also fills an identity file that lacks
-  the `identity` key, instead of taking any existing file as set up.
-- `entries.py new question` with `--id` or `--formerly` now ends an open question with the empty
-  answer label as well; before, any question filed under a given id was left without it. A text
-  that already carries an answer label at the start of a line, in English or German, gets no
-  second one, nor does a question filed with `--status answered`.
-- `.act-lock.json` is written with LF line endings on every platform. On Windows, every update and
-  `doctor.py --accept` wrote it with CRLF, so git warned about the conversion or the diff showed
-  every line.
-- With `feedback-cadence: immediate`, `feedback.py --send` with an empty outbox no longer sends a
-  batch of 0 entries with only the numbers and a second journal entry: `--add` has already sent
-  each entry. `--send --force` and the other cadences keep that send. The help for `--add` says
-  when it sends by itself.
-- `update.py` and `init.py` no longer stop with an `EOFError` traceback when a question finds no
-  input although stdin looks like a terminal, as on Windows with `< /dev/null` (the NUL device counts
-  as one). The question takes its safe default instead: no consent to the update, `abort` on local
-  changes in `.act/`, the shown default in `init`, and a file not written when importing a
-  settings file asks.
-- `update.py --plan` and `act-update` no longer claim to write nothing: the plan changes nothing in
-  the project but may refresh the local update note under `.act-local/`, and now says so in
-  `--help`, in its closing line and in the skill.
-- On Windows, a Bash call such as `python - <<'EOF'` with an empty heredoc no longer hangs until the
-  tool's timeout on Python 3.13 and later. Python took the empty input for a console, started its new
-  REPL, found no console handle and wrote the same traceback again and again, hundreds of megabytes
-  per call. `init`, `act-adopt` and `update` now set `PYTHON_BASIC_REPL=1` under `env` in
-  `.claude/settings.json`: the plain REPL reads the end of input and exits. A value the project set
-  itself is kept; older Python versions ignore the variable. The report of all three names the env
-  keys they add.
-- The session start's note that archive compaction is due counted entries archived before
-  `archived:` was written by their `created:` date, while `entries.py compact` dates them by the day
-  Git added them to the archive. Both now count the same way: the note no longer reports entries
-  that `compact` would leave alone, and it does not repeat after a run that merged everything due.
-- On Windows, the board showed umlauts and other non-ASCII characters in the branch name and the
-  last commit garbled (`ü` as `Ã¼`), and a commit subject with a character the Windows code page
-  does not know made the last commit vanish from the board. Every script and hook of the template
-  now reads the output of git and Semgrep as UTF-8, the board, the session start, the feedback
-  numbers and the deep security scan included.
-- A tier proposal the owner had already decided came back in the next doctor report of the same
-  day. A proposal whose question is filed no longer returns, not even on the same day, until 8
-  more outcomes are recorded.
-- Workers no longer lose part of their rules once the project's rules outgrow six hook entries:
-  Claude Code cuts every hook output above 10,000 characters down to a short preview, so the worker
-  rules now go out over 12 `SubagentStart` entries instead of 6. If even 12 are not enough, the last
-  entry names the files the worker has to read itself, and `rules.py --worker` and `act-doctor`
-  warn which rule files to shorten. `act-update` replaces the old six entries and leaves your own
-  hooks alone.
-- The SQL checks of `security-check` no longer hold a commit for a query builder's tagged template
-  literal, where every `${…}` is a bound parameter: ``sql`select … where code = ${code}` `` (Kysely,
-  Drizzle, postgres.js, also `sql<T>` and `<name>.sql`), ``Prisma.sql`…` ``, ``$queryRaw`…` `` and
-  ``$executeRaw`…` ``. A line with a raw helper (`sql.raw`, `sql.lit`, `sql.literal`, `sql.unsafe`,
-  `Prisma.raw`, `$queryRawUnsafe`, a bare `raw(…)`, `sql.__dangerous__rawValue`) is still reported,
-  and so are untagged template literals and real `+` concatenation.
-- The SQL check of `security-check` no longer holds a commit for a fixed `DELETE … FROM` or
-  `INSERT INTO` string without concatenation, such as `"DELETE FROM sessions WHERE expired = 1"` or a
-  parameterized `"INSERT INTO t (a) VALUES (?)"`. These two now count as built by concatenation only
-  when their line carries a quote and `+` (or `+=`), as far away and past a `;` as before. Python
-  `%`-formatting, PHP's `.`, PHP string interpolation and a `+` continued on the next line were never
-  covered for SELECT or UPDATE; for DELETE and INSERT they are no longer reported by accident either.
-- `secret-scan` no longer holds a commit for the override hashes `doctor --accept` writes into
-  `.act-lock.json`: a rule ID with a credential word in its name (`R-safe-no-secret-cli` …) next to a
-  64-digit hex value read like a credential. Exempt is only that shape — a rule ID as key, exactly 64
-  lowercase hex digits as value, nothing else on the line — and only in the lock file at the project
-  root; a known token shape on the line is still caught.
-- `entries.py archive` and the renaming of a new entry no longer give up at once when Windows reports
-  the file as in use, as it does while an IDE re-indexes a file just written: they retry up to three
-  times within about a second before reporting as before (`archive` also rolls back as before).
-- `feedback.py --plan`/`--send` outside a git checkout skip a directory or link they cannot read
-  instead of stopping there.
-- `init.py`, `update.py`, the dependency scan's ignore lookup and the git helpers in `actlib.py` no
-  longer stop with a traceback when git prints bytes that are not UTF-8, such as a file name or commit
-  subject in a legacy encoding. Output that is only shown or compared is decoded with replacement
-  characters; file names that go back to git or are matched against files on disk keep their bytes.
+- Windows: an empty heredoc no longer hangs a Bash call, and umlauts in the branch name show right.
+- `update.py` and `init.py` no longer crash when a question finds no input; they take the safe default.
+- `security-check` no longer holds commits for query-builder templates or a fixed `DELETE FROM`/`INSERT INTO`.
 
 ### Security
-
-- `worker-write-scope`: for a worker whose assignment has a `Write scope:` line, a write target in
-  the system temp directory or its scratchpad is now refused like any other target outside the
-  scope, and `Write scope: none` allows no writes at all.
-  Throwaway material goes under `.act-local/tmp/<task-id>-<slug>/`, which the assignment names in its
-  scope (`.act-local/tmp/<task-id>-<slug>/**`); the refusal says so. Workers without a `Write scope:`
-  line, the orchestrator, the `outside-root` check and writes to `/dev/null`, `NUL` and the standard
-  streams are unchanged.
-- The daily update check's `git ls-remote` allows only the `file`, `git`, `http`, `https` and `ssh`
-  protocols, also over a `GIT_ALLOW_PROTOCOL` of your own: a template source using a remote helper
-  such as `ext::` cannot start a program from the session start. A source behind another remote
-  helper gets no update note at session start; `act-update` itself is unchanged.
-- `git-discard` refuses `git branch -D <name>` of an unmerged branch also when a tag of the same
-  name exists. Before, `git branch --no-merged` listed the branch as `heads/<name>`, the name did
-  not match, and the delete went through.
-- `worker-write-scope` reads inline interpreter code: a worker with a restricted `Write scope:` that
-  runs `python`, `python3`, `py` or `node` with `-c`/`-e`, or with code from a heredoc, a here-string
-  or a pipe, in Bash or PowerShell, is refused when the code holds a write call (`open(…, 'w')`, `write_text`, `shutil.copy`,
-  `fs.writeFileSync` …) and a path written out that lies outside the scope. Workers had written files outside their scope this way, some right after the
-  check refused the same write. Best effort: a script file, a path built at run time and writes through
-  `subprocess` stay unseen (`topics/checks.md`).
-- `R-role-worker`: a write a check refused is never made another way; the worker reports the refusal
-  with its result.
+- A worker with a `Write scope:` can no longer write to the system temp directory; `Write scope: none` allows no writes.
+- The update check's `git ls-remote` allows only `file`, `git`, `http`, `https`, `ssh`, so `ext::` starts no program.
+- `git branch -D` of an unmerged branch is refused also when a tag of the same name exists.
+- Inline `python`/`node` code that writes outside a worker's `Write scope:` is refused; a refused write is reported.
 
 ## [2.3.0] - 2026-10-25
 
-Reads and writes outside the project root are checked, updates follow either the newest release or the default
-branch, worker runs are measured and start with far less rule text, ten new coding rule sets arrive, old archive
-entries can be compacted, and the dependency scan no longer passes findings as a clean result on Windows. Projects
-on v2.2.0 update with `act-update`.
+Outside-root checks, a choice of update channel, slimmer and measured workers, ten new coding sets.
+
+### Highlights
+- **`outside-root`** refuses reads and writes outside the project; extra places go into `outside-root-allow`.
+- **`update-channel`** (`release` default, or `latest`) decides whether `act-update` follows releases or the branch.
+- **Ten new coding sets** (PowerShell, Docker, CI, Rust, C, C++, Kotlin, CSS, JavaScript, React); `init` picks them.
 
 ### Upgrading from v2.2.0
-
-- Run `act-update` (or `python .act/scripts/update.py`), then start a new session so the new hooks and role fields
-  take effect. No new migration; the existing ones read headers more exactly.
-- `update-channel` decides what the next `act-update` brings. A project without the key in `docs/ai/config.md`
-  follows `release`, the newest stable release tag, and gets a one-time note; set `update-channel: latest` to keep
-  following the default branch.
-- The new check `outside-root` runs as `warn` in a project without the row in `docs/ai/config.md` § Checks; a
-  one-time note at session start says how to switch it to `block` and where further allowed places go
-  (`outside-root-allow`).
-- The template's roles get `omitClaudeMd: true` and `.claude/settings.json` a `SubagentStart` hook. Claude Code
-  before 2.1.271 ignores the field, so workers there get the rules twice until Claude Code is updated.
+- Run `act-update`, then start a new session so the new hooks and role fields take effect.
+- Without `update-channel` in `docs/ai/config.md` you follow `release`; set `update-channel: latest` to keep the branch.
+- `outside-root` runs as `warn`; set `block` in `docs/ai/config.md` § Checks; extra places: `outside-root-allow`.
+- The update gives the template's roles `omitClaudeMd: true` and `.claude/settings.json` a `SubagentStart` hook;
+  Claude Code before 2.1.271 ignores the field, so workers there get the rules twice.
 
 ### Added
-
-- **Commit secret scan: accepted false alarms in `docs/ai/local/secret-accepted.md`.** A line that cannot carry the
-  `act:allow-secret` comment (for example a JSON script entry whose name looks like a credential) can be accepted as
-  `- <path> <hash>: <reason>`; the hold message prints the finished entry. A changed line or another file is held
-  again, and a missing, oversized or unreadable list accepts nothing.
-- **Reads and writes outside the project root are checked.** The new check `outside-root` (rule
-  `R-safe-outside-root`, `docs/ai/config.md` § Checks) refuses Read, Write, Edit, Grep, Glob and shell commands that
-  name a path outside the project root, for the orchestrator and workers alike. Allowed without an entry: the folders
-  in `permissions.additionalDirectories`, the system temp directory, Claude Code's own folder for the project
-  (including `~/.claude/plans/`) and, read-only, `~/.claude/plugins/` and `~/.claude/skills/`.
-  Further places go into the new row `outside-root-allow` (comma-separated paths, ` (read)` after a path for
-  read-only). New projects start with `block`; an existing project without the row runs the check as `warn` and gets
-  a one-time note at session start saying how to switch it to `block`. `ACT_OUTSIDE_ROOT=block|warn|off` overrides
-  it for one run. `act-adopt` stays possible: the owner starts the first scan with the `!` prefix, which opens the
-  target folder for 24 hours or until `--abort`, also past `--finish`; `--apply` only refreshes a valid marker. Limits: the shell check is best effort, and programs that open files themselves and MCP tools with a
-  path are not checked.
-- **Worker runs are measured.** When a worker ends, the usage counter reads its transcript and records duration,
-  steps and tokens — `fresh` (input, cache writes, output) and `cache` (cache reads) — per role and tier in
-  `.act-local/usage.json`, the newest 50 runs each. Numbers only; they are never sent with feedback.
-  `usage.py --estimates` shows median and 80th percentile per role and tier with the date of the last measurement;
-  `usage.py --backfill` reads a project's existing transcripts once, without counting anything twice. Claude Code only.
-- **`docs/project/integrations.md` has a hand-written section** between `act:integrations-own` marks, for
-  example for an MCP server of a service other than the repo host. `integrations.py check --write` keeps it and
-  rewrites the rest; a begin mark without an end mark stops the command without writing.
-- **Path-bound rules under `.claude/rules/` are visible and kept.** `rules.py --list` and `--validate` show
-  Claude Code's `.claude/rules/*.md` files with their `paths:` patterns (block list, inline list with braces,
-  scalar, trailing comments), warn about a pattern that matches no project file, and note a file without `paths:`
-  that loads at every start. `act-adopt` proposes to keep such files instead of merging them, which would lose
-  their binding. The `explorer` and `builder` roles note that a path-bound rule loads only once a matching file is
-  read or written through a file tool.
-- **Ten new coding rule sets:** PowerShell, Docker, CI (GitHub Actions, GitLab CI), Rust, C, C++, Kotlin, CSS (for
-  projects without Tailwind), JavaScript (for projects without TypeScript) and React. Each holds what goes beyond
-  general knowledge (typical agent mistakes, version-dependent rules, toolchain, tests). `init` switches them on
-  from marker files (`Dockerfile`/Compose files, `*.ps1`, workflow files, `Cargo.toml`, a Kotlin Gradle build or
-  version catalog, C and C++ sources, stylesheets without Tailwind, `package.json` with JavaScript sources,
-  `react`/`next` dependencies); `init-notes` name detected languages that have no set yet (Flutter, Rails, Ruby,
-  R, Laravel) with a pointer to `act-feedback`.
-- **`act-update` lists new coding sets and groups in `docs/project/coding_rules.md`.** A set the template adds
-  appears unchecked, a new group of a checked set appears checked; existing lines, boxes, reasons and own rules
-  stay as they are. Before, the update only reported them. The scaffold says right after its introduction that a
-  checked set is imported with `@`.
-- **`docs/project/glossary.md` in every new project:** a place for the project's own terms, abbreviations and
-  turns of phrase, listed in the docs index, checked by `act-audit-docs`, and not loaded every session. It is
-  scaffold (`act:default`), so a non-English docs language lists it for translation.
-- **`entries.py compact` merges old archive entries into monthly collections.** Archived entries older than a
-  week, and journal entries, go into one file per kind and month (`Q-2026-09.md`, `ledger-2026-09.md` …) with
-  one anchored section per entry; links in the project are rewritten to the anchors, the head names the commit
-  that still holds the full text, `--plan` previews, a second run changes nothing. It refuses while a file to
-  merge is uncommitted. `entries.py archive` records the archive date as `archived:`, and the next free id and
-  the duplicate check also read collection files.
-- **Update channel `release` or `latest`.** The key `update-channel` in `docs/ai/config.md` (or
-  `update.py --channel`) chooses what `act-update` brings: `release`, the default, offers only the newest stable
-  release tag and never moves a project that is already past it; `latest` follows the default branch. The
-  session-start check follows the channel ("template release vX.Y.Z available"), `.act-lock.json` records
-  `template.ref`, and a project without the key gets a one-time note. A source without release tags is followed
-  at its tip with a note while the channel is the built-in default or `release` in `docs/ai/config.md` (which
-  `init` writes); `--channel release` and an invalid value stop.
-- **`/act-version` and `update.py --versions`** list the installed version, the channel, the source's releases
-  and the tip of its default branch, and what `act-update` would take, without a clone.
-- **`init` asks which update channel to follow** (`release` by default, or `latest`), accepts
-  `--update-channel` (also through `act-adopt --apply`), writes it to `docs/ai/config.md` § Update, and notes when
-  the template clone is already past the newest release. `act-doctor` reports a value other than `release` or
-  `latest`. Existing projects keep their `config.md`; without the key they get the one-time note of `act-update`.
-- **Archive compaction, part 2: `act-compact` and `compact_check.py`.** After `entries.py compact`, workers may
-  shorten only text that is recognisably the assistant's (paragraphs with a bold label and the option list below
-  them) and write a monthly topic overview `archive/YYYY-MM.md`. `compact_check.py` compares every section with
-  the original in git: ids, hashes, versions, dates, paths, numbers and every line the human wrote, marked or
-  not, must survive; a section deleted by hand is reported; `--restore` puts a section back in full length. The
-  session start says once a day when compaction is due (`archive-compact: 30d 300`, `archive-shorten: on` in
-  `docs/ai/config.md`).
-
-### Changed
-
-- **Estimates in minutes and `tkn`, never person-days.** `act-idea`, `act-prepare`, the task and backlog READMEs and
-  `R-cost-delegate` ask for `~<n> min · ~<n> tkn fresh · ~<n> tkn cache` plus the assumption behind it, based on
-  `usage.py --estimates` (runs per role times the median, up to the 80th percentile) where measurements exist.
-- **A rule that keeps being violated is named as a candidate for a check.** `R-work-override` and `act-feedback`
-  say so; the rule's text then shrinks to what the check does not cover. The known limits of the shell checks
-  (`topics/safeguards.md`) now list writes from inside a program and the authorship of `feedback.py --direct`.
-- **`act-adopt` says the tool copy stays the template's** until the next `act-update`.
-- **The `git-metadata-guard` row in `docs/ai/config.md` § Checks names every file the check covers**
-  (`.vscode/tasks.json`, `.devcontainer/**`, `.devcontainer.json`, `.envrc`, `.mcp.json`, `folderOpen` tasks).
-- **`act-adopt` keeps a `.junie/guidelines.md` that only points to `AGENTS.md` or `CLAUDE.md`** instead of
-  proposing to adopt it; Junie still gets no bridge.
-- **The doctor's tier proposal is remembered.** `doctor.py --inbox` notes count and day in
-  `.act-local/tier-proposals.json` and files the same proposal again only after at least 8 more outcomes for that
-  role and tier; a second run on the same day keeps it in the open daily report.
-- **`update` checks at the start that Git is 2.25 or newer** and stops with a message naming the version found,
-  instead of failing at the commit after all files are written; `--plan` and `--no-commit` are not affected.
-- **The `security-check: deps` offer at `init` covers pnpm projects.**
-- **`R-human-text` names one exception:** `act-compact` may shorten the assistant's own text in the sections of
-  an archive collection file; every line the human wrote stays verbatim.
-- **Proposals under `docs/ai/proposals/` carry a frontmatter header** (`---` around `author`, `date`, `target`) like
-  every other entry, including those written by the adoption content step, so they keep that form when archived.
-  Older proposals with the plain header lines are still read.
-- **Workers no longer load the orchestrator rules.** The template's roles carry `omitClaudeMd: true`, and a
-  `SubagentStart` hook hands them the rest of what `CLAUDE.md` loads (shared rules, coding rules, your own rules,
-  `CLAUDE.local.md`, the user-level `~/.claude/CLAUDE.md`) in up to six parts below Claude Code's 10,000-character
-  limit — about 24k characters less in every worker start. `update` adds the field to existing template roles and
-  their `-high` variants (your own roles and an explicit `omitClaudeMd: false` stay as they are) and the hook entries
-  to `.claude/settings.json`. `rules.py --worker` shows the parts. Claude Code before 2.1.271 ignores the field, so
-  workers there get the rules twice; details in the header of `.act/scripts/rules.py`.
-- **The seven mechanically checked rules are shortened to what they forbid or require**
-  (`R-safe-no-secret-read`, `R-safe-outside-root`, `R-safe-git-reset`, `R-safe-git-discard`, `R-safe-git-metadata`,
-  `R-cost-delegate`, `R-cost-wait`): recognition details, limits, switches and the `Write scope:`/`Cap:` syntax moved
-  word for word to the new `.act/rules/topics/checks.md`, about 4.3k characters less in every session and worker.
-  The block messages of the write-scope, cap and scope-overlap checks name the syntax themselves and point there.
+- Workers start with about 24k characters less rule text; `usage.py --estimates` shows what runs cost.
+- `entries.py compact` merges old archive entries into monthly files; git keeps the full text.
+- `docs/ai/local/secret-accepted.md` accepts a known false alarm of the commit secret scan.
+- `/act-version` shows installed version, channel and what `act-update` would take.
 
 ### Fixed
-
-- **`act-release` keeps Markdown headings in the tag message.** The tag is created with `--cleanup=verbatim`,
-  and the stored message is compared with the release notes before anything is pushed.
-- **Feedback metrics count only the project's files.** `files` and `size_mb` come from `git ls-files -co
-  --exclude-standard` in a git checkout, so a vendor, IDE or media folder that git ignores no longer inflates them.
-- **Skills started by typing their slash command count in feedback usage.** Before, only skills the model invoked
-  itself were counted; built-in and own commands stay out, as before.
-- **The board no longer drops tasks silently.** Open tasks list the most recently worked task first, show the task
-  id before the title, and end with `… +N more` when there are more than five; the session-start excerpt does the same.
-- **The daily dependency scan skips lock files git ignores** and nested checkouts with their own `.git`. The
-  session-start note groups findings per lock file, states the age of the scan, and drops a result once a scanned
-  lock file has changed or disappeared.
-- **The PowerShell write guard accepts the call operator with a literal program.** `& 'python3' .act/scripts/x.py …`
-  or `& "C:\…\python.exe" … > <temp file>` is checked like a direct call. Variables, script blocks and `iex` after
-  `&` stay refused, and `& 'pwsh' -Command …` is now scanned.
-- **The shell scanner behind the write guards is fast on long `cd` chains.** 800 statements took 21 s before and
-  take well under a second now; the targets it finds are unchanged.
-- **The frontmatter migrations read headers exactly like the readers** (line breaks at LF only, a non-breaking
-  space counts as whitespace), write each file through a temporary file and an atomic replace, skip symbolic
-  links, and leave out `archive/legacy` whatever its letter case.
-- **`init` in a clone with a detached HEAD commits the removal of the template's own files** (such as
-  `CHANGELOG.md` and the `.github` community files) instead of leaving them as unstaged deletions; a file the
-  user deleted before `init` stays out of the commit.
-- **`init --target` run from a set-up project records the template, not the project.** Address and commit come
-  as a pair from that project's `.act-lock.json`, so the new project's update source is the template and its
-  first update no longer stops with a downgrade warning.
-- **`init` commits a kept `.github/README.md` in the first commit** and names the other unmarked files under
-  `.github/` that it left out; files the clone already tracks are not named.
-- **A translated scaffold README is no longer reported as a hand change** by the one-inbox migration unless the
-  scaffold itself changed since the project's last commit; this also holds for a project in a subfolder of a
-  larger repository.
-- **The SQL checks of `security-check` no longer hold commits for "update" or "select" in prose, URL paths or
-  hyphenated words.** `sql-fstring` and `sql-concat` require a statement structure (`SELECT … FROM`, `INSERT
-  INTO`/`VALUES`, `UPDATE … SET`, `DELETE … FROM`); aliases, placeholders, optimizer hints and statements split
-  across concatenated literals are still caught.
-- **A project's own coding set, or a local override of a template set, under `docs/ai/local/coding/` works.** It
-  can be switched on in `docs/project/coding_rules.md`; the import names the file actually loaded (local before
-  template), and `rules.py --validate` and the doctor accept it.
-- **A hand-edited usage store with non-numeric outcome counts no longer breaks the doctor's tier check.**
-- **Worker run measurement is sturdier.** Idle gaps over 30 minutes are left out, so a worker continued hours
-  later no longer inflates its minutes; a damaged `usage.json` (wrong types, non-numeric counts) is reported per
-  field instead of a traceback; roles with measured runs but no counted start no longer show as `0x`; `Tier:`
-  values in backticks, bold or underscores are read as the bare tier.
-- **The Nuxt coding set no longer breaks the typecheck on Nuxt 4 and later.** Path aliases go into
-  `nuxt.config.ts` only, the root `tsconfig.json` holds just `references`; test files outside the generated
-  contexts are added through Nuxt's TypeScript options (including `nitro.typescript.tsConfig` for the server)
-  and proven with one deliberate type error per context.
-- **The Tailwind coding set is version-bound for source detection:** `content` paths on v3, automatic detection
-  with `@source` for additions from v4 on.
-- **A pnpm project is scanned without osv-scanner.** The dependency scan falls back to `pnpm audit --json` for
-  `pnpm-lock.yaml` (pnpm 9 or newer); an older or missing pnpm is reported as a missing tool as before, and
-  output in an unexpected shape counts as a failed scan, never as a clean one. `act-deps` notes that
-  accepted-finding ids differ between `npm audit` and osv-scanner or `pnpm audit`.
-- **Bridges are no longer reported as modified with `core.autocrlf=true`.** The `.gitattributes` block marks
-  `CLAUDE.md`, `AGENTS.md` and `docs/ai/rules.md` with `text eol=lf`. An update replaces the template's earlier
-  `merge=ours` lines in place; a line of the project's own for the same file is kept and reported as a conflict.
-  A project that had deleted one of the earlier lines gets it back in the new wording, as with any reworded line.
-- **A skill copy is no longer stuck as "kept (edited locally)" because of line endings.** A lock hash taken over
-  CRLF or LF matches the copy in either form, the lock records the hash over LF, and a really edited copy is
-  still kept.
-- **`update` reads file lists from git without path quoting,** so files with non-ASCII names are recognised and a
-  deleted one reaches the update commit.
-- **A Kotlin project no longer gets the Java set** unless it also has Java sources; Android layouts and
-  multi-module builds are recognised.
-- **The free-text `stack` value switches a set on only for a whole name** (`python3`, `Vue3`, `PHP8` count, `C#`
-  and `objective-c` no longer switch on `c`); PostgreSQL, MySQL, SQLite and MariaDB switch on the SQL set.
-- **The summary of the `.gitattributes`/`.gitignore` block names replaced lines** separately from added ones.
-- **Copies recorded by `act-load-settings` and for own skills are hashed over their LF form,** like all other
-  copies.
-- **A read-only or narrowly scoped worker can use the system temp directory as documented.** A glob in the last
-  path segment under the temp directory (`rm -f /tmp/x/*_ran`) and an extraction with `tar -C`, `--directory` or
-  `unzip -d` into a literal temp folder pass the write-scope check, as long as every entry of that folder, hidden
-  ones and links included, lies inside the temp directory; globs earlier in the path, `..`, leading-dot globs and
-  variables stay refused.
-- **A quoted here-doc for a program that is not a shell is no longer read as commands** when its opening line
-  also holds `[`, `${`, a backtick or `((`; a body fed to a shell (`bash <<'EOF'`, `sh -s`, `| bash`) is still
-  scanned. This also ends the recursive-delete false alarm on prose in such a body.
+- pnpm projects are scanned (`pnpm audit`, pnpm 9+); the board no longer drops tasks silently.
+- Smaller fixes in `init`, `act-adopt`, the shell guards and bridges under `core.autocrlf=true`.
 
 ### Security
-
-- **The dependency scan no longer passes findings as a clean result.** On Windows with a non-UTF-8 code page
-  (cp1252), `security_scan.py` read the scanner's UTF-8 report in that code page; one unknown byte emptied the
-  output, and a tool that exited 1 *because* it found something ended as "no known vulnerability found" with exit 0.
-  Tool output is now read as UTF-8. A tool that exits with its findings code but leaves no readable report (for
-  pip-audit, whose own fatal errors also exit 1, only a non-empty one) holds
-  the commit, makes `security_scan.py --deps` exit 1 with an `UNREAD FINDINGS` line, and shows up in the
-  session-start note and the report after a merge. Any other tool error prints "scan incomplete" instead of the
-  clean line; a timeout or a tool that will not start still only notes, so a machine without network can commit.
-- **`secret-scan` catches a literal fallback after an environment lookup in more spellings:** Laravel
-  `env('X', 'v')`, keyword defaults (`default=`), `os.environ.pop`, `import.meta.env`, `Deno.env.get`, Ruby
-  `ENV[...]` and `ENV.fetch`, Python string prefixes and triple quotes, nested defaults, and lookup chains of more
-  than six names. An f-string that interpolates a value is not read as a literal.
-- **`sql-fstring` also catches a template literal whose interpolation follows the SQL text.**
-- **`git-metadata-guard` sees what a recursive copy brings along.** A copy whose source directory or glob holds
-  a protected file (`cp -r payload/. .` with a `.vscode/tasks.json`, `.git/config` or `.claude/settings.json`
-  below it, `cp payload/* .vscode/`, `Copy-Item -Recurse`) is refused; the files below the source (at most
-  2,000) are mapped onto where they land and checked one by one.
-- **Credentials in a template source URL are masked** in `update.py` output, plan, version list and fetch errors,
-  also with an `@` in the password.
+- The dependency scan no longer reports findings as clean on Windows; an unreadable report holds the commit.
+- `git-metadata-guard` checks what a recursive copy brings along, e.g. `cp -r payload/. .` with a `.git/config`.
+- `secret-scan` catches a literal fallback after an environment lookup in more spellings; `sql-fstring` more templates.
+- Credentials in a template source URL are masked in `update.py` output.
 
 ## [2.2.0] - 2026-10-20
 
-Quick capture from the chat, entries with YAML frontmatter, a one-step archive that takes pasted images along, four
-new safety checks and a shell scanner that reads bash the way bash does. Projects on v2.1.0 update with `act-update`.
+Quick capture from chat, YAML frontmatter on entries, one-step archive, four new safety checks. Update: `act-update`.
+
+### Highlights
+- **Quick capture:** `todo:`, `note:` or `idea:` in chat is filed with no model turn; `quick-capture: off` stops it.
+- **Entries open with YAML frontmatter,** so GitHub and Markdown editors show their fields as metadata.
+- **`entries.py archive <id|file>`** archives a finished entry in one step and takes pasted images along.
 
 ### Upgrading from v2.1.0
-
-- Run `act-update` (or `python .act/scripts/update.py`). Migration `003` moves the header of every inbox entry into
-  YAML frontmatter, migration `004` does the same for tasks, backlog, journal and the archive under `docs/ai/work/`
-  (`archive/legacy/` and every `README.md` stay as they are). Both rewrite each file once and leave it alone after.
+- Run `act-update`: migrations `003` and `004` rewrite each inbox, task, backlog, journal and archive entry once.
 - Updating now needs Git 2.25 or newer.
-- Claude Code's `Artifact` tool is off after the update; `artifacts: on` in `docs/ai/config.md` keeps it.
+- Claude Code's `Artifact` tool is off after the update (saves ~13,700 tokens a session); `artifacts: on` keeps it.
 
 ### Added
-
-- **Quick capture from chat** — a message that begins with `todo:`, `note:` or `idea:` (any letter case) is filed by
-  the `UserPromptSubmit` hook without a model turn and never reaches the model, so it costs no tokens and does not
-  interrupt a running task. `todo:` and `note:` become inbox entries marked `triage: open`; `idea:` becomes a new
-  section at the end of your `docs/ai/concept/ideas-<identity>.md`, text unchanged. The assistant then processes
-  each `triage: open` entry right after the answered inbox entries: it decides whom a todo is for (or turns it into
-  a backlog entry), or replies below a note. The board and the session-start excerpt list such entries under
-  "Answered — the assistant processes these", and an answered note waits under "Waiting for you". Switch with
-  `quick-capture: on|off` in `docs/ai/config.md` (a missing key counts as `on`); new rule `R-human-capture` covers
-  tools without the hook, where the assistant files the entry itself.
-
-- **Coding rule set `nuxt5`** — rules for Nuxt 5 and its nightly channel on top of `nuxt`: versions and channel,
-  modules, Nitro 3/h3 v2 server code, typed `$fetch` and route targets, Unhead 3, and the checks after every Nuxt
-  update. `init` checks it when `package.json` names `nuxt` at major 5 (`^5.0.0`, `npm:nuxt-nightly@5x`) or the
-  `stack` value says "Nuxt 5"; `nuxt.md` points an existing project to it.
-
-- **New rule `R-safe-dev-server`** — a server the assistant starts for tests, a browser check or a screenshot runs on
-  a port of its own, never on one of the project's default ports; the owner's running server may be reused, but is
-  stopped, restarted or moved only after asking, and processes are never ended by name.
-
-- **`act-teach`** — short Markdown lessons on a topic, ideally on the project's own code, with exercises and a
-  learning record. New config key `teach-lessons: local | docs` (`.act-local/learn/` or versioned under `docs/learn/`,
-  which `act-audit-docs` then covers).
-- **Board excerpt at session start** — open tasks with their last state, waiting and answered inbox entries, about
-  2,000 characters, so a bare "continue" works from it. New config key `board-at-start: on | off`.
-- **New rule `R-code-checks-intact`** — a failing test, lint or type check is fixed in the code, never by deleting,
-  skipping, loosening or silencing the check; a check that is itself wrong is changed as its own step.
-- **Reviewer verdict `CONDITIONAL`** next to `ALLOW` and `BLOCK`: committed with its one condition filed in the inbox;
-  a known bug is always `BLOCK`.
-- **Four new safety checks:** `secret-read` (no secret file such as `.env`, private keys or cloud credentials read
-  into the context; `.env.example` and `*.pub` stay free), `git-metadata-guard` (no write to `.git/hooks`,
-  `.git/config` or a git config key that runs code; workers also not to `.claude/` settings, roles and skills),
-  `git-discard` (no `git clean -f`, folder checkout/restore over changes, `stash drop/clear`, force push to the default
-  branch or `branch -D` of an unmerged branch), `worker-scope-overlap` (no worker start whose `Write scope:` overlaps a
-  running worker's). `R-cost-delegate` gains `Depends on:` and a shared read note for several workers.
-- **Learning step** — `act-bug`, `act-perf` and `act-refactor` end by asking whether the finished code carries what
-  was learned; if not, a short note goes under `docs/project/learnings/`, which `act-prepare` and `act-bug` read first.
-  `act-commit` asks the same after two or more rework rounds.
-- `context_size.py --report` (and `--json`): base load of the first call, cache hit rate and cache breaks, read from
-  the transcript.
-- `doctor.py` checks skill and role frontmatter (YAML pitfalls, required fields, name vs. folder, known values) and
-  reports an expired or invalid `revisit:` date under a decision.
-- `act-audit-docs` can run as a Claude Code workflow script (one explorer and one doc-writer per doc area, in
-  parallel), only on explicit request.
-- Feedback: the project id is created with the first payload, so a direct message is never anonymous;
-  `--direct --contact <email>` adds an optional reply address.
-- This `CHANGELOG.md`, filled back to `0.1.0-beta` from the release notes. `init` removes it from a new project in
-  step 8 like the template's own README; an edited copy is kept with an inbox note.
-- Community files for the template's GitHub repository under `.github/`: code of conduct, contributing guide,
-  security policy, an accessibility statement (every environment "not tested", known barriers listed), issue forms
-  and a pull request template. They recommend `/act-feedback` as the first way to report a problem.
-- **`entries.py archive <id|file>`** archives a finished task, backlog item or inbox entry to
-  `docs/ai/work/archive/` in one step; an inbox entry gets `status: done`. Images and other files it links beside
-  itself (a pasted `img.png`, `image (1).png` …) move along: generic or already taken names get the entry id in front
-  (`Q<n>-img.png`), links are rewritten, and a file another Markdown file under `docs/` still links is copied instead
-  of moved. Everything is planned before the first write, so a failure leaves nothing half-done. `act-commit`,
-  `act-idea`, the chat rule and the inbox and concept READMEs point to it.
-- `doctor` reports files under `docs/ai/inbox/` and `docs/ai/concept/` that no Markdown file under `docs/` links
-  (kind `orphan-file`), such as a pasted picture left behind when its entry was archived by hand.
+- Rules `R-safe-dev-server` (test servers on their own port) and `R-code-checks-intact` (fix the code, not the check).
+- `act-teach` lessons, coding rule set `nuxt5`, `board-at-start` (`on`|`off`): open tasks shown at session start.
+- Four safety checks: `secret-read` (no secret file read into the context), `git-metadata-guard`, `git-discard` (no
+  `git clean -f`, `stash drop`, force push to the default branch) and `worker-scope-overlap`.
 
 ### Changed
-
-- **Entries open with YAML frontmatter** — the header fields of every inbox entry, task, backlog item and journal
-  entry (`id`, `kind`, `for`, `status`, `created` …) now stand between two `---` lines, so GitHub, GitLab and Markdown
-  editors show them as metadata instead of running them together into one paragraph. `entries.py`, quick capture and
-  the reports of `doctor --inbox` and `act-adopt` write the new form; every reader accepts both forms, so hand-written
-  entries in the old form keep working. `act-update` rewrites the existing entries once: migration
-  `003-inbox-frontmatter` the inbox, migration `004-work-frontmatter` the tasks, backlog, journal and the archive under
-  `docs/ai/work/` (archived inbox entries included). `docs/ai/work/archive/legacy/` and every `README.md` stay as they
-  are.
-
-- **Claude Code's `Artifact` tool is switched off by default** to save about 13,700 tokens at every session start.
-  New config key `artifacts: on | off` (default `off`): `off` sets `"enableArtifact": false` in
-  `.claude/settings.json` at session start, `init` and `update`; the tool is gone from the next session on. Existing
-  projects lose it after their next update — `artifacts: on` in `docs/ai/config.md` keeps it. `on` only removes an
-  entry the template set itself; a value the project set itself is never overwritten, a contradicting one is reported
-  once.
-- **Feedback to the template author defaults to `confirm` in new projects** instead of `off`: `init` writes
-  `feedback: confirm` whenever nobody chooses — a run without a terminal (as `act-setup` and `act-adopt` run it), an
-  empty answer, or three invalid ones. `confirm` shows every payload and asks before each send, so nothing leaves
-  without a yes; `off` stays one edit away in `docs/ai/config.md` § Feedback. Existing projects keep their value, and
-  a `config.md` without the key still counts as `off`. A project that has never sent counts the feedback cadence from
-  its first session with sending on, so it is no longer shown "feedback due" from the very start.
-- **`act-setup` and `act-adopt` translate the docs scaffold in the same run** when `language-docs` is not English,
-  and close the `translate-scaffold` todo themselves; it is left for later only by an `init` run without either skill.
-- **`doctor.py` no longer proposes a lower tier** for a role whose workers' results were all accepted; it
-  proposes only a higher one, once 8+ outcomes show 40%+ reworked or escalated (`R-role-outcome`). An
-  accepted result does not show that a cheaper tier would have done as well.
-- **Nuxt coding rules, stuck dev server on Windows:** no longer advise ending the process on port 3000; they end only a
-  server the assistant started itself, found by its listening PID (`Get-NetTCPConnection … -State Listen`, or
-  `findstr /C:` with `LISTENING`, since plain `findstr ":<port> "` also matches longer ports and client connections).
-- `init` removes these community files from a new project in step 8, like the template's own README; an edited
-  copy is kept with an inbox note, and `.github/` goes once nothing else is left in it.
-- `R-work-evidence` counts a CI run, a log excerpt or a screenshot of the running application as evidence, and every
-  reachable feedback loop runs before the human's.
-- Workers mark every assumption; an accepted one is confirmed, asked in the inbox or recorded with the task's state.
-- `R-work-idea-first` and `act-idea`: the recommended option names its failure modes and its way back; a throwaway
-  prototype and an existing dependency or service count as options, and a `revisit:` date is set when the use is
-  uncertain. `act-prepare` sets a first checkpoint after the first runnable slice.
-- New projects get `dependency-check: regularly`; existing values stay.
-- `context-hint` defaults to 180000 tokens, just below where Claude Code compacts on its own after an idle hour.
-- `worker-write-scope` refuses fewer harmless commands: every worker may write into the system temp directory, even
-  with `Write scope: none`, when the path is written out (`/tmp/...` in Bash, or the directory's absolute path in
-  any tool) and the project itself does not lie inside it; the resolved path counts, so `..` or a link back into the
-  project is judged as a project target. A target with a variable such as `$TEMP` stays refused, and so does a
-  temp or scratchpad path with a glob character (`.*` can match `..`); `R-cost-delegate` says what
-  `Write scope: none` now allows. An unquoted brace
-  list in Bash (`app/{css,js}`) is checked as every path it expands to and as its literal name. A refusal names the
-  way out for a target with a variable or command substitution and for a relative target after a `cd` on an earlier
-  line.
-- `secret-read` no longer reads the search pattern of `grep`, `egrep`, `fgrep`, `rg` or `git grep` as a file name,
-  so a secret scan such as `git diff --cached | grep -E '\.env|id_rsa'` runs; files named as operands, `-f` pattern
-  files and anything after `-e` stay checked.
-
-### Security
-
-- **The Bash write checks read a backslash-newline the way bash does.** They no longer join it in a comment, in
-  single quotes or in the body of a heredoc with a quoted delimiter (including a mixed one such as `<<'E'$x`, where
-  bash expands nothing in the delimiter), and they follow comments, quotes and heredocs inside `$(...)` within double
-  quotes; an escaped backslash before the pair is kept. Before, a write or delete after such a comment or heredoc
-  could slip past the `.act/` guard, the worker write scope and the delete/reset checks.
-- **A heredoc fed to a shell is scanned as a script** — `bash <<EOF`, `sh -s <<EOF`, `cat <<EOF | bash`,
-  `{ bash; } <<EOF`, `(bash) <<EOF` — and the `$(...)` in any unquoted heredoc body counts on its own, since bash
-  expands it before the shell reads the body. A `-c` after `--`, `-` or a script name is no longer taken as the
-  shell's own option, and a `<<` bit shift in arithmetic no longer counts as a heredoc.
-- **A crafted command with very many heredocs or pipe stages is scanned in linear time**, so it can no longer stall
-  the `PreToolUse` hook past its timeout, which would have let the call through.
-- `git-metadata-guard` also covers files that start code when the folder is opened: workers may not write
-  `.vscode/tasks.json`, `.devcontainer/`, `.envrc` or `.mcp.json`, and nobody adds a `folderOpen` task. A copy or
-  move into a directory (`cp`, `mv`, `Copy-Item`, `Move-Item`) is checked as `<dir>/<source name>`, which also closes
-  `cp -r x/.claude .` for workers.
-- Agents started by a Claude Code workflow script are bound to their `Write scope:` and `Cap:` like any other worker.
-- The `git reset --hard` guard no longer lets the command through when `git status` prints a file name it cannot
-  decode (`core.quotePath=false`).
-- The recursive-delete check covers more forms: `rm --rec` prefixes, glued `rd/s/q` and `rd/q /s` switches,
-  `del`/`erase`, wrappers such as `busybox` or `setsid`, `$SHELL`/`$0` as shell names, `iex`/`Invoke-Expression` like
-  `eval`, and every `find -exec` block.
+- New projects default to `feedback: confirm`: each payload is shown, nothing leaves without your yes; `off` stays.
 
 ### Fixed
+- Updates on Windows no longer fail with "WinError 206"; session start no longer rewrites unchanged bridges.
 
-- **A template update that touches many files no longer fails on Windows** with "WinError 206" (command line too
-  long) at its commit step, as a migration rewriting several hundred entries would. The paths now reach git on
-  standard input instead of the command line, the commit still covers exactly those paths, and the read-only path
-  queries run in chunks; `init`'s first commit does the same. This needs Git 2.25 or newer.
-- **Session start no longer rewrites unchanged bridges.** `CLAUDE.md`, `AGENTS.md` and `docs/ai/rules.md` are written
-  only when their content differs from the source apart from line endings. On a Windows checkout with
-  `core.autocrlf=true`, the LF rewrite used to leave the files listed as modified with an empty `git diff`, which
-  blocked `act-update` and `act-commit` until they were added again. `act-update` skips identical bridges the same way.
-- **`update.py --plan` says "nothing to update" when there is nothing to update.** When the project is already at the
-  source's commit and no migration is due, the plan used to describe steps 5 to 10 anyway, so `act-update` asked for
-  consent to an update that did not exist. Plan and real run now end the same way.
-- **Hidden files on Windows can be overwritten.** Writing an existing file with the Hidden attribute (a `.gitignore`
-  set hidden by an editor, for example) used to abort `init` and `act-adopt` with `PermissionError` 13 and leave the
-  adoption in `init-failed`. `init` and `act-adopt` now overwrite such a file in place and keep its attributes; where
-  that is impossible, the error names the file and the way out (`attrib -R -H`).
-- The worker write scope reads a timestamp without a time zone as UTC.
-- Feedback documentation: the reply address stays in the local copy of its one payload and is never reused for a
-  later message (it said "never stored" before).
+### Security
+- The Bash write checks read backslash-newline and heredocs the way bash does, also those fed to a shell, so a write
+  after them no longer slips past the `.act/` guard; very many heredocs are scanned in linear time.
+- `git-metadata-guard` also blocks workers from `.vscode/tasks.json`, `.devcontainer/`, `.envrc`, `.mcp.json`;
+  workflow-script agents are bound to their `Write scope:` and `Cap:`.
+- The `git reset --hard` guard holds on an undecodable file name; the recursive-delete check covers more forms.
 
 ## [2.1.0] - 2026-10-09
 
-Six new skills, a status line that says when a fresh session pays off, and safety checks that hold more and block
-less. Projects on v2.0.0 update with `act-update`.
+Six new skills, a status line that shows the context size, and safety checks that hold more and block less.
 
-### New skills
-
-- **`act-integrations`, `act-pr`, `act-issue`** — work with GitHub or GitLab, self-hosted included: check which
-  access exists (REST token, MCP servers) and record it in `docs/project/integrations.md`; prepare a pull or merge
-  request from the diff; read, create, comment on, close and start work on issues. Every write shows a preview and
-  waits for your yes. New config section **Git hosting** (`target-branch`, `forge`, `forge-host`); a token goes only
-  to github.com, gitlab.com or a host you named, never over plain http.
-- **`act-handover`** — before you close a session or `/clear`: uncommitted changes, started tasks without a state
-  line, answered inbox entries, and the sentence to type into the new session.
-- **`act-check-translations`, `act-seo`** — code-only checks of translation files (missing, extra and empty keys,
-  placeholders, keys used but not defined) and of on-page basics for search engines (title, description, headings,
-  canonical, Open Graph, alt text, robots.txt, sitemap).
-
-### Sessions, status line, board
-
-- The status line shows the context size (`ctx 127k`) and splits tasks into `run`, `wait` and `new`. A started task
-  waits when you mark it (`entries.py state <id> --wait`), when it has been quiet longer than `task-wait-hours`, or
-  when an open question or todo names it. What waits for you appears by id — questions `Q<n>`, todos now `U<n>` —
-  and every other kind as a count.
-- Once the context reaches `context-hint` (default 150000 tokens), the assistant suggests `/clear` or a new session
-  at the next task boundary: a fresh session after a finished task is the largest token saving there is. New config
-  section **Session length**.
-- Tasks get a `started:` header. Each person gets an ideas file under `docs/ai/concept/`; new entries are reported
-  at session start.
-- The board's place is a setting (`board: docs | shared | local`), and it is regenerated after git merge, pull,
-  rebase, switch and similar commands.
-
-### Rules and settings
-
-- New rules: `R-cost-amend` (an addition to a running worker's assignment goes to it at once, or the worker is
-  restarted when that is cheaper), `R-safe-no-personal-data` (no real personal or customer data in what the model
-  sees), `R-work-bounded-output` (output of unknown length stays out of the context).
-- `R-human-chat` makes compact chat a token-saving goal, with `output-depth` levels `normal`, `sparse` and `verbose`.
-- `inbox-decisions: immediate | at-start` decides whether an open decision goes to the inbox at once or waits until
-  work on its backlog entry starts.
-- Reasoning per skill (`reasoning:` in a skill becomes `effort:` in the Claude Code copy, overridable in
-  `config.md` § Roles); a `run` key for the start command; active environment overrides named at session start;
-  promised replies kept as todos.
-- Skill descriptions are trigger-first and linted (`skills.py --check`, `act-doctor`); long skills load in stages
-  from `references/`.
-- Your own skills and roles under `docs/ai/local/` get their tool copies automatically at session start and on
-  update.
-
-### Safety checks
-
-- `secret-scan` now also holds credentials in URL query strings, single-quoted keys, PHP array entries, literal
-  fallbacks after an environment lookup and credential pairs inside a quoted value — and no longer holds a commit
-  over plain code expressions in source files. Every finding is named.
-- After `git merge`, `pull` or `cherry-pick`, the lock files that came in get a dependency scan; findings become an
-  inbox report, never a block.
-- The Bash write scanners read backtick and `$(…)` spans, combined with the previous scanner so a check can only get
-  stricter; they no longer block on `$'` inside quoted patterns or heredoc text, and fail closed beyond their nesting
-  limit.
-- Worker write scope: brackets are literal (`server/api/[id]/**`), and a wildcard that reaches outside the scope is
-  refused.
-
-### Update and adoption
-
-- `update.py` refuses a downgrade unless `--allow-downgrade`; `--catch-up` keeps the recorded template commit; a
-  failed fetch says what failed. `session-start-refresh: warn | off` is honoured by `update.py` too.
-- `act-adopt` keeps the chosen languages, turns adopted rules into overrides or own rules, and asks before applying
-  rows without a target.
-- On Windows, a file held for a moment by a virus scanner or IDE no longer makes a write fail; the security scans
-  print UTF-8.
-- Documentation site in English and German: <https://wrufeger.github.io/agentic-coding-template-docs/>, linked from
-  the README.
+### Highlights
+- **Six new skills:** `act-integrations`, `act-pr`, `act-issue`, `act-handover`, `act-check-translations`, `act-seo`.
+- **Status line** shows the context size (`ctx 127k`); from `context-hint` (default 150000) the assistant suggests
+  `/clear` at the next task boundary.
 
 ### Upgrading from v2.0.0
+- Run `act-update` (or `python .act/scripts/update.py`); in `solo` mode it renames each inbox todo to `U<n>-<slug>.md`.
+- In `team` mode run `entries.py assign` on the default branch for the same; the archive is never rewritten.
 
-- Run `act-update` (or `python .act/scripts/update.py`). In `solo` mode, migration `002` gives every inbox todo a
-  `U<n>` id and renames it to `U<n>-<slug>.md`; in `team` mode, `entries.py assign` on the default branch does the
-  same. The archive is never rewritten.
+### Security
+- `secret-scan` holds more credential forms (URL queries, quoted keys, PHP arrays) and no longer holds a
+  commit over plain code.
+- Write scanners read backtick and `$(…)` spans; worker write scope reads brackets literally, no outside wildcards.
+- Lock files that come in via `git merge`, `pull` or `cherry-pick` get a dependency scan; findings never block.
 
 ## [2.0.0] - 2026-09-28
 
-The rebuild. This release replaces the template's previous generation on `main`. The previous generation stays
-available, frozen, on the branch `v1`.
+The rebuild with checks through hooks; replaces the previous generation on `main`, frozen on the branch `v1`.
 
-### What changed
+### Highlights
+- **One layer under `.act/`** with setup (`act-setup`), updates (`act-update`, `act-doctor`) and layered rules.
+- **9 worker roles with model tiers, 23 skills;** Codex, Copilot, Cursor and Gemini CLI read `AGENTS.md` and
+  `.agents/skills/`.
+- **Checks through hooks:** secret and danger scans before a commit, worker caps and write scopes, a
+  `git reset --hard` guard.
 
-- **One layer under `.act/`**, in English, stdlib-only Python 3.9+. A project's own documentation stays in its
-  own language (`language-docs`); the chat language is remembered per person and machine.
-- **Setup from a fresh clone:** open it in your AI assistant and say what you want (`act-setup`) — a new project
-  right in the clone, a new project elsewhere, or an existing codebase taken over with `act-adopt`.
-- **Staying current:** `act-update` shows the diff first, tells local changes from template changes by a
-  manifest, runs migrations, and a daily check at session start says when a newer template exists.
-  `act-doctor` reports drift between project and template.
-- **Rules in layers** — shared, orchestrator, topics — switched on and off per project in `docs/ai/rules.md`;
-  coding rule sets per language in `docs/project/coding_rules.md`, preselected from the detected stack.
-- **Roles and skills:** 9 worker roles with model tiers instead of model names, 23 skills. Claude Code gets
-  the full bridge (hooks, skills, role bridges); Codex, GitHub Copilot, Cursor and Gemini CLI read `AGENTS.md`
-  (Gemini CLI: `GEMINI.md`) and the skills under `.agents/skills/`.
-- **Mechanical checks through hooks:** secret and danger scans before a commit, worker caps and write scopes,
-  a guard before `git reset --hard`, a status-poll guard, and an optional security check (dependency scan;
-  a deep scan before a release).
-- **Work records as single files:** one inbox (questions, todos, reports, notes), tasks, backlog and journal
-  under `docs/ai/`; the board is generated under `.act-local/`.
-- **Settings export and import** between projects; opt-in feedback to the template author.
-
-### Moving a project from the previous generation
-
-- Do **not** merge or pull the new `main` into a project built on the previous generation — the layouts differ
-  (`.claude/` there, `.act/` here). `update-template.py --apply` from the last state of `v1` refuses on its own.
-- Instead run `act-adopt` from a checkout of this release. It moves board, tasks, questions, journal, backlog
-  and the project's own docs into the new layout, on a branch of its own; the old state stays reachable.
-  Details (German): `UMZUG.md` on `v1`.
-
-### Notes
-
-- A project set up from a pre-release state of the rebuild whose `.act-lock.json` has no
-  `template.manifest_sha256` yet shows `.act/ was pulled in without update.py` at session start. Run
-  `python .act/scripts/update.py` (or `--catch-up`) once; the lock then records it and the note stops.
+### Upgrading from the previous generation
+- Do not merge or pull the new `main` into a project built on the previous generation; the layouts differ.
+- Run `act-adopt` from a checkout of this release; it works on a branch of its own and the old state stays reachable.
+- If `session start` says `.act/ was pulled in without update.py`, run
+  `python .act/scripts/update.py` (or `--catch-up`) once.
 
 ## [0.1.0-beta] - 2026-09-13
 
-First public pre-release of the previous generation (today the branch `v1`), documentation in German only.
+First public pre-release of the previous generation (now the branch `v1`), documentation in German only.
 
-- Rules in two layers: a tool-neutral `AGENTS.md` (roles, done only with evidence, commits by pathspec, live systems)
-  and `CLAUDE.md` as the Claude Code addition, with pointer files for Cursor, Copilot, Aider and Gemini CLI.
-- 8 sub-agents under `.claude/agents/` with a fixed model each, 6 skills (`/create-project`, `/apply-template`,
-  `/update-template`, `/audit-docs`, `/commit`, `/run-maintenance`) and 9 stdlib-only scripts.
-- Working folder `docs/ai/` (board, tasks, questions, ledger, backlog, checklists) and a `docs/project/` skeleton with
-  coding rule modules for 10 languages and stacks; `AI-CONFIG.md` steers the collaboration.
-- Optional live log `ai.log` through hooks.
+### Added
+- Rules in two layers (`AGENTS.md`, `CLAUDE.md`), 8 sub-agents, 6 skills and a `docs/ai/` working folder.
 
 [Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.5.0...HEAD
 [2.5.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...v2.5.0

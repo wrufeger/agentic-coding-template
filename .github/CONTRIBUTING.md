@@ -32,7 +32,8 @@ Conventions for a pull request:
 - Everything under `.act/` is written in English, identifiers included.
 - A visible change (new or changed rule, skill, check, config key, script behavior, fix) gets an entry in
   [CHANGELOG.md](../CHANGELOG.md) under `[Unreleased]`, in Keep a Changelog form (`Added`, `Changed`, `Fixed`,
-  `Security`, `Removed`), written for someone who runs a project on the template.
+  `Security`, `Removed`), written for someone who runs a project on the template: one line, two at most, and a duty at update as
+  its own line under `### Upgrading` (writing rules: `.act/formats/changelog.md`).
 - After changing anything under `.act/`, refresh the manifest: `python .act/scripts/manifest.py --write`
   (`--check` shows drift).
 - After changing a script's behavior or `--help`, regenerate the reference: `python .act/scripts/script_docs.py`

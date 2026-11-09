@@ -307,6 +307,7 @@ refuses") treats `block` as `warn`.
 | `update-branch-hint` | warn | update or settings import on a branch other than the default one: one note that the others get it only with the merge — never refuses, `block` counts as `warn`, `off` drops the note |
 | `update-check` | block | at session start: a note if `.act/` was pulled in without `update.py`, and — checked at most once a day — a note that the template has moved on, repeated at every start and shown on the board and in the status line until the update is installed; never refuses, `off` skips both |
 | `docs-order` | warn | `act-doctor` only, never refuses: a folder under `docs/project/` with five or more entries and no `README.md`, a file its `README.md` does not name, an index line without a file, a dead relative link, a concept whose questions are all answered; `block` counts as `warn`, `off` skips it (`R-docs-order`) |
+| `changelog-length` | warn | `act-doctor` only, never refuses: an entry under `[Unreleased]` in `CHANGELOG.md` longer than 250 characters (its lines joined), named with its first words; `block` counts as `warn`, `off` skips it |
 | `own-rules-budget` | 6000 | `act-doctor` only, never refuses: the characters the "Own rules" sections of `docs/ai/rules.md` and `docs/project/coding_rules.md` may have together before one warning names the size and up to five lines that read like history (a date, an entry identifier, "formerly … since …"); `off` or `0` skips it |
 
 ## Logging

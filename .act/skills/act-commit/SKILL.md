@@ -69,7 +69,8 @@ secures the result.
      `CHANGELOG.md` in the project root, read the changelog format the same way (`.act/formats/changelog.md`,
      `changelog-format`, or `docs/project/formats/changelog.md`). If it says entries are written as you go
      (preset `keep-a-changelog`), add one line under `## [Unreleased]` in the right group for a commit with a
-     visible effect for someone using the project, and put `CHANGELOG.md` into this commit's pathspec. A purely
+     visible effect for someone using the project, and put `CHANGELOG.md` into this commit's pathspec. The entry
+     follows the writing rules of that format; a duty at update gets its own line under `### Upgrading`. A purely
      internal commit gets no line; with `at-release`, `release-notes-only`, `off` or no file, nothing is written
      here.
 8. **Throwaway folders.** Remove the task's folders under `.act-local/tmp/` with `python .act/scripts/act_local_tidy.py

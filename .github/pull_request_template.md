@@ -20,7 +20,7 @@ out; describe a larger change with /act-feedback or an issue first.
 ## Checklist
 
 - [ ] Everything under `.act/` is in English
-- [ ] `CHANGELOG.md` § `[Unreleased]` has an entry for any visible change
+- [ ] `CHANGELOG.md` § `[Unreleased]` has an entry for any visible change (a duty at update under `### Upgrading`)
 - [ ] `python .act/scripts/manifest.py --write` run after changes under `.act/`
 - [ ] `python .act/scripts/script_docs.py` run after script changes
 - [ ] No secrets and no real personal data in the diff
