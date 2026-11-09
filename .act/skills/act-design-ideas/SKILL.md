@@ -28,8 +28,8 @@ offer to set one up, don't fake it with descriptions called "drafts".
    "the card spacing" is usable, "looks good" isn't.
 3. **Read the existing project first** (delegate to `explorer`): component library, color/spacing
    tokens, comparable pages already in use. Ignoring them gets expensive later. Result ≤ 20 lines.
-4. **Build the variants:** one self-contained HTML file per variant, in a gitignored scratch
-   folder, using the project's own CSS/tokens and real sample data. Variants must differ in
+4. **Build the variants:** one self-contained HTML file per variant, in the throwaway
+   folder (`R-work-throwaway`: `.act-local/tmp/<YYYYMMDD>-<slug>/` with no task), using the project's own CSS/tokens and real sample data. Variants must differ in
    something recognizable (layout, density, hierarchy), not just color. One line per variant: what
    differs, who it speaks to. Independent variants build in parallel, one `builder` per variant.
 5. **Screenshot each variant** — at least desktop (1280px) and mobile (390px) — against the local
@@ -43,7 +43,7 @@ offer to set one up, don't fake it with descriptions called "drafts".
 
 ## Limits
 
-- No project code — only the scratch folder; `act-design-build` implements.
+- No project code — only the throwaway folder; `act-design-build` implements.
 - At most four variants; more becomes undecidable.
-- The scratch folder is gitignored; a variant that matters moves in as one file, not the folder.
+- The throwaway folder is gitignored and cleared by `act-local-tidy`; a variant that matters moves in as one file, not the folder.
 - Steps 1 and 7 need the live conversation; only building the variants in step 4 is delegated.

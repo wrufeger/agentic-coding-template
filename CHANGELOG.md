@@ -25,6 +25,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `changelog-length: off` in `docs/ai/config.md` § Checks.
 
 ### Added
+- `throwaway-place` check (`warn`|`off`, default `warn`): a note when a command or file write puts throwaway output
+  in the system temp directory or directly under `.act-local/`; `off` in `docs/ai/config.md` § Checks silences it.
 - Incident log: real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox
   report per day at session start; no commands or paths are logged; `ACT_INCIDENT_LOG=off` pauses it.
 - Check refusals are counted per check and role; `doctor.py --inbox` asks once after 3 refusals of one check in 7 days.
@@ -45,6 +47,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ### Changed
 - `update.py --plan` shows what each due migration does, not only its name; `act-update` shows those lines before you agree.
+- Work with no task (skill runs, doctor report, feedback) writes throwaway output to
+  `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.
 - `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
 - Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.

@@ -225,10 +225,12 @@ remaining limits and the rules for links are in the header of `protected_watch.p
 
 ## `R-work-throwaway` — Throwaway material under `.act-local/tmp/`
 
-Checks: act-local-tidy.
+Checks: act-local-tidy, throwaway-place.
 
 Throwaway material (probes, scratch projects, clones, output files) goes into `.act-local/tmp/<task-id>-<slug>/`, never
-into the system temp directory and never directly under `.act-local/`. The orchestrator removes a task's folders when
+into the system temp directory and never directly under `.act-local/`. Work with no task (a skill run, a doctor
+report, feedback intake) takes `.act-local/tmp/<YYYYMMDD>-<slug>/` (date in digits, no hyphens); `act-local-tidy`
+clears it after 7 days like any entry whose name does not start with an open task's id. The orchestrator removes a task's folders when
 it commits the task (`python .act/scripts/act_local_tidy.py --task <id>`); whoever made a folder removes it earlier.
 Git run in a subfolder that is not a repository of its own acts on the project's repository: set
 `GIT_CEILING_DIRECTORIES` to `.act-local/tmp`, or call git only on a repository of its own. A deny entry on Windows can
@@ -246,6 +248,15 @@ after a report-only result was shown, so the first result in a project is a repo
 remove. `python .act/scripts/act_local_tidy.py` lists the plan without removing anything. Limits: an entry that a
 parallel session uses for more than 7 days without an open task id in its name is removed — name it with the task id
 or list it in `act-local-keep`; a task file without an `id:` line protects no folder.
+
+`throwaway-place` (switch in `docs/ai/config.md` § Checks; `warn`, the default and the value of a missing row, notes;
+`off` says nothing; `block` counts as `warn`) notes, never refuses, when the main session writes into the wrong
+place: a shell redirection or write target, or the path of a Write/Edit call, in the system temp directory
+(`/tmp`, `$TEMP`, `$TMP`, `$TMPDIR`, `%TEMP%`, `$env:TEMP`, the directory `tempfile.gettempdir()` names) or a file
+directly under `.act-local/` (not one the template creates there itself). The note names
+`.act-local/tmp/<task-id>-<slug>/` or `.act-local/tmp/<YYYYMMDD>-<slug>/` and reaches the model with the call's
+result. A worker's call is not looked at (with a restricted `Write scope:`, `worker-write-scope` refuses it). Limits: only targets the write-scope
+reader sees; `mktemp`, `tempfile` in inline code and a script file's own writes stay unseen.
 
 ## `R-cost-delegate` — Delegate where it pays off; the assignment header
 

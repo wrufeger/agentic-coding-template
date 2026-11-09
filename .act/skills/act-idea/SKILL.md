@@ -21,8 +21,8 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
    pros, cons, effort each as in step 5), **recommendation** with its **failure modes** (how it could break, what it
    could leak or expose, which assumption carries it) and its **way back** (revert, migration
    down, switch off). "Do nothing" is a real option, with its consequences. Where the requirement
-   is still unclear, a throwaway prototype is an option of its own: time-boxed, in a scratch
-   folder, discarded afterwards, its findings go into the concept. An option that brings a new
+   is still unclear, a throwaway prototype is an option of its own: time-boxed, in the throwaway
+   folder (`.act-local/tmp/<YYYYMMDD>-<slug>/`, `R-work-throwaway`), discarded afterwards, its findings go into the concept. An option that brings a new
    dependency or a paid service is set against building it in the project, and the other way
    round — weighed on maintenance, security, lock-in and running cost, not on build effort alone.
 4. **Put it to the human** as a question in the inbox (`python .act/scripts/entries.py new

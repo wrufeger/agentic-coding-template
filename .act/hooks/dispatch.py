@@ -702,6 +702,7 @@ _PRE_TOOL_USE_CHECKS = (
     ("danger_scan", "check_danger_scan"),                 # dangerous patterns in the diff before commit (security-check)
     ("deps_scan", "check_deps_scan"),                     # dependency vulnerabilities in a touched lock file (security-check)
     ("encoding_hint", "check_encoding_hint"),             # non-UTF-8 target, note only (R-code-encoding)
+    ("throwaway_place", "check_throwaway_place"),         # main session: temp directory or a file directly under .act-local/ as a target, note only (R-work-throwaway)
     ("worker_scope_overlap", "check_worker_scope_overlap"),  # a worker start whose Write scope overlaps a running worker's (R-cost-delegate) —
                                                           # after every check that could still refuse the start: it records the start's
                                                           # scope, and a later refusal would leave that entry standing (worker_cap and
@@ -719,6 +720,7 @@ _PRE_TOOL_USE_CHECKS = (
 _POST_TOOL_USE_NOTES = (
     ("worker_cap", "note_worker_cap"),        # cap-reached / cap-exceeded hints (R-cost-delegate)
     ("encoding_hint", "note_encoding_hint"),  # `warn` mode's one-time non-UTF-8 note (R-code-encoding)
+    ("throwaway_place", "note_throwaway_place"),  # the note about a misplaced throwaway target (R-work-throwaway)
     ("secret_scan", "note_secret_scan"),      # `warn` mode / incomplete scan after a commit (R-safe-no-secret-diff)
     ("deps_scan", "note_deps_scan"),          # lower-severity/accepted findings after a commit (security-check)
     ("deps_scan", "note_deps_merge_scan"),    # lock files a merge/pull/cherry-pick brought in -> inbox report (security-check)

@@ -43,5 +43,5 @@ runs **without** the check loop — say "implemented", not "implemented and chec
   question found along the way gets asked, not decided.
 - At most three rounds; needing more means the assignment was cut too large.
 - No side rebuild — anything else noticed goes to `docs/ai/work/backlog/`.
-- Check screenshots are throwaway, in a gitignored scratch folder; only one that documents a
+- Check screenshots are throwaway, in the throwaway folder (`R-work-throwaway`: the task's, else `.act-local/tmp/<YYYYMMDD>-<slug>/`); only one that documents a
   decision moves into the repo on purpose.
