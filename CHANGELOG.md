@@ -44,6 +44,7 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   default `warn`).
 
 ### Changed
+- `update.py --plan` shows what each due migration does, not only its name; `act-update` shows those lines before you agree.
 - `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
 - Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.

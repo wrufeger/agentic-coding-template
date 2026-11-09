@@ -57,6 +57,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import unicodedata
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -2532,6 +2533,11 @@ def step_hooks_and_gitfiles(root: Path, plan: bool) -> tuple[str, list[Path]]:
 # function returning a description without writing anything, and an apply(root) function that
 # performs the change and returns (description, touched_paths) — the minimal shape for "--plan
 # first, then run, repeatable", exercised by this script's test fixtures.
+#
+# Every migration must open with a comment header `# Purpose: <what it changes for the
+# project> What this does: ...`. `--plan` shows the Purpose sentence per due migration, read as plain
+# text from the fetched ref (never imported), so the human sees the effect before consenting; a
+# migration without the header is listed as "(no Purpose header)".
 
 def _load_migration(path: Path):
     saved = sys.modules.pop(path.stem, None)
@@ -2561,18 +2567,78 @@ def _due_migration_ids(migrations_dir: Path) -> list[str]:
     return sorted(p.stem for p in migrations_dir.glob("[0-9][0-9][0-9]-*.py") if p.stem not in applied)
 
 
+_PURPOSE_MAX = 200
+_PURPOSE_READ_BYTES = 8192
+_CONTROL_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*\x07?|\x1b.|[\x00-\x1f\x7f-\x9f]")
+# Unicode categories dropped from the shown text: controls, format characters (bidi overrides,
+# zero-width marks), private use, surrogates and line/paragraph separators.
+_HIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Co", "Cs", "Zl", "Zp"})
+
+
+def _migration_purpose(path: Path) -> str:
+    """The `# Purpose:` sentence(s) of a migration's comment header, read as plain text — the file is
+    never imported or executed (it comes from a freshly fetched ref; see the module docstring). Reads
+    at most the first 8 KB as bytes, stops at the first non-comment line, joins the continuation lines
+    of the paragraph up to `What this does` or the first empty comment line, strips control characters
+    and ANSI escapes, bidi and other format characters (foreign text) and cuts to a fixed length at a
+    word boundary. A symbolic link or anything but a regular file is not read. "(no Purpose header)"
+    if none is found."""
+    if path.is_symlink() or not path.is_file():
+        return "(no Purpose header)"
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(_PURPOSE_READ_BYTES)
+    except OSError:
+        return "(no Purpose header)"
+    words: list[str] = []
+    found = False
+    for line in raw.decode("utf-8-sig", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            if found or stripped:
+                break
+            continue
+        text = stripped[1:].strip()
+        if not found:
+            if text.startswith("Purpose:"):
+                found = True
+                text = text[len("Purpose:"):].strip()
+            else:
+                continue
+        elif not text:
+            break
+        cut = text.find("What this does")
+        if cut >= 0:
+            words.append(text[:cut])
+            break
+        words.append(text)
+    # Whitespace first (a TAB parts words), then the remaining controls and escapes go without a trace.
+    visible = _CONTROL_RE.sub("", " ".join(" ".join(words).split()))
+    visible = "".join(c for c in visible if unicodedata.category(c) not in _HIDDEN_CATEGORIES)
+    purpose = " ".join(visible.split())
+    if not purpose:
+        return "(no Purpose header)"
+    if len(purpose) > _PURPOSE_MAX:
+        cut = purpose[: _PURPOSE_MAX - 1]
+        if " " in cut:
+            cut = cut[: cut.rfind(" ")]
+        purpose = cut.rstrip(" ,;:") + "…"
+    return purpose
+
+
 def _plan_migrations_summary(new_act_dir: Path) -> str:
-    """`--plan` preview of step 7: which migrations the fetched checkout would apply, listed by
-    filename only. Never imports them — this script never runs code from a freshly fetched ref
-    (see the module docstring); a real run only imports a migration once step 5 has made it the
-    project's own .act/, which is what makes importing it safe."""
+    """`--plan` preview of step 8: which migrations the fetched checkout would apply, each with the
+    `# Purpose:` sentence from its comment header, so the human sees the effect before consenting, not
+    just a name. Only text is read, never imported — this script never runs code from a freshly
+    fetched ref (see the module docstring); a real run only imports a migration once step 5 has made
+    it the project's own .act/, which is what makes importing it safe."""
     migrations_dir = new_act_dir / "migrations"
     if not migrations_dir.is_dir():
         return "no .act/migrations/ directory"
     due = _due_migration_ids(migrations_dir)
     if not due:
         return "no due migrations"
-    return "would run: " + ", ".join(due)
+    return "would run: " + "; ".join(f"{mid}: {_migration_purpose(migrations_dir / (mid + '.py'))}" for mid in due)
 
 
 def _due_migrations_note(migrations_dir: Path) -> str:

@@ -19,7 +19,9 @@ already past the newest release keeps its state.
 
 1. Clean working tree first; an unfinished task closes via `act-commit`. A project older than `v2.2.0` is refused
    with a message naming the way: set it up again with `act-adopt`.
-2. `python .act/scripts/update.py --plan` and share its summary with the human. It changes nothing.
+2. `python .act/scripts/update.py --plan` and share its summary with the human. It changes nothing. Show the
+   migration lines (`would run: <id>: <effect>`) as they stand before asking for consent; never describe a migration
+   from its name.
 3. **Consent before step 5** (`.act/` is replaced): rerun without `--plan`, or with `--yes` only once the human
    agreed. If the project edited `.act/` since the last update, ask what to do and pass
    `--on-local-changes rescue|discard|abort` (`rescue` moves the edits to `docs/ai/local/`).
