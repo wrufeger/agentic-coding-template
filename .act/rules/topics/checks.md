@@ -6,14 +6,54 @@ a command (parser allow-lists, time budgets, failure handling) is documented at 
 (header comment of the module); the block messages name the syntax and point here. The checks are switched in
 `docs/ai/config.md` § Checks (`block`, `warn` or `off`).
 
-**Incident log.** What a check does without stopping the call is noted in `.act-local/incidents.jsonl` (time, kind,
-source, role, a short message; never a command or a path): a `warn` message that was printed, a check that crashed or
-ran past 8 s of the hook's 10 s limit, a refusal that made the session or a worker switch model, and `usage.py
---outcome <role> <tier> escalated`. A check's refusal is not logged: whoever made the call sees it at once. The next
-session start puts the new lines into the inbox report `Incident log <date>` (`kind: report`, `for: all`; an open
-report of the same day is extended), counts per kind on top, and is silent when nothing is new. Delivered lines are
-kept 30 days. It is written by `session-start-refresh: block`; there is no config row of its own, but
-`ACT_INCIDENT_LOG=off` in the environment writes and delivers nothing for one run (a test suite that drives the hooks).
+**Incident log.** Only real faults are noted in `.act-local/incidents.jsonl` (time, kind, source, role, a short message;
+never a command or a path):
+
+- `restored` / `restore-failed`: `protected-watch` put a worker's change to a protected file back, or could not (tool,
+  kinds of file such as `git-hook`, their number);
+- `check-error` / `check-slow`: a check crashed (exception class only) or ran past 8 s of the hook's 10 s limit;
+- `warn`: a check in `warn` mode let a call through that wrote, deleted or read a secret file, with a reason class and a
+  masked target class (`outside-write other/d3`, `secret-file project/d1`; never a name) and the tool and the first word
+  of the command (a class such as `(assign)` or `(path)` when there is no plain word). A read outside the project
+  (`outside-root`), a note of `ide-mcp` and a hint to the main session (`worker-scope-overlap`) are not logged. The
+  environment overrides `ACT_OUTSIDE_ROOT` and `ACT_SECRET_READ` count like the config row; `encoding-hint: warn`
+  counts although it prints nothing;
+- `escalated` (`usage.py --outcome <role> <tier> escalated`) and `model-switch` (a refusal that made the session or a
+  worker switch model).
+
+A check's refusal is not logged: whoever made the call sees it at once; it is counted instead (below). The next session
+start puts the new lines into the inbox report `Incident log <date>` (`kind: report`, `for: all`; an open report of the
+same day is extended, text a person added to it stays), equal lines as one row with a count, counts per kind on top, and
+is silent when nothing is new. Delivered lines are kept 30 days. It is written by `session-start-refresh: block`; with
+`warn` the start only says how many events wait. There is no config row of its own, but `ACT_INCIDENT_LOG=off` in the
+environment writes, counts and delivers nothing for one run (a test suite that drives the hooks). Limits: two appends at
+the same instant are serialised by a short lock file (`.act-local/incidents.lock`), also held while a delivery cuts old
+lines out; a wait for it is given up after half a second and the event is appended anyway, so an event is lost only
+when a delivery's rewrite takes longer than that; when the offset cannot be written after a delivery, the same events
+come again.
+
+**Refusals counted.** Every refusal of a check is counted silently in `.act-local/usage.json` (`checks.<check>.refusals`,
+per day and role, `main` for the main session; the check's module name and the role name only, never a command or a
+path; days older than 30 are dropped). Counting never changes a check's verdict, also when it fails. `doctor.py --inbox`
+files one question when the same check refused workers at least 3 times within 7 days, not again while one is open and
+not within 7 days of the last one. Its proposal never loosens the check: it proposes one sentence for the worker's role
+file or the assignment header that tells the worker beforehand what the check does not allow, with the options adopt,
+reword, do nothing. The sentences are these (one per check; a check without one gets a generic sentence):
+
+- `write_guard`: Never write under `.act/` (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`.
+- `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
+- `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
+- `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
+- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`): never stage, commit, stash, reset or check out.
+- `nesting_guard`: Never start another worker; name a better split in your result.
+- `mcp_ide`: Do not use IDE tools that write, run a shell or run a program; use the standard tools inside your `Write scope:`.
+- `commit_pathspec`: Never stage with `git add -A`, `git add .` or `git commit -a`; name each path.
+- `git_discard`: Never run a git command that discards work (`reset --hard`, `clean -f`, a folder checkout or restore, `stash drop`, `branch -D`).
+- `recursive_delete`: Never delete recursively with a shell command (`rm -rf`); use the language's own means on a literal path under your throwaway folder.
+- `secret_read`: Never read `.env`, private keys or credential files with any read, grep or command; read `.env.example` or ask for the non-secret values in your result.
+- `outside_root`: Read and write only inside the project and the places your assignment names; a path outside, also in a `cd`, is refused, so name it in your result instead.
+- `encoding_hint`: Before writing to an existing file that is not UTF-8, keep its encoding; the first write to such a file is refused once.
+- `worker_cap`: Keep to the `Cap:` of your assignment: past it you are refused, so report what is done and what is left.
 
 **When a check itself fails.** `secret-read` and `outside-root` fail closed for the shell: if the module cannot be
 imported or raises on a call, Bash and PowerShell are refused and the failure is named on standard error, so a broken
@@ -437,7 +477,7 @@ ended (or stop it with `TaskStop`), or to test an isolated copy — a clone or a
 `Tests:`.
 
 **The orchestrator only gets a note, never a refusal** (same switch, `worker-scope-overlap`; `off` silences it, a `block`
-row counts as `warn` for it, so every note enters the incident log). The note names the worker's line and the way out
+row counts as `warn` for it; the notes are hints and not entries of the incident log). The note names the worker's line and the way out
 (wait until that worker has ended or stop it with `TaskStop`, or work in an isolated copy). It comes when a `Write`,
 `Edit`, `MultiEdit` or `NotebookEdit` path of the main session, or a write target of its Bash or PowerShell command
 (the scanners `worker-write-scope` uses, inline code included), falls under the `Tests:` of a running worker; and when a

@@ -65,8 +65,10 @@ from .common import (
     _TOOL_PATH_FIELDS,
     _check_mode,
     _load_pending_notes,
+    _note_hit,
     _pop_pending_notes,
     _queue_pending_note,
+    _target_class,
 )
 
 __all__ = [
@@ -247,6 +249,7 @@ def check_encoding_hint(payload: dict) -> int:
             continue
         _note_path(hints_path, noted, raw)
         if mode == "warn":
+            _note_hit("encoding-hint", "non-utf8-target", _target_class(_resolve_target(raw, base_cwd), root))  # the note is queued, nothing is printed here
             tool_use_id = payload.get("tool_use_id")
             if isinstance(tool_use_id, str) and tool_use_id:
                 pending_path = _pending_file(root, tool_use_id)

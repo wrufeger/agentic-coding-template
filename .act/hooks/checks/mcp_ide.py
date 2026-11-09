@@ -173,6 +173,7 @@
 
 from __future__ import annotations
 
+import io
 import re
 import sys
 from pathlib import Path
@@ -181,7 +182,7 @@ from urllib.parse import unquote
 
 import actlib
 
-from .common import _check_mode, _is_worker
+from .common import _check_mode, _is_worker, _note_hit, _note_only
 from .danger_scan import check_danger_scan
 from .deps_scan import check_deps_scan
 from .git_discard import check_git_discard
@@ -650,10 +651,16 @@ def _rename_worker_scope(payload: dict) -> Optional[dict]:
 
 def _deny_or_warn(mode: str, message: str) -> int:
     if mode == "warn":
+        _note_hit("ide-mcp", "tool-not-checkable")  # the call goes through although the guard cannot see its target
         print(message)
         return 0
     print(message, file=sys.stderr)
     return 2
+
+
+# Reused checks whose printed text is no acting `warn` hit: the two diff scans only hint, and the read checks report
+# their own hit (read-only or not) through checks.common._note_hit.
+_NO_ACTING_HIT = (check_danger_scan, check_deps_scan, check_secret_read, check_outside_root)
 
 
 def _run_reused_checks(checks: tuple, sub_payload: dict) -> int:
@@ -662,7 +669,21 @@ def _run_reused_checks(checks: tuple, sub_payload: dict) -> int:
     independently; this only decides which checks see the translated call, not how each one
     itself is gated."""
     for func in checks:
-        result = func(sub_payload)
+        if func in _NO_ACTING_HIT:
+            result = func(sub_payload)
+        else:
+            # What such a check prints while it lets the call through is a `warn` hit of a call that wrote or ran
+            # something: reported to the incident log as this check's own hit (_note_hit).
+            real_stdout, printed = sys.stdout, io.StringIO()
+            sys.stdout = printed
+            try:
+                result = func(sub_payload)
+            finally:
+                sys.stdout = real_stdout
+            sys.stdout.write(printed.getvalue())
+            text = printed.getvalue().strip()
+            if result == 0 and text and not text.startswith("{"):
+                _note_hit("ide-mcp", "reused-warn")
         if result != 0:
             return result
     return 0
@@ -747,6 +768,7 @@ def check_mcp_ide(payload: dict) -> int:
                 f"[act] {tool_name} has no target this guard can check -- not usable by a worker; "
                 "use a standard tool, or ask the orchestrator to run it (R-cost-delegate)",
             )
+        _note_only("ide-mcp")  # a plain note, not a `warn` hit
         print(f"[act] {tool_name} ran via the IDE MCP server, outside the usual write/shell checks")
         return 0
 
@@ -780,6 +802,7 @@ def check_mcp_ide(payload: dict) -> int:
                 f"[act] {tool_name}: an unrecognized tool on an IDE MCP server -- not usable by a "
                 "worker; use a standard tool, or ask the orchestrator to run it (R-cost-delegate)",
             )
+        _note_only("ide-mcp")  # a plain note, not a `warn` hit
         print(f"[act] {tool_name} ran via the IDE MCP server, outside the usual write/shell/exec checks")
         return 0
 

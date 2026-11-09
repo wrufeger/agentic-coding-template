@@ -7,7 +7,7 @@ and archived.
 | :--- | :--- | :--- | :--- |
 | `question` | `Q<n>` | assistant (`entries.py new question`); form below | `open` -> `answered` (answer below its `**Answer:**` line) -> `done` -> archive |
 | `todo` | `U<n>` | assistant or human; a task for a human, filed only once it is actionable (code pushed, questions answered) — also a tool's own action item: `init` (open points, the translate-scaffold hint), settings import (`setup-required`, a contradiction), `update` (locally-edited files it reset); also a chat message starting `todo:` (filed by the `UserPromptSubmit` hook, `quick-capture` in `config.md`) | `open` -> `done` -> archive |
-| `report` | none | a tool's own read-only report of what it found or did: `doctor --inbox`, `act-adopt` (adoption report), the incident log (`Incident log <date>`: `warn` hits, crashed or slow checks, escalated workers, model switches) | `open` -> `done` (read) -> archive |
+| `report` | none | a tool's own read-only report of what it found or did: `doctor --inbox`, `act-adopt` (adoption report), the incident log (`Incident log <date>`: files `protected-watch` restored, `warn` hits that wrote or read a secret, crashed or slow checks, escalated workers, model switches) | `open` -> `done` (read) -> archive |
 | `note` | none | human; the assistant replies below it; also a chat message starting `note:` (filed by the hook, `quick-capture` in `config.md`) | `open` -> `answered` -> `done` -> archive |
 
 An entry without `kind:` counts as `todo`.

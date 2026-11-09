@@ -122,7 +122,7 @@ from .brace_expand import expand_braces
 from .command_parse import Parse, parse_for
 from .command_words import _strip_command_prefix
 from .inline_code import UNKNOWN_WRITE, mentions_interpreter
-from .common import _TOOL_PATH_FIELDS, _check_mode, _shell_command
+from .common import _TOOL_PATH_FIELDS, _check_mode, _note_hit, _shell_command, _target_class
 from .powershell_targets import (
     _extract_ps_command_flag, _is_unplaced_target,
     _unplaced_reason,
@@ -1691,6 +1691,12 @@ def check_outside_root(payload: dict) -> int:
         return 0
     message = _message(judge.found, tool, mode)
     if mode == "warn":
+        # the incident log counts a hit only when the call wrote (a read outside is a hint nobody needs to act on);
+        # reported here, not left to the printed text, so that an override from the environment counts as well
+        writes = [item for item in judge.found if item.write]
+        shown = (writes or judge.found)[0]
+        _note_hit("outside-root", ("reserved-folder" if shown.lock else "outside-write") if writes else "outside-read",
+                  _target_class(shown.shown, root), acts=bool(writes))
         print(message)
         return 0
     print(message, file=sys.stderr)

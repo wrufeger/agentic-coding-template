@@ -99,6 +99,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "identity.json", "cache.json", "last-applied.json",        # actlib.py
     "tips.json", "usage.json", "context-hint.json",            # hooks/checks/tips.py, usage.py, context_hint.py
     "ideas-seen.json", "tier-proposals.json",                  # ideas.py, doctor.py
+    "refusal-proposals.json",   # doctor.py: the day a question about a refusing check was last filed
     "outside-root-note.json",   # hooks/checks/session.py
     "session-start.txt",        # hooks/checks/session.py: the whole session-start output
     "log-state.json", "log-state.lock", "entries.lock",        # log.py, entries.py

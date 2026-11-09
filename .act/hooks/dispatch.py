@@ -844,18 +844,72 @@ def _modes_seen() -> "dict[str, str]":
     return modes if isinstance(modes, dict) else {}
 
 
-def _note_check_outcome(module_name: str, payload: dict, result: int, printed: str, modes: "dict[str, str]") -> None:
-    """Incident log entries for one finished check: a plain-text note from a check whose row was `warn`, a
-    check that ended past 8 s of the harness' 10 s hook limit. A refusal is not an incident: the caller sees it at once."""
+def _hits_seen() -> "dict[str, dict]":
+    """checks.common.HITS (what a check in `warn` mode reported about a hit), or an empty dict while that module
+    is not loaded or lacks it. Never raises."""
+    hits = getattr(sys.modules.get("checks.common"), "HITS", None)
+    return hits if isinstance(hits, dict) else {}
+
+
+# The checks whose `warn` hit means the call went through AND wrote, deleted or committed something: the incident
+# log keeps those. A check that reports its hit itself (checks.common._note_hit) decides for its own call; a hint
+# to the main session, a worker-count note or a read-only notice is no entry.
+_ACTING_CHECKS = frozenset({
+    "write_guard", "git_metadata_guard", "write_scope", "worker_docs_ai", "worker_git_write",
+    "commit_pathspec", "git_discard", "recursive_delete", "secret_read", "secret_scan",
+})
+
+
+def _payload_target(payload: dict) -> str:
+    """The masked class of the file a file tool names (`project/d2`), else "-". Never a name."""
+    try:
+        tool_input = payload.get("tool_input")
+        raw = next((tool_input[key] for key in ("file_path", "notebook_path") if isinstance(tool_input, dict)
+                    and isinstance(tool_input.get(key), str)), "")
+        common = importlib.import_module("checks.common")
+        return common._target_class(raw, actlib.repo_root()) if raw else "-"
+    except Exception:  # noqa: BLE001 -- the log must never change a verdict
+        return "-"
+
+
+def _note_check_outcome(module_name: str, payload: dict, result: int, printed: str, modes: "dict[str, str]",
+                        hits: "dict[str, dict] | None" = None) -> None:
+    """Incident log entries for one finished check: a `warn` hit that let the call through and wrote, deleted or
+    read a secret file (the check's own report, else a plain-text note from a check whose row was `warn` and that
+    is in _ACTING_CHECKS), a check that ended past 8 s of the harness' 10 s hook limit. A refusal is not an
+    incident: the caller sees it at once, and it is only counted (_count_refusal)."""
     if result != 0:
         return
     text = printed.strip()
-    if text and not text.startswith("{") and "warn" in modes.values():
-        _note_incident("warn", module_name, payload)
+    hits = hits or {}
+    if hits or (text and not text.startswith("{") and "warn" in modes.values()):
+        acting = [info for info in hits.values() if isinstance(info, dict) and info.get("acts")]
+        if acting:
+            _note_incident("warn", module_name, payload, f"{acting[0].get('reason', 'warned')} {acting[0].get('target', '-')}")
+        elif not hits and module_name in _ACTING_CHECKS:
+            _note_incident("warn", module_name, payload, f"warned {_payload_target(payload)}")
     global _SLOW_NOTED
     if not _SLOW_NOTED and time.monotonic() - _HOOK_STARTED > 8.0:
         _SLOW_NOTED = True  # one row per hook call: the first check that ends past 8 s is the one named
         _note_incident("check-slow", module_name, payload)
+
+
+def _count_refusal(module_name: str, payload: dict) -> None:
+    """Count one refusal of a check, silently, per check, role and day in usage.json (identifiers only: the
+    check's module name and the worker's role name or `main`; no command, no path). A refusal is no incident, but a check that
+    keeps refusing workers is what `doctor.py --inbox` asks about. Never raises and never changes the verdict."""
+    try:
+        import incidents
+        if incidents.is_off():
+            return  # the switch of the test suites: the project's own counters stay clean
+        import usage
+        role = "main"
+        if payload.get("agent_id"):
+            agent_type = payload.get("agent_type")
+            role = agent_type if isinstance(agent_type, str) and agent_type else "worker"
+        usage.record_refusal(actlib.repo_root(), module_name, role)
+    except Exception:  # noqa: BLE001 -- counting must never change a verdict
+        pass
 
 
 def _is_reader_failure(exc: BaseException) -> bool:
@@ -921,12 +975,14 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
         checked_payload["_act_parse"] = parse  # one reading of the command for all checks of this call
     for module_name, func_name in _PRE_TOOL_USE_CHECKS:
         func, reason = _load(module_name, func_name)
+        failed = False
         if func is None:
+            failed = True
             result = _check_failed(module_name, reason or "check not available", payload)
         else:
             import io
-            failed = False
             _modes_seen().clear()
+            _hits_seen().clear()
             real_stdout, printed = sys.stdout, io.StringIO()
             sys.stdout = printed  # what the check prints is passed on below, and looked at for a `warn` hit
             try:
@@ -938,8 +994,11 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
                 sys.stdout = real_stdout
             sys.stdout.write(printed.getvalue())
             if not failed:
-                _note_check_outcome(module_name, payload, result, printed.getvalue(), dict(_modes_seen()))
+                _note_check_outcome(module_name, payload, result, printed.getvalue(), dict(_modes_seen()),
+                                    dict(_hits_seen()))
         if result != 0:
+            if not failed:
+                _count_refusal(module_name, payload)
             return result, module_name
     return 0, None
 

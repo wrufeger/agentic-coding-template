@@ -12,13 +12,24 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 ### Added
 
 - `entries.py new todo|note --triage` writes `triage: open` into the header, so a chat capture filed by hand needs no manual edit afterwards.
-- Incident log: what no one is told at the moment it happens is noted in `.act-local/incidents.jsonl` (per machine,
-  identifiers only, never a command's text) and arrives at the next session start as one inbox report "Incident log
-  <date>" with counts per kind on top (a second start the same day appends to it; the session start names the file in one
-  line): a check in `warn` mode that fired, a check that crashed or ran past 8 s of the hook limit, a worker outcome
-  recorded as `escalated`, and a refusal that made a session or worker switch model. A check's refusal is not logged:
-  whoever made the call sees it at once. Delivered lines are dropped after 30 days; no new setting, but
-  `ACT_INCIDENT_LOG=off` in the environment leaves the log alone for one run (a test suite that drives the hooks).
+- Incident log: only real faults are noted in `.act-local/incidents.jsonl` (per machine, identifiers only, never a
+  command's text or a path) and arrive at the next session start as one inbox report "Incident log <date>" with
+  counts per kind on top (a second start the same day appends to it, equal rows become one row with a count, text a
+  person added stays; the session start names the file in one line, or with `session-start-refresh: warn` says how many
+  events wait): a file `protected-watch` put back after a worker changed it (`restored`, and `restore-failed` when it
+  could not), a check in `warn` mode that let a call through that wrote, deleted or read a secret file (with a reason
+  class and a masked target class such as `outside-write home/d3`; the environment overrides of `outside-root` and
+  `secret-read` and `encoding-hint: warn` count too), a check that crashed or ran past 8 s of the hook limit, a worker
+  outcome recorded as `escalated`, and a refusal that made a session or worker switch model. Not logged: a refusal
+  (whoever made the call sees it at once), a read outside the project, an `ide-mcp` note, a hint to the main session.
+  Delivered lines are dropped after 30 days; no new setting, but `ACT_INCIDENT_LOG=off` in the environment leaves the
+  log alone for one run (a test suite that drives the hooks).
+- Every refusal of a check is counted silently per check, role and day in `.act-local/usage.json` (the check's name and
+  the role only, no command, no path; counting never changes a verdict). `doctor.py --inbox` files one question when the
+  same check refused workers at least 3 times within 7 days (not again while one is open, nor within 7 days of the
+  last one). The proposal never loosens the check: it offers one sentence for the worker's role file or the
+  assignment header that tells the worker beforehand what the check does not allow (the sentences are listed in
+  `.act/rules/topics/checks.md`), to adopt, reword or leave.
 - Rule `R-work-process-error`: a fault in how the work itself runs (workers getting in each other's way, a run
   checking the wrong state, a step against a rule) is reported the first time it shows, as an inbox question with
   proposed fixes, and the process changes before the work goes on; a workaround alone is not enough, and a cause in
@@ -30,8 +41,7 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   message names the other worker's line and the way out (wait, or test an isolated copy). A word on the line that
   is no plausible path is ignored, a pattern outside the project is dropped on its own.
 - `worker-scope-overlap` also notes (never refuses) when the main session writes under a running worker's `Tests:` tree or
-  runs the test command in a tree a running worker writes in; the note names the worker's line and the way out, and
-  enters the incident log.
+  runs the test command in a tree a running worker writes in; the note names the worker's line and the way out.
 - `outside-root-allow` takes an absolute path (a drive path in either slash style such as `D:/Program Files/Browser`, or a POSIX path such as `/opt/browser`) outside the project and the home directory as the entry for a program folder, for example the system browser of a browser check. It allows reading and starting a program below it and is read-only: the writes `outside-root` recognizes are refused there, as below a `(read)` entry; writes it does not see still pass (the same limit as for `(read)` entries). An entry that is a drive root, `/` or a folder above the project or the home directory opens reading of everything below it. The block message of `outside-root` names this form and says that an entry needs the owner's word.
 
 - A check or note that fails is no longer only a line on standard error: the call that goes ahead carries a `systemMessage` for you (PreToolUse and PostToolUse output) and, for the assistant, the same text as `additionalContext` of that call's PostToolUse (a worker gets it too); a failed model-switch report reaches the assistant as a note with its next tool call. Whether Claude Code displays a hook's `systemMessage` is not verified for PreToolUse and PostToolUse; for Stop and SubagentStop a live probe showed it is recorded in the transcript but not displayed.

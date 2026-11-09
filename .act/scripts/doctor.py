@@ -113,7 +113,11 @@
 #                                                     # (a second run with the same findings updates
 #                                                     # that same entry instead of adding another),
 #                                                     # and one question per new tier proposal (16),
-#                                                     # not part of the report
+#                                                     # not part of the report, and one question per
+#                                                     # check that refused workers at least 3 times in
+#                                                     # 7 days (usage.py counts every refusal silently;
+#                                                     # the proposal tells the worker beforehand what the
+#                                                     # check does not allow, it never loosens the check)
 #   python .act/scripts/doctor.py --accept ID [...]  # record ID's current template text as the
 #                                                     # accepted baseline (clears finding 4 for it)
 #   python .act/scripts/doctor.py --accept-all       # same, for every stale override/off found
@@ -2223,6 +2227,160 @@ def remember_tier_proposals(root: Path, filed: dict[str, int]) -> bool:
     return True
 
 
+# --- Worker refusals ------------------------------------------------------------------------------
+# The dispatcher counts every refusal of a check silently (usage.py record_refusal). When the same check refused
+# workers at least _REFUSAL_THRESHOLD times within _REFUSAL_WINDOW_DAYS days, --inbox files one question. The
+# proposal in it never loosens the check: it is one sentence for the worker's role file or the assignment header
+# that tells the worker beforehand what the check does not allow (the sentences are listed in
+# .act/rules/topics/checks.md, "Refusals counted"). Not filed again while a question about the check is open, nor
+# within _REFUSAL_WINDOW_DAYS days of the last one; a count is only identifiers, no command, no path.
+_REFUSAL_WINDOW_DAYS = 7
+_REFUSAL_THRESHOLD = 3
+_REFUSAL_MEMORY_FILE = Path(".act-local") / "refusal-proposals.json"
+_WORKER_LINE_RE = re.compile(r"^- `([a-z_]+)`: (.+)$")
+
+
+def _worker_lines(root: Path) -> dict[str, str]:
+    """check module name -> the one sentence a worker is told beforehand, from topics/checks.md."""
+    try:
+        text = (root / ".act" / "rules" / "topics" / "checks.md").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    start = text.find("The sentences are these")
+    lines: dict[str, str] = {}
+    for line in (text[start:].splitlines()[1:] if start >= 0 else []):
+        match = _WORKER_LINE_RE.match(line)
+        if match:
+            lines[match.group(1)] = match.group(2).strip()
+        elif line.strip() and not line.startswith("- "):
+            break
+    return lines
+
+
+def _refusal_memory(root: Path) -> dict[str, str]:
+    """check -> date (YYYY-MM-DD) its question was last filed; empty when there is none or it cannot be read."""
+    try:
+        data = json.loads((root / _REFUSAL_MEMORY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(key): value for key, value in data.items() if isinstance(value, str)} if isinstance(data, dict) else {}
+
+
+def _refusal_question_open(root: Path, check: str) -> bool:
+    inbox = root / actlib.INBOX_DIR
+    slug = entries._slugify(f"worker-refusals-{check}")
+    for path in inbox.glob(f"*-{slug}.md") if inbox.is_dir() else []:
+        try:
+            if re.search(r"^status:\s*open\b", path.read_text(encoding="utf-8"), re.MULTILINE):
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
+
+
+def _new_refusal_proposals(root: Path) -> list[tuple[str, dict[str, int]]]:
+    """(check, {worker role: refusals}) for each check that refused workers at least _REFUSAL_THRESHOLD times in
+    the window and has no open question and none filed within the window. The main session's refusals are not
+    counted: they are the human's own work."""
+    try:
+        import usage
+        counts = usage.refusal_counts(root, _REFUSAL_WINDOW_DAYS)
+    except Exception:  # noqa: BLE001 -- no counts, no question
+        return []
+    memory = _refusal_memory(root)
+    first_again = date.today().toordinal() - _REFUSAL_WINDOW_DAYS
+    found: list[tuple[str, dict[str, int]]] = []
+    for check in sorted(counts):
+        workers = {role: number for role, number in counts[check].items() if role != "main"}
+        if sum(workers.values()) < _REFUSAL_THRESHOLD or _refusal_question_open(root, check):
+            continue
+        try:
+            if date.fromisoformat(memory.get(check, "")).toordinal() > first_again:
+                continue
+        except ValueError:
+            pass
+        found.append((check, workers))
+    return found
+
+
+def refusal_question_text(check: str, workers: dict[str, int], line: str, language: str) -> tuple[str, str]:
+    """(title, body) of the question for a check that refused workers often. The first option, the
+    recommended one, adopts `line`; no option changes the check."""
+    def loc(en: str, de: str) -> str:
+        return actlib.localized(language, en, de)
+
+    total = sum(workers.values())
+    split = ", ".join(f"`{role}` {number}" for role, number in sorted(workers.items(), key=lambda item: (-item[1], item[0])))
+    top = sorted(workers.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days: tell them beforehand?",
+                f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt: ihnen vorher sagen, was nicht geht?")
+    hint = loc(f"The check `{check}` refused workers {total} times in the last {_REFUSAL_WINDOW_DAYS} days ({split}); only "
+               "the counts are kept, no command and no path. A refusal shows that the check works, so the check stays as "
+               "it is. The proposal is to tell the worker beforehand what the check does not allow, so it does not run "
+               "into it.",
+               f"Die Prüfung `{check}` hat in den letzten {_REFUSAL_WINDOW_DAYS} Tagen Worker {total}-mal gesperrt "
+               f"({split}); gezählt wird nur, nie ein Befehl oder Pfad. Eine Sperre zeigt, dass die Prüfung greift, "
+               "sie bleibt also, wie sie ist. Vorgeschlagen ist, dem Worker vorher zu sagen, was die Prüfung nicht "
+               "erlaubt, damit er gar nicht erst in die Sperre läuft.")
+    if top == "worker":  # no role name is known, so there is no role file to name
+        where_en = "into the text of the assignment header (the brief)"
+        where_de = "in den Text des Auftragskopfs (die Beauftragung) aufnehmen"
+    else:
+        where_en = (f"into the role file of `{top}` (a project version under `docs/ai/local/agents/{top}.md`) "
+                    "or into the text of the assignment header")
+        where_de = (f"in die Rollendatei von `{top}` (Projektfassung unter `docs/ai/local/agents/{top}.md`) "
+                    "oder in den Text des Auftragskopfs aufnehmen")
+    lines = [
+        hint, "",
+        "- **a)** " + loc(f"**Recommended:** Adopt: put this sentence {where_en}: \"{line}\" "
+                          "Effort: one line, a few minutes.",
+                          f"**Empfehlung:** Übernehmen: diesen Satz {where_de}: \"{line}\" "
+                          "Aufwand: eine Zeile, ein paar Minuten."),
+        "",
+        "- **b)** " + loc("Reword: say in the answer how the sentence should read or where it belongs. Effort: one "
+                          "sentence from you.",
+                          "Anders formulieren: in der Antwort sagen, wie der Satz lauten soll oder wo er hingehört. "
+                          "Aufwand: ein Satz von dir."),
+        "",
+        "- **c)** " + loc(f"Do nothing. The check stays unchanged; a new question about `{check}` comes at the earliest "
+                          f"{_REFUSAL_WINDOW_DAYS} days after this one, if it keeps refusing workers. Effort: none.",
+                          f"Nichts tun. Die Prüfung bleibt unverändert; eine neue Frage zu `{check}` kommt frühestens "
+                          f"{_REFUSAL_WINDOW_DAYS} Tage nach dieser, wenn sie weiter Worker sperrt. Aufwand: keiner."),
+        "",
+    ]
+    return title, "\n".join(lines) + "\n"
+
+
+def file_refusal_questions(root: Path) -> list[Path]:
+    """Write one inbox question for every check that refused workers often (see above) and note the day. Best
+    effort: a question that cannot be written is skipped with a warning and returns with the next run."""
+    new = _new_refusal_proposals(root)
+    if not new:
+        return []
+    language = actlib.docs_language(root)
+    lines = _worker_lines(root)
+    written: list[Path] = []
+    for check, workers in new:
+        line = lines.get(check) or (f"Before a call that `{check}` may refuse, read what it allows in "
+                                    "`.act/rules/topics/checks.md`; a refusal is not retried another way.")
+        title, body = refusal_question_text(check, workers, line, language)
+        try:
+            path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True,
+                                           slug=f"worker-refusals-{check}")
+        except (OSError, ValueError) as exc:
+            print(f"doctor.py: refusal question for {check!r} not filed: {exc}", file=sys.stderr)
+            continue
+        written.append(path)
+        memory = _refusal_memory(root)
+        memory[check] = date.today().isoformat()
+        try:
+            (root / _REFUSAL_MEMORY_FILE).parent.mkdir(parents=True, exist_ok=True)
+            actlib.write_text_atomic(root / _REFUSAL_MEMORY_FILE, json.dumps(memory, indent=2, sort_keys=True) + "\n")
+        except OSError:
+            print(f"doctor.py: could not write {_REFUSAL_MEMORY_FILE.as_posix()}", file=sys.stderr)
+    return written
+
+
 def check_tier_proposal(root: Path) -> list[Finding]:
     """Reads .act-local/usage.json's per-role/tier outcome counts (usage.py --outcome, recorded by
     the orchestrator per R-role-outcome after every worker acceptance/rework/escalation) and
@@ -2711,7 +2869,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", metavar="DIR", help="check this project instead of the current checkout")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
-    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings, and one inbox question per new tier proposal")
+    parser.add_argument("--inbox", action="store_true", help="also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings, and one inbox question per new tier proposal and per check that refused workers often")
     parser.add_argument("--accept", action="append", default=[], metavar="ID", help="accept the current template text for ID (repeatable)")
     parser.add_argument("--accept-all", action="store_true", help="accept the current template text for every stale override/off")
     return parser
@@ -2753,7 +2911,7 @@ def main(argv: list[str]) -> int:
         # A tier proposal is a decision, so it goes into a question of its own, not into the
         # doctor report; its numbers go into a report of their own that the question names. The
         # doctor report carries the other findings and is skipped when there are none.
-        for question in file_tier_questions(root):
+        for question in file_tier_questions(root) + file_refusal_questions(root):
             print(f"doctor.py: wrote {_rel(question, root)}")
         written = write_inbox(root, [f for f in findings if f.kind != "tier-proposal"])
         if written is not None:

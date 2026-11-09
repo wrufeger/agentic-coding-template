@@ -54,7 +54,7 @@
 # Bash/PowerShell command (the scanners write_scope uses), that falls under the `Tests:` of a running worker, and
 # a command that runs the project's test command (third entry of `commands`) in a tree a running worker writes in.
 # A target that is dynamic (`$VAR`, `~`), or relative with no known directory, cannot be placed and passes; inline
-# code the reader fails on is not looked at. The note is printed (the incident log counts it as a `warn` hit) and
+# code the reader fails on is not looked at. The note is printed (it is a hint, not an entry of the incident log) and
 # queued under .act-local/worker-scopes/hints/<tool_use_id>.json, because PreToolUse text never reaches the model:
 # note_main_session_overlap delivers it with this call's PostToolUse (registered in dispatch.py's
 # _POST_TOOL_USE_NOTES).
@@ -77,7 +77,7 @@ import actlib
 
 from . import inline_code as _inline_code
 from .command_parse import Parse, parse_for
-from .common import MODES_SEEN, _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _pop_pending_notes, _queue_pending_note
+from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _command_name,
@@ -555,15 +555,14 @@ def _queue_hint(root: Path, tool_use_id: object, text: str) -> None:
 
 def _main_session_mode(config: dict) -> str:
     """`off` when the switch is off, else `warn`: the main session is never refused, so a `block` row counts as
-    `warn` here, and that is what the dispatcher's incident log reads from MODES_SEEN to count a hit."""
+    `warn` here. Its notes are hints to the main session, never an entry of the incident log."""
     if _check_mode(config, "worker-scope-overlap", default="block") == "off":
         return "off"
-    MODES_SEEN["worker-scope-overlap"] = "warn"
     return "warn"
 
 
 def _say(root: Path, payload: dict, text: str) -> None:
-    """The note: on stdout like any warn check (transcript, incident log) and queued for the model."""
+    """The note: on stdout like any warn check (transcript) and queued for the model."""
     print(text)
     _queue_hint(root, payload.get("tool_use_id"), text)
 

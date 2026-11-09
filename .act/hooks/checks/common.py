@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sys
 import time
 import uuid
@@ -87,6 +88,48 @@ def _check_mode(config: dict[str, str], key: str, default: str) -> str:
     mode = value if value in ("block", "warn", "off") else default
     MODES_SEEN[key] = mode  # dispatch.py reads which row a check consulted, to tell a `warn` hit from a plain note
     return mode
+
+
+# What a check in `warn` mode tells the dispatcher about a hit that let the call through, for the incident log:
+# row -> {"reason": class word, "target": masked target class, "acts": True when the call wrote, deleted or read a
+# secret file}. A check that knows more than "it printed a warning" (the environment override of a row, a read
+# against a write, a note that is queued instead of printed) sets it; for any other warning the dispatcher falls
+# back on the printed text. Identifiers only: never a path, a command or a value.
+HITS: dict[str, dict] = {}
+
+
+def _note_hit(row: str, reason: str, target: str = "-", acts: bool = True) -> None:
+    HITS[row] = {"reason": reason, "target": target, "acts": acts}
+
+
+def _note_only(row: str) -> None:
+    """The row printed a plain note that is no `warn` hit (an informational line of a check whose row says `warn`)."""
+    MODES_SEEN[row] = "note"
+
+
+def _target_class(path: object, root: object = None) -> str:
+    """A masked class of a path for the incident log: `project`, `home`, `relative` or `other`, and the number of its
+    names, counted below the project or home folder (`home/d3`). Never a name, so no personal data ends up in a log line."""
+    try:
+        text = str(path).replace("\\", "/").strip()
+        if not text:
+            return "-"
+        lowered = text.lower()
+        kind = "other"
+        for name, base in (("project", root), ("home", os.path.expanduser("~"))):
+            if base:
+                prefix = str(base).replace("\\", "/").rstrip("/").lower()
+                if prefix and (lowered == prefix or lowered.startswith(prefix + "/")):
+                    kind = name
+                    text = text[len(prefix):]  # the depth counts below the project or home folder
+                    break
+        else:
+            if not (text.startswith(("/", "~")) or re.match(r"[A-Za-z]:", text)):
+                kind = "relative"
+        depth = len([part for part in text.split("/") if part and part != "." and not re.fullmatch(r"[A-Za-z]:", part)])
+        return f"{kind}/d{depth}"
+    except Exception:  # noqa: BLE001 -- a class that cannot be told is no reason to break a check
+        return "-"
 
 
 # Which tool_input field holds the write target, per tool. Bash has no single target field —

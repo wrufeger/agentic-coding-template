@@ -59,7 +59,8 @@
 #     removed, and the changed version is kept under `.act-local/protected-watch/kept/`. For `.git/config`
 #     only the changed keys are reset (`git config --file`), the rest of the file stays as git left it.
 #     The worker gets the message, the human gets a `systemMessage`, and a note is queued for the
-#     orchestrator's next tool call (`take_orchestrator_notes`).
+#     orchestrator's next tool call (`take_orchestrator_notes`). The incident log gets one row `restored` (and
+#     one `restore-failed` for what could not be put back) with the tool and the kinds of file, no path.
 #     One exception, a single form: a change of the project's `.claude/settings.local.json` that only ADDS
 #     entries to the list `permissions.allow` (strict JSON on both sides; every other key and every other
 #     `permissions` key equal; every earlier entry still there, order free; all entries strings) is
@@ -1317,7 +1318,38 @@ def watch(event: str, payload: dict, root: str | None = None) -> dict | None:
                     before = _keep(base, stamp, "before", change["path"], _read_blob(base, old["h"]))
                 results.append({"restored": False, "kept": before, "how": ""})
         _save_state(base, state, new_files)
+    _log_restores(root, payload, changes, results, restoring)
     return _report(event, payload, root, base, changes, results, restoring)
+
+
+_KIND_WORDS = (("pointer to the git directory", "git-pointer"), ("git hook", "git-hook"), ("git config", "git-config"),
+               ("Claude settings/role/skill", "claude-files"))
+
+
+def _log_restores(root: str, payload: dict, changes: list, results: list, restoring: bool) -> None:
+    """The incident log (.act/scripts/incidents.py): one row `restored` for the files of this call that were put
+    back, one `restore-failed` for those that could not be. Identifiers only: the tool, the kinds of file
+    (`git-hook`, `claude-files` ...) and their number, never a path. A change that is only reported (the
+    orchestrator's, mode `warn`, an added `permissions.allow` entry) is no incident. Never raises."""
+    if not restoring:
+        return
+    try:
+        scripts = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+        if scripts not in sys.path:
+            sys.path.append(scripts)
+        import incidents  # noqa: WPS433 -- lazy on purpose: only a change that was really made gets here
+        from pathlib import Path
+
+        tool = payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else "tool"
+        for kind, done in (("restored", True), ("restore-failed", False)):
+            picked = [change for change, result in zip(changes, results)
+                      if not result.get("added") and bool(result.get("restored")) == done]
+            if not picked:
+                continue
+            words = sorted({dict(_KIND_WORDS).get(_what(root, change["path"]), "startup-file") for change in picked})
+            incidents.record(Path(root), kind, "protected_watch", f"{tool} {'+'.join(words)} x{len(picked)}", "worker")
+    except Exception:  # noqa: BLE001 -- the log must never change what the watcher does
+        pass
 
 
 def _same_root(stored: object, root: str) -> bool:

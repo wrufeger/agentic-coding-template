@@ -517,7 +517,7 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
 
     branch = _current_branch(root)
 
-    # The incident log (warn hits, crashed or slow checks, escalated workers, model switches) goes
+    # The incident log (restored files, warn hits that wrote, crashed or slow checks, escalated workers, model switches) goes
     # into the inbox as one report of the day before the inbox is counted below.
     if mode == "block":
         try:
@@ -525,6 +525,16 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             delivered = incidents.deliver(root)
             if delivered:
                 print(f"[act] incident log: {delivered[1]} new event(s) in {delivered[0].relative_to(root).as_posix()}")
+        except Exception:
+            pass  # informational only, must never block the session
+    elif mode == "warn":
+        # nothing is written under `warn`: only say that events wait, so the owner knows they are not delivered
+        try:
+            import incidents
+            waiting_events = incidents.pending(root)
+            if waiting_events:
+                print(f"[act] incident log: {waiting_events} event(s) waiting, not delivered while "
+                      "session-start-refresh is `warn`")
         except Exception:
             pass  # informational only, must never block the session
 

@@ -99,7 +99,7 @@ import actlib
 
 from .brace_expand import expand_braces as _expand_braces
 from .command_parse import Parse, parse_for
-from .common import _check_mode, _shell_command
+from .common import _check_mode, _note_hit, _shell_command, _target_class
 from .shell_targets import _command_name, _to_native_path
 
 __all__ = [
@@ -565,6 +565,11 @@ def check_secret_read(payload: dict) -> int:
         f"`warn` or `off` in docs/ai/config.md § Checks, or for one run with {_ENV_OVERRIDE}"
     )
     if mode == "warn":
+        try:
+            root = actlib.repo_root()
+        except RuntimeError:
+            root = None
+        _note_hit("secret-read", "secret-file", _target_class(path, root))  # also when the environment set `warn`
         print(message)
         return 0
     print(message, file=sys.stderr)

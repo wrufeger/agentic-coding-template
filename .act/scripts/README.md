@@ -31,7 +31,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `id_links_install.py` | One-time, per-machine setup of the clickable entry ids (editor support). Copies the language server and its helper to a per-user folder… | direct (optional editor support, see `topics/id-links.md`; writes only under `~/.act/id-links/`) |
 | `id_links_lsp.py` | Language server that makes entry ids such as T12, B7, Q3 or U5 clickable in Markdown files opened in an editor (VS Code, IntelliJ with an… | direct (language server over stdio, started by the editor from the copy `id_links_install.py` makes, not by hand) |
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
-| `incidents.py` | The incident log. Hooks and scripts note what the human should see later but that no one is told about at the moment it happens: a check in… | library |
+| `incidents.py` | The incident log. Hooks and scripts note what went wrong without stopping anyone and that the human should see later: a protected file a… | library |
 | `info.py` | Show, in a compact block, which project this session works in and its state: project name, folder and host, the session name the project… | skill `act-info` |
 | `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
@@ -60,7 +60,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `actlib.py` — Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project…
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `frontmatter.py` — One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's…
-- `incidents.py` — The incident log. Hooks and scripts note what the human should see later but that no one is told about at the moment it happens: a check in…
+- `incidents.py` — The incident log. Hooks and scripts note what went wrong without stopping anyone and that the human should see later: a protected file a…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one…
 
@@ -466,7 +466,8 @@ options:
   --target DIR  check this project instead of the current checkout
   --json        machine-readable output
   --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings,
-                and one inbox question per new tier proposal
+                and one inbox question per new tier proposal and per check that refused workers
+                often
   --accept ID   accept the current template text for ID (repeatable)
   --accept-all  accept the current template text for every stale override/off
 ```
