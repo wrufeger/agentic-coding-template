@@ -46,7 +46,8 @@ with content goes to `.act/skills/act-adopt/SKILL.md` instead.
 `docs/ai/inbox/U<n>-translate-scaffold.md` listing the files still in English (`<!-- act:default -->` on line 1);
 it has no model to translate with, so the todo is only the fallback, never something to hand to the owner.
 Translate every listed file following the todo (`R-work-language`) and drop that line. Set the todo to
-`status: done`, `git mv` it to `docs/ai/work/archive/`, and commit the translated files and both paths of the todo
+`status: done`, `git mv` it to `docs/ai/work/archive/` (with `--no-commit` the todo is untracked: move it as a plain
+file), and commit the translated files and both paths of the todo
 by pathspec in one commit (`docs: translate scaffold into <code>`); with `--no-commit` leave everything
 uncommitted together with `init.py`'s changes.
 

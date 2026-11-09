@@ -71,7 +71,7 @@ The orchestrator writes them; a worker drafts under `.act-local/adopt/drafts/<sa
 - **`docs/project/coding_rules.md` and `docs/README.md`** (adopted into themselves): only the project's own passages, found
   with the `origin` diff, cut byte-identical like a body; the predecessor's scaffold prose (its `Datenstand` line, the
   section "Vorgefertigte Regelsätze") stays out. Where in the file is your call; the helper fixes heading levels and line
-  endings (`--into coding`: end of `## Own rules`, old top level becomes `###`; `--into readme`: end of the file, `##`):
+  endings (`--into coding`: end of `## Own rules`, old top level becomes `###`, `*`/`+` bullets become `- `; `--into readme`: end of the file, `##`):
 
   ```bash
   python .act/scripts/adopt_passages.py --target <dir> --into coding|readme --from <cut file> --plan

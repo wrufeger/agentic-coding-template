@@ -235,7 +235,17 @@ DEFAULT_CHANNEL = "release"
 _STABLE_TAG = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _URL_USER = re.compile(r"(?P<scheme>\b[a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s]*@")
 _CHANNEL_HINT_MARKER = Path(".act-local") / "update-channel-hint"
-_LS_REMOTE_TIMEOUT = 10
+_LS_REMOTE_TIMEOUT_DEFAULT = 10
+
+
+def _ls_remote_timeout() -> int:
+    """Seconds `git ls-remote` may take: `ACT_LS_REMOTE_TIMEOUT` (a whole number of 1..60, set by the prompt
+    shortcut so it stays below the hook's own limit), else the default."""
+    raw = os.environ.get("ACT_LS_REMOTE_TIMEOUT", "")
+    return int(raw) if raw.isascii() and raw.isdigit() and 1 <= int(raw) <= 60 else _LS_REMOTE_TIMEOUT_DEFAULT
+
+
+_LS_REMOTE_TIMEOUT = _ls_remote_timeout()
 
 
 def _mask_url_user(text: str) -> str:

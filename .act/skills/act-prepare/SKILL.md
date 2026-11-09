@@ -10,8 +10,9 @@ questions, stated assumptions) and `R-work-handover`. **In one sentence:** the h
 everything open **once**, then the block runs unattended. The costliest mistake is a question the
 code already answers, so research comes before the question round, never after.
 
-**Short path — one task, no open question:** bound the scope in a sentence, one `explorer` look at what exists
-and at `decisions.md`, then `entries.py new task <title>` with goal, acceptance criterion, steps and size
+**Short path — one task, no open question:** bound the scope in a sentence, one `explorer` look at what exists,
+at `decisions.md` and at `docs/project/learnings/` (grep `area:`/`tags:`), and a check that the backlog entries
+in scope have no open `decision:` point, then `entries.py new task <title>` with goal, acceptance criterion, steps and size
 (step 3). Ready by step 4's test: say so and hand it over. No question round, no ADR, no order plan. Anything
 open or conflicting: the full path below.
 

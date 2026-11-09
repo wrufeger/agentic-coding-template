@@ -519,12 +519,19 @@ if len(sys.argv) == 3 and sys.argv[1] == "UserPromptSubmit" and sys.argv[2] == "
                 import subprocess as _subprocess
                 _script5, _lead5 = (("info.py", []) if _config_match.group(1) == "info"
                                     else ("update.py", ["--versions", "--short"]))
+                # Windows paths keep their backslashes (non-POSIX split); the git lookup gets a shorter limit than the hook's 8 s.
                 _run5 = _subprocess.run(
-                    [sys.executable, str(_root5 / ".act" / "scripts" / _script5), *_lead5, *_shlex.split(_rest5)],
-                    cwd=str(_root5), capture_output=True, timeout=8, stdin=_subprocess.DEVNULL)
+                    [sys.executable, str(_root5 / ".act" / "scripts" / _script5), *_lead5,
+                     *[_t[1:-1] if os.name == "nt" and len(_t) > 1 and _t[0] == _t[-1] and _t[0] in "\"'" else _t
+                       for _t in _shlex.split(_rest5, posix=(os.name != "nt"))]],
+                    cwd=str(_root5), capture_output=True, timeout=8, stdin=_subprocess.DEVNULL,
+                    env={**os.environ, "ACT_LS_REMOTE_TIMEOUT": "5"})
                 _config_out = _run5.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n").rstrip("\n")
                 if not _config_out:
-                    _config_out = _run5.stderr.decode("utf-8", errors="replace").strip() or f"{_script5} printed nothing"
+                    _err5 = _run5.stderr.decode("utf-8", errors="replace").strip()
+                    if _run5.returncode == 2 and _err5.startswith("usage:"):
+                        sys.exit(0)  # argparse usage error (e.g. an unknown option): the prompt goes on
+                    _config_out = _err5 or f"{_script5} printed nothing"
         except Exception as _exc5:  # noqa: BLE001 -- a bug here must never eat the user's prompt
             print(f"[act] act-{_config_match.group(1)}: failed, message passed through ({_exc5!r})", file=sys.stderr)
             sys.exit(0)

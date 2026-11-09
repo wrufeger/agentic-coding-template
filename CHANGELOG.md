@@ -352,6 +352,13 @@ README), and `act-update` and `act-adopt` never bring it into a project.
 
 ### Fixed
 
+- The prompt shortcuts `/act-version` and `/act-info`: on Windows a path argument such as `--source D:\dev\x` keeps its
+  backslashes, a usage error of the script (`/act-info bitte`) lets the prompt through instead of blocking it, and the
+  `git ls-remote` look-up of `/act-version` stops after 5 s (`ACT_LS_REMOTE_TIMEOUT` sets the limit of `update.py`), inside
+  the hook's own limit.
+- `act-setup`, `act-adopt` and `act-prepare` texts: moving the translation todo with `--no-commit`, the `--kind` values
+  and the bullet rule of `adopt_passages.py --into coding` are named again; the short path of `act-prepare` looks at
+  learnings and open `decision:` points.
 - `i18n_check.py` no longer puts the file name in front of every key for a Nuxt i18n setup (`nuxt.config.*` with `i18n`
   and `files`): the files of one language are merged as they are, so `used-undefined` and `unused` stop reporting every
   key. Other projects keep the i18next namespace reading; `--no-namespace` forces the merge by hand. The code scan
