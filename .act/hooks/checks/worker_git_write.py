@@ -43,7 +43,9 @@
 #   - the outside-project exemption only recognizes a literal `-C <dir>` chain on the git
 #     invocation itself, or a literal `cd <dir>`-family command as the *whole command's own first
 #     simple command* with no later cd-like command anywhere after it
-#     (_leading_cd_outside_project) — both shapes named in the assignment's own examples. A `cd`
+#     (_leading_cd_outside_project) — both shapes named in the assignment's own examples. A `cd` inside
+#     `( ... )` counts only when every command of the line is inside that group (`(cd x && git commit)`);
+#     `(cd x) && git commit` runs the commit where the shell was (_group_closes_before_end). A `cd`
 #     buried deeper, inside a function, guarded by `if`, or naming a dynamic directory ($VAR,
 #     `` `...` ``, `$(...)`, a leading `~`) never grants the exemption: the git call is then still
 #     checked normally.
@@ -230,14 +232,47 @@ def _first_operand(args: list[str]) -> Optional[str]:
     return None
 
 
-def _leading_cd_directory(commands: list[list[str]], base_cwd: str) -> tuple[bool, Optional[Path]]:
+def _group_closes_before_end(parse: Parse) -> bool:
+    """True when the command's first word stands inside `( ... )` and a word follows the `)` that closes its
+    innermost group (or that group never closes, or the command does not tokenize but holds a `(`): a `cd` there
+    changes the directory of that subshell only, so the commands after the group run elsewhere and one directory
+    for the whole command is not determinable. False for a command whose first word is not inside a group, and
+    for one whose every command is inside it (`(cd x && git commit -m y)`)."""
+    if parse.tool_name == "PowerShell" or "(" not in parse.command:
+        return False  # PowerShell has no subshell (`(cd x); git commit` keeps the location); no group: no tokens needed
+    tokens = parse.chain_tokens()
+    if tokens is None:
+        return True
+    depth = 0
+    start = 0
+    for start, (text, is_op) in enumerate(tokens):
+        if not is_op:
+            break
+        depth += text == "("
+    if depth == 0:
+        return False
+    level, closed = depth, False
+    for text, is_op in tokens[start:]:
+        if is_op:
+            level += (text == "(") - (text == ")")
+            closed = closed or level < depth
+        elif closed:
+            return True
+    return not closed
+
+
+def _leading_cd_directory(
+    commands: list[list[str]], base_cwd: str, parse: Optional[Parse] = None,
+) -> tuple[bool, Optional[Path]]:
     """How a leading `cd` decides the directory a command runs in, read from `commands` (the
     prefix-stripped argv of every simple command, in order) -- (determinable, directory).
     (True, None): no leading cd (nothing, or a first command that is not cd-like) and no later one.
     (True, path): the first simple command is `cd`-like (_CD_LIKE_NAMES) with a literal operand
     resolving to `path` (against `base_cwd`) and no later simple command changes directory again
     (_CD_LIKE_NAMES or _CD_UNKNOWN_NAMES). (False, None): not determinable -- a later directory
-    change anywhere, a leading cd without an operand or with a dynamic or unresolvable one. Each
+    change anywhere, a leading cd without an operand or with a dynamic or unresolvable one, and (when `parse`
+    is given) a leading cd inside `( ... )` while other commands follow the group: `(cd x) && git commit`
+    runs the commit where the shell was, not in `x` (_group_closes_before_end). Each
     caller maps these three answers to its own verdict: git_discard.py refuses on not determinable,
     this module's exemption is simply not granted."""
     for later in commands[1:]:
@@ -248,6 +283,8 @@ def _leading_cd_directory(commands: list[list[str]], base_cwd: str) -> tuple[boo
             return False, None
     if not commands or _command_name(commands[0][0]) not in _CD_LIKE_NAMES:
         return True, None
+    if parse is not None and _group_closes_before_end(parse):
+        return False, None
     directory = _first_operand(commands[0][1:])
     resolved = None if directory is None else _resolve_dir(directory, base_cwd)
     if resolved is None:
@@ -268,7 +305,7 @@ def _leading_cd_outside_project(
         return False
     if parse is None:
         parse = Parse("Bash", command)
-    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd)
+    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd, parse)
     return determinable and directory is not None and _is_outside_root(directory, root)
 
 
@@ -303,7 +340,10 @@ def check_worker_git_write(payload: dict) -> int:
     parse = parse_for(payload, command)
     leading_cd_outside = _leading_cd_outside_project(command, base_cwd, root, parse)
 
-    for prefix, args in parse.git_invocations_with_prefix():
+    invocations = parse.git_invocations_with_prefix()
+    if parse.tool_name == "PowerShell":
+        invocations += parse.assigned_git_invocations()  # `$r = git commit -m x`: the Bash reader sees `$r`
+    for prefix, args in invocations:
         subcommand, sub_args, dash_c_dirs, has_dir_override, alias_defined = _parse_git_invocation(args)
         if subcommand is None:
             continue

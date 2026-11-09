@@ -351,6 +351,10 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   `docs/ai/config.md` § Roles (e.g. `builder | high` gives 80); an unknown `Tier:` word falls back to the role's
   default instead of 40. `entries.py new --triage` with `--status answered|done` is refused (`triage:` means the
   entry still needs processing). The cost rule on amending a running worker no longer names a Claude Code tool.
+- `write-guard` no longer refuses a PowerShell loop or script block (`foreach`, `ForEach-Object`, `$( ... )`) whose body only
+  runs a template script through an interpreter (`python .act/scripts/doctor.py --accept $id`): the script word is a read
+  there, as it is without the loop. Writing under `.act/` in the loop body (`Set-Content`, `>`, `Copy-Item`, a second
+  `.act/` word) is still refused.
 - `write-guard` no longer refuses ordinary inline Python whose write targets the text shows: a loop over a list or
   tuple of literals (also `for name, ans in [("a", "b"), ...]`), a path or glob pattern built from its variable,
   `next(<glob on a literal folder>)`, the path parameter of a function used only as `onerror=` / `onexc=` of
@@ -453,6 +457,18 @@ README), and `act-update` and `act-adopt` never bring it into a project.
   protected file such as `.envrc` went unseen. It also sees a copy inside `bash -c '...'`, `$(...)`, `( ... )`,
   `x=$(...)` and `pwsh -Command "Copy-Item ..."` now. What the coarse reading refused before (a shell line inside a quoted
   program text, a heredoc body a shell runs) is refused as before.
+- A `dir_fd=` argument (`dir_fd=`, `src_dir_fd=`, `dst_dir_fd=`) on a write call in inline Python (`shutil.rmtree`,
+  `os.remove`, `os.open`, `os.rename` ...) is no longer ignored: the path is judged against the directory it names when
+  the text shows it (`os.open('.act', os.O_RDONLY)`, directly or through a name bound once), and the write is refused as
+  one whose target is unknown when it does not. A call without `dir_fd` is read as before.
+- `worker-git-write` and `git-discard`: a `cd` inside `( ... )` ends with the group. `(cd <dir>) && git commit` and
+  `(cd <dir>); git reset --hard` no longer count as run in `<dir>` (a worker's commit got the outside-project exemption,
+  `git reset --hard` was judged against the wrong repository); a group that closes before the command ends makes the
+  directory not determinable, so `(cd <dir> && git commit); echo done` is no longer exempt either. `(cd <dir> && git commit)`
+  stays as before, and so does PowerShell, where `(cd <dir>)` keeps the location. `git-metadata-guard` keeps reading a
+  leading `cd` as applying to the whole line, so its copy-target judgment is as strict as before.
+- `worker-git-write` reads a git call behind a PowerShell assignment (`$r = git commit -m x`, `$null = git add x`) like
+  `git-metadata-guard` does; it passed before because the word reader took `$r` for the command.
 - A write check that cannot identify its target refuses instead of evaluating in part. Inline Python or Node code with a
   write call whose path the text does not show (a name bound twice, a loop variable, `sys.argv`, a join or f-string with a
   variable part) is refused by the `.act/` write guard and the worker write scope; a path the text shows is

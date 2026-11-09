@@ -1555,6 +1555,35 @@ class _Env:
             self.subst, self.memo = saved
         return found
 
+    def with_dir_fd(self, call: ast.Call, position: int, paths: "Optional[list[str | _Under]]") -> "Optional[list[str | _Under]]":
+        """`paths` (the shown paths of the argument at `position` of a write call) when no directory descriptor
+        moves it. A `dir_fd=` (`src_dir_fd=` for the first path, `dst_dir_fd=` for the second) that is not `None`
+        resolves the path against another directory, so the call writes where the text does not show: the paths
+        come back joined onto that directory when it is shown (`os.open('<literal>', ...)`, written out or through a
+        name bound once, no other keyword but `flags`), else None - not shown, and a refused write."""
+        names = ("dir_fd", "src_dir_fd" if position == 0 else "dst_dir_fd")
+        given = [item.value for item in call.keywords if item.arg in names
+                 and not (isinstance(item.value, ast.Constant) and item.value.value is None)]
+        if not given:
+            return paths
+        if paths is None or len(given) != 1 or any(isinstance(item, _Under) for item in paths):
+            return None
+        directory = self._descriptor_directory(given[0])
+        return None if directory is None else [os.path.join(directory, str(item)) for item in paths]
+
+    def _descriptor_directory(self, node: ast.expr) -> Optional[str]:
+        """The directory a descriptor argument stands for when the text shows it: `os.open(<path>, ...)` of a
+        shown path, directly or as a name bound once to it; else None."""
+        if not self.active:
+            return None
+        if isinstance(node, ast.Name) and len(self.bound.get(node.id, ())) == 1:
+            node = self.assigned.get(node.id, node)
+        if not isinstance(node, ast.Call) or _callee(node.func, self.aliases) != ("os", "open", None):
+            return None
+        if any(item.arg != "flags" for item in node.keywords):
+            return None
+        return self.text(_argument(node, 0, "path"))
+
     def _path_value_once(self, node: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
         text = self.text(node)
         if text is not None:
@@ -1703,6 +1732,8 @@ def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[Progr
                 node = _argument(call, 0, "file") or _argument(call, 0, "path")
             nodes.append(node)
     paths = [env.path_value(node) for node in nodes]
+    if module != "":
+        paths = [env.with_dir_fd(call, position, path) for position, path in zip(positions, paths)]
     values: list[str] = []
     for path in paths:
         for item in path or ():

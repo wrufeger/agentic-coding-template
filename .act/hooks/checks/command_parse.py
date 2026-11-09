@@ -119,6 +119,15 @@ class Parse:
             lambda: _command_words._git_invocations_with_prefix(self._command),
             lambda found: [(list(prefix), list(args)) for prefix, args in found])
 
+    def assigned_git_invocations(self) -> list:
+        """powershell_targets._assigned_git_invocations(ps_words): the git calls behind a PowerShell variable
+        assignment, as (prefix words, git argv) pairs like git_invocations_with_prefix; empty for a command
+        without one. Meant for a PowerShell call: the Bash word reader never sees these calls."""
+        return self._once(
+            "assigned_git_invocations",
+            lambda: _powershell_targets._assigned_git_invocations(self.ps_words()),
+            lambda found: [(list(prefix), list(args)) for prefix, args in found])
+
     def chain_tokens(self) -> Optional[list]:
         """shell_targets._tokenize_chain(command): the token stream of the whole command, or None when
         it does not tokenize (a result, not an error). Only this pure reading is shared by the commit

@@ -143,7 +143,6 @@ from . import inline_code as _inline_code
 from .command_parse import Parse, parse_for
 from .common import MAX_NESTING, _TOOL_PATH_FIELDS, _check_mode, _is_worker
 from .git_discard import _resolve_cwd_after_leading_cd, _resolve_target_dir
-from .powershell_targets import _ps_command_name, _strip_literal_call, _strip_program_assignment
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _is_dynamic_target, _resolve_path
 from .worker_git_write import _parse_git_invocation
 from .write_guard import _guard_root
@@ -574,13 +573,7 @@ def _assigned_git_invocations(
     caller's fallback."""
     if parse is None:
         parse = Parse("PowerShell", command)
-    found = []
-    for words in parse.ps_words():
-        call = _strip_literal_call(words)
-        stripped, _ = _strip_program_assignment(call)
-        if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
-            found.append(([], stripped[1:]))
-    return found
+    return parse.assigned_git_invocations()
 
 
 def _invocation_reason(

@@ -263,7 +263,7 @@ def _has_hard_flag(sub_args: list[str]) -> bool:
 
 
 def _resolve_cwd_after_leading_cd(
-    command: str, base_cwd: Optional[str], parse: Optional[Parse] = None,
+    command: str, base_cwd: Optional[str], parse: Optional[Parse] = None, group_scoped: bool = False,
 ) -> tuple[Optional[str], bool]:
     """The effective cwd a `git reset --hard` invocation in `command` runs against, after a
     possible leading `cd`-family command -- (effective_cwd, determinable). No leading cd at all:
@@ -273,12 +273,15 @@ def _resolve_cwd_after_leading_cd(
     not determinable: (None, False) -- the caller then refuses the call outright rather than
     falling back to the unchanged `cwd`, since `cwd` is exactly what pinning down the leading cd
     was supposed to override. `parse` is the dispatcher's reading of `command`; without it the
-    command is read here."""
+    command is read here. With `group_scoped` (git-discard's own judgment of a `reset --hard`), a leading
+    `cd` inside `( ... )` ends with the group (worker_git_write._group_closes_before_end); without it
+    (git-metadata-guard's copy targets) the leading `cd` is read as applying to the whole line, which
+    keeps that check at least as strict as before."""
     if base_cwd is None:
         return None, True
     if parse is None:
         parse = Parse("Bash", command)
-    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd)
+    determinable, directory = _leading_cd_directory(parse.stripped(), base_cwd, parse if group_scoped else None)
     if not determinable:
         return None, False
     return (base_cwd if directory is None else str(directory)), True
@@ -814,7 +817,7 @@ def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tu
         target = None
         if subcommand != "stash":  # a stash drop is refused wherever it runs
             if not resolved_cwd:
-                resolved_cwd.append(_resolve_cwd_after_leading_cd(command, base_cwd, parse))
+                resolved_cwd.append(_resolve_cwd_after_leading_cd(command, base_cwd, parse, group_scoped=True))
             effective_cwd, determinable = resolved_cwd[0]
             if determinable and not find_execdir:
                 target = _resolve_target_dir(prefix, dash_c_dirs, has_dir_override, effective_cwd)

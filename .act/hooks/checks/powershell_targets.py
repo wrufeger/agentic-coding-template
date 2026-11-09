@@ -846,6 +846,40 @@ def _assigned_read_words(call: list[str]) -> frozenset[int]:
     return frozenset()
 
 
+def _block_script_words(words: list[str]) -> frozenset[int]:
+    """Indexes in `words` of the script word of a plain `py|python|python3 [plain options] <script> args...`
+    call that starts the statement or follows a `{` (the body of a loop or script block, which the scanner
+    reads as one statement with the `{`/`}` words in it): the script is only run, as it is without the loop
+    (_assigned_read_words). Allow-list: the call ends at the next word holding a brace, and every word of it
+    must be a plain argument (_PS_PLAIN_ARG_RE); any other call keeps every word a candidate."""
+    skipped: set[int] = set()
+    for index, word in enumerate(words):
+        if index and words[index - 1] != "{":
+            continue
+        if not _PS_PROGRAM_WORD_RE.match(word) or _ps_command_name(word) not in _PS_PYTHON_PROGRAMS:
+            continue
+        end = next((i for i in range(index + 1, len(words)) if "{" in words[i] or "}" in words[i]), len(words))
+        call = words[index:end]
+        if all(_PS_PLAIN_ARG_RE.match(arg) for arg in call[1:]):
+            skipped.update(index + offset for offset in _assigned_read_words(call))
+    return frozenset(skipped)
+
+
+def _assigned_git_invocations(word_lists: list[list[str]]) -> list[tuple[list[str], list[str]]]:
+    """The git calls of PowerShell statements (`word_lists`, as _ps_word_lists reads them) that sit behind a
+    variable assignment (`$null = git config core.hooksPath x`, `$r = git commit -m x`), as (prefix, argv)
+    pairs the way the Bash word reader hands out its git calls (Parse.git_invocations_with_prefix): that
+    reader takes `$r` for the command there and never sees the git call. The assignment is cut off by
+    _strip_program_assignment, the helper the write scan uses, so both read the same forms."""
+    found: list[tuple[list[str], list[str]]] = []
+    for words in word_lists:
+        call = _strip_literal_call(words)
+        stripped, _ = _strip_program_assignment(call)
+        if stripped is not call and stripped and _ps_command_name(stripped[0]) == "git":
+            found.append(([], stripped[1:]))
+    return found
+
+
 def _broad_guard_candidates(words: list[str]) -> list[str]:
     """Extra, deliberately over-inclusive raw-text candidates for check 1 (write_guard) only — see
     the module docstring's `broad` paragraph and the _GUARD_OPAQUE_CMDLETS/_BROAD_EXCLUDE_VALUE_
@@ -862,7 +896,8 @@ def _broad_guard_candidates(words: list[str]) -> list[str]:
         words = words[:2] + effective
         candidates.extend(effective)
     if any(w in ("&", "{", "}") for w in words):
-        candidates.extend(words)
+        skipped = _block_script_words(words)
+        candidates.extend(word for index, word in enumerate(words) if index not in skipped)
     if effective:
         name = _ps_command_name(effective[0])
         kind = _ALIASES.get(name)
