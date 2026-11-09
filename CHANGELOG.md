@@ -58,6 +58,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - The recommended option of an inbox question comes first, as `**Recommended:**`; tier proposals are short.
 - Hooks also try `py -3`, so checks no longer go silent on Windows with only that launcher.
 - `protected-watch` leaves Claude Code's own "always allow" entries in `settings.local.json` and reports them.
+- `protected-watch` stays silent on the orchestrator's skill copies under `.claude/skills/` that `act-update` writes
+  unchanged; any other change there is still reported, a worker's change still put back.
 - A danger-scan finding booked in the baseline passes the first hold.
 - `init.py --target` refuses a target inside the project.
 - One changelog form (`.act/formats/changelog.md`): one line per entry, at most 250 characters, duties under

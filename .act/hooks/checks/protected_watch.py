@@ -74,6 +74,11 @@
 #     PowerShell, cmd) expands anything in a key, a value or a path: an argument with a character outside a
 #     small safe set is written as a Python string literal with `\xNN` escapes, one that begins with `@`
 #     (PowerShell splatting) or `-` or holds a comma (PowerShell array) is put in double quotes.
+#     One exception, the orchestrator's call only (`_own_skill_copies`): an added or modified file whose path is
+#     exactly (case-sensitive) a destination the copy step itself lists (init.copy_targets for the project's
+#     `tools`, plus own skills from the lock's `copies`), not in the lock's `removed_by_user`, and whose bytes
+#     equal what the step writes from its source, is not reported; the new state becomes the reference. Anything
+#     else is reported as before; a worker's call restores it like any other change.
 #   - a restore that fails (read-only file, a path through a link, no copy): the old entry stays the reference,
 #     so the change is reported again at the next call, and a temp file the write left behind is removed.
 #   Mode `off` (or a missing snapshot) does nothing. SessionStart calls `snapshot()` after the session
@@ -1012,6 +1017,75 @@ def _reportable_addition(base: str, change: dict, root: str) -> list[str] | None
     return _allow_additions(old_doc, new_doc)
 
 
+def _own_skill_copies(changes: list[dict], root: str) -> list[dict]:
+    """The changes that are the template's own skill copies: an added or modified file whose destination
+    (exact, case-sensitive string) is a key of the map the copy step itself builds (init.copy_targets for the
+    project's `tools`, plus the project's own skills as update.py adds them from the lock's `copies`), is not
+    in the lock's `removed_by_user`, and whose bytes equal init.skill_copy_bytes of the source the map names.
+    An allowlist, used for the orchestrator's call only: a deleted file, any other path, a destination the copy
+    step would not write, a source that is a link or outside the project, a file over 2 MB, anything not
+    byte-equal, or any error leaves the change out and it is reported as before."""
+    wanted: list[tuple[dict, str]] = []
+    for change in changes:
+        if change["op"] not in ("added", "modified") or change["kind"] != _KIND_FILE or change.get("data") is None:
+            continue
+        parts = _parts_below(root.rstrip("/") + "/.claude/skills", change["path"])
+        if parts and len(parts) >= 2:
+            wanted.append((change, ".claude/skills/" + "/".join(parts)))
+    if not wanted:
+        return []
+    from pathlib import Path
+
+    base, found, old_cwd = Path(root), [], os.getcwd()
+    try:
+        scripts = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+        if scripts not in sys.path:
+            sys.path.append(scripts)
+        import init  # noqa: WPS433 -- lazy on purpose: only a changed skill copy pays for it
+
+        os.chdir(base)  # actlib.resolve() and the lock readers look at the working directory
+        lock = init.actlib.read_lock_at(base)
+        if lock is None:
+            return []
+        removed = set(lock.get("removed_by_user") or [])
+        tools_cell = init.actlib.read_config(base).get("tools", "")
+        tools = sorted({init.actlib.normalize_tool(t) for t in tools_cell.split(",") if t.strip()})
+        real = base.resolve()
+        expected: dict[str, Path] = {}
+        for dest, src in init.copy_targets(base, tools).items():
+            expected[dest] = src
+        cut = init.act_profile.read_cut(base).skills
+        prefix = "docs/ai/local/skills/"
+        active = [d for d, gate in init.SKILL_TARGET_DIRS if init._skill_target_active(gate, tools)]
+        for entry in (lock.get("copies") or {}).values():  # own skills, as update.py's step builds them
+            source_rel = entry.get("source") if isinstance(entry, dict) else None
+            if (not isinstance(source_rel, str) or not source_rel.startswith(prefix)
+                    or os.path.normpath(source_rel).replace("\\", "/") != source_rel):
+                continue
+            rel = source_rel[len(prefix):]
+            if rel.split("/")[0] in cut or init.actlib.is_bytecode_cache(Path(rel)) or not (base / source_rel).is_file():
+                continue
+            for dest_root in active:
+                expected.setdefault(f"{dest_root}/{rel}", base / source_rel)
+        for change, dest in wanted:
+            src = expected.get(dest)
+            if src is None or dest in removed:
+                continue
+            try:
+                source_rel = os.path.relpath(src, real).replace("\\", "/")
+                if source_rel.startswith("../") or _link_in(root, f"{root.rstrip('/')}/{source_rel}", include_last=True):
+                    continue
+                if init.skill_copy_bytes(base, dest, Path(src)) == change["data"]:
+                    found.append(change)
+            except (OSError, ValueError, KeyError, AttributeError, TypeError):  # no verdict: reported
+                continue
+    except Exception:  # noqa: BLE001 -- no verdict at all: every change is reported
+        return []
+    finally:
+        os.chdir(old_cwd)
+    return found
+
+
 def _anchors(state: dict, root: str) -> list[_Anchor]:
     """The places a restore may write below, fixed when the snapshot was taken: the project root (itself
     reached however the owner set it up) and the git directories recorded then, each with its real path.
@@ -1294,10 +1368,13 @@ def watch(event: str, payload: dict, root: str | None = None) -> dict | None:
         for change in changes:
             if change["kind"] == _KIND_CONFIG and change["new"] is not None:
                 change["keys"] = _diff_keys(change["old"], change["new"])
+        worker = bool(payload.get("agent_id"))
+        if not worker:  # the orchestrator's own skill copies (act-update, session start) are no news
+            own = _own_skill_copies(changes, root)
+            changes = [change for change in changes if not any(change is done for done in own)]
         if not changes:
             _save_state(base, state, new_files)
             return None
-        worker = bool(payload.get("agent_id"))
         stamp = _timestamp()
         restoring = worker and mode == "block"
         anchors = _anchors(state, root) if restoring else []

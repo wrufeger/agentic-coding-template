@@ -226,7 +226,10 @@ comparison); `ACT_PROTECTED_WATCH` in the environment for one run. On a change:
   exact form is in `protected_watch.py`; any other change there is put back). Limit: an entry a worker adds to
   `permissions.allow` itself is only reported too; the file does not tell it from the owner's answer.
 - **The orchestrator's call, or `warn`:** reported only, with the commands that put the previous version back; the new
-  state becomes the reference.
+  state becomes the reference. One exception, the orchestrator's call only: a file under `.claude/skills/` that the
+  copy step (`init`, `act-update`, session start) writes for this project (exact path, not removed by you) and whose
+  bytes equal what it writes is not reported; a deleted file, any other path and any difference is. Limit: a skill
+  changed through its source (`.act/skills/`, `docs/ai/local/skills/`) is not reported, the source is versioned.
 
 Limits: it reports after the call and prevents nothing. A change made between two calls by someone else (the human,
 Claude Code, another session) is attributed to the next call; a worker's change first seen in the orchestrator's call
