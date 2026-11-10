@@ -981,6 +981,8 @@ def _offending_hint(
 # (or it is literal text in the code) and the real path is unknown. Other characters the shell treats
 # specially (`{`, a leading `~`) are plain characters to the interpreter and not dynamic here.
 _INLINE_DYNAMIC_RE = re.compile(r"[$`]")
+# A UNC share path: `\\host\share\...` (or `//host/share/...`), host and share named; `\\?\` and `\\.\` are not.
+_UNC_SHARE_RE = re.compile(r"^(?:\\\\|//)(?![?.][\\/])[^\\/\s]+[\\/]+[^\\/\s]")
 
 
 def _inline_literal_path(raw: str, base: Optional[str], root: Path) -> str:
@@ -1225,7 +1227,9 @@ def check_worker_write_scope(payload: dict) -> int:
     command_text = inline_source[1] if inline_source is not None and tool_name == "Bash" else ""
     for raw_target, base, literal_brace in checked_targets:
         offending = raw_target
-        if not str(raw_target).startswith("~"):  # `~` shows the home directory
+        # `~` shows the home directory; a UNC share path (`\\host\share\...`, not the `\\?\` form) is a shown
+        # target that is no project path as written: refused without a lookup, whatever the scope says.
+        if not str(raw_target).startswith("~") and not _UNC_SHARE_RE.match(str(raw_target)):
             judged = _known_target(raw_target, literal_brace, command_text)
             if base is None and command_text and not _CHDIR_RE.search(command_text):
                 base = inline_source[2]  # nothing changes the directory: the call runs where it started

@@ -110,7 +110,7 @@
   "hooks/checks/worker_rules.py": "c83aff9dc341285c72a7ccb773db38e6da7ea16dda934bae6829492de4d2679b",
   "hooks/checks/worker_scope_overlap.py": "f692bad6fa9c9a5c1fdc6658e3fc51a100f8965d2edb58955af7db0afaf012be",
   "hooks/checks/write_guard.py": "a8a669bea206f6752208b7ee7e3286169aed805c5453c402bbfb7fd459f8d129",
-  "hooks/checks/write_scope.py": "6cc352ffc7960b23ff2ef25e785b7c7e9f1d803337bb009797a33b245dbe782e",
+  "hooks/checks/write_scope.py": "ed6ce80e30da352f52a5323ae378ceed2526484ca4afd48ad6ee555318b1e398",
   "hooks/dispatch.py": "fe2e62ae11f2f6b31b862d293558e1e06f2ec1108f9516176afc938124b15221",
   "hooks/statusline.py": "774a7cc9852f3d6d5f4cf04a44cb6dd81d98608cfc609d4404795306d1591828",
   "ide/vscode/LICENSE.txt": "8bf4f2d0a8cb9ec0798afd8b0ac74b575b475c90dbc047283195f789865e0063",
