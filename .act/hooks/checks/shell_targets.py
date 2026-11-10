@@ -1148,7 +1148,9 @@ def _read_word(
                     piece = following if following in '"\\`' else inner + following
                     parts.append(piece)
                     bare.append(piece)
-                    live.append("." * len(piece))
+                    # `\$` keeps its backslash in the word; the mark "E" on the `$` tells a later reading that the
+                    # shell expands nothing there (_escaped_substitutions_only).
+                    live.append(".E" if piece == "\\$" else "." * len(piece))
                     in_name = False
                     index += 2
                 elif inner == "$" and index + 1 < len(text) and text[index + 1] in _EXPANSION_CLOSERS:
@@ -3486,6 +3488,21 @@ def _substitutions_are_quoted_text(word: str) -> bool:
     return True
 
 
+def _escaped_substitutions_only(word: str) -> bool:
+    """True when every `$(` in `word` is a `$` the lexer read as `\\$` inside double quotes (live mark "E"): the
+    shell expands nothing there, so the text holds no command to read. Allow-list, known only for a word the lexer
+    made; a plain `str`, a word of a nested scan and a word with any other `$(` answer False."""
+    live = getattr(word, "live", None)
+    if live is None or len(live) != len(word):
+        return False
+    start = word.find("$(")
+    while start >= 0:
+        if live[start] != "E":
+            return False
+        start = word.find("$(", start + 1)
+    return True
+
+
 def _rescan_word(word: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
     """Read a word that holds `$(` as command text once more (a command substitution runs commands).
     An arithmetic expansion `$((...))` in it is not a command: its body is read as command text instead
@@ -4020,7 +4037,8 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                 if "$(" not in word:
                     continue
                 in_remote_text = remote_start is not None and remote_start <= position < len(words)
-                if not in_remote_text and _substitutions_are_quoted_text(word):
+                if not in_remote_text and (_substitutions_are_quoted_text(word)
+                                            or (depth == 0 and _escaped_substitutions_only(word))):
                     continue  # (the text of a remote ssh call is handled below, whatever its quoting)
                 if in_remote_text:
                     # The command text of an ssh call runs on the other machine: only a `$(...)` the

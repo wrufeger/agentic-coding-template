@@ -140,11 +140,11 @@ it does: the drive form (`/q/x` as `Q:`), a folder of the working drive, a name 
 Git for Windows root (looked up in its usual install places only). A script that opens such a path itself is not seen:
 the exception trades some safety for comfort and holds only while nothing lies at the first segment.
 
-More generally a read names nothing, and is left out, where the command text does not show a place: a rooted word
-whose first segment below the root or drive does not exist on the disk (`cat /contacts.json`, `grep x /de/link-collection`,
-`C:/nothing/x`; deeper than the first segment nothing is looked up), and a shell word with a variable or substitution
-(`cat /etc/$f`). A write is never left out this way: it can create the place. Limit: a mistyped place below an existing
-folder (`D:/dev/proj/tests/x.ts` next to the project) is still a read outside.
+More generally a read names nothing, and is left out, where the command text does not show a place: a path that does not exist on the disk (`cat /contacts.json`,
+`grep x /de/link-collection`, `C:/nothing/x`, a mistyped file `D:/dev/proj/tests/x.ts` under an existing folder; on
+Windows a POSIX-rooted word counts as existing when one reading of its first segment does), and a shell word with a
+variable or substitution (`cat /etc/$f`). A write is never left out this way: it can create the place. Limit: a file
+created between the check and the read is read unseen.
 
 Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
 and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to

@@ -53,8 +53,10 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - `worker-write-scope` judges only paths a write call of inline code shows; unknown targets (variable, unreadable code)
   pass, a variable assigned a literal in the same command is judged by its value.
 - `worker-write-scope`: every target under `.act-local/tmp/` of the project is free for every worker, whatever its scope.
-- `outside-root` lets a read of a rooted word whose first segment does not exist (`/contacts.json`) and a word with a
-  variable pass; writes are judged as before.
+- `outside-root` lets a read of a path that does not exist (`/contacts.json`, a mistyped file name) and a word with a
+  variable pass; writes and existing places are judged as before.
+- `write-guard` and `worker-write-scope` read an escaped `\$(` inside double quotes (also in `python -c "..."`) as
+  text, no command substitution.
 - `write-guard` no longer refuses inline code whose write target the text does not show; a shown `.act/` path still does.
 - `update.py --plan` shows what each due migration does, not only its name, one line per migration; `act-update` shows those lines before you agree, also on resume and `--catch-up`.
 - Work with no task (skill runs, doctor report, feedback) writes throwaway output to

@@ -697,11 +697,11 @@ def _build_places(root: Path, payload: dict, config: dict) -> _Places:
 
 def _reads_nothing(raw: str, text: str, base: Optional[str], bash: bool, mode: str) -> bool:
     """True for a read that the command text does not show to reach anything: a shell word with a variable or
-    substitution (its place is unknown), or a path whose first segment below the root or drive does not exist
-    (`/contacts.json`, `/de/link-collection`, `C:/nothing/x`: a URL route or a mistyped place, there is nothing
-    to read; on Windows a POSIX-rooted word counts as existing when one reading of its first segment does,
-    _root_entry_exists). Deeper than the first segment nothing is looked up. A write is never judged this way:
-    it can create the place."""
+    substitution (its place is unknown), or a path that does not exist on the disk (`/contacts.json`,
+    `D:/dev/x/tests/typo.ts`, `C:/nothing/x`: a URL route or a mistyped file, there is nothing to read, even when a
+    parent folder exists; on Windows a POSIX-rooted word counts as existing when one reading of its first segment
+    does, _root_entry_exists, deeper than that nothing is looked up). A write is never judged this way: it can
+    create the place."""
     if _UNC_RE.match(raw.strip().strip("'\"")):
         return False  # a UNC path (`//localhost/C$/x` is the admin share, no variable) is never looked up
     if mode == "shell" and _DYNAMIC_RE.search(raw):
@@ -710,9 +710,7 @@ def _reads_nothing(raw: str, text: str, base: Optional[str], bash: bool, mode: s
         return not _root_entry_exists(text[len(_POSIX_PREFIX):].lstrip("/").split("/", 1)[0], base, bash)
     if text.startswith(("\\\\", "//")):
         return False  # a UNC path is never looked up (the host may hang): judged as written
-    drive, rest = os.path.splitdrive(text)
-    parts = [part for part in re.split(r"[\\/]+", rest) if part]
-    return bool(parts) and not os.path.lexists(drive + os.sep + parts[0])
+    return not os.path.lexists(text)
 
 
 class _Judge:
