@@ -90,6 +90,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- `write-guard` no longer refuses a write whose single-quoted text holds both a backtick and `$(`, such as
+  ``printf 'a `$(` b' >> docs/f.md``; the target is judged as before.
 - `context_size.py` measures the session named by `CLAUDE_CODE_SESSION_ID`; without it and with two live transcripts
   it refuses ("several sessions, no assignment") instead of guessing; `--transcript <path>` still overrides.
 - `worker-git-write` no longer refuses `git stash list` and `git stash show` for workers; every other `git stash` form

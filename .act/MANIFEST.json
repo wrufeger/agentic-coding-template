@@ -100,7 +100,7 @@
   "hooks/checks/session_rules.py": "94a6196eb0f0de905a9031f2277b7701249c27e0b7e222e4e3e272aab347395f",
   "hooks/checks/session_scans.py": "6e084e481a1d99c25c4979bc9436bbaeb6a7237d654cfb2fb3535bc165c3938f",
   "hooks/checks/session_update.py": "a7306f8c4c264a7321a931293198352ee650acdb7c5fe132b03e74853bc94189",
-  "hooks/checks/shell_targets.py": "156f61c3bfa873964cd1d202070875501dfa980af858574ce8cc9b3548cdd2ea",
+  "hooks/checks/shell_targets.py": "ca910c8c9887dc8994bd61c75f253f679cfe3efa4c96b1a2b3b803186a0464b2",
   "hooks/checks/state_files.py": "57685ec24c22a81c97705a298ce45b138e44335bec15928eeb2be603c054475c",
   "hooks/checks/status_poll.py": "51773b2ad5fbf494369591e357b9dd1643d0b82ef91cac41997527a7ca11e715",
   "hooks/checks/throwaway_place.py": "5a0adc4d3dd2caca387239a0dae62548d09445ab09ffbac0fcd21a04ab4300f8",

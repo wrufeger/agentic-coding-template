@@ -116,9 +116,11 @@
 #     `$(...)` is still handled by the operator mechanism (`$` a word character, the parentheses
 #     operators) and a word that contains `$(` after dequoting is scanned again as text, so a `$(`
 #     inside single quotes outside double quotes is still recursed into as if bash ran it (a false
-#     block, never a miss). The body of an `$((...))` is scanned as if it were a command (over-
-#     scanning its arithmetic — the safe side: a `>` in it counts as a redirection), but the
-#     expansion itself is no target and no command text (_rescan_word). A word of an `ssh [options]
+#     block, never a miss); a backtick in single quotes of that word is blanked first, so it cannot
+#     break the re-reading (_without_quoted_backticks). The body of an `$((...))` is scanned as if it
+#     were a command (over-scanning its arithmetic, the safe side: a `>` in it counts as a
+#     redirection), but the expansion itself is no target and no command text (_rescan_word). A word
+#     of an `ssh [options]
 #     <host> <command>` call that holds `$(` is not read as a local command either, when the call has
 #     exactly a known, harmless form (_ssh_remote_start, an allow list: anything else is read as
 #     before) - the program is `ssh` or the one of a system directory, a word in front is only a
@@ -3488,6 +3490,17 @@ def _substitutions_are_quoted_text(word: str) -> bool:
     return True
 
 
+def _without_quoted_backticks(word: str) -> str:
+    """`word` with every backtick the lexer read inside single quotes (live mark "'") replaced by a space.
+    The dequoted word is read again as command text (_rescan_word); there the single-quoted backtick, plain
+    text for the shell, would open a span of its own and fail to tokenize next to a `$(` (`'a `$(` b'`), so the
+    re-reading would stop on it and find none of the `$(` targets. A word the lexer did not make comes back as is."""
+    live = getattr(word, "live", None)
+    if live is None or len(live) != len(word) or "`" not in word:
+        return word
+    return "".join(" " if char == "`" and live[at] == "'" else char for at, char in enumerate(word))
+
+
 def _escaped_substitutions_only(word: str) -> bool:
     """True when every `$(` in `word` is a `$` the lexer read as `\\$` inside double quotes (live mark "E"): the
     shell expands nothing there, so the text holds no command to read. Allow-list, known only for a word the lexer
@@ -3508,7 +3521,9 @@ def _rescan_word(word: str, bases: _Bases, git_writes: frozenset, depth: int) ->
     An arithmetic expansion `$((...))` in it is not a command: its body is read as command text instead
     (a `$(...)` inside it still runs, `$(( a[$(cmd > f)] ))`; a `>` in it counts as a redirection, the
     safe side), and what is left of the word only when that still holds `$(`. Without this the
-    expansion itself, `$((n+3))`, came back as a write target of its own."""
+    expansion itself, `$((n+3))`, came back as a write target of its own. A backtick in single quotes of the
+    word is blanked first (_without_quoted_backticks)."""
+    word = _without_quoted_backticks(word)
     parts = _arithmetic_parts(word)
     if parts is None:
         return _scan_command(word, bases, git_writes, depth + 1)
