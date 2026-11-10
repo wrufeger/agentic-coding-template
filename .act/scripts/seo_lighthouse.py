@@ -18,7 +18,7 @@
 #          folders containing such characters are refused (exit 2).
 #
 # Where files go: the Chrome profile, the Lighthouse raw data and temporary files live in a fresh
-#          subfolder of one work folder, by default `<root>/.act-local/tmp/seo-lighthouse/` (option
+#          subfolder of one work folder, by default `<root>/.act-local/tmp/<YYYYMMDD>-seo-lighthouse/` (option
 #          `--workdir`). The child processes get it as their temp directory, the Chrome profile is passed
 #          with `--user-data-dir`. The subfolder is removed afterwards (the work folder too, if this run
 #          created it and it is empty); `--keep-raw` keeps the raw JSON under `raw/` with unique names.
@@ -65,6 +65,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import http.client
 import ipaddress
 import json
@@ -88,7 +89,13 @@ from urllib.parse import urlencode, urlparse
 LIGHTHOUSE_VERSION = "13.6.0"
 DEFAULT_RUNS = 3
 DEFAULT_TIMEOUT = 240
-DEFAULT_WORKDIR = Path(".act-local") / "tmp" / "seo-lighthouse"
+
+
+def default_workdir() -> Path:
+    """The work folder of a run with no task: `.act-local/tmp/<YYYYMMDD>-seo-lighthouse` (today's date)."""
+    return Path(".act-local") / "tmp" / f"{datetime.date.today():%Y%m%d}-seo-lighthouse"
+
+
 PSI_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 PSI_KEY_ENV = "PAGESPEED_API_KEY"
 PSI_ENDPOINT_ENV = "PAGESPEED_ENDPOINT"
@@ -942,7 +949,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--form-factor", choices=("mobile", "desktop"), default="mobile",
                    help="Lighthouse emulation (default mobile)")
     p.add_argument("--workdir", help="folder for Chrome profile, raw data and temp files "
-                                     "(default <root>/.act-local/tmp/seo-lighthouse)")
+                                     "(default <root>/.act-local/tmp/<YYYYMMDD>-seo-lighthouse)")
     p.add_argument("--root", default=".", help="project root for the default workdir (default: current directory)")
     p.add_argument("--keep-raw", action="store_true", help="keep the raw Lighthouse JSON under <workdir>/raw")
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds per run (default %(default)s)")
@@ -1023,7 +1030,7 @@ def run_cli(argv: Optional[Sequence[str]] = None) -> int:
         if not args.workdir and not Path(args.root).is_dir():
             print(f"seo_lighthouse: --root {args.root} is not an existing folder", file=sys.stderr)
             return EXIT_USAGE
-        workdir = Path(args.workdir) if args.workdir else Path(args.root) / DEFAULT_WORKDIR
+        workdir = Path(args.workdir) if args.workdir else Path(args.root) / default_workdir()
         try:
             results = measure(args.urls, args.runs, workdir.resolve(), args.keep_raw, args.timeout,
                               args.form_factor, os.environ)

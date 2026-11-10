@@ -27,7 +27,10 @@ from typing import Optional
 import actlib
 
 from . import inline_code as _inline_code
-from .common import _check_mode, _note_only, _pop_pending_notes, _queue_pending_note
+from .common import (
+    _SHELL_TOOL_NAMES, _TOOL_PATH_FIELDS, _check_mode, _is_worker, _note_only, _pop_pending_notes,
+    _queue_pending_note,
+)
 from .shell_targets import _is_dynamic_target
 from .worker_scope_overlap import _main_write_paths, _placed
 from .write_scope import _SAFE_ID_RE, _TEMP_VARIABLE_RE, _names_throwaway_place
@@ -72,6 +75,8 @@ def _misplaced(raw: str, base: Optional[str], literal: bool, root: Path) -> Opti
     placed = _placed(text, base, root, _is_dynamic_target(text) and not literal)
     if placed is not None and placed.startswith(_LOCAL_PREFIX):
         rest = placed[len(_LOCAL_PREFIX):].rstrip("/")
+        if rest == _inline_code.WHOLE_FOLDER:
+            return "deleting the folder"  # a recursive delete of `.act-local/` itself, not an entry below it
         if rest and not _known_entry(rest.split("/")[0]):
             return "a file or folder directly under `.act-local/` is not the place for"
     return None
@@ -86,7 +91,10 @@ def _hint_file(root: Path, tool_use_id: object) -> Optional[Path]:
 
 def check_throwaway_place(payload: dict) -> int:
     """Notes the first misplaced target of this call (stdout, and queued for PostToolUse). Always 0."""
-    if payload.get("agent_id") or _mode(actlib.read_config()) == "off":
+    tool_name = payload.get("tool_name")
+    if _is_worker(payload) or not (tool_name in _TOOL_PATH_FIELDS or tool_name in _SHELL_TOOL_NAMES):
+        return 0  # the tool is looked at before docs/ai/config.md is read
+    if _mode(actlib.read_config()) == "off":
         return 0
     try:
         root = actlib.repo_root()
@@ -98,6 +106,8 @@ def check_throwaway_place(payload: dict) -> int:
         if where is None:
             continue
         shown = str(raw).replace("\\", "/")
+        if where == "deleting the folder":
+            shown = _LOCAL_PREFIX
         shown = shown if len(shown) <= 80 else shown[:77] + "..."
         text = _THROWAWAY_NOTE.format(where=where, shown=shown)
         print(text)
@@ -112,7 +122,7 @@ def check_throwaway_place(payload: dict) -> int:
 def note_throwaway_place(payload: dict) -> Optional[str]:
     """PostToolUse counterpart: the note queued for this very call (by tool_use_id), once; None when there is
     none. Registered in dispatch.py's _POST_TOOL_USE_NOTES."""
-    if payload.get("agent_id"):
+    if _is_worker(payload):
         return None
     try:
         path = _hint_file(actlib.repo_root(), payload.get("tool_use_id"))

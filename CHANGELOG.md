@@ -53,6 +53,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - `update.py --plan` shows what each due migration does, not only its name, one line per migration; `act-update` shows those lines before you agree, also on resume and `--catch-up`.
 - Work with no task (skill runs, doctor report, feedback) writes throwaway output to
   `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.
+- `seo_lighthouse.py` works in `.act-local/tmp/<YYYYMMDD>-seo-lighthouse/` by default (was `.act-local/tmp/seo-lighthouse/`);
+  `--workdir` still overrides it.
 - `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
 - Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.

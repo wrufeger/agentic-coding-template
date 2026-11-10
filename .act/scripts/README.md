@@ -1153,7 +1153,7 @@ options:
   --form-factor {mobile,desktop}
                         Lighthouse emulation (default mobile)
   --workdir WORKDIR     folder for Chrome profile, raw data and temp files (default <root>/.act-
-                        local/tmp/seo-lighthouse)
+                        local/tmp/<YYYYMMDD>-seo-lighthouse)
   --root ROOT           project root for the default workdir (default: current directory)
   --keep-raw            keep the raw Lighthouse JSON under <workdir>/raw
   --timeout TIMEOUT     seconds per run (default 240)

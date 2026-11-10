@@ -24,7 +24,7 @@ Only on request. Read `R-safe-dev-server` first: the owner's dev server is their
 4. **Lighthouse.** From the crawl pick one URL per page type (home, list, detail, form, article) and run
    `python .act/scripts/seo_lighthouse.py <url> <url> ...` (three runs each, median and spread). It needs Node
    and Chrome; if they are missing, ask once before installing anything (`R-code-tools`). Without `--workdir` it
-   works in `<root>/.act-local/tmp/seo-lighthouse/`; when the work has a throwaway folder of its own (`.act-local/tmp/<YYYYMMDD>-<slug>/` with no task), pass it as
+   works in `<root>/.act-local/tmp/<YYYYMMDD>-seo-lighthouse/` (today's date); when the work has a throwaway folder of its own (`.act-local/tmp/<YYYYMMDD>-<slug>/` with no task), pass it as
    `--workdir` so the files end up there. A site in several languages needs one URL per language start page
   . A failed audit lists its first entries (element, address, text);
    `--json` has all of them.
