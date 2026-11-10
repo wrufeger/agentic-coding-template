@@ -25,6 +25,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `changelog-length: off` in `docs/ai/config.md` § Checks.
 
 ### Added
+- `act-doctor` notes a `docs/project/` file of 300 lines or more and a `docs/README.md` index line pointing below a
+  subfolder (switch `docs-order`, never a block); the changelog length check skips code blocks and counts `*`/`+` items.
 - Staged test cadence in `R-code-commit`: affected tests in a step, lint, typecheck and unit tests before a commit, the
   full suite before a push; `commands` takes an optional fourth entry for it (three entries work as before).
 - `throwaway-place` check (`warn`|`off`, default `warn`): a note when a command or file write puts throwaway output

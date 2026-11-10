@@ -26,7 +26,7 @@ move a document stand here.
 
 ## What `doctor.py` reports
 
-All four kinds are findings like any other (exit 1); none rewrites a file.
+All six kinds are findings like any other (exit 1); none rewrites a file.
 
 - `docs-index-missing` — a folder with five or more entries and no `README.md`, or a file or subfolder that
   its folder's `README.md` does not name. A name counts as named when it appears in the README outside a
@@ -48,6 +48,13 @@ All four kinds are findings like any other (exit 1); none rewrites a file.
   retired `done-entries: delete`). A concept
   that names no question is not reported, and neither is one that names an open one. The report is a
   prompt to apply the lifecycle above, not a judgement that the concept is finished.
+- `docs-file-long` — a Markdown file under `docs/project/` of 300 lines or more: split it into a folder with a
+  `README.md` and parts. A note only, whatever the file holds.
+- `docs-index-deep` — an index line of `docs/README.md` whose first path has two or more parts below `docs/`
+  (`docs/project/x.md`, `project/x.md`, `project/sub/`); only a folder (`docs/project/`) or a top-level file
+  (`docs/top.md`) belongs there, the rest in that folder's `README.md`. A link is read relative to `docs/`, a path
+  in backticks only when it starts with `docs/`; whatever resolves outside `docs/` and everything under `docs/ai/`
+  (the scaffold index lists that area in depth) is skipped.
 
 ## Switch
 

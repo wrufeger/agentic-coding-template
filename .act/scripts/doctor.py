@@ -87,7 +87,9 @@
 #               nothing (docs-index-stale); a dead relative link or `docs/project/...md` path in
 #               docs/README.md and docs/project/ (docs-link-dead); a concept under
 #               docs/project/concepts/ whose questions are all answered or gone, with no open one
-#               (docs-concept-decided). Nothing with the switch off.
+#               (docs-concept-decided); a file under docs/project/ of about 300 lines or more
+#               (docs-file-long); a docs/README.md index line pointing below a subfolder of docs/
+#               (docs-index-deep). Nothing with the switch off.
 #          23. the size of the always-loaded own rules (the sections marked `act:own-rules` in
 #               docs/ai/rules.md and docs/project/coding_rules.md together): one warning above the
 #               budget `own-rules-budget` in docs/ai/config.md (default 6000 characters, `off` or `0`
@@ -146,6 +148,7 @@ import difflib
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -232,6 +235,8 @@ KIND_LABELS: dict[str, str] = {
     "docs-index-missing": "Project docs without an index line (or a folder without README.md)",
     "docs-index-stale": "Index lines of a project docs README.md that name nothing",
     "docs-link-dead": "Dead relative links and paths in the project docs",
+    "docs-file-long": "Project docs files of about 300 lines or more (split into a folder)",
+    "docs-index-deep": "docs/README.md index lines that point below a subfolder of docs/",
     "docs-concept-decided": "Concepts whose questions are all answered (archive once built)",
     "own-rules-size": "Always-loaded own rules over the size budget (own-rules-budget)",
     "changelog-length": "Changelog entries under [Unreleased] over the length limit (changelog-length)",
@@ -278,6 +283,8 @@ KIND_LABELS_DE: dict[str, str] = {
     "docs-index-missing": "Projektdoku ohne Indexzeile (oder Ordner ohne README.md)",
     "docs-index-stale": "Indexzeilen eines README.md der Projektdoku, die nichts benennen",
     "docs-link-dead": "Tote relative Verweise und Pfade in der Projektdoku",
+    "docs-file-long": "Dateien der Projektdoku ab etwa 300 Zeilen (in einen Ordner aufteilen)",
+    "docs-index-deep": "Indexzeilen in docs/README.md, die unter einen Unterordner von docs/ zeigen",
     "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (archivieren, sobald gebaut)",
     "own-rules-size": "Immer geladene eigene Regeln über dem Größenbudget (own-rules-budget)",
     "changelog-length": "Changelog-Einträge unter [Unreleased] über der Längengrenze (changelog-length)",
@@ -1705,8 +1712,58 @@ def _check_decided_concepts(root: Path, project: Path) -> list[Finding]:
     return findings
 
 
+DOCS_FILE_LONG_LINES = 300
+
+
+def _check_docs_file_length(root: Path, project: Path, ignored: list[Path]) -> list[Finding]:
+    """A Markdown file under docs/project/ of DOCS_FILE_LONG_LINES lines or more."""
+    findings: list[Finding] = []
+    for path in sorted(project.rglob("*.md")):
+        if _is_ignored(path, ignored) or any(part.startswith(".") for part in path.relative_to(project).parts):
+            continue
+        text = _read_text(path)
+        count = len(text.splitlines()) if text is not None else 0
+        if count >= DOCS_FILE_LONG_LINES:
+            findings.append(Finding(
+                path=_rel(path, root), line=None, kind="docs-file-long",
+                message=(f"{count} lines (about {DOCS_FILE_LONG_LINES} is the limit) — split it into a folder "
+                         "with a README.md and parts (R-docs-order)"),
+            ))
+    return findings
+
+
+def _check_docs_index_depth(root: Path, docs: Path) -> list[Finding]:
+    """An index line of docs/README.md whose first path points below a subfolder of docs/: that file
+    names folders and top-level files only."""
+    readme = docs / "README.md"
+    text = _read_text(readme) if readme.is_file() else None
+    if text is None:
+        return []
+    findings: list[Finding] = []
+    for number, line in _unfenced(text):
+        token = _index_path(line)
+        if token is None:
+            continue
+        if f"]({token}" in line:  # a link is read relative to docs/, the folder of this README
+            relative = token
+        elif token.startswith("docs/"):  # a path in backticks counts only when it starts with docs/
+            relative = token[len("docs/"):]
+        else:
+            continue
+        parts = [part for part in posixpath.normpath(relative).split("/") if part and part != "."]
+        if not parts or parts[0] == ".." or parts[0] == "ai":  # outside docs/; docs/ai/ is the scaffold's own area
+            continue
+        if len(parts) >= 2:
+            findings.append(Finding(
+                path=_rel(readme, root), line=number, kind="docs-index-deep",
+                message=(f"index line names {token}, below a subfolder of docs/ — docs/README.md names "
+                         "folders and top-level files only; move the line to that folder's README.md (R-docs-order)"),
+            ))
+    return findings
+
+
 def check_docs_order(root: Path) -> list[Finding]:
-    """The four kinds of R-docs-order; nothing while `docs-order` is off or docs/ is missing."""
+    """The kinds of R-docs-order; nothing while `docs-order` is off or docs/ is missing."""
     docs = root / "docs"
     if not docs.is_dir() or not docs_order_enabled(root):
         return []
@@ -1715,6 +1772,8 @@ def check_docs_order(root: Path) -> list[Finding]:
     ignored = _git_ignored(root)
     if project.is_dir():
         findings += _check_docs_indexes(root, project, ignored)
+        findings += _check_docs_file_length(root, project, ignored)
+    findings += _check_docs_index_depth(root, docs)
     findings += _check_docs_links(root, docs, ignored)
     if project.is_dir():
         findings += _check_decided_concepts(root, project)
@@ -1870,8 +1929,9 @@ def _config_word(root: Path, key: str, default: str) -> str:
 
 def changelog_entries(lines: list[str]) -> list[tuple[int, str]]:
     """[(line number, text)] of the list items under `## [Unreleased]`: an item runs from its `- `
-    line to the next item, a heading or a blank line; its continuation lines are stripped and joined
-    with one space; the text is what follows the `- `."""
+    (or `* `, `+ `) line to the next item, a heading or a blank line; its continuation lines are
+    stripped and joined with one space; the text is what follows the marker. Fenced code blocks are
+    skipped."""
     start = None
     for number, line in enumerate(lines):
         if RE_UNRELEASED.match(line.strip()):
@@ -1882,12 +1942,24 @@ def changelog_entries(lines: list[str]) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     current: list[str] = []
     first = 0
+    fence: Optional[str] = None
     for number in range(start, len(lines)):
         line = lines[number]
         stripped = line.strip()
+        fence_match = RE_FENCE.match(stripped)
+        if fence is None and fence_match:  # a code block is skipped and ends the entry before it
+            fence = fence_match.group(1)[0]
+            if current:
+                found.append((first, " ".join(current)))
+            current = []
+            continue
+        if fence is not None:
+            if fence_match and fence_match.group(1)[0] == fence:
+                fence = None
+            continue
         if line.startswith("## "):
             break
-        if line.startswith("- "):
+        if line[:2] in ("- ", "* ", "+ "):
             if current:
                 found.append((first, " ".join(current)))
             current, first = [line[2:].strip()], number + 1
