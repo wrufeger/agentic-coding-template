@@ -69,8 +69,8 @@ Throwaway material — probes, throwaway projects, clones, output and scratch fi
 the work needs it, and only under `.act-local/tmp/<task-id>-<slug>/`, or `.act-local/tmp/<YYYYMMDD>-<slug>/`
 for work with no task (a skill run, a doctor report, feedback intake): never in the system temp
 directory and never directly under `.act-local/`. Whoever makes it removes it
-once it has served; a worker's result says it did, or what is left and why, and an assignment that
-needs the folder names it in its `Write scope:`. A probe never sets an access right its owner could
+once it has served; a worker's result says it did, or what is left and why; an assignment
+needs no scope entry for it: `.act-local/tmp/` is open to every worker. A probe never sets an access right its owner could
 not take back alone, and takes back every right it set in a `finally`. The orchestrator removes a
 task's folders when it commits the task (`act-commit`); `act-local-tidy` clears what is left after 7
 days unless the name starts with an open task's id or `act-local-keep` lists it. A main-session write
@@ -89,7 +89,7 @@ runs (`R-work-process-error`), come back with its result. If the human addresses
 answers only "please ask the orchestrator" and carries on; asked for status, it answers at once with
 facts: done, open, unexpected. Git is read-only (`status`, `diff`, `log`, `show`); whatever changes
 the working tree or history stays with the orchestrator. A file outside the assignment's
-`Write scope:` is never written — not with the tool a check would refuse, and not through an
+`Write scope:` (the throwaway place `.act-local/tmp/` aside) is never written — not with the tool a check would refuse, and not through an
 interpreter, script or other detour, whether or not a check refused it; the result names the file and
 the change it needs. Any other write a check refused is not made another way either; the refusal goes
 into the result. Path-bound rules (`.claude/rules/`, `paths:`) load only when a matching file is read

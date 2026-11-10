@@ -295,12 +295,10 @@ class _ScanBudget:
 @dataclass
 class _InlineSink:
     """Where the walk of the statements puts the path literals of inline interpreter code (_collect_ps_inline).
-    `precise` chooses the reader (the paths of the write calls, or every path literal next to a write call);
     `swallow` says what a failure of the reader does: noted in `failed` and the walk goes on (the targets scan,
     which then reports one dynamic target for the command), or it propagates (the worker write scope's own
     reading, which reports it)."""
 
-    precise: bool = False
     swallow: bool = False
     failed: bool = False
     found: list[_PsInlineTarget] = field(default_factory=list)
@@ -1485,7 +1483,7 @@ def _collect_ps_inline(
             code = _unwrap_here_string(code)
         if kind == _inline_code.SOURCE_NONE or code is None:
             continue
-        reader = _inline_code.write_targets if sink.precise else _inline_code.write_paths
+        reader = _inline_code.write_targets
         try:
             if kind == _inline_code.SOURCE_CODE and (start > 0 or program != statement[0]):
                 paths = _read_with_glued_closers(reader, language, code)
@@ -1598,7 +1596,7 @@ def _powershell_write_targets(
         if tokens is None or _uses_invoke_expression(tokens):
             return None
         tracked = start if start is not None else _TrackedDirs.start(base_cwd)
-        sink = _InlineSink(precise=True, swallow=True) if _inline_code.mentions_interpreter(command) else None
+        sink = _InlineSink(swallow=True) if _inline_code.mentions_interpreter(command) else None
         result = _scan_ps_tokens(tokens, base_cwd, git_writes, broad, depth, tracked, sink)
         if sink is not None:
             result |= _inline_sink_targets(sink, base_cwd, command, tracked)
@@ -1642,13 +1640,13 @@ def _ps_literal_output(words: list[str]) -> Optional[str]:
 
 
 def _scan_ps_inline(
-    tokens: list[_Token], base_cwd: str, precise: bool = False, start: Optional[_TrackedDirs] = None
+    tokens: list[_Token], base_cwd: str, start: Optional[_TrackedDirs] = None
 ) -> list[_PsInlineTarget]:
     """The path literals of inline interpreter code in a tokenized command, collected by the one walk of the
     statements (_scan_ps_tokens with an _InlineSink, from `start` or `base_cwd` alone): `python -c '<code>'`,
     `node -e "..."`, and a literal piped into `python -` / `python` / `node`. A literal comes once per directory
     it may run in. A failure of the reader propagates (the worker write scope reports it)."""
-    sink = _InlineSink(precise=precise)
+    sink = _InlineSink()
     tracked = start if start is not None else _TrackedDirs.start(base_cwd)
     _scan_ps_tokens(tokens, base_cwd, _GIT_WRITES_WORKER_SCOPE, False, 0, tracked, sink)
     return sink.found

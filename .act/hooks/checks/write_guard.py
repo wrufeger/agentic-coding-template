@@ -455,7 +455,7 @@ def _bash_targets_protected_path(
     target made of a loop or `read` variable fed by such a list (_bound_refusal; a literal loop word that names
     `.act` or may match it is refused as a write to `.act`), and a command `find` runs on every hit
     (-exec, -execdir, -ok, -okdir; _find_run_refusal) when its folders are not fixed. A write the scan could
-    not place (inline code whose path the text does not show, _is_unplaced_target) is refused as such.
+    not place (a PowerShell command it could not follow to the end, _is_unplaced_target) is refused as such; inline code whose write path the text does not show is no target and passes.
     `parse` is the dispatcher's reading of `command`; without it the command is read here."""
     if parse is None:
         parse = Parse("Bash", command)

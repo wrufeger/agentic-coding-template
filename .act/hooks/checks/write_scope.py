@@ -43,9 +43,12 @@
 #
 # Inline interpreter code (`python - <<'EOF' ... Path('x').write_text(...)`, `python -c`, `node -e`, a
 # literal piped into `python -`) is read for a restricted worker only: shell_targets.py /
-# powershell_targets.py find the call, its code and its directory, inline_code.py finds a write call and
-# the path literals, and _inline_target_offends judges each literal like a write target (but not as a
-# shell word). No other check sees these targets.
+# powershell_targets.py find the call, its code and its directory, inline_code.py finds the paths a write
+# call of the code shows, and _inline_target_offends judges each like a write target (but not as a shell
+# word). A check refuses only what the command text shows to be wrong: a target the text does not show (a
+# variable, a substitution, unreadable code, a relative path whose directory is unknown) passes, a shell
+# variable the same command assigns once as a simple literal is judged by that value (_known_target), and
+# every target under `.act-local/tmp/` of the project is free (_is_throwaway_target).
 #
 # A Bash target's quoting travels with it up to the judgment (shell_targets._Word.live): a glob
 # character bash takes literally - quoted or escaped - expands nothing, so `mkdir -p 'server/api/[id]'`
@@ -911,26 +914,32 @@ def _names_throwaway_place(
 
 
 _THROWAWAY_FOLDER = ".act-local/tmp/<task-id>-<slug>/"
+_THROWAWAY_ROOT = ".act-local/tmp"
+
+
+def _is_throwaway_target(rel: Optional[str]) -> bool:
+    """True for a project-root-relative target (_normalize_candidate_path) in the throwaway place
+    `.act-local/tmp/` of the project root: open to every worker, whatever its scope says."""
+    return rel is not None and (rel == _THROWAWAY_ROOT or rel.startswith(_THROWAWAY_ROOT + "/"))
 
 
 def _throwaway_way_out(scope: dict, in_throwaway_place: bool) -> str:
     """The way out of a refusal that concerns throwaway material: the system temp directory and the
-    worker's scratchpad are not open to a worker with a `Write scope:` line, whatever the scope says,
-    and a read-only assignment (`Write scope: none`) has no writable place at all. What is open is
-    the task's throwaway folder, once the assignment names it in its scope. Empty when neither
-    applies (a path in the project, a scope with patterns)."""
-    way = (
-        f"throwaway material belongs in `{_THROWAWAY_FOLDER}`: have the assignment add "
-        f"`{_THROWAWAY_FOLDER}**` to its `Write scope:` and write there"
-    )
-    if scope.get("mode") == "none":
-        return f"read-only assignment: nothing is writable, the system temp directory and the scratchpad included; {way}"
+    worker's scratchpad are not open to a worker with a `Write scope:` line, whatever the scope says;
+    what is open to every worker is the project's throwaway place `.act-local/tmp/`. Empty when the
+    refused path is no throwaway material (a path in the project)."""
     if in_throwaway_place:
-        return f"the system temp directory and the worker's scratchpad are not open to a worker with a `Write scope:` line; {way}"
+        return (
+            "the system temp directory and the worker's scratchpad are not open to a worker with a `Write scope:` "
+            f"line; throwaway material belongs in `{_THROWAWAY_FOLDER}`, which every worker may write"
+        )
+    if scope.get("mode") == "none":
+        return f"read-only assignment: nothing outside `{_THROWAWAY_FOLDER}` is writable"
     return ""
 
 
-# A target that starts with a temp-directory variable (`$TEMP`, `${TMPDIR}`, `$env:TMP`, `%TEMP%`).
+# A target that starts with a temp-directory variable (`$TEMP`, `${TMPDIR}`, `$env:TMP`, `%TEMP%`); read by
+# throwaway_place.py.
 _TEMP_VARIABLE_RE = re.compile(r"""^["']?(?:\$\{?(?:env:)?(?:TEMP|TMP|TMPDIR)\}?(?![A-Za-z0-9_])|%(?:TEMP|TMP)%)""", re.IGNORECASE)
 
 
@@ -942,27 +951,15 @@ def _offending_hint(
     in_throwaway_place: bool = False,
 ) -> str:
     """How to get a refused target through, where the refusal is a limit of the reading rather than
-    a verdict on the path: a variable or command substitution in it cannot be checked (`$TEMP`,
-    `$TMPDIR` and `$env:TEMP` included), the literal name of a brace list (`literal_brace`) is
-    judged next to its expansions, and a relative target that resolves against several directories
-    (a `cd` on an earlier line may have failed) has no single place to be judged in. A target in the
-    system temp directory or the scratchpad (`in_throwaway_place`) and every target of a read-only
-    assignment (`Write scope: none`) get the way out from _throwaway_way_out; with a read-only
-    assignment none of the other ways out helps."""
+    a verdict on the path: the literal name of a brace list (`literal_brace`) is judged next to its
+    expansions, and a relative target that resolves against several directories (a `cd` on an earlier
+    line may have failed) has no single place to be judged in. A target in the system temp directory
+    or the scratchpad (`in_throwaway_place`) and every target of a read-only assignment (`Write scope:
+    none`) get the way out from _throwaway_way_out; with a read-only assignment none of the other ways
+    out helps."""
     if scope.get("mode") == "none":
         return _throwaway_way_out(scope, in_throwaway_place)
     hints: list[str] = []
-    if re.search(r"[$`]", target):
-        if _TEMP_VARIABLE_RE.match(target):
-            hints.append(
-                "a target that starts with a temp variable cannot be checked, and writing the path out "
-                "leads into the next refusal; " + _throwaway_way_out(scope, True)
-            )
-        else:
-            hints.append(
-                "a target with a variable or command substitution cannot be checked: write the path out "
-                "or use Write/Edit"
-            )
     if literal_brace:
         hints.append(
             "a brace list counts as every path it expands to and as the one literal name bash writes with "
@@ -1004,61 +1001,85 @@ def _inline_target_offends(raw: str, base: Optional[str], root: Path, scope: dic
     lies outside what the worker may write: judged like any other write target (it must match the
     scope; `Write scope: none` allows nothing; the system temp directory and the scratchpad are no
     exception), except that the literal is not a shell word - no `/tmp` mapping, no brace or tilde
-    expansion, no wildcard escape check. A literal with a `$` or a backtick is dynamic and offends, and
-    so does a relative one without a known directory. A literal is judged as written: see
+    expansion, no wildcard escape check. Only a literal the code shows is judged: one with a `$` or a
+    backtick, an unplaced one and a relative one without a known directory are unknown and pass (unless
+    the assignment is read-only: then any shown write offends). A literal is judged as written: see
     _inline_literal_path for the one Windows case where that takes a drive."""
     raw = _inline_literal_path(raw, base, root)
-    dynamic = _INLINE_DYNAMIC_RE.search(raw) is not None or _is_unplaced_target(raw)
-    if scope.get("mode") == "none" or dynamic or (base is None and not _is_absolute_target(raw)):
-        return True
+    if _INLINE_DYNAMIC_RE.search(raw) is not None or _is_unplaced_target(raw) or (
+        base is None and not _is_absolute_target(raw)
+    ):
+        return False
     rel = _normalize_candidate_path(raw, root, base if base is not None else str(root))
-    return rel is None or not _matches_scope(rel, scope.get("patterns") or [])
+    if rel is None or _is_throwaway_target(rel):
+        return False  # the throwaway place is open to every worker
+    return scope.get("mode") == "none" or not _matches_scope(rel, scope.get("patterns") or [])
 
 
-# A heredoc operator (`<<`, `<<-`, not the here-string `<<<`) followed by its delimiter, or the opening of a
-# PowerShell here-string (`@'` / `@"` at the end of a line).
-_HEREDOC_START_RE = re.compile(r"""(?<!<)<<-?(?!<)\s*[\\'"A-Za-z_]|@['"]\s*$""", re.MULTILINE)
-
-
-def _literal_in_heredoc_body(command: str, raw: str) -> bool:
-    """True if the path literal `raw` stands in the text of `command` after the first heredoc (or here-string)
-    opener: it was found in the body of an interpreter call fed through one. Used for the wording of a refusal
-    only, never for a verdict; a literal the reader decoded (escapes) differently from how it stands in the
-    text is not found and simply gets the shorter message."""
-    start = _HEREDOC_START_RE.search(command)
-    return start is not None and raw in command[start.end():]
-
-
-_HEREDOC_WAY_OUT = (
-    "the code is fed to the interpreter through a heredoc: if the code only reads that path (a literal mistaken "
-    "for a target), write the helper script as a file inside the write scope and run it (`python <file>`), or "
-    "use Write/Edit instead of a heredoc; a file outside the write scope is never written, not through a script "
-    "either"
-)
-
-
-def _inline_hint(
-    language: str, raw: str, scope: dict, in_throwaway_place: bool = False, in_heredoc: bool = False
-) -> str:
-    """How to proceed after a refusal of inline interpreter code: what was found, and the ways out. With
-    `in_heredoc` (the path literal was found in the body of a heredoc) it also names the way out for a
-    program fed that way: a script file inside the scope, run as a file; not for a read-only assignment,
-    which has no place in the scope to write one."""
+def _inline_hint(language: str, scope: dict, in_throwaway_place: bool = False) -> str:
+    """How to proceed after a refusal of inline interpreter code: what was found, and the way out."""
     hint = (
         f"inline {language} code with a write call names a path outside the write scope: write the file with "
-        "Write/Edit; read outside the scope in a separate call without a write call"
+        "Write/Edit"
     )
-    if in_heredoc and scope.get("mode") != "none":
-        hint += "; " + _HEREDOC_WAY_OUT
-    if _is_unplaced_target(raw):
-        hint = (
-            f"inline {language} code with a write call names a path its text does not show: write the path out "
-            "as a literal, or write the file with Write/Edit"
-        )
-    elif _INLINE_DYNAMIC_RE.search(raw):
-        hint += "; a path with `$` or a backtick in the code cannot be checked, write it out"
     way_out = _throwaway_way_out(scope, in_throwaway_place)
     return f"{hint}; {way_out}" if way_out else hint
+
+
+# A plain variable assignment of a shell command - `NAME=value` at the start of a command, the value one
+# unquoted word, a single-quoted or a double-quoted text with no expansion in it (`f=server/x.ts && sed -i
+# ... $f`) - and a use of a variable in a target (`$NAME`, `${NAME}`).
+_ASSIGNMENT_RE = re.compile(
+    r"""(?:^|[;&|\n])[ \t]*(?:export[ \t]+)?([A-Za-z_]\w*)=(?:"([^"$`\\\n]*)"|'([^'\n]*)'|([\w./:+@%-]+))(?=[ \t]*(?:&&|\|\||;|\n|$))"""
+)
+# A word that changes the directory a Bash command runs in; without one a relative target resolves against the
+# directory the call started in, even where the scanner lost track of it (a quote it could not read).
+_CHDIR_RE = re.compile(r"(?<![\w.-])(?:cd|pushd|popd|chdir|sl|Set-Location)(?![\w.-])|\s-C\b|--chdir|--directory", re.IGNORECASE)
+_VARIABLE_USE_RE =re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
+_NAME_ASSIGNED_RE = re.compile(r"(?:^|[;&|(\n\s])(?:export[ \t]+)?([A-Za-z_]\w*)\+?=")
+# Other ways a shell name gets bound: a loop or `select` variable, and the names after `read`, `local`,
+# `declare`, `typeset`, `readonly`, `getopts`, `mapfile`, `readarray` - such a name is never resolved.
+_NAME_LOOP_RE = re.compile(r"\b(?:for|select)[ \t]+([A-Za-z_]\w*)")
+_NAME_DECLARED_RE = re.compile(r"\b(?:read|local|declare|typeset|readonly|getopts|mapfile|readarray)\b([^;&|\n]*)")
+
+
+def _known_target(raw: str, literal_brace: bool, command: str) -> Optional[str]:
+    """The text of a shell write target as it can be judged, or None where the command text does not show it:
+    a variable is replaced by the value the command assigns it as a simple literal (_with_assigned_values), one
+    it does not, a substitution, and a brace list of unknown quoting stay unknown."""
+    if _is_unplaced_target(raw):
+        return None
+    if _INLINE_DYNAMIC_RE.search(raw):
+        text = _with_assigned_values(raw, command)
+        return None if _INLINE_DYNAMIC_RE.search(text) else text
+    return raw if literal_brace or not _is_dynamic_target(raw) else None
+
+
+def _with_assigned_values(target: str, command: str) -> str:
+    """`target` with each variable that `command` assigns exactly once, as a simple literal, replaced by its
+    value (`f=server/x.ts && sed -i s/a/b/ $f`: `$f` is `server/x.ts`). A variable assigned any other way, more
+    than once or not at all stays; the caller treats a target that still holds one as unknown."""
+    if "$" not in target:
+        return target
+    counts: dict[str, int] = {}
+    for match in _NAME_ASSIGNED_RE.finditer(command):
+        counts[match.group(1)] = counts.get(match.group(1), 0) + 1
+    for match in _NAME_LOOP_RE.finditer(command):
+        counts[match.group(1)] = counts.get(match.group(1), 0) + 2
+    for match in _NAME_DECLARED_RE.finditer(command):
+        for name in re.findall(r"[A-Za-z_]\w*", match.group(1)):
+            counts[name] = counts.get(name, 0) + 2
+    values = {
+        match.group(1): next(group for group in match.groups()[1:] if group is not None)
+        for match in _ASSIGNMENT_RE.finditer(command)
+        if counts.get(match.group(1)) == 1
+    }
+
+    def value_of(match: "re.Match[str]") -> str:
+        name = match.group(1) or match.group(2)
+        return values.get(name, match.group(0))
+
+    return _VARIABLE_USE_RE.sub(value_of, target)
 
 
 def check_worker_write_scope(payload: dict) -> int:
@@ -1201,24 +1222,25 @@ def check_worker_write_scope(payload: dict) -> int:
             if key not in seen_forms:
                 seen_forms.add(key)
                 checked_targets.append((path, base, literal_brace))
+    command_text = inline_source[1] if inline_source is not None and tool_name == "Bash" else ""
     for raw_target, base, literal_brace in checked_targets:
-        dynamic = _is_dynamic_target(raw_target) and not literal_brace
-        if scope.get("mode") == "none":
-            offending = raw_target
-        elif dynamic or (base is None and not _is_absolute_target(raw_target)):
-            # The shell still expands this target ($VAR, $(...), ~, {a,b}), or it is relative and
-            # the directory it resolves against is unknown (pushd, a subshell `cd`, `cd $X`, ...,
-            # see shell_targets._scan_tokens) — deny rather than check it against a guessed path.
-            offending = raw_target
-        else:
-            rel = _normalize_candidate_path(raw_target, root, base if base is not None else str(root))
+        offending = raw_target
+        if not str(raw_target).startswith("~"):  # `~` shows the home directory
+            judged = _known_target(raw_target, literal_brace, command_text)
+            if base is None and command_text and not _CHDIR_RE.search(command_text):
+                base = inline_source[2]  # nothing changes the directory: the call runs where it started
+            if judged is None or (base is None and not _is_absolute_target(judged)):
+                continue  # a target the text does not show passes
+            rel = _normalize_candidate_path(judged, root, base if base is not None else str(root))
             patterns = scope.get("patterns") or []
-            if rel is not None and _matches_scope(rel, patterns) and not (
+            if _is_throwaway_target(rel) and not (".." in judged and _GLOB_CHAR_RE.search(judged)):
+                continue  # the throwaway place is open to every worker
+            if scope.get("mode") != "none" and rel is not None and _matches_scope(rel, patterns) and not (
                 tool_name in ("Bash", "PowerShell")
-                and _shell_expansion_escapes(raw_target, base, root, patterns)
+                and _shell_expansion_escapes(judged, base, root, patterns)
             ):
                 continue
-            offending = raw_target
+            offending = judged
         message = _write_scope_message(
             offending,
             scope,
@@ -1238,10 +1260,7 @@ def check_worker_write_scope(payload: dict) -> int:
         in_throwaway_place = _names_throwaway_place(
             _inline_literal_path(raw_path, base, root), base, root, scratchpad_dir, literal_brace=True
         )
-        in_heredoc = inline_source is not None and _literal_in_heredoc_body(inline_source[1], raw_path)
-        message = _write_scope_message(
-            raw_path, scope, _inline_hint(language, raw_path, scope, in_throwaway_place, in_heredoc)
-        )
+        message = _write_scope_message(raw_path, scope, _inline_hint(language, scope, in_throwaway_place))
         if mode == "warn":
             print(message)
             return 0

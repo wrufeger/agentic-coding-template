@@ -50,6 +50,12 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   default `warn`).
 
 ### Changed
+- `worker-write-scope` judges only paths a write call of inline code shows; unknown targets (variable, unreadable code)
+  pass, a variable assigned a literal in the same command is judged by its value.
+- `worker-write-scope`: every target under `.act-local/tmp/` of the project is free for every worker, whatever its scope.
+- `outside-root` lets a read of a rooted word whose first segment does not exist (`/contacts.json`) and a word with a
+  variable pass; writes are judged as before.
+- `write-guard` no longer refuses inline code whose write target the text does not show; a shown `.act/` path still does.
 - `update.py --plan` shows what each due migration does, not only its name, one line per migration; `act-update` shows those lines before you agree, also on resume and `--catch-up`.
 - Work with no task (skill runs, doctor report, feedback) writes throwaway output to
   `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.

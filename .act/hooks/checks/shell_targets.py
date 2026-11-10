@@ -56,11 +56,11 @@
 #   - writes made from inside a program are invisible to _bash_write_targets, except the ones named in
 #     the next entries: a script file, `find -exec`, an alias or shell function, `tar`/`zip` writing an
 #     archive. Inline interpreter code (`python -c "open(...)"`, a heredoc fed to `python -`, `node -e`) is
-#     read on top of the scan, through _bash_inline_write_targets (a second walk of the same scan with a side
-#     channel, _INLINE_SINK; reading and limits in inline_code.py): the paths a write call of the code names
+#     read on top of the scan, through _bash_inline_code_targets (a second walk of the same scan with a side
+#     channel, _INLINE_SINK; reading and limits in inline_code.py): the paths a write call of the code shows
 #     are added to the result of _bash_write_targets (_with_inline_writes, `inline=True`), once per directory the call may
 #     run in. The worker write scope asks without them (`inline=False`) and reads the same code on its own, through
-#     _bash_inline_code_targets (every path literal of a program that holds a write call), and the git-metadata guard reads the program
+#     _bash_inline_code_targets, with its own wording, and the git-metadata guard reads the program
 #     text of inline Python through _bash_inline_code (_INLINE_CODE_SINK, with the span where a top-level
 #     program stands, _SPAN_TEXT);
 #   - programs that write on their own are read by their arguments (_simple_command_targets): `git clone`
@@ -210,7 +210,7 @@ __all__ = [
     "_without_quoted_heredoc_bodies",
     "_raw_redirect_targets", "_command_name", "_is_span_word", "_operands", "_cd_bases",
     "_pairs", "_git_targets", "_download_targets", "_simple_command_targets", "_scan_tokens",
-    "_scan_command", "_bash_write_targets_new", "_bash_write_targets", "_bash_inline_write_targets",
+    "_scan_command", "_bash_write_targets_new", "_bash_write_targets",
     "_attribute_targets", "_perl_inplace_targets", "_robocopy_targets", "_LITERAL_DIR_RE",
     "_WILDCARD_DIR_RE", "_expand_directory_wildcard",
     "_HeredocOperand", "_InlineTarget", "_bash_inline_code_targets",
@@ -849,9 +849,6 @@ _INLINE_SINK: Optional[list] = None
 # The program texts themselves, (language, code, directory, source, span), for a check that reads such
 # a program on its own (see _bash_inline_code); None outside that scan, same rule.
 _INLINE_CODE_SINK: Optional[list] = None
-# True while _bash_inline_write_targets walks the command: the inline reader then reports the paths a write
-# call names (inline_code.write_targets) instead of every path literal of a program that holds one.
-_INLINE_PRECISE = False
 # The top-level command text of a _bash_inline_code scan, after line continuations are joined: the one
 # text whose words get a `span` (_Word.span) and whose heredoc bodies get a `body_span`. _scan_command
 # compares the text it tokenizes against it, so a nested text (`sh -c`, `eval`, a `$(...)`, a heredoc
@@ -3387,7 +3384,7 @@ def _collect_inline_code(
                 code_sink.append((language, code, base, kind, span))
         if sink is None:
             return
-        paths = (_inline_code.write_targets if _INLINE_PRECISE else _inline_code.write_paths)(language, code)
+        paths = _inline_code.write_targets(language, code)
         for path in paths:
             if _WSL_DEPTH:
                 path = str(_wsl_native_word(path))
@@ -4340,7 +4337,7 @@ def _with_inline_writes(targets: list[_Target], command: str, base_cwd: str) -> 
     if not _inline_code.mentions_interpreter(command):
         return targets
     try:
-        inline = _bash_inline_write_targets(command, base_cwd)
+        inline = _bash_inline_code_targets(command, base_cwd)
     except _inline_code.ReaderFailure:
         raise  # a program error of the reader: the call is not let through unread, every check refuses it (dispatch.py)
     except Exception:  # noqa: BLE001 - see the docstring
@@ -4360,14 +4357,14 @@ def _with_inline_writes(targets: list[_Target], command: str, base_cwd: str) -> 
 
 
 def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget]:
-    """The path literals that inline interpreter code in a Bash command names next to a write call -
+    """The paths that a write call of inline interpreter code in a Bash command shows -
     (path, the directory it resolves against or None when unknown, language) - for the worker write
-    scope only (check 1c); no other check calls this, and _bash_write_targets is unchanged. The command
-    is walked once more with _INLINE_SINK set, so the interpreter calls are found in the same places
-    and under the same directory tracking (`cd`, `&&` chains, `sh -c`, heredoc bodies fed to a shell)
-    as every write target. A literal path is not a shell word: the caller must not map `/tmp` or
-    expand braces or `~` in it. Best effort: a command that does not mention an interpreter, or whose
-    scan fails, yields what was found so far (see inline_code.py for the reading and its limits)."""
+    scope and the main session's overlap note, and (as `inline=True`) for every other write check through
+    _with_inline_writes. The command is walked once more with _INLINE_SINK set, so the interpreter calls are
+    found in the same places and under the same directory tracking (`cd`, `&&` chains, `sh -c`, heredoc
+    bodies fed to a shell) as every write target. A literal path is not a shell word: the caller must not map
+    `/tmp` or expand braces or `~` in it. Best effort: a command that does not mention an interpreter, or
+    whose scan fails, yields what was found so far (see inline_code.py for the reading and its limits)."""
     global _INLINE_SINK, _SSH_REMOTE_IS_REMOTE
     if not _inline_code.mentions_interpreter(command):
         return []
@@ -4387,19 +4384,6 @@ def _bash_inline_code_targets(command: str, base_cwd: str) -> list[_InlineTarget
         _INLINE_SINK = previous
         _SSH_REMOTE_IS_REMOTE = previous_remote
     return list(dict.fromkeys(found))
-
-
-def _bash_inline_write_targets(command: str, base_cwd: str) -> list[_InlineTarget]:
-    """Like _bash_inline_code_targets, but only the paths a write call of the inline code names
-    (inline_code.write_targets), not every path literal of a program that holds one: for the checks that
-    refuse a write and must not refuse a program for a path it only reads."""
-    global _INLINE_PRECISE
-    previous = _INLINE_PRECISE
-    _INLINE_PRECISE = True
-    try:
-        return _bash_inline_code_targets(command, base_cwd)
-    finally:
-        _INLINE_PRECISE = previous
 
 
 # (interpreter language, program text, the directory the call runs in - None = unknown, where the text

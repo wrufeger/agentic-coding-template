@@ -150,7 +150,7 @@ import actlib
 from .brace_expand import expand_braces
 from .command_parse import Parse, parse_for
 from .command_words import _strip_command_prefix
-from .inline_code import UNKNOWN_WRITE, mentions_interpreter
+from .inline_code import mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _note_hit, _shell_command, _target_class
 from .powershell_targets import (
     _extract_ps_command_flag, _is_unplaced_target,
@@ -695,6 +695,26 @@ def _build_places(root: Path, payload: dict, config: dict) -> _Places:
 
 # --- judging paths -----------------------------------------------------------------------------
 
+def _reads_nothing(raw: str, text: str, base: Optional[str], bash: bool, mode: str) -> bool:
+    """True for a read that the command text does not show to reach anything: a shell word with a variable or
+    substitution (its place is unknown), or a path whose first segment below the root or drive does not exist
+    (`/contacts.json`, `/de/link-collection`, `C:/nothing/x`: a URL route or a mistyped place, there is nothing
+    to read; on Windows a POSIX-rooted word counts as existing when one reading of its first segment does,
+    _root_entry_exists). Deeper than the first segment nothing is looked up. A write is never judged this way:
+    it can create the place."""
+    if _UNC_RE.match(raw.strip().strip("'\"")):
+        return False  # a UNC path (`//localhost/C$/x` is the admin share, no variable) is never looked up
+    if mode == "shell" and _DYNAMIC_RE.search(raw):
+        return True
+    if text.startswith(_POSIX_PREFIX):
+        return not _root_entry_exists(text[len(_POSIX_PREFIX):].lstrip("/").split("/", 1)[0], base, bash)
+    if text.startswith(("\\\\", "//")):
+        return False  # a UNC path is never looked up (the host may hang): judged as written
+    drive, rest = os.path.splitdrive(text)
+    parts = [part for part in re.split(r"[\\/]+", rest) if part]
+    return bool(parts) and not os.path.lexists(drive + os.sep + parts[0])
+
+
 class _Judge:
     """Collects the findings of one call."""
 
@@ -724,7 +744,7 @@ class _Judge:
         try:
             for base in self.capped(bases or [None]):
                 text = _resolve_text(raw, base, self.bash, mode)
-                if text:
+                if text and not (not write and _reads_nothing(raw, text, base, self.bash, mode)):
                     keys.append(_key(text))
                     texts.append(text)
         except _UnknownPath as unknown:
@@ -1949,8 +1969,6 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
             if targets is None:
                 targets = reading.ps_raw_redirects()
             for target in sorted(targets):
-                if target == UNKNOWN_WRITE:
-                    continue  # inline code whose path the text does not show: refused by the write guards, in every mode
                 if _is_unplaced_target(target):
                     # The scanner could not place this write (a relative one behind more directory changes than
                     # it tracks, a command larger than its budget): not checked in full, refused like a scanner
@@ -1963,8 +1981,6 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
         else:
             scanned = parse.for_text(whole if mentions_interpreter(whole) else command)
             for target, base in scanned.bash_write_targets(cwd, _GIT_WRITES_WORKER_SCOPE):
-                if target == UNKNOWN_WRITE:
-                    continue  # inline code whose path the text does not show: refused by the write guards, in every mode
                 if _is_unplaced_target(target):
                     judge.unchecked.append(f"it holds a write the scanner could not place ({_unplaced_reason(target)})")
                     continue

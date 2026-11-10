@@ -140,6 +140,12 @@ it does: the drive form (`/q/x` as `Q:`), a folder of the working drive, a name 
 Git for Windows root (looked up in its usual install places only). A script that opens such a path itself is not seen:
 the exception trades some safety for comfort and holds only while nothing lies at the first segment.
 
+More generally a read names nothing, and is left out, where the command text does not show a place: a rooted word
+whose first segment below the root or drive does not exist on the disk (`cat /contacts.json`, `grep x /de/link-collection`,
+`C:/nothing/x`; deeper than the first segment nothing is looked up), and a shell word with a variable or substitution
+(`cat /etc/$f`). A write is never left out this way: it can create the place. Limit: a mistyped place below an existing
+folder (`D:/dev/proj/tests/x.ts` next to the project) is still a read outside.
+
 Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
 and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to
 `settings.md.bak-<stamp>`). `act-adopt` is the one exception: the owner starts the first scan with the `!` prefix,
@@ -310,13 +316,13 @@ role default, and an unknown `Tier:` word falls back to the role default too. Wi
 The worker gets one note on reaching the cap ("cap reached — deliver your current state now") and is
 refused from 1.5× the cap onward — wrap up and report rather than push past it.
 
-`Write scope: none` allows no writes at all: not in the project, and not in the system temp directory or
-the worker's scratchpad either (only `/dev/null`, `NUL` and the standard streams stay free). A worker with
-any `Write scope:` line writes only what that scope allows; the system temp directory and the scratchpad
-are no exception. Throwaway material goes under `.act-local/tmp/<task-id>-<slug>/` (`R-work-throwaway`),
-and an assignment that needs it names the folder in its scope (`.act-local/tmp/<task-id>-<slug>/**`); the
-refusal of a write into the system temp directory or the scratchpad, every refusal under `none`, and the
-refusal of a target that starts with a temp variable (`$TEMP`, `${TMPDIR}`, `$env:TEMP` ...) say so. Limit:
+`Write scope: none` allows no writes at all, except into the throwaway place (below): not in the project, and not
+in the system temp directory or the worker's scratchpad either (`/dev/null`, `NUL` and the standard streams stay
+free). A worker with any `Write scope:` line writes only what that scope allows; the system temp directory and the
+scratchpad are no exception. Every target under `.act-local/tmp/` of the project root is free for every worker,
+whatever its scope says (`R-work-throwaway`: throwaway material goes under `.act-local/tmp/<task-id>-<slug>/`);
+a `..` that leaves it is judged as the path it reaches, and the refusal of a write into the system temp
+directory or the scratchpad names that place. Limit:
 `mktemp` (also `-d`, `-p`), PowerShell `New-TemporaryFile` and `tempfile` in inline code create a file in
 the system temp directory without a path in the command, so the check does not see it; a later write
 through the variable that holds the name is refused. Leaving the `Write scope:` line out means no restriction beyond the
@@ -393,92 +399,41 @@ Inline interpreter code is read too, for a worker with a restricted scope (`none
 without a `Write scope:` line and the orchestrator are not affected). A Bash or PowerShell call that runs
 `python`, `python3`, `python3.N`, `pythonw`, `py` (also `py -3`) or `node` (an `.exe` suffix and a
 directory in front are fine, and so are the usual prefixes such as `env`) with code of its own is refused
-when the code holds **a write call and a path written out as a literal that lies outside the scope** (the
-system temp directory and the worker's scratchpad are not exempt, as for any write). The code comes from `-c`
-(also a cluster such as `-Ic`, with options like `-X utf8` before it) or `node -e`/`--eval`/`-p`/`--print`
-(also after `-i`/`--interactive`, which still runs the code); or from standard input - `-` or no script argument, with a heredoc (`python - <<'EOF'`), a here-string, or
-a literal piped in (`cat <<'EOF' | python -`, `{ cat <<'EOF'; } | python -`, `cat <<'EOF' | (python -)`,
-`echo '...' | python3`, `printf '%s' '...' | node`, in PowerShell a string or here-string piped into
-`python -`); `<<-` counts with or without a blank before the delimiter, and a `$'...'` elsewhere in the
-command does not hide the heredoc. Write calls: Python `open(...)` with a literal
-write mode (`w`, `a`, `x` or `+`), `.write_text`, `.write_bytes`, `.touch`, `.mkdir`, `.unlink`, `.rmdir`,
-`.rename`, `.symlink_to`, `.hardlink_to`, `shutil.copy*`/`move`/`rmtree`, and `os.remove`, `rename`,
-`replace`, `makedirs`, `mkdir`, `rmdir`, `symlink`, `link`, `truncate`, `open`; Node `writeFile`,
-`appendFile`, `createWriteStream`, `copyFile`, `cp`, `rename`, `unlink`, `rm`, `rmdir`, `mkdir`,
-`symlink`, `truncate` (and their `Sync` forms). A string counts as a path when it contains `/` or `\`, or
-is a bare file name with an extension (`out.txt`; not a number like `1.0`), is not a URL and holds none of
-`*?[]^|()<>`; its escapes are decoded the way the language does before that test (`'caf\u00e9'` is text,
-`'a\x2fb'` is a path; a raw Python literal stays as written); an f-string or template literal is judged
-by the part before its first interpolation, up to the last separator. Every such literal is judged like a
-shell target, against the directory the call runs in (a `cd` before it counts), but as written: no
-`/tmp` mapping, no brace or tilde expansion, and no Git-Bash drive form - on Windows a literal such as
-`/d/work/x` is the folder `d` on the drive of the directory the call runs in, as the interpreter sees it,
-not drive D. A literal holding `$` or a backtick counts as unknown and is refused. The refusal says to write the file with
-Write/Edit; when the literal was found in the body of a heredoc (or a PowerShell here-string) it adds the way out for a
-program fed that way, for the case that the code only reads that path: write the helper script as a file inside the
-write scope and run it (`python <file>`), or use Write/Edit instead of a heredoc; a file outside the scope is never
-written, not through a script either (`R-role-worker`) (left out for a read-only assignment, which has no place in the scope to write a
-script). Only the wording differs; which calls are refused does not change. Code that only reads - no write call -
-may name any path, so read outside the scope in a call of its own. Limit: in code that does hold a write call, every
-path-like string is judged, also one that is only read, printed or kept in a list or name (`".act/x.py"` next to a
-write inside the scope is refused); write the file with Write/Edit, or split the read and the write into two calls.
+only when **a write call of the code names a path written out as a literal that lies outside the scope**. The
+code comes from `-c` (also a cluster such as `-Ic`) or `node -e`/`--eval`/`-p`/`--print`, or from standard
+input (`-` or no script argument): a heredoc (`python - <<'EOF'`), a here-string, or a literal piped in
+(`cat <<'EOF' | python -`, `echo '...' | python3`, in PowerShell a string or here-string piped into
+`python -`).
 
-A literal that is only a switch of a Windows tool (`icacls`, `cacls`, `robocopy`, `xcopy`, `takeown`,
-`attrib`, `cmd`; `/deny`, `/grant:r`, `/MIR`, `/R:3`, `/c`) is no path in one place only: among the
-arguments of the call that starts the tool, when the tool's name is the literal in the tool's position of
-that call - the first element of the list `subprocess.run`, `call`, `check_call`, `check_output` or
-`Popen` gets, the first argument of Node `spawn`, `spawnSync`, `execFile` or `execFileSync` with the list
-as the second, the program of `os.exec*`/`os.spawn*` - and the tool knows the switch; for `cmd` only the
-switches up to `/c` or `/k`, as what follows is another program's command line. A command line that is the
-first argument of such a call, of `os.system` or of Node `exec`/`execSync` (`'icacls d /deny x'`) is cut
-into words when it is one command (no `;`, `&`, `|`, `<`, `>`, `(`, `)`, `^`, `%`, `$`, backtick or line
-break in it); the tool and its switches drop out, every other word is judged. Anywhere else - another
-call, the same statement, a list built from parts, `args=` - a `/c` or `/deny` stays a path, and so does
-a switch that names a file (`/LOG:out.txt`). Limits: a file in the root of a drive named like a switch is
-not judged in that list; `from subprocess import run` used bare is not seen as a start.
+What counts is only what the text shows, nothing else (a check refuses what the command text shows to be wrong; an
+unknown target passes): a string that is merely mentioned (an import line, a comment, a message, a path the code
+only reads, the system temp folder in a text) is no target, and neither is a path the text does not show - a name
+bound twice, a loop variable, a parameter, `sys.argv`, a join or f-string with a variable part, a call's result -, a
+literal that holds a `$` or a backtick, or code that cannot be read as Python (or a program
+larger than the reader takes). Shown is: a string literal; `Path(...)`, `os.path.join(...)` (Node `path.join(...)`) of
+such parts; a name bound exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used
+unchanged (not where the program calls `exec`, `eval`, `getattr`, `setattr`, `__import__` ... or stores an attribute on
+a module); and the files of `<folder>.glob('<literal>')`, `.rglob(...)`, `glob.glob('<literal>')` with a literal folder
+(the folder is judged; the worker scope allows it only where the scope covers all of it). The text of an
+`exec`/`eval` written out is read again.
 
-In Python code, a literal that only registers a folder for imports is no path either: the literal that is all of
-the second argument of `sys.path.insert(`, of the only argument of `sys.path.append(` or `site.addsitedir(`, or
-an element of the list or tuple that is all of the only argument of `sys.path.extend(` (whitespace around it and a
-string prefix allowed). A joined or interpolated literal, a name, a literal in a call nested in the argument
-(`os.path.join('out', 'x')`) and the same text elsewhere in the program stay paths, and a write call that names
-it (`open('lib/x', 'w')`) is judged as before. Nothing drops out where the program may read the folder back
-(`sys.path[0]`, `sys.modules`, `getattr`, `__import__`, `eval` ...): only a bare `import sys`, the registration
-calls and `sys.argv`, `sys.exit`, `sys.stdout` and the like are left. Limit: `import sys as s`, `from sys import path` and `from site
-import addsitedir` are not recognised, so their literal is still judged as a path.
-
-A write call of inline code is judged by the path its text shows. Shown is: a string literal; `Path(...)`,
-`os.path.join(...)` (Node `path.join(...)`) of such parts, put together with `+`, `/` or an f-string field; a name bound
-exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used unchanged - not a
-parameter, loop target, import, `with ... as`, `global` or `nonlocal`, and the program calls none of `exec`, `eval`,
-`compile`, `globals`, `locals`, `vars`, `setattr`, `getattr`, `__import__`, `sys._getframe`, `cProfile.run`, `runpy`,
-`os.chdir`, touches no `f_globals`, `f_locals`, `__dict__`, stores no attribute on a module (`os.path.join = ...`) -
-and, as the iterable of a `for` loop, `<such a path>.glob('<literal>')` or `.rglob(...)`, or `glob.glob('<literal>')` /
-`glob.iglob(...)` (also `recursive=True`; the folder is the literal part before the first wildcard): the files are
-somewhere under that folder when neither the folder nor the pattern holds `..` and the folder is relative. The check judges the
-folder (the guard of the template's own files refuses a folder that is or lies in `.act/`, the worker write scope
-allows it only where the scope covers all of the folder, outside-root asks whether it lies outside); for the project's
-own root (`Path('.')`, a pattern without a folder) and for `.git` it also judges the protected places below it the pattern can reach (`rglob`, a pattern with `/` or
-`**`, or one that matches such a name, as `*` matches `.act`). Anything else is not shown - a name that is bound twice,
-a loop variable, a parameter, `sys.argv`, a join or f-string with a variable part, `glob.glob(root_dir=...)`, a call's result, in Node
-a name or join with such a part - and the call is refused, not guessed at, by the write guard and the worker write scope
-alike (outside-root leaves it to them in every mode, for a `-c`/`-e` text as for a heredoc body; a Python program that
-cannot be read as Python while the literal reading sees a write call in it is refused too). The write calls are `open`
-(also `io.open`, `codecs.open`) with a writing mode or one that is not seen, `.open(<mode>)` on a path only with a
-writing mode written out (`Image.open(x)`, `tarfile.open(name)` and `gzip.open(fn)` read), `os.open` (not with
-`os.O_RDONLY` alone), `os.remove`, `unlink`, `rmdir`, `removedirs`, `mkdir`, `makedirs`, `truncate`, `chmod`, `chown`,
-`utime`, `rename`, `replace`, `symlink`, `link`, `shutil.copy`, `copy2`, `copyfile`, `copytree`, `move`, `rmtree`, and the
-`Path` methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`, `chmod`, `lchmod`, `rename`,
-`link_to`, `symlink_to`, `hardlink_to`. A reader failure (a program error of it, not a text it does not understand)
-refuses the call in every check that reads write targets. Way out: write the path out in the code, or write the file
-with a file tool.
+The write calls are Python `open` (also `io.open`, `codecs.open`) with a writing mode or one that is not seen, `.open`
+with a writing mode written out, `os.open`, `os.remove`, `unlink`, `rmdir`, `removedirs`, `mkdir`, `makedirs`,
+`truncate`, `chmod`, `chown`, `utime`, `rename`, `replace`, `symlink`, `link`, `shutil.copy`, `copy2`, `copyfile`,
+`copytree`, `move`, `rmtree`, and the `Path` methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`,
+`chmod`, `lchmod`, `rename`, `link_to`, `symlink_to`, `hardlink_to`; Node `writeFile`, `appendFile`,
+`createWriteStream`, `copyFile`, `cp`, `rename`, `unlink`, `rm`, `rmdir`, `mkdir`, `symlink`, `truncate` (and their
+`Sync` forms). A literal counts as a path when it holds `/` or `\`, or is a bare file name with an extension
+(`out.txt`), is no URL; its escapes are decoded the way the language does. A literal is judged like
+a shell target, against the directory the call runs in (a `cd` before it counts), but as written: no `/tmp` mapping,
+no brace or tilde expansion, and no Git-Bash drive form - on Windows a literal such as `/d/work/x` is the folder `d`
+on the drive of the directory the call runs in. The refusal says to write the file with Write/Edit.
 
 Limits of that reading (what stays unseen; it catches the common form, not every form):
 - the program is not in the command: a script file run by path (`python /tmp/x.py`), code held in a
   shell variable or read from a file (`cat x.py | python`);
-- the path is not a literal that tells it: a write call with such a path is refused (see the paragraph above); a
-  name without extension and without separator in a path literal (`open('out', 'w')`; a dot name such as `.act` or
-  `.envrc` is judged where a write call names it); a glob- or regex-looking literal (`*?[]^|()<>`);
+- the path is not a literal that tells it (see above), a name without extension and without separator in a path
+  literal (`open('out', 'w')`), a glob- or regex-looking literal (`*?[]^|()<>`);
 - the write is not in the list: writes through `subprocess`, `os.system` or `child_process`; a bare
   `.write(` such as `sys.stdout.write`, `str.replace` and `Path.replace`, `print(..., file=...)`,
   `fs.openSync`; a name imported under another one;
@@ -498,8 +453,13 @@ When the reading meets text it cannot read, the call is not refused for it and
 before. An error of the reader's own program (a bug of the check, not a text it fails to understand) is
 different: `worker-write-scope` and `git-metadata-guard` then name the error and, in block mode, refuse the
 call (in warn mode they only warn), since inline code that was never judged must not pass as code without a
-write call; `.act/scripts/doctor.py` or the owner decides how to go on. Text the reader cannot parse, or a program too large or too deep for it,
-stays on the lenient path above.
+write call; `.act/scripts/doctor.py` or the owner decides how to go on.
+
+A shell target with a variable is unknown and passes, unless the same command assigns the variable once as a simple
+literal (`f=server/x.ts && sed -i ... $f`, `d="out"; echo x > ${d}/y`): then the value is judged like any target. So
+does a command substitution, a brace list of unknown quoting, a target behind a `cd` the scan cannot follow, a target
+the scan could not place and a command it cannot read (too deeply nested, too large). A `~` start is the home
+directory and is refused (it is never in the scope); a `$` after a shown folder (`other/$x`) passes.
 
 `worker-scope-overlap` (`docs/ai/config.md` § Checks) refuses a start whose scope overlaps that of a
 worker still running: `none` overlaps nothing, a missing `Write scope:` line counts as everything,
