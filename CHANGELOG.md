@@ -76,6 +76,10 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 ### Fixed
 - `context_size.py` measures the session named by `CLAUDE_CODE_SESSION_ID`; without it and with two live transcripts
   it refuses ("several sessions, no assignment") instead of guessing; `--transcript <path>` still overrides.
+- `worker-git-write` no longer refuses `git stash list` and `git stash show` for workers; every other `git stash` form
+  stays refused.
+- `worker-scope-overlap` also notes a run of the fourth `commands` entry (full or E2E suite) in a tree a running worker
+  writes in.
 - `write-guard` and the scope checks no longer refuse a `shutil.rmtree(..., onerror=h)` chmod helper that only calls
   `func(path)`, also on absolute folders.
 - `worker-write-scope` no longer refuses inline Python that only adds an import folder (`sys.path.insert(0, 'lib')`,

@@ -44,7 +44,7 @@ reword, do nothing. The sentences are these (one per check; a check without one 
 - `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
-- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`): never stage, commit, stash, reset or check out.
+- `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`): never stage, commit, stash, reset or check out.
 - `nesting_guard`: Never start another worker; name a better split in your result.
 - `mcp_ide`: Do not use IDE tools that write, run a shell or run a program; use the standard tools inside your `Write scope:`.
 - `commit_pathspec`: Never stage with `git add -A`, `git add .` or `git commit -a`; name each path.
@@ -334,7 +334,9 @@ made from inside a script file stay invisible to it. There is no cap on the numb
 command: a target inside the scope costs about 1.4 ms, so the hook's 10 s time limit is reached at roughly
 7000 literal targets in one command (about 200 KB of command text), above which the remaining PreToolUse
 checks of that call do not run - no realistic command comes close, and a target outside the scope stops the
-check at the first hit.
+check at the first hit. Advice for a relative target behind a `cd`: in a real shell the `cd` holds only for the parts
+behind `&&` (behind `&` it ran in the background shell, after `;` it may have failed), so chain the parts with `&&`
+or put the `cd` and the parts that need it into one group (`cd d && (a > ../x & b > ../y; wait)`).
 
 The command text of an `ssh [options] <host> <command>` call counts as remote - only the `$(...)` the
 local shell expands (easy to cut out: no `#`, `<<`, line break or `case` inside, no stray `)` around) are
@@ -413,7 +415,9 @@ program fed that way, for the case that the code only reads that path: write the
 write scope and run it (`python <file>`), or use Write/Edit instead of a heredoc; a file outside the scope is never
 written, not through a script either (`R-role-worker`) (left out for a read-only assignment, which has no place in the scope to write a
 script). Only the wording differs; which calls are refused does not change. Code that only reads - no write call -
-may name any path, so read outside the scope in a call of its own.
+may name any path, so read outside the scope in a call of its own. Limit: in code that does hold a write call, every
+path-like string is judged, also one that is only read, printed or kept in a list or name (`".act/x.py"` next to a
+write inside the scope is refused); write the file with Write/Edit, or split the read and the write into two calls.
 
 A literal that is only a switch of a Windows tool (`icacls`, `cacls`, `robocopy`, `xcopy`, `takeown`,
 `attrib`, `cmd`; `/deny`, `/grant:r`, `/MIR`, `/R:3`, `/c`) is no path in one place only: among the
@@ -535,8 +539,8 @@ row counts as `warn` for it; the notes are hints and not entries of the incident
 (wait until that worker has ended or stop it with `TaskStop`, or work in an isolated copy). It comes when a `Write`,
 `Edit`, `MultiEdit` or `NotebookEdit` path of the main session, or a write target of its Bash or PowerShell command
 (the scanners `worker-write-scope` uses, inline code included), falls under the `Tests:` of a running worker; and when a
-command runs the test command (third entry of `commands` in `docs/ai/config.md`; `(not set)` means none: a simple
-command starting with its words, the program by name, quoted text not counted) in a tree a running worker writes in. That
+command runs the test command or the full suite (third and fourth entry of `commands` in `docs/ai/config.md`; `(not set)`
+means none: a simple command starting with its words, the program by name, quoted text not counted) in a tree a running worker writes in. That
 tree is the directory the run starts in (the call's cwd, moved by a literal `cd`) and every word that names an existing
 file or folder, such as `--template <dir>`; a worker that writes below `.act-local/tmp/` is an isolated copy and meets
 only a tree below `.act-local/tmp/`, a worker without a `Write scope:` line meets every tree. PreToolUse text does not

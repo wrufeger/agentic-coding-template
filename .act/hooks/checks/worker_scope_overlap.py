@@ -52,7 +52,7 @@
 # The orchestrator gets a note, never a refusal (check_main_session_overlap, same switch; `off` silences it, a
 # `block` row counts as `warn` for it): a Write/Edit/MultiEdit/NotebookEdit path, or a write target of its
 # Bash/PowerShell command (the scanners write_scope uses), that falls under the `Tests:` of a running worker, and
-# a command that runs the project's test command (third entry of `commands`) in a tree a running worker writes in.
+# a command that runs the project's test command or full suite (third and fourth entry of `commands`) in a tree a running worker writes in.
 # A target that is dynamic (`$VAR`, `~`), or relative with no known directory, cannot be placed and passes; inline
 # code the reader fails on is not looked at. The note is printed (it is a hint, not an entry of the incident log) and
 # queued under .act-local/worker-scopes/hints/<tool_use_id>.json, because PreToolUse text never reaches the model:
@@ -428,27 +428,42 @@ def _write_note(shown: str, pattern: str, worker_id: str) -> str:
 
 
 def _split_commands_cell(value: str) -> list[str]:
-    """The `commands` cell of docs/ai/config.md as its entries: split at a comma outside backticks."""
+    """The `commands` cell of docs/ai/config.md as its entries. A cell with backticks is read by them: entries are
+    split at a comma outside backticks and an entry that holds a backtick span is that span's text (a note after
+    the closing backtick is dropped). A cell without any is split at a comma outside quotes (`'`, `"`)."""
+    backticks = "`" in value
     parts: list[str] = []
     buffer: list[str] = []
-    in_code = False
+    quote = ""
     for char in value:
-        if char == "`":
-            in_code = not in_code
-        if char == "," and not in_code:
+        if backticks:
+            if char == "`":
+                quote = "" if quote else "`"
+        elif quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        if char == "," and not quote:
             parts.append("".join(buffer).strip())
             buffer = []
         else:
             buffer.append(char)
     parts.append("".join(buffer).strip())
+    if backticks:
+        parts = [re.sub(r"^[^`]*`([^`]*)`.*$", r"\1", part, flags=re.DOTALL).strip() for part in parts]
     return parts
 
 
-def _test_command_words(config: dict) -> list[str]:
-    """The words of the configured test command (third entry of `commands`); [] when it is not set."""
+def _test_command_words(config: dict) -> list[list[str]]:
+    """The words of each configured test command: the third entry of `commands` (the test command) and the
+    fourth (the full or end-to-end suite); an entry that is not set is left out, [] when neither is set."""
     parts = _split_commands_cell(config.get("commands", ""))
-    command = parts[2].strip("`").strip() if len(parts) >= 3 else ""
-    return [] if command.lower() in ("", "(not set)", "none") else command.split()
+    found: list[list[str]] = []
+    for part in parts[2:4]:
+        command = part.strip("`").strip()
+        if command.lower() not in ("", "(not set)", "none"):
+            found.append(command.split())
+    return found
 
 
 def _normal_program(word: str) -> str:
@@ -497,9 +512,9 @@ def _runs_test_command(words: list[str], test: list[str]) -> bool:
 
 
 def _test_run_trees(
-    command: str, cwd: str, root: Path, test: list[str], parse: Optional[Parse] = None,
+    command: str, cwd: str, root: Path, tests: list[list[str]], parse: Optional[Parse] = None,
 ) -> list[tuple[str, bool]]:
-    """(path, is a directory) of the tree each run of the test command in `command` reads: the directory it
+    """(path, is a directory) of the tree each run of a test command (`tests`) in `command` reads: the directory it
     runs in (the call's cwd, moved by a literal `cd` in front of it) and every word of the run that names an
     existing file or directory. Paths are in the form write_scope._normalize_candidate_path gives. `parse` is
     the dispatcher's reading of `command`; without it the command is read here."""
@@ -517,7 +532,7 @@ def _test_run_trees(
                 if resolved is not None:
                     current = str(resolved)
             continue
-        if not _runs_test_command(words, test):
+        if not any(_runs_test_command(words, test) for test in tests):
             continue
         places: list[tuple[str, bool]] = [(current, True)]
         for word in [str(one) for one in words[:_MAX_TREE_WORDS]]:
@@ -596,8 +611,8 @@ def _say(root: Path, payload: dict, text: str) -> None:
 def check_main_session_overlap(payload: dict) -> int:
     """The orchestrator gets notes, never a refusal (R-cost-delegate), under the switch of
     check_worker_scope_overlap. (1) A path it writes, with a file tool or as a write target of a shell command, that
-    falls under the `Tests:` of a running worker. (2) A shell command that runs the configured test command in a tree
-    a running worker writes in. Always returns 0. A worker's own call is not looked at (write_scope does)."""
+    falls under the `Tests:` of a running worker. (2) A shell command that runs the configured test command or full suite
+    (third and fourth entry of `commands`) in a tree a running worker writes in. Always returns 0. A worker's own call is not looked at (write_scope does)."""
     config = actlib.read_config()
     if _main_session_mode(config) == "off" or payload.get("agent_id"):
         return 0
@@ -632,11 +647,11 @@ def check_main_session_overlap(payload: dict) -> int:
 
     shell = payload.get("tool_input") if tool_name in ("Bash", "PowerShell") else None
     command = shell.get("command") if isinstance(shell, dict) else None
-    test = _test_command_words(config) if isinstance(command, str) else []
-    if test:
+    tests = _test_command_words(config) if isinstance(command, str) else []
+    if tests:
         cwd_raw = payload.get("cwd")
         cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
-        for tree, is_dir in _test_run_trees(command, cwd, root, test, parse_for(payload, command)):
+        for tree, is_dir in _test_run_trees(command, cwd, root, tests, parse_for(payload, command)):
             for worker_id, entry in running:
                 shown = _tree_meets_scope(tree, is_dir, entry)
                 if shown is None:

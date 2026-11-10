@@ -4,7 +4,8 @@
 # Purpose: Check — a worker running a git command that changes the tree or history (PreToolUse,
 #          R-role-worker): a worker only ever reads git (status, diff, log, show) — every subcommand
 #          in _GIT_WRITE_SUBCOMMANDS is a write for this check's purposes, plus `branch` unless it only
-#          lists (_branch_lists_only); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
+#          lists (_branch_lists_only); `stash` is one too, except `stash list` / `stash show` with plain
+#          words only (_stash_reads_only); `status`, `diff`, `log`, `show`, `rev-parse`, `ls-files` and
 #          `blame` are never in the write set. Split from checks/git_discard.py: this one asks WHO runs a
 #          mutating git command (workers only, outside the project exempt), that one WHAT is lost (anyone).
 #
@@ -174,7 +175,19 @@ def _parse_git_invocation(
     return args[index], args[index + 1:], dash_c_dirs, has_dir_override, alias_defined
 
 
+def _stash_reads_only(sub_args: list[str]) -> bool:
+    """True for `git stash list` / `git stash show`: the first argument is exactly that word (a bare `stash`,
+    `-p`, `push`, `pop`, `drop` … is a write) and every later word is plain: none starts with `--ou` (an
+    abbreviation of the log/diff option `--output`, which writes its result to a file) and none holds a character
+    the shell or PowerShell expands or unquotes (`$`, a backtick, `\\`, `'`, `"`), which could build that option."""
+    if not sub_args or sub_args[0] not in ("list", "show"):
+        return False
+    return not any(a.startswith("--ou") or any(c in a for c in "$`\\'\"") for a in sub_args[1:])
+
+
 def _is_git_write_subcommand(subcommand: str, args: list[str]) -> bool:
+    if subcommand == "stash":
+        return not _stash_reads_only(args)
     return subcommand in _GIT_WRITE_SUBCOMMANDS or (subcommand == "branch" and not _branch_lists_only(args))
 
 
