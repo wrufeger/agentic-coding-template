@@ -83,6 +83,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "danger-scan-hints",        # hooks/checks/danger_scan.py
     "encoding-hints",           # hooks/checks/encoding_hint.py
     "throwaway-hints",          # hooks/checks/throwaway_place.py
+    "commit-hash-hints",        # hooks/checks/commit_hashes.py
     "secret-scan-notes",        # hooks/checks/secret_scan.py
     "deps-scan-notes",          # hooks/checks/deps_scan.py
     "merge-heads",              # hooks/checks/deps_scan.py

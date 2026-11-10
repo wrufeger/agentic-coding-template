@@ -1141,6 +1141,9 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("protected-watch", "Checks", values=_MODE3, default="block")
     add("model-switch", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
     add("throwaway-place", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
+    add("commit-hashes", "Checks", values=_MODE3, default="warn")  # never refuses: block counts as warn
+    add("commit-hashes-repos", "Checks", default="none")
+    add("cd-git", "Checks", values=_MODE3, default="block")
     add("update-branch-hint", "Checks", values=_MODE3, default="warn")
     add("update-check", "Checks", values=_MODE3, default="block", effect=nxt)
     add("docs-order", "Checks", values=_MODE3, default="warn")

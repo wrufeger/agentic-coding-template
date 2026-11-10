@@ -287,6 +287,34 @@ directly under `.act-local/` (not one the template creates there itself). The no
 result. A worker's call is not looked at (with a restricted `Write scope:`, `worker-write-scope` refuses it). Limits: only targets the write-scope
 reader sees; `mktemp`, `tempfile` in inline code and a script file's own writes stay unseen.
 
+## `R-work-evidence` — Done only with evidence
+
+Checks: commit-hashes.
+
+A commit hash counts as evidence, so `commit-hashes` (switch in `docs/ai/config.md` § Checks; `warn`, the default and
+the value of a missing row, notes; `off` says nothing; `block` counts as `warn`) notes, never refuses, a hash in a
+`git commit` that no repository knows. It reads the lines the commit adds to staged journal files
+(`docs/ai/work/ledger/`) and the message as the command shows it: `-m`, a heredoc behind `-F -`, a literal `-F <file>`.
+A hash is a word in backticks of 7 to 40 hex characters with a digit and a letter (`` `3e2901a` ``); a bare number, a
+hex word without a digit and a word without backticks are not looked at. Each is looked up with
+`git cat-file -e <hash>^{commit}` in this repository and in the repositories the row `commit-hashes-repos` lists
+(comma-separated, relative to the project root or absolute; default `none`; a folder that is no repository is skipped),
+because a journal can name commits of another repository. The note names the unknown hashes and reaches the model with
+the call's result. A worker's call is not looked at. Limits: a message file written in the same call, hashes inside a
+program's own text and an ambiguous abbreviation (counts as unknown) are not handled; a lookup that runs past about
+4 seconds, or a missing git, gives no note.
+
+## `cd-git` — `cd` and `git` in one call (no rule of its own)
+
+Claude Code asks the owner for approval each time for a Bash call that holds `cd` (or `pushd`) and `git`, in auto mode
+too; `git -C <folder> <command>` with the folder written out does not. `cd-git` (switch in `docs/ai/config.md`
+§ Checks; `block`, the default, refuses; `warn` names the way and lets the call pass; `off`) refuses such a call, for the
+main session and for workers, and names `git -C <folder> …` in a call of its own as the way. It runs only when the
+`tools` row holds `claude-code`; for another tool or a project without the row it does nothing. A `cd` into the folder
+the call runs in (the project root, `cd .`, `cd sub/..`) does not count; a `cd` to a variable or substitution counts as a
+`cd` elsewhere. Subshells and the text of `bash -c` are read. Limits: Bash calls only (not PowerShell), a `cd` or `git`
+made inside a program is not seen; an exception lets the call pass.
+
 ## `R-cost-delegate` — Delegate where it pays off; the assignment header
 
 Checks: worker-cap, worker-write-scope, worker-scope-overlap.

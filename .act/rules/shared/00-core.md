@@ -13,7 +13,8 @@ summary: proof before 'done'; reachable feedback loops first; unverified results
 or a screenshot of the running application (`run` in `docs/ai/config.md`), a commit hash, or an
 outside call. Before a check is handed to the human, every feedback loop within reach has run. An
 unbacked result is "not verified", not "done" — say so plainly, and question a flawed plan rather than
-agreeing to be agreeable.
+agreeing to be agreeable. A commit hash named as evidence is checked mechanically by
+`commit-hashes`.
 
 ## `R-work-override` — The project overrides the template
 

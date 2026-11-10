@@ -25,6 +25,10 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `changelog-length: off` in `docs/ai/config.md` § Checks.
 
 ### Added
+- `cd-git` check (`block`|`warn`|`off`, default `block`, only with `claude-code` in `tools`): a Bash call with `cd` and
+  `git` is refused and `git -C <folder>` named, because Claude Code asks you each time for that combination.
+- `commit-hashes` check (`warn`|`off`, default `warn`): a note when a commit message or journal line names a hash in
+  backticks that no repository knows; `commit-hashes-repos` lists further repositories.
 - `act-doctor` notes a `docs/project/` file of 300 lines or more and a `docs/README.md` index line pointing below a
   subfolder (switch `docs-order`, never a block); the changelog length check skips code blocks and counts `*`/`+` items.
 - Staged test cadence in `R-code-commit`: affected tests in a step, lint, typecheck and unit tests before a commit, the
