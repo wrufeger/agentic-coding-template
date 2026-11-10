@@ -107,6 +107,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `act-local-tidy`, `act-doctor` and `rules.py` findings, rule-line moves in `rules.md`, the feedback link check.
 
 ### Security
+- The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and
+  refuse `git diff|log|show --output=<file>` outside the allowed places.
 - The write guard refuses `shutil.rmtree` of the project root or a folder that holds it (passed before), and an
   rmtree error helper that does more than `func(path)`.
 - The write guard no longer lets a write through that takes its files from a list it cannot read (`xargs`, `$(...)`,

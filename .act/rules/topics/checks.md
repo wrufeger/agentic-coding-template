@@ -147,7 +147,8 @@ which opens the target folder for 24 hours or until `--abort` through a marker u
 only the adopt scripts write.
 The write-target scanners shared by the write guard, the worker write scope and `outside-root` see a `cd`/`pushd`
 into a folder before a relative write (a folder an earlier top-level `mkdir`/`New-Item -ItemType Directory` with a
-literal path makes counts as existing), `git clone` and the other git commands that write a target, `robocopy`, the
+literal path makes counts as existing), `git clone` and the other git commands that write a target (also `git diff|log|show --output=<file>`, `--output <file>`
+and an abbreviation from `--ou`), `robocopy`, the
 source of a PowerShell move, `perl`/`ruby -i`, `chmod`/`chown`, `xargs` with literal input and the literal file names
 a `-c`/`-e` interpreter argument opens for writing; not a path built at run time, archives `tar`/`zip` create, or
 `find -exec`. A relative write behind more than 24 possible folders, or past the work bound of one command, is
@@ -158,7 +159,10 @@ creation wins. A name a command made a file at (a move or copy to it, `ln`, `tou
 does not count so: the `mkdir` fails there, the `cd` after it stays where it was, and the write is also placed in the
 old folder (`mv a.txt out; mkdir out; cd out; touch .act/x`). The shell may be in two places after `cd .act && ls && cd ..; echo x > out.txt` (and with `pushd`/`popd`): a
 failing `ls` skips the `cd ..` while the `;` goes on, so the write is also placed in `.act`, and the guard refuses it. That
-is a limit, not a bug: write the command with `;` between the steps, or as two calls.
+is a limit, not a bug: write the command with `;` between the steps, or as two calls. A list that ends in `&` runs as
+one background job, so what follows the `&` is placed where the list began, not in the folder of a `cd` inside it
+(`cd out && A & B`: B runs in the starting folder); `--output` is read from the words before `--`, and a value that
+`git` takes for another option is not told apart.
 
 Limits: the shell check is best effort. A program that opens files itself (`python script.py`, `docker run -v`) is
 invisible; an MCP tool that takes a path is checked only if it is a read tool of the IDE server's known list. A command

@@ -65,7 +65,7 @@
 #     program stands, _SPAN_TEXT);
 #   - programs that write on their own are read by their arguments (_simple_command_targets): `git clone`
 #     (its destination, the folder named by the URL when none is given), `git init`, `worktree add`,
-#     `submodule add`, `archive -o`, `bundle create`, `format-patch -o`; `robocopy` (destination, source with
+#     `submodule add`, `archive -o`, `bundle create`, `format-patch -o`, `diff|log|show --output`; `robocopy` (destination, source with
 #     /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `sort -o` (its output file) and the
 #     output operand of `uniq`; `chmod`/`chown`/`chgrp` (the files, not the mode or owner word); and `xargs`,
 #     whose input words are operands of the command it runs: the
@@ -2923,11 +2923,37 @@ def _clone_directory(url: str, bare: bool) -> Optional[str]:
     return last or None
 
 
+_GIT_OUTPUT_FILE_SUBS = frozenset({"diff", "log", "show"})
+
+
+def _git_output_file_targets(args: list[str]) -> list[str]:
+    """The file `git diff|log|show --output=FILE` (also `--output FILE` and an abbreviation from `--ou`)
+    writes its result to; empty without one. Words after `--` are paths."""
+    targets: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg == "--":
+            break
+        if not arg.startswith("--"):
+            continue
+        name, has_value, value = arg.partition("=")
+        if len(name) >= 4 and "--output".startswith(name):
+            if has_value:
+                if value:
+                    targets.append(value)
+            elif index < len(args):
+                targets.append(args[index])
+                index += 1
+    return targets
+
+
 def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
     """What a git subcommand that creates files or directories of its own writes (the words after the
     subcommand are `args`): the destination of `clone` (the one derived from the URL when none is
     given) and `submodule add`, the directory of `init`, `worktree add` and `format-patch -o`, the file of
-    `bundle create` and `archive -o`. [] for any other subcommand."""
+    `bundle create` and `archive -o`, the `--output` file of `diff`, `log` and `show`. [] for any other subcommand."""
     if sub == "clone":
         operands, values = _operands(args, _GIT_CLONE_VALUE_FLAGS)
         bare = any(arg in ("--bare", "--mirror") for arg in args)
@@ -2939,6 +2965,8 @@ def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
             if implied:
                 targets.append(implied)
         return targets
+    if sub in _GIT_OUTPUT_FILE_SUBS:
+        return _git_output_file_targets(args)
     spec = _GIT_CREATORS.get(sub)
     if spec is None:
         return []
@@ -3908,8 +3936,10 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         a prefix, outside a subshell and a pipe, and the command has no `dirs`, no `DIRSTACK`, no loop,
         `if`, `case` or function body: _dir_stack_unreliable);
       - `cd` without a literal directory (`cd`, `cd -`, `cd $X`, `cd ~`), a `pushd`/`popd` of any other
-        form or without a certain stack, any `cd`/`pushd` inside a subshell or `$(...)`, and one next
-        to a pipe or `&` add "unknown";
+        form or without a certain stack, any `pushd` inside a subshell or `$(...)`, and one next
+        to a pipe or `&` add "unknown" (a literal `cd` inside a subshell holds until the `)`);
+      - a list that ends in `&` ran as one background job: what follows runs where the list began, and the
+        `pushd` stack is the one the list began with;
       - a folder a plain `mkdir` with literal operands made earlier in the line (first in its list, outside a
         subshell, a pipe, a construct whose body may not run) counts as existing for a `cd` to it, unless a
         file is in the way or a later command removes or moves it (_WrittenPlaces.note_created);
@@ -3937,6 +3967,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     group_outputs: list[list[Optional[str]]] = []
     closed_group: Optional[str] = None
     dir_stack: list[_Bases] = []  # the directories `pushd` left, for a later `popd`
+    list_stack: list[_Bases] = []  # the stack as the current list began: what a background list leaves behind
     # False once a `pushd`/`popd` was not followed: a `popd` is then unknown. It is false from the start when the
     # command can change the stack by other means or run a `pushd`/`popd` a different number of times than it
     # is written (_dir_stack_unreliable).
@@ -4070,7 +4101,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                         after_list = after_list | new_bases
                         chain_dirty = True
                     bases = new_bases
-                elif directory is None or directory == "" or saved or near_pipe:
+                elif directory is None or directory == "" or (saved and kind != "cd") or near_pipe:
                     bases = bases | {None}
                     after_list = after_list | {None}
                     if kind != "cd":
@@ -4120,7 +4151,15 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         if separator == "||":
             bases = bases | list_start | after_list
         elif separator in _LIST_END_OPS:
+            if separator == "&":
+                # The list before `&` ran as one background job: a `cd` or `pushd` in it changed nothing for
+                # what follows, which runs where the list started.
+                after_list = list_start
+                if not saved:
+                    dir_stack = list(list_stack)
             bases = list_start = after_list
+            if not saved:
+                list_stack = list(dir_stack)
         elif separator == "(":
             saved.append((bases, list_start, after_list))
             list_start = after_list = bases
