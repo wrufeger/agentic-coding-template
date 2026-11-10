@@ -12,7 +12,7 @@
 #          status line's source only for an older Claude Code without `context_window` on stdin.
 #
 # Usage:
-#   python .act/scripts/context_size.py                  # newest transcript of the project at the cwd
+#   python .act/scripts/context_size.py                  # own transcript (CLAUDE_CODE_SESSION_ID), else the newest of the project
 #   python .act/scripts/context_size.py --transcript P   # a specific transcript
 #   python .act/scripts/context_size.py --report [--json] # whole session: base load, cache hit rate, cache breaks
 #   As a module: tokens_from_status(), last_context_tokens(), status_segment(), hint_threshold().
@@ -25,14 +25,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, Optional
 
 DEFAULT_THRESHOLD = 180_000
 _TAIL_SIZES = (256_000, 1_000_000, 4_000_000)  # grow only when the smaller tail holds no main-session call
+_RECENT_SECONDS = 600  # a second transcript this fresh means a parallel session
 _USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
@@ -143,6 +146,27 @@ def project_transcripts(cwd: Path) -> Path:
     return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd))
 
 
+def pick_transcript(folder: Path, session_id: str, now: Optional[float] = None) -> tuple[Optional[Path], str]:
+    """(transcript, "") or (None, reason). `session_id` (CLAUDE_CODE_SESSION_ID) names the own transcript
+    `<id>.jsonl`. Without it the newest file counts, unless a second one changed within the last
+    10 minutes: then the own session is unknown and nothing is guessed."""
+    if session_id:
+        own = folder / f"{session_id}.jsonl"
+        if own.is_file():
+            return own, ""
+        return None, (f"no transcript for this session: pass --transcript <path> "
+                      f"(CLAUDE_CODE_SESSION_ID={session_id} has no transcript under {folder})")
+    try:
+        candidates = sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            return None, f"no transcript under {folder}"
+        if len(candidates) > 1 and (time.time() if now is None else now) - candidates[-2].stat().st_mtime < _RECENT_SECONDS:
+            return None, f"several sessions, no assignment: pass --transcript <path> (2 or more under {folder} changed in the last 10 minutes)"
+    except OSError as error:
+        return None, f"cannot list transcripts under {folder}: {error}"
+    return candidates[-1], ""
+
+
 def _usage_fields(usage: dict) -> dict:
     out = {}
     for key in _USAGE_KEYS + ("output_tokens",):
@@ -242,7 +266,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         except (AttributeError, ValueError):
             pass
     parser = argparse.ArgumentParser(description="Context size of the running session, from its transcript.")
-    parser.add_argument("--transcript", type=Path, help="path of a transcript (.jsonl); default: the newest of this project")
+    parser.add_argument("--transcript", type=Path, help="path of a transcript (.jsonl); default: this session's (CLAUDE_CODE_SESSION_ID), else the newest of this project")
     parser.add_argument("--report", action="store_true", help="whole-session report: base load, cache hit rate, cache breaks")
     parser.add_argument("--json", action="store_true", help="print the whole-session report as JSON (implies --report)")
     args = parser.parse_args(argv)
@@ -252,11 +276,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     transcript = args.transcript
     if transcript is None:
         folder = project_transcripts(Path.cwd())
-        candidates = sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
-        if not candidates:
-            print(f"no transcript under {folder}", file=sys.stderr)
+        transcript, problem = pick_transcript(folder, os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip())
+        if transcript is None:
+            print(problem, file=sys.stderr)
             return 1
-        transcript = candidates[-1]
     if args.report:
         try:
             report = build_report(transcript)

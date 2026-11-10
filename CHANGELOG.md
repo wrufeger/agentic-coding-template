@@ -74,6 +74,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- `context_size.py` measures the session named by `CLAUDE_CODE_SESSION_ID`; without it and with two live transcripts
+  it refuses ("several sessions, no assignment") instead of guessing; `--transcript <path>` still overrides.
 - `write-guard` and the scope checks no longer refuse a `shutil.rmtree(..., onerror=h)` chmod helper that only calls
   `func(path)`, also on absolute folders.
 - `worker-write-scope` no longer refuses inline Python that only adds an import folder (`sys.path.insert(0, 'lib')`,

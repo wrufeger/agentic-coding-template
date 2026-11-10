@@ -447,7 +447,8 @@ Context size of the running session, from its transcript.
 options:
   -h, --help            show this help message and exit
   --transcript TRANSCRIPT
-                        path of a transcript (.jsonl); default: the newest of this project
+                        path of a transcript (.jsonl); default: this session's
+                        (CLAUDE_CODE_SESSION_ID), else the newest of this project
   --report              whole-session report: base load, cache hit rate, cache breaks
   --json                print the whole-session report as JSON (implies --report)
 ```
