@@ -50,7 +50,7 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   default `warn`).
 
 ### Changed
-- `update.py --plan` shows what each due migration does, not only its name; `act-update` shows those lines before you agree.
+- `update.py --plan` shows what each due migration does, not only its name, one line per migration; `act-update` shows those lines before you agree, also on resume and `--catch-up`.
 - Work with no task (skill runs, doctor report, feedback) writes throwaway output to
   `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.
 - `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.

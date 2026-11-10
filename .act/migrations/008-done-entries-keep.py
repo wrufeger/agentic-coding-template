@@ -26,7 +26,7 @@
 #          own, gone on every path); when docs/ai/config.md, or a folder on its way, is a symbolic link or a
 #          Windows junction, nothing is written: the description says "skipped: ... is a link or junction".
 #          Why a migration and not a step of update.py: it edits a file the project owns, so update.py lists it in
-#          its plan (`would run: 008-...`) and prints its plan line, which tells a `delete` project what changes,
+#          its plan (a `008-...` line under `[8/10]`) and prints its plan line, which tells a `delete` project what changes,
 #          before applying it. A row left behind by a project that skips the migration is ignored, never an
 #          error. init records every migration it ships as done for a new project, whose config has no such row.
 #          plan() only reads, never writes; it names each part it would remove, apply() reports the same.

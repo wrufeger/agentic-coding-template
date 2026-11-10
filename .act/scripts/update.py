@@ -2638,19 +2638,28 @@ def _plan_migrations_summary(new_act_dir: Path) -> str:
     due = _due_migration_ids(migrations_dir)
     if not due:
         return "no due migrations"
-    return "would run: " + "; ".join(f"{mid}: {_migration_purpose(migrations_dir / (mid + '.py'))}" for mid in due)
+    return f"would run {len(due)} migration(s):" + "".join(
+        "\n" + line for line in _due_migration_lines(migrations_dir, due))
+
+
+def _due_migration_lines(migrations_dir: Path, due: list[str]) -> list[str]:
+    """One indented `<name>: <Purpose>` line per due migration."""
+    return [f"[act]       {mid}: {_migration_purpose(migrations_dir / (mid + '.py'))}" for mid in due]
 
 
 def _due_migrations_note(migrations_dir: Path) -> str:
-    """Parenthetical for a consent prompt: which migrations this run would apply. Resume mode (no
-    .act/ diff left to show — it already matches the fetched template) and --catch-up both skip
-    straight to a bare "apply?"/"catch up?" question; without this, approving either one would be
-    a blind yes on migrations that a normal update's diff (step 3) would otherwise have surfaced.
-    Empty string if none are due, so the prompt text is unchanged in the common case."""
+    """Printed before a consent prompt: one line per migration this run would apply, then the
+    parenthetical for the prompt. Resume mode (no .act/ diff left to show — it already matches the
+    fetched template) and --catch-up both skip straight to a bare "apply?"/"catch up?" question;
+    without this, approving either one would be a blind yes on migrations that a normal update's
+    diff (step 3) would otherwise have surfaced. Prints nothing and returns an empty string if none
+    are due, so the prompt text is unchanged in the common case."""
     due = _due_migration_ids(migrations_dir)
     if not due:
         return ""
-    return f" ({len(due)} migration(s) due: {', '.join(due)})"
+    print(f"[act]   {len(due)} migration(s) due:")
+    print("\n".join(_due_migration_lines(migrations_dir, due)))
+    return f" ({len(due)} migration(s) due, listed above)"
 
 
 def step_migrate(root: Path, plan: bool) -> tuple[str, list[str], list[Path]]:
@@ -3422,12 +3431,12 @@ def main(argv: list[str]) -> int:
                 # No .act/ diff to show (step 3 already said so) — name the due migrations here
                 # instead, so this prompt is not a blind yes on them (they would otherwise only
                 # have been visible in a normal update's diff).
-                resume_migrations_note = _due_migrations_note(new_act_dir / "migrations")
                 print(
                     "[act]   .act/ already matches the fetched template; resuming an interrupted "
                     "update (stale lock, e.g. a crashed update or a plain 'git pull' outside "
                     "update.py, or migrations still due)"
                 )
+                resume_migrations_note = _due_migrations_note(new_act_dir / "migrations")
             else:
                 print("[act] done - nothing to update")
                 return 0

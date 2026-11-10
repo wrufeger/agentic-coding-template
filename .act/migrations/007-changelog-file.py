@@ -21,7 +21,7 @@
 #              or from the next release.
 #          Why a migration and not a step of update.py: it runs once per project and is recorded in the
 #          lock, so a project that deletes the file or switches the changelog off afterwards is not offered
-#          it again at every update; update.py lists the migration in its plan (`would run: 007-...`) and prints
+#          it again at every update; update.py lists the migration in its plan (a `007-...` line under `[8/10]`) and prints
 #          its plan line before applying it, and the project answers by agreeing to the update, or by
 #          adding the row `changelog` with the value `off` under § Formats in docs/ai/config.md first (an old
 #          config has no such section, and `config.py` refuses to set a missing row: add it by hand). init
