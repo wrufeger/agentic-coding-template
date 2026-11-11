@@ -67,7 +67,7 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.
 - `seo_lighthouse.py` works in `.act-local/tmp/<YYYYMMDD>-seo-lighthouse/` by default (was `.act-local/tmp/seo-lighthouse/`);
   `--workdir` still overrides it.
-- `reviewer` blocks only for errors on ordinary paths; the full suite runs once on the accepted state.
+- `reviewer` blocks only for errors on ordinary paths; the commit's checks run once on the accepted state.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
 - Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.
 - `init` sets the scope profile from the stack (`full` for web, else `standard`); existing projects keep theirs.
