@@ -21,7 +21,7 @@
 # Usage:
 #   python .act/scripts/usage.py                          # same as --show
 #   python .act/scripts/usage.py --show
-#   python .act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated
+#   python .act/scripts/usage.py --outcome <role> <tier> accepted|reworked|escalated [--reason assignment|edge-case|worker|decision]
 #   python .act/scripts/usage.py --unused <key>
 #   python .act/scripts/usage.py --reset
 #   python .act/scripts/usage.py --estimates              # measured effort per role/tier
@@ -42,8 +42,9 @@
 #   --show:    one line per category with any entries ("Roles:", "Skills:", ...), one indented
 #              line per key ("  builder: 4x, 2026-09-21..2026-09-23 tiers=standard:4
 #              models=?:4"); "(no usage recorded yet)" if the store is empty. Exit 0 always.
-#   --outcome: "usage: <role>/<tier> outcome recorded: <outcome>", exit 0; exit 2 with a message
-#              on stderr for an unrecognized outcome word; exit 1 (rare) if the consolidate lock
+#   --outcome: "usage: <role>/<tier> outcome recorded: <outcome>" (with --reason: "... <outcome> (<reason>)"),
+#              exit 0; exit 2 with a message on stderr, nothing recorded, for an unrecognized outcome
+#              word, an unknown reason word, a reason without --outcome or a reason with `accepted`; exit 1 (rare) if the consolidate lock
 #              could not be acquired in time — nothing was recorded, safe to just retry.
 #   --unused:  "usage: <key> is unused|used"; exit 0 if never recorded (the tip may fire), exit 1
 #              if it was (the tip stays quiet) — a shell-friendly inversion of the usual "0 means
@@ -62,9 +63,13 @@
 #                               "tiers": {"<tier-or-''>": n, ...}, "models": {"<model-or-''>": n},
 #                               "outcomes": {"<tier-or-''>": {"accepted": n, "reworked": n,
 #                                                              "escalated": n}},
+#                               "reasons": {"<tier-or-''>": {"assignment"|"edge-case"|"worker"|"decision": n}},
 #                               "recent": {"<tier-or-''>": ["accepted"|"reworked"|"escalated", ...]}}},
 #                               (recent: the last 30 outcomes per tier, oldest first, written by --outcome;
-#                                a file without it keeps working)
+#                                a file without it keeps working; it leaves out the outcomes the orchestrator
+#                                caused - reason assignment, edge-case or decision - so the tier proposal
+#                                counts only what a higher tier could have avoided; reasons counts every
+#                                reason given with reworked or escalated)
 #    "skills":     {"<skill>":     {"count": n, "first_used": ..., "last_used": ...}},
 #    "commands":   {"<command>":   {"count": n, "first_used": ..., "last_used": ...}},
 #    "scripts":    {"<script>":    {"count": n, "first_used": ..., "last_used": ...}},
@@ -149,6 +154,8 @@ import actlib
 
 _CATEGORIES = ("roles", "skills", "commands", "scripts", "checklists", "checks")
 _OUTCOME_VALUES = ("accepted", "reworked", "escalated")
+_REASON_VALUES = ("assignment", "edge-case", "worker", "decision")  # why work was reworked or escalated
+_REASONS_NOT_RECENT = ("assignment", "edge-case", "decision")  # the orchestrator's reasons: not in `recent`
 _RUN_EVENT_CAT = "run"  # event-file category of one measured worker run (not a store category)
 _RUNS_KEPT = 50  # newest measured runs kept per role and tier in usage.json
 _MEASURED_ROLE_SKIP = ("fork",)  # not a role choice, see checks/usage.py
@@ -482,7 +489,7 @@ def _read_store(root: Path) -> dict:
 
 # Fields of a store entry that hold a mapping, and the type their values must have.
 _ENTRY_MAPS = {"tiers": int, "models": int, "kinds": int, "runs": list, "outcomes": dict, "recent": list,
-               "refusals": dict}
+               "refusals": dict, "reasons": dict}
 _REFUSAL_DAYS_KEPT = 30  # days of refusal counts kept per check
 _ROLE_WORD_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_-]{0,40}\Z")  # a role name as the count's key: a plain word, never text
 # How many of the latest outcomes per role/tier are kept in order (roles.<name>.recent); the tier
@@ -529,6 +536,18 @@ def _sanitize_store(store: dict, path: Path) -> None:
                         for kind in list(counts):
                             number = counts[kind]
                             if isinstance(number, bool) or not isinstance(number, int):
+                                problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is "
+                                                f"{number!r}, not a number")
+                                del counts[kind]
+                elif field == "reasons":
+                    # Per tier a mapping reason word -> count; any other key or count is dropped.
+                    for tier_key, counts in value.items():
+                        for kind in list(counts):
+                            number = counts[kind]
+                            if kind not in _REASON_VALUES:
+                                problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is not a reason word")
+                                del counts[kind]
+                            elif isinstance(number, bool) or not isinstance(number, int):
                                 problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is "
                                                 f"{number!r}, not a number")
                                 del counts[kind]
@@ -873,6 +892,10 @@ def _format_entry(cat: str, name: str, entry: dict) -> str:
         for tier, counts in sorted(outcomes.items()):
             parts = ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
             detail += f" outcomes[{tier or '?'}]={parts}"
+        for tier, counts in sorted((entry.get("reasons") or {}).items()):
+            if not counts:
+                continue  # nothing valid left for this tier after cleaning
+            detail += f" reasons[{tier or '?'}]=" + ",".join(f"{k}={v}" for k, v in sorted(counts.items()))
     elif cat == "checks":
         kinds = entry.get("kinds") or {}
         if kinds:
@@ -897,18 +920,28 @@ def cmd_show(root: Path) -> int:
     return 0
 
 
-def cmd_outcome(root: Path, role: str, tier: str, outcome: str) -> int:
+def cmd_outcome(root: Path, role: str, tier: str, outcome: str, reason: Optional[str] = None) -> int:
     if outcome not in _OUTCOME_VALUES:
-        print(f"usage: outcome must be one of {', '.join(_OUTCOME_VALUES)}", file=sys.stderr)
+        print(f"usage: outcome {outcome!r} is not one of {', '.join(_OUTCOME_VALUES)}", file=sys.stderr)
+        return 2
+    if reason is not None and outcome == "accepted":
+        print("usage: --reason belongs to reworked or escalated, not to accepted", file=sys.stderr)
+        return 2
+    if reason is not None and reason not in _REASON_VALUES:
+        print(f"usage: reason {reason!r} is not one of {', '.join(_REASON_VALUES)}", file=sys.stderr)
         return 2
 
     def _mutate(store: dict) -> None:
         bucket = store["roles"].setdefault(role, {"count": 0})
         counts = bucket.setdefault("outcomes", {}).setdefault(tier or "", {})
         counts[outcome] = counts.get(outcome, 0) + 1
+        if reason is not None:
+            reasons = bucket.setdefault("reasons", {}).setdefault(tier or "", {})
+            reasons[reason] = reasons.get(reason, 0) + 1
         recent = bucket.setdefault("recent", {}).setdefault(tier or "", [])
-        recent.append(outcome)
-        del recent[:-_RECENT_KEEP]
+        if reason not in _REASONS_NOT_RECENT:
+            recent.append(outcome)
+            del recent[:-_RECENT_KEEP]
 
     store = consolidate_and_mutate(root, _mutate)
     if store is None:
@@ -920,7 +953,8 @@ def cmd_outcome(root: Path, role: str, tier: str, outcome: str) -> int:
     if outcome == "escalated":
         import incidents  # the incident log: delivered to the inbox at the next session start
         incidents.record(root, "escalated", "usage.py", f"{role}/{tier or '-'}")
-    print(f"usage: {role}/{tier or '(no tier)'} outcome recorded: {outcome}")
+    suffix = f" ({reason})" if reason is not None else ""
+    print(f"usage: {role}/{tier or '(no tier)'} outcome recorded: {outcome}{suffix}")
     return 0
 
 
@@ -1097,6 +1131,10 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--backfill", action="store_true",
                        help="read this project's existing worker transcripts once "
                             "(a second run adds nothing twice)")
+    parser.add_argument("--reason", metavar="WORD",
+                        help="with --outcome reworked|escalated: why - assignment, edge-case, worker or "
+                             "decision; assignment, edge-case and decision (the orchestrator's) stay out of the "
+                             "tier proposal window")
     parser.add_argument("--transcripts-dir", metavar="DIR",
                         help="with --backfill: the transcript folder to read instead of "
                              "Claude Code's folder for this project")
@@ -1115,8 +1153,11 @@ def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     root = actlib.repo_root()
 
+    if args.reason is not None and not args.outcome:
+        print("usage: --reason needs --outcome", file=sys.stderr)
+        return 2
     if args.outcome:
-        return cmd_outcome(root, *args.outcome)
+        return cmd_outcome(root, *args.outcome, reason=args.reason)
     if args.unused is not None:
         return cmd_unused(root, args.unused)
     if args.reset:

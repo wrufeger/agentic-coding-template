@@ -44,7 +44,11 @@
 #              {"since": date, "skills": {name: n}, "scripts": {name: n}} - template skills and
 #              scripts by name (the names listed in .act/MANIFEST.json), everything else (a skill
 #              or script built in the project) only as ONE collective counter `own` in each of the
-#              two maps, never by name.
+#              two maps, never by name. With reasons recorded for reworked or escalated work (usage.py
+#              --reason) it also carries `events`: {"<reason>_<role>_<tier>": n} - growth since the
+#              previous send, role = a template role (or its -high form) by name else `own`, tier =
+#              light|standard|elevated|expert, `none` for no tier, else `other`; only the four reason
+#              words, only keys the receiving endpoint accepts; present only when not empty.
 #            - The adaptive cadence threshold drops the old "lower it after a template update"
 #              factor (no reliable per-date update log to read yet); the ignored/postponed/
 #              consecutive-sends factors are kept.
@@ -562,6 +566,51 @@ def _template_names(root: Path) -> tuple[set[str], set[str]]:
     return skills, scripts
 
 
+_EVENT_TIERS = ("light", "standard", "elevated", "expert")
+_EVENT_REASONS = ("assignment", "edge-case", "worker", "decision")
+_EVENT_KEY_RE = re.compile(r"[a-z][a-z0-9_-]{1,39}")  # what the receiving endpoint accepts as a counter name
+
+
+def _template_roles(root: Path) -> set[str]:
+    """Role names the template ships (agents/<name>.md in .act/MANIFEST.json, README.md excepted) plus
+    the `<name>-high` form of each; empty without a manifest."""
+    try:
+        data = json.loads((root / ".act" / "MANIFEST.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    roles: set[str] = set()
+    for rel in data if isinstance(data, dict) else ():
+        parts = str(rel).split("/")
+        if len(parts) == 2 and parts[0] == "agents" and parts[1].endswith(".md") and parts[1] != "README.md":
+            roles.update((parts[1][:-3], parts[1][:-3] + "-high"))
+    return roles
+
+
+def _reason_counts(root: Path) -> dict[str, int]:
+    """Reason counts of .act-local/usage.json (read directly, never consolidated) as sendable counter keys
+    `<reason>_<role>_<tier>`; several source entries mapping to one key are summed. Anything that
+    is not a template role by name becomes `own`, an unknown tier `other`, an unknown reason is left
+    out, and so is a key the endpoint would not accept."""
+    try:
+        data = json.loads((root / ".act-local" / "usage.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    roles = data.get("roles") if isinstance(data, dict) else None
+    known = _template_roles(root)
+    result: dict[str, int] = {}
+    for role, entry in (roles.items() if isinstance(roles, dict) else ()):
+        reasons = entry.get("reasons") if isinstance(entry, dict) else None
+        for tier, counts in (reasons.items() if isinstance(reasons, dict) else ()):
+            for reason, count in (counts.items() if isinstance(counts, dict) else ()):
+                if reason not in _EVENT_REASONS or isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+                    continue
+                tier_word = tier if tier in _EVENT_TIERS else ("none" if tier == "" else "other")
+                key = f"{reason}_{role if role in known else 'own'}_{tier_word}"
+                if _EVENT_KEY_RE.fullmatch(key):
+                    result[key] = result.get(key, 0) + count
+    return result
+
+
 def _usage_counts(root: Path) -> dict[str, dict[str, int]]:
     """Raw invocation counts per category ("skills", "scripts") from .act-local/usage.json,
     read directly (never consolidated - building a payload must not write). Missing or unreadable
@@ -616,6 +665,7 @@ def _usage_since_last_send(root: Path, state: dict) -> dict:
     baseline = state.get("usage_baseline")
     baseline = baseline if isinstance(baseline, dict) else {}
     counts = _usage_counts(root)
+    reasons = _reason_counts(root)
     usage: dict = {}
     since = str(state.get("usage_baseline_at") or state.get("last_sent") or "")[:10]
     if not since:
@@ -638,6 +688,18 @@ def _usage_since_last_send(root: Path, state: dict) -> dict:
             key = name if name in known else "own"
             merged[key] = merged.get(key, 0) + delta
         usage[category] = merged
+    before = baseline.get("events")
+    before = before if isinstance(before, dict) else {}
+    events: dict[str, int] = {}
+    for key, count in reasons.items():
+        base = before.get(key)
+        base = base if isinstance(base, int) and not isinstance(base, bool) else 0
+        if base > count:
+            base = 0  # usage.json was reset since the baseline was taken: count from zero
+        if count - base > 0:
+            events[key] = count - base
+    if events:
+        usage["events"] = events
     return usage
 
 
@@ -1136,7 +1198,7 @@ def cmd_send(root: Path, force: bool, yes: bool, bypass_cadence: bool = False) -
         if index == 0 and "usage" in chunk_payload:
             # The chunk carrying the counts went out: they become the baseline right now, so a later
             # chunk failing does not make the next send report them a second time.
-            state["usage_baseline"] = _usage_counts(root)
+            state["usage_baseline"] = {**_usage_counts(root), "events": _reason_counts(root)}
             state["usage_baseline_at"] = time.strftime("%Y-%m-%d")
             _write_state(root, state)
 

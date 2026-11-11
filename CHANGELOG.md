@@ -52,8 +52,12 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 - Small additions: `entries.py new --triage`, a reason after a rule set path.
 - `act-doctor` warns, never blocking, about an entry under `[Unreleased]` over 250 characters (`changelog-length`,
   default `warn`).
+- `usage.py --outcome <role> <tier> reworked|escalated --reason assignment|edge-case|worker|decision` records why a
+  result was reworked; `--show` lists the reasons, and with `feedback-scope` `c` a send counts them per template role.
 
 ### Changed
+- A tier proposal from `act-doctor` no longer counts reworks given the reason `assignment`, `edge-case` or `decision`;
+  `R-cost-delegate` asks to name the assertions of affected tests and settle edge cases before a `builder` assignment.
 - `worker-write-scope` judges only paths a write call of inline code shows; unknown targets (variable, unreadable code)
   pass, a variable assigned a literal in the same command is judged by its value.
 - `worker-write-scope`: every target under `.act-local/tmp/` of the project is free for every worker, whatever its scope.

@@ -333,7 +333,7 @@ def _ask_feedback_mode(root: Path, interactive: bool, notes: list[str]) -> str:
     print()
     print("Report back to the template author about the working method?")
     print("- Entries: a short written summary plus a few closed-list settings — never file names/paths, code, or this project's own text.")
-    print("- With the default scope (feedback-scope: a,b,c), a send also adds usage numbers: commit/date counts, days active, file count and size, `ai.log` line counts if logging is on, a random project id (persists across sends, not tied to you), this project's template base commit, and with scope c which template skills/scripts were used since the last send (your own ones only as a count). Narrow this with `feedback-scope`.")
+    print("- With the default scope (feedback-scope: a,b,c), a send also adds usage numbers: commit/date counts, days active, file count and size, `ai.log` line counts if logging is on, a random project id (persists across sends, not tied to you), this project's template base commit, and with scope c which template skills/scripts were used since the last send (your own ones only as a count) and the reasons recorded for reworked worker results. Narrow this with `feedback-scope`.")
     print("- confirm (default): shows the full payload and asks before every send. automatic: sends without asking.")
     print("- Every actual send is also kept locally under '.act-local/feedback/sent/' (gitignored).")
     print("- Off again any time: docs/ai/config.md § Feedback.")

@@ -24,12 +24,15 @@ already ruled out).
 
 ## `R-role-outcome` — Record every worker outcome
 
-summary: usage.py --outcome after every acceptance, rework or escalation; feeds a tier proposal, never a live edit
+summary: usage.py --outcome after every acceptance, rework or escalation, with the reason for a rework; feeds a tier proposal, never a live edit
 
 Right after accepting, reworking, or escalating a worker's result, run `python .act/scripts/usage.py
 --outcome <role> <tier> accepted|reworked|escalated` (`<tier>`: the role's own tier or the deviation
-the assignment named, `""` if neither is known). `doctor.py --inbox` turns the recorded pattern into an inbox question for a higher tier —
-the human decides, nothing changes live.
+the assignment named, `""` if neither is known). With `reworked` or `escalated`, add the reason:
+`--reason assignment` (the assignment was unclear), `edge-case` (it lacked an edge case), `worker` (the
+worker erred) or `decision` (the orchestrator changed its own decision). `doctor.py --inbox` turns the
+recorded pattern into an inbox question for a higher tier, counting only `worker` and outcomes without
+a reason — the human decides, nothing changes live.
 
 ## Role assignment — which role for what
 

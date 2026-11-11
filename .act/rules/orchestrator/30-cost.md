@@ -27,6 +27,10 @@ minutes, from `python .act/scripts/usage.py --estimates`) is given from `standar
 <whose result>` only where the assignment reads another worker's result; it starts after that worker
 has ended. Cap defaults, pattern syntax, limits: `topics/checks.md`.
 
+**Preparing an assignment.** Before a `builder` assignment, find the tests, probes and checks that
+already pin the behavior concerned and name their assertions in the assignment; decide the design's
+edge cases first or ask the human; state each check criterion as a command with its expected output.
+
 Cut assignments small: a judgment assignment (a verdict per entry or file) covers about 10–12 units;
 rework goes out as a new, short assignment, not to a worker whose context is full. Work expected to
 run longer than about five minutes is first checked for independent parts (test and probe runs, case

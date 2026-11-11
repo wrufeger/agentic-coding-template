@@ -338,7 +338,7 @@ Voluntary feedback to the template author about the working method, never about 
 `feedback`: `off` \| `confirm` \| `automatic` \| `manual` \| `local` (this project never sends anything to
 the template author; findings become backlog entries here instead). `feedback-cadence` is an upper limit:
 `manual` \| `immediate` \| `hourly` \| `daily` \| `weekly` \| `adaptive`. `feedback-scope`: `a`
-metrics, `b` rule and structure changes, `c` tool usage (counts of template skills/scripts used since the last send; your own only as one `own` count). Every sent payload's full copy stays
+metrics, `b` rule and structure changes, `c` tool usage (counts of template skills/scripts used since the last send; your own only as one `own` count; reasons recorded for reworked worker results, per template role and tier). Every sent payload's full copy stays
 local (`.act-local/feedback/sent/`, gitignored) — the journal gets one entry per day with one line per send
 (time, kind, entry count, each entry's kind and title, never its text). A message you write yourself
 (`feedback: <text>`) always goes out, even with `off` (but never with `local`), together with the template commit and the

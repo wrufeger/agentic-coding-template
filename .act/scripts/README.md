@@ -1338,7 +1338,7 @@ Call: direct
 
 ```text
 usage: usage.py [-h] [--show | --outcome ROLE TIER OUTCOME | --unused KEY | --reset |
-                --estimates | --backfill] [--transcripts-dir DIR]
+                --estimates | --backfill] [--reason WORD] [--transcripts-dir DIR]
 
 Local usage counter: worker starts by role/tier/model, skill/command/script/checklist calls,
 worker outcomes.
@@ -1354,6 +1354,9 @@ options:
                         tokens (fresh/cache), run count, last measurement
   --backfill            read this project's existing worker transcripts once (a second run adds
                         nothing twice)
+  --reason WORD         with --outcome reworked|escalated: why - assignment, edge-case, worker or
+                        decision; assignment, edge-case and decision (the orchestrator's) stay out
+                        of the tier proposal window
   --transcripts-dir DIR
                         with --backfill: the transcript folder to read instead of Claude Code's
                         folder for this project

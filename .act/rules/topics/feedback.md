@@ -29,7 +29,8 @@ either — they only say how the template was configured:
   `daily` · `weekly` (default) · `adaptive` (learns from how often reminders get acted on or
   postponed, see `feedback.py`'s own header comment for the exact math). Nothing to report means
   nothing is sent, however short the cadence.
-- `feedback-scope`: `a` (metrics) · `b` (rule and structure changes) · `c` (tool usage) — what the
+- `feedback-scope`: `a` (metrics) · `b` (rule and structure changes) · `c` (tool usage, including the
+  reasons recorded for reworked worker results) — what the
   assistant is allowed to collect **on its own**. A finding written by hand via `--add` always
   goes into the outbox regardless of scope; scope only gates the automatically derived numbers.
 
