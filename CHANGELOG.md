@@ -84,6 +84,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   `### Upgrading`; a release adds a head line and 3–5 highlights.
 - The template's own `CHANGELOG.md` is rewritten in that form, about a sixth of its former length; the full old wording
   stays in the Git history and the release notes of each tag.
+- Every template script counts its own run in `.act-local/usage.json`, whoever starts it: the assistant, a hook,
+  another script or you in a terminal (before, only the assistant's shell calls). `usage.py` itself is not counted.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

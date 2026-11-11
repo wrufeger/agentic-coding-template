@@ -50,6 +50,12 @@
 #              found", picked to match the CLI contract this task's order specifies verbatim.
 #   --reset:   "usage: reset (<n> file(s) removed)", exit 0.
 #
+# Scripts count themselves: every .act/scripts/*.py with a `__main__` branch calls
+#   count_script_run(__file__) first thing there (this file excepted: its read commands write
+#   nothing), so a run counts whoever started it - the model, a hook, another script, a person in a terminal.
+#   Counted only if the project holding the script has an .act-local/ folder and is the project of the
+#   current directory. The hook observer (checks/usage.py) no longer counts scripts.
+#
 # Schema of .act-local/usage.json:
 #   {"version": 1,
 #    "roles":      {"<role>": {"count": n, "first_used": "YYYY-MM-DD", "last_used": "...",
@@ -229,8 +235,8 @@ def _write_entry(events_dir: Path, entry: dict) -> None:
 
 
 def record_event(root: Path, category: str, key: str, **fields: str) -> None:
-    """Record one occurrence in `category` ("roles", "skills", "commands", "scripts",
-    "checklists") — called by .act/hooks/checks/usage.py's observe(). `fields` are folded in by
+    """Record one occurrence in `category` ("roles", "skills", "commands", "checklists"; a script
+    counts itself through count_script_run) — called by .act/hooks/checks/usage.py's observe(). `fields` are folded in by
     _fold_event() (e.g. tier=/model= for "roles"). See this module's header for the write itself
     and why it never touches usage.json directly."""
     _write_event(root, category, key, **fields)
@@ -245,6 +251,24 @@ def record_refusal(root: Path, check: str, role: str) -> None:
             _write_event(root, "checks", check, kind="refusal", role=role)
     except Exception:  # noqa: BLE001 -- bookkeeping must never reach a check's verdict
         pass
+
+
+def count_script_run(script_file: str) -> None:
+    """Count one run of the script `script_file` (its `__file__`) as a "scripts" event. Every script with a
+    `__main__` branch but this one calls this first, so a run counts whoever started it: the model, a hook, another script
+    or a person in a terminal. Counted only when the project holding the script already has an `.act-local/`
+    folder (never created here) and is the project found from the current directory - a script of another
+    checkout run from here counts nowhere. No lock, no git, no subprocess; never raises, never prints."""
+    try:
+        script = Path(script_file).resolve()
+        project = script.parents[2]
+        if script.parent.name != "scripts" or not (project / ".act-local").is_dir():
+            return
+        if actlib.repo_root() != project:
+            return
+        _write_event(project, "scripts", script.stem)
+    except (OSError, RuntimeError, IndexError, ValueError):
+        return
 
 
 def record(kind: str, key: str) -> None:
@@ -1105,4 +1129,6 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    # The one script that does not count itself: its read commands (--show, --unused, --estimates)
+    # write nothing, and --outcome runs after every worker by rule, so a count would say nothing.
     sys.exit(main(sys.argv[1:]))

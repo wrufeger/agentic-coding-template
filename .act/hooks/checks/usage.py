@@ -36,8 +36,9 @@
 #   - a skill call: PreToolUse, tool_name "Skill", tool_input.skill.
 #   - a slash command: UserPromptSubmit, payload.prompt starting with "/<name>" (the same field
 #     .claude/scripts/ai-log.py's --hook mode reads for its own "[user] [prompt]" line).
-#   - a script call: PreToolUse, tool_name "Bash"/"PowerShell" (checks.common._SHELL_TOOL_NAMES),
-#     command containing ".act/scripts/<name>.py".
+#   - NOT a script call: every .act/scripts/*.py with a `__main__` branch (usage.py excepted) counts
+#     its own run at start (usage.count_script_run), whoever started it - the model, a hook, another script or a person -
+#     so a shell command naming a script records nothing here.
 #   - a checklist read: PreToolUse, tool_name "Read", file_path under ".act/checklists/" or
 #     "docs/ai/local/checklists/".
 #   Cap hits and denials inside a PreToolUse *check* (worker-cap, status-poll, ...) cannot be seen
@@ -50,7 +51,7 @@
 #
 # Fixed (was "Known limit", 2026-09-23 review, point 4): this observer used to
 # see a PreToolUse *before* any check ran (dispatch.py's own fixed order), so a role start, skill
-# call, script call or checklist read was counted here even when a later check in the chain denied
+# call or checklist read was counted here even when a later check in the chain denied
 # it (worker-cap, write-scope, nesting-guard, ...) — a denied attempt looked the same as a
 # successful one in usage.json. dispatch.py now runs its PreToolUse observers *after* the checks
 # (dispatch._run_pre_tool_use_observers) and skips this observer outright when the call was denied
@@ -82,10 +83,10 @@ from pathlib import Path
 import actlib
 import usage
 
-from .common import _SHELL_TOOL_NAMES, _WORKER_TOOL_NAMES, _is_harness_message
+from .common import _WORKER_TOOL_NAMES, _is_harness_message
 
 __all__ = [
-    "_TIER_RE", "_SCRIPT_CALL_RE", "_CHECKLIST_PATH_RE", "_SLASH_COMMAND_TOKEN_RE",
+    "_TIER_RE", "_CHECKLIST_PATH_RE", "_SLASH_COMMAND_TOKEN_RE",
     "_COMMAND_NAME_RE", "_FORK_SUBAGENT_TYPE", "_tier_from_prompt", "_slash_command", "observe",
 ]
 
@@ -96,24 +97,6 @@ __all__ = [
 _SAFE_AGENT_ID_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")  # becomes part of a file name
 
 _TIER_RE = re.compile(r"Tier:\s*[`*_]*([^\s.,;·`*_]+)", re.IGNORECASE)
-
-# ".act/scripts/<name>.py" run *through an interpreter* — either a literal "python"/"python3"/"py"
-# (optionally ".exe") or a shell variable holding a resolved interpreter path, the pattern
-# .act/bridges/settings.hooks.json's own wiring uses for dispatch.py (`"$P" .act/hooks/dispatch.py
-# ...`; 2026-09-23 review point 2's own ask: check that a script invoked this way from a skill/hook
-# still counts). Interpreter flags ("-u", ...) between the interpreter and the path are tolerated.
-# Without the interpreter requirement, merely *reading* the script (`sed -n 1,40p
-# .act/scripts/feedback.py`, `grep -n x .act/scripts/log.py`) used to count as a call too (review
-# point 2) — it no longer does, since neither "sed"/"grep" nor the line/pattern arguments in front
-# of the path match either interpreter alternative. Known looseness, accepted: the variable branch
-# matches *any* "$NAME"/"${NAME}" right before a script path, not only one that actually holds an
-# interpreter (e.g. `echo $P .act/scripts/x.py` still counts) — narrower than that would miss the
-# legitimate "$P .act/scripts/x.py" forms the review explicitly asked to catch, and a stray `echo`
-# of a script path is a rare, harmless over-count for a nudge counter.
-_SCRIPT_CALL_RE = re.compile(
-    r'(?:(?:python3?|py)(?:\.exe)?|"?\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"?)'
-    r'\s+(?:-\S+\s+)*["\']?[^\s"\']*\.act[/\\]scripts[/\\](\w[\w-]*)\.py'
-)
 
 # A Read target under .act/checklists/ or docs/ai/local/checklists/ (see actlib.resolve — a
 # checklist may live in either place, project override first). Either path separator, anchored at
@@ -217,13 +200,6 @@ def _observe_pre_tool_use(root, payload: dict) -> None:
         skill = tool_input.get("skill")
         if isinstance(skill, str) and skill:
             usage.record_event(root, "skills", skill)
-        return
-
-    if tool_name in _SHELL_TOOL_NAMES:
-        command = tool_input.get("command")
-        if isinstance(command, str):
-            for name in _SCRIPT_CALL_RE.findall(command):
-                usage.record_event(root, "scripts", name)
         return
 
     if tool_name == "Read":

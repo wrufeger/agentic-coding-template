@@ -1167,4 +1167,9 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    try:
+        from usage import count_script_run
+        count_script_run(__file__)
+    except ImportError:
+        pass
     sys.exit(main(sys.argv[1:]))
