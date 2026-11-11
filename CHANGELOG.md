@@ -86,6 +86,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
   stays in the Git history and the release notes of each tag.
 - Every template script counts its own run in `.act-local/usage.json`, whoever starts it: the assistant, a hook,
   another script or you in a terminal (before, only the assistant's shell calls). `usage.py` itself is not counted.
+- Nuxt 5 coding rules: each nightly workaround names its upstream issue or release and when to drop it;
+  `CR-nuxt5-checks` has you check them after every Nuxt update.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
