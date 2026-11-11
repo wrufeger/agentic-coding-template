@@ -11,7 +11,10 @@
 #
 # Each hash is looked up with `git cat-file -e <hash>^{commit}` in this repository and in the repositories
 # the row `commit-hashes-repos` lists (paths relative to the project root, `none` for no further one): a
-# journal can name commits of another repository. A hash none of them knows is named in one note.
+# journal can name commits of another repository. A hash none of them knows is named in one note, unless it is the
+# start (case-insensitive) of a template commit recorded in `.act-lock.json` of the project root, in the
+# working tree, staged or in its history: an update journals the change of the template commit, and a project has no clone of the template.
+# Limit: a template commit never recorded in the lock, such as an intermediate one, is still noted.
 #
 # Switch `commit-hashes` in docs/ai/config.md § Checks: `warn` (default, also for a missing row) notes, `off`
 # says nothing; `block` counts as `warn` because the call is never refused. The note reaches the model as
@@ -45,6 +48,8 @@ __all__ = ["check_commit_hashes", "note_commit_hashes"]
 _HINTS_DIRNAME = "commit-hash-hints"
 _LEDGER = "docs/ai/work/ledger/"
 _HASH_RE = re.compile(r"\\?`([0-9A-Fa-f]{7,40})\\?`")
+_LOCK = ".act-lock.json"
+_LOCK_COMMIT_RE = re.compile(r'"commit"\s*:\s*"([0-9A-Fa-f]{7,40})"')
 _MAX_HASHES = 20
 _MAX_FILE_BYTES = 200_000
 _BUDGET_SECONDS = 4.0
@@ -132,6 +137,30 @@ def _repos(root: Path, config: dict) -> list[Path]:
     return repos
 
 
+def _lock_commits(root: Path, deadline: float) -> Optional[list[str]]:
+    """Every template commit `.act-lock.json` names, in the working tree (an update committed in the call that
+    stages it), staged or in its history (added and removed lines); None when out of time or git fails."""
+    found: list[str] = []
+    try:
+        lock = root / _LOCK
+        if lock.is_file() and lock.stat().st_size <= _MAX_FILE_BYTES:
+            found.extend(match.lower() for match in _LOCK_COMMIT_RE.findall(
+                lock.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        pass
+    for args in (["diff", "--cached", "-U0", "--no-color", "--", _LOCK],
+                 ["log", "--format=", "-p", "-U0", "--no-color", "--", _LOCK]):
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None
+        done = _git(root, args, left)
+        if done is None:
+            return None
+        if done.returncode == 0:
+            found.extend(match.lower() for match in _LOCK_COMMIT_RE.findall(done.stdout))
+    return found
+
+
 def _unknown(hashes: list[str], repos: list[Path]) -> list[str]:
     deadline = time.monotonic() + _BUDGET_SECONDS
     missing: list[str] = []
@@ -149,6 +178,11 @@ def _unknown(hashes: list[str], repos: list[Path]) -> list[str]:
                 break
         if not known:
             missing.append(word)
+    if missing:
+        recorded = _lock_commits(repos[0], deadline)
+        if recorded is None:
+            return []
+        missing = [word for word in missing if not any(commit.startswith(word) for commit in recorded)]
     return missing
 
 

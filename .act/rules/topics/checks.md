@@ -299,8 +299,10 @@ A hash is a word in backticks of 7 to 40 hex characters with a digit and a lette
 hex word without a digit and a word without backticks are not looked at. Each is looked up with
 `git cat-file -e <hash>^{commit}` in this repository and in the repositories the row `commit-hashes-repos` lists
 (comma-separated, relative to the project root or absolute; default `none`; a folder that is no repository is skipped),
-because a journal can name commits of another repository. The note names the unknown hashes and reaches the model with
-the call's result. A worker's call is not looked at. Limits: a message file written in the same call, hashes inside a
+because a journal can name commits of another repository. A hash none of them knows still counts as known when it
+starts (any case) a template commit that `.act-lock.json` records, in the working tree, staged or in its history; a
+template commit never recorded there is noted. The note names the unknown hashes and reaches the model with the call's
+result. A worker's call is not looked at. Limits: a message file written in the same call, hashes inside a
 program's own text and an ambiguous abbreviation (counts as unknown) are not handled; a lookup that runs past about
 4 seconds, or a missing git, gives no note.
 
