@@ -70,7 +70,7 @@
   "hooks/checks/cd_git.py": "fcafb3bf33f57e185a0624e672aae17bf7250e6579c59c77e38da16c99774f6f",
   "hooks/checks/command_parse.py": "35b51a0b47f77b270f2d38262cb4529b2c801a01dd4c6c102f467aa24495a626",
   "hooks/checks/command_words.py": "f9aaaf9347237487c746dd2d873709a0947bdfe47a47e72c58268f3d7b6e6af0",
-  "hooks/checks/commit_hashes.py": "332ebc6de90f76731e2c694419e2c73b0c5a5106c482aad82f02956731b8b94c",
+  "hooks/checks/commit_hashes.py": "716471d93fcc4c89cadae8e842a698b1410bb179952f399a684ed98cf916932d",
   "hooks/checks/commit_pathspec.py": "bbf93cc7a4298d5d94d3477435671fd394c7c104eb49e373cb4c6e88901f0ce8",
   "hooks/checks/common.py": "96b9d4298461f9b01031b2139e7c61ca987fe2ddb3bf46d380bb07dfbd615a75",
   "hooks/checks/context_hint.py": "ac79f1bd5631c11cf9c5083f1f85225299fe171fd9d560f59c925988c013609c",

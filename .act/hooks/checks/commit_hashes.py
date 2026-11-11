@@ -11,10 +11,11 @@
 #
 # Each hash is looked up with `git cat-file -e <hash>^{commit}` in this repository and in the repositories
 # the row `commit-hashes-repos` lists (paths relative to the project root, `none` for no further one): a
-# journal can name commits of another repository. A hash none of them knows is named in one note, unless it is the
-# start (case-insensitive) of a template commit recorded in `.act-lock.json` of the project root, in the
-# working tree, staged or in its history: an update journals the change of the template commit, and a project has no clone of the template.
-# Limit: a template commit never recorded in the lock, such as an intermediate one, is still noted.
+# journal can name commits of another repository. A hash none of them knows is named in one note, unless it
+# is the start (case-insensitive) of a template commit recorded in `.act-lock.json` of the project root, in
+# the working tree, staged or in its history: an update journals the change of the template commit, and a
+# project has no clone of the template. Limit: a template commit never recorded in the lock, such as an
+# intermediate one, is still noted.
 #
 # Switch `commit-hashes` in docs/ai/config.md § Checks: `warn` (default, also for a missing row) notes, `off`
 # says nothing; `block` counts as `warn` because the call is never refused. The note reaches the model as
