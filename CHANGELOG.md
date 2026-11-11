@@ -10,6 +10,9 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
+Formats and a changelog for every project, `Tests:` lines and an incident log for workers, shorter core rules,
+safety checks that see more and refuse fewer harmless commands.
+
 ### Upgrading
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
 - An absolute `outside-root-allow` entry outside the project and home is read-only now; writes there are refused.
