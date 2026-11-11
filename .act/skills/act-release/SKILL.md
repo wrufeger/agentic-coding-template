@@ -50,9 +50,10 @@ Say which of the three applies when you start, so the human sees where the text 
    changelog format; append the lower-severity checklist from step 3 (when it ran) under its own heading.
    - `changelog: file` — into `CHANGELOG.md`: with a format that collects entries as you go
      (`keep-a-changelog`), turn the `[Unreleased]` section into `[X.Y.Z] - <date>`, add what the commits show
-     and the section lacks, add the head line and 3 to 5 highlights (taking those entries out of the list), turn
-     `### Upgrading` into `### Upgrading from <last tag>`, shorten entries over the format's limit, open a new
-     empty `[Unreleased]`; with `at-release` write the whole section in that form. No
+     and the section lacks, check that its head line still says what the release is about (write one if it is
+     missing), add 3 to 5 highlights (taking those entries out of the list), turn `### Upgrading` into
+     `### Upgrading from <last tag>`, shorten entries over the format's limit, open a new empty `[Unreleased]`;
+     with `at-release` write the whole section in that form. No
      `CHANGELOG.md` yet: create it from the starter of the changelog format first (`act-update` offers the file
      to older projects too).
    - `release-notes-only` — no `CHANGELOG.md`; write the notes in the release notes format and keep them in the

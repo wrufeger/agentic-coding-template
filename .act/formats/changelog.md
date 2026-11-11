@@ -18,8 +18,9 @@ The layout of keepachangelog.com, one file `CHANGELOG.md` in the project root, n
   list below; `### Upgrading from v<previous version>`, one line for every duty at update, each with the exact
   setting or command; then the groups `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, only those
   with content.
-- `## [Unreleased]` sits above them with no head line and no highlights (both are added at release). Its first
-  group is `### Upgrading` (no "from") as soon as there is a duty at update, then the groups as above.
+- `## [Unreleased]` sits above them with a head line of its own from the first entry on (what the coming release
+  is about so far, one sentence) and no highlights (they are added at release). Its first group is `### Upgrading`
+  (no "from") as soon as there is a duty at update, then the groups as above.
 - Writing rules, for every entry; the reader is someone who uses the project:
   1. One line; two only when an important detail would be missing otherwise. Never more than 250 characters per
      entry (the text from `- ` to the next entry, continuation lines joined by a space).
@@ -33,10 +34,13 @@ The layout of keepachangelog.com, one file `CHANGELOG.md` in the project root, n
 - `act-doctor` reports an entry under `[Unreleased]` longer than 250 characters (switch `changelog-length` in
   `docs/ai/config.md` § Checks, default `warn`, `off` disables it).
 - Entries as you go: `act-commit` adds a line under `[Unreleased]` for every commit with a visible effect (a
-  feature, a changed behaviour, a fix, a removal), in the same commit. A purely internal commit gets none.
-- `act-release` renames `[Unreleased]` to the new version with the date, adds the head line and the highlights
-  (taking those entries out of the list), turns `Upgrading` into `Upgrading from <last tag>`, shortens entries that
-  are too long and opens a new empty `[Unreleased]`.
+  feature, a changed behaviour, a fix, a removal), in the same commit. A purely internal commit gets none. It also
+  keeps the head line right: writes it with the first entry (or when the section has none yet) and rewrites it
+  when an entry changes what matters most.
+- `act-release` renames `[Unreleased]` to the new version with the date, checks that the head line still says what
+  the release is about (writes one if it is missing), adds the highlights (taking those entries out of the list),
+  turns `Upgrading` into `Upgrading from <last tag>`, shortens entries that are too long and opens a new empty
+  `[Unreleased]`.
   Link references at the bottom (`[X.Y.Z]: <compare url>`) only if the file already has them.
 
 ### at-release
