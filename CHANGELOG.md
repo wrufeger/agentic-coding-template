@@ -95,6 +95,13 @@ safety checks that see more and refuse fewer harmless commands.
   another script or you in a terminal (before, only the assistant's shell calls). `usage.py` itself is not counted.
 - Nuxt 5 coding rules: each nightly workaround names its upstream issue or release and when to drop it;
   `CR-nuxt5-checks` has you check them after every Nuxt update.
+- Nuxt 5 coding rules: a commit touching `server/`, `shared/`, `app/composables/`, `app/utils/` or `nuxt.config`
+  runs `build` too; main pages are checked on the built server; the i18n switch `nitroViteEnvironment` is gone.
+- Nuxt 5 coding rules: after each nightly move, raise your `vue` entry to the nightly's range and run `nuxt prepare`.
+- Nuxt 5 coding rules: no comma in a comment after an export in `server/utils/`; security headers as a `/**` route
+  rule, the CSP on `render:html`; with pnpm, change dependencies only right after a Nuxt update.
+- Nuxt coding rules: with `ssr: false`, bundle the `@nuxt/icon` icons; anchor E2E locators fully, take UI library
+  labels from their locale files; parallel test servers each get their own `buildDir`, cache and port.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

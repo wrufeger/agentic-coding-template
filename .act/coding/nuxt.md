@@ -103,7 +103,7 @@ summary: /types, /constants, /server and shared/utils/ at the repo root, each th
 
 ## `CR-nuxt-ssr` — Choose the SSR mode on purpose
 
-summary: ask before assuming SSR, know the hydration cost, check for mismatches after SSR work
+summary: ask before assuming SSR, know the hydration cost, check for mismatches after SSR work, bundle icons without SSR
 
 - `ssr: false` or a plain SPA is often the simpler choice for a purely local UI with no SEO or
   first-paint requirement (e.g. an admin tool). Ask the user once, when scaffolding or restructuring
@@ -120,6 +120,9 @@ summary: ask before assuming SSR, know the hydration cost, check for mismatches 
   the last resort.
 - Copying a `useFetch`/`useAsyncData` result into your own `ref` is a common hydration-mismatch
   cause too — see `CR-nuxt-basics` for why and the fix, not repeated here.
+- With `ssr: false`, `@nuxt/icon` (also through `@nuxt/ui`) fetches icons at runtime from the public Iconify API
+  unless they are bundled: install the icon sets as `@iconify-json/<set>`, provider `none`, `clientBundle.scan`,
+  `fallbackToApi: false`; an unknown icon then shows as missing with a console warning.
 
 ## `CR-nuxt-toolchain` — Lint and format tooling
 
@@ -131,10 +134,24 @@ summary: ESLint with `@nuxt/eslint` plus Prettier, whichever the project has set
 
 ## `CR-nuxt-tests` — Unit and end-to-end tests
 
-summary: vitest/Playwright by default, but whichever suite the project runs must pass
+summary: vitest/Playwright by default, but whichever suite the project runs must pass; anchored locators, isolated parallel test servers
 
 - `vitest` (`vitest.config.ts`) for unit and component tests, `@playwright/test`
   (`playwright.config.ts`) for end-to-end tests — the template's usual choice; if the project has a
   different test runner installed and configured (e.g. Selenium, Nightwatch, Cypress), use that one
   instead (see `R-code-tools`).
 - Whichever test suites the project actually has exist and run; a change that breaks them is not done.
+- Anchor a role-and-name locator fully: a required field may carry `*` in its accessible name, so `/^Name/` matches
+  several fields and Playwright's strict mode fails; use `/^Name\*?$/`.
+- Take a UI library's built-in labels (pagination, close buttons) from its locale files instead of writing the text
+  into the test: a library may start following the app's i18n language on update (reported for `@nuxt/ui` 4.12 with
+  `@nuxtjs/i18n`).
+- Parallel test builds or test servers run under the throwaway folder (`R-work-throwaway`); lint, the formatter and
+  file watchers must exclude it as a whole: add `.act-local/` to their ignores (`ignores` in `eslint.config`,
+  `.prettierignore`, `ignore` in `nuxt.config`) where they do not skip it already. Each test server gets its own
+  `buildDir`, Nitro output dir and Vite `cacheDir` (absolute: Vite resolves a relative one against `app/`), all
+  three from an environment variable that `nuxt.config` reads, plus its own port. Reported for the Nuxt 5 CLI:
+  `nuxt dev` locks its `buildDir` and refuses a second dev server on it, and on the same port a non-interactive
+  `nuxt dev` ends a non-interactive holder, so a test runner on the owner's port can stop the owner's server
+  (`R-safe-dev-server`). A stale lock file in a test server's own `buildDir` may be removed before start only when
+  its process is gone or its PID now belongs to another process, never by its age.
