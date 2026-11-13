@@ -16,6 +16,9 @@
 #              another letter case (`changelog.md`, `CHANGES.md`, `HISTORY.md`, `NEWS` ...) gets no
 #              second file either: the migration says which file it found and creates nothing. With `changelog: release-notes-only` or `off` nothing is
 #              created; the description says so.
+#            - If git ignores CHANGELOG.md (`git check-ignore -q`, e.g. an allowlist .gitignore), nothing
+#              is created either, because the update could not commit it; the description says so. Git
+#              missing or no repository: the file is created as before.
 #            - Nothing else is written. Old releases are not reconstructed from the git history: the
 #              file starts empty and fills from the next commit with a visible effect (format permitting)
 #              or from the next release.
@@ -36,6 +39,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -107,8 +111,18 @@ def _like(root: Path) -> str:
     return ""
 
 
+def _git_ignores(root: Path) -> bool:
+    """True when `git check-ignore -q` says git ignores CHANGELOG.md; any other exit, git missing or no
+    repository: False."""
+    try:
+        result = subprocess.run(["git", "check-ignore", "-q", "--", TARGET], cwd=root, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _state(root: Path) -> str:
-    """"linked", "exists", "other-name", "switched-off" or "create"."""
+    """"linked", "exists", "other-name", "switched-off", "ignored" or "create"."""
     if _LINKS.link_problem(root, root / TARGET):  # a link at the path (even a dangling one)
         return "linked"
     if _exists(root / TARGET):
@@ -117,6 +131,8 @@ def _state(root: Path) -> str:
         return "other-name"
     if _mode(root) != "file":
         return "switched-off"
+    if _git_ignores(root):
+        return "ignored"
     return "create"
 
 
@@ -133,6 +149,9 @@ def plan(root: Path) -> str:
         return f"{_like(root)} is already the project's changelog — {TARGET} is not created"
     if state == "switched-off":
         return f"`changelog` is {_mode(root)} in docs/ai/config.md — {TARGET} is not created"
+    if state == "ignored":
+        return (f"{TARGET} is ignored by git — not created (allow it in .gitignore and create it by hand "
+                "to keep a changelog)")
     return f"{TARGET} exists — nothing to do"
 
 

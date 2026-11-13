@@ -149,6 +149,8 @@ safety checks that see more and refuse fewer harmless commands.
   applies it and says if the source moved on; a rewritten source is refused.
 - A project made from a project takes the template source from its lock only if remote, else the published address;
   `update.py` refuses a source that is itself a set-up project and names `--source <address>`.
+- An update no longer ends in a traceback when `.gitignore` ignores a file it writes (an allowlist such as `*`,
+  `!docs/`): the file stays out of the commit, which names it; an ignored `CHANGELOG.md` is not created.
 
 ### Security
 - The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and

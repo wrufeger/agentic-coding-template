@@ -3010,41 +3010,111 @@ def step_lock(
     return f"lock updated (version '{version}')"
 
 
+def _git_ignored(root: Path, rels: list[str]) -> set[str]:
+    """The subset of `rels` that git ignores (`git check-ignore -z --stdin`, paths on stdin because a big
+    update can exceed the Windows command line; no `--no-index`, so a tracked path is never reported).
+    Exit 1 = none ignored; any exit other than 0 or 1 raises."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-z", "--stdin"], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="surrogateescape",  # exact round trip of a legacy-encoded name
+        input="".join(f"{rel}\0" for rel in rels),
+    )
+    if result.returncode == 1:
+        return set()
+    if result.returncode != 0:
+        raise RuntimeError(f"git check-ignore failed with exit {result.returncode}: {result.stderr.strip()}")
+    return {entry for entry in result.stdout.split("\0") if entry}
+
+
+def _left_out_note(left_out: list[str]) -> str:
+    """The result-line suffix naming the paths left out because git ignores them (at most ten)."""
+    if not left_out:
+        return ""
+    shown = ", ".join(left_out[:10])
+    more = f", … and {len(left_out) - 10} more" if len(left_out) > 10 else ""
+    return f"; left out {len(left_out)} path(s) git ignores: {shown}{more}"
+
+
+def _ls_names(root: Path, group: list[str], *flags: str) -> list[str]:
+    """Names `git ls-files -z <flags> -- <group>` lists (literal pathspecs: `[`, `*`, `?` are plain
+    characters; a directory in `group` matches everything under it)."""
+    out = _git(["--literal-pathspecs", "-c", "core.quotepath=false", "ls-files", "-z", *flags, "--", *group], cwd=root)
+    return [name for name in out.stdout.split("\0") if name]
+
+
+def _never_worth_naming(rel: str) -> bool:
+    """Bytecode caches are always ignored and never worth a mention."""
+    return "__pycache__" in rel.split("/") or rel.endswith(".pyc")
+
+
 def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path]) -> str:
+    """Commit what the update wrote, by path only (never a tree-wide add), every git call with
+    `--literal-pathspecs`. Per named path:
+    - a file or directory git tracks is staged with `git add -u` (its changes and deletions, even where
+      a pattern ignores it; a tracked file a run deleted counts, a directory with tracked files under it
+      counts as one path);
+    - under a directory, new files git does not ignore are added by exact name; new files git ignores
+      are left out and named in the result, never forced in (`git add` refuses an ignored path, exit 1),
+      except bytecode caches;
+    - a named untracked file that git ignores is left out and named the same way, else added.
+    `plan` only reads (`ls-files`, `check-ignore`) and counts and names the same."""
     if no_commit:
         return "--no-commit: left staged/unstaged for the caller"
     all_rels = {str(p.relative_to(root)).replace("\\", "/"): p for p in paths}
-    rels = sorted(rel for rel, p in all_rels.items() if p.exists())
-    missing = sorted(rel for rel, p in all_rels.items() if not p.exists())
-    if missing:
-        # A file this run deleted goes into the commit too — but only one git still tracks,
-        # named by path (never a tree-wide add); an untracked one has nothing to commit.
-        missing_set = set(missing)
-        for group in _path_chunks(missing):
-            tracked = _git(["-c", "core.quotepath=false", "ls-files", "--", *group], cwd=root, check=False)
-            rels = sorted(set(rels) | {line.strip() for line in tracked.stdout.splitlines() if line.strip() in missing_set})
+    # What git tracks at or under the named paths (an index query, chunked for the command line).
+    tracked_names: set[str] = set()
+    for group in _path_chunks(sorted(all_rels)):
+        tracked_names |= set(_ls_names(root, group))
+    tracked_dirs = {"/".join(parts[:i]) for parts in (n.split("/") for n in tracked_names) for i in range(1, len(parts))}
+    tracked_files: list[str] = []
+    dirs: list[str] = []
+    loose_files: list[str] = []
+    for rel in sorted(all_rels):
+        if rel in tracked_names:
+            tracked_files.append(rel)
+        elif rel in tracked_dirs or all_rels[rel].is_dir():
+            dirs.append(rel)
+        elif all_rels[rel].exists():
+            loose_files.append(rel)
+        # else: a missing path git does not track has nothing to commit
+    dirs_tracked = [d for d in dirs if d in tracked_dirs]
+    new_files: set[str] = set()
+    ignored_new: set[str] = set()
+    prefixes = tuple(f"{d}/" for d in dirs)  # `ls-files -o` also matches a sibling such as `.act-local` for `.act`
+    for group in _path_chunks(dirs):
+        new_files |= {n for n in _ls_names(root, group, "-o", "--exclude-standard") if n.startswith(prefixes)}
+        ignored_new |= {n for n in _ls_names(root, group, "-o", "-i", "--exclude-standard")
+                        if n.startswith(prefixes) and not _never_worth_naming(n)}
+    ignored_loose: set[str] = _git_ignored(root, loose_files) if loose_files else set()
+    add_new = sorted(new_files | {rel for rel in loose_files if rel not in ignored_loose})
+    add_tracked = sorted(set(tracked_files) | set(dirs_tracked))
+    rels = sorted(set(add_tracked) | set(add_new))
+    note = _left_out_note(sorted(ignored_new | ignored_loose))
     if not rels:
-        return "nothing to commit"
+        return f"nothing to commit{note}"
     if plan:
-        return f"would commit {len(rels)} path(s): {', '.join(rels)}"
+        return f"would commit {len(rels)} path(s): {', '.join(rels)}{note}"
     # The paths go to git on stdin (`--pathspec-from-file`), not as arguments: a big update can name
     # more paths than a Windows command line holds.
-    actlib.git_pathspec_stdin(["add"], rels, cwd=root)
+    if add_tracked:
+        actlib.git_pathspec_stdin(["--literal-pathspecs", "add", "-u"], add_tracked, cwd=root)
+    if add_new:
+        actlib.git_pathspec_stdin(["--literal-pathspecs", "add"], add_new, cwd=root)
     staged = False
     for group in _path_chunks(rels):
-        diff = _git(["diff", "--cached", "--quiet", "--", *group], cwd=root, check=False)
+        diff = _git(["--literal-pathspecs", "diff", "--cached", "--quiet", "--", *group], cwd=root, check=False)
         if diff.returncode == 1:
             staged = True
             break
         if diff.returncode != 0:
             raise RuntimeError(f"git diff --cached --quiet failed: {diff.stderr.strip()}")
     if not staged:
-        return "nothing staged, no commit made"
+        return f"nothing staged, no commit made{note}"
     # The pathspec restricts the commit to these paths, same as the add above — never the whole
     # index, so changes staged elsewhere by something else running concurrently stay untouched.
-    actlib.git_pathspec_stdin(["commit", "-m", "chore: update template"], rels, cwd=root)
+    actlib.git_pathspec_stdin(["--literal-pathspecs", "commit", "-m", "chore: update template"], rels, cwd=root)
     sha = _git(["rev-parse", "--short", "HEAD"], cwd=root).stdout.strip()
-    return f"committed {len(rels)} path(s) as {sha}"
+    return f"committed {len(rels)} path(s) as {sha}{note}"
 
 
 # ---------------------------------------------------------------------------
