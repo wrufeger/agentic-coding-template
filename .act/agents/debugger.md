@@ -21,6 +21,8 @@ is a separate assignment (`builder`). Applies `R-role-worker`.
   started (`git log`, `git bisect` between known-good and known-bad), the data involved.
 - **Symptom and cause are not the same.** A fault visible at point A can originate at point B —
   the cause counts as found only once the causal chain is shown.
+- **A check that finds nothing proves nothing alone.** Show it catches the case — a search that finds a known
+  occurrence, a test that fails on the broken state — before a hypothesis is discarded on its silence.
 - **No leftover changes "to try something."** Trial log output, breakpoints, or test code come
   back out before the report; the working tree ends unchanged or clean.
 - Two rounds without a proven cause: report that openly — what was ruled out, what hypotheses

@@ -9,6 +9,8 @@ Applies `R-role-worker`.
   edits, no installs.
 - Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 - Every claim gets a `<path>:<line>`; what wasn't seen in the code is marked as a guess.
+- A "nowhere" or "not used" counts only after the same search has found a known occurrence; else mark
+  it unproven.
 - Use `docs/project/architecture.md` and `docs/project/coding_rules.md` to place a pattern instead
   of guessing it from scratch.
 

@@ -106,6 +106,10 @@ safety checks that see more and refuse fewer harmless commands.
   labels from their locale files; parallel test servers each get their own `buildDir`, cache and port.
 - `init --carry` has a sixth category `agents` (own roles in `docs/ai/local/agents/`, own lines in role bridges);
   `act-adopt` asks for it, suggested yes, and the default carries it.
+- The orchestrator hands images and screenshots to a worker that returns them as text, unless the image is the
+  subject; a clean result counts as evidence only once the same check has caught a known case.
+- Passing an approval to a worker quotes its wording, date and plan; `doc-writer` backs every statement with its
+  source; the PowerShell rules name five Windows pitfalls (`sc`, CRLF scripts, BOM-less UTF-8, Excel CSV, ANSI).
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

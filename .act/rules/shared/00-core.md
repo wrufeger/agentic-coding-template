@@ -13,7 +13,9 @@ summary: proof before 'done'; reachable feedback loops first; unverified results
 or a screenshot of the running application (`run` in `docs/ai/config.md`), a commit hash, or an
 outside call. Before a check is handed to the human, every feedback loop within reach has run. An
 unbacked result is "not verified", not "done" — say so plainly, and question a flawed plan rather than
-agreeing to be agreeable. A commit hash named as evidence is checked mechanically by
+agreeing to be agreeable. A clean result (no hit, no error, green) is evidence only once the same
+check has caught a case known to exist — a planted match for a search, a test that is red before the fix;
+without that, report it as unproven, not as absent. A commit hash named as evidence is checked mechanically by
 `commit-hashes`.
 
 ## `R-work-override` — The project overrides the template
@@ -53,14 +55,17 @@ diagnosis, not on the first plausible explanation.
 
 ## `R-work-bounded-output` — Keep output of unknown length out of the context
 
-summary: cut unbounded output (head/tail/grep or a throwaway file); read only failures; large files in excerpts
+summary: cut unbounded output (head/tail/grep or a throwaway file); read only failures; large files in excerpts; no images in the orchestrator
 
 Output of unknown length is cut with `head`/`tail`/`grep`, or written to a file in the task's
 throwaway folder (`R-work-throwaway`; with no task `.act-local/tmp/<YYYYMMDD>-<slug>/`) and read from
 there — a worker whose assignment names no such folder cuts instead; it never goes whole into the
 context. Of build and test output read only the
 failures; read a large file in excerpts (`offset`/`limit`). Every line in the context is read again
-with each following step.
+with each following step. The orchestrator does not read an image or screenshot into its own context: a
+worker returns it as text — `quick-check` for numbers, status lines and dialogs, `explorer` for verbatim
+text; a worker reads images itself. Exception: the image is the subject itself (design, accessibility)
+or the human asks for it.
 
 ## `R-work-throwaway` — Throwaway material has one place and goes away
 

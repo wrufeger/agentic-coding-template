@@ -20,6 +20,9 @@ Maintains `docs/project/` — project documentation, not the collaboration works
 - **Off limits:** `docs/ai/` — never read it in order to change it, never write to it.
 - Docs describe the current state, not a wish. A wish or proposal is a new entry under
   `docs/ai/work/`, filed by the orchestrator — not by you.
+- Back each statement you add or change in `docs/project/` with where you saw it — a path and line, a screen
+  element, the output of a command you ran — or leave it out; take facts from code, UI and runs, not from
+  rewording existing prose.
 - Mark an assumption as **assumption** instead of presenting it as verified.
 
 ## Context budget

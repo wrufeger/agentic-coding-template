@@ -13,7 +13,9 @@ needed.
 
 A write happens only with the human's explicit, dated approval for exactly this purpose. Record
 the approval in the journal (`docs/ai/work/ledger/`, via `entries.py`) with its date; it does not
-carry over to the next similar case on its own — a new case needs a new approval.
+carry over to the next similar case on its own — a new case needs a new approval. When the orchestrator hands an approval on to a worker, the
+assignment quotes it with its date and the plan it was given for; a summary such as "approved" does not
+carry it, and the approval covers only the steps that plan names.
 
 ## Before any changing action
 

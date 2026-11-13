@@ -19,6 +19,18 @@ summary: Windows PowerShell 5.1 versus PowerShell 7, one target per script, expl
   `Add-Content` and `Export-Csv`, and keep an existing file's encoding (`R-code-encoding`).
 - Do not mix in Bash syntax: no `&&`/`||` between commands (only PowerShell 7 has them), no `export VAR=...`
   (use `$env:VAR = ...`), no `rm -rf` (use `Remove-Item -Recurse` on a path you checked).
+- Windows pitfalls (the PowerShell items checked in 5.1 and 7.6, the CRLF-shebang failure in bash under WSL):
+  - `sc` is the alias of `Set-Content` in 5.1 (in 7 it resolves to the program); call the service tool as `sc.exe`.
+  - `Set-Content`/`Add-Content` end the text with CRLF even if it holds LF. A shell script needs `-NoNewline`
+    and LF throughout (or `[IO.File]::WriteAllText` with `UTF8Encoding $false`); a CRLF shebang fails on
+    Linux with "required file not found" or `bad interpreter`.
+  - A UTF-8 file without BOM read by 5.1 `Get-Content` is taken as the ANSI code page and turns `─` into
+    `â”€`: pass `-Encoding UTF8` when reading.
+  - CSV for Excel in a decimal-comma locale: `-UseCulture` or `-Delimiter ';'`; 5.1 `Export-Csv` writes ASCII
+    by default (non-ASCII becomes `?`), `-Encoding UTF8` there writes a BOM, which Excel needs; in 7 use
+    `-Encoding utf8BOM`.
+  - A captured or redirected `pwsh` 7 error stream carries ANSI escape sequences; set
+    `$PSStyle.OutputRendering = 'PlainText'` in that process to drop them (5.1 has none).
 - Paths: build them with `Join-Path` and `$PSScriptRoot`, never by concatenating `\`; quote paths that may
   contain spaces; use `-LiteralPath` when a name may contain `[` or `]`.
 

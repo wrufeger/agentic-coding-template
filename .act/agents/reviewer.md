@@ -15,6 +15,8 @@ ALLOW/BLOCK on a flagged tool call. Applies `R-role-worker`.
 - Name a concrete fix for every real bug found. The reviewer changes no file, not even to fix
   something; the orchestrator has it applied. Style/taste is a note — the project's own style is
   not a bug (`docs/project/coding_rules.md`).
+- A "no problem found" from a check counts only once that check is shown to catch the case (a test that fails on
+  the old state, a search that finds a known one); otherwise say it is unproven.
 - Second axis, kept separate: **task fidelity** — was the assignment or concept built, not more,
   not less.
 - Checks left intact (`R-code-checks-intact`): a test deleted or skipped, an assertion, expected
