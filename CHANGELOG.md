@@ -26,6 +26,8 @@ safety checks that see more and refuse fewer harmless commands.
 - A `file:` entry in `outside-root-allow` is now ignored.
 - Shorten the `[Unreleased]` entries of your `CHANGELOG.md` that `act-doctor` names (over 250 characters), or set
   `changelog-length: off` in `docs/ai/config.md` § Checks.
+- If `update.py` stops because its source is itself a set-up project, run it once with `--source <template address>`
+  as the message names.
 
 ### Added
 - `cd-git` check (`block`|`warn`|`off`, default `block`, only with `claude-code` in `tools`): a Bash call with `cd` and
@@ -102,6 +104,8 @@ safety checks that see more and refuse fewer harmless commands.
   rule, the CSP on `render:html`; with pnpm, change dependencies only right after a Nuxt update.
 - Nuxt coding rules: with `ssr: false`, bundle the `@nuxt/icon` icons; anchor E2E locators fully, take UI library
   labels from their locale files; parallel test servers each get their own `buildDir`, cache and port.
+- `init --carry` has a sixth category `agents` (own roles in `docs/ai/local/agents/`, own lines in role bridges);
+  `act-adopt` asks for it, suggested yes, and the default carries it.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
@@ -137,6 +141,10 @@ safety checks that see more and refuse fewer harmless commands.
 - Hook locks, hint buffers and `entries.py` no longer lose data or block.
 - Smaller fixes: worker scope after a stop or continue, the default `worker-cap`, `/act-version`, `/act-info`,
   `act-local-tidy`, `act-doctor` and `rules.py` findings, rule-line moves in `rules.md`, the feedback link check.
+- `act-update` applies the commit its plan showed: `--plan` names and keeps the fetched commit for an hour, the run
+  applies it and says if the source moved on; a rewritten source is refused.
+- A project made from a project takes the template source from its lock only if remote, else the published address;
+  `update.py` refuses a source that is itself a set-up project and names `--source <address>`.
 
 ### Security
 - The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and

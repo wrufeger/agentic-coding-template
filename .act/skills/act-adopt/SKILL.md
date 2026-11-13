@@ -27,7 +27,8 @@ symlink or junction). Or in the template checkout (no `.claude/skills/`, no root
    has: `skills` (own skills in `docs/ai/local/skills/`), `rules` (`## Own rules`, `docs/project/coding_rules.md`),
    `exceptions` (rule groups switched off with a reason after ` — `; one without a reason is a stack default and
    stays behind), `overrides` (`replaces` lines and other files of `docs/ai/local/`), `topics`
-   (`docs/ai/local/rules/topics/`). Answers become `--carry` (comma list; all yes = leave out; all no =
+   (`docs/ai/local/rules/topics/`), `agents` (own roles in `docs/ai/local/agents/` and own lines in the role bridges
+   `.claude/agents/`; suggested answer yes). Answers become `--carry` (comma list; all yes = leave out; all no =
    `--carry none`; the owner's profile is separate, `--no-profile`). Only committed content travels, never `.env*`,
    symlinks or untracked files; what the new project cannot take goes to its inbox. The template checkout has nothing
    to ask. The new project gets this project's `.act/`, not the newest; its first `act-update` brings that.

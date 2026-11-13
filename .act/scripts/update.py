@@ -43,6 +43,13 @@
 #   fetched state is older than/unrelated to the installed commit without --allow-downgrade, the
 #   user chose abort at step 2 or declined at step 4, --catch-up found .act/ hand-edited, or the
 #   installed version is older than v2.2.0 -- that project goes through act-adopt; nothing is changed).
+#
+# The plan binds the consent: a git source's --plan writes .act-local/update-plan.json (source, channel,
+#   --ref argument, resolved ref, the fetched commit, time). A real run within an hour of it, with the same
+#   source, channel and no --ref, applies exactly that commit (and says so when the source moved on);
+#   a real run that ends with exit 0 removes the file. Limit: a plain-folder source has no commit, so it
+#   gets no plan file and a real run ignores any plan. A fetched tree that is itself a set-up project
+#   (.act-lock.json and docs/ai/config.md at its root) is refused, with the address to use instead.
 
 from __future__ import annotations
 
@@ -58,7 +65,7 @@ import stat
 import subprocess
 import sys
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -785,6 +792,131 @@ def _downgrade_warning(checkout: Path, fetched: Optional[str], source: str) -> O
             "or pass --allow-downgrade if this state is meant."
         )
     return None
+
+
+# ---------------------------------------------------------------------------
+# The plan file -- binds the consent of a real run to the commit --plan showed
+# ---------------------------------------------------------------------------
+
+_PLAN_FILE = "update-plan.json"
+_PLAN_MAX_AGE_S = 3600
+_REMOTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_REMOTE_SCP = re.compile(r"^[^@/\s]+@[^:/\s]+:")
+
+
+def _plan_path(root: Path) -> Path:
+    return Path(root) / ".act-local" / _PLAN_FILE
+
+
+def _is_plain_dir(source: str) -> bool:
+    """True for a local folder that is not a git checkout (step_fetch copies only its .act/)."""
+    src_path = Path(source)
+    return src_path.is_dir() and not (src_path / ".git").exists()
+
+
+def _write_plan(root: Path, source: str, channel: str, ref_arg: str, resolved_ref: str, commit: str) -> None:
+    """Record what --plan showed. Best-effort: an I/O problem leaves no plan (a real run then fetches as before)."""
+    path = _plan_path(root)
+    if not actlib.local_write_ok(root, path):
+        return
+    data = {
+        "source": source, "channel": channel, "ref_arg": ref_arg, "resolved_ref": resolved_ref,
+        "commit": commit, "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _drop_plan(root: Path) -> None:
+    """A real run that ends with exit 0 has used up (or passed by) the plan."""
+    try:
+        _plan_path(root).unlink()
+    except OSError:
+        pass
+
+
+def _load_plan(root: Path, source: str, channel: str, args: argparse.Namespace) -> tuple[Optional[dict], str]:
+    """(plan to apply, "") or (None, line to print). A plain-folder source ignores any plan silently."""
+    path = _plan_path(root)
+    if args.plan or not path.is_file() or _is_plain_dir(source):
+        return None, ""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        created_text = str(data["created"])
+        created = datetime.fromisoformat(created_text)
+        commit = str(data["commit"])
+        if created.tzinfo is None or not re.fullmatch(r"[0-9a-f]{7,64}", commit):
+            raise ValueError("bad created or commit")
+        fields = {k: str(data[k]) for k in ("source", "channel", "ref_arg", "resolved_ref")}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return None, f"plan from ? not used: {path} is not readable ({exc.__class__.__name__})"
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    reason = ""
+    if args.ref:
+        reason = "this run names --ref"
+    elif age > _PLAN_MAX_AGE_S:
+        reason = f"older than {_PLAN_MAX_AGE_S // 60} minutes"
+    elif age < -60:
+        reason = "created in the future"
+    elif fields["source"] != source:
+        reason = "it was made for another source"
+    elif fields["channel"] != channel:
+        reason = "it was made for another channel"
+    elif fields["ref_arg"] != (args.ref or ""):
+        reason = "it was made with another --ref"
+    if reason:
+        return None, f"plan from {created_text} not used: {reason}"
+    return {**fields, "commit": commit}, ""
+
+
+def _rev_of(checkout: Path, name: str) -> str:
+    result = _git(["rev-parse", "--verify", "-q", f"{name}^{{commit}}"], cwd=checkout, check=False)
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _origin_branch(checkout: Path) -> str:
+    """The source's default branch as a fresh clone saw it (the clone may be detached by now), "" if unknown."""
+    result = _git(["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"], cwd=checkout, check=False)
+    name = result.stdout.strip() if result.returncode == 0 else ""
+    return name[len("origin/"):] if name.startswith("origin/") else name
+
+
+def _project_source_problem(tree_root: Path, source: str) -> Optional[str]:
+    """A message when the fetched tree is itself a set-up project (its root has .act-lock.json and
+    docs/ai/config.md) instead of the template; None otherwise. Names the address to use instead."""
+    if not ((tree_root / ".act-lock.json").is_file() and (tree_root / "docs" / "ai" / "config.md").is_file()):
+        return None
+
+    def is_remote(text: str) -> bool:
+        return bool(_REMOTE_URL.match(text) or _REMOTE_SCP.match(text))
+
+    address = ""
+    try:
+        lock = json.loads((tree_root / ".act-lock.json").read_text(encoding="utf-8"))
+        locked = str(lock.get("template", {}).get("source", "") or "").strip()
+        if is_remote(locked):
+            address = locked
+    except (OSError, ValueError, AttributeError):
+        pass
+    if not address:
+        try:
+            for line in (tree_root / ".act" / "VERSION").read_text(encoding="utf-8").splitlines():
+                if line.startswith("source="):
+                    address = line[len("source="):].strip()
+                    break
+        except OSError:
+            pass
+        if address and not is_remote(address):
+            address = f"https://{address}" + ("" if address.endswith(".git") else ".git")
+    shown = _mask_url_user(address) if address else "<template address>"
+    return (
+        f"update.py: '{_mask_url_user(source)}' is itself a set-up project (it has .act-lock.json and "
+        "docs/ai/config.md), not the template; nothing was changed.\n"
+        f"update.py: name the template as the source: python .act/scripts/update.py --source {shown}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3157,6 +3289,7 @@ def _finish_update(
     except OSError:
         pass
 
+    _drop_plan(root)
     _print_tidy_preview(root, notes)
 
     if notes:
@@ -3342,6 +3475,7 @@ def main(argv: list[str]) -> int:
     # aim this one run elsewhere, so they leave the local update note alone.
     own_state = not (args.channel or args.source or args.ref)
     follows_tip_without_tags = False
+    pending_release_note = None  # written only once the fetched source passed the project-source check
     if not args.ref:
         _channel_hint_once(root, channel_origin, plan)
         if channel == "release":
@@ -3356,35 +3490,80 @@ def main(argv: list[str]) -> int:
             elif decision_kind == "nothing":
                 if own_state:
                     actlib.record_update_result(root, None)
+                if not plan:
+                    _drop_plan(root)
                 print(f"[act] done - {release_text}")
                 return 0
             else:
                 target_ref = release_tag
                 if own_state:
-                    actlib.record_update_result(root, _release_result(release_tag or "", release_tag_commit))
+                    pending_release_note = _release_result(release_tag or "", release_tag_commit)
                 print(f"[act] channel release: {release_text}")
 
+    used_plan, plan_line = _load_plan(root, source, channel, args)
+    if plan_line:
+        print(f"[act] {plan_line}")
     tmp_root = Path(root) / ".act-local" / "update-tmp"
     _rmtree_robust(tmp_root)
     tmp_root.mkdir(parents=True, exist_ok=True)
     try:
         try:
-            new_act_dir, fetched_commit = step_fetch(source, target_ref, tmp_root / "checkout", notes)
+            new_act_dir, fetched_commit = step_fetch(
+                source, used_plan["commit"] if used_plan else target_ref, tmp_root / "checkout", notes)
         except RuntimeError as error:
-            print(_fetch_failure_message(root, source, args, error, target_ref), file=sys.stderr)
+            if pending_release_note is not None:  # the source answered the tag query, only the fetch failed
+                actlib.record_update_result(root, pending_release_note)
+            if used_plan:
+                print(
+                    f"update.py: the planned commit {used_plan['commit']} could not be fetched from "
+                    f"'{_mask_url_user(source)}': {_mask_url_user(str(error))}\n"
+                    "update.py: nothing was applied; the plan file is kept. If the source was rewritten, "
+                    "run `python .act/scripts/update.py --plan` again and apply what it shows.",
+                    file=sys.stderr)
+            else:
+                print(_fetch_failure_message(root, source, args, error, target_ref), file=sys.stderr)
             return 1
-        _print_step(1, f"fetched '{_mask_url_user(source)}'" + (f" @ {target_ref}" if target_ref else "") + f" -> {new_act_dir}")
-        lock_ref = target_ref or (_checkout_branch(new_act_dir.parent) if fetched_commit else "")
+        tree_root = Path(source) if (fetched_commit is None and _is_plain_dir(source)) else new_act_dir.parent
+        project_problem = _project_source_problem(tree_root, source)
+        if project_problem:
+            print(project_problem, file=sys.stderr)
+            return 1
+        if pending_release_note is not None:
+            actlib.record_update_result(root, pending_release_note)
+        commit_part = f" (commit {fetched_commit[:7]})" if fetched_commit else ""
+        _print_step(1, f"fetched '{_mask_url_user(source)}'" + (f" @ {target_ref}" if target_ref and not used_plan else "")
+                    + commit_part + f" -> {new_act_dir}")
+        tip_commit = fetched_commit
+        if used_plan and fetched_commit:
+            # what a plan-less run would take now: the release tag, else the source's default branch tip
+            tip_commit = _rev_of(new_act_dir.parent, target_ref or "refs/remotes/origin/HEAD")
+            reachable = bool(tip_commit) and _git(
+                ["merge-base", "--is-ancestor", fetched_commit, tip_commit],
+                cwd=new_act_dir.parent, check=False).returncode == 0
+            if not reachable:
+                print(
+                    f"update.py: the planned commit {used_plan['commit']} is no longer reachable from "
+                    f"'{_mask_url_user(source)}' (the source was rewritten).\n"
+                    "update.py: nothing was applied; the plan file is kept. Run "
+                    "`python .act/scripts/update.py --plan` again and apply what it shows.",
+                    file=sys.stderr)
+                return 1
+            if tip_commit and tip_commit != fetched_commit:
+                print(f"[act] source moved on since the plan ({fetched_commit[:7]} -> {tip_commit[:7]}); "
+                      f"applying the planned {fetched_commit[:7]}")
+            lock_ref = used_plan["resolved_ref"] or _origin_branch(new_act_dir.parent)
+        else:
+            lock_ref = target_ref or (_checkout_branch(new_act_dir.parent) if fetched_commit else "")
 
-        if own_state and fetched_commit and (channel == "latest" or follows_tip_without_tags):
+        if own_state and fetched_commit and tip_commit and (channel == "latest" or follows_tip_without_tags):
             # the tip just fetched against the installed commit: same answer as `--versions` gives
             installed_tip = _installed_state(root)[1]
-            relation = _history_relation(new_act_dir.parent, fetched_commit, installed_tip) if installed_tip else ""
+            relation = _history_relation(new_act_dir.parent, tip_commit, installed_tip) if installed_tip else ""
             if relation == "same":
                 actlib.record_update_result(root, None)
             elif relation == "newer":
                 actlib.record_update_result(
-                    root, _tip_result(root, fetched_commit, installed_tip, channel == "release"))
+                    root, _tip_result(root, tip_commit, installed_tip, channel == "release"))
 
         downgrade = _downgrade_warning(new_act_dir.parent, fetched_commit, source)
         if downgrade:
@@ -3406,6 +3585,8 @@ def main(argv: list[str]) -> int:
         _print_step(3, diff_summary)
 
         if plan:
+            if fetched_commit:
+                _write_plan(root, source, channel, args.ref or "", target_ref or "", fetched_commit)
             # Same condition as the real run below: no diff and no resume needed means nothing would happen.
             if not has_changes and not _resume_needed(root, fetched_commit):
                 print("[act] done - nothing to update")
@@ -3438,6 +3619,7 @@ def main(argv: list[str]) -> int:
                 )
                 resume_migrations_note = _due_migrations_note(new_act_dir / "migrations")
             else:
+                _drop_plan(root)
                 print("[act] done - nothing to update")
                 return 0
 

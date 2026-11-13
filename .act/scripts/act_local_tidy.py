@@ -72,6 +72,7 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "usage",                    # hooks/checks/usage.py: event files
     "incidents.*",              # incidents.py: the incident log (events and the delivered offset)
     "update-channel-hint",      # update.py: marker for the release-channel hint
+    "update-plan.json",         # update.py: what --plan showed (commit), read by the next real run, removed after it
     "done-entries-hint",        # retired marker of an old session-start note; stays known so old files are not "unknown"
     "*.template.md",            # init.py: rescue copies of root entry files (<stem>.template.md)
     "outside-allow",            # adopt scripts: marker read by the outside-root check

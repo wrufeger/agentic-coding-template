@@ -115,8 +115,8 @@ options:
                         with --apply: update channel (release or latest), passed on to init.py;
                         default release
   --carry LIST          with --apply: what init.py carries over from the project this runs from,
-                        comma-separated (skills, rules, exceptions, overrides, topics; all =
-                        default, none), passed on to init.py --carry
+                        comma-separated (skills, rules, exceptions, overrides, topics, agents; all
+                        = default, none), passed on to init.py --carry
 
 TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
   path       as in scan.json          class   as in scan.json (must match)
@@ -160,7 +160,8 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
   --carry <list> goes on to init.py: when this runs from a project (not the template checkout), init.py
-  takes over that project's own skills, rules, exceptions, overrides and topics unless --carry names fewer.
+  takes over that project's own skills, rules, exceptions, overrides, topics and agents (own roles and
+  own lines in the role bridges) unless --carry names fewer.
   A target equal to the project this runs from, or inside it (also through a symlink or junction), is
   refused in every mode.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
@@ -873,8 +874,9 @@ options:
   --carry LIST          --target only: what to carry over from the source project, comma-separated
                         (default all): skills (own skills), rules (## Own rules), exceptions (rule
                         groups switched off, with reason), overrides (`replaces` lines and the
-                        other docs/ai/local/ files: rule, role, script, checklist overrides),
-                        topics (docs/ai/local/rules/topics/); none = nothing
+                        other docs/ai/local/ files: rule, script, checklist overrides), topics
+                        (docs/ai/local/rules/topics/), agents (own roles in docs/ai/local/agents/
+                        and own lines in the role bridges); none = nothing
   --no-profile          don't offer the owner profile at %APPDATA%\act\settings.md /
                         ~/.config/act/settings.md (on by default)
   --profile             apply the owner profile without asking (its entries are shown first).

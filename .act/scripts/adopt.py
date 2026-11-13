@@ -2276,7 +2276,8 @@ Source/test/content trees (first path segment): {', '.join(sorted(CONTENT_TREES)
   --non-interactive --no-commit (detected at runtime; only an init.py without that flag makes its
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
   --carry <list> goes on to init.py: when this runs from a project (not the template checkout), init.py
-  takes over that project's own skills, rules, exceptions, overrides and topics unless --carry names fewer.
+  takes over that project's own skills, rules, exceptions, overrides, topics and agents (own roles and
+  own lines in the role bridges) unless --carry names fewer.
   A target equal to the project this runs from, or inside it (also through a symlink or junction), is
   refused in every mode.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
@@ -2359,7 +2360,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "default release")
     parser.add_argument("--carry", metavar="LIST",
                         help="with --apply: what init.py carries over from the project this runs from, "
-                             "comma-separated (skills, rules, exceptions, overrides, topics; all = default, "
+                             "comma-separated (skills, rules, exceptions, overrides, topics, agents; all = default, "
                              "none), passed on to init.py --carry")
     return parser
 

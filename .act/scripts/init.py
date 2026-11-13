@@ -25,7 +25,7 @@
 #   python .act/scripts/init.py                      # set up the current checkout in place
 #   python .act/scripts/init.py --target <path>       # create/dock in another directory instead
 #                                                      # (never the project itself or a folder inside it)
-#   python .act/scripts/init.py --target <path> --carry skills,rules,exceptions,overrides,topics
+#   python .act/scripts/init.py --target <path> --carry skills,rules,exceptions,overrides,topics,agents
 #                                                      # what to take over from the source project (default all; none)
 #   python .act/scripts/init.py --plan                # show the ten steps, change nothing
 #   python .act/scripts/init.py --non-interactive      # never prompt; take defaults, log to inbox
@@ -251,31 +251,81 @@ def _commits_ahead_of(root: Path, ref: str) -> Optional[int]:
         return None
 
 
-def _checkout_template_ref(checkout_root: Path) -> tuple[str, str]:
-    """(source address, commit) of the template that the checkout `init.py` is running from stands for.
+_REMOTE_ADDRESS = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://|^[^@/\s]+@[^:/\s]+:")
+
+
+def _is_remote_address(value: str) -> bool:
+    """Whether `value` is a remote git address (a URL with a scheme, or `user@host:path`); anything
+    else -- a drive path, an absolute or relative folder -- is a local folder."""
+    return bool(_REMOTE_ADDRESS.match(value))
+
+
+def _published_template_source(root: Path) -> str:
+    """The template's published address from the `source=` line of root's .act/VERSION, normalized to
+    a fetchable address: one without a scheme and without `user@host:` becomes `https://<value>.git`.
+    Empty when there is no such line."""
+    try:
+        lines = (root / ".act" / "VERSION").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        key, _, value = line.partition("=")
+        if key.strip() == "source" and value.strip():
+            address = value.strip()
+            if _is_remote_address(address):
+                return address
+            return f"https://{address}" if address.endswith(".git") else f"https://{address}.git"
+    return ""
+
+
+def _template_ref_of_project(checkout_root: Path, lock_path: Path) -> tuple[str, str, str]:
+    """(source, commit, note) for a checkout that is itself a set-up project (it has an .act-lock.json).
+    The project's own "origin" and HEAD never belong to the template. The source is the lock's
+    `template.source` if that is a remote address; if it is empty or a local folder, the published
+    address from the .act/VERSION that was used for the setup. The commit is the lock's, else "".
+    `note` says so when the VERSION fallback was taken, else it is empty."""
+    recorded = commit = ""
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+        template = lock.get("template") if isinstance(lock, dict) else None
+        if isinstance(template, dict):
+            if isinstance(template.get("source"), str):
+                recorded = template["source"].strip()
+            if isinstance(template.get("commit"), str):
+                commit = template["commit"].strip()
+    except (OSError, ValueError):
+        pass  # unreadable lock: treated like one with no source
+    if recorded and _is_remote_address(recorded):
+        return recorded, commit, ""
+    published = _published_template_source(checkout_root)
+    why = "names a local folder" if recorded else "names no source"
+    note = f"template source: {published or '(none)'} (from .act/VERSION; the source project's lock {why})"
+    return published, commit, note
+
+
+def _checkout_template_ref_with_note(checkout_root: Path) -> tuple[str, str, str]:
+    """(source address, commit, note) of the template that the checkout `init.py` is running from stands
+    for; `note` is a result line or "" (see `_checkout_template_ref`).
     Normally the checkout *is* the template: its own "origin" remote URL if it has one, else its absolute
     local path, and its HEAD (an incident with a renamed remote showed why the address is taken here).
-    The exception is a checkout that is itself a set-up project (it has an .act-lock.json with a template
-    source): its "origin" is the project's own repository and its HEAD a commit of that repository, neither
-    of which belongs to the template. Source and commit then both come from the lock, as a pair, so the new
-    project's first update neither fetches the source project nor sees a commit foreign to the template."""
+    The exception is a checkout that is itself a set-up project (it has an .act-lock.json): its "origin"
+    is the project's own repository and its HEAD a commit of that repository, neither of which belongs
+    to the template (`_template_ref_of_project`)."""
     lock_path = checkout_root / ".act-lock.json"
     if lock_path.is_file():
-        try:
-            lock = json.loads(lock_path.read_text(encoding="utf-8-sig"))
-            template = lock.get("template") if isinstance(lock, dict) else None
-            recorded = template.get("source") if isinstance(template, dict) else None
-            if isinstance(recorded, str) and recorded.strip():
-                commit = template.get("commit")
-                return recorded.strip(), commit.strip() if isinstance(commit, str) else ""
-        except (OSError, ValueError):
-            pass  # unreadable lock: fall back to the checkout itself below
+        return _template_ref_of_project(checkout_root, lock_path)
     if not (checkout_root / ".git").exists():
         # a plain folder without git of its own: a repository further up is not its origin or HEAD
-        return str(checkout_root.resolve()), ""
+        return str(checkout_root.resolve()), "", ""
     origin = _get_remote_url(checkout_root, "origin")
     head = _git(["rev-parse", "HEAD"], cwd=checkout_root, check=False).stdout.strip()
-    return (origin if origin else str(checkout_root.resolve())), head
+    return (origin if origin else str(checkout_root.resolve())), head, ""
+
+
+def _checkout_template_ref(checkout_root: Path) -> tuple[str, str]:
+    """(source address, commit) of the template that the checkout stands for."""
+    source, commit, _note = _checkout_template_ref_with_note(checkout_root)
+    return source, commit
 
 
 def _read_version_file(root: Path) -> tuple[str, str]:
@@ -922,14 +972,15 @@ def step_git_target(root: Path, plan: bool, source_act: Path) -> tuple[str, str,
     refs/heads/main' works on Git versions before 2.28 too (no '-b main' needed), unlike 'git init
     -b main'/'git branch -m main', and is safe before the first commit: it only moves the unborn
     HEAD, nothing is renamed or rewritten."""
-    template_source, template_commit = _checkout_template_ref(source_act.parent)
+    template_source, template_commit, ref_note = _checkout_template_ref_with_note(source_act.parent)
+    suffix = f"; {ref_note}" if ref_note else ""
     if (root / ".git").exists():
-        return "target already has a repository, left unchanged", template_source, template_commit
+        return "target already has a repository, left unchanged" + suffix, template_source, template_commit
     if plan:
-        return "would run 'git init' in target (branch 'main')", template_source, template_commit
+        return "would run 'git init' in target (branch 'main')" + suffix, template_source, template_commit
     _git(["init"], cwd=root)
     _git(["symbolic-ref", "HEAD", "refs/heads/main"], cwd=root)
-    return "ran 'git init' in target (branch 'main')", template_source, template_commit
+    return "ran 'git init' in target (branch 'main')" + suffix, template_source, template_commit
 
 
 # ---------------------------------------------------------------------------
@@ -1943,16 +1994,19 @@ def _merge_settings_hooks(
 # inbox, never silently dropped. `--no-local` opts out.
 # ---------------------------------------------------------------------------
 
-CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics")
+CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics", "agents")
 # What each category takes along from the source project:
 #   skills      own skills: docs/ai/local/skills/<name>/ where .act/skills/<name> does not exist
 #   rules       the "## Own rules" section of docs/ai/rules.md and docs/project/coding_rules.md
 #   exceptions  rule groups switched off (checkbox unchecked) in those two files, with their reason
 #   overrides   the "## Overrides" `replaces` lines of those two files, and every other file under
-#               docs/ai/local/ (rule, role, script and checklist overrides or own ones, and an override of
-#               a template skill) except own skills and rules/topics/
+#               docs/ai/local/ (rule, script and checklist overrides or own ones, and an override of
+#               a template skill) except own skills, rules/topics/ and agents/
 #   topics      docs/ai/local/rules/topics/ (own topic rules and overrides of template topics)
-# The names follow `settings_export.py` where they fit (skills, topics); its agents/scripts/checklists
+#   agents      everything under docs/ai/local/agents/ (own roles and overrides of template roles) and the
+#               source's own lines in its role bridges (.claude/agents/<role>.md and <role>-high.md: the
+#               body after the bridge line), appended to the same bridge of the new project
+# The names follow `settings_export.py` where they fit (skills, topics, agents); its scripts/checklists
 # fall under "overrides" here, its rules/coding areas split into "rules" and "exceptions".
 
 
@@ -1996,6 +2050,8 @@ def _local_file_category(source_root: Path, rel_to_local: Path) -> str:
         return "skills"
     if len(parts) > 2 and parts[0] == "rules" and parts[1] == "topics":
         return "topics"
+    if parts and parts[0] == "agents":
+        return "agents"
     return "overrides"
 
 
@@ -2398,6 +2454,79 @@ def _carry_over_local_dir(
     return summary, (copied if not plan else [])
 
 
+def _bridge_split(text: str, role: str) -> Optional[list[str]]:
+    """The lines of a role bridge after its bridge line (`Apply the rules from `.act/agents/<role>.md`
+    before the ones below.`), without leading and trailing blank lines; None if there is no bridge line."""
+    marker = f"Apply the rules from `.act/agents/{role}.md` before the ones below."
+    lines = text.replace("\r\n", "\n").split("\n")
+    for index, line in enumerate(lines):
+        if line.strip() == marker:
+            rest = lines[index + 1:]
+            while rest and not rest[0].strip():
+                rest.pop(0)
+            while rest and not rest[-1].strip():
+                rest.pop()
+            return rest
+    return None
+
+
+def _carry_role_bridges(root: Path, source_root: Path, plan: bool) -> tuple[Optional[str], list[Path]]:
+    """The source project's own lines in its role bridges, carried to the end of the same bridge of the
+    new project. For each template role, `.claude/agents/<role>.md` and `<role>-high.md` of the source
+    (as committed, like docs/ai/local/): its body after the bridge line, minus the template's own body
+    text after that line if the source still starts with it. Frontmatter is never copied. A target
+    bridge that does not exist is skipped; a source bridge without the bridge line is named and
+    nothing is copied for it. Returns (summary part, target files written)."""
+    bridges_dir = root / ".act" / "bridges" / "agents"
+    agents_dir = root / ".act" / "agents"
+    if not agents_dir.is_dir():
+        return None, []
+    carried: list[str] = []
+    no_line: list[str] = []
+    paths: list[Path] = []
+    for role_path in sorted(agents_dir.glob("*.md")):
+        role = role_path.stem
+        if role.lower() == "readme":
+            continue
+        template_file = bridges_dir / role_path.name
+        template_rest: list[str] = []
+        if template_file.is_file():
+            template_rest = _bridge_split(template_file.read_text(encoding="utf-8"), role) or []
+        for name in (f"{role}.md", f"{role}-high.md"):
+            rel = f".claude/agents/{name}"
+            dest = root / rel
+            if not plan and not dest.is_file():
+                continue
+            blob = _git_head_blob_bytes(source_root, rel)
+            if blob is None:
+                continue
+            rest = _bridge_split(blob.decode("utf-8", errors="replace"), role)
+            if rest is None:
+                no_line.append(name)
+                continue
+            if template_rest and rest[:len(template_rest)] == template_rest:
+                rest = rest[len(template_rest):]
+                while rest and not rest[0].strip():
+                    rest.pop(0)
+            if not rest:
+                continue
+            if not plan:
+                current = dest.read_bytes().decode("utf-8")
+                if current.replace("\r\n", "\n").rstrip("\n").endswith("\n".join(rest)):
+                    continue
+                eol = "\r\n" if "\r\n" in current else "\n"
+                dest.write_bytes((current.rstrip("\r\n") + eol * 2 + eol.join(rest) + eol).encode("utf-8"))
+                paths.append(dest)
+            carried.append(name)
+    parts: list[str] = []
+    if carried:
+        parts.append(f"agent bridges: {'would carry' if plan else 'carried'} own lines into {len(carried)} "
+                     f"bridge(s) ({', '.join(carried)})")
+    if no_line:
+        parts.append(f"agent bridges without the bridge line, nothing copied: {', '.join(no_line)}")
+    return ("; ".join(parts) if parts else None), paths
+
+
 def step_source_project(
     root: Path, plan: bool, source_checkout: Path, carry: frozenset[str],
     dest_was_preexisting: dict[str, bool], notes: list[str],
@@ -2424,6 +2553,11 @@ def step_source_project(
     local_summary, copied = _carry_over_local_dir(root, source_checkout, plan, notes, carry)
     if local_summary:
         summaries.append(local_summary)
+    if "agents" in carry:
+        bridge_summary, bridge_paths = _carry_role_bridges(root, source_checkout, plan)
+        if bridge_summary:
+            summaries.append(bridge_summary)
+        copied = [*copied, *bridge_paths]
     if not summaries:
         return "source project: nothing to take over", []
     return "source project: " + "; ".join(summaries), copied
@@ -2632,6 +2766,10 @@ def step_source_and_profile(
         local_summary, _copied = _carry_over_local_dir(root, source_checkout, True, preview_notes, carry)
         if local_summary:
             combined_lines.append(f"[source project] {local_summary}")
+        if "agents" in carry:
+            bridge_summary, _paths = _carry_role_bridges(root, source_checkout, True)
+            if bridge_summary:
+                combined_lines.append(f"[source project] {bridge_summary}")
 
     profile_display = _profile_display_path()
     profile_source = None
@@ -3772,8 +3910,9 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, Optional[str], fro
                         help="--target only: what to carry over from the source project, comma-separated "
                              "(default all): skills (own skills), rules (## Own rules), exceptions (rule "
                              "groups switched off, with reason), overrides (`replaces` lines and the other "
-                             "docs/ai/local/ files: rule, role, script, checklist overrides), topics "
-                             "(docs/ai/local/rules/topics/); none = nothing")
+                             "docs/ai/local/ files: rule, script, checklist overrides), topics "
+                             "(docs/ai/local/rules/topics/), agents (own roles in docs/ai/local/agents/ "
+                             "and own lines in the role bridges); none = nothing")
     parser.add_argument("--no-profile", action="store_true",
                         help="don't offer the owner profile at %%APPDATA%%\\act\\settings.md / "
                              "~/.config/act/settings.md (on by default)")
