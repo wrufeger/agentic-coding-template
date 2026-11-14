@@ -33,14 +33,25 @@ applying a version-dependent rule, check the version from the project files.
 
 ## `R-code-checks-intact` — Fix the code, not the check
 
-summary: fix the code, never delete, skip, loosen or silence a failing check; a wrong check is changed as its own step
+summary: fix the code, never weaken a check; a red test changed only with approval; no commit while red; time-outs re-run once; two failed fixes escalate
 
 A failing test, lint or type check is made to pass in the code under test, never by weakening the
 check: no deleted or skipped test (`skip`, `xfail`, `.only`, `@Disabled` …), no loosened assertion,
 expected value, tolerance or timeout, no suppression (`# noqa`, `@ts-ignore`, `eslint-disable` …), no
 file, rule or threshold taken out of or lowered in a check's configuration — unless the assignment
-asks for exactly that. A check that is itself wrong is named in the report with the reason and
-changed as its own step, never inside the fix that needed it green.
+asks for exactly that. A test here is every test and probe the project keeps among its checks, not a
+throwaway probe. A check that is itself wrong is named in the report with the reason and changed as
+its own step, never inside the fix that needed it green. Once a test has run red, it is changed only
+with the human's approval for this case, or where an assignment written before it first ran red named
+that change; a change named only after the red run needs the approval, and a worker without either
+hands the change back with its result. A new test that does not yet fail for the reason it was
+written for (a typo, a missing import) is still being written. Nothing is committed or pushed while a
+check run for it is red, not even with a failure called known or unrelated to the change. A failure is
+expected only in a test written from the start as a negative test that asserts it. A first time-out or
+abort is no result — neither passed, red nor skipped: the run is repeated once, alone if it ran beside
+others; a second one is a failure like a red check. After two failed fix attempts the failure goes to
+the expert role with both attempts and their output (`R-role-escalate`); still red after that, it
+becomes an inbox question to the human (`R-human-ask`).
 
 ## `R-docs-order` — Project docs stay findable
 

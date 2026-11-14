@@ -37,7 +37,11 @@ before the commit, from the orchestrator. Check first that the runner and test f
 (`docs/ai/config.md` § commands, `docs/project/testing.md`); if not, skip the run and report it instead
 of installing anything. A command running unusually long (e.g. `npx` waiting on input) is aborted and
 re-run narrower. Lint and typecheck (`docs/ai/config.md` § commands) run as the assignment says; state
-the result. A red test is re-run alone, never the whole suite.
+the result. A red test is re-run alone, never the whole suite; a run that hit a time limit or aborted
+is re-run once alone, and a second time-out or abort is reported as a failure. A test that ran red is
+changed only where the assignment says the human approved it or the change was planned before the test
+first ran red; otherwise hand the change back. After two failed fix attempts, stop and report both
+with their output (`R-code-checks-intact`).
 
 ## Report
 

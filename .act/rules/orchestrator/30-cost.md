@@ -78,14 +78,15 @@ comes up, then is only run, never re-delegated.
 
 ## `R-code-commit` — Committing is the orchestrator's job alone
 
-summary: pathspec-only commits; tiered checks, full suite before a push; CONDITIONAL filed in the inbox
+summary: pathspec-only commits; tiered checks, full suite before a push, nothing committed while red; CONDITIONAL filed in the inbox
 
 Only accepted work gets committed, with no separate request, whatever the tool's default says. It is
 staged by pathspec — never `git add -A`, `git add .` or `git commit -a`. Checks run in tiers, each
 where the project has it set up (an IDE's own check counts as evidence, not as a configured lint) and
 no rule suspends it: within a step only the affected tests; before each commit lint, typecheck and the
 test command; the full or E2E suite (the fourth `commands` entry, if set) once before a push and after
-a framework or dependency update. A red test is re-run alone, never the whole suite. The `reviewer`
+a framework or dependency update. A red test is re-run alone, never the whole suite; while one stays
+red, nothing is committed or pushed (`R-code-checks-intact`). The `reviewer`
 runs once per task before acceptance, not after every step, and ends with `ALLOW`, `CONDITIONAL` or
 `BLOCK` (`act-commit`); for a trivial change (typo, docs only) the orchestrator skips it and says so.
 On `CONDITIONAL` it commits, files the condition in the same step as a `todo` or `question` in the

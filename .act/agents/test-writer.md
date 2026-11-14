@@ -18,7 +18,8 @@ proves them with a test run. Applies `R-role-worker`.
 - **Without a source template:** work from the concept or interface description alone, red test
   first — the implementation that turns it green is a separate assignment unless told otherwise.
 - Never make the tested code fit just to turn a test green. A test that finds a real bug: report
-  the bug, don't quietly adjust code or expectation.
+  the bug, don't quietly adjust code or expectation. An expected failure is a negative test from
+  the start that asserts it, never a red test marked as expected afterwards.
 - Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 ## Report
