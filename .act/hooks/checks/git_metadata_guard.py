@@ -12,9 +12,10 @@
 #             `GIT_CONFIG_KEY_<n>` with a key that runs code (`_dangerous_reason`). A hook or such a
 #             key runs at the next git command, past every other check and beyond the session.
 #          2. For workers only (the payload carries `agent_id`): a write to `.claude/settings*.json`,
-#             `.claude/agents/**`, `.claude/skills/**` in the project or in the user's home. They
-#             switch hooks, permissions and roles; the orchestrator changes them on the human's
-#             request and stays free to do so.
+#             `.claude/agents/**`, `.claude/skills/**` in the project or in the user's home, and the
+#             Copilot role files `.github/agents/**` of the project (that folder only, no home
+#             counterpart). They switch hooks, permissions, roles and tool rights; the orchestrator
+#             changes them on the human's request and stays free to do so.
 #          3. Files that start code when the folder is opened in an editor (`_launch_reason`,
 #             `_folder_open_reason`). Workers: any write to `.vscode/tasks.json`, `.devcontainer/**`,
 #             `.devcontainer.json`, `.envrc`, `.mcp.json` (file tools and shell). Orchestrator: a Write/Edit/
@@ -160,7 +161,10 @@ _CONFIG_NAMES = frozenset({"config", "config.worktree"})
 
 # Raw-text fallback for a target that cannot be placed (dynamic, unknown base, scanner failure).
 _RAW_GIT_RE = re.compile(r"\.git(?::[^\\/]*)?[\\/](?:hooks|config|modules|worktrees)", re.IGNORECASE)
-_RAW_CLAUDE_RE = re.compile(r"\.claude[\\/](?:settings[^\\/]*\.json|agents|skills|commands)", re.IGNORECASE)
+_RAW_CLAUDE_RE = re.compile(
+    r"\.claude[\\/](?:settings[^\\/]*\.json|agents|skills|commands)|\.github[\\/]agents(?![\w.-])",
+    re.IGNORECASE,
+)
 _RAW_LAUNCH_RE = re.compile(r"\.vscode[\\/]tasks\.json|\.devcontainer|\.envrc|\.mcp\.json", re.IGNORECASE)
 _RAW_TASKS_RE = re.compile(r"\.vscode[\\/]tasks\.json", re.IGNORECASE)
 
@@ -346,6 +350,7 @@ def _path_reason(
             rest == ()
             or (len(rest) == 1 and rest[0].startswith("settings") and rest[0].endswith(".json"))
             or rest[0] in ("agents", "skills", "commands")
+            or tuple(p.lower() for p in claude_dir.parts[-2:]) == (".github", "agents")  # all of it
         ):
             return "the Claude settings, roles or skills (workers may not change them)"
     return _launch_reason(parts, worker, shell)
@@ -624,6 +629,7 @@ def _claude_dirs(root: Optional[Path]) -> list[Path]:
     dirs = []
     if root is not None:
         dirs.append(root / ".claude")
+        dirs.append(root / ".github" / "agents")  # Copilot role files: same lock, project only
     config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
     if config_dir:
         dirs.append(Path(config_dir))

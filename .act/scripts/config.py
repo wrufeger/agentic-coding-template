@@ -22,8 +22,8 @@
 #   `key = value` line per row (a long value is cut at 60 characters with `…`), with the source in
 #   parentheses where it is not config.md alone (this machine's remembered chat language, the name -
 #   never the value - of an environment variable that overrides the key, "row missing, default: ...",
-#   "own key, not checked"); the Roles rows follow as `<role> = tier · reasoning · model` and are
-#   only shown; the last line says how to look at and set a key. One key: its value and source, the
+#   "own key, not checked"); the Roles rows follow as `<role> = tier · reasoning · model` (` · <copilot models>`
+#   appended when the row's fifth cell, `Copilot`, is filled) and are only shown; the last line says how to look at and set a key. One key: its value and source, the
 #   allowed values or format, the default, when a change takes effect, then the notes - the
 #   paragraphs under the table that name the key, in the project's own config.md (for a check the
 #   Guards column instead). A new value is validated without regard to case against the schema and
@@ -149,6 +149,14 @@ def _source_notes(row: Row) -> str:
     return ", ".join(notes)
 
 
+def _roles_line(row: Row) -> str:
+    """One Roles row as `<role> = tier · reasoning · model`, plus ` · <copilot models>` when the
+    fifth cell (`Copilot`) is not empty."""
+    tier, reasoning, model = (row.cells + ["", "", ""])[1:4]
+    copilot = row.cells[4].strip() if len(row.cells) > 4 else ""
+    return f"{row.key} = {tier} · {reasoning} · {model}" + (f" · {copilot}" if copilot else "")
+
+
 def _overview(doc: Doc) -> str:
     out: list[str] = []
     seen: set[str] = set()
@@ -163,8 +171,7 @@ def _overview(doc: Doc) -> str:
             if not roles_started:
                 out.append("  (edit these rows by hand; changed here only for display)")
                 roles_started = True
-            tier, reasoning, model = (row.cells + ["", "", ""])[1:4]
-            out.append(f"  {row.key} = {tier} · {reasoning} · {model}")
+            out.append(f"  {_roles_line(row)}")
             continue
         seen.add(row.key)
         notes = _source_notes(row)
@@ -258,8 +265,7 @@ def _key_form(doc: Doc, key: str, rows: list[Row]) -> tuple[int, str]:
                    f"(`.act/skeleton/config.md`) before it can be set.")
     else:
         if row.in_roles:
-            tier, reasoning, model = (row.cells + ["", "", ""])[1:4]
-            return 0, (f"{row.key} = {tier} · {reasoning} · {model}  (Roles table: edit by hand)")
+            return 0, f"{_roles_line(row)}  (Roles table: edit by hand)"
         notes = _source_notes(row)
         out.append(f"{key} = {row.value or '(empty)'}" + (f"  ({notes})" if notes else "  (docs/ai/config.md)"))
         if len(rows) > 1:

@@ -41,7 +41,7 @@ file or the assignment header that tells the worker beforehand what the check do
 reword, do nothing. The sentences are these (one per check; a check without one gets a generic sentence):
 
 - `write_guard`: Never write under `.act/` (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`.
-- `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
+- `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, Copilot roles under `.github/agents/`, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.
 - `worker_git_write`: Git is read-only for you (`status`, `diff`, `log`, `show`, `stash list`, `stash show`): never stage, commit, stash, reset or check out.
@@ -206,7 +206,8 @@ Checks: git-metadata-guard, protected-watch.
 tool, a shell command, or `git config`, `git -c` or `GIT_CONFIG_KEY_<n>` for a key that starts a program
 (`core.hooksPath`, `core.fsmonitor`, `core.sshCommand`, a `!` alias, a filter, textconv or credential helper, an
 `ext::` remote URL …; the full list is in `git_metadata_guard.py`); `git init --template` too. A worker also never
-writes `.claude/settings*.json`, `.claude/agents`, `.claude/skills`, `.claude/commands`, `.vscode/tasks.json`,
+writes `.claude/settings*.json`, `.claude/agents`, `.claude/skills`, `.claude/commands`, the Copilot role files
+`.github/agents/**` of the project (only that folder; there is no home counterpart), `.vscode/tasks.json`,
 `.devcontainer/**`, `.devcontainer.json`, `.envrc` or `.mcp.json`; nobody adds a `folderOpen` task to
 `.vscode/tasks.json` or a `*.code-workspace` with a file tool, or writes `.vscode/tasks.json` with a shell command; the
 human writes such a file themselves.
@@ -223,8 +224,8 @@ check that reads write targets. The checks are a guard rail against mistakes, no
 Because the guard cannot see a script file, `protected-watch` compares the protected files with a snapshot (taken at
 session start, kept under `.act-local/protected-watch/`) after every tool call of the orchestrator and of workers:
 `.git/hooks/**` and `.git/config` (only the keys that start code) of the repository and its linked git directories,
-`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**`, and `.mcp.json`, `.envrc`,
-`.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the project root. It never follows a link.
+`.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**`, `.github/agents/**`, and
+`.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the project root. It never follows a link.
 
 Switch `protected-watch`: `block` (default), `warn` (reports every change, restores nothing), `off` (no snapshot, no
 comparison); `ACT_PROTECTED_WATCH` in the environment for one run. On a change:

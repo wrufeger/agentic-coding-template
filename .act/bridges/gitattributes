@@ -21,3 +21,4 @@
 /.claude/skills/** text eol=lf
 /.agents/skills/** text eol=lf
 /.claude/agents/** text eol=lf
+/.github/agents/** text eol=lf

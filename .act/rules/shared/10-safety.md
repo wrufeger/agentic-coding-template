@@ -71,7 +71,7 @@ shell command or a repository `git config` key that starts a program (`core.hook
 `core.fsmonitor`, `core.sshCommand`, a `!` alias …): it runs at the next git command, past every other
 check. A worker also never writes Claude settings (`.claude/settings*.json`), agents, skills or
 commands under `.claude` (project or `~/.claude`; the orchestrator changes them on the human's
-request), nor files that start code when the folder is opened (editor tasks, dev container, `.envrc`,
+request) or Copilot role files under the project's `.github/agents/`, nor files that start code when the folder is opened (editor tasks, dev container, `.envrc`,
 MCP config); nobody adds a `folderOpen` task. The human writes such a file themselves. Checked
 mechanically by `git-metadata-guard`; after every call `protected-watch` compares these files with a
 snapshot, puts back what a worker changed and reports what the orchestrator changed. Details (keys and

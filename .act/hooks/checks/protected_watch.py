@@ -11,7 +11,7 @@
 #   - `.git/hooks/**`, `.git/config`, `.git/config.worktree` of the repository, of a `.git` file's git
 #     directory (and its `commondir`), and of the git directories below `modules/` and `worktrees/`;
 #   - `.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**` of the
-#     project;
+#     project; `.github/agents/**` (Copilot role files) of the project, treated the same way;
 #   - `.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the
 #     project root.
 #   `.git/config` is compared only on the keys that start code (git_metadata_guard._dangerous_reason, the
@@ -476,6 +476,19 @@ def _scan(root: str, gitdirs: list[str]) -> dict:
             _add(found, names[".vscode"], _KIND_LINK, top)
         else:
             _add_item(found, names[".vscode"] + "/tasks.json", _KIND_FILE)
+    if ".github" in names:
+        github = names[".github"]
+        top = _lstat(github)
+        if top is not None and _is_link_info(top):
+            _add(found, github, _KIND_LINK, top)
+        elif top is not None:  # only the agents folder of it is watched
+            try:
+                with os.scandir(github) as entries:
+                    for entry in entries:
+                        if entry.name.lower() == "agents":
+                            _walk(entry.path, found)
+            except OSError:
+                pass
     if ".claude" in names:
         claude = names[".claude"]
         top = _lstat(claude)
@@ -1237,7 +1250,7 @@ def _what(root: str, path: str) -> str:
         return "git hook"
     if shown.endswith("config") or shown.endswith("config.worktree"):
         return "git config"
-    if "/.claude/" in "/" + shown:
+    if "/.claude/" in "/" + shown or "/.github/agents/" in "/" + shown:
         return "Claude settings/role/skill"
     return "file that starts code when the folder is opened"
 

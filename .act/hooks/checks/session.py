@@ -751,6 +751,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         role_frontmatter_changed = tiers.refresh_project_bridge_frontmatter(root, apply=(mode == "block"), notes=tier_notes)
     except Exception:
         pass
+    try:
+        session_tools = {actlib.normalize_tool(t) for t in actlib.read_config().get("tools", "").split(",") if t.strip()}
+        if "copilot" in session_tools:
+            role_frontmatter_changed += tiers.refresh_project_bridge_frontmatter(
+                root, tool="copilot", apply=(mode == "block"), notes=tier_notes)
+    except Exception:
+        pass
     if mode == "warn":
         for dest_rel in role_frontmatter_changed:
             warn_notes.append(f"[act] note: {dest_rel} model/effort would be refreshed from tiers.json/config.md (warn mode, not applied)")

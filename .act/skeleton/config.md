@@ -394,9 +394,12 @@ in `docs/ai/local/reminders.md` are not affected by this key.
 ## Roles
 <!-- act:roles -->
 
-| Role | Tier | Reasoning | Model |
-| :--- | :--- | :--- | :--- |
+| Role | Tier | Reasoning | Model | Copilot |
+| :--- | :--- | :--- | :--- | :--- |
 
 Empty by default: every role runs the tier/reasoning the template ships. Fill a row to override
 one role's tier and/or reasoning, or set `Model` outright — a filled `Model` wins over `Tier`.
+`Model` applies to Claude Code only. `Copilot` (with `tools: copilot`) takes a comma-separated
+priority list of Copilot model IDs for the role's file under `.github/agents/`; the first one your
+plan offers is used, and a filled cell wins over `Tier` there. A table with four columns stays valid.
 A skill's name in the `Role` column (e.g. `act-prepare`) overrides that skill's own `reasoning` level for this project; only `Reasoning` counts there.

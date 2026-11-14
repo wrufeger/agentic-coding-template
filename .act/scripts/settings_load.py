@@ -1500,16 +1500,19 @@ def write_unit_bridges(root: Path, result: Analysis) -> list[str]:
     tools = [t.strip().lower() for t in actlib.read_config().get("tools", "").split(",") if t.strip()]
 
     agent_names = sorted({Path(item["path"]).stem for item in written if item["area"] == "agents"})
-    if agent_names and "claude-code" in tools:
+    if agent_names and any(actlib.normalize_tool(t) in ("claude-code", "copilot") for t in tools):
         tiers_data = tiers.load_tiers(root)
         overrides = tiers.read_role_overrides(root)
+        targets = init.agent_bridge_targets(root, tools)
         for name in agent_names:
             bridge_src = root / "docs" / "ai" / "local" / "agents" / f"{name}.md"
-            dest = root / ".claude" / "agents" / f"{name}.md"
-            message, _created = init.write_agent_bridge_file(
-                name, bridge_src, dest, False, root, tiers_data, overrides, False,
-            )
-            messages.append(f"agents: {message}")
+            for dest_rel, src in targets.items():
+                if init.bridge_target_parts(dest_rel)[1] != name or src.resolve() != bridge_src.resolve():
+                    continue
+                message, _created = init.write_agent_bridge_file(
+                    name, bridge_src, root / dest_rel, False, root, tiers_data, overrides, False,
+                )
+                messages.append(f"agents: {message}")
 
     skill_items = [item for item in written if item["area"] == "skills"]
     if skill_items:

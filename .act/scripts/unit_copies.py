@@ -165,7 +165,7 @@ def ensure_own_unit_copies(
                     skill_jobs.append((key, src))
 
         own_dir = (root / "docs" / "ai" / "local" / "agents").resolve()
-        if roles and "claude-code" in tools:
+        if roles and any(actlib.normalize_tool(t) in ("claude-code", "copilot") for t in tools):
             targets = init.agent_bridge_targets(root, tools)
             for role_path in roles:
                 lowered = role_path.stem.lower()
@@ -174,16 +174,17 @@ def ensure_own_unit_copies(
                         f"role '{role_path.stem}' in docs/ai/local/agents/ has the name of a template role "
                         "(or its -high variant) — treated as its override, no own bridge made")
                     continue
-                dest_rel = f".claude/agents/{role_path.name}"
-                src = targets.get(dest_rel)
-                if src is None or src.resolve().parent != own_dir:
-                    continue
                 if _escapes(role_path, own_dir):
                     messages.append(f"docs/ai/local/agents/{role_path.name}: symlink or outside its folder — skipped")
                     continue
-                if dest_rel in removed_by_user or (root / dest_rel).is_file():
-                    continue  # removed by hand: stays removed; present: only model/effort are refreshed
-                role_jobs.append((dest_rel, role_path, src))
+                for dest_rel, src in targets.items():
+                    if init.bridge_target_parts(dest_rel)[1] != role_path.stem:
+                        continue
+                    if src.resolve() != role_path.resolve():
+                        continue
+                    if dest_rel in removed_by_user or (root / dest_rel).is_file():
+                        continue  # removed by hand: stays removed; present: only model/effort are refreshed
+                    role_jobs.append((dest_rel, role_path, src))
 
         missing = [key for key, _src in skill_jobs if not (root / key).is_file()]
         missing += [dest_rel for dest_rel, _role_path, _src in role_jobs]

@@ -8,7 +8,8 @@
 #          landed on it, 'template' is deleted outright so nobody can merge it back into 'main',
 #          once the first commit has landed), check git identity, write the per-checkout workspace identity, thin the
 #          bridges down to the chosen tools, materialize skeleton + bridges (plus skill copies and
-#          role bridges, see copy_targets()/agent_bridge_targets(); in-place, a root CLAUDE.md/
+#          role bridges -- .claude/agents/ for Claude Code, .github/agents/ for Copilot, see
+#          copy_targets()/agent_bridge_targets(); in-place, a root CLAUDE.md/
 #          AGENTS.md still carrying the template's own bootstrap marker is replaced by its project
 #          bridge here too, see _bootstrap_entry_files/TEMPLATE_BOOTSTRAP_MARKER -- --target never
 #          has one to replace), append .gitattributes/.gitignore, retire the template's own
@@ -48,7 +49,7 @@ import subprocess
 import sys
 from datetime import date
 from pathlib import Path
-from typing import Callable, NamedTuple, Optional, TypedDict, Union
+from typing import Any, Callable, NamedTuple, Optional, TypedDict, Union
 
 import act_profile
 import actlib
@@ -1532,8 +1533,9 @@ def _skill_target_active(tool_gate: Optional[Union[str, tuple[str, ...]]], tools
     `tools` (docs/ai/config.md § Project): None is always active, a single tool id must be
     present, a tuple of ids needs at least one of them present. Both sides go through
     actlib.normalize_tool() first, so a `tools` value written in a variant spelling
-    (.act/tiers.json's now-retired "codex-cli"/"copilot-cli"/"gemini-cli", say) still matches this
-    module's own canonical gate ids instead of silently producing no .agents/skills/ at all."""
+    ("codex-cli"/"copilot-cli"/"gemini-cli", the names .act/tiers.json used to carry, say) still
+    matches this module's own canonical gate ids instead of silently producing no .agents/skills/ at
+    all."""
     normalized_tools = {actlib.normalize_tool(t) for t in tools}
     if tool_gate is None:
         return True
@@ -1599,7 +1601,7 @@ def copy_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[s
 
 def skill_copy_bytes(
     root: Path, dest_rel: str, src: Path, tiers_data: Optional[dict] = None,
-    overrides: Optional[dict[str, dict[str, str]]] = None,
+    overrides: Optional[dict[str, dict[str, Any]]] = None,
 ) -> bytes:
     """The bytes written for one skill-copy destination: `src` verbatim, except a skill's SKILL.md
     under a skills folder whose tool gate is a single tool id (".claude/skills"), which gets that
@@ -1623,12 +1625,35 @@ def skill_copy_bytes(
     return data if new_text == text else new_text.encode("utf-8")
 
 
+CLAUDE_AGENTS_DIR = ".claude/agents"
+COPILOT_AGENTS_DIR = ".github/agents"
+
+
+def bridge_target_parts(dest_rel: str) -> tuple[str, str]:
+    """(tool, name) of a role-bridge destination as agent_bridge_targets() keys it: `tool` is
+    "copilot" for a file under .github/agents/ and "claude-code" for any other; `name` is the file
+    name without its `.agent.md` (Copilot) or `.md` ending -- `Path.stem` alone would leave
+    `.agent` on a Copilot file. For a "-high" variant's destination the name still ends in
+    "-high"."""
+    path = Path(dest_rel)
+    if path.parent.as_posix() == COPILOT_AGENTS_DIR:
+        name = path.name
+        if name.endswith(tiers.COPILOT_AGENT_SUFFIX):
+            name = name[: -len(tiers.COPILOT_AGENT_SUFFIX)]
+        elif name.endswith(".md"):
+            name = name[: -len(".md")]
+        return "copilot", name
+    return "claude-code", path.stem
+
+
 def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -> dict[str, Path]:
     """Every role-bridge destination -> its .act/bridges/agents/ source, for the given tools.
     Enumerates .act/agents/<name>.md role files dynamically (README.md is documentation, not a
     role) and only includes a role once its bridge under .act/bridges/agents/ exists too — a role
-    with no bridge yet has nothing written. Only "claude-code" has a bridge format today; a tool
-    without one is simply never a target.
+    with no bridge yet has nothing written. "claude-code" gets `.claude/agents/<name>.md`,
+    "copilot" `.github/agents/<name>.agent.md` (same roles, same source; a tool spelled
+    "copilot-cli" counts); a tool without a bridge format is simply never a target. With both
+    tools the one dict holds both folders.
 
     Unlike copy_targets(), the destination file is never replaced once written (see
     step_materialize below and update.py's step 6): init creates it once, update only adds bridges
@@ -1656,7 +1681,11 @@ def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -
     agents_dir = root / ".act" / "agents"
     bridges_dir = root / ".act" / "bridges" / "agents"
     targets: dict[str, Path] = {}
-    if "claude-code" not in tools:
+    wanted = {actlib.normalize_tool(t) for t in tools}
+    folders = [(folder, ending) for tool, folder, ending in (
+        ("claude-code", CLAUDE_AGENTS_DIR, ".md"), ("copilot", COPILOT_AGENTS_DIR, tiers.COPILOT_AGENT_SUFFIX),
+    ) if tool in wanted]
+    if not folders:
         return targets
     cut_roles = act_profile.read_cut(root).roles if apply_cut else frozenset()
     template_role_names: set[str] = set()
@@ -1669,10 +1698,12 @@ def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -
                 continue
             bridge_src = bridges_dir / role_path.name
             if bridge_src.is_file():
-                targets[f".claude/agents/{role_path.name}"] = bridge_src
+                for folder, ending in folders:
+                    targets[f"{folder}/{role_path.stem}{ending}"] = bridge_src
 
     # Case-insensitive, and reserved for a template role's generated "-high" variant name too
-    # (agent_bridge_variant_targets() below writes ".claude/agents/<role>-high.md" for those) —
+    # (agent_bridge_variant_targets() below writes ".claude/agents/<role>-high.md" for those, and
+    # ".github/agents/<role>-high.agent.md" for Copilot) —
     # otherwise a docs/ai/local/agents/<role>-high.md would slip through as an "own role" here
     # and end up aliased onto what should be the template variant's bridge target instead
     # (confirmed 2026-09-22 in review).
@@ -1686,13 +1717,14 @@ def agent_bridge_targets(root: Path, tools: list[str], apply_cut: bool = True) -
                 continue
             if role_path.stem.lower() in reserved_role_names:
                 continue  # the role's docs/ai/local/ override, or a reserved "-high" name, not an own role's bridge source
-            targets[f".claude/agents/{role_path.name}"] = role_path
+            for folder, ending in folders:
+                targets[f"{folder}/{role_path.stem}{ending}"] = role_path
     return targets
 
 
 # Frontmatter key of a role bridge that only the scripts read: it says the role gets a "-high"
-# variant and is never copied into the generated .claude/agents/ file (Claude Code would see an
-# unknown field there).
+# variant and is never copied into a generated agent file (the tool would see an unknown field
+# there).
 HIGH_VARIANT_KEY = "high-variant"
 
 
@@ -1732,16 +1764,20 @@ def agent_bridge_variant_targets(root: Path, tools: list[str], apply_cut: bool =
     `model:` and no `tier:` already has nothing to bump); a template role's bridge must also declare
     `high-variant: true` in its frontmatter (bridge_wants_variant() below; a project's own role needs
     no declaration); skipped outright for `tier: expert` or a
-    `reasoning` already at the top of the tool's reasoning scale — one step further does not exist there."""
+    `reasoning` already at the top of the tool's reasoning scale — one step further does not exist there.
+    Every base target has its variant under its own tool's folder and scale: `.claude/agents/<role>-high.md`
+    and `.github/agents/<role>-high.agent.md`."""
     base_targets = agent_bridge_targets(root, tools, apply_cut)
     if not base_targets:
         return {}
     tiers_data = tiers.load_tiers(root)
     overrides = tiers.read_role_overrides(root)
-    scale = (tiers_data.get("claude-code") or {}).get("reasoning_scale") or []
+    scales = {tool: (tiers.tool_table(tiers_data, tool) or {}).get("reasoning_scale") or []
+              for tool in ("claude-code", "copilot")}
     targets: dict[str, Path] = {}
     for dest_rel, bridge_src in base_targets.items():
-        role = Path(dest_rel).stem
+        tool, role = bridge_target_parts(dest_rel)
+        scale = scales[tool]
         tmpl_fields, _, _ = tiers.split_frontmatter(bridge_src.read_text(encoding="utf-8"))
         if "tier" not in tmpl_fields or not bridge_wants_variant(root, bridge_src, tmpl_fields):
             continue
@@ -1754,11 +1790,15 @@ def agent_bridge_variant_targets(root: Path, tools: list[str], apply_cut: bool =
         override = overrides.get(role, {})
         effective_tier = override.get("tier", template_tier)
         effective_reasoning = override.get("reasoning", template_reasoning)
-        if "model" not in override and effective_tier == "expert":
+        own_model = "copilot" if tool == "copilot" else "model"
+        if own_model not in override and effective_tier == "expert":
             continue
         if scale and effective_reasoning == scale[-1]:
             continue
-        targets[f".claude/agents/{role}-high.md"] = bridge_src
+        if tool == "copilot":
+            targets[f"{COPILOT_AGENTS_DIR}/{role}-high{tiers.COPILOT_AGENT_SUFFIX}"] = bridge_src
+        else:
+            targets[f"{CLAUDE_AGENTS_DIR}/{role}-high.md"] = bridge_src
     return targets
 
 
@@ -1770,7 +1810,7 @@ def _write_new_file(dest: Path, text: str) -> None:
 
 def write_agent_bridge_file(
     role: str, bridge_src: Path, dest: Path, plan: bool, root: Path,
-    tiers_data: dict, overrides: dict[str, dict[str, str]], variant: bool,
+    tiers_data: dict, overrides: dict[str, dict[str, Any]], variant: bool,
     notes: Optional[list[str]] = None,
 ) -> tuple[str, bool]:
     """Like _write_copy_file, but for a role bridge (base or "-high" variant): resolves the
@@ -1788,10 +1828,17 @@ def write_agent_bridge_file(
     already has once one exists. `notes`, if given, collects one message (deduplicated) whenever
     tiers.json/config.md leave `model`/`effort` unresolvable for a *reportable* reason (see
     resolve_tier()); the older-bridge/unresearched-tool cases stay silent, same as before.
-    Returns (message, created)."""
+
+    The format follows the destination: a file under .github/agents/ is a Copilot agent file
+    (_write_copilot_agent_file(): `model`/`models`/`model-policy`/`reasoning-effort` from the tier
+    list or the role's `Copilot` cell, mapped `tools`, `include-custom-instructions: true`); it is
+    not written when `<name>.md` (no `.agent`) already stands next to it, since Copilot would see two
+    agents with one ID. Returns (message, created)."""
     label = _relative_label(dest, root)
     if dest.is_file():
         return f"{label}: already present, left unchanged", False
+    if bridge_target_parts(_relative_label(dest, root))[0] == "copilot":
+        return _write_copilot_agent_file(role, bridge_src, dest, plan, root, tiers_data, overrides, variant, notes)
     if plan:
         return f"{label}: would create", False
     bridge_text = _without_bridge_only_keys(bridge_src.read_text(encoding="utf-8"))
@@ -1827,6 +1874,41 @@ def write_agent_bridge_file(
         text = tiers.render_frontmatter(fields, order, body)
     _write_new_file(dest, text)
     return f"{label}: created", True
+
+
+def _write_copilot_agent_file(
+    role: str, bridge_src: Path, dest: Path, plan: bool, root: Path,
+    tiers_data: dict, overrides: dict[str, dict[str, Any]], variant: bool,
+    notes: Optional[list[str]] = None,
+) -> tuple[str, bool]:
+    """The Copilot branch of write_agent_bridge_file() (`dest` does not exist yet): the agent file
+    under .github/agents/ from the role bridge via tiers.render_generated_copilot_bridge(). A bridge
+    without `tier` (an older or own one) gets no model keys unless the role's `Copilot` cell names
+    models. Nothing is written when `<name>.md` already stands there. `notes` collects what
+    tiers.describe_unresolved_tier() says about a tier that does not resolve."""
+    label = _relative_label(dest, root)
+    other = dest.with_name(dest.name[: -len(tiers.COPILOT_AGENT_SUFFIX)] + ".md")
+    if other.is_file():
+        return f"{label}: already present as {other.name}, left unchanged", False
+    if plan:
+        return f"{label}: would create", False
+    bridge_text = _without_bridge_only_keys(bridge_src.read_text(encoding="utf-8"))
+    tmpl_fields, _, _ = tiers.split_frontmatter(bridge_text)
+    models, effort = [], None
+    if "tier" in tmpl_fields or (overrides.get(role) or {}).get("copilot"):
+        models, effort, problem, eff_tier, eff_reasoning = tiers.effective_copilot_models(
+            root, role, tmpl_fields.get("tier", ""), tmpl_fields.get("reasoning", ""),
+            tiers_data, overrides, variant,
+        )
+        if not models and problem and notes is not None:
+            message = tiers.describe_unresolved_tier(role, "copilot", eff_tier, eff_reasoning, problem)
+            if message not in notes:
+                notes.append(message)
+    text = tiers.render_generated_copilot_bridge(bridge_text, models, effort, role if variant else None)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _write_new_file(dest, text)
+    return (f"{label}: created" if models or "tier" not in tmpl_fields
+            else f"{label}: created (tier/reasoning left unresolved)"), True
 
 
 def _copy_source_label(root: Path, src: Path) -> str:
@@ -2472,7 +2554,8 @@ def _bridge_split(text: str, role: str) -> Optional[list[str]]:
 
 def _carry_role_bridges(root: Path, source_root: Path, plan: bool) -> tuple[Optional[str], list[Path]]:
     """The source project's own lines in its role bridges, carried to the end of the same bridge of the
-    new project. For each template role, `.claude/agents/<role>.md` and `<role>-high.md` of the source
+    new project. For each template role, `.claude/agents/<role>.md` and `<role>-high.md` of the source,
+    and the Copilot files `.github/agents/<role>.agent.md` and `<role>-high.agent.md`
     (as committed, like docs/ai/local/): its body after the bridge line, minus the template's own body
     text after that line if the source still starts with it. Frontmatter is never copied. A target
     bridge that does not exist is skipped; a source bridge without the bridge line is named and
@@ -2492,8 +2575,10 @@ def _carry_role_bridges(root: Path, source_root: Path, plan: bool) -> tuple[Opti
         template_rest: list[str] = []
         if template_file.is_file():
             template_rest = _bridge_split(template_file.read_text(encoding="utf-8"), role) or []
-        for name in (f"{role}.md", f"{role}-high.md"):
-            rel = f".claude/agents/{name}"
+        candidates = [(f"{CLAUDE_AGENTS_DIR}/{name}", name) for name in (f"{role}.md", f"{role}-high.md")]
+        candidates += [(f"{COPILOT_AGENTS_DIR}/{name}", name) for name in (
+            f"{role}{tiers.COPILOT_AGENT_SUFFIX}", f"{role}-high{tiers.COPILOT_AGENT_SUFFIX}")]
+        for rel, name in candidates:
             dest = root / rel
             if not plan and not dest.is_file():
                 continue
@@ -2940,7 +3025,7 @@ def step_materialize(
                     touched.append(dest)
 
     tiers_data = tiers.load_tiers(root)
-    overrides = tiers.read_role_overrides(root)
+    overrides = tiers.read_role_overrides(root, notes)
 
     for dest_rel, src in copy_targets(root, cfg["tools"]).items():
         dest = root / dest_rel
@@ -2955,7 +3040,7 @@ def step_materialize(
             copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.lock_hash(dest.read_bytes())}
 
     for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
-        role = Path(dest_rel).stem
+        role = bridge_target_parts(dest_rel)[1]
         message, created = write_agent_bridge_file(
             role, src, root / dest_rel, plan, root, tiers_data, overrides, False, notes,
         )
@@ -2964,7 +3049,7 @@ def step_materialize(
             touched.append(root / dest_rel)
 
     for dest_rel, src in agent_bridge_variant_targets(root, cfg["tools"]).items():
-        role = Path(dest_rel).stem[: -len("-high")]
+        role = bridge_target_parts(dest_rel)[1][: -len("-high")]
         message, created = write_agent_bridge_file(
             role, src, root / dest_rel, plan, root, tiers_data, overrides, True, notes,
         )
@@ -4338,6 +4423,8 @@ def _step_own_files_in_place(root: Path, plan: bool, interactive: bool, cfg: Pro
     # it, so it is not committed here -- but it would otherwise sit there untracked without a word.
     # A file the clone already tracks (detached-HEAD route) is in history anyway, so it is not named.
     own_set = {p.relative_to(root).as_posix() for p in own_root_files}
+    # the Copilot agent files step 6 wrote under .github/agents/ are the project's bridges, committed with them
+    own_set |= set(agent_bridge_targets(root, cfg["tools"])) | set(agent_bridge_variant_targets(root, cfg["tools"]))
     tracked_now = set(_git(["ls-files", "-z", "--", ".github"], cwd=root, check=False).stdout.split("\0"))
     unmarked = sorted(
         p.relative_to(root).as_posix() for p in (root / ".github").rglob("*")

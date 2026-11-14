@@ -604,16 +604,23 @@ def check_act_refs(root: Path) -> list[Finding]:
     return findings
 
 
+def _copilot_configured() -> bool:
+    """True when `copilot` is among the configured tools: only then are .github/agents files the template's."""
+    return any(actlib.normalize_tool(t) == "copilot" for t in _configured_tools(actlib.read_config()))
+
+
 def check_bridge_files(root: Path) -> list[Finding]:
-    """Role/skill bridges under .claude/agents/ and .claude/skills/, once they exist, mention the
+    """Role/skill bridges under .claude/agents/, .claude/skills/ and .github/agents/ (Copilot), once they exist, mention the
     .act/ file they wrap in prose. Neither directory exists yet at this build stage — the check is a
     no-op until they do, rather than assuming a fixed layout."""
     findings = []
-    for sub in ("agents", "skills"):
-        bridge_dir = root / ".claude" / sub
+    bridge_dirs = [(root / ".claude" / "agents", "*.md"), (root / ".claude" / "skills", "*.md")]
+    if _copilot_configured():
+        bridge_dirs.append((root / ".github" / "agents", "*.agent.md"))
+    for bridge_dir, pattern in bridge_dirs:
         if not bridge_dir.is_dir():
             continue
-        for path in sorted(bridge_dir.glob("*.md")):
+        for path in sorted(bridge_dir.glob(pattern)):
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeDecodeError):
@@ -637,7 +644,7 @@ def check_bridge_files(root: Path) -> list[Finding]:
 # (label, sub-directory) pairs this template treats as holding "units": .act/'s own copies, the
 # project's docs/ai/local/ overrides/additions (mirrored under the same sub-directory names), and
 # the Claude Code bridges once they exist. Any base directory that does not exist is skipped.
-_UNIT_BASES = (("act", ".act"), ("local", "docs/ai/local"), ("claude", ".claude"))
+_UNIT_BASES = (("act", ".act"), ("local", "docs/ai/local"), ("claude", ".claude"), ("github", ".github"))
 _UNIT_SUBDIRS = ("scripts", "agents", "skills")
 
 
@@ -646,9 +653,12 @@ def _scan_units(root: Path) -> list[tuple[str, str, Path]]:
     in _UNIT_BASES and each subdir in _UNIT_SUBDIRS that exists. label+subdir is the "namespace";
     the path relative to that namespace is what the docs/ai/local/ overlay exception compares."""
     out: list[tuple[str, str, Path]] = []
+    copilot = _copilot_configured()
     for label, base_rel in _UNIT_BASES:
         base = root / base_rel
         for sub in _UNIT_SUBDIRS:
+            if label == "github" and (sub != "agents" or not copilot):
+                continue  # only Copilot's role files, and only with `copilot` in tools; .github/ holds CI scripts
             sub_dir = base / sub
             if not sub_dir.is_dir():
                 continue
@@ -707,6 +717,8 @@ def check_duplicate_units(root: Path) -> list[Finding]:
         if sub == "skills":
             sub_dir = root / unit_base_dirs[label] / sub
             return (sub, path.relative_to(sub_dir).parts[0])  # the skill's directory name
+        if label == "github" and path.name.endswith(".agent.md"):
+            return (sub, path.name[: -len(".agent.md")] + ".md")  # the Copilot file of the role `<name>.md`
         return (sub, path.name)  # a script/agent is a single flat file — its own unit
 
     by_unit: dict[tuple[str, str], list[tuple[str, str, Path]]] = defaultdict(list)
@@ -720,7 +732,7 @@ def check_duplicate_units(root: Path) -> list[Finding]:
             if label == "act":
                 continue  # the template's own file — always the source, never the finding
             rel = _rel(path, root)
-            if label == "claude" and (rel in copy_dests or rel in bridge_dests):
+            if label in ("claude", "github") and (rel in copy_dests or rel in bridge_dests):
                 continue  # generated skill copy or role bridge — expected
             if label == "local" and rel in copy_sources:
                 continue  # source of a recorded tool copy (own skill) — expected
@@ -2661,6 +2673,12 @@ _ROLE_FIELDS = frozenset({
     "permissionMode", "hooks", "mcpServers", "color", "disallowedTools", "skills", "memory",
     "maxTurns", "background", "isolation", "initialPrompt", "omitClaudeMd",
 })
+# Copilot's own agent-file fields (.github/agents/*.agent.md): lists are flow lists, tools are Copilot aliases
+_COPILOT_ROLE_FIELDS = frozenset({
+    "name", "description", "model", "models", "model-policy", "reasoning-effort", "tools",
+    "strict-tools-list", "include-custom-instructions", "variant-of", "target", "mcp-servers", "infer",
+    "user-invocable", "disable-model-invocation", "metadata", "handoffs", "agents",
+})
 _KNOWN_TOOL_NAMES = frozenset({
     "Read", "Write", "Edit", "MultiEdit", "Bash", "Grep", "Glob", "WebFetch", "WebSearch",
     "NotebookEdit", "NotebookRead", "TodoWrite", "Task", "Agent", "BashOutput", "KillShell",
@@ -2820,6 +2838,7 @@ def check_frontmatter(root: Path) -> list[Finding]:
     units: list[tuple[Path, str, str]] = []  # (file, "skill" or "role", expected name)
     skill_bases = [root / "docs" / "ai" / "local" / "skills"]
     role_bases = [root / "docs" / "ai" / "local" / "agents", root / ".claude" / "agents"]
+    copilot_dir = root / ".github" / "agents"
     if not in_project:
         skill_bases.insert(0, root / ".act" / "skills")
         role_bases.insert(0, root / ".act" / "bridges" / "agents")
@@ -2833,6 +2852,9 @@ def check_frontmatter(root: Path) -> list[Finding]:
             for path in sorted(base.glob("*.md")):
                 if path.name.lower() != "readme.md":
                     units.append((path, "role", path.stem))
+    if copilot_dir.is_dir() and _copilot_configured():
+        for path in sorted(copilot_dir.glob("*.agent.md")):
+            units.append((path, "copilot-role", path.name[: -len(".agent.md")]))
 
     for path, unit_kind, expected_name in units:
         rel = _rel(path, root)
@@ -2886,7 +2908,7 @@ def check_frontmatter(root: Path) -> list[Finding]:
             if effort and reasoning_set and effort not in reasoning_set:
                 add("frontmatter-field", f"`effort: {effort}` is none of {', '.join(sorted(reasoning_set))} (.act/tiers.json)")
 
-        allowed = _SKILL_FIELDS if unit_kind == "skill" else _ROLE_FIELDS
+        allowed = {"skill": _SKILL_FIELDS, "copilot-role": _COPILOT_ROLE_FIELDS}.get(unit_kind, _ROLE_FIELDS)
         unknown = [k for k in dict.fromkeys(parsed.order) if k not in allowed]
         if unknown:
             add("frontmatter-unknown",

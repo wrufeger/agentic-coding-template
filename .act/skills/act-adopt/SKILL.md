@@ -120,6 +120,15 @@ and `mode` decides whether an entry without a kept id gets a new one (`solo`) or
 a path the adoption removes is flagged: settle it with the owner. An old `AI-CONFIG.md` without a language row is
 assumed `de`: confirm it with the owner.
 
+## 5b. Copilot roles — only with `copilot` in `tools`
+
+`init.py` wrote `.github/agents/<role>.agent.md`, each with `models:` (a priority list). Show the owner a short table,
+role → `models`, read from those files, and ask to compare it in Copilot with `/model`: which models the plan offers
+(the top model needs an admin to enable it). Record a difference as the `Copilot` column of `docs/ai/config.md` § Roles (add the
+column to the table head if it is missing; the models comma-separated, first choice first), then run
+`python .act/scripts/update.py --catch-up --yes`. An existing `.github/agents/` goes to `legacy` as before: check it for
+own agents worth carrying over as roles. Limit: the Copilot cloud agent on GitHub.com probably ignores `model`.
+
 ## 6. Fill the content — one worker per target, never "all the docs at once"
 
 While reading each old source, harvest what would help someone who never sees this project, cut (never retype) each

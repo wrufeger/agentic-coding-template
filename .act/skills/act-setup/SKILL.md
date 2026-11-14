@@ -56,6 +56,13 @@ uncommitted together with `init.py`'s changes.
 Mention it once. The methods go into the `methods` row and `docs/project/coding_rules.md`; change them later with
 `/act-config methods <names|none>`, then `python .act/scripts/rules.py --sync-methods`.
 
+**Copilot roles (only with `copilot` in `tools`).** `init.py` wrote `.github/agents/<role>.agent.md`, each with
+`models:` (a priority list). Show the owner a short table, role → `models`, read from those files, and ask to compare
+it in Copilot with `/model`: which models the plan offers (the top model needs an admin to enable it). Record a difference as
+the `Copilot` column of `docs/ai/config.md` § Roles (add the column to the table head if it is missing; the models
+comma-separated, first choice first), then run `python .act/scripts/update.py --catch-up --yes`. Limit: the Copilot
+cloud agent on GitHub.com probably ignores `model`.
+
 ## 4. Say what is there now
 
 In three sentences: where the board and open questions live now (`docs/ai/work/`, `docs/ai/inbox/`), that the

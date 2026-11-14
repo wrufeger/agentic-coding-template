@@ -11,7 +11,7 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 ## [Unreleased]
 
 Formats and a changelog for every project, `Tests:` lines and an incident log for workers, shorter core rules,
-safety checks that see more and refuse fewer harmless commands.
+safety checks that see more and refuse fewer harmless commands, Copilot roles with a model each.
 
 ### Upgrading
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
@@ -28,6 +28,8 @@ safety checks that see more and refuse fewer harmless commands.
   `changelog-length: off` in `docs/ai/config.md` § Checks.
 - If `update.py` stops because its source is itself a set-up project, run it once with `--source <template address>`
   as the message names.
+- Copilot projects: after `act-update`, compare the models in `.github/agents/` with `/model` and put differences in
+  the `Copilot` column of `docs/ai/config.md` § Roles.
 
 ### Added
 - `cd-git` check (`block`|`warn`|`off`, default `block`, only with `claude-code` in `tools`): a Bash call with `cd` and
@@ -59,6 +61,8 @@ safety checks that see more and refuse fewer harmless commands.
   default `warn`).
 - `usage.py --outcome <role> <tier> reworked|escalated --reason assignment|edge-case|worker|decision` records why a
   result was reworked; `--show` lists the reasons, and with `feedback-scope` `c` a send counts them per template role.
+- With `copilot` in `tools`, each role gets `.github/agents/<role>.agent.md` with a model list per tier; set a role's
+  own list in the new `Copilot` column of § Roles, then run `python .act/scripts/update.py --catch-up --yes`.
 
 ### Changed
 - A tier proposal from `act-doctor` no longer counts reworks given the reason `assignment`, `edge-case` or `decision`;
@@ -172,6 +176,7 @@ safety checks that see more and refuse fewer harmless commands.
   `.act-local`).
 - `act-release` starts its security reviewer with `Write scope: none` again; it ran without a write scope.
 - A failing `secret-read` or `outside-root` no longer lets a command through; a hook that cannot load refuses the call.
+- Workers may no longer write `.github/agents/`; `protected-watch` puts their changes back, as for `.claude/agents/`.
 
 ## [2.5.0] - 2026-11-05
 

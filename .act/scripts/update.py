@@ -1776,19 +1776,23 @@ def step_refresh_copies(
 
 
 _BRIDGE_DERIVED_LINE_RE = re.compile(r"(model|effort|tier|reasoning)\s*:")
+# a Copilot agent file's lines tiers.py re-derives: the model list and the effort
+_COPILOT_DERIVED_LINE_RE = re.compile(r"(model|models|reasoning-effort|tier|reasoning)\s*:")
 
 
-def _bridge_core(text: str, drop: tuple[str, ...] = ()) -> str:
+def _bridge_core(text: str, drop: tuple[str, ...] = (), copilot: bool = False) -> str:
     """A role bridge's text minus what changes on its own: the `model:`/`effort:` frontmatter
-    lines tiers.py re-derives at every session start and update, the `tier:`/`reasoning:` lines an
+    lines tiers.py re-derives at every session start and update (a Copilot file: `model:`,
+    `models:`, `reasoning-effort:`), the `tier:`/`reasoning:` lines an
     unresolved bridge still carries, and line endings. What is left differs from the template's
     rendering only where a person edited the file."""
+    derived = _COPILOT_DERIVED_LINE_RE if copilot else _BRIDGE_DERIVED_LINE_RE
     text = text.replace("\r\n", "\n")
     match = re.match(r"---\n(.*?\n)---\n", text, re.S)
     if not match:
         return text
     kept = [line for line in match.group(1).splitlines(keepends=True)
-            if not _BRIDGE_DERIVED_LINE_RE.match(line)
+            if not derived.match(line)
             and not any(line.startswith(f"{key}:") for key in drop)]
     return "---\n" + "".join(kept) + "---\n" + text[match.end():]
 
@@ -1804,19 +1808,32 @@ def _bridge_edited(
     if source_path is None:
         return True
     try:
+        dest_rel = dest_path.relative_to(root).as_posix()
+    except ValueError:
+        dest_rel = dest_path.name
+    copilot = new_init.bridge_target_parts(dest_rel)[0] == "copilot"
+    try:
         current = dest_path.read_text(encoding="utf-8")
         with actlib.scratch_dir("bridge-check", root) as tmp:
-            reference_path = tmp / dest_path.name
-            new_init.write_agent_bridge_file(
-                role, source_path, reference_path, False, root, tiers_data, overrides, variant, None,
-            )
+            if copilot:
+                # init.py picks the Copilot format from the destination's place under the project
+                # root, so the reference is written to the same relative place under the scratch folder
+                reference_path = tmp / dest_rel
+                new_init.write_agent_bridge_file(
+                    role, source_path, reference_path, False, tmp, tiers_data, overrides, variant, None,
+                )
+            else:
+                reference_path = tmp / dest_path.name
+                new_init.write_agent_bridge_file(
+                    role, source_path, reference_path, False, root, tiers_data, overrides, variant, None,
+                )
             reference = reference_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return True
     # A variant whose model is unresolvable under `overrides` renders verbatim, without its
     # "-high" name/description/variant-of — those three lines then say nothing about an edit.
     drop = ("name", "description", "variant-of") if variant and "variant-of:" not in reference else ()
-    return _bridge_core(current, drop) != _bridge_core(reference, drop)
+    return _bridge_core(current, drop, copilot) != _bridge_core(reference, drop, copilot)
 
 
 def _in_git_history(root: Path, rel: str) -> bool:
@@ -1859,18 +1876,40 @@ def _role_bridge_targets(new_init, root: Path, tools: list[str]) -> tuple[dict[s
     )
 
 
+# The tools whose role files this module keeps: init.py's agent_bridge_targets() keys, one folder each
+# (.claude/agents/<role>.md, .github/agents/<role>.agent.md).
+ROLE_TOOLS = ("claude-code", "copilot")
+
+
+def _bridge_dest(new_init, tool: str, role: str, variant: bool) -> str:
+    """The destination (project-relative, `/`-separated) of `tool`'s role file for `role`, or for its
+    "-high" variant: the inverse of init.py's bridge_target_parts()."""
+    name = f"{role}-high" if variant else role
+    if tool == "copilot":
+        return f"{new_init.COPILOT_AGENTS_DIR}/{name}{new_init.tiers.COPILOT_AGENT_SUFFIX}"
+    return f"{new_init.CLAUDE_AGENTS_DIR}/{name}.md"
+
+
+def _role_of_dest(new_init, dest_rel: str, variant: bool) -> str:
+    """The role a role-file destination belongs to, whatever its tool; a variant's name loses `-high`."""
+    name = new_init.bridge_target_parts(dest_rel)[1]
+    return name[: -len("-high")] if variant else name
+
+
 def step_new_role_bridges(
     root: Path, plan: bool, notes: Optional[list[str]] = None, *,
-    changed_roles: frozenset[str] = frozenset(), force_all: bool = False,
+    changed_roles: frozenset[str] = frozenset(), force_tools: frozenset[str] = frozenset(),
     old_overrides: Optional[dict[str, dict[str, str]]] = None,
     known: frozenset[str] = frozenset(), backup_dir: Optional[Path] = None, brief: bool = False,
     returning_roles: frozenset[str] = frozenset(),
+    changed_by_tool: Optional[dict[str, frozenset[str]]] = None,
 ) -> tuple[str, list[Path], list[str], bool]:
     """Creates a bridge for any role new since the last update, and a "-high" variant for any
     applicable role — new or already existing — that does not have one yet.
-    An existing .claude/agents/<name>.md (base or variant) is otherwise never touched
-    here; its `model`/`effort` frontmatter is refreshed separately, by
-    step_refresh_role_frontmatter() below.
+    An existing .claude/agents/<name>.md or .github/agents/<name>.agent.md (base or variant) is
+    otherwise never touched here; its `model`/`effort` frontmatter (Copilot: the model list) is
+    refreshed separately, by step_refresh_role_frontmatter() below. Everything below holds for each
+    tool's folder on its own.
 
     A missing bridge the project deleted stays deleted (same rule as a skill copy): it is
     recorded in .act-lock.json's removed_by_user as soon as it is recognised as deleted — already
@@ -1878,7 +1917,7 @@ def step_new_role_bridges(
     committed (_in_git_history) — and only a missing bridge none of those explain is created as new.
 
     For a role in `changed_roles` (its row in docs/ai/config.md § Roles changed since the last
-    snapshot — or every role, with `force_all`, when `claude-code` just joined `tools`), its
+    snapshot — or every role of a tool in `force_tools`, the tools that just joined `tools`), its
     bridges follow the new value: a missing one is recreated and its removed_by_user record
     dropped; an edited one (compared against the rendering under `old_overrides`, the table it was
     generated from — see _bridge_edited()) is backed up into `backup_dir` and regenerated, or left
@@ -1886,7 +1925,12 @@ def step_new_role_bridges(
     "-high" variant (frontmatter `variant-of: <role>`) the new value no longer calls for is removed
     the same way — as is one whose role's bridge no longer declares a variant at all (`high-variant:`
     in .act/bridges/agents/<role>.md), changed or not; a project's own "...-high" role without that
-    field is never touched.
+    field is never touched. `changed_by_tool`, if given, narrows `changed_roles` per tool to the roles
+    whose row moved in a cell that applies to that tool (_changed_roles_by_tool()); without it every
+    tool follows `changed_roles`.
+
+    A Copilot target next to which `<name>.md` stands counts as present, like an existing target:
+    init.py leaves it alone and that is no failure.
 
     A role in `returning_roles` (the scope that cut it ended, docs/ai/config.md § Scope) gets its missing
     bridges back: the scope removed them, so being absent says nothing about the project — the `known`
@@ -1926,8 +1970,23 @@ def step_new_role_bridges(
     had_failure = False
 
     def _role_of(dest_rel: str) -> str:
-        stem = Path(dest_rel).stem
-        return stem[: -len("-high")] if dest_rel in variant_targets else stem
+        return _role_of_dest(new_init, dest_rel, dest_rel in variant_targets)
+
+    def _tool_of(dest_rel: str) -> str:
+        return new_init.bridge_target_parts(dest_rel)[0]
+
+    def _changed(tool: str, role: str) -> bool:
+        return role in (changed_roles if changed_by_tool is None else changed_by_tool.get(tool, frozenset()))
+
+    def _present(dest_rel: str) -> bool:
+        """The target exists, or (Copilot) the project's own `<name>.md` stands next to it."""
+        dest = root / dest_rel
+        if dest.is_file():
+            return True
+        suffix = new_init.tiers.COPILOT_AGENT_SUFFIX
+        if _tool_of(dest_rel) != "copilot" or not dest.name.endswith(suffix):
+            return False
+        return dest.with_name(dest.name[: -len(suffix)] + ".md").is_file()
 
     # Precompute which missing bridges need the git-history fallback, then ask once
     # for the whole batch rather than once per file inside the loop below — the loop's own
@@ -1935,8 +1994,9 @@ def step_new_role_bridges(
     # since none of it depends on state the loop itself mutates.
     _needs_git_check = [
         dest_rel for dest_rel in sorted(targets)
-        if not (root / dest_rel).is_file()
-        and not (force_all or _role_of(dest_rel) in changed_roles or _role_of(dest_rel) in returning_roles)
+        if not _present(dest_rel)
+        and not (_tool_of(dest_rel) in force_tools or _changed(_tool_of(dest_rel), _role_of(dest_rel))
+                 or _role_of(dest_rel) in returning_roles)
         and dest_rel not in removed_by_user and dest_rel not in known
     ]
     _history_hits = _paths_in_git_history(root, _needs_git_check)
@@ -1945,8 +2005,8 @@ def step_new_role_bridges(
         dest_path = root / dest_rel
         role = _role_of(dest_rel)
         variant = dest_rel in variant_targets
-        follows_value = force_all or role in changed_roles
-        if dest_path.is_file():
+        follows_value = _tool_of(dest_rel) in force_tools or _changed(_tool_of(dest_rel), role)
+        if _present(dest_rel):
             # An existing bridge is never re-created, edited or not: the only part of it that hangs
             # on the role's value is the `model`/`effort` pair, which step_refresh_role_frontmatter()
             # and every session start re-derive in place — a project's own text in it survives
@@ -1983,44 +2043,47 @@ def step_new_role_bridges(
     # (`high-variant:` absent — checked for every role, changed or not), or the role's new value
     # rules it out (e.g. the role moved to tier "expert", or to the top reasoning step — changed
     # roles only).
-    changed = {_role_of(rel) for rel in targets} if force_all else set(changed_roles)
-    undeclared: set[str] = set()
     undeclared_removed: list[str] = []
-    for base_rel, base_src in base_targets.items():
-        try:
-            base_fields, _body, _order = new_init.tiers.split_frontmatter(base_src.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            continue
-        if not new_init.bridge_wants_variant(root, base_src, base_fields):
-            changed.add(Path(base_rel).stem)
-            undeclared.add(Path(base_rel).stem)
-    for role in sorted(changed):
-        dest_rel = f".claude/agents/{role}-high.md"
-        dest_path = root / dest_rel
-        if dest_rel in targets or not dest_path.is_file():
-            continue
-        try:
-            fields, _body, _order = new_init.tiers.split_frontmatter(dest_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            continue
-        if fields.get("variant-of") != role:
-            continue  # a project's own "...-high" role, not a generated variant
-        source_path = base_targets.get(f".claude/agents/{role}.md")
-        edited = _bridge_edited(new_init, root, dest_path, role, source_path, True, tiers_data, reference_overrides)
-        if edited and not _backup_file(backup_dir, dest_rel, dest_path):
-            kept_failed.append(dest_rel)
-            had_failure = True
-            continue
-        try:
-            dest_path.unlink()
-        except OSError:
-            continue
-        dropped.append(dest_rel)
-        touched.append(dest_path)
-        if edited:
-            reset.append(dest_rel)
-            if role in undeclared:
-                undeclared_removed.append(dest_rel)
+    for tool in (t for t in ROLE_TOOLS if t in tools):
+        tool_bases = {rel: src for rel, src in base_targets.items() if _tool_of(rel) == tool}
+        changed = {_role_of(rel) for rel in targets if _tool_of(rel) == tool} if tool in force_tools \
+            else {r for r in changed_roles if _changed(tool, r)}
+        undeclared: set[str] = set()
+        for base_rel, base_src in tool_bases.items():
+            try:
+                base_fields, _body, _order = new_init.tiers.split_frontmatter(base_src.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            if not new_init.bridge_wants_variant(root, base_src, base_fields):
+                changed.add(_role_of(base_rel))
+                undeclared.add(_role_of(base_rel))
+        for role in sorted(changed):
+            dest_rel = _bridge_dest(new_init, tool, role, True)
+            dest_path = root / dest_rel
+            if dest_rel in targets or not dest_path.is_file():
+                continue
+            try:
+                fields, _body, _order = new_init.tiers.split_frontmatter(dest_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+            if fields.get("variant-of") != role:
+                continue  # a project's own "...-high" role, not a generated variant
+            source_path = tool_bases.get(_bridge_dest(new_init, tool, role, False))
+            edited = _bridge_edited(new_init, root, dest_path, role, source_path, True, tiers_data, reference_overrides)
+            if edited and not _backup_file(backup_dir, dest_rel, dest_path):
+                kept_failed.append(dest_rel)
+                had_failure = True
+                continue
+            try:
+                dest_path.unlink()
+            except OSError:
+                continue
+            dropped.append(dest_rel)
+            touched.append(dest_path)
+            if edited:
+                reset.append(dest_rel)
+                if role in undeclared:
+                    undeclared_removed.append(dest_rel)
 
     if sorted(set(removed_by_user)) != sorted(set(lock.get("removed_by_user", []))):
         # written only when it changed ("nothing to change" must leave the lock untouched)
@@ -2050,36 +2113,43 @@ def step_new_role_bridges(
 
 def _remove_role_bridges(
     new_init, root: Path, old_tools: list[str], old_roles: dict, brief: bool,
+    left: tuple[str, ...] = ("claude-code",),
 ) -> tuple[Optional[str], list[Path]]:
-    """`claude-code` left `tools` (Offen 1, decided 2026-09-24): its role bridges go the way of its
-    skill copies — every bridge the old `tools` value targeted is removed if unedited
-    (_bridge_edited against the Roles table it was generated from), and left in place and reported
-    if edited. Returns (summary part or None, removed paths)."""
+    """A tool in `left` (`claude-code` or `copilot`) left `tools` (decided 2026-09-24): its role
+    bridges go the way of its skill copies — every bridge of that tool the old `tools` value targeted
+    is removed if unedited (_bridge_edited against the Roles table it was generated from), and left in
+    place and reported if edited. The other tool's role files are not looked at. Returns (summary part
+    or None, removed paths)."""
     base_targets, variant_targets = _role_bridge_targets(new_init, root, old_tools)
     tiers_data = new_init.tiers.load_tiers(root)
-    removed, kept = [], []
+    removed: dict[str, list[str]] = {tool: [] for tool in left}
+    kept: dict[str, list[str]] = {tool: [] for tool in left}
     removed_paths: list[Path] = []
     for dest_rel, source_path in sorted({**base_targets, **variant_targets}.items()):
+        tool = new_init.bridge_target_parts(dest_rel)[0]
+        if tool not in left:
+            continue
         dest_path = root / dest_rel
         if not dest_path.is_file():
             continue
         variant = dest_rel in variant_targets
-        role = Path(dest_rel).stem[: -len("-high")] if variant else Path(dest_rel).stem
+        role = _role_of_dest(new_init, dest_rel, variant)
         if _bridge_edited(new_init, root, dest_path, role, source_path, variant, tiers_data, old_roles):
-            kept.append(dest_rel)
+            kept[tool].append(dest_rel)
             continue
         try:
             dest_path.unlink()
         except OSError:
-            kept.append(dest_rel)
+            kept[tool].append(dest_rel)
             continue
-        removed.append(dest_rel)
+        removed[tool].append(dest_rel)
         removed_paths.append(dest_path)
     parts = []
-    if removed:
-        parts.append(_list_part("claude-code left tools, removed", removed, brief))
-    if kept:
-        parts.append(_list_part("claude-code left tools, kept (edited)", kept, brief))
+    for tool in left:
+        if removed[tool]:
+            parts.append(_list_part(f"{tool} left tools, removed", removed[tool], brief))
+        if kept[tool]:
+            parts.append(_list_part(f"{tool} left tools, kept (edited)", kept[tool], brief))
     return ("; ".join(parts) or None), removed_paths
 
 
@@ -2088,8 +2158,8 @@ def _remove_cut_role_bridges(
     known: frozenset[str] = frozenset(),
 ) -> tuple[Optional[str], list[Path]]:
     """The scope (§ Scope: `profile`, `exclude`) now cuts these template roles: their bridges and
-    "-high" variants under .claude/agents/ are removed if unedited (_bridge_edited against the Roles
-    table they were generated from), left in place and reported if edited. A project's own role is
+    "-high" variants under .claude/agents/ and .github/agents/ are removed if unedited (_bridge_edited
+    against the Roles table they were generated from), left in place and reported if edited. A project's own role is
     never in `roles`. A bridge of these roles that is already missing was deleted by the project (it is in
     `known`, the snapshot's list of bridges that existed, or was committed once): it is entered in
     removed_by_user, so it stays deleted when the scope ends and the role returns. Returns (summary
@@ -2101,7 +2171,7 @@ def _remove_cut_role_bridges(
     removed_paths: list[Path] = []
     for dest_rel, source_path in sorted({**base_targets, **variant_targets}.items()):
         variant = dest_rel in variant_targets
-        role = Path(dest_rel).stem[: -len("-high")] if variant else Path(dest_rel).stem
+        role = _role_of_dest(new_init, dest_rel, variant)
         dest_path = root / dest_rel
         if role not in roles:
             continue
@@ -2259,7 +2329,9 @@ def _valid_snapshot(last: Optional[dict]) -> bool:
     return (
         isinstance(tools, list) and all(isinstance(t, str) for t in tools)
         and isinstance(roles, dict)
-        and all(isinstance(entry, dict) and all(isinstance(v, str) for v in entry.values()) for entry in roles.values())
+        and all(isinstance(entry, dict) and all(
+            isinstance(v, str) or (isinstance(v, list) and all(isinstance(item, str) for item in v))
+            for v in entry.values()) for entry in roles.values())
     )
 
 
@@ -2302,6 +2374,32 @@ def _sync_note_once(problem: Optional[str]) -> None:
         print(f"[act] note: {problem} -- skill copies, CLAUDE.md and role bridges left untouched until it is fixed")
 
 
+def _changed_roles_by_tool(old_roles: dict, new_roles: dict) -> dict[str, frozenset[str]]:
+    """Per role tool: the roles whose row moved in a cell that applies to that tool (tiers.TOOL_ROLE_CELLS)."""
+    result: dict[str, frozenset[str]] = {}
+    for tool, cells in tiers.TOOL_ROLE_CELLS.items():
+        result[tool] = frozenset(
+            role for role in set(old_roles) | set(new_roles)
+            if any((old_roles.get(role) or {}).get(c) != (new_roles.get(role) or {}).get(c) for c in cells)
+        )
+    return result
+
+
+def _changed_roles(old_roles: dict, new_roles: dict, tools: set[str]) -> frozenset[str]:
+    """The roles whose row moved in a cell that matters to the project: `tier`/`reasoning` (they also
+    set a skill copy's reasoning field) or a cell of a role tool in `tools` (old or new)."""
+    by_tool = _changed_roles_by_tool(old_roles, new_roles)
+    moved: set[str] = set()
+    for role in set(old_roles) | set(new_roles):
+        if any((old_roles.get(role) or {}).get(c) != (new_roles.get(role) or {}).get(c)
+               for c in ("tier", "reasoning")):
+            moved.add(role)
+    for tool in ROLE_TOOLS:
+        if tool in tools:
+            moved |= by_tool[tool]
+    return frozenset(moved)
+
+
 def _compare_snapshot(root: Path) -> dict:
     """Current values against .act-lock.json § applied, without writing anything. {"problem": ...}
     when `tools` cannot be used (_read_tools); otherwise the values plus what moved."""
@@ -2323,10 +2421,8 @@ def _compare_snapshot(root: Path) -> dict:
         "cut_roles_out": frozenset(set(current["cut"]["roles"]) - set(old_cut["roles"])),
         "cut_roles_back": frozenset(set(old_cut["roles"]) - set(current["cut"]["roles"])),
         "tools_moved": old_tools != current["tools"],
-        "changed_roles": frozenset(
-            role for role in set(old_roles) | set(current["roles"])
-            if old_roles.get(role) != current["roles"].get(role)
-        ),
+        "changed_roles": _changed_roles(old_roles, current["roles"], set(old_tools) | set(current["tools"])),
+        "changed_by_tool": _changed_roles_by_tool(old_roles, current["roles"]),
     }
 
 
@@ -2375,8 +2471,9 @@ def sync_dependent_files(
     own skills included); what it no longer targets is removed by step_refresh_copies()'s "no
     longer shipped" case (kept if edited). A changed role row touches only that role's bridges.
     `tools` touches the files that hang on a tool themselves: CLAUDE.md and the hook entries
-    in .claude/settings.json (_sync_tool_bridges) and — via `claude-code` — every role bridge
-    (all restored when it joins, unedited ones removed when it leaves, _remove_role_bridges).
+    in .claude/settings.json (_sync_tool_bridges) and — via `claude-code` and `copilot`, each for its
+    own folder (.claude/agents, .github/agents) — every role bridge (all restored when the tool
+    joins, unedited ones removed when it leaves, _remove_role_bridges).
 
     The comparison runs against .act-lock.json § applied (versioned, so a branch switch is no
     value change). `always_run=True`: both steps always run, as update.py's own job (template-side
@@ -2408,8 +2505,8 @@ def sync_dependent_files(
     old_tools, old_roles = state["old_tools"], state["old_roles"]
     tools_moved, changed_roles = state["tools_moved"], state["changed_roles"]
     cut_moved = state["cut_moved"]
-    claude_joined = "claude-code" in current["tools"] and "claude-code" not in old_tools
-    claude_left = "claude-code" in old_tools and "claude-code" not in current["tools"]
+    joined = frozenset(t for t in ROLE_TOOLS if t in current["tools"] and t not in old_tools)
+    left = tuple(t for t in ROLE_TOOLS if t in old_tools and t not in current["tools"])
     brief = not always_run
 
     if not always_run and (not state["has_snapshot"] or (not tools_moved and not changed_roles and not cut_moved)):
@@ -2449,8 +2546,8 @@ def sync_dependent_files(
         tool_parts, tool_touched = _sync_tool_bridges(new_init, root, old_tools, current["tools"])
         parts.extend(tool_parts)
         touched.extend(tool_touched)
-        if claude_left:
-            removed_summary, removed_paths = _remove_role_bridges(new_init, root, old_tools, old_roles, brief)
+        if left:
+            removed_summary, removed_paths = _remove_role_bridges(new_init, root, old_tools, old_roles, brief, left)
             if removed_summary:
                 parts.append(f"roles: {removed_summary}")
             touched.extend(removed_paths)
@@ -2459,7 +2556,7 @@ def sync_dependent_files(
     # committed once is otherwise read as "deleted by the project" (step_new_role_bridges, returning_roles),
     # while one the project really deleted stays deleted (removed_by_user).
     cut_roles = frozenset(current["cut"]["roles"])
-    if new_init is not None and "claude-code" in current["tools"]:
+    if new_init is not None and any(t in current["tools"] for t in ROLE_TOOLS):
         gone = state["cut_roles_out"] | (cut_roles if always_run and not state["has_snapshot"] else frozenset())
         if gone:
             cut_summary, cut_removed = _remove_cut_role_bridges(
@@ -2468,11 +2565,11 @@ def sync_dependent_files(
                 parts.append(f"roles: {cut_summary}")
             touched.extend(cut_removed)
     role_bridges_failed = False
-    if always_run or changed_roles or state["cut_roles_back"] or claude_joined:
+    if always_run or changed_roles or state["cut_roles_back"] or joined:
         role_summary, role_touched, roles_reset, role_bridges_failed = step_new_role_bridges(
-            root, False, notes, changed_roles=changed_roles, force_all=claude_joined,
+            root, False, notes, changed_roles=changed_roles, force_tools=joined,
             old_overrides=old_roles, known=state["known"], backup_dir=backup_dir, brief=brief,
-            returning_roles=state["cut_roles_back"],
+            returning_roles=state["cut_roles_back"], changed_by_tool=state["changed_by_tool"],
         )
         if not (brief and role_summary == "no new roles or variants"):
             parts.append(f"roles: {role_summary}")
@@ -2543,20 +2640,120 @@ def _add_omit_claude_md(root: Path, new_init, notes: Optional[list[str]] = None)
     return changed
 
 
+COPILOT_NO_MODEL_TITLE = "Copilot role files without a model"
+# .act-lock.json key: the files a question above was already filed for. A file is asked about once;
+# it leaves the list once it has a model line or is gone, so the same name coming back is asked again.
+COPILOT_NO_MODEL_LOCK_KEY = "copilot_files_without_model_reported"
+
+
+def _open_question_titled(root: Path, title: str) -> bool:
+    """Whether docs/ai/inbox/ already holds an open question with this heading."""
+    inbox = root / actlib.INBOX_DIR
+    if not inbox.is_dir():
+        return False
+    heading = re.compile(rf"^# {re.escape(title)}\s*$", re.MULTILINE)
+    for path in sorted(inbox.glob("*.md")):
+        try:
+            with open(path, "rb") as handle:
+                head = handle.read(4096).decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        if heading.search(head) and re.search(r"^kind:\s*question\s*$", head, re.MULTILINE) \
+                and re.search(r"^status:\s*open\s*$", head, re.MULTILINE):
+            return True
+    return False
+
+
+def _report_copilot_files_without_model(root: Path, new_init) -> Optional[Path]:
+    """Files one inbox question (docs/ai/inbox/, via entries.py) naming the files under .github/agents/
+    that carry a template role's name but no `model:`/`models:` line: they are the project's own and
+    every refresh leaves them as they are. For each file the question shows the lines the template
+    would set (the model list from the role's `Copilot` cell in docs/ai/config.md § Roles, else from
+    its tier) and offers to add them by hand or to leave the file. Not filed again while a question
+    with this heading is open, and never again for a file it was filed for once (COPILOT_NO_MODEL_LOCK_KEY
+    in .act-lock.json); the files are never changed. Returns the entry's path, None when nothing was
+    filed — best effort: a broken inbox write or lookup never fails the update."""
+    try:
+        found = new_init.tiers.copilot_files_without_model(root)
+        recorded = actlib.read_lock().get(COPILOT_NO_MODEL_LOCK_KEY)
+        recorded = [p for p in recorded if isinstance(p, str)] if isinstance(recorded, list) else []
+        reported = [p for p in recorded if p in found]
+        if reported != recorded:
+            actlib.write_lock({COPILOT_NO_MODEL_LOCK_KEY: reported})
+        paths = [p for p in found if p not in reported]
+        if not paths or _open_question_titled(root, COPILOT_NO_MODEL_TITLE):
+            return None
+        tiers_mod = new_init.tiers
+        tiers_data = tiers_mod.load_tiers(root)
+        overrides = tiers_mod.read_role_overrides(root)
+        roles = set(tiers_mod.role_bridge_names(root))
+        blocks: list[str] = []
+        for rel in paths:
+            name = new_init.bridge_target_parts(rel)[1]
+            variant = name not in roles
+            role = name[: -len("-high")] if variant else name
+            fields: dict = {}
+            bridge = root / ".act" / "bridges" / "agents" / f"{role}.md"
+            if bridge.is_file():
+                fields, _body, _order = tiers_mod.split_frontmatter(bridge.read_text(encoding="utf-8"))
+            models, effort, _problem, _tier, _reasoning = tiers_mod.effective_copilot_models(
+                root, role, fields.get("tier", ""), fields.get("reasoning", ""), tiers_data, overrides, variant,
+            )
+            if models:
+                lines = [
+                    f"model: {tiers_mod.frontmatter.quote_value(models[0])}",
+                    f"models: {json.dumps(models)}",
+                    "model-policy: preferred",
+                ]
+                if effort:
+                    lines.append(f"reasoning-effort: {effort}")
+            else:
+                lines = ["(no model list resolves for this role: the tier table and the Copilot column of "
+                         "docs/ai/config.md § Roles name none)"]
+            blocks.append(f"- `{rel}`\n\n  ```\n" + "\n".join(f"  {line}" for line in lines) + "\n  ```\n")
+        body = (
+            "These role files under `.github/agents/` carry the name of a template role but have no `model:` or "
+            "`models:` line. They are treated as your own files: an update never changes them, and the role runs "
+            "on the model of the session. The lines the template would set for each one:\n\n"
+            + "\n".join(blocks) + "\n"
+            "- **a)** **Recommended:** Add these lines to each file by hand, inside the frontmatter. Every later "
+            "update then keeps them current from the tier table and the Copilot column of § Roles in "
+            "`docs/ai/config.md`. One edit per file.\n\n"
+            "- **b)** Leave the files as they are. The role runs on the model of the session; a later update "
+            "asks again only about a file not named here. No effort.\n"
+        )
+        path, _entry_id = entries.create_entry(
+            root, "question", COPILOT_NO_MODEL_TITLE, status="open", body=body, answer_block=True,
+        )
+        actlib.write_lock({COPILOT_NO_MODEL_LOCK_KEY: reported + paths})
+        return path
+    except Exception:
+        return None
+
+
 def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[str]] = None) -> tuple[str, list[Path]]:
     """Re-derives the `model`/`effort` frontmatter of every already-materialized role bridge (base
     and "-high" variant alike, template role or a project's own named in docs/ai/config.md §
     Roles) from the updated .act/tiers.json and that Roles table — the one part of a role bridge
-    that *does* change on every update, via tiers.py's refresh_project_bridge_frontmatter().
+    that *does* change on every update, via tiers.py's refresh_project_bridge_frontmatter(). With
+    the `copilot` tool configured the same is done for .github/agents/<role>.agent.md (`model`,
+    `models`, `reasoning-effort`), and a file there without any model line — the project's own
+    choice, never changed — becomes one inbox question (_report_copilot_files_without_model).
     Everything else in the file, including a project's own text below the frontmatter, is left
     exactly as it is (tiers.py's refresh_project_bridge_frontmatter() carries that guarantee, and
     also never lets a single unreadable/unwritable file abort this step — it is skipped with a note
     instead, so the update still completes even though `.act/` was already replaced by step 5).
     `notes`, if given, collects those messages. Returns (summary, touched_paths)."""
     if plan:
+        copilot_plan = ""
+        try:
+            if "copilot" in _project_tools(root):
+                copilot_plan = ", and the model lists of the Copilot agent files under .github/agents/"
+        except (OSError, ValueError):
+            pass
         return (
             "would refresh model/effort frontmatter on every existing role bridge from the "
-            "updated tiers table",
+            "updated tiers table" + copilot_plan,
             [],
         )
 
@@ -2565,6 +2762,10 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
         return "could not load tiers.py from the updated template; role bridge frontmatter left untouched", []
     try:
         changed = new_init.tiers.refresh_project_bridge_frontmatter(root, notes=notes)
+        copilot = "copilot" in _project_tools(root)
+        copilot_changed = (
+            new_init.tiers.refresh_project_bridge_frontmatter(root, tool="copilot", notes=notes) if copilot else []
+        )
     except (OSError, UnicodeDecodeError) as exc:
         # Belt and suspenders: refresh_project_bridge_frontmatter() already catches these per file
         # and never lets one bad file raise, but this step must not be able to abort the update
@@ -2573,10 +2774,18 @@ def step_refresh_role_frontmatter(root: Path, plan: bool, notes: Optional[list[s
             notes.append(f"role bridge frontmatter refresh failed ({exc.__class__.__name__}); left as it was")
         return "role bridge frontmatter refresh failed, left untouched", []
     omit_added = _add_omit_claude_md(root, new_init, notes)
-    touched = [root / rel for rel in dict.fromkeys([*changed, *omit_added])]
-    summary = f"refreshed {len(changed)} role bridge(s)" if changed else "no role bridge frontmatter changes"
+    question = _report_copilot_files_without_model(root, new_init) if copilot else None
+    touched = [root / rel for rel in dict.fromkeys([*changed, *copilot_changed, *omit_added])]
+    if question is not None:
+        touched.append(question)
+    total = len(changed) + len(copilot_changed)
+    summary = f"refreshed {total} role bridge(s)" if total else "no role bridge frontmatter changes"
+    if copilot_changed:
+        summary += f" ({len(copilot_changed)} in {new_init.COPILOT_AGENTS_DIR})"
     if omit_added:
         summary += f"; omitClaudeMd added to {len(omit_added)} role bridge(s)"
+    if question is not None:
+        summary += f"; inbox question filed: {COPILOT_NO_MODEL_TITLE}"
     return summary, touched
 
 

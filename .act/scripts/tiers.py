@@ -6,9 +6,12 @@
 #          .act/tiers.json (the template's tier -> model table) and docs/ai/config.md's
 #          "## Roles" table (a project's own override; a filled-in model there wins over the tier
 #          lookup entirely). Used by init.py/update.py when materializing/refreshing
-#          .claude/agents/<name>.md (and its "-high" variant) and by .act/hooks/dispatch.py's session-start-refresh, which re-derives only the
-#          `model`/`effort` frontmatter fields of an already-existing bridge -- everything else in
-#          that file, including a project's own text below the frontmatter, is left untouched.
+#          .claude/agents/<name>.md (and its "-high" variant) -- and, with the `copilot` tool,
+#          .github/agents/<name>.agent.md with a model priority list -- and by
+#          .act/hooks/dispatch.py's session-start-refresh, which re-derives only the
+#          `model`/`effort` frontmatter fields (Copilot: `model`/`models`/`reasoning-effort`) of an
+#          already-existing bridge -- everything else in that file, including a project's own text
+#          below the frontmatter, is left untouched.
 #
 # Usage: not run directly -- imported (`import tiers`) the same way actlib.py is, from a script in
 #        .act/scripts/ or .act/hooks/ (both add their own directory to sys.path automatically).
@@ -21,7 +24,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import actlib
 import frontmatter
@@ -99,6 +102,95 @@ def render_generated_bridge(bridge_text: str, model: str, effort: Optional[str])
     return render_frontmatter(new_fields, new_order, body)
 
 
+# Claude Code tool names of a role bridge -> the tool aliases a Copilot agent file takes (compared
+# without regard to case); a name not listed here is written unchanged.
+_COPILOT_TOOL_ALIASES: dict[str, str] = {
+    "bash": "execute", "shell": "execute", "powershell": "execute",
+    "read": "read", "notebookread": "read",
+    "edit": "edit", "multiedit": "edit", "write": "edit", "notebookedit": "edit",
+    "grep": "search", "glob": "search",
+    "task": "agent",
+    "websearch": "web", "webfetch": "web",
+    "todowrite": "todo",
+}
+
+COPILOT_AGENT_SUFFIX = ".agent.md"
+
+
+def copilot_tool_names(value: str) -> list[str]:
+    """The `tools` value of a role bridge (a comma list, a `[a, b]` flow list or a `- a` block list
+    folded to one line by the frontmatter parser) as Copilot tool aliases: each name mapped through
+    the alias table, in the order of first appearance, without duplicates; an unknown name stays."""
+    text = value.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if re.match(r"^-\s", text) or re.search(r"\s-\s", text):
+        parts = [piece for piece in re.split(r"(?:^|\s)-\s+", text) if piece.strip()]
+    else:
+        parts = text.split(",")
+    names: list[str] = []
+    for part in parts:
+        name = part.strip().strip("'\"").strip()
+        if not name:
+            continue
+        mapped = _COPILOT_TOOL_ALIASES.get(name.lower(), name)
+        if mapped not in names:
+            names.append(mapped)
+    return names
+
+
+def render_generated_copilot_bridge(
+    bridge_text: str, models: list[str], effort: Optional[str], variant_of: Optional[str] = None,
+) -> str:
+    """Build a .github/agents/<name>.agent.md's initial content from a role bridge (a template one
+    under .act/bridges/agents/ or a project's own role file): the bridge's frontmatter keys in their
+    order, `tier` becoming `model` (the first of `models`), `models` and `model-policy: preferred`,
+    `reasoning` becoming `reasoning-effort` (left out when `effort` is falsy), `tools` mapped to
+    Copilot's aliases and followed by `strict-tools-list: true` (no `tools` in the bridge: neither),
+    `include-custom-instructions: true` last; every other key of the bridge (`effort`, `omitClaudeMd`,
+    `model`, ...) is dropped. With no `models` (a bridge without `tier` and no Copilot cell) the
+    model keys and `reasoning-effort` are left out. `variant_of` (a role name) makes the file that
+    role's "-high" variant: `name` becomes `<role>-high`, `variant-of: <role>` follows it and the
+    description is reworded. The body below the frontmatter is copied verbatim."""
+    fields, body, order = split_frontmatter(bridge_text)
+    model_lines: list[str] = []
+    if models:
+        model_lines = [
+            f"model: {frontmatter.quote_value(models[0])}",
+            f"models: {json.dumps(models)}",
+            "model-policy: preferred",
+        ]
+        if effort:
+            model_lines.append(f"reasoning-effort: {effort}")
+    # the model block sits where `tier` stood; a bridge without one gets it after its description
+    anchor = "tier" if "tier" in order else next((k for k in ("description", "name") if k in order), "")
+    lines = ["---"]
+    emitted = False
+    for key in order:
+        if key not in fields:
+            continue
+        if key == "name":
+            value = f"{variant_of}-high" if variant_of else fields[key]
+            lines.append(f"name: {frontmatter.quote_value(value)}")
+            if variant_of:
+                lines.append(f"variant-of: {variant_of}")
+        elif key == "description":
+            value = (f"Same as {variant_of}, one reasoning step higher - use only when named explicitly."
+                     if variant_of else fields[key])
+            lines.append(f"description: {frontmatter.quote_value(value)}")
+        elif key == "tools":
+            lines.append(f"tools: {json.dumps(copilot_tool_names(fields[key]))}")
+            lines.append("strict-tools-list: true")
+        if key == anchor and not emitted:
+            lines.extend(model_lines)
+            emitted = True
+    if not emitted:
+        lines.extend(model_lines)
+    lines.append("include-custom-instructions: true")
+    lines.append("---")
+    return "\n".join(lines) + "\n" + body
+
+
 # ---------------------------------------------------------------------------
 # .act/tiers.json
 # ---------------------------------------------------------------------------
@@ -126,6 +218,58 @@ def bump(scale: list[str], value: str, steps: int = 1) -> str:
     return scale[index]
 
 
+# A tool whose table moved to a new name: a lookup for the key finds the table under the old name
+# when the new one is missing (a project's own .act/tiers.json from before the rename).
+_TOOL_TABLE_FALLBACKS: dict[str, str] = {"copilot": "copilot-cli"}
+
+
+def tool_table(tiers_data: dict, tool: str) -> Optional[dict]:
+    """The table of `tool` in `tiers_data`, or None when there is none. For `copilot` an entry
+    named `copilot-cli` answers when `copilot` is missing. Every reader of the table goes through
+    here."""
+    data = tiers_data.get(tool)
+    if data is None and tool in _TOOL_TABLE_FALLBACKS:
+        data = tiers_data.get(_TOOL_TABLE_FALLBACKS[tool])
+    return data if isinstance(data, dict) else None
+
+
+def tier_models(entry: dict) -> list[str]:
+    """The model list of one tier entry: its `models` (a priority list, first available wins) or
+    else its single `model`; empty when it has neither."""
+    models = entry.get("models")
+    if isinstance(models, list):
+        listed = [str(m) for m in models if str(m).strip()]
+        if listed:
+            return listed
+    model = entry.get("model")
+    return [str(model)] if model else []
+
+
+def resolve_tier_models(
+    tiers_data: dict, tool: str, tier: str, reasoning: str
+) -> tuple[list[str], Optional[str], Optional[str]]:
+    """Like resolve_tier(), but with the tier's whole model list (`models`, else `[model]`):
+    ([model, ...], effort_or_None, problem_or_None); the list is empty whenever `problem` is set
+    and for the silent cases named at resolve_tier()."""
+    tool_data = tool_table(tiers_data, tool)
+    if tool_data is None:
+        return [], None, ("tool" if tiers_data else None)
+    tiers_table = tool_data.get("tiers") or {}
+    entry = tiers_table.get(tier)
+    if not entry:
+        return [], None, ("tier" if tiers_table else None)
+    models = tier_models(entry)
+    scale = tool_data.get("reasoning_scale") or []
+    if reasoning and reasoning != "none" and scale and reasoning not in scale:
+        return [], None, "reasoning"
+    value = reasoning if reasoning in scale else (scale[0] if scale else reasoning)
+    if entry.get("bump_reasoning"):
+        value = bump(scale, value, 1)
+    if not value or value == "none":
+        return models, None, None
+    return models, value, None
+
+
 def resolve_tier(
     tiers_data: dict, tool: str, tier: str, reasoning: str
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -142,23 +286,8 @@ def resolve_tier(
     - "reasoning": `tier` resolved fine, but `reasoning` is non-empty, not "none", and not one of
       the tool's `reasoning_scale` values -- previously this silently fell back to the scale's
       first entry instead of being reported, which is the bug this case exists to prevent."""
-    tool_data = tiers_data.get(tool)
-    if tool_data is None:
-        return None, None, ("tool" if tiers_data else None)
-    tiers_table = tool_data.get("tiers") or {}
-    entry = tiers_table.get(tier)
-    if not entry:
-        return None, None, ("tier" if tiers_table else None)
-    model = entry.get("model")
-    scale = tool_data.get("reasoning_scale") or []
-    if reasoning and reasoning != "none" and scale and reasoning not in scale:
-        return None, None, "reasoning"
-    value = reasoning if reasoning in scale else (scale[0] if scale else reasoning)
-    if entry.get("bump_reasoning"):
-        value = bump(scale, value, 1)
-    if not value or value == "none":
-        return model, None, None
-    return model, value, None
+    models, effort, problem = resolve_tier_models(tiers_data, tool, tier, reasoning)
+    return (models[0] if models else None), effort, problem
 
 
 # ---------------------------------------------------------------------------
@@ -166,12 +295,19 @@ def resolve_tier(
 # ---------------------------------------------------------------------------
 
 _MODEL_VALUE_RE = re.compile(r"^[A-Za-z0-9._:\[\]=-]+$")
+# one entry of the Roles table's Copilot cell: the same shape plus "/" (a provider/id of a BYOK model)
+_COPILOT_MODEL_RE = re.compile(r"^[A-Za-z0-9._:/\[\]=-]+$")
 ROLES_MARK_RE = re.compile(r"^<!--\s*act:roles\s*-->$")
 
 
-def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[str, dict[str, str]]:
+def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[str, dict[str, Any]]:
     """Parse the "## Roles" table in docs/ai/config.md: role name (backticks stripped) ->
-    {"tier": ..., "reasoning": ..., "model": ...} for whichever of the three cells is non-empty.
+    {"tier": ..., "reasoning": ..., "model": ..., "copilot": [...]} for whichever of the cells is
+    non-empty. The optional fifth cell (`Copilot`) is a comma-separated priority list of Copilot
+    model IDs, result key `copilot` (a list of strings): each entry loses its backticks and
+    whitespace, empty entries fall away, and every entry must match `[A-Za-z0-9._:/\\[\\]=-]+`
+    (a provider/id of a BYOK model too) or the whole cell is rejected with a note, like `model`.
+    A table with four columns stays valid.
     A role not mentioned there at all is simply absent from the result. Robust against a missing
     file or an empty/header-only table -- returns {} rather than raising.
 
@@ -192,7 +328,7 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
     # (R-work-language); the English heading remains the fallback for a config.md without the mark.
     # The table's header row is skipped by shape (a separator row follows it), never by its words.
     in_roles = False
-    result: dict[str, dict[str, str]] = {}
+    result: dict[str, dict[str, Any]] = {}
     for index, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("## "):
@@ -209,7 +345,7 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
         role = cells[0].strip("`").strip()
         if not role or set(role) <= {"-", ":"} or actlib._is_header_row(lines, index):
             continue
-        entry: dict[str, str] = {}
+        entry: dict[str, Any] = {}
         if cells[1].strip("`").strip():
             entry["tier"] = cells[1].strip("`").strip()
         if cells[2].strip("`").strip():
@@ -223,6 +359,17 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
                     f"docs/ai/config.md § Roles: model value for '{role}' rejected "
                     f"(unexpected characters), not applied: {raw_model!r}"
                 )
+        if len(cells) > 4:
+            listed = [part.strip().strip("`").strip() for part in cells[4].split(",")]
+            listed = [part for part in listed if part]
+            if listed:
+                if all(_COPILOT_MODEL_RE.match(part) for part in listed):
+                    entry["copilot"] = listed
+                elif notes is not None:
+                    notes.append(
+                        f"docs/ai/config.md § Roles: Copilot models for '{role}' rejected "
+                        f"(unexpected characters), not applied: {cells[4]!r}"
+                    )
         if entry:
             result[role] = entry
     return result
@@ -234,7 +381,7 @@ def read_role_overrides(root: Path, notes: Optional[list[str]] = None) -> dict[s
 
 def effective_model_effort(
     root: Path, role: str, template_tier: str, template_reasoning: str,
-    tiers_data: dict, overrides: dict[str, dict[str, str]], tool: str = "claude-code",
+    tiers_data: dict, overrides: dict[str, dict[str, Any]], tool: str = "claude-code",
     bump_variant: bool = False,
 ) -> tuple[Optional[str], Optional[str], Optional[str], str, str]:
     """Resolve one role's `model`/`effort`/`problem`, override-first (docs/ai/config.md § Roles): a
@@ -251,9 +398,15 @@ def effective_model_effort(
     the override's own value where one was given, the template's otherwise, after any
     `bump_variant` step -- so a caller building a `describe_unresolved_tier()` message reports the
     value that actually caused `problem`, not just the template's default (which may itself be
-    perfectly valid, e.g. an override that only replaces `reasoning` with a typo)."""
-    del root
-    scale = (tiers_data.get(tool) or {}).get("reasoning_scale") or []
+    perfectly valid, e.g. an override that only replaces `reasoning` with a typo).
+
+    For `tool="copilot"` the `model` cell does not apply (it is Claude Code's); the result is the
+    first of effective_copilot_models()'s list."""
+    if tool == "copilot":
+        models, effort, problem, tier, reasoning = effective_copilot_models(
+            root, role, template_tier, template_reasoning, tiers_data, overrides, bump_variant)
+        return (models[0] if models else None), effort, problem, tier, reasoning
+    scale = (tool_table(tiers_data, tool) or {}).get("reasoning_scale") or []
     override = overrides.get(role, {})
 
     if "model" in override:
@@ -269,6 +422,32 @@ def effective_model_effort(
         reasoning = bump(scale, reasoning, 1)
     model, effort, problem = resolve_tier(tiers_data, tool, tier, reasoning)
     return model, effort, problem, tier, reasoning
+
+
+def effective_copilot_models(
+    root: Path, role: str, template_tier: str, template_reasoning: str,
+    tiers_data: dict, overrides: dict[str, dict[str, Any]], bump_variant: bool = False,
+) -> tuple[list[str], Optional[str], Optional[str], str, str]:
+    """Like effective_model_effort() for the `copilot` tool, with a model priority list instead of one
+    model: (models, effort, problem, effective_tier, effective_reasoning). A filled `Copilot` cell
+    of the role's row in docs/ai/config.md § Roles wins outright over the tier lookup (`problem` is
+    then None); its `reasoning` still falls back to the template's value. Without it
+    `tier`/`reasoning` go through resolve_tier_models(); a tier with only a single `model` gives
+    `[model]`. The `model` cell is Claude Code's and is ignored here. `bump_variant` bumps the
+    reasoning one step further, for the role's "-high" file."""
+    del root
+    scale = (tool_table(tiers_data, "copilot") or {}).get("reasoning_scale") or []
+    override = overrides.get(role, {})
+    tier = override.get("tier", template_tier)
+    reasoning = override.get("reasoning", template_reasoning)
+    if bump_variant:
+        reasoning = bump(scale, reasoning, 1)
+    listed = override.get("copilot")
+    if listed:
+        effort = reasoning if reasoning and reasoning != "none" else None
+        return list(listed), effort, None, tier, reasoning
+    models, effort, problem = resolve_tier_models(tiers_data, "copilot", tier, reasoning)
+    return models, effort, problem, tier, reasoning
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +530,132 @@ def _apply_resolved_fields(text: str, model: str, effort: Optional[str]) -> Opti
     return new_text if new_text != text else None
 
 
+_COPILOT_MODEL_LINE_RE = re.compile(r"^model:\s*")
+_COPILOT_MODELS_LINE_RE = re.compile(r"^models:\s*")
+_COPILOT_EFFORT_LINE_RE = re.compile(r"^reasoning-effort:\s*")
+
+
+# The cells of a Roles row that apply to each tool's bridges: `tier` and `reasoning` to both, the fixed
+# `model` to Claude Code only, the `Copilot` model list to Copilot only.
+TOOL_ROLE_CELLS: dict[str, tuple[str, ...]] = {
+    "claude-code": ("tier", "reasoning", "model"),
+    "copilot": ("tier", "reasoning", "copilot"),
+}
+
+
+def _is_continuation(line: str) -> bool:
+    """Whether a frontmatter line continues the key line before it: indented, or a `- ` list item."""
+    return line.startswith((" ", "\t", "- ")) or line.rstrip("\r\n") == "-"
+
+
+def _apply_resolved_copilot_fields(
+    text: str, models: list[str], effort: Optional[str], insert_missing: bool = False,
+) -> Optional[str]:
+    """The Copilot counterpart of _apply_resolved_fields(): rewrite only the `model:`, `models:` and
+    `reasoning-effort:` lines of an already-frontmattered .agent.md text (`model` = the first of
+    `models`, `models` a JSON-style list), every other line byte for byte with its own line
+    terminator. The continuation lines of a replaced key (indented or `- ` lines, e.g. the items of a
+    block list) go with it. A missing line of the three is inserted before the closing `---` (in
+    that order), a `reasoning-effort:` line goes away when `effort` is falsy. A file with neither a
+    `model:` nor a `models:` line is the project's own choice of model and returns None, like a file
+    with no frontmatter fence or a result byte-identical to `text` -- unless `insert_missing` is
+    set: then `model:`, `models:`, `model-policy: preferred` and `reasoning-effort:` (when `effort`)
+    are inserted before the closing `---`."""
+    if not models:
+        return None
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    close_index = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"), None)
+    if close_index is None:
+        return None
+    eol = lines[0][len(lines[0].rstrip("\r\n")):] or "\n"
+    block = [line.rstrip("\r\n") for line in lines[1:close_index]]
+    if not any(_COPILOT_MODEL_LINE_RE.match(b) or _COPILOT_MODELS_LINE_RE.match(b) for b in block):
+        if not insert_missing:
+            return None
+        added = [f"model: {frontmatter.quote_value(models[0])}", f"models: {json.dumps(models)}",
+                 "model-policy: preferred"]
+        if effort:
+            added.append(f"reasoning-effort: {effort}")
+        inserted = "".join(lines[:close_index] + [f"{line}{eol}" for line in added] + lines[close_index:])
+        return inserted if inserted != text else None
+    wanted = {
+        "model": f"model: {frontmatter.quote_value(models[0])}",
+        "models": f"models: {json.dumps(models)}",
+        "effort": f"reasoning-effort: {effort}" if effort else "",
+    }
+    seen: set[str] = set()
+    new_block: list[str] = []
+    replacing = False  # the previous line was one of the three keys: its continuation lines go too
+    for line in lines[1:close_index]:
+        stripped = line.rstrip("\r\n")
+        line_eol = line[len(stripped):]
+        if replacing and _is_continuation(line):
+            continue
+        replacing = False
+        for kind, pattern in (("model", _COPILOT_MODEL_LINE_RE), ("models", _COPILOT_MODELS_LINE_RE),
+                              ("effort", _COPILOT_EFFORT_LINE_RE)):
+            if pattern.match(stripped):
+                seen.add(kind)
+                replacing = True
+                if wanted[kind]:
+                    new_block.append(f"{wanted[kind]}{line_eol}")
+                break
+        else:
+            new_block.append(line)
+    for kind in ("model", "models", "effort"):
+        if kind not in seen and wanted[kind]:
+            new_block.append(f"{wanted[kind]}{eol}")
+    new_text = "".join(lines[:1] + new_block + lines[close_index:])
+    return new_text if new_text != text else None
+
+
+def _has_model_line(text: str) -> bool:
+    """Whether the frontmatter of `text` has a `model:` or a `models:` line."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return False
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return False
+        if _COPILOT_MODEL_LINE_RE.match(line) or _COPILOT_MODELS_LINE_RE.match(line):
+            return True
+    return False
+
+
+def copilot_files_without_model(root: Path) -> list[str]:
+    """The files under .github/agents/ that carry the name of a template role or of its "-high"
+    variant (`<name>.agent.md` or `<name>.md`) and have neither a `model:` nor a `models:` line:
+    paths relative to `root`, `/`-separated, sorted. They are the project's own files, never
+    changed by a refresh; update.py turns them into a question with a proposal. A file that cannot
+    be read is left out."""
+    agents_dir = root / ".github" / "agents"
+    if not agents_dir.is_dir():
+        return []
+    names = set(role_bridge_names(root))
+    names |= {f"{name}-high" for name in names}
+    found: list[str] = []
+    for path in sorted(agents_dir.iterdir()):
+        if not path.is_file():
+            continue
+        if path.name.endswith(COPILOT_AGENT_SUFFIX):
+            stem = path.name[: -len(COPILOT_AGENT_SUFFIX)]
+        elif path.name.endswith(".md"):
+            stem = path.name[: -len(".md")]
+        else:
+            continue
+        if stem not in names:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _has_model_line(text):
+            found.append(path.relative_to(root).as_posix())
+    return found
+
+
 def describe_unresolved_tier(role: str, tool: str, tier: str, reasoning: str, problem: str) -> str:
     """Human-readable `[act] note:` text for one of resolve_tier()'s reportable `problem` values."""
     if problem == "tool":
@@ -376,6 +681,12 @@ def refresh_project_bridge_frontmatter(
     list is given (deduplicated -- the same problem is reported once, not once per role that hits
     it) — the file is still left exactly as it is either way.
 
+    With `tool="copilot"` the same applies to .github/agents/*.agent.md and the lines `model:`,
+    `models:` and `reasoning-effort:` (see _apply_resolved_copilot_fields()): the models come from
+    the role's `Copilot` cell in docs/ai/config.md § Roles, else from the tier's list; a file with
+    neither a `model:` nor a `models:` line is the project's own and stays untouched
+    (copilot_files_without_model() names such files).
+
     Only a "-high" file the template itself generated as a bump of `base_role` -- marked with a
     `variant-of: <base_role>` frontmatter field at generation time, see init.py's
     write_agent_bridge_file() -- is treated as a variant here; a project's own role that merely
@@ -388,11 +699,13 @@ def refresh_project_bridge_frontmatter(
 
     With `apply=False` (dry run, used by dispatch.py's session-start-refresh under `warn`), nothing
     is written -- the returned list is what *would* change. Returns the list of
-    .claude/agents/<name>.md destinations (repo-root-relative, forward slashes) actually changed
-    (or that would be, under `apply=False`)."""
-    if tool != "claude-code":
+    .claude/agents/<name>.md (Copilot: .github/agents/<name>.agent.md) destinations
+    (repo-root-relative, forward slashes) actually changed (or that would be, under `apply=False`)."""
+    if tool not in ("claude-code", "copilot"):
         return []
-    agents_dest_dir = root / ".claude" / "agents"
+    copilot = tool == "copilot"
+    suffix = COPILOT_AGENT_SUFFIX if copilot else ".md"
+    agents_dest_dir = root / (".github" if copilot else ".claude") / "agents"
     if not agents_dest_dir.is_dir():
         return []
     bridges_dir = root / ".act" / "bridges" / "agents"
@@ -408,10 +721,10 @@ def refresh_project_bridge_frontmatter(
             notes.append(message)
 
     changed: list[str] = []
-    for dest in sorted(agents_dest_dir.glob("*.md")):
-        if dest.stem.lower() == "readme":
+    for dest in sorted(agents_dest_dir.glob(f"*{suffix}")):
+        stem = dest.name[: -len(suffix)]
+        if not stem or stem.lower() == "readme":
             continue
-        stem = dest.stem
         rel = dest.relative_to(root).as_posix()
 
         try:
@@ -432,25 +745,37 @@ def refresh_project_bridge_frontmatter(
                 _note(f"{template_roles[base_role].relative_to(root).as_posix()}: skipped, could not read "
                       f"({exc.__class__.__name__}); role '{base_role}' left as it is")
                 continue
-            if "tier" not in tmpl_fields:
+            if "tier" not in tmpl_fields and not (copilot and overrides.get(base_role, {}).get("copilot")):
                 continue  # older (or hand-authored) bridge with a fixed model already
             template_tier = tmpl_fields.get("tier", "")
             template_reasoning = tmpl_fields.get("reasoning", "")
-        elif base_role in overrides:
+        elif any(c in overrides.get(base_role, {}) for c in TOOL_ROLE_CELLS[tool]):
             template_tier, template_reasoning = "", ""
         else:
             continue  # nothing to resolve this role's fields from
 
-        model, effort, problem, eff_tier, eff_reasoning = effective_model_effort(
-            root, base_role, template_tier, template_reasoning, tiers_data, overrides,
-            tool=tool, bump_variant=is_variant,
-        )
-        if model is None:
-            if problem:
-                _note(describe_unresolved_tier(base_role, tool, eff_tier, eff_reasoning, problem))
-            continue
-
-        new_text = _apply_resolved_fields(text, model, effort)
+        if copilot:
+            models, effort, problem, eff_tier, eff_reasoning = effective_copilot_models(
+                root, base_role, template_tier, template_reasoning, tiers_data, overrides, is_variant,
+            )
+            if not models:
+                if problem:
+                    _note(describe_unresolved_tier(base_role, tool, eff_tier, eff_reasoning, problem))
+                continue
+            # an own role's file written without model lines (it had no tier) gets them once its row
+            # carries a Copilot cell; a template role's file without them stays the project's choice
+            own_role = base_role not in template_roles and bool(overrides.get(base_role, {}).get("copilot"))
+            new_text = _apply_resolved_copilot_fields(text, models, effort, insert_missing=own_role)
+        else:
+            model, effort, problem, eff_tier, eff_reasoning = effective_model_effort(
+                root, base_role, template_tier, template_reasoning, tiers_data, overrides,
+                tool=tool, bump_variant=is_variant,
+            )
+            if model is None:
+                if problem:
+                    _note(describe_unresolved_tier(base_role, tool, eff_tier, eff_reasoning, problem))
+                continue
+            new_text = _apply_resolved_fields(text, model, effort)
         if new_text is None:
             continue
         if apply:
@@ -473,7 +798,7 @@ _SKILL_REASONING_LINE_RE = re.compile(r"^reasoning:\s*(.*?)\s*$")
 
 
 def skill_copy_text(
-    text: str, skill: str, tool: str, tiers_data: dict, overrides: dict[str, dict[str, str]],
+    text: str, skill: str, tool: str, tiers_data: dict, overrides: dict[str, dict[str, Any]],
 ) -> str:
     """The text of one skill's SKILL.md as it is written for `tool`: the source's `reasoning: <level>`
     frontmatter line (a value of the tool's `reasoning_scale`) is replaced by the tool's own field
@@ -484,7 +809,7 @@ def skill_copy_text(
     `reasoning` line in the last two cases -- so the skill simply inherits the session's setting.
     Line terminators and every other line are kept byte for byte; an `effort:` line the source carries
     itself is replaced only when a level resolves."""
-    tool_data = tiers_data.get(tool) or {}
+    tool_data = tool_table(tiers_data, tool) or {}
     field = tool_data.get("reasoning_field") or ""
     scale = tool_data.get("reasoning_scale") or []
     lines = text.splitlines(keepends=True)

@@ -32,6 +32,9 @@ already past the newest release keeps its state.
    declines it; `config.py` cannot set a missing row, `.act/skeleton/config.md` shows its shape.
 5. The script's findings land in `docs/ai/inbox/`, never as a silent fix; the commit is made unless `--no-commit`.
    Add a journal line with the base-commit change and the finding count (`R-work-record-now`).
+   In a Copilot project (`copilot` in `tools`) the update also writes `.github/agents/<role>.agent.md`, and
+   `update.py --catch-up --yes` refreshes them after a change in `docs/ai/config.md` § Roles; an own file there named
+   like a role but without `model:`/`models:` stays unchanged and becomes an inbox question.
 6. A template bug noticed along the way: an `act-feedback` entry right away (its immediate trigger).
 
 ## `.act/` pulled in some other way

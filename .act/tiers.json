@@ -1,5 +1,5 @@
 {
-  "_comment": "Tier -> tool value tables. No real model name belongs anywhere else under .act/ -- only here, plus a project's own fixed-model override in docs/ai/config.md § Roles. 'reasoning_scale' is the ladder a role's reasoning field, and a '-high' variant's one-step bump, walk; 'reasoning_field' is the tool's own frontmatter key for it (Claude Code: 'effort'). A tool with an empty 'tiers' object has no researched mapping yet -- .act/scripts/tiers.py then leaves a role's existing model/effort untouched instead of guessing one.",
+  "_comment": "Tier -> tool value tables. No real model name belongs anywhere else under .act/ -- only here, plus a project's own fixed-model override in docs/ai/config.md § Roles. 'reasoning_scale' is the ladder a role's reasoning field, and a '-high' variant's one-step bump, walk; 'reasoning_field' is the tool's own frontmatter key for it (Claude Code: 'effort'). A tier may carry 'models' instead of 'model': an ordered priority list (the first one the account offers wins; Copilot). A tool with an empty 'tiers' object has no researched mapping yet -- .act/scripts/tiers.py then leaves a role's existing model/effort untouched instead of guessing one.",
   "claude-code": {
     "reasoning_field": "effort",
     "reasoning_scale": ["none", "low", "medium", "high", "xhigh", "max"],
@@ -17,11 +17,16 @@
     "reasoning_scale": [],
     "tiers": {}
   },
-  "copilot-cli": {
-    "_status": "research stage, not confirmed -- verify reasoningEffort frontmatter support (issue #2904) before filling in",
-    "reasoning_field": "",
-    "reasoning_scale": [],
-    "tiers": {}
+  "copilot": {
+    "reasoning_field": "reasoning-effort",
+    "reasoning_scale": ["none", "low", "medium", "high", "xhigh", "max"],
+    "tiers": {
+      "light": {"models": ["claude-haiku-5.5", "claude-haiku-4.5"]},
+      "standard": {"models": ["claude-sonnet-5.5"]},
+      "elevated": {"models": ["claude-opus-5.5", "claude-sonnet-5.5"]},
+      "high": {"models": ["claude-opus-5.5", "claude-sonnet-5.5"], "bump_reasoning": true},
+      "expert": {"models": ["claude-fable-5.2", "claude-opus-5.5"]}
+    }
   },
   "gemini-cli": {
     "_status": "research stand, experimental subagent model field -- verify model IDs live (consumer vs. API naming differs) before filling in",
