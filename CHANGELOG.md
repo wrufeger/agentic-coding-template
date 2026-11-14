@@ -32,6 +32,9 @@ safety checks that see more and refuse fewer harmless commands, Copilot roles wi
   the `Copilot` column of `docs/ai/config.md` § Roles.
 
 ### Added
+- Rust coding rules: new group `CR-rust-async` (no blocking in tasks, bounded channels, cancel-safe `select!`,
+  `async fn` in traits) and points on numeric casts, overflow, lints and dependency MSRV; uncheck it in
+  `docs/project/coding_rules.md`.
 - `cd-git` check (`block`|`warn`|`off`, default `block`, only with `claude-code` in `tools`): a Bash call with `cd` and
   `git` is refused and `git -C <folder>` named, because Claude Code asks you each time for that combination.
 - `commit-hashes` check (`warn`|`off`, default `warn`): a note when a commit message or journal line names a backticked
