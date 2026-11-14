@@ -3324,6 +3324,8 @@ def step_project_changelog(root: Path, plan: bool, template_one_goes: bool = Fal
     found = changelog_like_files(root, ignore="CHANGELOG.md" if goes else "")
     if found:
         return None, f"CHANGELOG.md not created: the project already has {found[0]} as its changelog"
+    if (root / ".git").exists() and _git_ignores_changelog(root):
+        return None, "CHANGELOG.md not created: git ignores it (allow it in .gitignore, then create it by hand)"
     if plan:
         return None, "CHANGELOG.md would be created (## [Unreleased])"
     _write_new_file(target, changelog_starter(root))
@@ -3612,33 +3614,150 @@ def _tracked_but_missing(root: Path) -> set[str]:
     return {entry for entry in result.stdout.split("\0") if entry}
 
 
+_PATH_CHUNK_CHARS = 8000  # one git call's path arguments stay well below the Windows command-line limit
+
+
+def _path_chunks(rels: list[str]) -> list[list[str]]:
+    """Split `rels` into groups whose joined length stays within _PATH_CHUNK_CHARS (a single longer
+    path gets a group of its own): a long path list as arguments fails on Windows (about 32,000
+    characters), so read-only queries run once per group."""
+    groups: list[list[str]] = []
+    current: list[str] = []
+    size = 0
+    for rel in rels:
+        if current and size + len(rel) + 1 > _PATH_CHUNK_CHARS:
+            groups.append(current)
+            current, size = [], 0
+        current.append(rel)
+        size += len(rel) + 1
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _git_ignored(root: Path, rels: list[str]) -> set[str]:
+    """The subset of `rels` that git ignores (`git check-ignore -z --stdin`, paths on stdin; no
+    `--no-index`, so a tracked path is never reported). Exit 1 = none ignored; any exit other than 0
+    or 1 raises."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-z", "--stdin"], cwd=root, capture_output=True, text=True, encoding="utf-8",
+        errors="surrogateescape",  # exact round trip of a legacy-encoded name
+        input="".join(f"{rel}\0" for rel in rels),
+    )
+    if result.returncode == 1:
+        return set()
+    if result.returncode != 0:
+        raise RuntimeError(f"git check-ignore failed with exit {result.returncode}: {result.stderr.strip()}")
+    return {entry for entry in result.stdout.split("\0") if entry}
+
+
+def _left_out_note(left_out: list[str]) -> str:
+    """The result-line suffix naming the paths left out because git ignores them (at most ten)."""
+    if not left_out:
+        return ""
+    shown = ", ".join(left_out[:10])
+    more = f", … and {len(left_out) - 10} more" if len(left_out) > 10 else ""
+    return f"; left out {len(left_out)} path(s) git ignores: {shown}{more}"
+
+
+def _ls_names(root: Path, group: list[str], *flags: str) -> list[str]:
+    """Names `git ls-files -z <flags> -- <group>` lists (literal pathspecs: `[`, `*`, `?` are plain
+    characters; a directory in `group` matches everything under it)."""
+    out = _git(["--literal-pathspecs", "-c", "core.quotepath=false", "ls-files", "-z", *flags, "--", *group], cwd=root)
+    return [name for name in out.stdout.split("\0") if name]
+
+
+def _never_worth_naming(rel: str) -> bool:
+    """Bytecode caches are always ignored and never worth a mention."""
+    return "__pycache__" in rel.split("/") or rel.endswith(".pyc")
+
+
+def _git_ignores_changelog(root: Path) -> bool:
+    """True when `git check-ignore -q` says git ignores CHANGELOG.md; any other exit, git missing or a
+    timeout: False."""
+    try:
+        result = subprocess.run(["git", "check-ignore", "-q", "--", "CHANGELOG.md"], cwd=root,
+                                capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def step_commit(root: Path, plan: bool, no_commit: bool, paths: list[Path],
                 message: str = INIT_COMMIT_MESSAGE, removed: Optional[set[str]] = None) -> str:
-    """`removed`: tracked files this run deleted itself (a clone that keeps its history, e.g. a
-    detached HEAD, still tracks the template's own files that steps 6 and 8 remove) -- staged with
-    the rest so the deletion lands in the commit instead of staying behind as an unstaged change."""
+    """Commit what the run wrote, by path only, every git call with `--literal-pathspecs`. Candidates:
+    the named paths that exist, plus `removed` (tracked files this run deleted itself -- a clone that
+    keeps its history, e.g. a detached HEAD, still tracks the template's own files that steps 6 and 8
+    remove -- so the deletion lands in the commit instead of staying behind as an unstaged change).
+    Per candidate, in a folder with a `.git` of its own:
+    - a file or directory git tracks is staged with `git add -u` (its changes and deletions, even where
+      a pattern ignores it; a directory with tracked files under it counts as one path);
+    - under a directory, new files git does not ignore are added by exact name; new files git ignores
+      are left out and named in the result, never forced in (`git add` refuses an ignored path, exit 1),
+      except bytecode caches;
+    - a named untracked file that git ignores is left out and named the same way, else added.
+    The commit pathspec holds only the paths staged this way; `plan` only reads and counts the same.
+    Without a `.git` of its own nothing is classified (no left-out note). Whatever else the index
+    holds stays staged and is only named."""
     if no_commit:
         # Returns before any `git add`, so nothing is staged either -- say so plainly instead of
         # the previous, inaccurate "staged/unstaged".
         return "would leave uncommitted (--no-commit, nothing staged)" if plan else "left uncommitted (--no-commit, nothing staged)"
-    rels = sorted(
-        {str(p.relative_to(root)).replace(os.sep, "/") for p in paths if p.exists()} | (removed or set())
-    )
-    if not rels:
+    named = {str(p.relative_to(root)).replace(os.sep, "/"): p for p in paths if p.exists()}
+    candidates = sorted(set(named) | (removed or set()))
+    if not candidates:
         return "nothing to commit"
+    own_repo = (root / ".git").exists()
+    left_note = ""
+    add_tracked: list[str] = []
+    add_new: list[str] = []
+    rels = candidates
+    if own_repo:
+        tracked_names: set[str] = set()
+        for group in _path_chunks(candidates):
+            tracked_names |= set(_ls_names(root, group))
+        tracked_dirs = {"/".join(parts[:i]) for parts in (n.split("/") for n in tracked_names)
+                        for i in range(1, len(parts))}
+        add_tracked = [rel for rel in candidates if rel in tracked_names or rel in tracked_dirs]
+        # else: a removed path git does not track has nothing to commit
+        untracked = [rel for rel in candidates if rel in named and rel not in add_tracked]
+        dirs = [rel for rel in untracked if named[rel].is_dir()]
+        loose = [rel for rel in untracked if rel not in dirs]
+        scan = sorted(set(dirs) | {rel for rel in add_tracked if rel in named and named[rel].is_dir()})
+        prefixes = tuple(f"{d}/" for d in scan)  # `ls-files -o` can also match a sibling such as `.act-local` for `.act`
+        new_files: set[str] = set()
+        ignored_new: set[str] = set()
+        for group in _path_chunks(scan):
+            new_files |= {n for n in _ls_names(root, group, "-o", "--exclude-standard") if n.startswith(prefixes)}
+            ignored_new |= {n for n in _ls_names(root, group, "-o", "-i", "--exclude-standard")
+                            if n.startswith(prefixes) and not _never_worth_naming(n)}
+        ignored_loose = _git_ignored(root, loose) if loose else set()
+        add_loose = [rel for rel in loose if rel not in ignored_loose]
+        add_new = sorted(new_files | set(add_loose))
+        # An untracked directory counts as one path once a new file under it is added.
+        rels = sorted(set(add_tracked) | set(add_loose) | {d for d in dirs if any(n.startswith(f"{d}/") for n in new_files)})
+        left_note = _left_out_note(sorted(ignored_new | ignored_loose))
+    if not rels:
+        return f"nothing to commit{left_note}"
     if plan:
-        return f"would commit {len(rels)} path(s): {', '.join(rels)}"
-    actlib.git_pathspec_stdin(["--literal-pathspecs", "add"], rels, cwd=root)
+        return f"would commit {len(rels)} path(s): {', '.join(rels)}{left_note}"
+    if own_repo:
+        if add_tracked:
+            actlib.git_pathspec_stdin(["--literal-pathspecs", "add", "-u"], add_tracked, cwd=root)
+        if add_new:
+            actlib.git_pathspec_stdin(["--literal-pathspecs", "add"], add_new, cwd=root)
+    else:
+        actlib.git_pathspec_stdin(["--literal-pathspecs", "add"], rels, cwd=root)
     diff = _git(["diff", "--cached", "--no-renames", "--name-only", "-z"], cwd=root)
     staged = [name for name in diff.stdout.split("\0") if name]
     # The index may hold more than this run staged (the target repo's own work in progress). The
     # commit is limited to the run's own paths; foreign entries stay staged and are only named.
     own = [name for name in staged if any(name == rel or name.startswith(rel.rstrip("/") + "/") for rel in rels)]
     foreign = [name for name in staged if name not in own]
-    note = ""
+    note = left_note
     if foreign:
         shown = ", ".join(foreign[:5]) + (f" (+{len(foreign) - 5} more)" if len(foreign) > 5 else "")
-        note = f"; left {len(foreign)} foreign staged path(s) staged: {shown}"
+        note += f"; left {len(foreign)} foreign staged path(s) staged: {shown}"
     if not own:
         return "nothing staged, no commit made" + note
     actlib.git_pathspec_stdin(["--literal-pathspecs", "commit", "-m", message], rels, cwd=root)

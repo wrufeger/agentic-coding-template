@@ -173,7 +173,7 @@
   "scripts/ideas.py": "d9e96e1cb9c984d30240a79f8b5fed332fd05aecab9749880ca3ff7ad2d99a76",
   "scripts/incidents.py": "a104d967b47eae09013361263d6a13aa198ad7b93bf1c555ea274332f766616b",
   "scripts/info.py": "de63bd5f51905ffaa8696f15c9341f0c9658a357e0695feadabd6ccd3c5d41e2",
-  "scripts/init.py": "d09e1e4bf0cf53b43975535f3d38b19dc9f2d8ba9a53337ff0782f3eed415433",
+  "scripts/init.py": "b2d4ad81ec924671bbd62d43d3d4fa3116d3cefdfaeb3792a49c38350921deb4",
   "scripts/integrations.py": "041283809b7eba7bada061d02dae5d8f700fe9d9eceb4a354971c1875ec67f10",
   "scripts/log.py": "951fe6b90fe526f52fbc833c9b78eaec74494d354f3bf74ca67b2eeb1c0e8011",
   "scripts/manifest.py": "cce2b81e83402956a01f8e40a2308b6e8c8ffc9acfe9a1e0dfd4b8c9e4956a9e",
