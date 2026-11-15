@@ -19,8 +19,9 @@ The layout of keepachangelog.com, one file `CHANGELOG.md` in the project root, n
   setting or command; then the groups `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, only those
   with content.
 - `## [Unreleased]` sits above them with a head line of its own from the first entry on (what the coming release
-  is about so far, one sentence) and no highlights (they are added at release). Its first group is `### Upgrading`
-  (no "from") as soon as there is a duty at update, then the groups as above.
+  is about so far, one sentence) and `### Highlights`: the entries that matter most, taken out of the list below
+  as in a release, up to 5 and at least 3 once the section has that many. Then `### Upgrading` (no "from") as
+  soon as there is a duty at update, then the groups as above.
 - Writing rules, for every entry; the reader is someone who uses the project:
   1. One line; two only when an important detail would be missing otherwise. Never more than 250 characters per
      entry (the text from `- ` to the next entry, continuation lines joined by a space).
@@ -36,9 +37,11 @@ The layout of keepachangelog.com, one file `CHANGELOG.md` in the project root, n
 - Entries as you go: `act-commit` adds a line under `[Unreleased]` for every commit with a visible effect (a
   feature, a changed behaviour, a fix, a removal), in the same commit. A purely internal commit gets none. It also
   keeps the head line right: writes it with the first entry (or when the section has none yet) and rewrites it
-  when an entry changes what matters most.
+  when an entry changes what matters most. The highlights the same way: a new entry that matters more than one
+  of them takes its place, and the one it replaces goes back into its group.
 - `act-release` renames `[Unreleased]` to the new version with the date, checks that the head line still says what
-  the release is about (writes one if it is missing), adds the highlights (taking those entries out of the list),
+  the release is about (writes one if it is missing), checks that the highlights are still the 3 to 5 entries
+  that matter most (adds or swaps them, taking those entries out of the list),
   turns `Upgrading` into `Upgrading from <last tag>`, shortens entries that are too long and opens a new empty
   `[Unreleased]`.
   Link references at the bottom (`[X.Y.Z]: <compare url>`) only if the file already has them.

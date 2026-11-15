@@ -51,7 +51,8 @@ Say which of the three applies when you start, so the human sees where the text 
    - `changelog: file` — into `CHANGELOG.md`: with a format that collects entries as you go
      (`keep-a-changelog`), turn the `[Unreleased]` section into `[X.Y.Z] - <date>`, add what the commits show
      and the section lacks, check that its head line still says what the release is about (write one if it is
-     missing), add 3 to 5 highlights (taking those entries out of the list), turn `### Upgrading` into
+     missing), check that the highlights are still the 3 to 5 entries that matter most (add or swap them, taking
+     those entries out of the list), turn `### Upgrading` into
      `### Upgrading from <last tag>`, shorten entries over the format's limit, open a new empty `[Unreleased]`;
      with `at-release` write the whole section in that form. No
      `CHANGELOG.md` yet: create it from the starter of the changelog format first (`act-update` offers the file

@@ -107,8 +107,8 @@ with a model each.
   unchanged; any other change there is still reported, a worker's change still put back.
 - A danger-scan finding booked in the baseline passes the first hold.
 - `init.py --target` refuses a target inside the project.
-- One changelog form (`.act/formats/changelog.md`): a head line under `[Unreleased]` that `act-commit` keeps
-  current, one line per entry, at most 250 characters, duties under `### Upgrading`; a release adds 3–5 highlights.
+- One changelog form (`.act/formats/changelog.md`): a head line and up to 5 highlights under `[Unreleased]` that
+  `act-commit` keeps current, one line per entry, at most 250 characters, duties under `### Upgrading`.
 - The template's own `CHANGELOG.md` is rewritten in that form, about a sixth of its former length; the full old wording
   stays in the Git history and the release notes of each tag.
 - Every template script counts its own run in `.act-local/usage.json`, whoever starts it: the assistant, a hook,
