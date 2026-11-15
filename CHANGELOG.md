@@ -14,6 +14,20 @@ Formats and a changelog for every project, `Tests:` lines and an incident log fo
 safety checks that see more, refuse fewer harmless commands and never pass when out of time or broken, Copilot roles
 with a model each.
 
+### Highlights
+- **Formats and a changelog for every project:** presets for commits, changelog, release notes and README in
+  `docs/ai/config.md` § Formats, or your own in `docs/project/formats/`; a `CHANGELOG.md` (`changelog`, default
+  `file`), offered by `act-update`.
+- **Incident log:** real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox
+  report per day at session start; no commands or paths are logged; `ACT_INCIDENT_LOG=off` pauses it.
+- **Safety checks never pass unchecked:** a check that runs out of time or crashes, or a hook whose 8 s run out
+  before it, refuses the call and names the row that switches it off (`<row>: off`); run the command again.
+- **Shorter core rules:** the rules loaded in every session are about 8 000 characters shorter, `act-adopt` half as
+  long; every rule id stays.
+- **Copilot roles with a model each:** with `copilot` in `tools`, each role gets `.github/agents/<role>.agent.md`
+  with a model list per tier; set your own in the `Copilot` column of § Roles, then run
+  `python .act/scripts/update.py --catch-up --yes`.
+
 ### Upgrading
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
 - An absolute `outside-root-allow` entry outside the project and home is read-only now; writes there are refused.
@@ -46,16 +60,13 @@ with a model each.
   full suite before a push; `commands` takes an optional fourth entry for it (three entries work as before).
 - `throwaway-place` check (`warn`|`off`, default `warn`): a note when a command or file write puts throwaway output
   in the system temp directory or directly under `.act-local/`; `off` in `docs/ai/config.md` § Checks silences it.
-- Incident log: real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox
-  report per day at session start; no commands or paths are logged; `ACT_INCIDENT_LOG=off` pauses it.
 - Check refusals are counted per check and role; `doctor.py --inbox` asks once after 3 refusals of one check in 7 days.
 - Rule `R-work-process-error`: a fault in how the work runs is reported once as an inbox question, then fixed.
 - `protected-watch` (`block`|`warn`|`off`, default `block`) puts back protected files a worker changed (`.git/hooks`,
   `.claude/settings*.json`, `.mcp.json`); changes by the orchestrator are only reported.
 - `model-switch` check (`warn`|`off`, default `warn`) tells you when a worker or session continues on another model.
-- Formats: `commit-format`, `changelog-format`, `release-notes-format`, `readme-format` in `docs/ai/config.md`;
-  `docs/project/formats/<name>.md` replaces a preset; `act-export-settings --with-formats` carries them over.
-- `CHANGELOG.md` for new projects (`changelog: file|release-notes-only|off`, default `file`); `act-update` offers it.
+- Format keys `commit-format`, `changelog-format`, `release-notes-format`, `readme-format`; `changelog` also takes
+  `release-notes-only` or `off`; `act-export-settings --with-formats` carries your formats over.
 - `act-release` publishes the release on GitHub or GitLab after an explicit yes and a pushed tag.
 - Working methods `test-first`, `spec-first`, `simple-changes`: the `methods` row in § Scope (default `none`).
 - `act-adopt` ships in every project; `--carry` picks what a new project takes over.
@@ -65,8 +76,6 @@ with a model each.
   default `warn`).
 - `usage.py --outcome <role> <tier> reworked|escalated --reason assignment|edge-case|worker|decision` records why a
   result was reworked; `--show` lists the reasons, and with `feedback-scope` `c` a send counts them per template role.
-- With `copilot` in `tools`, each role gets `.github/agents/<role>.agent.md` with a model list per tier; set a role's
-  own list in the new `Copilot` column of § Roles, then run `python .act/scripts/update.py --catch-up --yes`.
 
 ### Changed
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
@@ -88,7 +97,6 @@ with a model each.
   `--workdir` still overrides it.
 - `reviewer` blocks only for errors on ordinary paths; the commit's checks run once on the accepted state.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
-- Daily core rules are about 8 000 characters shorter, `act-adopt` half as long; every rule id stays.
 - `init` sets the scope profile from the stack (`full` for web, else `standard`); existing projects keep theirs.
 - `git-reset-hard` and `git-discard` are one check (both lines stay); `git branch -D` only for a branch HEAD contains.
 - Nothing leaves `docs/` before it is in its monthly file; `done-entries: delete` projects now archive (migration 008).
@@ -167,8 +175,8 @@ with a model each.
   as `*`, `!docs/`): it stays out of the commit, which names it; an ignored `CHANGELOG.md` is not created.
 
 ### Security
-- A check that runs out of time or crashes refuses the call and names the row that switches it off (`<row>: off`); the scans repeat a git call that ran out once. `commit-hashes` after a time-out only says it is incomplete.
-- When a hook's 8 s run out before a safety check ran, the call is refused and the text names the checks and the rows that switch them off; run the command again. A check that only notes says it did not run.
+- After a time-out the commit scans repeat a git call once; a check that only notes says it did not run, and
+  `commit-hashes` says it is incomplete.
 - The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and
   refuse `git diff|log|show --output=<file>` outside the allowed places.
 - The write guard refuses `shutil.rmtree` of the project root or a folder that holds it (passed before), and an
