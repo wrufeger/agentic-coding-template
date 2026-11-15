@@ -57,9 +57,14 @@
 #     removes it, as Bash `mv` counts its sources;
 #   - Remove-Item/rm/del/ri/rd/rmdir/erase (every -Path/-LiteralPath value plus every positional);
 #   - Expand-Archive (-DestinationPath); Invoke-WebRequest/iwr (-OutFile);
-#   - [System.IO.File]/[IO.File]/[global::System.IO.File]::WriteAllText/WriteAllLines/
-#     AppendAllText/AppendAllLines/WriteAllBytes/CreateText/AppendText/OpenWrite/Create/Delete(...) (1st argument),
-#     File::Copy/Move and Directory::Move (2nd argument), Directory::Delete/CreateDirectory (1st argument), and
+#   - [System.IO.File]/[IO.File]/[global::System.IO.File] and [IO.Directory] calls of the shared method set
+#     (_ps_io_write_name: WriteAll*/AppendAll* also as *Async, CreateText/AppendText/OpenWrite/Create/Delete/
+#     CreateDirectory/CreateSubdirectory/Encrypt/Decrypt/Set*, not SetCurrentDirectory; the list reader of
+#     list_feeds.py uses the same set), also written `.Invoke(` (1st argument); `Open` unless it opens an
+#     existing file for reading (_ps_open_is_read_only, decided on the argument text with its quotes kept: mode
+#     `Open` and access `Read`, each one quoted word or the enum member, an optional share one quoted word or a
+#     FileShare member; a quoted string with a comma in it is a write); `Replace` (each of its
+#     first three arguments that is not `$null`); File::Copy/Move and Directory::Move (2nd argument); and
 #     [...IO.StreamWriter]::new(...) (1st argument) — matched against the statement's words
 #     rejoined with a single space each, so whitespace right after the opening "(" does not split
 #     the match across two words;
@@ -114,6 +119,8 @@
 # Known limits (a target missed here is simply not checked — see the two _ALIASES gaps noted
 # above for Copy-Item/Move-Item in mixed positional/named form, beyond the one `-Path`-as-source
 # shape this module does understand):
+#   - a .NET call written `[IO.File]::Copy.Invoke(`/`Move.Invoke(` (only the other methods are read with `.Invoke(`),
+#     and `CreateSymbolicLink`, `CreateAsSymbolicLink`, `OpenHandle` (they make or open a link or a handle, not read);
 #   - Invoke-Expression/iex anywhere in the command makes the whole command bail to None — what it
 #     runs is opaque to a syntactic scan, but check 1 still denies if the raw command text mentions
 #     .act/ anywhere (see this module's docstring and checks/write_guard.py);
@@ -172,7 +179,8 @@ __all__ = [
     "_PS_REDIRECT_OPS", "_PS_VALUE_FLAGS", "_ALIASES", "_CD_ALIASES",
     "_FLAG_ONLY_KEYS", "_PS_INTERP_NAMES", "_CMD_NAMES", "_GUARD_OPAQUE_ALL_ARGS",
     "_GUARD_OPAQUE_DASH_C", "_BROAD_EXCLUDE_VALUE_FLAGS", "_BROAD_SKIP_KINDS", "_IEX_WORDS",
-    "_IO_FILE_WRITE_RE", "_IO_FILE_COPY_MOVE_RE",
+    "_IO_FILE_WRITE_RE", "_IO_FILE_COPY_MOVE_RE", "_ps_io_write_name", "_ps_open_is_read_only",
+    "_ps_split_arguments", "_ps_unquote",
     "_IO_STREAMWRITER_RE", "_PS_IGNORABLE_RE", "_PS_RAW_REDIRECT_RE", "_PS_MAX_SCAN_DEPTH", "_Token",
     "_match_ps_operator", "_consume_here_string", "_ps_tokens", "_uses_invoke_expression",
     "_ps_command_name", "_ps_split_args", "_target_from_flags", "_target_destination",
@@ -332,17 +340,154 @@ _BROAD_EXCLUDE_VALUE_FLAGS = {"rename-item": {"newname"}, "ren": {"newname"}, "r
 # to "every positional" here would turn the source (being read, not written) into a false positive.
 _BROAD_SKIP_KINDS = frozenset({"destination2nd", "robocopy", "perl_inplace"})
 
+# The .NET calls of `[IO.File]` and `[IO.Directory]` that change, create or remove a file or folder, by lower-case name:
+# one definition for the literal reader here and the list reader of list_feeds.py. Besides these names, every
+# WriteAll*/AppendAll* (also *Async) and every Set* but SetCurrentDirectory counts (_ps_io_write_name).
+_PS_IO_STATIC_WRITES = frozenset({
+    "create", "createtext", "appendtext", "openwrite", "open", "delete", "copy", "move", "replace", "encrypt",
+    "decrypt", "createdirectory", "createsubdirectory",
+})
+_PS_IO_GENERIC_PREFIXES = ("writeall", "appendall", "set")
+
+
+def _ps_io_write_name(name: str) -> bool:
+    """True when the .NET method `name` of `[IO.File]`/`[IO.Directory]` writes (_PS_IO_STATIC_WRITES, the generic
+    WriteAll*/AppendAll*/Set* families, `SetCurrentDirectory` aside)."""
+    low = name.lower()
+    return low in _PS_IO_STATIC_WRITES or (low.startswith(_PS_IO_GENERIC_PREFIXES) and low != "setcurrentdirectory")
+
+
+# The names whose 1st argument is the one target; Open, Replace, Copy and Move have their own reading below.
+_IO_FIRST_ARGUMENT_NAMES = "|".join(sorted(_PS_IO_STATIC_WRITES - {"open", "replace", "copy", "move"}))
+_IO_CLASS = r"\[(?:global::)?(?:System\.)?IO\.(?:File|Directory)\]::"
 _IO_FILE_WRITE_RE = re.compile(
-    r"\[(?:global::)?(?:System\.)?IO\.File\]::"
-    r"(?:WriteAllText|WriteAllLines|AppendAllText|AppendAllLines|WriteAllBytes|CreateText|AppendText|OpenWrite|Create|Delete)"
-    r"\(\s*([^,)]+)",
+    _IO_CLASS + rf"(?:{_IO_FIRST_ARGUMENT_NAMES}|(?:writeall|appendall)\w*|set(?!currentdirectory)\w*)"
+    r"(?:\.Invoke)?\(\s*([^,)]+)",
     re.IGNORECASE,
 )
-# Directory.Delete(path[, recursive])/Directory.CreateDirectory(path): the 1st argument.
-_IO_DIRECTORY_WRITE_RE = re.compile(
-    r"\[(?:global::)?(?:System\.)?IO\.Directory\]::(?:Delete|CreateDirectory)\(\s*([^,)]+)",
-    re.IGNORECASE,
-)
+def _ps_split_arguments(text: str) -> list[str]:
+    """The arguments of a call written as `text` (what stands between its parentheses, quotes kept): cut at the
+    commas outside quotes, parentheses, brackets and braces, each one stripped. A quoted string ends at its own
+    quote (`''` or `""` inside it is a quote character, a backtick escapes in `"..."`); a backtick outside quotes
+    escapes the next character."""
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        index += 1
+        current.append(char)
+        if char == "`" and quote != "'" and index < len(text):
+            current.append(text[index])
+            index += 1
+        elif quote:
+            if char == quote:
+                if index < len(text) and text[index] == quote:
+                    current.append(char)
+                    index += 1
+                else:
+                    quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            current.pop()
+            parts.append("".join(current).strip())
+            current = []
+    parts.append("".join(current).strip())
+    return parts
+
+
+def _ps_unquote(text: str) -> str:
+    """`text` without the quotes around it when it is one quoted string (`'a'`, `"a"`); else as it is."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1].replace(text[0] * 2, text[0])
+    return text
+
+
+# The one reading of `Open` that is no write: mode `Open` and access `Read`, each one quoted word or the enum member;
+# a share argument, when given, is one quoted word or an enum member of FileShare. Everything else is a write.
+_PS_QUOTED_WORD_RE = re.compile(r"'(\w+)'|\"(\w+)\"")
+_PS_OPEN_MODE_RE = re.compile(r"\[(?:global::)?(?:system\.)?io\.filemode\]::open", re.IGNORECASE)
+_PS_OPEN_ACCESS_RE = re.compile(r"\[(?:global::)?(?:system\.)?io\.fileaccess\]::read", re.IGNORECASE)
+_PS_OPEN_SHARE_RE = re.compile(r"\[(?:global::)?(?:system\.)?io\.fileshare\]::\w+", re.IGNORECASE)
+
+
+def _ps_quoted_word(part: str) -> Optional[str]:
+    """The lower-case word of `part` when it is exactly one quoted word (`'Open'`, `"Open"`: letters, digits and
+    underscore, no comma, no space); None otherwise."""
+    match = _PS_QUOTED_WORD_RE.fullmatch(part)
+    return (match.group(1) or match.group(2)).lower() if match else None
+
+
+def _ps_open_is_read_only(arguments: str, has_path: bool) -> bool:
+    """True when the arguments of an `Open` call - their text with the quotes kept - are literally mode `Open` and
+    access `Read` and nothing else but an optional share argument: `File.Open(path, mode, access[, share])` with
+    `has_path` (the path is the first argument and not looked at), `FileInfo.Open(mode, access[, share])` without.
+    The text is cut at the top-level commas (_ps_split_arguments); mode and access must each be exactly one quoted
+    word (`'Open'`, `"Read"`) or the enum member (`[IO.FileMode]::Open`, `[System.IO.FileAccess]::Read`), the share
+    exactly one quoted word or an enum member `[IO.FileShare]::<Name>`. A quoted string that holds a comma
+    (`'Open,Read'`), a bare word, a variable, a FileStreamOptions object, another count of arguments: a write."""
+    parts = _ps_split_arguments(arguments)
+    if has_path:
+        parts = parts[1:]
+    if not 2 <= len(parts) <= 3:
+        return False
+    mode, access = parts[0], parts[1]
+    if not (_ps_quoted_word(mode) == "open" or _PS_OPEN_MODE_RE.fullmatch(mode)):
+        return False
+    if not (_ps_quoted_word(access) == "read" or _PS_OPEN_ACCESS_RE.fullmatch(access)):
+        return False
+    return len(parts) == 2 or _ps_quoted_word(parts[2]) is not None or bool(_PS_OPEN_SHARE_RE.fullmatch(parts[2]))
+
+
+def _ps_call_arguments(text: str, start: int) -> str:
+    """The text of the arguments of the call whose opening parenthesis ends just before `text[start]`: up to the
+    parenthesis that closes it (one inside a quoted string does not count), the rest of `text` when none does."""
+    depth = 1
+    quote = ""
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char == "`" and quote != "'":
+            index += 2
+            continue
+        if quote:
+            quote = "" if char == quote else quote  # a doubled quote closes and reopens: same state
+        elif char in "'\"":
+            quote = char
+        else:
+            depth += (char == "(") - (char == ")")
+            if depth == 0:
+                return text[start:index]
+        index += 1
+    return text[start:]
+
+
+def _ps_io_call_targets(joined: str) -> list[str]:
+    """The targets of the `[IO.File]::Open(...)` calls that are not a read of an existing file (the path, unquoted)
+    and of the `[IO.File]::Replace(...)` calls (each of the first three arguments that is not `$null`, unquoted)
+    in `joined`, the words of a statement with their quotes kept (`_RawWord.raw`)."""
+    found: list[str] = []
+    for match in _IO_OPEN_CALL_RE.finditer(joined):
+        arguments = _ps_call_arguments(joined, match.end())
+        if not _ps_open_is_read_only(arguments, True):
+            found.append(_ps_unquote(_ps_split_arguments(arguments)[0]))
+    for match in _IO_REPLACE_CALL_RE.finditer(joined):
+        found += [part for part in map(_ps_unquote, _ps_split_arguments(_ps_call_arguments(joined, match.end()))[:3])
+                  if part and part.lower() != "$null"]
+    return found
+
+
+# File.Open(path, mode, access[, share]) and File.Replace(source, destination, backup[, ignoreErrors]).
+_IO_OPEN_CALL_RE = re.compile(_IO_CLASS + r"Open(?:\.Invoke)?\(", re.IGNORECASE)
+_IO_REPLACE_CALL_RE = re.compile(_IO_CLASS + r"Replace(?:\.Invoke)?\(", re.IGNORECASE)
 # File.Copy(sourceFileName, destFileName)/File.Move(...) and Directory.Move: the *2nd* argument is the target, unlike
 # every other File method above (1st argument) — a separate pattern, not a shared capture group.
 # File.Move and Directory.Move also take the 1st argument away (the source), like Move-Item.
@@ -431,22 +576,34 @@ def _consume_here_string(command: str, index: int) -> Optional[tuple[str, int]]:
         pos = line_end + 1
 
 
+class _RawWord(str):
+    """The text of a word token (quotes removed, as every consumer reads it) that also holds the word as written,
+    quotes and escapes kept, in `raw`: a `'Open,Read'` and a `'Open','Read'` read the same without it."""
+
+    raw: str
+
+
 def _ps_tokens(command: str) -> Optional[list[_Token]]:
     """Tokenize a PowerShell command into (text, is_operator) pairs. None if a quote or a
     here-string is never closed — the command is then not safely evaluable (see the module
-    docstring's None contract)."""
+    docstring's None contract). The text of a word is a _RawWord: a str that also carries the word as written."""
     tokens: list[_Token] = []
     word: list[str] = []
     i = 0
     n = len(command)
+    start = 0  # where the word being read began in `command`
 
     def flush() -> None:
         if word:
-            tokens.append(("".join(word), False))
+            text = _RawWord("".join(word))
+            text.raw = command[start:i]
+            tokens.append((text, False))
             word.clear()
 
     while i < n:
         ch = command[i]
+        if not word:
+            start = i
         if ch == "`" and i + 1 < n and command[i + 1] in "\r\n":
             i += 2
             if command[i - 1] == "\r" and i < n and command[i] == "\n":
@@ -809,8 +966,12 @@ _PS_PLAIN_ARG_RE = re.compile(r"^[^(){}`;,]*$")
 # Interpreter options that take no value and cannot run other code (`-3`, `-3.12`, `-u`, `-B` ...): the first
 # word after them is the script. `-m`, `-c` and options with a value (`-X`, `-W`) are not among them.
 _PS_PYTHON_PLAIN_OPTION_RE = re.compile(r"^-(?:\d(?:\.\d+)?(?:-\d+)?|[uBOEsSIqdvb]+)$")
-# git subcommands that only read the repository; their path and revision words are no write target.
-_PS_GIT_READ_SUBCOMMANDS = frozenset({"log", "diff", "show", "status", "blame", "ls-files", "rev-parse", "grep"})
+# git subcommands that only read the repository; their path and revision words are no write target. `stash show`
+# (two words) is read the same way (_assigned_read_words).
+_PS_GIT_READ_SUBCOMMANDS = frozenset({
+    "log", "diff", "show", "status", "blame", "ls-files", "rev-parse", "grep",
+    "diff-tree", "diff-index", "diff-files", "whatchanged",
+})
 
 
 def _strip_program_assignment(words: list[str]) -> tuple[list[str], list[str]]:
@@ -836,7 +997,8 @@ def _assigned_read_words(call: list[str]) -> frozenset[int]:
     """Indexes in `call` (program word first) of the words that are no write target: the script word of
     `py|python|python3 [plain interpreter options] <script> ...` (never with `-m`, `-c` or an option with a
     value), and the non-option words (paths, revisions) of `git <log|diff|show|status|blame|ls-files|
-    rev-parse|grep> ...` without `-o` or `--output*`. Empty for every other call."""
+    rev-parse|grep|diff-tree|diff-index|diff-files|whatchanged|stash show> ...` without `-o` or an option that
+    starts with `--ou` (`--output`, or an abbreviation of it that takes a file). Empty for every other call."""
     name = _ps_command_name(call[0])
     if name in _PS_PYTHON_PROGRAMS:
         for index in range(1, len(call)):
@@ -845,14 +1007,16 @@ def _assigned_read_words(call: list[str]) -> frozenset[int]:
                 continue
             return frozenset() if word.startswith("-") else frozenset({index})
         return frozenset()
-    if name == "git" and len(call) > 1 and call[1] in _PS_GIT_READ_SUBCOMMANDS:
-        options = call[2:]
+    if name == "git" and len(call) > 1:
+        first = 3 if call[1] == "stash" and call[2:3] == ["show"] else 2  # where the options of the read call start
+        if call[1] not in _PS_GIT_READ_SUBCOMMANDS and first == 2:
+            return frozenset()
         if any(
-            word.startswith("--output") or word == "-o" or (word.startswith("-") and not word.startswith("--") and "o" in word[1:])
-            for word in options
+            word.startswith("--ou") or word == "-o" or (word.startswith("-") and not word.startswith("--") and "o" in word[1:])
+            for word in call[first:]
         ):
             return frozenset()
-        return frozenset(index for index in range(2, len(call)) if not call[index].startswith("-"))
+        return frozenset(index for index in range(first, len(call)) if not call[index].startswith("-"))
     return frozenset()
 
 
@@ -1359,10 +1523,11 @@ def _flush_ps_statement(
                 if candidate and not _ps_is_ignorable(candidate):
                     result.add(candidate)
     joined = " ".join(words + redirect_targets)
-    for pattern in (_IO_FILE_WRITE_RE, _IO_DIRECTORY_WRITE_RE, _IO_FILE_COPY_MOVE_RE, _IO_MOVE_SOURCE_RE,
-                    _IO_STREAMWRITER_RE):
+    for pattern in (_IO_FILE_WRITE_RE, _IO_FILE_COPY_MOVE_RE, _IO_MOVE_SOURCE_RE, _IO_STREAMWRITER_RE):
         for match in pattern.finditer(joined):
             result.update(_resolve_ps_targets(match.group(1).strip(), tracked))
+    for raw in _ps_io_call_targets(" ".join(getattr(word, "raw", word) for word in words + redirect_targets)):
+        result.update(_resolve_ps_targets(raw, tracked))
 
 
 def _scan_ps_tokens(

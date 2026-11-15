@@ -78,9 +78,9 @@ with a model each.
 - `worker-write-scope`: every target under `.act-local/tmp/` of the project is free for every worker, whatever its scope.
 - `outside-root` lets a read of a path that does not exist (`/contacts.json`, a mistyped file name) and a word with a
   variable pass; writes and existing places are judged as before.
-- `write-guard` and `worker-write-scope` read an escaped `\$(` inside double quotes (also in `python -c "..."`) as
+- `template-write-guard` and `worker-write-scope` read an escaped `\$(` inside double quotes (also in `python -c "..."`) as
   text, no command substitution.
-- `write-guard` no longer refuses inline code whose write target the text does not show; a shown `.act/` path still does.
+- `template-write-guard` no longer refuses inline code whose write target the text does not show; a shown `.act/` path still does.
 - `update.py --plan` shows what each due migration does, not only its name, one line per migration; `act-update` shows those lines before you agree, also on resume and `--catch-up`.
 - Work with no task (skill runs, doctor report, feedback) writes throwaway output to
   `.act-local/tmp/<YYYYMMDD>-<slug>/`; `act-local-tidy` clears it after 7 days.
@@ -120,13 +120,17 @@ with a model each.
   subject; a clean result counts as evidence only once the same check has caught a known case.
 - Passing an approval to a worker quotes its wording, date and plan; `doc-writer` backs every statement with its
   source; the PowerShell rules name five Windows pitfalls (`sc`, CRLF scripts, BOM-less UTF-8, Excel CSV, ANSI).
+- `ssh -i ~/<key>` and `ssh -o Key=Value` with a harmless key (`StrictHostKeyChecking`, `BatchMode`, `ConnectTimeout`,
+  `Port`, `User`, `UserKnownHostsFile=/dev/null` …) no longer make the write checks read the remote command as local.
+- The write guard no longer refuses PowerShell `Open('Open','Read')` or a name-only wildcard that cannot match `.act`
+  (`Get-Item *.log | Remove-Item`) when the command changes no folder.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
-- `write-guard` no longer refuses a write whose single-quoted text holds both a backtick and `$(`, such as
+- `template-write-guard` no longer refuses a write whose single-quoted text holds both a backtick and `$(`, such as
   ``printf 'a `$(` b' >> docs/f.md``; the target is judged as before.
 - `context_size.py` measures the session named by `CLAUDE_CODE_SESSION_ID`; without it and with two live transcripts
   it refuses ("several sessions, no assignment") instead of guessing; `--transcript <path>` still overrides.
@@ -134,7 +138,7 @@ with a model each.
   stays refused.
 - `worker-scope-overlap` also notes a run of the fourth `commands` entry (full or E2E suite) in a tree a running worker
   writes in.
-- `write-guard` and the scope checks no longer refuse a `shutil.rmtree(..., onerror=h)` chmod helper that only calls
+- `template-write-guard` and the scope checks no longer refuse a `shutil.rmtree(..., onerror=h)` chmod helper that only calls
   `func(path)`, also on absolute folders.
 - `worker-write-scope` no longer refuses inline Python that only adds an import folder (`sys.path.insert(0, 'lib')`,
   `append`, `extend`, `site.addsitedir`) next to a write elsewhere; code that reads the folder back is still checked.
@@ -185,6 +189,15 @@ with a model each.
 - `act-release` starts its security reviewer with `Write scope: none` again; it ran without a write scope.
 - A failing `secret-read` or `outside-root` refuses every call it would have checked (commands, reads, writes), not only commands; a hook that cannot load refuses the call.
 - Workers may no longer write `.github/agents/`; `protected-watch` puts their changes back, as for `.claude/agents/`.
+- The write guard also refuses writes into `.act/` through a `mapfile -C` callback, a file list in a Bash array or a
+  `$(find|ls|grep -l …)` variable, a PowerShell `FileInfo` object, `$f = $_`, a property write or
+  `MoveTo`/`CopyTo`/`Replace`.
+- The write checks place a write after `&` behind a `{ }` group, loop, `if` or `case` correctly and refuse
+  `--output=<file>` of `git format-patch|diff-tree|diff-index|diff-files|whatchanged|stash show` outside the allowed
+  places.
+- The write guard and the worker scope read a name assigned once to a literal (`f=.act/x && echo y > $f`, also with
+  `local`, `declare`, `export`); `outside-root` judges every word of a brace expansion (`cat /x/{a,b}.txt`).
+
 
 ## [2.5.0] - 2026-11-05
 

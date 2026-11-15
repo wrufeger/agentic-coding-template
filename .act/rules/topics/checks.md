@@ -180,7 +180,11 @@ More generally a read names nothing, and is left out, where the command text doe
 `grep x /de/link-collection`, `C:/nothing/x`, a mistyped file `D:/dev/proj/tests/x.ts` under an existing folder; on
 Windows a POSIX-rooted word counts as existing when one reading of its first segment does), and a shell word with a
 variable or substitution (`cat /etc/$f`). A write is never left out this way: it can create the place. Limit: a file
-created between the check and the read is read unseen.
+created between the check and the read is read unseen. A brace expansion in a read word (`cat /x/{a,b}.txt`,
+`{1..3}`) is judged as every word it stands for, up to 63 words; a range is counted before it is built, and a larger
+one stays an unexpanded word. A word with a quoted or escaped brace, a value cut out of such a word
+(`--in='/x/{a,b}'`) and a string literal of inline code (`python -c "open('/x/{a,b}')"`) are not expanded. The
+refusal names the word as typed and the expanded word.
 
 Two scripts write outside the project, only when the human explicitly asks: `id_links_install.py` to `~/.act/id-links/`
 and `act-export-settings --profile` to the user's config folder (`settings.md`; an existing file is first copied to
@@ -189,8 +193,9 @@ which opens the target folder for 24 hours or until `--abort` through a marker u
 only the adopt scripts write.
 The write-target scanners shared by the write guard, the worker write scope and `outside-root` see a `cd`/`pushd`
 into a folder before a relative write (a folder an earlier top-level `mkdir`/`New-Item -ItemType Directory` with a
-literal path makes counts as existing), `git clone` and the other git commands that write a target (also `git diff|log|show --output=<file>`, `--output <file>`
-and an abbreviation from `--ou`), `robocopy`, the
+literal path makes counts as existing), `git clone` and the other git commands that write a target (also `git diff|log|show|diff-tree|diff-index|diff-files|whatchanged|stash show --output=<file>`,
+`--output <file>` and an abbreviation from `--ou`, and `git format-patch --output=<file>`, where any `--ou...`
+abbreviation counts as a target), `robocopy`, the
 source of a PowerShell move, `perl`/`ruby -i`, `chmod`/`chown`, `xargs` with literal input and the literal file names
 a `-c`/`-e` interpreter argument opens for writing; not a path built at run time, archives `tar`/`zip` create, or
 `find -exec`. A relative write behind more than 24 possible folders, or past the work bound of one command, is
@@ -203,8 +208,33 @@ old folder (`mv a.txt out; mkdir out; cd out; touch .act/x`). The shell may be i
 failing `ls` skips the `cd ..` while the `;` goes on, so the write is also placed in `.act`, and the guard refuses it. That
 is a limit, not a bug: write the command with `;` between the steps, or as two calls. A list that ends in `&` runs as
 one background job, so what follows the `&` is placed where the list began, not in the folder of a `cd` inside it
-(`cd out && A & B`: B runs in the starting folder); `--output` is read from the words before `--`, and a value that
+(`cd out && A & B`: B runs in the starting folder). When the list holds a `{ }` group, a loop, an `if` or a
+`case` with an inner `;` (`cd out && { A; } & B`), B is judged in the starting folder and, to be safe, in the
+folder of the `cd` too; `--output` is read from the words before `--`, and a value that
 `git` takes for another option is not told apart.
+
+Write-guard lists. A write whose files come from a list (loop, `read`, `mapfile`/`readarray` array, array assignment,
+assignment, `find -exec`, PowerShell pipeline) is refused unless the list names fixed folders. A Bash scalar
+`X=$(...)` or an array `a=($(...))` (an assignment is recognized only as a command of its own, never inside `[[ ...
+]]` or as an argument) is a list only when a substitution in it lists files. Its pipeline must start with a lister in
+name mode and go on only with `head`, `tail`, `sort`, `uniq` or `grep`. The listers are `find`, `ls`, `fd`, `locate`;
+`git ls-files` without `-s`/`--stage`; `grep`, `rg` and `git grep` with `-l`/`-L` (also in a cluster such as `-rl`),
+`--files-with-matches`, `--files-without-match`, `--files` or `--name-only`; and `git diff
+--name-only`/`--name-status`. The command word is matched whole, so `./find-version.sh` is no `find`. An `ls` whose
+path operands are all name-only globs that cannot match `.act` (`f=$(ls -t *.log | head -1)`; no `/` or backslash,
+`[!…]` counting as a match) lists names of the current folder and binds nothing, in a scalar and in an array
+assignment; a `for` loop over such a substitution keeps its list. Anything else (`grep -m1 ... | cut`, `ls | wc -l`,
+`git diff | sha256sum`, `basename "$f"`) prints text and binds nothing; so does a lister behind another first stage
+(`cat x | grep -rl y .`, a limit). A `mapfile -C <callback>` runs per line like `find -exec`; a variable-only callback
+is unknown. In PowerShell the literal destination of `MoveTo`/`CopyTo` and the destination and backup of an item's
+`Replace` are write targets; `Open` is free only as mode `Open` plus access `Read`. A name-only wildcard that cannot
+match `.act` (`gi *.log | Remove-Item`) is relieved only for a write on the item itself, never
+`MoveTo`/`CopyTo`/`Replace`, and only when the command holds no location change (`location`, `cd`, `sl`, `chdir`,
+`pushd`, `popd`), no `iex`, no `&` or `.` call operator (literal names too), no word ending `.ps1`, no
+`[scriptblock]`, no `Invoke-Command`/`icm` and no `.Invoke(`. A write target unrelated to the item (`Move-Item $_ $d`)
+is judged as anywhere else. Limits: a junction or link matched by name, compound assignment operators, symbolic-link
+and handle calls, casts and typed variables, item objects built with `-ArgumentList (,'x')`; `[IO.File]::Copy`/`Move`
+written `.Invoke(` is missed by the literal reader, not by the list reader.
 
 Limits: the shell check is best effort. A program that opens files itself (`python script.py`, `docker run -v`) is
 invisible; an MCP tool that takes a path is checked only if it is a read tool of the IDE server's known list. A command
@@ -304,6 +334,14 @@ the template's `.act/` write-guard lets a write into it pass (conditions in `wri
 project root or of a folder that holds it is refused. Limit: a relative
 `.act/` target after `cd $VAR/...` (a variable, `P=<dir> cd $P/x` too) is judged against the project root and
 refused; `cd <literal folder> && cp ... .act/...` into such a project passes, so write the folder out.
+
+The write-guard reads shell names the same way: a target made of a name that the command assigns exactly once, as
+a literal, naming `.act/` (`f=.act/x && echo y > $f`, also `local`/`declare`/`export`/`readonly f=...`) is refused
+like the written-out path, and the refusal names the target as typed and the value it was read as. A name assigned
+more than once, also with literals only, or bound any other way stays unknown and passes. Limit, for both checks:
+the assignment is read wherever it stands in the text, so one that bash does not run before the write (inside
+`( … )`, a later pipeline stage, a branch that does not run, after `unset`, a heredoc body or quoted string,
+`local` outside a function, a name only a child `bash -c` sees, a quoted `'$f'` target) can be taken as the value.
 
 `act-local-tidy` (switch `act-local-tidy`; `warn` only reports what would go, `off` skips) runs once a day at session
 start in a detached process; the next start reports the result in one line. It removes `.act-local/tmp/` entries older
@@ -424,10 +462,16 @@ local shell expands (easy to cut out: no `#`, `<<`, line break or `case` inside,
 read - exactly when the call has a plain, known form: `ssh` or the ssh of a system directory, in front of
 it only a reserved word or the bare name of `sudo`, `env`, `command`, `exec`, `nohup`, `nice`, `timeout`
 (with a plain duration), `stdbuf` or `setsid`, no `$`, backtick, `{`, `*`, `?`, `[` or `~` in any word up
-to the host, options only from `-4 -6 -a -C -n -q -T -t -v -x` (also combined) and `-p <digits>`,
-`-l <name>`, `-i <file>`, a `[user@]host` that is not this machine (`localhost` and its variants, any
+to the host (except the value of `-i`, which may also be `~/` and plain characters), options only from
+`-4 -6 -a -C -n -q -T -t -v -x` (also combined), `-p <digits>`, `-l <name>`, `-i <file>` and `-o Key=Value` as
+one word with one of the keys `StrictHostKeyChecking` (`yes|no|ask|accept-new|off`), `BatchMode`,
+`IdentitiesOnly`, `PasswordAuthentication`, `PubkeyAuthentication`, `Compression` (`yes|no`),
+`ConnectTimeout`, `ServerAliveInterval`, `ServerAliveCountMax`, `ConnectionAttempts`, `Port` (digits),
+`LogLevel`, `User`, `UserKnownHostsFile` and `GlobalKnownHostsFile` (only `/dev/null`) or `IdentityFile` (as
+`-i`), a `[user@]host` that is not this machine (`localhost` and its variants, any
 `127/8` or `0/8` address in any spelling, the IPv6 loopback, `ip6-*`, this computer's own name), and a
-first command word that begins with a plain character other than `-`. Every other form - every `-o`,
+first command word that begins with a plain character other than `-`. Every other form - every other `-o` key or value (`ProxyCommand`, `LocalCommand`, `Hostname`, the `Key Value`
+form ...),
 `-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`, a wrapper's option, `parallel` or `xargs` in front, an
 expansion up to the host or at the start of the command, a `PATH=`, `BASH_ENV`, an alias, a function
 `ssh`, `source` or `.`, `enable`, `command_not_found_handle` or the word `hash` in the same command - is
@@ -460,8 +504,8 @@ sub-expression, script block, escape, `;` or comma-separated array) is read as t
 statement handlers: its redirections, and the `git mv`/`git rm` targets. For `write-guard` and
 `git-metadata-guard`, every word right of the `=` stays a possible target as before, except two kinds of
 word: the script of `py|python|python3 [-3|-u|-B ...] <script>` (never with `-m`, `-c` or an option that takes
-a value), and the path and revision words of `git log|diff|show|status|blame|ls-files|rev-parse|grep` without
-`-o` or `--output*`. So `$out = py .act/scripts/board.py` and `$log = git log -- .act/scripts` pass, while
+a value), and the path and revision words of `git log|diff|show|status|blame|ls-files|rev-parse|grep|diff-tree|diff-index|
+diff-files|whatchanged|stash show` without `-o` or an option starting with `--ou`. So `$out = py .act/scripts/board.py` and `$log = git log -- .act/scripts` pass, while
 `$x = python -m zipfile -e a.zip .act/`, `$x = git clone <url> .act/y`, `$x = git archive -o .act/x.zip HEAD`
 and `$x = py x.py, '.act/x'` are judged as before. Any other right side (a cmdlet such as `Join-Path`, a
 string, an expression, the call operator) is read as before.
@@ -526,9 +570,12 @@ different: `worker-write-scope` and `git-metadata-guard` then name the error and
 call (in warn mode they only warn), since inline code that was never judged must not pass as code without a
 write call; `.act/scripts/doctor.py` or the owner decides how to go on.
 
-A shell target with a variable is unknown and passes, unless the same command assigns the variable once as a simple
-literal (`f=server/x.ts && sed -i ... $f`, `d="out"; echo x > ${d}/y`): then the value is judged like any target. So
-does a command substitution, a brace list of unknown quoting, a target behind a `cd` the scan cannot follow, a target
+A shell target with a variable is unknown and passes, unless the same command assigns the name exactly once, as a
+simple literal: `f=v`, `export|local|declare|typeset|readonly [-r -x -g] f=v`, or several names in one
+assignment-only command (`f=a g=b; ...`; `f=server/x.ts && sed -i ... $f`, `d="out"; echo x > ${d}/y`). Then the
+value is judged like any target. A name assigned more than once (also with literals only), a prefix assignment of a
+command (`g=x cmd $g`), `read`/`mapfile`, a loop variable, `+=`, other flags (`declare -i`) and a non-literal value
+keep the name unknown. So does a command substitution, a brace list of unknown quoting, a target behind a `cd` the scan cannot follow, a target
 the scan could not place and a command it cannot read (too deeply nested, too large). A `~` start is the home
 directory and is refused (it is never in the scope); a `$` after a shown folder (`other/$x`) passes.
 

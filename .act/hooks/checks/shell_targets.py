@@ -65,8 +65,9 @@
 #     program stands, _SPAN_TEXT);
 #   - programs that write on their own are read by their arguments (_simple_command_targets): `git clone`
 #     (its destination, the folder named by the URL when none is given), `git init`, `worktree add`,
-#     `submodule add`, `archive -o`, `bundle create`, `format-patch -o`, `diff|log|show --output`; `robocopy` (destination, source with
-#     /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `sort -o` (its output file) and the
+#     `submodule add`, `archive -o`, `bundle create`, `format-patch -o|--output`, `--output` of `diff`, `log`,
+#     `show`, `diff-tree`, `diff-index`, `diff-files`, `whatchanged` and `stash show`; `robocopy` (destination,
+#     source with /MOV, log files); `perl`/`ruby -i` and `gawk -i inplace` (the files); `sort -o` (its output file) and the
 #     output operand of `uniq`; `chmod`/`chown`/`chgrp` (the files, not the mode or owner word); and `xargs`,
 #     whose input words are operands of the command it runs: the
 #     literal output of the previous stage (`echo`, `printf`, a heredoc) is read, any other input is one
@@ -87,7 +88,10 @@
 #   - only the directory changes listed in _scan_tokens are followed (`cd`, `pushd` and the `popd` back to
 #     it, while the stack is certain); anything else there makes the base unknown rather than guessed. A
 #     folder name with blanks or parentheses counts as literal (_LITERAL_DIR_RE: only quoting can put them
-#     there);
+#     there). Compound keywords for a `&` behind a `{ }`, loop, `if` or `case` are read by position, not by
+#     grammar (_compound_marks): a quoted keyword, a `case` pattern spelled like one or the `}` of a function
+#     body counts as a keyword too; a closer therefore only adds a base, and a stray opener leaves the old
+#     reading of that `&`;
 #   - not recognized as writers at all: `patch`, a `tar`/`unzip` extraction into the
 #     implicit current directory (no explicit `-C`/`-d`), `find -delete` with no leading path
 #     operand, `git apply`/`stash`/`reset --hard`/`clean`. `tar -x -C <dir>`, `unzip -d <dir>` and
@@ -126,8 +130,11 @@
 #     before) - the program is `ssh` or the one of a system directory, a word in front is only a
 #     reserved word or the bare name of a wrapper that runs its argument list itself (_SSH_ARGV_WRAPPERS,
 #     a duration after `timeout`; never `parallel`, `xargs` or a wrapper's option), every word up to the destination is plain text (no `$`, backtick, `{`, `*`, `?`, `[`,
-#     `~`), every option is one of `-4 -6 -a -C -n -q -T -t -v -x` (also combined) or `-p <port>`,
-#     `-l <name>`, `-i <file>` (so never `-o`, `-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`), the
+#     `~`; except the value of `-i`, a plain word or `~/` and plain characters, and an allowed `-o` word,
+#     which is judged only by its key's value pattern), every option is one of
+#     `-4 -6 -a -C -n -q -T -t -v -x` (also combined) or `-p <port>`, `-l <name>`, `-i <file>`, `-o Key=Value`
+#     with a key of _SSH_SAFE_OPTION_VALUES and a value of its pattern (so never another `-o`, `-F`, `-E`,
+#     `-J`, `-W`, `-L`, `-R`, `-D`), the
 #     destination is `[user@]host` and not this machine (`localhost` and its variants, `127/8` and
 #     `0/8` in any spelling, the IPv6 loopback, `ip6-*`, this computer's own name: _is_local_ssh_host),
 #     the first word after it begins with a plain character other than `-` (ssh reads options after
@@ -2924,12 +2931,14 @@ def _clone_directory(url: str, bare: bool) -> Optional[str]:
     return last or None
 
 
-_GIT_OUTPUT_FILE_SUBS = frozenset({"diff", "log", "show"})
+_GIT_OUTPUT_FILE_SUBS = frozenset({"diff", "log", "show", "diff-tree", "diff-index", "diff-files", "whatchanged"})
 
 
-def _git_output_file_targets(args: list[str]) -> list[str]:
-    """The file `git diff|log|show --output=FILE` (also `--output FILE` and an abbreviation from `--ou`)
-    writes its result to; empty without one. Words after `--` are paths."""
+def _git_output_file_targets(args: list[str], with_directory: bool = False) -> list[str]:
+    """The file `git diff|log|show|diff-tree|diff-index|diff-files|whatchanged|stash show --output=FILE` (also
+    `--output FILE` and an abbreviation from `--ou`) writes its result to; empty without one. With
+    `with_directory` (`format-patch`, whose `--output-directory` an abbreviation from `--ou` may mean as well) the
+    value of such an abbreviation is a target either way. Words after `--` are paths."""
     targets: list[str] = []
     index = 0
     while index < len(args):
@@ -2940,7 +2949,7 @@ def _git_output_file_targets(args: list[str]) -> list[str]:
         if not arg.startswith("--"):
             continue
         name, has_value, value = arg.partition("=")
-        if len(name) >= 4 and "--output".startswith(name):
+        if len(name) >= 4 and ("--output".startswith(name) or (with_directory and "--output-directory".startswith(name))):
             if has_value:
                 if value:
                     targets.append(value)
@@ -2954,7 +2963,8 @@ def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
     """What a git subcommand that creates files or directories of its own writes (the words after the
     subcommand are `args`): the destination of `clone` (the one derived from the URL when none is
     given) and `submodule add`, the directory of `init`, `worktree add` and `format-patch -o`, the file of
-    `bundle create` and `archive -o`, the `--output` file of `diff`, `log` and `show`. [] for any other subcommand."""
+    `bundle create` and `archive -o`, the `--output` file of `diff`, `log`, `show`, `diff-tree`, `diff-index`,
+    `diff-files`, `whatchanged`, `stash show` and `format-patch`. [] for any other subcommand."""
     if sub == "clone":
         operands, values = _operands(args, _GIT_CLONE_VALUE_FLAGS)
         bare = any(arg in ("--bare", "--mirror") for arg in args)
@@ -2968,6 +2978,8 @@ def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
         return targets
     if sub in _GIT_OUTPUT_FILE_SUBS:
         return _git_output_file_targets(args)
+    if sub == "stash":
+        return _git_output_file_targets(args[1:]) if args[:1] == ["show"] else []
     spec = _GIT_CREATORS.get(sub)
     if spec is None:
         return []
@@ -2988,7 +3000,10 @@ def _git_creator_targets(sub: str, args: list[str]) -> list[str]:
         return [implied] if implied else []
     if sub == "bundle":
         return operands[:1]
-    return list(values.get("-o", [])) + list(values.get("--output", [])) + list(values.get("--output-directory", []))
+    found = list(values.get("-o", [])) + list(values.get("--output", [])) + list(values.get("--output-directory", []))
+    if sub == "format-patch":
+        found += [target for target in _git_output_file_targets(args, True) if target not in found]
+    return found
 
 
 def _simple_command_targets(
@@ -3669,9 +3684,12 @@ _SSH_DURATION_RE = re.compile(r"\d+(?:\.\d+)?[smhd]?")
 # text to count as remote. The program: `ssh` itself, or the one of a system directory. A word up to and
 # including the destination is plain when the shell expands nothing in it: no `$`, backtick, brace, glob
 # character or tilde. The options: flags that change nothing about where the text runs (`-4`, `-6`, `-a`,
-# `-C`, `-n`, `-q`, `-T`, `-t`, `-v`, `-x`, also combined, `-tt`, `-vvv`) and three that take a value
-# (`-p` a port of digits, `-l` a login name, `-i` an identity file - glued or as the next word). Any other
-# option (`-o`, `-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`, ...) can change the destination, run a program
+# `-C`, `-n`, `-q`, `-T`, `-t`, `-v`, `-x`, also combined, `-tt`, `-vvv`) and four that take a value
+# (`-p` a port of digits, `-l` a login name, `-i` an identity file - glued or as the next word, a plain word
+# or `~/` and plain characters - and `-o` with one `Key=Value` word out of _SSH_SAFE_OPTION_VALUES: keys that
+# only tune the connection or name a file to read, each with a value of its own pattern). Any other
+# option (`-F`, `-E`, `-J`, `-W`, `-L`, `-R`, `-D`, ...) and any other `-o` key or value (`ProxyCommand`,
+# `LocalCommand`, `Hostname`, ..., the `Key Value` form) can change the destination, run a program
 # here or write a file here and is left off the list on purpose. The destination: `[user@]host`, a name
 # or an address.
 _SSH_PROGRAM_RE = re.compile(
@@ -3680,7 +3698,24 @@ _SSH_PROGRAM_RE = re.compile(
     re.IGNORECASE,
 )
 _SSH_PLAIN_WORD_RE = re.compile(r"[^$`{*?\[~]+")
-_SSH_OPTION_RE = re.compile(r"-([46aCnqTtvx]*)(?:([pli])(.*))?")
+_SSH_OPTION_RE = re.compile(r"-([46aCnqTtvx]*)(?:([plio])(.*))?")
+# `-i` value: a plain word, or `~/` and plain characters (the one tilde a shell expands to the home folder).
+_SSH_IDENTITY_RE = re.compile(r"(?:~/)?[^$`{*?\[~]+")
+_SSH_YES_NO = "yes|no"
+_SSH_DIGITS = "[0-9]{1,6}"
+# The `-o` keys (lower case) whose single `Key=Value` word leaves the call as it is: they tune the
+# connection or name a file ssh reads, none runs a program, changes the destination or writes a file.
+_SSH_SAFE_OPTION_VALUES = {
+    "stricthostkeychecking": "yes|no|ask|accept-new|off",
+    "batchmode": _SSH_YES_NO, "identitiesonly": _SSH_YES_NO, "passwordauthentication": _SSH_YES_NO,
+    "pubkeyauthentication": _SSH_YES_NO, "compression": _SSH_YES_NO,
+    "connecttimeout": _SSH_DIGITS, "serveraliveinterval": _SSH_DIGITS, "serveralivecountmax": _SSH_DIGITS,
+    "connectionattempts": _SSH_DIGITS, "port": _SSH_DIGITS,
+    "loglevel": "QUIET|FATAL|ERROR|INFO|VERBOSE|DEBUG|DEBUG1|DEBUG2|DEBUG3",
+    "user": "[A-Za-z0-9._-]+",
+    "userknownhostsfile": "/dev/null", "globalknownhostsfile": "/dev/null",
+    "identityfile": _SSH_IDENTITY_RE.pattern,
+}
 _SSH_PORT_RE = re.compile(r"[0-9]{1,5}")
 _SSH_DESTINATION_RE = re.compile(r"(?:[\w.-]+@)?(?:[A-Za-z0-9][\w.-]*|[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*)")
 _NUMERIC_HOST_LABEL_RE = re.compile(r"(?:0x[0-9a-f]+|[0-9]+)", re.IGNORECASE)
@@ -3754,6 +3789,14 @@ def _is_local_ssh_host(host: str) -> bool:
     )
 
 
+def _ssh_safe_option(value: str) -> bool:
+    """Whether `value` (the word after `-o`) is `Key=Value` with a key of _SSH_SAFE_OPTION_VALUES (any case)
+    and a value that matches that key's pattern whole."""
+    key, equals, setting = value.partition("=")
+    pattern = _SSH_SAFE_OPTION_VALUES.get(key.lower())
+    return bool(equals) and pattern is not None and re.fullmatch(pattern, setting) is not None
+
+
 def _ssh_may_run_remote(command: str) -> bool:
     """True when `command` names ssh and nothing in it can make that word run something else
     (_SSH_SHADOWED_RE): only then is the command text of an ssh call left out of the local reading."""
@@ -3768,8 +3811,10 @@ def _ssh_remote_start(words: list[str]) -> Optional[int]:
     (`PATH=`) or that is neither a reserved word (`if`, `{`, ...) nor a wrapper of _SSH_ARGV_WRAPPERS
     (`parallel`, `xargs`, an option of a wrapper: the words may reach a shell); a word from the first up
     to the destination that the shell still expands
-    (_SSH_PLAIN_WORD_RE; the reserved words `if`, `{`, ... in front are plain); an option not in
-    _SSH_OPTION_RE, or a port that is not digits; a destination that is not `[user@]host`
+    (_SSH_PLAIN_WORD_RE; the reserved words `if`, `{`, ... in front are plain; the value of `-i` may also be
+    `~/` and plain characters, _SSH_IDENTITY_RE, and an `-o Key=Value` word is judged only by its key's value
+    pattern, _ssh_safe_option); an option not in _SSH_OPTION_RE, an `-o` key or value off
+    _SSH_SAFE_OPTION_VALUES, or a port that is not digits; a destination that is not `[user@]host`
     (_SSH_DESTINATION_RE) or is this machine (_is_local_ssh_host); no command; a first command word that
     is empty or begins with `-` or with something the shell expands - ssh reads options after the
     destination too (a `--` in front of it ends them, which changes nothing here), and an expansion
@@ -3778,6 +3823,7 @@ def _ssh_remote_start(words: list[str]) -> Optional[int]:
     if at >= len(words) or _SSH_PROGRAM_RE.fullmatch(str(words[at])) is None:
         return None
     index = at + 1
+    checked: set[int] = set()  # the words an option's own pattern has judged: no plain-word test for them
     while index < len(words):
         arg = str(words[index])
         if arg == "--":
@@ -3794,11 +3840,17 @@ def _ssh_remote_start(words: list[str]) -> Optional[int]:
             value = str(words[index]) if index < len(words) else ""
         if letter == "p" and _SSH_PORT_RE.fullmatch(value) is None:
             return None
+        if letter == "o" and not _ssh_safe_option(value):
+            return None
+        if letter == "o" or (letter == "i" and _SSH_IDENTITY_RE.fullmatch(value) is not None):
+            checked.add(index)
         index += 1
     if index + 1 >= len(words):
         return None
     for position, word in enumerate(words[:index + 1]):
         plain = str(word)
+        if position in checked:
+            continue
         if position < at:
             after_timeout = position > 0 and str(words[position - 1]) == "timeout"
             if plain in _RESERVED_PREFIXES or plain in _SSH_ARGV_WRAPPERS:
@@ -3937,6 +3989,35 @@ def _ssh_local_effects(words: list[str]) -> tuple[list[str], Optional[str]]:
 _REPEATING_CONSTRUCT_WORDS = frozenset({"for", "while", "until", "if", "case", "select", "function"})
 
 
+_COMPOUND_OPENERS = frozenset({"{", "if", "while", "until", "for", "select", "case"})
+_COMPOUND_CLOSERS = frozenset({"}", "fi", "done", "esac"})
+# Words that may stand in front of the command of a segment without ending the construct they belong to.
+_COMPOUND_CONTINUERS = frozenset({"do", "then", "else", "elif", "!", "time"})
+
+
+def _compound_marks(words: list[str]) -> list[bool]:
+    """The compound-command keywords a segment starts with, in order: True for one that opens a body (`{`, `if`,
+    `while`, `until`, `for`, `select`, `case`), False for one that closes it (`}`, `fi`, `done`, `esac`).
+    `do`, `then`, `else`, `elif`, `!` and `time` are skipped; the first other word ends the run, as do the
+    headers of `for`, `select` and `case`, whose words are no command. The words are read without their quotes
+    and without knowing `case` patterns, a leading redirection or `function NAME {`, so a quoted keyword, a
+    pattern spelled like a keyword or the `}` of a function body can be taken for one. That only widens what a
+    background list returns to: a closer adds the base its compound began with to the current one, never
+    replaces it (_scan_tokens), and a stray opener leaves the base as it was."""
+    marks: list[bool] = []
+    for word in words:
+        text = str(word)
+        if text in _COMPOUND_OPENERS:
+            marks.append(True)
+            if text in ("for", "select", "case"):
+                break
+        elif text in _COMPOUND_CLOSERS:
+            marks.append(False)
+        elif text not in _COMPOUND_CONTINUERS:
+            break
+    return marks
+
+
 def _dir_stack_unreliable(tokens: list[_Token]) -> bool:
     """Whether the directory stack of `pushd`/`popd` cannot be followed through this token stream: `dirs`
     (`dirs -c` empties it) or an assignment to / `unset` of `DIRSTACK` changes it behind the scanner's back,
@@ -3968,7 +4049,9 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         form or without a certain stack, any `pushd` inside a subshell or `$(...)`, and one next
         to a pipe or `&` add "unknown" (a literal `cd` inside a subshell holds until the `)`);
       - a list that ends in `&` ran as one background job: what follows runs where the list began, and the
-        `pushd` stack is the one the list began with;
+        `pushd` stack is the one the list began with. When a `{ }`, loop, `if` or `case` with an inner `;` stands
+        in it, the closing word adds the base the compound began with (compound_starts), so what follows is
+        judged in both, and a stack that changed inside the compound makes a later `popd` unknown;
       - a folder a plain `mkdir` with literal operands made earlier in the line (first in its list, outside a
         subshell, a pipe, a construct whose body may not run) counts as existing for a `cd` to it, unless a
         file is in the way or a later command removes or moves it (_WrittenPlaces.note_created);
@@ -3997,6 +4080,13 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     closed_group: Optional[str] = None
     dir_stack: list[_Bases] = []  # the directories `pushd` left, for a later `popd`
     list_stack: list[_Bases] = []  # the stack as the current list began: what a background list leaves behind
+    # The `list_start` and the list's `pushd` stack that held where each open compound command (`{ }`,
+    # `for`/`while`/`until` ... `done`, `if` ... `fi`, `case` ... `esac`) began: an inner `;`, newline or `&&` moves
+    # them, but the `&` behind the closing word backgrounds the whole list, which began before the compound.
+    compound_starts: list[tuple[_Bases, list[_Bases]]] = []
+    # True once a closing word found the list's `pushd` stack changed inside its compound: a `&` ending the list then
+    # leaves a stack the scanner cannot name.
+    compound_stack_changed = False
     # False once a `pushd`/`popd` was not followed: a `popd` is then unknown. It is false from the start when the
     # command can change the stack by other means or run a `pushd`/`popd` a different number of times than it
     # is written (_dir_stack_unreliable).
@@ -4156,6 +4246,16 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                         after_list = after_list | new_bases
                     bases = new_bases
         produced, closed_group = _track_group_output(group_outputs, words, separator, produced, closed_group)
+        for opens in _compound_marks(words):
+            if opens:
+                compound_starts.append((list_start, list(list_stack)))
+            elif compound_starts:
+                # Never narrower than before: a word taken for a closer by mistake (_compound_marks) must not
+                # drop the base the list is in now.
+                began, began_stack = compound_starts.pop()
+                list_start = list_start | began
+                if began_stack != list_stack:
+                    compound_stack_changed = True
         # A pipe hands the stage's literal output on; a `(` right behind a pipe (`cat <<EOF | (python -)`)
         # passes what it got to the first command inside.
         if separator in _PIPE_OPS:
@@ -4187,6 +4287,9 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                 after_list = list_start
                 if not saved:
                     dir_stack = list(list_stack)
+                if compound_stack_changed:
+                    dir_stack_known = False
+            compound_stack_changed = False
             bases = list_start = after_list
             if not saved:
                 list_stack = list(dir_stack)

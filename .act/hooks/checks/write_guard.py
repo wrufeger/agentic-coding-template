@@ -25,7 +25,7 @@ from .command_parse import Parse, parse_for
 from .inline_code import WHOLE_FOLDER
 from .common import _TOOL_PATH_FIELDS, _check_mode
 from .common import _is_unplaced_target, _unplaced_reason
-from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, ps_fed_writes, shell_facts
+from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, lists_files, ps_fed_writes, shell_facts
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
 from .shell_targets import _resolve_path
 
@@ -447,14 +447,16 @@ def _bash_targets_protected_path(
     uses them to switch branches, unstage, and fetch the template's own version of a .act/ file
     back. A target whose directory is unknown (after `pushd`, a `cd $VAR`, inside a subshell, ...),
     that contains a variable, or whose own project `root` could not be determined is denied only
-    if its own text names .act/ — everything else about it cannot be decided here (a
+    if its own text names .act/ (a variable the command assigns exactly once, as a literal, is first read as
+    that value, _assigned_value_refusal) — everything else about it cannot be decided here (a
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
     the raw text — a sibling checkout's .act/ is not this project's to protect). A dynamic target that is a
     list the scan cannot read (an `xargs` input, a `$(...)` or backtick span) passes only when its source
     names fixed folders (_list_is_shown, an allow-list), else it is refused with _LIST_MESSAGE; so does a
     target made of a loop or `read` variable fed by such a list (_bound_refusal; a literal loop word that names
     `.act` or may match it is refused as a write to `.act`), and a command `find` runs on every hit
-    (-exec, -execdir, -ok, -okdir; _find_run_refusal) when its folders are not fixed. A write the scan could
+    (-exec, -execdir, -ok, -okdir; _find_run_refusal) when its folders are not fixed, and the command a `mapfile`/
+    `readarray -C <callback>` runs per quantum on a line of its feed (_callback_refusal). A write the scan could
     not place (a PowerShell command it could not follow to the end, _is_unplaced_target) is refused as such; inline code whose write path the text does not show is no target and passes.
     `parse` is the dispatcher's reading of `command`; without it the command is read here."""
     if parse is None:
@@ -471,6 +473,11 @@ def _bash_targets_protected_path(
         message = _judge_target(raw, base, root, command, facts)
         if message is not None:
             return message
+    if re.search(r"mapfile|readarray", command, re.IGNORECASE):
+        for callback, binding in facts().callbacks:
+            message = _callback_refusal(callback, binding, command, base_cwd, root)
+            if message is not None:
+                return message
     if "find" in command.lower():
         for words in facts().finds:
             source, runs = find_hits(words)
@@ -497,6 +504,92 @@ def _find_deletes(words: list[str]) -> bool:
     return any(word == "-delete" and words[index - 1] not in _FIND_VALUE_PRIMARIES for index, word in enumerate(words) if index)
 
 
+# The literal values a command binds shell names to, read for a target made of a variable. A value is one
+# unquoted word, a single-quoted text or a double-quoted text with no expansion in it; a binding is an
+# assignment-only command (`f=a g=b/c; ...`, optionally behind `export`, `local`, `declare`, `typeset` or
+# `readonly` with plain flags `-r -x -g`). A prefix assignment of a command (`g=x cmd $g`) binds nothing the
+# command sees (bash expands `$g` first). A name assigned more than once, or any other way, stays unknown.
+# This is a copy of the reader in write_scope.py; each check keeps its own.
+# Limit: the assignment is read wherever it stands in the text, so one that bash does not run before the write
+# (inside `( ... )`, in a later pipeline stage, in a branch that does not run, after `unset`, in a heredoc body
+# or a quoted string, `local` outside a function, a name only a child `bash -c` sees, a quoted `'$f'` or `\$f`
+# target, a non-ASCII name) can be taken as the value: a possible false block on a constructed command.
+_LITERAL_VALUE = r"""(?:"[^"$`\\\n]*"|'[^'\n]*'|[\w./:+@%-]+)"""
+_ASSIGN_WORD = rf"[A-Za-z_]\w*={_LITERAL_VALUE}"
+_ASSIGNMENT_COMMAND_RE = re.compile(
+    rf"""(?:^|[;&|\n])[ \t]*((?:(?:export|local|declare|typeset|readonly)[ \t]+(?:-[rxg]+[ \t]+)*)?{_ASSIGN_WORD}(?:[ \t]+{_ASSIGN_WORD})*)(?=[ \t]*(?:&&|\|\||;|\n|$))"""
+)
+_ASSIGN_PART_RE = re.compile(rf"(?:^|[ \t])([A-Za-z_]\w*)=({_LITERAL_VALUE})(?=[ \t]|$)")
+_NAME_ASSIGNED_RE = re.compile(r"(?:^|[;&|(\n\s])(?:export[ \t]+)?([A-Za-z_]\w*)\+?=")
+_NAME_LOOP_RE = re.compile(r"\b(?:for|select)[ \t]+([A-Za-z_]\w*)")
+_NAME_READ_RE = re.compile(r"\b(?:read|getopts|mapfile|readarray)\b([^;&|\n]*)")
+_NAME_DECLARED_RE = re.compile(r"\b(?:local|declare|typeset|readonly)\b([^;&|\n]*)")
+_PLAIN_FLAG_RE = re.compile(r"-[rxg]+")
+_VARIABLE_USE_RE = re.compile(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})")
+
+
+def _assigned_literals(command: str) -> dict[str, str]:
+    """Every shell name `command` assigns exactly once, as a literal binding, mapped to its value. A name
+    assigned more than once, also with literals only, or any other way (from a substitution, with `+=`, as a
+    prefix of a command, by `read` or `mapfile`, as a loop variable, declared with another flag or without a
+    value) is not in the result: it is not known what it holds. The assignment is read wherever it stands in the
+    text (see the limit above): one bash does not run before the write can be taken as the value."""
+    counts: dict[str, int] = {}
+    for match in _NAME_ASSIGNED_RE.finditer(command):
+        counts[match.group(1)] = counts.get(match.group(1), 0) + 1
+    for match in _NAME_LOOP_RE.finditer(command):
+        counts[match.group(1)] = counts.get(match.group(1), 0) + 2
+    for match in _NAME_READ_RE.finditer(command):
+        for name in re.findall(r"[A-Za-z_]\w*", match.group(1)):
+            counts[name] = counts.get(name, 0) + 2
+    for match in _NAME_DECLARED_RE.finditer(command):
+        words = match.group(1).split()
+        plain_flags = all(_PLAIN_FLAG_RE.fullmatch(word) for word in words if word.startswith("-"))
+        for word in (word for word in words if not word.startswith("-")):
+            parsed = re.match(r"([A-Za-z_]\w*)=(.*)$", word)
+            if plain_flags and parsed is not None and re.fullmatch(_LITERAL_VALUE, parsed.group(2)):
+                continue  # a literal binding, counted by _NAME_ASSIGNED_RE
+            for name in re.findall(r"[A-Za-z_]\w*", word):
+                counts[name] = counts.get(name, 0) + 2
+    values: dict[str, str] = {}
+    for command_match in _ASSIGNMENT_COMMAND_RE.finditer(command):
+        for part in _ASSIGN_PART_RE.finditer(command_match.group(1)):
+            if counts.get(part.group(1)) == 1:
+                value = part.group(2)
+                values[part.group(1)] = value[1:-1] if value[:1] in ("'", '"') else value
+    return values
+
+
+def _assigned_text(raw: str, command: str) -> Optional[str]:
+    """The text of the target `raw` with each variable that `command` assigns exactly once, as a simple literal,
+    replaced by its value. None where nothing is replaced: no variable, or none of them a literal binding."""
+    if "$" not in raw or not command:
+        return None
+    values = _assigned_literals(command)
+
+    def value_of(match: "re.Match[str]") -> str:
+        return values.get(match.group(1) or match.group(2), match.group(0))
+
+    text = _VARIABLE_USE_RE.sub(value_of, str(raw))
+    return text if text != raw else None
+
+
+def _assigned_value_refusal(
+    raw: str, base: Optional[str], root: Optional[Path], command: str,
+) -> Optional[str]:
+    """The refusal message when a variable of the target `raw` is assigned once, as a literal, in `command` and
+    the resulting target is a write to `.act/` (`f=.act/x && echo y > $f`): it is judged as a target written
+    out. A value that gives no such verdict, and a variable the command does not bind to one literal, change
+    nothing - the target is judged as it stands."""
+    text = _assigned_text(raw, command)
+    if text is None:
+        return None
+    message = _judge_target(text, base, root, command, None)
+    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE):
+        return f"{message} (the target `{raw}` was read as `{text}`: the command assigns that value to the name)"
+    return None
+
+
 def _judge_target(
     raw: str, base: Optional[str], root: Optional[Path], command: str, facts: Optional[Callable[[], ShellFacts]],
 ) -> Optional[str]:
@@ -504,6 +597,9 @@ def _judge_target(
     None. `facts` reads the loop and `read` variables of the command (list_feeds.shell_facts) when asked for."""
     if _is_unplaced_target(raw):
         return _unplaced_message(raw)
+    message = _assigned_value_refusal(raw, base, root, command)
+    if message is not None:
+        return message
     if base is None or _is_dynamic_target(raw) or root is None:
         if _names_protected_path(raw, root):
             return _WRITE_GUARD_MESSAGE
@@ -526,10 +622,54 @@ def _bound_refusal(
     unknown and passes as before."""
     for match in _BOUND_VARIABLE_RE.finditer(raw):
         for binding in bindings.get(match.group(1) or match.group(2), ()):
-            if binding.names_act:
-                return _WRITE_GUARD_MESSAGE
-            if binding.unshown or not all(_source_is_shown(source, base, root) for source in binding.sources):
-                return _LIST_MESSAGE
+            message = _binding_refusal(binding, base, root)
+            if message is not None:
+                return message
+    return None
+
+
+def _binding_refusal(binding: Binding, base: Optional[str], root: Optional[Path]) -> Optional[str]:
+    """The refusal message for one list (list_feeds.Binding): it names `.act` or may match it, or something in it
+    cannot be shown (_source_is_shown); None when it is shown. A scalar variable (`LIST=$(...)`) is a list only
+    through the sources that list files (list_feeds.lists_files) and is judged by those alone: with none of them it is
+    no list and passes, whatever its text names - the test comes before `names_act` and `unshown` are read."""
+    sources = [source for source in binding.sources if lists_files(source)] if binding.scalar else binding.sources
+    if binding.scalar and not sources:
+        return None
+    if binding.names_act:
+        return _WRITE_GUARD_MESSAGE
+    if binding.unshown or not all(_source_is_shown(source, base, root) for source in sources):
+        return _LIST_MESSAGE
+    return None
+
+
+# A `-C` callback that is nothing but a variable or a substitution (`"$cb"`, `$(cmd)`): the command is unknown.
+_BARE_CALLBACK_RE = re.compile(r"\$\{?\w+\}?|\$\(.*\)|`[^`]*`", re.DOTALL)
+
+
+def _callback_refusal(
+    callback: str, binding: Binding, command: str, base_cwd: str, root: Optional[Path],
+) -> Optional[str]:
+    """The refusal message for the `-C` callback of a `mapfile`/`readarray` (list_feeds.ShellFacts.callbacks): bash runs
+    it per quantum with the array index and the line appended, so it is read like a `find -exec` command on a hit
+    (_find_run_refusal), the line being the hit and the list `binding` that feeds the mapfile standing for the
+    source; a callback that is a shell (`sh -c '... "$2"' _`) is read like `find -exec sh -c '...' _ {}`, a `$`
+    or backtick inside it is part of its text. A value that is only a variable or a substitution is an unknown
+    command, as `find -exec` treats one; so is an empty one."""
+    if not callback.strip() or _BARE_CALLBACK_RE.fullmatch(callback.strip()):
+        return None
+    text = f"{callback} 0 {FIND_HIT}"
+    words = callback.split()
+    is_shell = os.path.basename(words[0]).lower() in ("sh", "bash", "zsh", "dash", "ksh")
+    base = _command_base(command, base_cwd)
+    for raw, where in Parse("Bash", text).bash_write_targets(base, _GIT_WRITES_TEMPLATE_GUARD):
+        message = _judge_target(raw, where, root, text, None)
+        if message is not None:
+            return message
+        if FIND_HIT in raw or (is_shell and _is_dynamic_target(raw)):
+            message = _binding_refusal(binding, where, root)
+            if message is not None:
+                return message
     return None
 
 
@@ -614,11 +754,50 @@ def _powershell_targets_protected_path(
     return _ps_list_refusal(command, base_cwd, root)
 
 
+def _inside_project(base: Optional[str], root: Optional[Path]) -> bool:
+    """True when the directory `base` is known, lies in the project `root` (the root itself or below) and is not
+    inside `.act`: a name-only wildcard listed there names no file of `.act` (a parent of the root would list the
+    project folder itself)."""
+    if base is None or root is None:
+        return False
+    resolved = _resolve_path(base)
+    if resolved is None:
+        return False
+    top = _folded(_resolve_path(str(root)) or root)
+    inside = _folded(resolved) == top or top in _folded(resolved).parents
+    return inside and not _is_under_project_act(resolved, root)
+
+
+def _item_target_refusal(target: str, base: Optional[str], root: Optional[Path], removed: bool = True) -> Optional[str]:
+    """The refusal message for the file or folder `target` an item object made in place names (`[IO.FileInfo]::new(x)`
+    followed by a method that writes), or - with `removed` False - a place a method of an item writes to (the
+    argument of `MoveTo`, `CopyTo`, `Replace`, which removes nothing at it; the project root and its parents are no
+    refusal there, `.Replace('..', '/')` may be a string): judged like a write target of the literal reader - a
+    literal against `.act` (and the project root), a text that holds a variable by its own text only; None when it
+    passes."""
+    if _is_unplaced_target(target):
+        return _unplaced_message(target)
+    if base is None and not _is_absolute_target(target) or _is_dynamic_target(target) or root is None:
+        return _WRITE_GUARD_MESSAGE if _names_protected_path(target, root) else None
+    resolved = _resolve_path(target, base)
+    if resolved is None:
+        return _WRITE_GUARD_MESSAGE if removed else None
+    if removed and _removes_root(resolved, root):
+        return _ROOT_REMOVAL_MESSAGE
+    return _WRITE_GUARD_MESSAGE if _is_under_project_act(resolved, root) else None
+
+
 def _ps_list_refusal(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
     """_LIST_MESSAGE when a write or delete cmdlet of the PowerShell `command` takes its item from a list
     (list_feeds.ps_fed_writes: the pipeline, `$_`, a variable a loop or an assignment filled, a sub-expression) that
     a list command of the allow-list does not show: `Get-ChildItem`/`gci`/`ls`/`dir`, `Resolve-Path`, `git ls-files`
-    ... must name fixed folders, not the project root, `.act` or no folder at all (_fixed_folder). A source that is
+    ... must name fixed folders, not the project root, `.act` or no folder at all (_fixed_folder). A single name-only
+    wildcard that cannot match `.act` (`Get-Item *.log`) reads the current folder only and passes when that lies
+    inside the project and not in `.act` (_inside_project) - list_feeds.ps_fed_writes leaves it out only for a
+    command without a location change or a command it does not show, and a write that works on the item itself
+    (a link or junction that a wildcard matches by its name and that leads to `.act` is a known limit). The file an
+    item object made in place names (`[IO.FileInfo]::new(x).Delete()`) is judged as a write target, and the argument
+    of `MoveTo`, `CopyTo` and `Replace` of an item as a place written to (_item_target_refusal). A source that is
     none of those (`Get-Content list.txt`, a literal list) is not judged, as before."""
     fed = ps_fed_writes(command, lambda name, args: _listing_operands([name, *args], True))
     base = _command_base(command, base_cwd)  # a `Set-Location` moves where a lister reads from
@@ -627,6 +806,16 @@ def _ps_list_refusal(command: str, base_cwd: str, root: Optional[Path]) -> Optio
             # No folder named: the lister reads the current one (a leading `Set-Location` moved it, _command_base).
             if operands is None or not all(_fixed_folder(operand, base, root) for operand in operands or ["."]):
                 return _LIST_MESSAGE
+        if item.current_folder and not _inside_project(base, root):
+            return _LIST_MESSAGE
+        for target in item.item_targets:
+            message = _item_target_refusal(target, base, root)
+            if message is not None:
+                return message
+        for target in item.destinations:
+            message = _item_target_refusal(target, base, root, removed=False)
+            if message is not None:
+                return message
     return None
 
 

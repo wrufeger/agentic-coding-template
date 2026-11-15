@@ -74,7 +74,10 @@
 #     only string literals of an interpreter's inline code (`python -c`, ...) are looked at.
 #   - a path built from a variable or a command substitution (`cat "$X/.."`, `$(pwd)/..`) is judged
 #     only up to its literal prefix, so `cat /safe-place/$X/../..` passes when the prefix is allowed;
-#     a brace list in a shell word is not expanded. A glob is judged by its literal directory prefix.
+#     a brace expansion in a shell word is judged as every word it stands for (`cat /x/{a,b}.txt`), besides
+#     the word's literal prefix; an expansion of 64 words or more and a word with a quoted or escaped brace
+#     stay as they were, a word whose quoting is unknown (not read by the lexer) counts as unquoted. A glob
+#     is judged by its literal directory prefix.
 #   - paths are compared after resolving them (symlinks followed; a path of more than 40 segments is
 #     cut lexically instead, which keeps a `cd a; cd a; ...` chain from costing quadratic time).
 #     Nothing is looked up on the network: a UNC path to another host is compared as written. NTFS
@@ -147,7 +150,7 @@ from urllib.parse import unquote
 
 import actlib
 
-from .brace_expand import expand_braces
+from .brace_expand import MAX_BRACE_RESULTS, expand_braces
 from .command_parse import Parse, parse_for
 from .command_words import _strip_command_prefix
 from .inline_code import mentions_interpreter
@@ -281,6 +284,7 @@ class _Finding:
     write: bool
     shown: str
     lock: bool = False
+    typed: str = ""  # the brace word as typed, when `raw` is one of the words it expands to
 
 
 def _key(path: object) -> str:
@@ -713,6 +717,80 @@ def _reads_nothing(raw: str, text: str, base: Optional[str], bash: bool, mode: s
     return not os.path.lexists(text)
 
 
+# A brace range `{1..3}`, `{01..10}`, `{a..e}`, `{1..10..2}` (the whole group), and the brackets that stand in for
+# a group the shell leaves as text while the others are expanded.
+_BRACE_RANGE_RE = re.compile(r"\{(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])(?:\.\.(-?\d+))?\}")
+_BRACE_TEXT_GROUP_RE = re.compile(r"\{([^{},]*)\}")
+_BRACE_OPEN, _BRACE_CLOSE = "\x01", "\x02"
+
+
+def _range_items(match: "re.Match[str]") -> Optional[list[str]]:
+    """The words a brace range stands for, or None for a range that is no valid one (`{a..5}`, `{A..a}`) or longer
+    than the brace limit."""
+    start, end, step_text = match.group(1), match.group(2), match.group(3)
+    if max(len(start), len(end), len(step_text or "")) > 18:
+        return None  # a number of that size is no list the check builds (and `int` refuses very long digit runs)
+    step = abs(int(step_text)) or 1 if step_text else 1
+    if start.lstrip("-").isdigit() != end.lstrip("-").isdigit():
+        return None
+    if start.lstrip("-").isdigit():
+        first, last = int(start), int(end)
+        if abs(last - first) // step + 1 >= MAX_BRACE_RESULTS:
+            return None  # counted before anything is built: `{1..100000000}` costs no list
+        width = max(len(start), len(end)) if any(len(part.lstrip("-")) > 1 and part.lstrip("-")[0] == "0" for part in (start, end)) else 0
+        numbers = range(first, last + 1, step) if first <= last else range(first, last - 1, -step)
+        items = [str(number).zfill(width) if width else str(number) for number in numbers]
+    else:
+        if start.isupper() != end.isupper():
+            return None
+        first, last = ord(start), ord(end)
+        if abs(last - first) // step + 1 >= MAX_BRACE_RESULTS:
+            return None
+        letters = range(first, last + 1, step) if first <= last else range(first, last - 1, -step)
+        items = [chr(code) for code in letters]
+    return items
+
+
+def _brace_variants(raw: str, live: Optional[str] = None) -> Optional[list[str]]:
+    """The words a shell word with a brace expansion (`{a,b}`, `{1..3}`, nested) stands for, expanded with
+    expand_braces; None where it has none: no group with a comma or a range (`{id}` and `{}` are text), a brace or
+    comma the lexer saw quoted or escaped, a range that is no valid one, or an expansion over the helper's limit
+    (that stays as it was). `live` says which characters of the word the shell acts on (shell_targets._Word.live;
+    taken from `raw` when it has it): a word whose quoting is not known is expanded as bash would an unquoted
+    one."""
+    text = str(raw)
+    if "{" not in text:
+        return None
+    if live is None:
+        live = getattr(raw, "live", None)
+    if live is not None and len(live) == len(text) and any(
+        char in "{},." and mark != "L" for char, mark in zip(text, live)
+    ):
+        return None
+    failed = False
+
+    def listed(match: "re.Match[str]") -> str:
+        nonlocal failed
+        items = _range_items(match)
+        if items is None:
+            failed = True
+            return match.group(0)
+        return "{" + ",".join(items) + "}" if len(items) > 1 else (items[0] if items else "")
+
+    text = _BRACE_RANGE_RE.sub(listed, text)
+    if failed:
+        return None
+    while True:
+        marked = _BRACE_TEXT_GROUP_RE.sub(lambda match: _BRACE_OPEN + match.group(1) + _BRACE_CLOSE, text)
+        if marked == text:
+            break
+        text = marked
+    variants = expand_braces(text)
+    if len(variants) >= MAX_BRACE_RESULTS or variants == [text]:
+        return None
+    return [variant.replace(_BRACE_OPEN, "{").replace(_BRACE_CLOSE, "}") for variant in variants]
+
+
 class _Judge:
     """Collects the findings of one call."""
 
@@ -736,7 +814,16 @@ class _Judge:
                 self.unchecked.append(reason)
         return bases[:_MAX_BASES]
 
-    def judge(self, raw: str, write: bool, bases: list[Optional[str]], mode: str = "shell") -> None:
+    def judge(
+        self, raw: str, write: bool, bases: list[Optional[str]], mode: str = "shell", expand: bool = True,
+        live: Optional[str] = None, typed: str = "",
+    ) -> None:
+        if expand and mode == "shell" and self.bash:
+            # A brace expansion is judged as every word it stands for, besides the word itself (its literal
+            # prefix, as before): `cat /x/{a,b}.txt` reads `/x/a.txt` and `/x/b.txt`. `expand` is off for the
+            # value of an assignment in front of a command, which bash leaves as typed.
+            for variant in _brace_variants(raw, live) or ():
+                self.judge(variant, write, bases, mode, expand=False, typed=str(raw))
         keys: list[str] = []
         texts: list[str] = []
         try:
@@ -753,7 +840,7 @@ class _Judge:
         locked = write and any(_under(key, self.lock_key) for key in keys)
         if not locked and any(self.places.allows(key, write) for key in keys):
             return
-        self._add(raw, keys[0], texts[0], write, locked)
+        self._add(raw, keys[0], texts[0], write, locked, typed)
 
     def scanner_failed(self, exc: Exception) -> None:
         """A scanner raised on this command: what it would have found is unknown, so the call counts as not checked."""
@@ -769,7 +856,7 @@ class _Judge:
         parents): a finding whatever the place says."""
         self._add(raw, _key(text), text, True, True)
 
-    def _add(self, raw: str, key: str, text: str, write: bool, locked: bool) -> None:
+    def _add(self, raw: str, key: str, text: str, write: bool, locked: bool, typed: str = "") -> None:
         for existing in self.found:
             if existing.key == key:
                 existing.write = existing.write or write
@@ -778,7 +865,7 @@ class _Judge:
         shown = text.replace("\\", "/")
         if shown.startswith(_POSIX_PREFIX):
             shown = shown[len(_POSIX_PREFIX):]
-        self.found.append(_Finding(str(raw).strip().strip("'\""), key, write, shown, locked))
+        self.found.append(_Finding(str(raw).strip().strip("'\""), key, write, shown, locked, typed.strip().strip("'\"")))
 
     def is_parent_of_lock(self, key: str) -> bool:
         return key != self.lock_key and _under(self.lock_key, key)
@@ -902,6 +989,7 @@ class _Words(list):
     words of an `echo` there are file names, not text."""
 
     feeds_xargs: bool = False
+    literal_values: bool = False  # the words are assignments in front of a command: no brace expansion in them
 
 
 _OPERAND_START_RE = re.compile(r"^[(\[]*[\d$]")
@@ -1636,6 +1724,18 @@ def _scan_wsl(judge: _Judge, args: list[str], bases: list[Optional[str]], depth:
     return True
 
 
+def _cut_from_quoted_word(text: str, words: list[str]) -> bool:
+    """True when `text` is cut out of a longer word of `words` that has a quoted or escaped character (a mark
+    other than "L" in its `live`): the shell does not brace-expand what such a word holds as typed. A word whose
+    quoting is not known (no `live`) counts as unquoted."""
+    for word in words:
+        live = getattr(word, "live", None)
+        if live is not None and len(live) == len(word) and text in str(word) and text != str(word):
+            if any(mark != "L" for mark in live):
+                return True
+    return False
+
+
 def _scan_from(
     judge: _Judge, word_lists: list[list[str]], bases: list[Optional[str]], depth: int, in_wsl: bool = False,
 ) -> None:
@@ -1649,16 +1749,22 @@ def _scan_from(
         if name == "wsl" and depth < 2 and _scan_wsl(judge, args, bases, depth):
             continue  # the words of the wsl call itself are its options and the line read above
         feeds = bool(getattr(words, "feeds_xargs", False))
+        lives = {str(word): word.live for word in words if getattr(word, "live", None) is not None}
         def route_absent(word: str, bases: list[Optional[str]] = bases) -> bool:
             first = _route_first_segment(word)
             return first is not None and not any(
                 _root_entry_exists(first, base, judge.bash) for base in judge.capped(bases or [None])
             )
 
-        for text, _strict in _read_candidates(
+        for text, strict in _read_candidates(
             name, args, feeds, not judge.bash, _program_word(words), None if in_wsl else route_absent,
         ):
-            judge.judge(text, False, bases)
+            expand = not getattr(words, "literal_values", False)
+            if expand and (strict or (text not in lives and _cut_from_quoted_word(text, words))):
+                # A candidate cut out of a word (an option value, a string literal of inline code) is read
+                # as bash would leave it when its word has a quoted or escaped character: no brace expansion.
+                expand = False
+            judge.judge(text, False, bases, expand=expand, live=lives.get(text))
         if len(words) > 2 and _PS_ASSIGN_RE.match(str(words[0])) and words[1] == "=":
             # `$t = "C:\\x"`: the value of an assignment is a word like any other.
             if _looks_like_path(str(words[2])):
@@ -1802,7 +1908,9 @@ def _shell_word_lists(parse: Parse) -> list[list[str]]:
         for index, (words, _separator) in enumerate(raw):
             assigned = _leading_assignments(words)
             if assigned:
-                lists.append(_Words(["export", *assigned]))
+                exported = _Words(["export", *assigned])
+                exported.literal_values = True
+                lists.append(exported)
             stripped = _strip_command_prefix(words)
             if not stripped:
                 continue
@@ -1975,14 +2083,14 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
                     if reason not in judge.unchecked:
                         judge.unchecked.append(reason)
                     continue
-                judge.judge(target, True, [cwd])
+                judge.judge(target, True, [cwd], live=getattr(target, "live", None))
         else:
             scanned = parse.for_text(whole if mentions_interpreter(whole) else command)
             for target, base in scanned.bash_write_targets(cwd, _GIT_WRITES_WORKER_SCOPE):
                 if _is_unplaced_target(target):
                     judge.unchecked.append(f"it holds a write the scanner could not place ({_unplaced_reason(target)})")
                     continue
-                judge.judge(str(target), True, [base if base is not None else cwd])
+                judge.judge(str(target), True, [base if base is not None else cwd], live=getattr(target, "live", None))
     except Exception as exc:  # noqa: BLE001 - the read scan below still runs, the call is refused
         judge.scanner_failed(exc)
     groups: list[list[list[str]]] = []
@@ -2024,6 +2132,8 @@ def _message(findings: list[_Finding], tool: str, mode: str) -> str:
     lead = "[act] warning --" if mode == "warn" else "[act] outside-root refused --"
     first = findings[0]
     shown = f"`{first.raw}`" if first.raw.replace("\\", "/") == first.shown else f"`{first.raw}` ({first.shown})"
+    if first.typed and first.typed != first.raw:
+        shown = f"`{first.typed}` (a brace expansion, expanded to {shown})"
     if first.lock:
         what = (
             f"{tool} writes {shown}: `.act-local/outside-allow/` is reserved for the act-adopt "
