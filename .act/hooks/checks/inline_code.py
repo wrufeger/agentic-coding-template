@@ -19,31 +19,48 @@
 # Python is read with `ast` (read_python_program, below): write calls are `open` with a writing mode (a mode the
 # reading cannot see counts as writing), `os.remove|unlink|rmdir|removedirs|mkdir|makedirs|truncate|chmod|chown|
 # utime|open|symlink|link|rename|replace`, `shutil.copy|copy2|copyfile|copymode|copystat|copytree|move|rmtree|
-# chown`, and on any receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`,
-# `chmod`, `lchmod`, `rename`, `symlink_to`, `hardlink_to`, `link_to`; the path is what the text shows: a string
-# literal, `Path(...)` / `os.path.join(...)` of such parts, a name bound once to such a value and used unchanged,
-# `Path('<literal>').glob('<literal>')` on a relative folder and `glob.glob` of a literal pattern (_Env).
-# The text of an `exec`/`eval` written out is read again.
+# chown`, `tarfile.open` and `zipfile.ZipFile` whose mode is a string literal starting with `w`, `x` or `a`, and on
+# any receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`, `chmod`, `lchmod`,
+# `rename`, `symlink_to`, `hardlink_to`, `link_to`; the path is what the text shows: a string literal,
+# `Path(...)` / `os.path.join(...)` of such parts, a name bound once to such a value and used unchanged,
+# `Path('<literal>').glob('<literal>')` on a relative folder and `glob.glob` of a literal pattern (_Env). A glob
+# may reach the places the guards protect (_PROTECTED_PROBES: `.act/`, the git hooks and config, the Claude
+# settings including the local one, the editor and container start files, a worker's `docs/ai/`). When the program
+# has one `os.chdir('<literal>')` as a statement of its module body and nothing else that could change the folder,
+# the relative literal paths of the write calls after it lie below that literal (_follow_chdir). The text of an
+# `exec`/`eval` written out is read again.
 #
 # Node is read at regex level (comments dropped, every string literal blanked): `writeFile[Sync]`,
 # `appendFile[Sync]`, `createWriteStream`, `copyFile[Sync]`, `cp[Sync]`, `rename[Sync]`, `unlink[Sync]`,
 # `rm[Sync]`, `rmdir[Sync]`, `mkdir[Sync]`, `symlink[Sync]`, `truncate[Sync]` as a call; the path is a string
-# literal, a name declared once as `const NAME = "literal"` or `path.join(...)` of such parts.
+# literal, a name declared once as `const NAME = "literal"` (not a parameter, a `for (NAME of|in ...)` variable or
+# a name in code that holds `eval`, `Function`, `vm` or `with (`) or `path.join(...)` of such parts, read the way
+# Node's join reads them (_node_join: a later part with a leading `/` is just a part, `..` folds, only a first
+# part that is absolute makes the result absolute).
 #
 # A literal counts as a path when it holds `/` or `\` or is a bare file name with an extension (`name.ext`, not
 # all digits) and is no URL, holds no control character, is not made of separators alone (_resolved_is_path).
+# A bare `.` or `..` literal is no path for any call but `shutil.rmtree` (`./`, `../` and `../..` are paths), whose
+# whole-folder entry (`./(whole folder)`, WHOLE_FOLDER) is one: the guards refuse it for the project root and every
+# folder above it.
 #
-# Known limits (a path missed here is simply not checked): a bare name without an extension (`open('out',
+# Known limits (a path missed here is simply not checked): a `path.join` that starts with a UNC path (`//a/b`), which
+# Node's win32 join reads as a share, not as a root; a bare name without an extension (`open('out',
 # 'w')`); a script file run by path; writes through `subprocess`/`os.system`/`child_process`; a write call that
-# is not in the lists above (`.write(`, `Path.replace`, `fs.openSync`); code that imports a name under another
+# is not in the lists above (`.write(`, `Path.replace`, `fs.openSync`, the files `tarfile` or `zipfile` extract); a
+# program that changes directory in any form but the one above (a second `chdir`, one in a branch, a loop or a
+# function, `fchdir`, a folder that is no literal), whose names are unknown after it; a program larger than
+# _PROGRAM_SIZE_LIMIT, which is not read at all (no target, no refusal); code that imports a name under another
 # one; any other interpreter (perl, ruby, php, deno, bun). Best effort: it catches the common form.
 
 from __future__ import annotations
 
 import ast
 import fnmatch
+import functools
 import itertools
 import os
+import posixpath
 import re
 import shlex
 import sys
@@ -453,7 +470,102 @@ _NODE_JOIN_RE = re.compile(r"(?<![\w$.])path\s*\.\s*join\s*\(")
 # What may follow the literal of `const NAME = "literal"` so that the literal is the whole value: the end of the
 # statement, or a line break not continued by an operator, a call or a member access.
 _NODE_INITIALIZER_END_RE = re.compile(r"[ \t]*(?:[;,]|$|\r?\n\s*(?![.(\[+\-*/%?:|&<>=]))")
-_NODE_REBINDING_RE = re.compile(r"(?<![\w$])(?:eval|Function|vm)(?![\w$])")
+# `eval`, `Function` and `vm` run text the reading cannot see; `with (` puts an object's properties in front of every
+# name inside its block.
+_NODE_REBINDING_RE = re.compile(r"(?<![\w$])(?:eval|Function|vm)(?![\w$])|(?<![\w$.])with\s*\(")
+
+
+_NODE_FUNCTION_HEAD_RE = re.compile(r"\bfunction\b[^(){};]*$")
+_NODE_ARROW_RE = re.compile(r"\s*=>")
+
+
+@functools.lru_cache(maxsize=8)
+def _node_parameter_bindings(skeleton: str) -> tuple[str, ...]:
+    """What the parameter lists of the code bind: for each `function f(...)` and `(...) =>` the text of every
+    parameter in front of its default (`function f(a = g(), {b, c}, ...d)` -> `a`, `{b, c}`, `...d`). The lists
+    are found by matching parentheses, so a call inside a default value does not end one early; a default value
+    itself binds nothing, also inside a destructuring pattern (`({ a = g(out) })` binds `a`, not `out`): it runs
+    from the `=` to the next `,` or closing bracket at the same depth."""
+    opening: list[int] = []
+    groups: list[tuple[int, int]] = []
+    for index, char in enumerate(skeleton):
+        if char == "(":
+            opening.append(index)
+        elif char == ")" and opening:
+            groups.append((opening.pop(), index))
+    bindings: list[str] = []
+    for start, end in groups:
+        is_list = (_NODE_FUNCTION_HEAD_RE.search(skeleton, max(0, start - 200), start) is not None
+                   or _NODE_ARROW_RE.match(skeleton, end + 1) is not None)
+        if not is_list:
+            continue
+        depth = 0
+        skipping: Optional[int] = None  # the depth at which a default value runs, while inside one
+        kept: list[str] = []
+        for index in range(start + 1, end + 1):
+            char = skeleton[index] if index < end else ","
+            if skipping is not None:
+                if char in "([{":
+                    depth += 1
+                elif char in ")]}":
+                    if depth == skipping:
+                        skipping = None
+                        depth -= 1
+                        kept.append(char)
+                    else:
+                        depth -= 1
+                elif char == "," and depth == skipping:
+                    skipping = None
+                    if depth == 0:
+                        bindings.append("".join(kept))
+                        kept = []
+                    else:
+                        kept.append(char)
+                continue
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif char == "=" and skeleton[index + 1:index + 2] not in ("=", ">")                     and skeleton[index - 1:index] not in ("=", "!", "<", ">"):
+                skipping = depth
+                continue
+            elif char == "," and depth == 0:
+                bindings.append("".join(kept))
+                kept = []
+                continue
+            kept.append(char)
+    return tuple(bindings)
+
+
+def _node_join(values: list[str]) -> str:
+    """`path.join(...)` of literal parts the way Node's posix join reads them: the non-empty parts joined with `/`
+    and the result normalized - `.` segments dropped, `a/..` folded, a leading `..` kept, repeated slashes
+    collapsed, an empty result `.`, a trailing slash kept. A part with a leading `/` is just a part (`('.act',
+    '/rules/x.md')` is `.act/rules/x.md`); only a first part that is absolute makes the result absolute."""
+    joined = "/".join(value for value in values if value)
+    if sys.platform == "win32":
+        joined = joined.replace("\\", "/")  # Node's default `path` there is win32 and splits on both separators
+    if not joined:
+        return "."
+    absolute = joined.startswith("/")
+    segments: list[str] = []
+    for segment in joined.split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == ".." and segments and segments[-1] != "..":
+            segments.pop()
+        elif segment == ".." and absolute:
+            continue  # nothing above the root
+        else:
+            segments.append(segment)
+    result = "/".join(segments)
+    if absolute:
+        result = "/" + result
+    elif not result:
+        result = "."
+    if joined.endswith("/") and not result.endswith("/"):
+        result += "/"
+    return result
 
 
 def _node_const_ok(skeleton: str, name: str) -> bool:
@@ -468,12 +580,16 @@ def _node_const_ok(skeleton: str, name: str) -> bool:
         r"\bfunction\b[^(]*\([^)]*(?<![\w$.])" + word + r"(?![\w$])",
         r"\([^()]*(?<![\w$.])" + word + r"(?![\w$])[^()]*\)\s*(?:=>|\{)",
         before + word + r"\s*=>",
+        r"\bfor\s*(?:await\s*)?\(\s*" + word + r"\s+(?:of|in)(?![\w$])",
         r"\bcatch\s*\(\s*" + word + r"(?![\w$])",
         before + word + r"\s*(?:\+\+|--)",
         r"(?:\+\+|--)\s*" + word + r"(?![\w$])",
     )
     assigns = len(re.findall(before + word + r"\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|\?\?|&&|\|\|)?=(?!=)", skeleton))
-    return declarations == 1 and assigns == 1 and not any(re.search(pattern, skeleton) for pattern in hidden)
+    bound_by_parameter = any(re.search(r"(?<![\w$])" + word + r"(?![\w$])", parameter)
+                             for parameter in _node_parameter_bindings(skeleton))
+    return (declarations == 1 and assigns == 1 and not bound_by_parameter
+            and not any(re.search(pattern, skeleton) for pattern in hidden))
 
 
 def _node_write_targets(literals: list[_Literal], skeleton: str) -> list[str]:
@@ -513,7 +629,7 @@ def _node_write_targets(literals: list[_Literal], skeleton: str) -> list[str]:
         if parts[-1][1] != end - 1:
             return None
         values = [path_of(part, depth + 1) for part in parts]
-        return None if None in values else os.path.join(*[value for value in values if value is not None])
+        return None if None in values else _node_join([value for value in values if value is not None])
 
     found: list[str] = []
     for match in _NODE_WRITE_RE.finditer(skeleton):
@@ -588,7 +704,8 @@ def _resolved_is_path(value: str) -> bool:
 #     a mode the reading cannot see counts as writing), `os.remove`, `unlink`, `rmdir`, `removedirs`,
 #     `mkdir`, `makedirs`, `truncate`, `chmod`, `chown`, `utime`, `open`, `symlink`, `link`, `rename`,
 #     `replace`, `shutil.copy`, `copy2`, `copyfile`, `copymode`, `copystat`, `copytree`, `move`, `rmtree`,
-#     `chown`, and on any receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`,
+#     `chown`, `tarfile.open` and `zipfile.ZipFile` with a literal mode that starts with `w`, `x` or `a`, and on any
+#     receiver the methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`,
 #     `rmdir`, `chmod`, `lchmod`, `rename`, `symlink_to`, `hardlink_to`, `link_to`, `open` (writing mode):
 #     the receiver is the path when the text shows it (`Path(...)` of literals, a name bound once), else unknown.
 #     For a copy the destination is the path, for a move, rename or link both operands are.
@@ -603,7 +720,7 @@ CALL_RUN = "run"      # a command line the program hands to a shell or a program
 CALL_WRITE = "write"  # a path the program writes, creates, moves, links or deletes
 CALL_CODE = "code"    # Python text the program runs itself (`exec`, `eval`)
 
-_PROGRAM_SIZE_LIMIT = 32_768   # characters of one program read as Python (parsing costs ~3 ms per KB); a larger one is not read, and refused when it holds a write call
+_PROGRAM_SIZE_LIMIT = 32_768   # characters of one program read as Python (parsing costs ~3 ms per KB); a larger one is not read: it gives no target and passes
 _LITERAL_FOLD_DEPTH = 64       # `"a" + "b" + ...` chains folded this deep; deeper is not a literal
 
 # (module, function) -> how the arguments are read: "line" (the first argument is a command line),
@@ -636,6 +753,9 @@ _WRITE_FUNCTIONS: dict[tuple[str, str], tuple] = {
     ("shutil", "copy"): (1,), ("shutil", "copy2"): (1,), ("shutil", "copyfile"): (1,), ("shutil", "copymode"): (1,),
     ("shutil", "copystat"): (1,), ("shutil", "copytree"): (1,), ("shutil", "move"): (0, 1),
     ("shutil", "rmtree"): (0,), ("shutil", "chown"): (0,),
+    # an archive: the first argument is the path only when the mode is a string literal that starts with `w`, `x` or
+    # `a` (a reading mode, no mode or one the reading cannot see is a read)
+    ("tarfile", "open"): ("archive",), ("zipfile", "ZipFile"): ("archive",),
 }
 # method -> whether the first argument is a path too (a rename target, a link target)
 _WRITE_METHODS: dict[str, bool] = {
@@ -794,6 +914,14 @@ def _mode_writes(call: ast.Call, position: int, env: "_Env") -> bool:
     return _PY_MODE_RE.match(f"'{mode}'") is not None and any(char in "wax+" for char in mode)
 
 
+def _archive_writes(call: ast.Call) -> bool:
+    """True if the `mode` of a `tarfile.open` / `zipfile.ZipFile` call (positional second argument or `mode=`) is a
+    string literal that starts with `w`, `x` or `a` (`'w'`, `'w:gz'`, `'x:xz'`, `'a'`)."""
+    node = _argument(call, 1, "mode")
+    mode = _fold_string(node) if node is not None else None
+    return mode is not None and mode[:1] in ("w", "x", "a")
+
+
 def _is_read_only_flag(node: Optional[ast.expr]) -> bool:
     """True for the flags `os.O_RDONLY` of an `os.open` call, written out as that and as nothing else."""
     return isinstance(node, ast.Attribute) and node.attr == "O_RDONLY" and isinstance(node.value, ast.Name)
@@ -865,7 +993,9 @@ _JOIN_MODULES = {"os": ["path", "join"], "os.path": ["join"], "posixpath": ["joi
 #   - `<such a path>.with_suffix('<literal>')`, and `<file of a glob>.with_suffix(...)`: somewhere under the folder;
 #   - the path parameter of a function the program uses only as `onerror=` / `onexc=` of `shutil.rmtree` calls whose
 #     targets are shown: somewhere under those targets (when they hold no `..`), and only when the function uses its
-#     first parameter for nothing but `first(path)`.
+#     first parameter for nothing but `first(path)`;
+#   - after the one `os.chdir('<literal>')` of the module body (_follow_chdir) a relative literal path, joined onto
+#     that literal; the names stay unknown after any `chdir`.
 _REBINDING_NAMES = frozenset({
     "exec", "eval", "compile", "globals", "locals", "vars", "setattr", "getattr", "delattr", "__import__",
     "_getframe", "currentframe", "f_globals", "f_locals", "__dict__", "__setattr__", "__builtins__", "runpy",
@@ -874,10 +1004,11 @@ _REBINDING_NAMES = frozenset({
 _REBINDING_ATTRIBUTES = frozenset({"modules"})  # `sys.modules`
 _MODULE_ROOTS = frozenset({"os", "sys", "builtins", "pathlib", "shutil", "posixpath", "ntpath"})
 # Where a glob that may reach it is also judged (the first segment of each, matched against the pattern; a deep
-# pattern reaches all of them): the places the guards of the template's own and of the git metadata files protect.
+# pattern reaches all of them): the places the guards of the template's own and of the git metadata files protect,
+# and the `docs/ai/` a worker never writes.
 _PROTECTED_PROBES = (
-    ".act/", ".git/hooks/", ".git/config", ".claude/settings.json", ".mcp.json", ".vscode/tasks.json",
-    ".devcontainer/devcontainer.json", ".envrc",
+    ".act/", ".git/hooks/", ".git/config", ".claude/settings.json", ".claude/settings.local.json", ".mcp.json",
+    ".vscode/tasks.json", ".devcontainer/devcontainer.json", ".envrc", "docs/ai/",
 )
 _ANY_FILE = "(any file here)"
 WHOLE_FOLDER = "(whole folder)"  # the folder a recursive delete removes as a whole: the guards judge it as a folder
@@ -1219,7 +1350,7 @@ class _Env:
             inner = self._under(node.func.value)
             if inner is None or any(not isinstance(item, _Under) for item in inner):
                 return None
-            return [_Under(item.base, "*", True) for item in inner if isinstance(item, _Under)]
+            return [_Under(item.base, item.pattern, item.recursive) for item in inner if isinstance(item, _Under)]
         return None
 
     def _globbed(self, iterable: Optional[ast.expr]) -> "Optional[list[str | _Under]]":
@@ -1347,11 +1478,17 @@ def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[Progr
             if not _mode_writes(call, 1, env):
                 return None
             positions = (0,)
+        elif positions == ("archive",):
+            if not _archive_writes(call):
+                return None
+            positions = (0,)
         nodes = []
         for position in positions:
             node = _argument(call, position, ("src", "dst")[position] if position < 2 else None)
             if node is None and position == 0:
                 node = _argument(call, 0, "file") or _argument(call, 0, "path")
+                if node is None and module == "tarfile":
+                    node = _argument(call, 0, "name")
             nodes.append(node)
     paths = [env.path_value(node) for node in nodes]
     if module != "":
@@ -1366,6 +1503,96 @@ def _read_call(call: ast.Call, aliases: _Aliases, env: "_Env") -> Optional[Progr
                 if (module, function) == ("shutil", "rmtree"):
                     values.append(item.rstrip("/\\") + "/" + WHOLE_FOLDER)  # the folder goes as a whole
     return ProgramCall(name, CALL_WRITE, tuple(values), None, True, line, None in paths)
+
+
+# A program that changes directory once. The narrow form is followed: the program has exactly one use of `chdir` or
+# `fchdir` anywhere (a name, an attribute, an import, a string), it is `os.chdir('<literal>')` as a statement of the
+# module body itself, the program rebinds nothing behind the text (_REBINDING_NAMES, besides `chdir`), and no write
+# call stands in a `def`, `lambda` or `class` (which may run before or after it). Then a relative literal path of a
+# write call in a module statement after the chdir lies below that literal (an absolute literal makes it absolute;
+# the folder the interpreter runs in is for the checks to apply). Everything before it, every other form (a second
+# chdir, one in a branch, a loop, a function or a `try`, a name or a call's result as the folder, `getattr`) stays
+# as it is: names unknown after any chdir, a relative path judged against the folder the call runs in.
+_CHDIR_NAMES = frozenset({"chdir", "fchdir"})
+
+
+def _mentions_chdir(node: ast.AST) -> bool:
+    """True if `node` is a use of `chdir` or `fchdir` in any form the text shows: a name, an attribute, an imported
+    name, or a string that holds the word (`getattr(os, 'chdir')`)."""
+    if isinstance(node, ast.Name):
+        return node.id in _CHDIR_NAMES
+    if isinstance(node, ast.Attribute):
+        return node.attr in _CHDIR_NAMES
+    if isinstance(node, ast.alias):
+        return node.name.split(".")[-1] in _CHDIR_NAMES
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return "chdir" in node.value
+        return isinstance(node.value, bytes) and b"chdir" in node.value
+    return False
+
+
+def _chdir_statement(tree: ast.Module, aliases: _Aliases, env: "_Env") -> Optional[tuple[int, str]]:
+    """(the index in the module body of the one `os.chdir('<literal>')` statement, its literal) when the program has
+    the narrow form above, else None."""
+    if aliases.star:
+        return None
+    uses = [node for node in ast.walk(tree) if _mentions_chdir(node)]
+    if len(uses) != 1 or not isinstance(uses[0], ast.Attribute):
+        return None
+    for index, statement in enumerate(tree.body):
+        call = statement.value if isinstance(statement, ast.Expr) else None
+        if not (isinstance(call, ast.Call) and call.func is uses[0]):
+            continue
+        root = uses[0].value
+        if not (isinstance(root, ast.Name) and env.aliases.modules.get(root.id, root.id) == "os"
+                and env._imported_only(root.id)):
+            return None
+        if len(call.args) != 1 or call.keywords:
+            return None
+        argument = call.args[0]
+        if not (isinstance(argument, ast.Constant) and isinstance(argument.value, str)):
+            return None
+        folder = argument.value
+        if not folder or folder[0] == "~" or "$" in folder or _CONTROL_CHAR_RE.search(folder) is not None:
+            return None
+        if re.fullmatch(r"[A-Za-z]:", folder):
+            return None  # a bare drive means that drive's current folder, which the text does not show
+        if any(env._rebinds(node) for node in ast.walk(tree) if node is not uses[0]):
+            return None
+        return index, folder
+    return None
+
+
+def _follow_chdir(tree: ast.Module, aliases: _Aliases, env: "_Env", found: list) -> list:
+    """`found` (pairs of a call node and its ProgramCall) as the calls of the program, the relative literal paths of
+    the write calls after the one chdir joined onto its folder (see above)."""
+    calls = [call for _node, call in found]
+    chdir = _chdir_statement(tree, aliases, env)
+    if chdir is None:
+        return calls
+    index, folder = chdir
+    inside: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            inside.update(id(part) for part in ast.walk(node) if isinstance(part, ast.Call))
+    if any(call.kind == CALL_WRITE and id(node) in inside for node, call in found):
+        return calls
+    after = {id(part) for statement in tree.body[index + 1:] for part in ast.walk(statement)
+             if isinstance(part, ast.Call)}
+    joined: list = []
+    for node, call in found:
+        if call.kind == CALL_WRITE and id(node) in after:
+            call = call._replace(values=tuple(_below(folder, value) for value in call.values))
+        joined.append(call)
+    return joined
+
+
+def _below(folder: str, value: str) -> str:
+    """`value` joined onto `folder` when it is a relative literal path (not rooted, no drive, not `~`), else as it is."""
+    if not value or value[0] in "/\\~" or re.match(r"[A-Za-z]:", value):
+        return value
+    return posixpath.join(folder, value)
 
 
 # --- A harmless program: the allow-list -------------------------------------------------------------
@@ -1565,13 +1792,14 @@ def read_python_program(code: str) -> Optional[PythonProgram]:
         tree = ast.parse(code)
         aliases = _module_aliases(tree)
         env = _Env(tree, aliases)
-        found: list[ProgramCall] = []
+        found: list[tuple[ast.Call, ProgramCall]] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 call = _read_call(node, aliases, env)
                 if call is not None:
-                    found.append(call)
+                    found.append((node, call))
+        calls = _follow_chdir(tree, aliases, env, found)
         blocker = _harmless_blocker(tree)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return None
-    return PythonProgram(sorted(found, key=lambda call: call.line), blocker is None, blocker)
+    return PythonProgram(sorted(calls, key=lambda call: call.line), blocker is None, blocker)

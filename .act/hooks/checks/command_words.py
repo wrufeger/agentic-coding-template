@@ -234,10 +234,11 @@ def _is_quoted_text_substitution(word: str) -> bool:
 
 def _is_print_only_word(word: str) -> bool:
     """True when the shell acts on nothing in `word` but plain characters: every `$` and backtick in it stood
-    inside single quotes (the lexer's live mark "'"), or is the `$` that opens an ANSI-C `$'...'` (a live `$`
-    right before single-quoted text), and no backtick span. A word without live marks (a plain `str`)
-    qualifies only when it holds neither character. Allow-list: `'$(cmd)'` and `$'$(cmd)'` qualify; `"$(cmd)"`,
-    `$_`, `${x}`, `\\$(cmd)` and `` `cmd` `` do not."""
+    inside single quotes (the lexer's live mark "'"; an ANSI-C `$'...'` run is one, the lexer decodes it itself),
+    and no backtick span. The branch for a live `$` right before single-quoted text now fires only for `$$'`
+    (the process id and a plain quote); the first `$` of that pair is a live one, so such a word still fails
+    on it. A word without live marks (a plain `str`) qualifies only when it holds neither character.
+    Allow-list: `'$(cmd)'` and `$'$(cmd)'` qualify; `"$(cmd)"`, `$_`, `${x}`, `\\$(cmd)` and `` `cmd` `` do not."""
     if getattr(word, "subs", ()):
         return False
     live = getattr(word, "live", None)

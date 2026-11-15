@@ -101,8 +101,9 @@
 #          in this order" (_simple_commands) and "is this one a `git <sub>` call, and under which
 #          `-C` directory" (_git_call) — much less than shell_targets' write-target machinery, so
 #          it is its own small walker, not a copy of _scan_tokens. If the command cannot be
-#          tokenized at all (an unclosed quote, a live `$'...'` ANSI-C quoting — that tokenizer does not know
-#          it; a `$'` that is only text is told apart by the quote pass the shell checks share),
+#          tokenized at all (an unclosed quote, or a `$'` that the quote pass the shell checks share cannot
+#          place; that tokenizer reads a live `$'...'` ANSI-C run itself, and a `$'` that is only text is told
+#          apart by the same pass),
 #          a coarse raw-text fallback treats a bare "git ... commit" mention as a `-a`-style commit
 #          with no known add-paths — over-inclusive on purpose, the same stance shell_targets takes
 #          for its own tokenizing fallback. The chain is read once, with the word lexer (backtick

@@ -525,17 +525,21 @@ unknown target passes): a string that is merely mentioned (an import line, a com
 only reads, the system temp folder in a text) is no target, and neither is a path the text does not show - a name
 bound twice, a loop variable, a parameter, `sys.argv`, a join or f-string with a variable part, a call's result -, a
 literal that holds a `$` or a backtick, or code that cannot be read as Python (or a program
-larger than the reader takes). Shown is: a string literal; `Path(...)`, `os.path.join(...)` (Node `path.join(...)`) of
-such parts; a name bound exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used
+larger than the reader takes). Shown is: a string literal; `Path(...)`, `os.path.join(...)` (Node `path.join(...)`, read the way Node joins: a later
+part with a leading `/` stays a part, on Windows `\` splits as well) of such parts; a name bound exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used
 unchanged (not where the program calls `exec`, `eval`, `getattr`, `setattr`, `__import__` ... or stores an attribute on
 a module); and the files of `<folder>.glob('<literal>')`, `.rglob(...)`, `glob.glob('<literal>')` with a literal folder
-(the folder is judged; the worker scope allows it only where the scope covers all of it). The text of an
-`exec`/`eval` written out is read again.
+(the folder is judged; the worker scope allows it only where the scope covers all of it; a glob that can reach a
+protected place below the folder - `.act/`, the git and Claude settings files, a worker's `docs/ai/` - is judged
+there too). After the program's one `os.chdir('<literal>')`, a statement of the module body (no other `chdir`, no
+`getattr` or `exec`, no write call inside a `def`, `lambda` or `class`), a relative path lies below that folder;
+any other `chdir` leaves names unknown. The text of an `exec`/`eval` written out is read again.
 
 The write calls are Python `open` (also `io.open`, `codecs.open`) with a writing mode or one that is not seen, `.open`
 with a writing mode written out, `os.open`, `os.remove`, `unlink`, `rmdir`, `removedirs`, `mkdir`, `makedirs`,
 `truncate`, `chmod`, `chown`, `utime`, `rename`, `replace`, `symlink`, `link`, `shutil.copy`, `copy2`, `copyfile`,
-`copytree`, `move`, `rmtree`, and the `Path` methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`,
+`copytree`, `move`, `rmtree`, `tarfile.open` and `zipfile.ZipFile` with a literal mode starting with `w`, `x` or
+`a`, and the `Path` methods `write_text`, `write_bytes`, `touch`, `mkdir`, `unlink`, `rmdir`,
 `chmod`, `lchmod`, `rename`, `link_to`, `symlink_to`, `hardlink_to`; Node `writeFile`, `appendFile`,
 `createWriteStream`, `copyFile`, `cp`, `rename`, `unlink`, `rm`, `rmdir`, `mkdir`, `symlink`, `truncate` (and their
 `Sync` forms). A literal counts as a path when it holds `/` or `\`, or is a bare file name with an extension
@@ -554,7 +558,8 @@ Limits of that reading (what stays unseen; it catches the common form, not every
   `fs.openSync`; a name imported under another one;
 - the code is another interpreter's: perl, ruby, php, deno, bun;
 - the shell scan does not reach the code: a heredoc after a line that does not tokenize on its own (a
-  string spanning lines, an unterminated quote) or after a `$'...'` the scan misreads (`$'it\'s'`); a
+  string spanning lines, an unterminated quote) or after a `$'` the quote pass cannot place (in a comment
+  with a quote, in arithmetic, in a `${...}` with an operator); a
   pipe into a group counts only for the group's first command (`cat <<'EOF' | (true; python -)`); a
   heredoc given to a group or subshell (`( python - ) <<'EOF'`);
 - the code text is misread: a JavaScript regular expression after `)`, `]` or `}` (taken for a division,

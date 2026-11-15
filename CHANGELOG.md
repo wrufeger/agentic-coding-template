@@ -138,6 +138,16 @@ with a model each.
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- The write checks read ANSI-C quoting (`$'...'`) the way bash does: a relative target after a `cd` is judged from
+  the folder the `cd` reached, which ends a false `outside-root` report.
+- `git commit -m $'...'` is read as written instead of scanning unstaged files; where the quote pass cannot place a
+  `$'`, the cautious reading stays.
+- Inline code: a Node `path.join` is read the way Node joins (a later part with a leading `/` stays below the
+  first; on Windows `\` splits as well).
+- Inline code: a Node `const` hidden by a parameter list with nested parentheses, `for (x of|in ...)` or `with (`
+  is no longer taken as the path.
+- Inline code: after the one `os.chdir('<literal>')` of a Python program, a relative path is judged below that
+  folder.
 - `template-write-guard` no longer refuses a write whose single-quoted text holds both a backtick and `$(`, such as
   ``printf 'a `$(` b' >> docs/f.md``; the target is judged as before.
 - `context_size.py` measures the session named by `CLAUDE_CODE_SESSION_ID`; without it and with two live transcripts
@@ -175,6 +185,10 @@ with a model each.
   as `*`, `!docs/`): it stays out of the commit, which names it; an ignored `CHANGELOG.md` is not created.
 
 ### Security
+- Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
+  worker's `docs/ai/` or `.claude/settings.local.json` is judged there too.
+- The bash reading takes `$$` (the process id) as one unit, so a quote right after it stays a plain quote, and
+  `cat $'.env'` is refused like `cat .env`.
 - After a time-out the commit scans repeat a git call once; a check that only notes says it did not run, and
   `commit-hashes` says it is incomplete.
 - The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and
