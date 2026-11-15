@@ -16,7 +16,8 @@
 # subshells and `bash -c` text included). Bash only: the prompt is Claude Code's Bash permission check.
 #
 # Limits: a `cd` or a `git` made by a program (`python -c`, a script file) is not seen; a `cd` whose folder
-# is a variable or a substitution counts as a `cd` elsewhere. Fails open: an exception lets the call pass.
+# is a variable or a substitution counts as a `cd` elsewhere. An exception is a crash of the check: the dispatcher
+# refuses the call it was to look at (the check is in its table of refusing checks).
 
 from __future__ import annotations
 
@@ -77,32 +78,36 @@ def _is_git(words: list[str]) -> bool:
 
 
 def check_cd_git(payload: dict) -> int:
-    """Refuse `cd`/`pushd` and `git` in one Bash call (exit 2, the reason on stderr); 0 otherwise."""
-    try:
-        shell = _shell_command(payload)
-        if shell is None or shell[0] != "Bash":
-            return 0
-        command = shell[1]
-        if ("cd" not in command and "pushd" not in command) or "git" not in command:
-            return 0  # the cheap text test first: most calls end here without reading docs/ai/config.md
-        config = actlib.read_config()
-        mode = _check_mode(config, "cd-git", default="block")
-        tools = [actlib.normalize_tool(tool) for tool in config.get("tools", "").split(",")]
-        if mode == "off" or "claude-code" not in tools:
-            return 0
-        cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else str(actlib.repo_root())
-        word_lists = parse_for(payload, command).stripped()
-        if not any(_is_git(words) for words in word_lists):
-            return 0
-        folder: Optional[str] = None
-        for words in word_lists:
-            target = _cd_target(words)
-            if target is not None and not _stays_here(target, cwd):
-                folder = target
-                break
-        if folder is None:
-            return 0
-    except Exception:  # noqa: BLE001 -- fail open: a check that cannot read the call lets it pass
+    """Refuse `cd`/`pushd` and `git` in one Bash call (exit 2, the reason on stderr); 0 otherwise. An exception is
+    not caught: dispatch.py refuses the call this check was to look at and names the check."""
+    shell = _shell_command(payload)
+    if shell is None or shell[0] != "Bash":
+        return 0
+    command = shell[1]
+    if ("cd" not in command and "pushd" not in command) or "git" not in command:
+        return 0  # the cheap text test first: most calls end here without reading docs/ai/config.md
+    config = actlib.read_config()
+    mode = _check_mode(config, "cd-git", default="block")
+    tools = [actlib.normalize_tool(tool) for tool in config.get("tools", "").split(",")]
+    if mode == "off" or "claude-code" not in tools:
+        return 0
+    if isinstance(payload.get("cwd"), str) and payload.get("cwd"):
+        cwd = payload["cwd"]
+    else:
+        try:
+            cwd = str(actlib.repo_root())
+        except RuntimeError:
+            return 0  # not inside a template-managed project: nothing to enforce against
+    word_lists = parse_for(payload, command).stripped()
+    if not any(_is_git(words) for words in word_lists):
+        return 0
+    folder: Optional[str] = None
+    for words in word_lists:
+        target = _cd_target(words)
+        if target is not None and not _stays_here(target, cwd):
+            folder = target
+            break
+    if folder is None:
         return 0
     shown = folder if folder and not any(char in folder for char in "$`~") else "<folder>"
     if " " in shown:

@@ -79,7 +79,9 @@
 #   verbatim as an un-cadenced reminder rather than dropped — better to show something on the
 #   default cadence than to silently lose a line the user wrote by hand.
 #
-# Output format: session_line() returns "[act] reminder: <text>" / "[act] tip: <text>" or None —
+# Output format: session_line() returns "[act] reminder: <text>" / "[act] tip: <text>" or None, with a line
+#   `[act] tips incomplete (time limit <n> s); ...` in front of it when the `git log` behind an `older:` condition
+#   ran out of time (also when no tip is due) —
 #   session.py prints it verbatim, one line, nothing else (SessionStart's hook is synchronous,
 #   plain stdout reaches the model). observe() instead prints one JSON object on stdout for
 #   UserPromptSubmit only (never for any other event, never for a worker's own payload — see
@@ -102,7 +104,7 @@ from typing import Optional
 
 import actlib
 
-from .common import _is_harness_message
+from .common import _is_harness_message, _time_limit_note
 from .state_files import write_json_atomic
 
 __all__ = [
@@ -238,12 +240,22 @@ def _load_tips(root: Path) -> list:
     return tips
 
 
+_GIT_LOG_TIMEOUT = 3
+_LIMIT_NOTES: list[str] = []  # lines about a git call that ran out of time during this run
+
+
 def _last_commit_time(root: Path, path_str: str) -> Optional[float]:
     try:
         result = subprocess.run(
             ["git", "log", "-1", "--format=%ct", "--", path_str],
-            cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3,
+            cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_GIT_LOG_TIMEOUT,
         )
+    except subprocess.TimeoutExpired:
+        # not stderr, which reaches nobody on exit 0: session_line() adds the line to the one it returns, and the
+        # session start prints that into its JSON object (additionalContext)
+        _LIMIT_NOTES.append(_time_limit_note(
+            "tips", _GIT_LOG_TIMEOUT, "the age of a file a tip depends on is unknown"))
+        return None
     except Exception:
         return None
     if result.returncode != 0:
@@ -449,6 +461,16 @@ def _due_reminder(root: Path, config: dict, state: dict) -> Optional[dict]:
 # SessionStart entry point
 # ---------------------------------------------------------------------------
 
+def _with_limit_notes(line: Optional[str]) -> Optional[str]:
+    """`line` with the lines about git calls that ran out of time during this run in front of it (they are said
+    even when no tip is due), the list empty afterwards; None when there is neither."""
+    parts = list(dict.fromkeys(_LIMIT_NOTES))
+    del _LIMIT_NOTES[:]
+    if line:
+        parts.append(line)
+    return "\n".join(parts) if parts else None
+
+
 def session_line(payload: dict, root: Path, config: dict, waiting: int) -> Optional[str]:
     """The one line session.py's refresh_session() prints under the status line, or None. Never
     raises — every failure mode falls back to None; session.py also wraps this in its own
@@ -505,7 +527,7 @@ def session_line(payload: dict, root: Path, config: dict, waiting: int) -> Optio
             _write_state(root, state)
         except Exception:
             pass
-    return line
+    return _with_limit_notes(line)
 
 
 # ---------------------------------------------------------------------------

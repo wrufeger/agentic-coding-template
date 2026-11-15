@@ -55,6 +55,12 @@
 #          "Standard local").
 #
 # Known limits:
+#   - Time: a git call that runs past its limit is repeated once when at least half a second is left before the
+#     check's deadline, for its own limit or what is left (secret_scan._run_git); otherwise, and when the loop over
+#     the invocations or add paths stops at the deadline with work open, or a git alias cannot be looked up for want
+#     of time, the commit is refused unchecked (exit 2, "time budget used up", the seconds, run again,
+#     `security-check: off`) -- never let through. "Not a repository" and "nothing to check" are no time-out and stay
+#     free.
 #   - the SQL-string-concatenation patterns are a rough heuristic (an SQL keyword near a quote-and-
 #     `+`, a PHP dot or `"... $var"` interpolation (PHP files only), Python `%` or `.format()`
 #     after the literal, or an f-string/template-literal placeholder) - an operator or `+` continued
@@ -72,10 +78,9 @@
 #     anywhere on the same added line — a `Loader=` argument written on a following line (a call
 #     split across lines) is invisible, same class of limit secret_scan.py already accepts for its
 #     own -U0, line-based diff view;
-#   - if docs/project/coding_rules.md cannot be read or parsed at all (missing file, a rules.py
-#     bug), this check fails open (no patterns are known to be enabled, so nothing is scanned) -
-#     a broken rules.py must not lock out every commit, the same stance checks/session.py takes for
-#     its own `import rules`;
+#   - a missing docs/project/coding_rules.md means no pattern is enabled and nothing is scanned; a rules.py
+#     that cannot be imported or parsed is a crash of this check, not an empty list: the dispatcher refuses the
+#     call it was to look at (exception class named, `security-check: off` switches the check off);
 #   - patterns run against the whole added line, not the language of the file it lives in - a
 #     Python file happening to contain a Vue-shaped `v-html=` string could be flagged if the
 #     project has the Vue coding set enabled too; accepted for the same reason secret_scan.py does
@@ -95,9 +100,10 @@ from typing import Callable, NamedTuple, Optional
 import actlib
 
 from .command_parse import parse_for
-from .common import _shell_command
+from .common import _shell_command, _time_limit_refusal
 from .encoding_hint import _reader_key
 from .secret_scan import (
+    _GitTimedOut,
     _check_deadline,
     _diff_entries,
     _diff_sections,
@@ -384,20 +390,15 @@ DANGER_PATTERNS[".act/coding/nuxt.md"] = DANGER_PATTERNS[".act/coding/vue.md"]
 def _enabled_coding_sets(root: Path) -> set[str]:
     """The coding-rule-set paths (e.g. ".act/coding/python.md") the project has actually checked
     on in docs/project/coding_rules.md, read with .act/scripts/rules.py's own parser - never a
-    second parser here (R-work-override). Empty (nothing scanned, never a reason to block) if the
-    file is missing or rules.py cannot be imported/parsed - see the module docstring's "Known
-    limits"."""
-    try:
-        import rules  # deferred: a broken rules.py must never lock out every commit
-    except Exception:
-        return set()
+    second parser here (R-work-override). Empty (nothing scanned, never a reason to block) only when the
+    file is missing; a rules.py that cannot be imported or parsed raises, which is a crash of this check
+    (dispatch.py refuses the call it was to look at and names the exception class) - an empty list there
+    would let a dangerous line through unseen - see the module docstring's "Known limits"."""
+    import rules  # deferred: it lives under .act/scripts/, not in this package
     path = root / "docs" / "project" / "coding_rules.md"
     if not path.is_file():
         return set()
-    try:
-        project_file = rules.parse_project_file(path, rules.AREAS["coding"])
-    except Exception:
-        return set()
+    project_file = rules.parse_project_file(path, rules.AREAS["coding"])
     return {project_set.path for project_set in project_file.sets if project_set.enabled}
 
 
@@ -488,16 +489,30 @@ def _scan_new_file(
 
 def _scan_commit(
     invocation: dict, patterns: tuple[DangerPattern, ...], deadline: float, booked: frozenset = frozenset(),
-) -> list[dict]:
-    """Findings for one commit-like invocation (see secret_scan._git_commit_invocations for its
+) -> tuple[list[dict], bool]:
+    """(findings, timed_out) for one commit-like invocation (see secret_scan._git_commit_invocations for its
     shape) - mirrors secret_scan._scan_commit's own staged/unstaged/add-paths walk, against the
-    danger patterns instead of secret patterns. An incomplete scan (timeout, oversized section) is
-    never grounds to block on its own here either - it only means fewer findings, same stance
-    secret_scan.py takes."""
+    danger patterns instead of secret patterns. `timed_out` says that time ran out while work was still
+    open (a git call past its limit that could not be repeated, the deadline reached with paths unread):
+    check_danger_scan then refuses the commit unchecked instead of letting fewer findings pass. The findings
+    made up to that point are kept. A git call that merely failed (not a repository) is free."""
     findings: list[dict] = []
+    try:
+        timed_out = _scan_commit_walk(invocation, patterns, deadline, booked, findings)
+    except _GitTimedOut:
+        return findings, True
+    return findings, timed_out
+
+
+def _scan_commit_walk(
+    invocation: dict, patterns: tuple[DangerPattern, ...], deadline: float, booked: frozenset, findings: list[dict],
+) -> bool:
+    """The walk of _scan_commit: fills `findings`, returns whether time ran out with work still open; a
+    git call past its limit raises _GitTimedOut."""
+    timed_out = False
     cwd = invocation["cwd"]
     if not Path(cwd).is_dir():
-        return findings
+        return False
 
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
@@ -505,34 +520,40 @@ def _scan_commit(
     # every git call runs from the repository's top level, same as secret_scan._scan_commit: with
     # `diff.relative=true` a diff from a subdirectory silently drops everything outside it
     # (2026-09-27 review 3, m3); the pathspecs handed in are absolute or top-anchored
-    toplevel = _repo_toplevel(cwd, budget())
+    toplevel = _repo_toplevel(cwd, budget(), deadline)
     git_cwd = toplevel or cwd
     staged = _run_git(
-        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+        ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(), deadline,
     )
     if staged is not None:
         _scan_diff_text(staged, patterns, findings, booked)
 
     if invocation["all"] and len(findings) < _MAX_FINDINGS:
         unstaged = _run_git(
-            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+            ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(), deadline,
         )
         if unstaged is not None:
             _scan_diff_text(unstaged, patterns, findings, booked)
 
     for entry in invocation["add_paths"]:
-        if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
+        if len(findings) >= _MAX_FINDINGS:
+            break
+        if deadline - time.monotonic() <= 0:
+            timed_out = True  # an add path is still unread
             break
         raw_path = entry["path"]
         if raw_path != _WHOLE_TREE_PATHSPEC:
             # the whole-tree entry's own unstaged diff is the `all` pass above (always set with it)
             path_diff = _run_git(
                 ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
-                git_cwd, budget(),
+                git_cwd, budget(), deadline,
             )
             if path_diff is not None:
                 _scan_diff_text(path_diff, patterns, findings, booked)
-        if len(findings) >= _MAX_FINDINGS or deadline - time.monotonic() <= 0:
+        if len(findings) >= _MAX_FINDINGS:
+            break
+        if deadline - time.monotonic() <= 0:
+            timed_out = True  # the untracked files of this path are still unread
             break
         if toplevel is None:
             break  # nowhere to join root-relative names onto
@@ -542,14 +563,14 @@ def _scan_commit(
         ls_args = ["ls-files", "--others", "--full-name", "-z", "--", raw_path]
         if not entry["forced"]:
             ls_args.insert(2, "--exclude-standard")
-        untracked = _run_git(ls_args, toplevel, budget())
+        untracked = _run_git(ls_args, toplevel, budget(), deadline)
         if untracked is None:
             continue
         for rel in filter(None, untracked.split("\0")):
             if len(findings) >= _MAX_FINDINGS:
                 break
             _scan_new_file(Path(toplevel) / rel, rel, patterns, findings, booked)
-    return findings
+    return timed_out
 
 
 def _hints_file(root: Path, reader_key: str) -> Path:
@@ -665,24 +686,37 @@ def check_danger_scan(payload: dict) -> int:
 
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+    started = time.monotonic()
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    invocations = _git_commit_invocations(
-        command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
-    )
-    if not invocations:
-        return 0
-
     # booked keys are dropped while collecting, so they never count toward the cap and cannot hide a new hit
     booked = _load_baseline(root)
     all_findings: list[dict] = []
-    for invocation in invocations:
-        if time.monotonic() >= deadline:
-            break
-        all_findings.extend(_scan_commit(invocation, patterns, deadline, booked))
-        if len(all_findings) >= _MAX_FINDINGS:
-            break
-    if not all_findings:
+    timed_out = False
+    try:
+        invocations = _git_commit_invocations(
+            command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+        )
+        for invocation in invocations:
+            if time.monotonic() >= deadline:
+                timed_out = True  # an invocation is still unscanned
+                break
+            found, inv_timed_out = _scan_commit(invocation, patterns, deadline, booked)
+            all_findings.extend(found)
+            timed_out = timed_out or inv_timed_out
+            if len(all_findings) >= _MAX_FINDINGS or inv_timed_out:
+                break
+    except _GitTimedOut:
+        timed_out = True  # a git alias could not be looked up in time: the call may be a commit
+        invocations = []
+    if not invocations and not timed_out:
         return 0
+
+    def refuse_for_time() -> int:
+        print(_time_limit_refusal("danger-scan", max(deadline - started, 0.0), "security-check"), file=sys.stderr)
+        return 2
+
+    if not all_findings:
+        return refuse_for_time() if timed_out else 0
 
     # a finding the adoption baseline booked (exact `file|rule-id` key) was dropped above; a new occurrence
     # of the same rule in the same file passes too, like the per-reader repeat
@@ -693,7 +727,7 @@ def check_danger_scan(payload: dict) -> int:
         # be recognized as "already noted") - report once, on stderr, but let this attempt through
         # rather than block forever on a call this check cannot ever remember having warned about
         print(_build_message(all_findings), file=sys.stderr)
-        return 0
+        return refuse_for_time() if timed_out else 0
 
     hints_path = _hints_file(root, reader_key)
     noted = _load_noted(hints_path)
@@ -707,8 +741,12 @@ def check_danger_scan(payload: dict) -> int:
         new_keys.append(key)
 
     if not new_findings:
-        return 0  # every hit here was already noted once for this reader - the repeat goes through
+        # every hit here was already noted once for this reader - the repeat goes through, unless the
+        # scan ran out of time, which is never a pass
+        return refuse_for_time() if timed_out else 0
 
     _note_findings(hints_path, noted, new_keys)
     print(_build_message(new_findings), file=sys.stderr)
+    if timed_out:
+        refuse_for_time()  # the hold message and the time-out are both named
     return 2

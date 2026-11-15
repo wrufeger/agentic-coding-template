@@ -16,8 +16,8 @@ import actlib
 import manifest
 
 from .background import spawn_detached
-from .common import _check_mode
-from .state_files import checked_today, mark_checked_today
+from .common import _check_mode, _time_limit_note
+from .state_files import checked_today, mark_checked_today, write_json_atomic
 
 # ---------------------------------------------------------------------------
 # Check 2b — template awareness at session start: a project .act/ that was brought to a clean
@@ -73,6 +73,28 @@ def _update_check_state_path(root: Path) -> Path:
     return root / ".act-local" / "update-check.json"
 
 
+_LS_REMOTE_TIMEOUT = 5
+
+
+def _update_check_timeout_path(root: Path) -> Path:
+    return root / ".act-local" / "update-check-timeout.json"
+
+
+def _timeout_note(root: Path) -> Optional[str]:
+    """The line for a lookup that ran out of time in the detached worker of an earlier start (no output
+    reaches anybody there, so it leaves this marker): taken once, the marker is removed. None when there is none."""
+    path = _update_check_timeout_path(root)
+    try:
+        if not path.is_file() or not actlib.local_write_ok(root, path):
+            return None
+        path.unlink()
+    except OSError:
+        return None
+    return _time_limit_note(
+        "session_update", _LS_REMOTE_TIMEOUT, "the template update lookup of an earlier start ran out of time; "
+        "the next lookup is due tomorrow, or run `python .act/scripts/update.py --versions` now")
+
+
 _STABLE_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 _UPDATE_CHANNELS = ("release", "latest")
 
@@ -99,14 +121,18 @@ def _ls_remote_output(root: Path, source: str, patterns: list[str]) -> Optional[
                 result = subprocess.run(
                     ["git", "ls-remote", "--", source, *patterns],
                     cwd=root, stdout=out_file, stderr=subprocess.DEVNULL,
-                    timeout=5, env=env,
+                    timeout=_LS_REMOTE_TIMEOUT, env=env,
                     # no console window for git.exe on Windows, where the worker has none
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             if result.returncode != 0:
                 return None
             return out_path.read_text(encoding="utf-8", errors="replace").strip()
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            if actlib.local_write_ok(root, _update_check_timeout_path(root)):
+                write_json_atomic(_update_check_timeout_path(root), {"limit": _LS_REMOTE_TIMEOUT})
+            return None
+        except OSError:
             return None
 
 
@@ -404,6 +430,9 @@ def _check_update_awareness(root: Path, config: dict[str, str],
     post_notes: list[str] = []
     if _pulled_without_update(root):
         pre_notes.append("[act] note: .act/ was pulled in without update.py -- run `python .act/scripts/update.py` (or --catch-up) to finish it")
+    timeout_note = _timeout_note(root)
+    if timeout_note:
+        pre_notes.append(timeout_note)
     pending = _pending_update_note(root, state)
     if pending:
         post_notes.append(pending)

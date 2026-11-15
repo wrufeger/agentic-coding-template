@@ -662,6 +662,16 @@ def _guard():
     return _GUARD
 
 
+_LIMIT_NOTES: list[str] = []
+
+
+def _limit_note(text: str) -> None:
+    """A line about a git call that ran out of time, for the report of this run (run() hands it to the human as
+    message and to the model as context): stderr reaches nobody on exit 0."""
+    if text not in _LIMIT_NOTES:
+        _LIMIT_NOTES.append(text)
+
+
 def _config_keys(config_path: str) -> dict | None:
     """What the config file says about the keys that start code, or None when that cannot be told (no git,
     no key list): the caller then compares the whole file.
@@ -678,6 +688,11 @@ def _config_keys(config_path: str) -> dict | None:
             ["git", "config", "--file", config_path, "--list", "-z"], capture_output=True, timeout=_GIT_TIMEOUT,
             cwd=os.path.dirname(config_path),
         )
+    except subprocess.TimeoutExpired:
+        # nothing is left unchecked: the caller compares the whole file instead of the code-starting keys
+        _limit_note(f"[act] protected_watch incomplete (time limit {_GIT_TIMEOUT:g} s); the git config is compared "
+                    "as a whole file instead of key by key")
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     if done.returncode != 0:
@@ -711,6 +726,11 @@ def _git_config_run(config_path: str, args: list[str]) -> bool:
             ["git", "config", "--file", config_path, *args], capture_output=True, timeout=_GIT_TIMEOUT,
             cwd=os.path.dirname(config_path),
         )
+    except subprocess.TimeoutExpired:
+        # the caller reports the restore as failed (restore-failed), so the change is not left unnoticed
+        _limit_note(f"[act] protected_watch incomplete (time limit {_GIT_TIMEOUT:g} s); a git config key could not "
+                    "be put back")
+        return False
     except (OSError, subprocess.SubprocessError):
         return False
     return done.returncode in (0, 5)  # 5: the key to unset was not there
@@ -1587,6 +1607,7 @@ def run(event: str, payload: dict) -> dict | None:
     root = _project_root()
     context: list[str] = []
     message: list[str] = []
+    del _LIMIT_NOTES[:]
     try:
         found = watch(event, payload, root)
     except Exception as exc:  # noqa: BLE001 -- a watcher bug must never block or corrupt the hook output
@@ -1595,6 +1616,10 @@ def run(event: str, payload: dict) -> dict | None:
     if found:
         context.append(found["context"])
         message.append(found["message"])
+    if _LIMIT_NOTES:  # a git call of the watcher ran out of time: said with the report, not on stderr
+        context.extend(_LIMIT_NOTES)
+        message.extend(_LIMIT_NOTES)
+        del _LIMIT_NOTES[:]
     if not payload.get("agent_id"):
         try:
             context.extend(take_orchestrator_notes(root))

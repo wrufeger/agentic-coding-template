@@ -11,7 +11,8 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 ## [Unreleased]
 
 Formats and a changelog for every project, `Tests:` lines and an incident log for workers, shorter core rules,
-safety checks that see more and refuse fewer harmless commands, Copilot roles with a model each.
+safety checks that see more, refuse fewer harmless commands and never pass when out of time or broken, Copilot roles
+with a model each.
 
 ### Upgrading
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
@@ -162,6 +163,8 @@ safety checks that see more and refuse fewer harmless commands, Copilot roles wi
   as `*`, `!docs/`): it stays out of the commit, which names it; an ignored `CHANGELOG.md` is not created.
 
 ### Security
+- A check that runs out of time or crashes refuses the call and names the row that switches it off (`<row>: off`); the scans repeat a git call that ran out once. `commit-hashes` after a time-out only says it is incomplete.
+- When a hook's 8 s run out before a safety check ran, the call is refused and the text names the checks and the rows that switch them off; run the command again. A check that only notes says it did not run.
 - The write checks place a write behind `&` in the folder the list began in, not in the one a `cd` before it went to, and
   refuse `git diff|log|show --output=<file>` outside the allowed places.
 - The write guard refuses `shutil.rmtree` of the project root or a folder that holds it (passed before), and an
@@ -180,7 +183,7 @@ safety checks that see more and refuse fewer harmless commands, Copilot roles wi
 - Migrations, session start and hooks never write, move or remove through a link or junction (`docs/ai/inbox`,
   `.act-local`).
 - `act-release` starts its security reviewer with `Write scope: none` again; it ran without a write scope.
-- A failing `secret-read` or `outside-root` no longer lets a command through; a hook that cannot load refuses the call.
+- A failing `secret-read` or `outside-root` refuses every call it would have checked (commands, reads, writes), not only commands; a hook that cannot load refuses the call.
 - Workers may no longer write `.github/agents/`; `protected-watch` puts their changes back, as for `.claude/agents/`.
 
 ## [2.5.0] - 2026-11-05

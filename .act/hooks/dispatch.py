@@ -245,6 +245,7 @@ import sys
 import time
 
 from pathlib import Path  # noqa: E402
+from typing import NamedTuple  # noqa: E402
 
 # When this hook process began its own work -- every PreToolUse check receives it as
 # payload["_act_hook_started"] (see _run_checks) and caps its own time budget against it
@@ -752,21 +753,125 @@ _OBSERVERS = (
 )
 
 
-# Checks whose failure (import error, missing function, exception while running) refuses the
+# Guards whose failure (import error, missing function, exception while running) refuses the
 # call instead of letting it through: exit code 1 would count as "not blocking" for the harness,
-# so a broken guard would silently open the door it is meant to keep shut. Every other check
-# fails open — a broken convenience check must not stop all work — but its failure is reported
+# so a broken guard would silently open the door it is meant to keep shut. A check that can refuse
+# but is not in this set refuses the call it was to look at as well, judged by _REFUSING_SCOPE, with a
+# text that also names the row switching it off. Every other check -- one that only ever notes --
+# fails open, a broken convenience check must not stop all work, but its failure is reported
 # to the model and the human (see _report_check_failures), not left to one stderr line.
 _FAIL_CLOSED = {"write_guard", "git_metadata_guard", "nesting_guard", "write_scope", "mcp_ide",
                 "secret_read", "outside_root"}
 # Only tools that can write or start a worker are refused by a broken guard — reading stays
 # possible, so the assistant can still look into what broke.
 _FAIL_CLOSED_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "PowerShell", "Agent", "Task"}
-# The two read guards are refused for the shell only: a broken secret_read must not let `cat .env` through,
-# and a broken outside_root not a command that reaches out of the project; Read, Write, Edit and the rest
-# stay possible, so the cause can be looked into and the config fixed.
-_FAIL_CLOSED_SHELL_ONLY = {"secret_read", "outside_root"}
+# The two read guards are not refused for _FAIL_CLOSED_TOOLS but for what each of them looks at (_REFUSING_SCOPE,
+# as after the hook's time limit): a broken secret_read must not let `cat .env` or `Read .env` through, and a broken
+# outside_root not a command or a path tool that reaches out of the project. A tool they never judge (Write for
+# secret_read, Agent) stays possible, so the cause can be looked into and the config fixed.
+_READ_GUARD_FUNCS = {"secret_read": "check_secret_read", "outside_root": "check_outside_root"}
 _SHELL_TOOLS = {"Bash", "PowerShell"}
+_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+_WORKER_START_TOOLS = frozenset({"Agent", "Task"})
+
+
+class _Scope(NamedTuple):
+    """What a check that can refuse really looks at -- the calls a crash of it, or the hook's time limit reached
+    before it ran, refuse unchecked. `tools`: the tool names it judges (None: every tool but `skip`); `who`: "any"
+    caller, only a "worker" or only the "main" session; `text`: a word the shell command must hold (the check's own
+    first test, for a check that ends at once on any other command)."""
+    tools: "frozenset[str] | None"
+    who: str = "any"
+    skip: "frozenset[str]" = frozenset()
+    text: str = ""
+
+
+# Every check of _PRE_TOOL_USE_CHECKS that can refuse (a `return 2` in its code), by its function: the tools,
+# callers and commands its code judges, read from that code -- no wider (a call it never looks at is not refused
+# for it) and no narrower (a call it would have refused must not pass because it did not run). A check that never
+# refuses is not listed: encoding_hint's once-only stop and throwaway_place's note stay open, and
+# check_main_session_overlap only notes. mcp_ide judges an `mcp__` call by its own rule (_mcp_call_needs_mcp_ide).
+_REFUSING_SCOPE: "dict[str, _Scope]" = {
+    "check_write_guard": _Scope(_WRITE_TOOLS | _SHELL_TOOLS),
+    "check_git_metadata_guard": _Scope(_WRITE_TOOLS | _SHELL_TOOLS),
+    "check_worker_nesting_guard": _Scope(_WORKER_START_TOOLS | {"Bash"}, "worker"),
+    "check_worker_write_scope": _Scope(_WRITE_TOOLS | _SHELL_TOOLS | _WORKER_START_TOOLS),  # a start records the scope
+    "check_secret_read": _Scope(frozenset({"Read", "Grep"}) | _SHELL_TOOLS),
+    "check_outside_root": _Scope(frozenset({"Read", "NotebookRead", "Grep", "Glob"}) | _WRITE_TOOLS | _SHELL_TOOLS),
+    "check_worker_docs_ai": _Scope(_WRITE_TOOLS | _SHELL_TOOLS, "worker"),
+    "check_worker_git_write": _Scope(frozenset(_SHELL_TOOLS), "worker"),
+    "check_cd_git": _Scope(frozenset({"Bash"})),
+    "check_commit_pathspec": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_git_discard": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_recursive_delete": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_secret_scan": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_danger_scan": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_deps_scan": _Scope(frozenset(_SHELL_TOOLS)),
+    "check_commit_hashes": _Scope(frozenset(_SHELL_TOOLS), "main", text="commit"),
+    "check_worker_scope_overlap": _Scope(_WORKER_START_TOOLS, "main"),
+    "check_worker_cap": _Scope(None, "worker", frozenset({"SubagentHandback"})),  # a worker can always hand back
+    "check_status_poll": _Scope(frozenset({"ReadNotifications", "ListAgents", "TaskOutput"}), "main"),
+}
+
+# The row of docs/ai/config.md § Checks that switches a check off, for the texts that name it.
+_CHECK_KEYS = {
+    "write_guard": "template-write-guard", "git_metadata_guard": "git-metadata-guard",
+    "nesting_guard": "worker-nesting-guard", "write_scope": "worker-write-scope", "mcp_ide": "ide-mcp",
+    "secret_read": "secret-read", "outside_root": "outside-root", "worker_docs_ai": "worker-docs-ai",
+    "worker_git_write": "worker-git-write", "cd_git": "cd-git", "commit_pathspec": "commit-pathspec",
+    "git_discard": "git-discard", "recursive_delete": "recursive-delete", "secret_scan": "secret-scan",
+    "danger_scan": "security-check", "deps_scan": "security-check", "encoding_hint": "encoding-hint",
+    "throwaway_place": "throwaway-place", "commit_hashes": "commit-hashes",
+    "worker_scope_overlap": "worker-scope-overlap", "worker_cap": "worker-cap", "status_poll": "status-poll",
+}
+
+
+def _judges_call(module_name: str, func_name: str, payload: dict) -> bool:
+    """True when the check `func_name` of `module_name` is one that can refuse and judges this very call (its tool,
+    its caller, its command: _REFUSING_SCOPE) -- the call that a crash of the check, or the hook's time limit
+    reached before the check ran, refuses unchecked."""
+    tool_name = payload.get("tool_name")
+    if module_name == "mcp_ide":
+        # Unlike a crash of mcp_ide (_mcp_call_needs_mcp_ide: a read tool is free), a read tool that takes a path
+        # counts here: the running check hands that path to secret-read and outside-root as a plain Read.
+        return isinstance(tool_name, str) and (_mcp_call_needs_mcp_ide(tool_name, payload)
+                                               or _mcp_read_tool_has_path(tool_name))
+    scope = _REFUSING_SCOPE.get(func_name)
+    if scope is None or not isinstance(tool_name, str):
+        return False
+    if scope.tools is None:
+        if tool_name in scope.skip:
+            return False
+    elif tool_name not in scope.tools:
+        return False
+    if scope.who != "any" and _is_worker(payload) != (scope.who == "worker"):
+        return False
+    if scope.text:
+        tool_input = payload.get("tool_input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        return isinstance(command, str) and scope.text in command
+    return True
+
+
+def _switch_text(module_name: str) -> str:
+    """`key: off` for the row that switches the check off, in the words of the refusal texts."""
+    key = _CHECK_KEYS.get(module_name)
+    return f"`{key}: off`" if key else "its row to `off`"
+
+
+def _mcp_read_tool_has_path(tool_name: str) -> bool:
+    """True for an `mcp__` call of a read-class tool that names a file, a folder or a search root (the tables'
+    _READ_TOOL_PATHS, by the tool's name whatever the server, as mcp_ide.py itself reads them). False when the
+    tables cannot be used: the crash rule of _mcp_call_needs_mcp_ide decides there."""
+    suffix = tool_name[len("mcp__"):].partition("__")[2] if tool_name.startswith("mcp__") else ""
+    if not suffix:
+        return False
+    try:
+        tables = importlib.import_module("checks.mcp_ide_tables")
+        return tables._tool_class(suffix) == "read" and suffix in tables._READ_TOOL_PATHS
+    except Exception:  # noqa: BLE001 -- no tables: nothing to classify with
+        return False
+
 
 def _mcp_call_needs_mcp_ide(tool_name: str, payload: dict) -> bool:
     """True when a *working* checks.mcp_ide.check_mcp_ide could have denied this call -- i.e.
@@ -931,7 +1036,10 @@ def _is_reader_failure(exc: BaseException) -> bool:
     return isinstance(reader_failure, type) and isinstance(exc, reader_failure)
 
 
-def _check_failed(module_name: str, reason: str, payload: dict, reader_failure: bool = False) -> int:
+def _guard_applies(module_name: str, payload: dict) -> bool:
+    """True when a guard of _FAIL_CLOSED that cannot be used refuses this call: the mcp_ide rule for an `mcp__` call,
+    what the guard itself judges (_REFUSING_SCOPE, as for the hook's time limit) for the two read guards, else a tool
+    of _FAIL_CLOSED_TOOLS."""
     tool_name = payload.get("tool_name")
     if module_name == "mcp_ide":
         # mcp_ide is only ever this check's business for an actual `mcp__...` call (see
@@ -941,17 +1049,41 @@ def _check_failed(module_name: str, reason: str, payload: dict, reader_failure: 
         # actually have looked at all (_mcp_call_needs_mcp_ide, review finding 4b) — a plainly
         # read-only or unrecognized MCP tool passes through the same as mcp_ide.py's own final
         # `return 0` would for it, broken check or not.
-        applies = isinstance(tool_name, str) and _mcp_call_needs_mcp_ide(tool_name, payload)
-    elif module_name in _FAIL_CLOSED_SHELL_ONLY:
-        applies = tool_name in _SHELL_TOOLS
+        return isinstance(tool_name, str) and _mcp_call_needs_mcp_ide(tool_name, payload)
+    if module_name in _READ_GUARD_FUNCS:
+        return _judges_call(module_name, _READ_GUARD_FUNCS[module_name], payload)
+    return tool_name in _FAIL_CLOSED_TOOLS
+
+
+def _check_failed(module_name: str, reason: str, payload: dict, reader_failure: bool = False,
+                  func_name: str = "", crashed: bool = False) -> int:
+    """The verdict for a check that could not be used: refused when it is a guard of _FAIL_CLOSED, or a check that
+    can refuse and judges this call (_judges_call); otherwise let through with a report. `crashed`
+    is an exception raised by a check that loaded (its class is named, never its text, which may hold part of the
+    command); a check that could not be loaded is named with its whole reason."""
+    tool_name = payload.get("tool_name")
+    if module_name in _FAIL_CLOSED:
+        applies = _guard_applies(module_name, payload)
     else:
-        applies = tool_name in _FAIL_CLOSED_TOOLS
+        applies = tool_name in _FAIL_CLOSED_TOOLS  # only meant for a reader failure, below
     reason = " ".join(str(reason).split())[:_MAX_FAILURE_REASON]
     _note_incident("check-error", module_name, payload, reason.split(":")[0])  # the exception class only, never its text
     if (module_name in _FAIL_CLOSED or reader_failure) and applies:
+        switch = ""
+        if crashed and module_name in _READ_GUARD_FUNCS:  # the row can switch it off while it can be loaded
+            switch = f"; to switch it off set {_switch_text(module_name)} in docs/ai/config.md § Checks"
         print(f"[act] check {module_name} failed ({reason}) — refusing to be safe; "
-              f"{tool_name} stays refused until the check works again, ask the owner to run "
+              f"{tool_name} stays refused until the check works again{switch}, ask the owner to run "
               ".act/scripts/doctor.py (with the `!` prefix)", file=sys.stderr)
+        return 2
+    if module_name not in _FAIL_CLOSED and not reader_failure and _judges_call(module_name, func_name, payload):
+        if crashed:
+            detail = f"{reason.split(':')[0]}; switch it off with {_switch_text(module_name)} in docs/ai/config.md § Checks"
+        else:
+            detail = f"{reason}; `off` does not help while it cannot be loaded"
+        print(f"[act] check {module_name} failed ({detail}) — the {tool_name} call it was to look at is refused "
+              "unchecked; run it again once the check works, or ask the owner to run .act/scripts/doctor.py "
+              "(with the `!` prefix)", file=sys.stderr)
         return 2
     text = (f"[act] check {module_name} skipped ({reason}) — it did not look at this "
             f"{tool_name if isinstance(tool_name, str) else 'tool'} call; run .act/scripts/doctor.py")
@@ -975,6 +1107,35 @@ def _build_parse(payload: dict) -> "object | None":
         return None
 
 
+def _hook_budget() -> float:
+    """Seconds of this hook call after which no further check starts: checks.common._HOOK_BUDGET (8 s of the
+    harness' 10), or 8.0 while that module is not loaded or lacks it."""
+    value = getattr(sys.modules.get("checks.common"), "_HOOK_BUDGET", 8.0)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 8.0
+
+
+def _hook_time_limit(remaining: "tuple[tuple[str, str], ...]", payload: dict) -> int:
+    """The hook's own time is used up, so the checks in `remaining` do not run. Returns the exit code: 2 when one
+    of them can refuse and would have looked at this call (refused unchecked, naming the checks that did not run
+    and how to switch one off), else 0 with one line naming the checks that did not run, reported with the check
+    failures of the call (_CHECK_FAILURES) -- a spent budget is never a silent pass."""
+    names = list(dict.fromkeys(module for module, _func in remaining))
+    budget = _hook_budget()
+    refusing = [module for module, func in remaining if _judges_call(module, func, payload)]
+    if not refusing:
+        # Not a plain print: PreToolUse's stdout is transcript-only on an allowed call. Like a skipped check it is
+        # reported to the human as systemMessage and left for this call's PostToolUse (_report_check_failures).
+        _CHECK_FAILURES.append(f"[act] {', '.join(names)} not run (hook time limit {budget:g} s)")
+        return 0
+    refusing = list(dict.fromkeys(refusing))
+    tool_name = payload.get("tool_name")
+    switches = ", ".join(f"{module} {_switch_text(module)}" for module in refusing)
+    print(f"[act] hook time limit {budget:g} s used up before these checks ran: {', '.join(names)}; the "
+          f"{tool_name if isinstance(tool_name, str) else 'tool'} call is refused unchecked. Run the command again. "
+          f"To switch a check off, set its row in docs/ai/config.md § Checks ({switches}).", file=sys.stderr)
+    return 2
+
+
 def _run_checks(payload: dict) -> "tuple[int, str | None]":
     """(exit code, denying module's name) — the name is None on allow (exit code 0), and passed on
     to _run_pre_tool_use_observers so checks.event_log.observe can name the check that denied
@@ -985,12 +1146,15 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
     parse = _build_parse(payload)
     if parse is not None:
         checked_payload["_act_parse"] = parse  # one reading of the command for all checks of this call
-    for module_name, func_name in _PRE_TOOL_USE_CHECKS:
+    for position, (module_name, func_name) in enumerate(_PRE_TOOL_USE_CHECKS):
+        if time.monotonic() - _HOOK_STARTED >= _hook_budget():
+            code = _hook_time_limit(_PRE_TOOL_USE_CHECKS[position:], payload)
+            return (code, "hook_time_limit") if code else (0, None)
         func, reason = _load(module_name, func_name)
         failed = False
         if func is None:
             failed = True
-            result = _check_failed(module_name, reason or "check not available", payload)
+            result = _check_failed(module_name, reason or "check not available", payload, func_name=func_name)
         else:
             import io
             _modes_seen().clear()
@@ -1001,7 +1165,8 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
                 result = func(checked_payload)
             except Exception as exc:  # noqa: BLE001
                 failed = True  # _check_failed has logged check-error; a refusal row on top would double it
-                result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload, _is_reader_failure(exc))
+                result = _check_failed(module_name, f"{type(exc).__name__}: {exc}", payload, _is_reader_failure(exc),
+                                       func_name, crashed=True)
             finally:
                 sys.stdout = real_stdout
             sys.stdout.write(printed.getvalue())
@@ -1158,7 +1323,7 @@ def _emit_post_tool_use_notes(event: str, payload: dict, watch: "dict | None" = 
     _queue_failure_notes) and of the notes just run, for the model as context and for the human as the
     systemMessage; then the notes themselves."""
     notes = _run_post_tool_use_notes(payload)
-    failures = list(queued or []) + _NOTE_FAILURES
+    failures = list(queued or []) + _NOTE_FAILURES + _take_observer_notes()  # the last: lines of the observers
     notes = failures + notes
     messages = ([watch["message"]] if watch and watch["message"] else []) + failures
     if watch:

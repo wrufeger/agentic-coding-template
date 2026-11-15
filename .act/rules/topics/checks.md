@@ -11,7 +11,8 @@ never a command or a path):
 
 - `restored` / `restore-failed`: `protected-watch` put a worker's change to a protected file back, or could not (tool,
   kinds of file such as `git-hook`, their number);
-- `check-error` / `check-slow`: a check crashed (exception class only) or ran past 8 s of the hook's 10 s limit;
+- `check-error` / `check-slow`: a check crashed (exception class only) or ran past 8 s of the hook's 10 s limit
+  (past 8 s no further check starts, see "When a check itself fails" below);
 - `warn`: a check in `warn` mode let a call through that wrote, deleted or read a secret file, with a reason class and a
   masked target class (`outside-write other/d3`, `secret-file project/d1`; never a name) and the tool and the first word
   of the command (a class such as `(assign)` or `(path)` when there is no plain word). A read outside the project
@@ -55,14 +56,49 @@ reword, do nothing. The sentences are these (one per check; a check without one 
 - `encoding_hint`: Before writing to an existing file that is not UTF-8, keep its encoding; the first write to such a file is refused once.
 - `worker_cap`: Keep to the `Cap:` of your assignment: past it you are refused, so report what is done and what is left.
 
-**When a check itself fails.** `secret-read` and `outside-root` fail closed for the shell: if the module cannot be
-imported or raises on a call, Bash and PowerShell are refused and the failure is named on standard error, so a broken
-check does not let `cat .env` through (`off` does not help when the module cannot be imported; `warn` does not soften
-it). Read, Write and Edit stay possible; the owner starts `.act/scripts/doctor.py` with the `!` prefix. If the
-dispatcher cannot import its own helpers, every tool is refused (PreToolUse). Every other check fails open, but not
-silently: the failure goes to standard error, to the human as `systemMessage` and to the model as `additionalContext`
-of the call's PostToolUse (see `dispatch.py`). Assumption, not verified: that Claude Code displays the `systemMessage`
-of a PreToolUse or PostToolUse hook (a live probe, 2026-11-07, showed it is never displayed for Stop and SubagentStop).
+**When a check itself fails.** `secret-read` and `outside-root` fail closed: if the module cannot be imported or
+raises on a call, every tool they otherwise look at is refused (`secret-read`: Read, Grep, Bash and PowerShell;
+`outside-root`: the path tools Read, Grep, Glob, Write and Edit, Bash and PowerShell) and the failure is named on
+standard error, so a broken check does not let `cat .env` or `Read .env` through (`off` does not help when the module
+cannot be imported; `warn` does not soften it). A tool they never look at stays possible, so the cause can be looked
+into; the owner starts `.act/scripts/doctor.py` with the `!` prefix. If the
+dispatcher cannot import its own helpers, every tool is refused (PreToolUse). Every other check that can refuse
+(`secret-scan`, the danger and dependency scans of `security-check`, `git-discard`, `commit-hashes`, `cd-git`,
+`commit-pathspec`, `recursive-delete`, the `worker-*` checks, `status-poll`) refuses the call it was to look at as well:
+the tools and callers it judges are listed in `_REFUSING_SCOPE` of `dispatch.py` (the shell checks only Bash and
+PowerShell; `commit-hashes` only a `git commit` of the main session; `worker-cap` every call of a worker but its
+`SubagentHandback`, which always goes through). The text names the check, the exception class, the row that switches
+it off (`<row>: off` in `docs/ai/config.md` § Checks, which helps only while the check can be loaded) and
+`.act/scripts/doctor.py`; for `commit-hashes` that means a crash refuses the commit although the check otherwise only
+notes. `security-check` also refuses when the coding rule sets cannot be read (a broken `rules.py`); a missing
+`docs/project/coding_rules.md` is an empty list and free. Only a check that never refuses (`encoding-hint`,
+`throwaway-place`, the notes) fails open, but not silently: the failure goes to standard error, to the human as
+`systemMessage` and to the model as `additionalContext` of the call's PostToolUse (see `dispatch.py`).
+
+**When a check runs out of time.** A spent time limit is never a pass. `secret-scan` and the danger and dependency
+scans of `security-check` repeat a git call that ran past its limit once, for its own limit or what is left of the
+check's deadline, when at least half a second is left (`secret-scan`, `danger-scan`: 4.5 s, shortened by what the hook
+has used; the hook as a whole has 8 s of the harness' 10). `git-discard` does not repeat: one git call may take its
+whole budget. Otherwise, and when a loop stops at the deadline with work open or a git alias cannot be looked up for
+want of time, the call is refused (exit 2): `[act] <check>: time budget used up, not finished after <n> s, so the call
+is refused unchecked. Run the command again; to switch this check off, set `<row>: off` in docs/ai/config.md §
+Checks.` (`security-check` for the danger and dependency scans; in `warn` mode the text is a note and the commit goes
+ahead). "Not a repository" and "nothing to check" are no time-out and stay free; the size limit of `secret-scan` (a
+file over 2 MB) stays a note. A check or hook that only notes says `[act] <name> incomplete (time limit <n> s);
+<what is missing>` instead of staying silent (`commit-hashes`, the board refresh and the git lookups of the session
+start, `tips`, `protected-watch`; the template update lookup runs detached and reports it at the next start). Those
+lines are in the JSON the hook prints, which Claude Code shows: `systemMessage` for the human and `additionalContext`
+for the model (PostToolUse; the session start's JSON for `tips`), never only on standard error, which nobody sees on
+exit 0. The dispatcher starts no further check once 8 s of the hook are used: if one that can refuse and judges this
+call is left, the call is refused `[act] hook time limit 8 s used up before these checks ran: <checks>; the <tool>
+call is refused unchecked. Run the command again. ...`. What a check judges is the table above, not wider and not
+narrower: `secret-read` a Read, a Grep and the shell, `outside-root` every tool with a path and the shell, `ide-mcp` an
+`mcp__` call of a write, shell or exec tool of an IDE server and a read tool that takes a path (`read_file`, which
+`ide-mcp` hands to `secret-read` and `outside-root` as a Read). Otherwise
+(only notes are left, or a call none of them judges) one line `[act] <checks> not run (hook time limit 8 s)` goes
+to the human as `systemMessage` and to the model as `additionalContext` of the call's PostToolUse, and the call goes
+ahead. Assumption, not verified: that Claude Code displays the `systemMessage` of a PreToolUse or PostToolUse hook (a
+live probe, 2026-11-07, showed it is never displayed for Stop and SubagentStop).
 
 ## `R-safe-no-secret-read` — Never read a secret file into the context
 
@@ -193,7 +229,8 @@ with the same switches lists something; `git checkout -- <folder>`, `git checkou
 `git checkout -f`, `git switch -f` while the target has uncommitted changes; `git stash drop` and `git stash clear`; a
 forced push or a delete of the default branch on the remote; `git branch -D` and `git branch -M`/`-C` over a branch
 HEAD does not contain (a branch only cherry-picked into HEAD counts as not contained). A call whose repository cannot
-be determined, too long to check in time or whose check fails is refused (run smaller calls), except a `branch` that
+be determined, too long to check in time (the text says "time budget used up") or whose check fails is refused (run
+smaller calls), except a `branch` that
 only lists and a `reset` without `--hard`. Switches: `git-reset-hard` and `git-discard`. The full table is `_TABLE`
 in `git_discard.py`.
 
@@ -293,8 +330,8 @@ reader sees; `mktemp`, `tempfile` in inline code and a script file's own writes 
 Checks: commit-hashes.
 
 A commit hash counts as evidence, so `commit-hashes` (switch in `docs/ai/config.md` § Checks; `warn`, the default and
-the value of a missing row, notes; `off` says nothing; `block` counts as `warn`) notes, never refuses, a hash in a
-`git commit` that no repository knows. It reads the lines the commit adds to staged journal files
+the value of a missing row, notes; `off` says nothing; `block` counts as `warn`) notes, and never refuses for, a hash in
+a `git commit` that no repository knows. It reads the lines the commit adds to staged journal files
 (`docs/ai/work/ledger/`) and the message as the command shows it: `-m`, a heredoc behind `-F -`, a literal `-F <file>`.
 A hash is a word in backticks of 7 to 40 hex characters with a digit and a letter (`` `3e2901a` ``); a bare number, a
 hex word without a digit and a word without backticks are not looked at. Each is looked up with
@@ -304,8 +341,10 @@ because a journal can name commits of another repository. A hash none of them kn
 starts (any case) a template commit that `.act-lock.json` records, in the working tree, staged or in its history; a
 template commit never recorded there is noted. The note names the unknown hashes and reaches the model with the call's
 result. A worker's call is not looked at. Limits: a message file written in the same call, hashes inside a
-program's own text and an ambiguous abbreviation (counts as unknown) are not handled; a lookup that runs past about
-4 seconds, or a missing git, gives no note.
+program's own text and an ambiguous abbreviation (counts as unknown) are not handled; a missing git gives no note, and
+a lookup that runs past about 4 seconds gives the line `[act] commit-hashes incomplete (time limit <n> s) …`, no refusal.
+A crash of the check (an exception, not a hash that is unknown) refuses a `git commit` of the main session, by the
+dispatcher, naming the check, the exception class, `commit-hashes: off` and `.act/scripts/doctor.py`.
 
 ## `cd-git` — `cd` and `git` in one call (no rule of its own)
 
@@ -316,7 +355,8 @@ main session and for workers, and names `git -C <folder> …` in a call of its o
 `tools` row holds `claude-code`; for another tool or a project without the row it does nothing. A `cd` into the folder
 the call runs in (the project root, `cd .`, `cd sub/..`) does not count; a `cd` to a variable or substitution counts as a
 `cd` elsewhere. Subshells and the text of `bash -c` are read. Limits: Bash calls only (not PowerShell), a `cd` or `git`
-made inside a program is not seen; an exception lets the call pass.
+made inside a program is not seen. A crash of the check refuses the Bash call it was to look at, by the dispatcher,
+naming the check, the exception class, `cd-git: off` and `.act/scripts/doctor.py`.
 
 ## `R-cost-delegate` — Delegate where it pays off; the assignment header
 

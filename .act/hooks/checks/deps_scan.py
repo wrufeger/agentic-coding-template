@@ -38,7 +38,8 @@
 #          own `stale_after` (the tools' own timeouts, `security_scan.scan_time_limit`, plus
 #          `_WORKER_MARGIN_SECONDS` — never a fixed guess a multi-tool scan could outrun, review 2
 #          m6) is a dead worker: the marker is cleared and the commit let through with a "not
-#          checked" note, nothing cached. A spawn that fails clears its marker at once and notes,
+#          checked" note (the next commit spawns afresh), nothing cached. A spawn that fails clears its marker at
+#          once and refuses the commit unchecked (what crashed, how to switch the check off, doctor.py),
 #          rather than leaving every later commit waiting on a worker that never existed (m6). With
 #          no scan tool installed at all the engine cannot start a subprocess anyway, so its
 #          missing-tool answer is taken directly, without a worker.
@@ -67,10 +68,17 @@
 #          Registration (dispatch.py): `("deps_scan", "check_deps_scan")` in `_PRE_TOOL_USE_CHECKS`
 #          right after danger_scan, `("deps_scan", "note_deps_scan")` in `_POST_TOOL_USE_NOTES`;
 #          `check_deps_scan` in `checks/mcp_ide.py`'s `_SHELL_REUSE_CHECKS` — an IDE terminal's own
-#          `git commit` gets the same check. Any exception in `check_deps_scan`'s own body is caught
-#          here and turned into a fail-open note naming it, never propagated: reached via mcp_ide's
-#          shell-reuse path, an uncaught exception would surface as `check_mcp_ide` itself failing,
-#          which *is* fail-closed (dispatch.py's `_FAIL_CLOSED`).
+#          `git commit` gets the same check. An exception in `check_deps_scan`'s own body is not
+#          caught here: the dispatcher refuses the call it was to check (dispatch.py's
+#          `_REFUSING_SCOPE`), and reached via mcp_ide's shell-reuse path it surfaces as
+#          `check_mcp_ide` itself failing, which is fail-closed too.
+#
+#          Time: a git call past its limit is repeated once when at least half a second is left before the
+#          check's deadline, for its own limit or what is left (secret_scan._run_git), otherwise -- like a
+#          loop that stops at the deadline with work open, a git alias that cannot be looked up, and less
+#          than `_MIN_DETECTION_SECONDS` left once a commit is recognised -- the commit is refused unchecked (exit 2, "time budget
+#          used up", the seconds, run again, `security-check: off`). "Not a repository" and a commit
+#          that touches no lock file are no time-out and stay free.
 #
 #          After `git merge`, `git pull` and `git cherry-pick` (also `pull --rebase`, `merge
 #          --no-commit`, a merge that stops on conflicts) the lock files the command brought in are
@@ -113,7 +121,7 @@
 #   - two commits racing on the very same lock-file state can each spawn a worker (the marker check
 #     is best-effort, not a lock) — wasteful, never wrong: both compute the same answer;
 #   - the wait budget is shared with the other commit checks through the hook-wide deadline: when
-#     they have used the hook's time up, this check notes "not checked" instead of looking at all;
+#     they have used the hook's time up, a commit is refused unchecked instead of passing;
 #   - the detached worker outlives the hook's own end and the end of the session (live probe,
 #     Claude Code 2.1.319 on Windows, 2026-11-06: hook processes run in no job object). On Windows a
 #     hook that Claude Code ends at its timeout takes its whole process tree with it, this worker
@@ -144,8 +152,9 @@ from . import session
 from .board_refresh import _base_cwd, _targets_own_project
 from .command_parse import parse_for
 from .command_words import _strip_command_prefix
-from .common import _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command
+from .common import _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command, _time_limit_refusal
 from .secret_scan import (
+    _GitTimedOut,
     _check_deadline,
     _git_commit_invocations,
     _repo_toplevel,
@@ -197,8 +206,8 @@ _WORKER_MARGIN_SECONDS = 60.0
 class _Outcome:
     """What `_resolve_scan` found out for one commit's touched lock files: `status` is "result"
     (with `result` set), "running" (a scan is in flight, deny once), "dead" (a marker outlived its
-    own stale limit -- cleared, fail open), "spawn_failed" (no worker could be started, fail open)
-    or "unhashable" (a file changed between being listed and being digested, fail open) or "linked"
+    own stale limit -- cleared, fail open with a note), "spawn_failed" (no worker could be started, the
+    commit refused) or "unhashable" (a file changed between being listed and being digested, fail open) or "linked"
     (the running marker cannot be written because `.act-local` or its scan-cache folder is a link or
     junction, `detail` names it; a scan cannot be handed to a worker and the hook's own time does not
     suffice for one, so the commit is held, not let through unchecked)."""
@@ -216,8 +225,8 @@ def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
     new file in the tree. Every name git reports (`--name-only`, `ls-files --full-name`) is
     repo-root-relative and joined onto the repository's own top level, never onto the commit's
     directory, which may be a subdirectory. A commit's own `-a` never takes an untracked file, so
-    none is listed for it. Best-effort, same "an incomplete read only means fewer touched names,
-    never a reason to block" stance `danger_scan.py`/`secret_scan.py` take for their git calls."""
+    none is listed for it. A git call that runs past its limit raises secret_scan._GitTimedOut (after
+    the one repeat), as `danger_scan.py`/`secret_scan.py` do: fewer touched names would be a pass."""
     cwd = invocation["cwd"]
     if not Path(cwd).is_dir():
         return []
@@ -225,9 +234,9 @@ def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
 
-    toplevel = _repo_toplevel(cwd, budget())
+    toplevel = _repo_toplevel(cwd, budget(), deadline)
     if toplevel is None:
-        return []  # not a repository (git commit itself would fail), or out of time
+        return []  # not a repository (git commit itself would fail): free
     base = Path(toplevel)
 
     # every git call runs from the top level, never from `cwd`: with `diff.relative=true` a diff
@@ -235,12 +244,12 @@ def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
     # vanish from a `cd sub && git commit` (2026-09-27 review 3, m3); the pathspecs handed in are
     # absolute or top-anchored, so the result is otherwise the same
     candidates: list[str] = []
-    staged = _run_git(["diff", "--cached", "--name-only"], toplevel, budget())
+    staged = _run_git(["diff", "--cached", "--name-only"], toplevel, budget(), deadline)
     if staged:
         candidates.extend(str(base / name) for name in staged.splitlines())
 
     if invocation["all"]:
-        unstaged = _run_git(["diff", "--name-only"], toplevel, budget())
+        unstaged = _run_git(["diff", "--name-only"], toplevel, budget(), deadline)
         if unstaged:
             candidates.extend(str(base / name) for name in unstaged.splitlines())
 
@@ -249,7 +258,7 @@ def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
         if path != _WHOLE_TREE_PATHSPEC:
             if not path.startswith(":"):
                 candidates.append(path)  # a magic pathspec (`:/src`) is not a file name of its own
-            path_diff = _run_git(["diff", "--name-only", "--", path], toplevel, budget())
+            path_diff = _run_git(["diff", "--name-only", "--", path], toplevel, budget(), deadline)
             if path_diff:
                 candidates.extend(str(base / name) for name in path_diff.splitlines())
         # --full-name plus the top level: the whole tree from a subdirectory too (2026-09-27
@@ -257,7 +266,7 @@ def _touched_lock_files(invocation: dict, deadline: float) -> "list[str]":
         ls_args = ["ls-files", "--others", "--full-name", "-z", "--", path]
         if not entry["forced"]:
             ls_args.insert(2, "--exclude-standard")
-        untracked = _run_git(ls_args, toplevel, budget())
+        untracked = _run_git(ls_args, toplevel, budget(), deadline)
         if untracked:
             candidates.extend(str(base / rel) for rel in filter(None, untracked.split("\0")))
 
@@ -652,21 +661,33 @@ def _judge(payload: dict, root: Path, result: security_scan.ScanResult) -> int:
 def _check(payload: dict, root: Path, command: str) -> int:
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
+    started = time.monotonic()
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    if deadline - time.monotonic() < _MIN_DETECTION_SECONDS:
-        _note(payload, "[act] security-check (deps): no time left in this hook call -- not checked this time")
-        return 0
-    invocations = _git_commit_invocations(
-        command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
-    )
+
+    def refuse_for_time() -> int:
+        print(_time_limit_refusal("security-check (deps)", max(deadline - started, 0.0), "security-check"),
+              file=sys.stderr)
+        return 2
+
+    try:
+        invocations = _git_commit_invocations(
+            command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
+        )
+    except _GitTimedOut:
+        return refuse_for_time()  # a git alias could not be looked up in time: the call may be a commit
     if not invocations:
         return 0
+    if deadline - time.monotonic() < _MIN_DETECTION_SECONDS:
+        return refuse_for_time()  # a commit, and no time left to look at what it touches
 
     touched: set[str] = set()
-    for invocation in invocations:
-        if time.monotonic() >= deadline:
-            break
-        touched.update(_touched_lock_files(invocation, deadline))
+    try:
+        for invocation in invocations:
+            if time.monotonic() >= deadline:
+                return refuse_for_time()  # an invocation is still unlisted
+            touched.update(_touched_lock_files(invocation, deadline))
+    except _GitTimedOut:
+        return refuse_for_time()
     if not touched:
         return 0  # this commit does not touch a lock file -- nothing for Art B to look at
 
@@ -696,8 +717,13 @@ def _check(payload: dict, root: Path, command: str) -> int:
         _note(payload, "[act] security-check (deps): a previous scan attempt never finished -- not checked this time")
         return 0
     if outcome.status == "spawn_failed":
-        _note(payload, "[act] security-check (deps): the dependency scan could not be started -- not checked this time")
-        return 0
+        print(
+            "[act] security-check (deps): the dependency scan could not be started, so the commit is refused "
+            "unchecked. Run .act/scripts/doctor.py to see what is wrong; to switch this check off, set "
+            "`security-check: off` in docs/ai/config.md § Checks.",
+            file=sys.stderr,
+        )
+        return 2
     if outcome.result is None:
         _note(payload, "[act] security-check (deps): a touched lock file changed while being read -- not checked this time")
         return 0
@@ -709,9 +735,8 @@ def check_deps_scan(payload: dict) -> int:
     sits in a lock file this commit touches -- see the module docstring for the full contract.
     Applies to the orchestrator and every worker alike (no `_is_worker` gate, same as
     danger_scan.py/secret_scan.py: a vulnerable dependency is no less real coming from a worker).
-    Every exception raised anywhere below is caught here and turned into a fail-open note naming
-    it -- see the module docstring for why (reached through checks/mcp_ide.py's own shell-reuse
-    path, an uncaught exception here would make an unrelated call fail *closed* instead)."""
+    An exception below is not caught here: dispatch.py refuses the call it was to check and names the
+    check (see the module docstring)."""
     config = actlib.read_config()
     level = actlib.security_check_level(config)
     if level not in ("deps", "full"):
@@ -734,12 +759,7 @@ def check_deps_scan(payload: dict) -> int:
     except Exception:  # noqa: BLE001 -- best effort: without a record the post-call scan falls back to the reflog
         pass
 
-    try:
-        return _check(payload, root, command)
-    except Exception as exc:  # noqa: BLE001 -- logged in the note below; see the module docstring
-        note = f"[act] security-check (deps): internal error ({type(exc).__name__}: {exc}) -- not checked this time"
-        _note(payload, note)
-        return 0
+    return _check(payload, root, command)
 
 
 def note_deps_scan(payload: dict) -> Optional[str]:

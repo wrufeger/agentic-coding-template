@@ -30,8 +30,9 @@
 #          .act/scripts/board.py, or `session-start-refresh: off|warn` in docs/ai/config.md §
 #          Checks (same switch as the session-start refresh): nothing happens.
 #
-# Contract: never raises, never blocks, prints nothing -- any error (a broken board.py, a timeout,
-#          an unreadable path) is swallowed. Cheap for every other call: one tokenizer pass over a
+# Contract: never raises, never blocks, prints nothing -- any error (a broken board.py, an unreadable
+#          path) is swallowed; a timeout is not: the line `board_refresh incomplete (time limit <n> s)` is left
+#          for dispatch.py, which gives it to the human and the model with the call's other notes. Cheap for every other call: one tokenizer pass over a
 #          Bash/PowerShell command, and nothing at all for any other tool or event.
 #
 # Known limits: shares command_words.py's and worker_git_write.py's tokenizing limits (a `git`
@@ -50,7 +51,7 @@ from typing import Optional
 import actlib
 
 from .command_parse import Parse
-from .common import _check_mode, _is_worker, _shell_command
+from .common import _check_mode, _is_worker, _observer_note, _shell_command, _time_limit_note
 from .worker_git_write import _parse_git_invocation, _resolve_dash_c_chain
 
 __all__ = [
@@ -151,5 +152,10 @@ def observe(event: str, payload: dict) -> None:
             [sys.executable, str(board_script)], cwd=str(root),
             timeout=_BOARD_TIMEOUT_SECONDS, capture_output=True,
         )
+    except subprocess.TimeoutExpired:
+        # not a print: the hook's stdout is one JSON object and stderr reaches nobody on exit 0 (dispatch.py
+        # hands the line to the human and the model with this call's other notes)
+        _observer_note(_time_limit_note(
+            "board_refresh", _BOARD_TIMEOUT_SECONDS, "the board was not refreshed after this call"))
     except (OSError, subprocess.SubprocessError):
         pass  # a broken board refresh must never disturb the hook chain

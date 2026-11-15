@@ -26,6 +26,7 @@ __all__ = [
     "_HARNESS_MESSAGE_PREFIXES", "_is_harness_message",
     "_load_pending_notes", "_queue_pending_note", "_pop_pending_notes", "_hook_deadline", "_HOOK_BUDGET",
     "MAX_NESTING", "_unplaced_target", "_is_unplaced_target", "_unplaced_reason",
+    "_time_limit_refusal", "_time_limit_note", "_observer_note", "_take_observer_notes",
 ]
 
 
@@ -250,6 +251,42 @@ _LEFTOVER_SUFFIXES = (".json", ".lock", ".tmp", ".stale")
 
 # Cap, seconds after dispatch.py's own start (payload["_act_hook_started"]): the harness ends a hook after 10 s.
 _HOOK_BUDGET = 8.0
+
+
+def _time_limit_refusal(check: str, seconds: float, *keys: str) -> str:
+    """The text of a check that can refuse and ran out of time: it names the check, the seconds after which it
+    had not finished, that the call is refused for it and run again, and how the check is switched off (the
+    config key or keys of docs/ai/config.md § Checks). A check that cannot look at what it was asked to look at
+    never lets the call through unchecked."""
+    switch = " and ".join(f"`{key}: off`" for key in keys)
+    return (f"[act] {check}: time budget used up, not finished after {seconds:g} s, so the call is refused "
+            f"unchecked. Run the command again; to switch this check off, set {switch} in "
+            "docs/ai/config.md § Checks.")
+
+
+def _time_limit_note(name: str, seconds: float, what: str = "") -> str:
+    """The one line of a check or hook that only ever notes and ran out of time: that it is incomplete, after how
+    many seconds, and what that means for this call (`what`, may be empty)."""
+    tail = f"; {what}" if what else ""
+    return f"[act] {name} incomplete (time limit {seconds:g} s){tail}"
+
+
+_OBSERVER_NOTES: "list[str]" = []
+
+
+def _observer_note(text: str) -> None:
+    """An observer's line for this hook call: a PostToolUse observer cannot print (the hook's stdout is one JSON
+    object, and a line on stderr reaches nobody on exit 0), so it leaves the text here and dispatch.py hands it to
+    the human as systemMessage and to the model as additionalContext of the same call (_take_observer_notes)."""
+    if text and text not in _OBSERVER_NOTES:
+        _OBSERVER_NOTES.append(text)
+
+
+def _take_observer_notes() -> "list[str]":
+    """The lines left by _observer_note since the last call, in order; the list is empty afterwards."""
+    taken = list(_OBSERVER_NOTES)
+    del _OBSERVER_NOTES[:]
+    return taken
 
 
 def _hook_deadline(payload: "dict | None") -> "float | None":

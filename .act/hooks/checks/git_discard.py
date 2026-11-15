@@ -30,7 +30,10 @@
 #          Which tree is meant: a leading `cd` (_resolve_cwd_after_leading_cd), then the `-C` chain, else the
 #          call's own `cwd`. A tree that cannot be pinned down -- no `cwd`, a dynamic `-C` or `cd` target,
 #          a second directory change, `--git-dir`/`--work-tree`/`GIT_DIR=`, `env -C`, `find -execdir` -- is
-#          refused, as is a git call that fails or runs out of the shared time budget (deny by default).
+#          refused, as is a git call that fails or runs out of the shared time budget (deny by default). A
+#          refusal for want of time says so in the same words as the scans (checks/common.py
+#          _time_limit_refusal: the check, "time budget used up", the seconds, run again, the config row that
+#          switches it off); a failed check names the exception class, the rows and doctor.py.
 #          An inline alias is judged by what it expands to (the call's own arguments appended, nested
 #          aliases followed); one that cannot be expanded (`!shell`, `--config-env`, a cycle) or that
 #          expands to `reset`/`--hard` is refused outright.
@@ -60,7 +63,7 @@ from typing import Callable, Iterator, Optional
 import actlib
 
 from .command_parse import Parse, parse_for
-from .common import _check_mode, _shell_command
+from .common import _check_mode, _shell_command, _time_limit_refusal
 from .shell_targets import _command_name, _to_native_path
 from .worker_git_write import (
     _branch_lists_only,
@@ -90,14 +93,24 @@ class _Unknown(Exception):
     """Raised when a fact the verdict depends on cannot be established."""
 
 
+class _TimedOut(_Unknown):
+    """_Unknown for want of time: the budget is used up, or a git call ran past its limit. It is refused like any
+    unknown, with the time-out text (_time_limit_message) instead of the one that tells to look first."""
+
+
 class _Budget:
     """The shared time budget of one hook run; every git call draws from it."""
 
     def __init__(self, hook_started: Optional[float] = None) -> None:
-        deadline = time.monotonic() + _TIME_BUDGET
+        self._started = time.monotonic()
+        deadline = self._started + _TIME_BUDGET
         if isinstance(hook_started, (int, float)) and not isinstance(hook_started, bool):
             deadline = min(deadline, float(hook_started) + _HOOK_BUDGET)
         self._deadline = deadline
+
+    def seconds(self) -> float:
+        """The seconds this budget had from its start (what the time-out text names)."""
+        return max(self._deadline - self._started, 0.0)
 
     def expired(self) -> bool:
         return time.monotonic() >= self._deadline
@@ -105,13 +118,15 @@ class _Budget:
     def run(self, args: list[str], cwd: Path, limit: float = _CALL_LIMIT) -> subprocess.CompletedProcess:
         remaining = self._deadline - time.monotonic()
         if remaining <= 0.2:
-            raise _Unknown("time budget used up")
+            raise _TimedOut("time budget used up")
         try:
             return subprocess.run(
                 ["git", *args], cwd=str(cwd), capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=min(limit, remaining),
             )
-        except (OSError, subprocess.TimeoutExpired) as error:
+        except subprocess.TimeoutExpired as error:
+            raise _TimedOut(f"git {args[0]} ran past its limit") from error
+        except OSError as error:
             raise _Unknown(f"git {args[0]} could not run: {error}") from error
 
     def out(self, args: list[str], cwd: Path) -> str:
@@ -735,14 +750,18 @@ _TABLE: dict[str, tuple[str, str, str, _Verdict, str]] = {
               "apply it with `git stash pop`/`apply` or commit it first, or ask the owner"),
 }
 
-_TIMEOUT_MESSAGE = (
-    "[act] git refused -- ran out of time before every git command in this call could be checked "
-    f"({_DISCARD_RULE}): split the command into smaller calls"
-)
 _ERROR_MESSAGE = (
     "[act] git refused -- the check itself failed ({error}) "
-    f"({_DISCARD_RULE}): run the git commands one at a time"
+    f"({_DISCARD_RULE}): run the git commands one at a time; to switch the check off, set `{_DISCARD_ROW}: off` and "
+    f"`{_RESET_ROW}: off` in docs/ai/config.md § Checks, or run .act/scripts/doctor.py to see what is wrong"
 )
+
+
+def _time_limit_message(budget: _Budget, row: Optional[str]) -> str:
+    """The text of a refusal for want of time: the check, the seconds, run again (a smaller call is quicker),
+    and the config row that switches it off (both rows for a refusal that belongs to none)."""
+    keys = (row,) if row else (_DISCARD_ROW, _RESET_ROW)
+    return _time_limit_refusal("git-discard", budget.seconds(), *keys)
 
 
 def check_git_discard(payload: dict) -> int:
@@ -766,7 +785,8 @@ def check_git_discard(payload: dict) -> int:
                 return 2
             warnings.append(message)
     except Exception as error:  # a check that fails must not let the command through
-        message = _ERROR_MESSAGE.format(error=f"{type(error).__name__}: {error}"[:120])
+        # the class only: the text of the exception may hold part of the command
+        message = _ERROR_MESSAGE.format(error=type(error).__name__)
         if _mode_of(None, modes) == "block":
             print(message, file=sys.stderr)
             return 2
@@ -793,7 +813,7 @@ def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tu
     resolved_cwd: list[tuple[Optional[str], bool]] = []  # the same for every invocation of the command
     for prefix, args in parse.git_invocations_with_prefix():
         if budget.expired():
-            yield None, _TIMEOUT_MESSAGE
+            yield None, _time_limit_message(budget, None)
             return
         subcommand, sub_args, dash_c_dirs, has_dir_override, _ = _parse_git_invocation(args)
         if subcommand is None:
@@ -826,6 +846,9 @@ def _refusals(payload: dict, command: str, modes: dict[str, str]) -> Iterator[tu
                 continue
         try:
             why = verdict(sub_args, target, budget, global_args + prefix)
+        except _TimedOut:
+            yield row, _time_limit_message(budget, row)
+            continue
         except _Unknown:
             yield row, unknown
             continue

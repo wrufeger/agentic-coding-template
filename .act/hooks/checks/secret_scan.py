@@ -119,11 +119,15 @@
 #          (_check_deadline: dispatch.py's own start, payload["_act_hook_started"], plus
 #          _HOOK_BUDGET -- inside the harness's 10s hook timeout; the secret, danger and deps scans
 #          run back to back in one hook call, so their budgets must not simply add up, 2026-09-27
-#          review 2, m5). Running out
-#          of it never blocks by itself — only a note ("not fully checked") — but real findings
-#          from the part that *was* scanned still hold the commit. The note says which limit hit
-#          (_incomplete_note): the time budget (or a failed git call), and/or the files skipped for
-#          size, named.
+#          review 2, m5). A git call that runs past its limit is repeated once, for its own limit
+#          or what is left, when at least half a second is left before the deadline (_run_git); a repeat
+#          that is not possible or fails again, a loop that stops at the deadline with work still open, and a git alias that cannot
+#          be looked up for want of time refuse the commit unchecked (exit 2, "time budget used up":
+#          the seconds, run again, how to switch the check off; `warn` mode prints the same text as
+#          a note) -- a spent budget is never a pass. Real findings from the part that *was* scanned
+#          still hold the commit first. Not a time-out, and so only a note ("not fully checked",
+#          _incomplete_note): a git call that failed (not a repository, an error answer: the commit
+#          is free) and the files skipped for size, named.
 #
 #          PreToolUse's plain stdout (the `warn`-mode hold message, the "not fully checked" note)
 #          is transcript-only and never reaches the model on an allowed (exit 0) call — confirmed
@@ -189,7 +193,9 @@ import actlib
 import feedback_privacy
 
 from .command_parse import Parse, parse_for
-from .common import _HOOK_BUDGET, MAX_NESTING, _check_mode, _hook_deadline, _shell_command
+from .common import (
+    _HOOK_BUDGET, MAX_NESTING, _check_mode, _hook_deadline, _shell_command, _time_limit_note, _time_limit_refusal,
+)
 from .encoding_hint import _pop_pending_notes, _queue_pending_note
 from .shell_targets import (
     _ASSIGNMENT_RE,
@@ -218,7 +224,7 @@ __all__ = [
     "_LOCK_FILE_REL", "_LOCK_OVERRIDE_RE", "_match_secret", "_is_env_filename", "_mask", "_format_finding", "_build_message",
     "_strip_ab_prefix", "_diff_sections", "_section_file_name", "_diff_entries", "_text_lines", "_match_secret_line",
     "_joined_line_hit",
-    "_scan_diff_text", "_scan_new_file", "_run_git", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
+    "_scan_diff_text", "_scan_new_file", "_run_git", "_GitTimedOut", "_repo_toplevel", "_resolve_dir", "_resolve_alias",
     "_git_call", "_nested_command", "_simple_commands", "_with_span_commands",
     "_git_commit_invocations", "_scan_commit", "_pending_file", "_queue_note",
     "_ADD_UNTRACKED_FLAGS", "_WHOLE_TREE_PATHSPEC", "_HOOK_BUDGET", "_hook_deadline", "_check_deadline",
@@ -403,6 +409,21 @@ _HEX_ONLY_RE = re.compile(r"^[0-9a-fA-F]+$")
 _ADD_SUBCOMMANDS = frozenset({"add", "stage"})  # `git stage` is git's own synonym for `git add`
 _KNOWN_SUBCOMMANDS = {"add", "stage", "commit", "merge", "cherry-pick", "revert", "rebase", "am"}
 _CONTINUE_SUBCOMMANDS = {"merge", "cherry-pick", "revert", "rebase", "am"}
+# git's own commands. An alias never shadows one of them, so a call of one of these needs no alias lookup (the
+# lookup is what a spent time budget cannot afford: _git_call).
+_GIT_BUILTINS = frozenset({
+    "status", "log", "diff", "show", "branch", "checkout", "switch", "restore", "reset", "clean", "stash", "tag",
+    "fetch", "pull", "push", "remote", "clone", "init", "config", "describe", "grep", "blame", "bisect", "mv", "rm",
+    "ls-files", "ls-tree", "ls-remote", "rev-parse", "rev-list", "cat-file", "diff-tree", "diff-index", "reflog",
+    "worktree", "submodule", "notes", "shortlog", "show-ref", "for-each-ref", "symbolic-ref", "update-ref",
+    "apply", "archive", "bundle", "gc", "fsck", "prune", "repack", "maintenance", "help", "version", "var",
+    "format-patch", "send-email", "request-pull", "range-diff", "merge-base", "name-rev", "count-objects",
+    "hash-object", "write-tree", "read-tree", "commit-tree", "mktree", "check-ignore", "check-attr", "sparse-checkout",
+    "difftool", "mergetool", "gitk", "citool", "gui", "instaweb", "daemon", "credential", "filter-branch",
+    "replace", "rerere", "verify-commit", "verify-tag", "whatchanged", "cherry", "patch-id", "interpret-trailers",
+    "column", "fmt-merge-msg", "unpack-file", "pack-objects", "unpack-objects", "index-pack", "update-index",
+    "stripspace", "mailinfo", "mailsplit", "get-tar-commit-id", "scalar", "backfill", "hook", "last-modified",
+})
 # git-commit options that consume the next word as their own value — never a pathspec operand
 # (2026-09-23 review, item 1).
 _COMMIT_VALUE_FLAGS = frozenset({
@@ -745,16 +766,13 @@ def _build_message(findings: list[dict]) -> str:
     )
 
 
-def _incomplete_note(timed_out: bool, oversized: list[str]) -> str:
-    """The "not fully checked" note, saying which limit hit: the time budget (_TIME_BUDGET per
-    check, _HOOK_BUDGET from the hook's own start; a git call that failed or timed out counts here
-    too) and/or files skipped for size (_MAX_DIFF_BYTES, named)."""
+def _incomplete_note(git_failed: bool, oversized: list[str]) -> str:
+    """The "not fully checked" note for what is no time-out: a git call that failed (not a repository, or
+    git answered with an error) and/or files skipped for size (_MAX_DIFF_BYTES, named). A time-out is no
+    note but a refusal (_time_limit_message)."""
     reasons: list[str] = []
-    if timed_out:
-        reasons.append(
-            f"time budget used up ({_TIME_BUDGET:g}s for this check, {_HOOK_BUDGET:g}s for the whole "
-            "hook) or a git call failed"
-        )
+    if git_failed:
+        reasons.append("a git call failed (not a repository, or git answered with an error)")
     if oversized:
         shown = ", ".join(oversized[:5])
         more = f" (+{len(oversized) - 5} more)" if len(oversized) > 5 else ""
@@ -763,6 +781,12 @@ def _incomplete_note(timed_out: bool, oversized: list[str]) -> str:
         "[act] secret-scan: not fully checked — " + "; ".join(reasons)
         + " — review it yourself before committing"
     )
+
+
+def _time_limit_message(seconds: float) -> str:
+    """The text of a scan that ran out of time (_TIME_BUDGET for this check, _HOOK_BUDGET for the whole hook)
+    while work was still open: the commit is refused unchecked, `block` mode only."""
+    return _time_limit_refusal("secret-scan", seconds, "secret-scan")
 
 
 def _strip_ab_prefix(path: str) -> str:
@@ -1015,25 +1039,50 @@ def _scan_new_file(
             findings.append({"file": rel, "line": line_no, "kind": kind, "value": value, "hash": digest})
 
 
-def _run_git(args: list[str], cwd: str, timeout: float) -> Optional[str]:
-    if timeout <= 0:
-        return None
-    try:
-        # bytes, decoded here: text mode would turn a lone CR in the output into a line feed and so
-        # move the text behind it onto a line of its own (a diff reads that as context and skips it)
-        result = subprocess.run(
-            ["git", "-c", "core.quotePath=false", *args], cwd=cwd, capture_output=True, timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None
-    return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
+_RETRY_MIN_SECONDS = 0.5  # the least a repeat of a timed-out git call is worth starting with
 
 
-def _repo_toplevel(cwd: str, timeout: float) -> Optional[str]:
-    """`git rev-parse --show-toplevel` for `cwd`, or None -- the base every root-relative name git
-    reports (`diff --name-only`, `ls-files --full-name`) is joined onto, never `cwd` itself, which
-    may be a subdirectory of the repository (shared by this module, danger_scan and deps_scan)."""
-    output = _run_git(["rev-parse", "--show-toplevel"], cwd, timeout)
+class _GitTimedOut(Exception):
+    """A git call of a scan ran past its time limit and could not be repeated before the check's deadline."""
+
+
+def _run_git(args: list[str], cwd: str, timeout: float, deadline: Optional[float] = None) -> Optional[str]:
+    """Stdout of `git <args>` in `cwd`, or None when git fails (an error exit, no git, an unusable `cwd`). A
+    call that runs past `timeout` is told apart only with a `deadline` (the check's own, a monotonic instant):
+    it is repeated once, for the shorter of its own `timeout` and what is left before the deadline, when at least
+    _RETRY_MIN_SECONDS are left, otherwise _GitTimedOut is raised, also for a `timeout` that is already used up.
+    Without a deadline a time-out gives None, as a failure does (the callers that only note something)."""
+    for attempt in (1, 2):
+        if timeout <= 0:
+            if deadline is None:
+                return None
+            raise _GitTimedOut("no time left for a git call")
+        try:
+            # bytes, decoded here: text mode would turn a lone CR in the output into a line feed and so
+            # move the text behind it onto a line of its own (a diff reads that as context and skips it)
+            result = subprocess.run(
+                ["git", "-c", "core.quotePath=false", *args], cwd=cwd, capture_output=True, timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            if deadline is None:
+                return None
+            left = deadline - time.monotonic()
+            if attempt == 1 and left >= _RETRY_MIN_SECONDS:
+                timeout = min(timeout, left)  # the repeat gets its own limit, or what is left of the deadline
+                continue
+            raise _GitTimedOut(f"a git call ran past {timeout:g} s") from None
+        except (OSError, ValueError):
+            return None
+        return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
+    return None  # not reached: the second attempt returns or raises
+
+
+def _repo_toplevel(cwd: str, timeout: float, deadline: Optional[float] = None) -> Optional[str]:
+    """`git rev-parse --show-toplevel` for `cwd`, or None (not a repository, or git failed) -- the base every
+    root-relative name git reports (`diff --name-only`, `ls-files --full-name`) is joined onto, never `cwd`
+    itself, which may be a subdirectory of the repository (shared by this module, danger_scan and deps_scan).
+    `deadline` as in _run_git: with one, a time-out raises _GitTimedOut instead of giving None."""
+    output = _run_git(["rev-parse", "--show-toplevel"], cwd, timeout, deadline)
     if not output:
         return None
     stripped = output.strip()
@@ -1043,8 +1092,9 @@ def _repo_toplevel(cwd: str, timeout: float) -> Optional[str]:
 def _check_deadline(payload: dict, budget: float) -> float:
     """now + `budget`, capped by `_hook_deadline(payload)` when there is one -- the deadline a
     check hands to its own git/file work. May already lie in the past when earlier checks used the
-    hook's time up; every consumer treats "no time left" as "not fully checked", never as a reason
-    to block or to run past the hook's own timeout."""
+    hook's time up; every consumer treats "no time left" with work still open as a time-out (the scans
+    refuse the call unchecked, the notes say they are incomplete), never as a pass, and never runs
+    past the hook's own timeout."""
     deadline = time.monotonic() + budget
     hook_deadline = _hook_deadline(payload)
     if hook_deadline is not None:
@@ -1120,16 +1170,17 @@ def _resolve_pathspec(raw: str, base: str) -> Optional[str]:
     return _resolve_dir(raw, base)
 
 
-def _resolve_alias(name: str, cwd: str, timeout: float, cache: dict) -> Optional[str]:
+def _resolve_alias(name: str, cwd: str, timeout: float, cache: dict, deadline: Optional[float] = None) -> Optional[str]:
     """First word of `git config --get alias.<name>` in `cwd`, cached in `cache` for the lifetime
     of one check_secret_scan call (so the same unresolved/resolved name is never looked up twice
     in one chain). None if `name` names no alias, is a shell alias ("!..." — unsupported, out of
-    scope), or the lookup fails/times out. Does not itself check whether the resolved name is one
-    this module understands — the caller does that (2026-09-23 review, item 8)."""
+    scope), or the lookup fails. A lookup that runs past its limit raises _GitTimedOut when a `deadline`
+    is given (_run_git). Does not itself check whether the resolved name is one this module understands --
+    the caller does that (2026-09-23 review, item 8)."""
     if name in cache:
         return cache[name]
     resolved: Optional[str] = None
-    output = _run_git(["config", "--get", f"alias.{name}"], cwd, timeout)
+    output = _run_git(["config", "--get", f"alias.{name}"], cwd, timeout, deadline)
     if output:
         stripped = output.strip()
         first = stripped.split(None, 1)[0] if stripped else ""
@@ -1146,7 +1197,8 @@ def _git_call(
     None>} for a `git [-C dir] [global opts] <sub> ...` call whose subcommand is `add`, `commit`,
     or one of merge/cherry-pick/revert/rebase/am run with `--continue` (item 8) — resolving a
     *simple* git alias to one of those first when the literal subcommand is none of them and
-    `deadline` still has time left (_resolve_alias). Assignments and wrapper commands (sudo, env,
+    `deadline` still has time left (_resolve_alias); with no time left a name that is no git builtin of its own
+    (an alias cannot shadow one) raises _GitTimedOut. Assignments and wrapper commands (sudo, env,
     ...) before `git` are skipped, same as shell_targets._simple_command_targets. None if `words`
     names no such subcommand at all (bare `git`, not `git` in the first place, or a subcommand this
     module has no interest in)."""
@@ -1187,14 +1239,18 @@ def _git_call(
 
     subcommand = args[i]
     sub_args = args[i + 1:]
-    if subcommand not in _KNOWN_SUBCOMMANDS and deadline is not None and deadline - time.monotonic() > 0:
+    if subcommand not in _KNOWN_SUBCOMMANDS and deadline is not None and deadline - time.monotonic() <= 0:
+        if subcommand not in _GIT_BUILTINS:
+            # no time left to look the name up, and it may be an alias for a commit: not "not a commit"
+            raise _GitTimedOut("no time left to resolve a git alias")
+    elif subcommand not in _KNOWN_SUBCOMMANDS and deadline is not None:
         call_cwd = cwd
         if directory is not None:
             resolved_dir = _resolve_dir(directory, cwd)
             if resolved_dir is not None:
                 call_cwd = resolved_dir
         resolved = _resolve_alias(
-            subcommand, call_cwd, min(_ALIAS_TIMEOUT, deadline - time.monotonic()), alias_cache,
+            subcommand, call_cwd, min(_ALIAS_TIMEOUT, deadline - time.monotonic()), alias_cache, deadline,
         )
         if resolved in _KNOWN_SUBCOMMANDS:
             subcommand = resolved
@@ -1415,16 +1471,27 @@ def _git_commit_invocations(
 
 
 def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, list[str], bool]:
-    """Findings for one commit-like invocation, plus whether scanning was cut short (timeout or a
-    diff section/file over 2MB — an incomplete scan is never grounds to block on its own, only to
-    note), the names of any file skipped for size, and whether time (or a failed git call) was
-    what cut it short -- the two reasons get distinct wording in check_secret_scan's note."""
+    """(findings, git_failed, oversized, timed_out) for one commit-like invocation: a git call that failed (not
+    a repository, or an error answer) is only worth a note, like the names of the files skipped for size
+    (over 2MB); `timed_out` says that time ran out while work was still open (a git call past its limit and
+    not repeatable, the deadline reached before the walk was done), which check_secret_scan answers with a
+    refusal, not a note. The findings made up to that point are kept."""
     findings: list[dict] = []
     oversized: list[str] = []
-    incomplete = timed_out = False
+    try:
+        git_failed, timed_out = _scan_commit_walk(invocation, deadline, findings, oversized)
+    except _GitTimedOut:
+        return findings, False, oversized, True
+    return findings, git_failed, oversized, timed_out
+
+
+def _scan_commit_walk(invocation: dict, deadline: float, findings: list[dict], oversized: list[str]) -> tuple[bool, bool]:
+    """The walk of _scan_commit: fills `findings` and `oversized`, returns (git_failed, timed_out); a git call
+    past its limit raises _GitTimedOut."""
+    git_failed = timed_out = False
     cwd = invocation["cwd"]
     if not os.path.isdir(cwd):
-        return findings, False, oversized, False
+        return False, False
 
     def budget() -> float:
         return min(_GIT_TIMEOUT, deadline - time.monotonic())
@@ -1435,25 +1502,27 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
     # commit`. From the top level the output is complete and root-relative whichever directory the
     # commit runs from, without `--no-relative` (git >= 2.28 only); the pathspecs handed in are
     # absolute or top-anchored, so the result is otherwise the same (2026-09-27 review 3, m3).
-    toplevel = _repo_toplevel(cwd, budget())
+    toplevel = _repo_toplevel(cwd, budget(), deadline)
     if toplevel is None:
-        incomplete = timed_out = True  # not a repository (git commit itself would fail), or out of time
+        git_failed = True  # not a repository (git commit itself would fail): a note, no time-out
     git_cwd = toplevel or cwd
     accepted = _LazyAccepted(toplevel, deadline)
     staged = _run_git(
         ["diff", "--cached", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+        deadline,
     )
     if staged is None:
-        incomplete = timed_out = True
+        git_failed = True
     else:
         _scan_diff_text(staged, findings, oversized, accepted)
 
     if invocation["all"] and len(findings) < _MAX_COLLECTED:
         unstaged = _run_git(
             ["diff", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0"], git_cwd, budget(),
+            deadline,
         )
         if unstaged is None:
-            incomplete = timed_out = True
+            git_failed = True
         else:
             _scan_diff_text(unstaged, findings, oversized, accepted)
 
@@ -1461,46 +1530,44 @@ def _scan_commit(invocation: dict, deadline: float) -> tuple[list[dict], bool, l
         if len(findings) >= _MAX_COLLECTED:
             break
         if deadline - time.monotonic() <= 0:
-            incomplete = timed_out = True
+            timed_out = True  # an add path is still unread
             break
         raw_path = entry["path"]
         if raw_path != _WHOLE_TREE_PATHSPEC:
             # the whole-tree entry's own unstaged diff is the `all` pass above (always set with it)
             path_diff = _run_git(
                 ["diff", *_diff_prefix_args(), "--no-color", "--no-ext-diff", "--no-textconv", "-U0", "--", raw_path],
-                git_cwd, budget(),
+                git_cwd, budget(), deadline,
             )
             if path_diff is None:
-                incomplete = timed_out = True
+                git_failed = True
             else:
                 _scan_diff_text(path_diff, findings, oversized, accepted)
 
         if len(findings) >= _MAX_COLLECTED or deadline - time.monotonic() <= 0:
-            if deadline - time.monotonic() <= 0:
-                incomplete = timed_out = True
+            if deadline - time.monotonic() <= 0 and len(findings) < _MAX_COLLECTED:
+                timed_out = True  # the untracked files of this path are still unread
             break
         if toplevel is None:
-            break  # nowhere to join root-relative names onto (already noted as incomplete above)
+            break  # nowhere to join root-relative names onto (already noted as failed above)
         # --full-name: root-relative names whichever subdirectory the commit runs from, read via
         # the top level -- a bare `ls-files` from a subdirectory would also stop at that
         # subdirectory without an explicit pathspec (2026-09-27 review 2, C2)
         ls_args = ["ls-files", "--others", "--full-name", "-z", "--", raw_path]
         if not entry["forced"]:
             ls_args.insert(2, "--exclude-standard")
-        untracked = _run_git(ls_args, toplevel, budget())
+        untracked = _run_git(ls_args, toplevel, budget(), deadline)
         if untracked is None:
-            incomplete = timed_out = True
+            git_failed = True
             continue
         for rel in filter(None, untracked.split("\0")):
             if len(findings) >= _MAX_COLLECTED:
                 break
             if deadline - time.monotonic() <= 0:
-                incomplete = timed_out = True
+                timed_out = True  # an untracked file is still unread
                 break
             _scan_new_file(Path(toplevel) / rel, rel, findings, oversized, accepted)
-    if oversized:
-        incomplete = True
-    return findings, incomplete, oversized, timed_out
+    return git_failed, timed_out
 
 
 def _pending_file(root: Path, session_id: str) -> Optional[Path]:
@@ -1548,29 +1615,33 @@ def check_secret_scan(payload: dict) -> int:
         # merge/cherry-pick/revert/rebase/am --continue or an alias resolving to `commit` never
         # contains the literal substring "commit" itself, so the filter can only be this broad
 
+    started = time.monotonic()
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    invocations = _git_commit_invocations(
-        command, _base_cwd(payload), deadline, {},
-        chain_tokens=parse_for(payload, command).chain_tokens(),
-    )
-    if not invocations:
-        return 0
-
     findings: list[dict] = []
-    incomplete = False
+    git_failed = False
     timed_out = False
     oversized: list[str] = []
-    for invocation in invocations:
-        if time.monotonic() >= deadline:
-            incomplete = timed_out = True
-            break
-        more, inv_incomplete, inv_oversized, inv_timed_out = _scan_commit(invocation, deadline)
-        findings.extend(more)
-        incomplete = incomplete or inv_incomplete
-        timed_out = timed_out or inv_timed_out
-        oversized.extend(inv_oversized)
-        if len(findings) >= _MAX_COLLECTED:
-            break
+    try:
+        invocations = _git_commit_invocations(
+            command, _base_cwd(payload), deadline, {},
+            chain_tokens=parse_for(payload, command).chain_tokens(),
+        )
+        for invocation in invocations:
+            if time.monotonic() >= deadline:
+                timed_out = True  # an invocation is still unscanned
+                break
+            more, inv_failed, inv_oversized, inv_timed_out = _scan_commit(invocation, deadline)
+            findings.extend(more)
+            git_failed = git_failed or inv_failed
+            timed_out = timed_out or inv_timed_out
+            oversized.extend(inv_oversized)
+            if len(findings) >= _MAX_COLLECTED or inv_timed_out:
+                break
+    except _GitTimedOut:
+        timed_out = True  # a git alias could not be looked up in time: the call may be a commit
+        invocations = []
+    if not invocations and not timed_out:
+        return 0
 
     if findings:
         message = _build_message(findings)
@@ -1581,8 +1652,17 @@ def check_secret_scan(payload: dict) -> int:
         print(message, file=sys.stderr)
         return 2
 
-    if incomplete:
-        note = _incomplete_note(timed_out, oversized)
+    if timed_out:
+        message = _time_limit_message(max(deadline - started, 0.0))
+        if mode == "warn":
+            print(message)  # `warn` never refuses: the same text as a note
+            _queue_note(payload, message)
+            return 0
+        print(message, file=sys.stderr)
+        return 2
+
+    if git_failed or oversized:
+        note = _incomplete_note(git_failed, oversized)
         print(note)
         _queue_note(payload, note)
     return 0

@@ -12,6 +12,11 @@ from typing import Optional
 
 import actlib
 
+from .common import _time_limit_note
+
+_BRANCH_TIMEOUT = 5
+_COMMITS_TIMEOUT = 10
+
 # ---------------------------------------------------------------------------
 # Check 2 — session start: inbox count, bridge re-derivation, board refresh,
 #           orchestrator-only rules as a fallback short form
@@ -21,9 +26,12 @@ def _current_branch(root: Path) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_BRANCH_TIMEOUT,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        print(_time_limit_note("session_notes", _BRANCH_TIMEOUT, "the current branch is unknown"))
+        return "unknown"
+    except OSError:
         return "unknown"
     name = result.stdout.strip()
     return name if result.returncode == 0 and name else "unknown"
@@ -178,9 +186,9 @@ def _last_docs_audit_entry(root: Path) -> "tuple[Optional[date], bool]":
 
 
 def _commits_since(root: Path, when: date) -> int:
-    """Number of commits on HEAD authored since `when` (inclusive of that day) -- 0 on any error
-    (no git, not a repository, timeout): silence over a wrong number, same as every other
-    best-effort sub-step in this module."""
+    """Number of commits on HEAD authored since `when` (inclusive of that day) -- 0 on an error (no git, not
+    a repository): silence over a wrong number, same as every other best-effort sub-step in this module. A
+    timeout is not silent: one line says that the count is missing (the caller goes on with 0)."""
     try:
         # A bare "--since=YYYY-MM-DD" is parsed against the current time of day (review finding
         # c) -- a commit made earlier *today*, before this hook's own clock time, would otherwise
@@ -188,9 +196,12 @@ def _commits_since(root: Path, when: date) -> int:
         # of `when`'s day count, matching what a human reading "since 2026-08-01" expects.
         result = subprocess.run(
             ["git", "rev-list", "--count", f"--since={when.isoformat()}T00:00:00", "HEAD"],
-            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=_COMMITS_TIMEOUT,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        print(_time_limit_note("session_notes", _COMMITS_TIMEOUT, "the commit count of the docs audit note is missing"))
+        return 0
+    except OSError:
         return 0
     if result.returncode != 0:
         return 0

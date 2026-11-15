@@ -20,8 +20,13 @@
 # Switch `commit-hashes` in docs/ai/config.md § Checks: `warn` (default, also for a missing row) notes, `off`
 # says nothing; `block` counts as `warn` because the call is never refused. The note reaches the model as
 # PostToolUse context (a PreToolUse line on stdout is only shown to the person), queued under
-# `.act-local/commit-hash-hints/<tool_use_id>.json`. Fails open: an exception, a missing git or a lookup
-# past the time budget lets the call pass without a note.
+# `.act-local/commit-hash-hints/<tool_use_id>.json`. A missing git, or none of the repositories being one, lets
+# the call pass without a note. A lookup past the time budget does not pass silently: one line says that the
+# check is incomplete (`_time_limit_note`), the call is not refused. A crash of the check is no pass either:
+# the exception is not caught here, dispatch.py refuses the call it was to check and names the check, the
+# exception class, the row that switches it off (`commit-hashes: off`) and doctor.py. It refuses only a call this
+# check looks at: a shell command of the main session that holds the word `commit` (`_REFUSING_SCOPE`), so an `ls`
+# is never refused for it, whether the check crashed or the hook's own time ran out before it.
 #
 # Limits: a hash in a message file written in the same call, or in a program's own text, is not seen; an
 # abbreviation that is ambiguous in a repository counts as unknown there.
@@ -39,7 +44,7 @@ import actlib
 from .command_parse import parse_for
 from .common import (
     _SHELL_TOOL_NAMES, _check_mode, _is_worker, _note_only, _pop_pending_notes, _queue_pending_note,
-    _shell_command,
+    _shell_command, _time_limit_note,
 )
 from .worker_git_write import _parse_git_invocation
 from .write_scope import _SAFE_ID_RE
@@ -54,6 +59,10 @@ _LOCK_COMMIT_RE = re.compile(r'"commit"\s*:\s*"([0-9A-Fa-f]{7,40})"')
 _MAX_HASHES = 20
 _MAX_FILE_BYTES = 200_000
 _BUDGET_SECONDS = 4.0
+
+
+class _TimedOut(Exception):
+    """A git call of this check ran past its limit, or the budget was used up before the lookups were done."""
 
 _NOTE = (
     "[act] note: {hashes} named in this commit {verb} no commit in this repository{others} — a mistyped or "
@@ -78,10 +87,13 @@ def _hex_hashes(text: str) -> list[str]:
 
 
 def _git(root: Path, args: list[str], timeout: float) -> Optional[subprocess.CompletedProcess]:
+    """The finished git call, None when git cannot be run; _TimedOut when it ran past `timeout`."""
     try:
         return subprocess.run(
             ["git", "-C", str(root), *args], capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=max(timeout, 0.5), check=False)
+    except subprocess.TimeoutExpired as error:
+        raise _TimedOut(f"git {args[0]} ran past {timeout:g} s") from error
     except (OSError, subprocess.SubprocessError):
         return None
 
@@ -140,7 +152,8 @@ def _repos(root: Path, config: dict) -> list[Path]:
 
 def _lock_commits(root: Path, deadline: float) -> Optional[list[str]]:
     """Every template commit `.act-lock.json` names, in the working tree (an update committed in the call that
-    stages it), staged or in its history (added and removed lines); None when out of time or git fails."""
+    stages it), staged or in its history (added and removed lines); None when git fails, _TimedOut when out of
+    time."""
     found: list[str] = []
     try:
         lock = root / _LOCK
@@ -153,7 +166,7 @@ def _lock_commits(root: Path, deadline: float) -> Optional[list[str]]:
                  ["log", "--format=", "-p", "-U0", "--no-color", "--", _LOCK]):
         left = deadline - time.monotonic()
         if left <= 0:
-            return None
+            raise _TimedOut("no time left to read the recorded template commits")
         done = _git(root, args, left)
         if done is None:
             return None
@@ -170,7 +183,7 @@ def _unknown(hashes: list[str], repos: list[Path]) -> list[str]:
         for repo in repos:
             left = deadline - time.monotonic()
             if left <= 0:
-                return []  # out of time: no note rather than a false one
+                raise _TimedOut("no time left to look the hashes up")  # no false note, but not silent either
             done = _git(repo, ["cat-file", "-e", f"{word}^{{commit}}"], left)
             if done is None:
                 return []
@@ -194,44 +207,55 @@ def _hint_file(root: Path, tool_use_id: object) -> Optional[Path]:
     return path if actlib.local_write_ok(root, path) else None
 
 
+def _give_note(payload: dict, root: Path, note: str) -> None:
+    """The note on stdout, and queued for PostToolUse (the model) under this call's tool_use_id."""
+    print(note)
+    _note_only("commit-hashes")
+    path = _hint_file(root, payload.get("tool_use_id"))
+    if path is not None:
+        _queue_pending_note(path, note, payload)
+
+
 def check_commit_hashes(payload: dict) -> int:
-    """Notes the commit hashes of this `git commit` that no repository knows (stdout, and queued for PostToolUse)."""
+    """Notes the commit hashes of this `git commit` that no repository knows (stdout, and queued for PostToolUse).
+    Never refuses by itself; an exception is not caught (dispatch.py refuses the call, see the module header)."""
+    shell = _shell_command(payload)
+    if shell is None or _is_worker(payload) or "commit" not in shell[1]:
+        return 0
+    config = actlib.read_config()
+    if _mode(config) == "off":
+        return 0
+    command = shell[1]
+    commits = [
+        sub_args for args in parse_for(payload, command).git_invocations()
+        for subcommand, sub_args, _dirs, _override, _alias in [_parse_git_invocation(args)]
+        if subcommand == "commit"
+    ]
+    if not commits:
+        return 0
     try:
-        shell = _shell_command(payload)
-        if shell is None or _is_worker(payload) or "commit" not in shell[1]:
-            return 0
-        config = actlib.read_config()
-        if _mode(config) == "off":
-            return 0
-        command = shell[1]
-        commits = [
-            sub_args for args in parse_for(payload, command).git_invocations()
-            for subcommand, sub_args, _dirs, _override, _alias in [_parse_git_invocation(args)]
-            if subcommand == "commit"
-        ]
-        if not commits:
-            return 0
         root = actlib.repo_root()
-        cwd = Path(payload["cwd"]) if isinstance(payload.get("cwd"), str) and payload.get("cwd") else root
+    except RuntimeError:
+        return 0  # no project to look in: nothing to check
+    cwd = Path(payload["cwd"]) if isinstance(payload.get("cwd"), str) and payload.get("cwd") else root
+    try:
         text = "\n".join([command, _staged_ledger_text(root), *(_message_files(args, cwd) for args in commits)])
         hashes = _hex_hashes(text)[:_MAX_HASHES]
         if not hashes:
             return 0
         repos = _repos(root, config)
         missing = _unknown(hashes, repos) if repos else []
-        if not missing:
-            return 0
-        shown = ", ".join(f"`{word}`" for word in missing)
-        note = _NOTE.format(
-            hashes=shown, verb="is" if len(missing) == 1 else "are",
-            others=" or the repositories of `commit-hashes-repos`" if len(repos) > 1 else "")
-        print(note)
-        _note_only("commit-hashes")
-        path = _hint_file(root, payload.get("tool_use_id"))
-        if path is not None:
-            _queue_pending_note(path, note, payload)
-    except Exception:  # noqa: BLE001 -- a note is never worth a refused or broken call
+    except _TimedOut:
+        _give_note(payload, root, _time_limit_note(
+            "commit_hashes", _BUDGET_SECONDS, "a hash named in this commit may be unchecked; the call is not refused"))
         return 0
+    if not missing:
+        return 0
+    shown = ", ".join(f"`{word}`" for word in missing)
+    note = _NOTE.format(
+        hashes=shown, verb="is" if len(missing) == 1 else "are",
+        others=" or the repositories of `commit-hashes-repos`" if len(repos) > 1 else "")
+    _give_note(payload, root, note)
     return 0
 
 

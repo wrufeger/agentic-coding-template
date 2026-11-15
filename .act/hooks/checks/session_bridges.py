@@ -12,15 +12,23 @@ from typing import Optional
 
 import actlib
 
+from .common import _time_limit_note
+
+_BOARD_TIMEOUT = 15
+
+
 def _refresh_board(root: Path) -> None:
     """Run .act/scripts/board.py if it exists yet (a parallel task builds it); do nothing,
-    silently, otherwise — per the build order for this script."""
+    silently, otherwise — per the build order for this script. A refresh that runs past its limit is
+    named in one line (the board stays as it was); a broken one does not block the session."""
     board_script = root / ".act" / "scripts" / "board.py"
     if not board_script.is_file():
         return
     try:
-        subprocess.run([sys.executable, str(board_script)], cwd=root, timeout=15, capture_output=True)
-    except (OSError, subprocess.TimeoutExpired):
+        subprocess.run([sys.executable, str(board_script)], cwd=root, timeout=_BOARD_TIMEOUT, capture_output=True)
+    except subprocess.TimeoutExpired:
+        print(_time_limit_note("session_bridges", _BOARD_TIMEOUT, "the board was not refreshed"))
+    except OSError:
         pass  # a broken board refresh must not block the session
 
 
