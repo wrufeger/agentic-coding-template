@@ -145,6 +145,12 @@ with a model each.
   (`Get-Item *.log | Remove-Item`) when the command changes no folder.
 - `act-doctor`: the own-rules size warning suggests sending what would help every project as feedback
   (`act-feedback`); a stale override asks whether the new template text makes it unnecessary.
+- Builders build only what was asked and bring own ideas back as questions; the reviewer blocks a new visible text,
+  restriction or hidden element without an origin; assignments quote exact texts verbatim.
+- Writing roles write files from Python with LF; reading roles run git in another folder only as `git -C <path>` and
+  count a live-system call as reading only for a subcommand documented as reading.
+- `R-safe-no-shell-delete`: no unguarded variable in a delete target (`"${D:?}"` or a fixed path);
+  `R-safe-dev-server`: a browser session opened for a check is closed after use.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

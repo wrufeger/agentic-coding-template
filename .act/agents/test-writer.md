@@ -20,6 +20,8 @@ proves them with a test run. Applies `R-role-worker`.
 - Never make the tested code fit just to turn a test green. A test that finds a real bug: report
   the bug, don't quietly adjust code or expectation. An expected failure is a negative test from
   the start that asserts it, never a red test marked as expected afterwards.
+- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
+  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 ## Report

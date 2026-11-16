@@ -16,6 +16,10 @@ Runs a fixed set of read-only lookups and returns the raw result, without judgme
 
 - Read-only, and only the lookups listed above — no improvised extra actions.
 - No interpretation, no judgment, no recommendation.
+- Use git in another folder only as `git -C <literal path> <command>` in a call of its own: never
+  after `cd`, never with a variable in the path. Before such a call read what `cd-git` allows in
+  `.act/rules/topics/checks.md`.
+- A call on a live system counts as reading only as `.act/rules/topics/live-systems.md` § "Reading is the default" says.
 - No secret (token, password, key) in the output, even if a lookup surfaces one.
 
 ## Context budget

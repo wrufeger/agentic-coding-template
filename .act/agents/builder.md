@@ -18,6 +18,10 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 - Only the assignment, nothing "improved along the way." A deviation from the existing style
   needs a real reason — state it in the report instead of doing it quietly.
+- Build what the assignment describes or what was chosen. An idea of your own (an extra visible text, a restriction or
+  refusal, something hidden from the user) goes into the report as a question, never into the code on an assumption.
+- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
+  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - Respect the layer separation and shared types from `docs/project/coding_rules.md`; no untyped
   "whatever" (`any` or its equivalent).
 - New migrations are versioned and idempotent (naming convention: `docs/project/coding_rules.md`

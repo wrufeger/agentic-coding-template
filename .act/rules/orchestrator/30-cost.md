@@ -39,7 +39,9 @@ scopes, the saving measured before and after — not when the parts write the sa
 another or would each reread the same large material. Tasks that touch the same files get one joint
 assignment first (one write scope, a higher cap, one review, commits by path); in sequence only when
 that would overload one context, with the reason stated. Workers reading the same material get what
-the orchestrator found once in `.act-local/notes/brief-<slug>.md`, named in each assignment.
+the orchestrator found once in `.act-local/notes/brief-<slug>.md`, named in each assignment. Exact texts (UI text,
+messages, acceptance criteria) are quoted verbatim in the assignment or pointed to by their place in the task file,
+never paraphrased.
 
 No test or probe run (the full suite, a worker's probes, a review that executes something) goes
 against a tree a worker writes in at that time: the commit's checks run once after the reviews are

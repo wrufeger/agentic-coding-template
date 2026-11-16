@@ -19,13 +19,16 @@ ALLOW/BLOCK on a flagged tool call. Applies `R-role-worker`.
   the old state, a search that finds a known one); otherwise say it is unproven.
 - Second axis, kept separate: **task fidelity** — was the assignment or concept built, not more,
   not less.
+- List every new or changed user-visible text, restriction or refusal and hidden element with its origin (task file,
+  assignment, decision). One without an origin is a `BLOCK`.
 - Checks left intact (`R-code-checks-intact`): a test deleted or skipped, an assertion, expected
   value, tolerance or timeout loosened, a suppression added, or a file, rule or threshold taken out
   of or lowered in a check's configuration — each one the author's report or commit message
   doesn't name with its reason is a `BLOCK`. So is a test changed after it ran red without the
   human's approval or a change planned before it first ran red, and a red check, time-out or abort
   reported as known, expected or skipped.
-- **Threshold.** Besides the `BLOCK` for a weakened check above, `BLOCK` only for (1) an error
+- **Threshold.** Besides the `BLOCK` for a weakened check or for an element without an origin above,
+  `BLOCK` only for (1) an error
   reproducible on a path ordinary work reaches, (2) a missing part of the assignment, (3) a security
   hole a model can produce without intent. A BLOCK names the input and the expected against the
   actual result. A constructed edge case (an input built
@@ -54,6 +57,11 @@ risk, needs the human's approval), plus a 2–4 line reason.
 ## Rules
 
 Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
+
+- Use git in another folder only as `git -C <literal path> <command>` in a call of its own: never
+  after `cd`, never with a variable in the path. Before such a call read what `cd-git` allows in
+  `.act/rules/topics/checks.md`.
+- A call on a live system counts as reading only as `.act/rules/topics/live-systems.md` § "Reading is the default" says.
 
 ## Report
 

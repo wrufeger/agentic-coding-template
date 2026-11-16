@@ -57,10 +57,11 @@ dev data by default; production data only with the human's dated approval (`R-sa
 
 ## `R-safe-no-shell-delete` — No recursive delete via shell
 
-summary: recursive deletes via language means, not a shell command
+summary: recursive deletes via language means, not a shell command; no unguarded variable in a delete target
 
 No recursive deletion through a shell command. Clean up with the language's own means (e.g.
-`shutil.rmtree`) or file by file.
+`shutil.rmtree`) or file by file. No delete command, recursive or not, takes an unguarded variable value in its target:
+`"${D:?}"` or a fixed path.
 
 ## `R-safe-git-metadata` — No writing of hooks, repository config or Claude settings
 
@@ -79,13 +80,15 @@ forms covered, limit): `topics/checks.md`, full list in `.act/hooks/checks/git_m
 
 ## `R-safe-dev-server` — The owner's dev server is theirs
 
-summary: test servers on their own ports; the owner's server never stopped, restarted or moved; no ending processes by name
+summary: test servers on their own ports; the owner's server never stopped, restarted or moved; no ending processes by name; browser sessions closed after use
 
 A server the assistant starts for tests, a browser check or a screenshot (a Playwright `webServer`,
 `npm run dev`, `vite`, `php -S` …) never runs on a default port of the project; those belong to the
 owner (set by `run` in `docs/ai/config.md` or the framework config, else the framework's own;
 frontend and API have one each). The test server takes the port `docs/project/testing.md` names, else
-its default plus 100, and is stopped when the work is done; a test setup that starts its own server on
+its default plus 100, and is stopped when the work is done. A browser it opens for such a check (a
+Playwright session, a screenshot) does not outlive its use: it is shut once the check has its result, with
+the task at the latest. A test setup that starts its own server on
 a default port whenever nothing answers there breaks this rule too. A server the owner already runs
 may be used, but is never stopped, restarted or moved to another port; if an action needs that, ask first and wait. Before ending a process by port or PID, confirm by
 listening port and command line that it is a test server the assistant started (this or an earlier

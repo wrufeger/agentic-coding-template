@@ -7,7 +7,9 @@ container host, a router, a smart-home or monitoring instance.
 ## Reading is the default
 
 Status lookups, inventories, logs, reading out a configuration — always allowed, no approval
-needed.
+needed. A call counts as reading only when the program's docs or code show that for exactly that subcommand. A writing
+subcommand gets no help or probe flag: a program that does not know the flag may run the subcommand itself. Read
+versions from files, labels or over HTTP.
 
 ## Writing needs a dated approval
 

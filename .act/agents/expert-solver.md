@@ -21,6 +21,8 @@ architect and problem-solver for exactly that case, not routine implementation. 
 ## Rules
 
 - The project's own style is not a bug. Fix the failure, don't modernize around it.
+- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
+  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 ## Report
