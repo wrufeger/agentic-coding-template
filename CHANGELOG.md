@@ -219,6 +219,8 @@ with a model each.
 - Refusal questions name the body of the role's bridge (`.claude/agents/<role>.md`) as the place for an addition;
   a `docs/ai/local/agents/<role>.md` with a template role's name is never read.
 - `encoding-hint` no longer reports a UTF-8 file as cp1252 when a character straddles its 64 KiB read window.
+- On Windows, `init`, `act-adopt`, `act-feedback` and `rules.py` write project files
+  (`.claude/settings.json`, `docs/ai/config.md`, `coding_rules.md`, adopt reports, backlog entries) with LF.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a

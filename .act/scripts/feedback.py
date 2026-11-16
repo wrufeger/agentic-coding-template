@@ -263,7 +263,7 @@ def _set_config_value(root: Path, key: str, value: str) -> bool:
         return False
     new_text = pattern.sub(lambda m: m.group(1) + " " + value + " " + m.group(3), text, count=1)
     try:
-        path.write_text(new_text, encoding="utf-8")
+        actlib.write_text_lf(path, new_text)
     except OSError:
         return False
     return True

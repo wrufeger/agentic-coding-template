@@ -1087,7 +1087,7 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
             # An unchecked set loses its "@" as well, or Claude Code would still import it.
             lines[pset.line - 1] = rules.coding_set_line(
                 re.sub(r"\[[ xX]\]", "[ ]", lines[pset.line - 1], count=1))
-            project.path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+            actlib.write_text_lf(project.path, "\n".join(lines).rstrip("\n") + "\n")
             return f"{set_label}: whole set switched off", True
         if gid in pset.groups:
             group = pset.groups[gid]
@@ -1095,7 +1095,7 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
                 return f"`{gid}`: already switched off", False
             lines = project.path.read_text(encoding="utf-8").splitlines()
             lines[group.line - 1] = re.sub(r"\[[ xX]\]", "[ ]", lines[group.line - 1], count=1)
-            project.path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+            actlib.write_text_lf(project.path, "\n".join(lines).rstrip("\n") + "\n")
             return f"`{gid}`: group switched off (in {set_label})", True
         if pset.enabled:
             # The project uses this set but never mentions `gid` — it counts as "on" (rules.classify
@@ -1104,7 +1104,7 @@ def _toggle_group_off(root: Path, project: rules.ProjectFile, gid: str) -> Optio
             if template is not None and gid in template.groups:
                 lines = project.path.read_text(encoding="utf-8").splitlines()
                 lines.insert(pset.line, f"  - [ ] `{gid}`")
-                project.path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+                actlib.write_text_lf(project.path, "\n".join(lines).rstrip("\n") + "\n")
                 return f"`{gid}`: added and switched off (in {set_label})", True
     return None
 
@@ -1134,7 +1134,7 @@ def write_resolutions(root: Path, result: Analysis) -> list[tuple[str, bool]]:
         if replaces_lines:
             lines = _insert_after_heading(lines, "## Overrides", "<!-- act:overrides -->", replaces_lines)
         if own_lines or replaces_lines:
-            path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+            actlib.write_text_lf(path, "\n".join(lines).rstrip("\n") + "\n")
             for r in resolutions:
                 if r.entry.symbol in ("+", "~"):
                     messages.append((f"{area_name}: `{r.entry.id}` — applied", True))
@@ -1577,7 +1577,7 @@ def write_files(root: Path, result: Analysis, yes: bool) -> list[str]:
                 result.open_items.append(OpenItem(item["file"], item["dest"], REASON_NEEDS_YES))
                 continue
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(item["text"], encoding="utf-8")
+        actlib.write_text_lf(dest, item["text"])
         item["written"] = True
         messages.append(f"{item['dest']}: written")
     return messages

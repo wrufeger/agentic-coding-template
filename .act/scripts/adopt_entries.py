@@ -193,8 +193,7 @@ def merge_reserved_ids(root: Path, ids: list[str]) -> list[str]:
             current |= set(data.get("ids", []))
     new = sorted(i for i in ids if i not in current)
     if new:
-        path.write_text(json.dumps({"ids": sorted(current | set(ids))}, indent=2, ensure_ascii=False) + "\n",
-                        encoding="utf-8")
+        actlib.write_text_lf(path, json.dumps({"ids": sorted(current | set(ids))}, indent=2, ensure_ascii=False) + "\n")
     return new
 
 

@@ -304,7 +304,7 @@ def _add_places(path: Path, key: str, entry: dict) -> set[str]:
     at = at - 1 if at > 0 and lines[at - 1] == "" else at
     lines[at:at] = rows
     try:
-        path.write_text("\n".join(lines), encoding="utf-8")
+        actlib.write_text_lf(path, "\n".join(lines))
     except OSError:
         return named
     return named | set(missing)

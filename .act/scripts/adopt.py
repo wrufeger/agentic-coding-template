@@ -1877,7 +1877,7 @@ def write_legacy_readme(root: Path, moved: dict, plan: bool) -> Optional[str]:
     ]
     path = root / LEGACY_README
     path.parent.mkdir(parents=True, exist_ok=True)
-    actlib.overwrite_text(path, "\n".join(lines))
+    actlib.write_text_lf(path, "\n".join(lines))
     return LEGACY_README
 
 
@@ -1986,7 +1986,7 @@ def write_report(root: Path, rows: list, state: dict, doctor: tuple, refs: tuple
         out += [f"- {none}"]
     out += ["", L("## Accounting", "## Bilanz"), "", "```text", *[line.strip() for line in acc], "```", ""]
     dest.parent.mkdir(parents=True, exist_ok=True)
-    actlib.overwrite_text(dest, "\n".join(out))
+    actlib.write_text_lf(dest, "\n".join(out))
     return dest
 
 
