@@ -85,6 +85,10 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
     `taskkill //PID <pid> //F` (a single `/PID` is rewritten to a path there and ends nothing). Afterwards
     request `http://localhost:<port>/` (a server may listen on `::1` only): it must be refused. Elsewhere use
     `lsof -iTCP:<port> -sTCP:LISTEN` and `kill <pid>`. A server on the owner's port is theirs: ask first.
+  - **Security:** set `workspaceDir` in `nuxt.config.ts` to the project folder itself and check the resolved value
+    without starting the server, by loading the config. Reason: with the dev server reachable from the network, a
+    stray lock or workspace file in a parent folder can make that parent folder readable through it (advisory
+    `GHSA-mjrq-cffv-q4qc`, Nuxt 3 and 4 through `@nuxt/schema` 3.5.0 up to below 4.6.4, fixed in 4.6.4).
 
 ## `CR-nuxt-root-folders` — Fixed root folders with their own aliases
 
@@ -118,6 +122,8 @@ summary: ask before assuming SSR, know the hydration cost, check for mismatches 
   `import.meta.client`; share request-scoped state through `useState`, never a module-level `ref`;
   fix invalid HTML nesting (e.g. a block element inside a `<p>`); reach for `<ClientOnly>` only as
   the last resort.
+- An HTML comment between the branches of a `v-if` / `v-else-if` / `v-else` chain breaks hydration in dev, and neither
+  lint nor the type check notices; move the comment in front of the whole chain or into one branch.
 - Copying a `useFetch`/`useAsyncData` result into your own `ref` is a common hydration-mismatch
   cause too — see `CR-nuxt-basics` for why and the fix, not repeated here.
 - With `ssr: false`, `@nuxt/icon` (also through `@nuxt/ui`) fetches icons at runtime from the public Iconify API

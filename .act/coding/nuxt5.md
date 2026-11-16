@@ -10,7 +10,7 @@ longer holds gets a new ID and is listed as `retired:` in this header.
 
 ## `CR-nuxt5-channel` — Nightly channel and versions
 
-summary: `nuxt-nightly@5x` as a tag, the lockfile as the only pin, pnpm re-resolving the tag, the nightly's `vue` range, majors in step with Nuxt, DevTools explicit
+summary: `nuxt-nightly@5x` as a tag, the lockfile as the only pin, pnpm re-resolving the tag, the nightly's `vue` range, majors in step with Nuxt, DevTools explicit, one package moved without Nuxt
 
 - Until the stable release, list `nuxt` as `"npm:nuxt-nightly@5x"` — a tag, never a build number. If `npm install`
   (`pnpm install`) writes a fixed version, set it back to `@5x` by hand and install again (with pnpm that install is
@@ -30,6 +30,12 @@ summary: `nuxt-nightly@5x` as a tag, the lockfile as the only pin, pnpm re-resol
   remove or update packages only right after a deliberate Nuxt update (own commit, full check chain), then confirm
   with `pnpm why nuxt` that the resolved Nuxt is unchanged. Drops once Nuxt 5 ships a stable release and the project
   leaves the channel tag.
+- To move a single package (a security fix) without moving Nuxt, with pnpm: set `nuxt` in `package.json` for the run to
+  the exact version the lockfile holds, update the package, restore `package.json`, then set the lockfile's specifier
+  for `nuxt` back to the channel tag. Afterwards `pnpm install --frozen-lockfile` must pass and the lockfile diff shows
+  new entries only, none changed or removed; otherwise start over as a deliberate Nuxt update. A nightly CLI that moved
+  along is taken back in the lockfile. The same steps lift the module copies named in `CR-nuxt5-checks` to the fixed
+  version without moving the nightly. Drops with the pnpm line above.
 - A nightly can raise its own `vue` range; a project `vue` entry left on the old minimum keeps a second Vue copy.
   After every move, read the nightly's range (`npm view <nightly>@<version> dependencies.vue`, `pnpm view` alike),
   raise your entry to it, then `npm ls vue` / `pnpm why vue` shows one version. Run `nuxt prepare` too: the
@@ -60,7 +66,7 @@ summary: `NUXT_B8013` means switched off, Pinia 4 with its peer, the i18n way ba
 
 ## `CR-nuxt5-server` — Nitro 3 and h3 v2
 
-summary: explicit imports from `nuxt/server`, `event.req` as a web request, typed bodies, `status`/`statusText`, no comma in export-line comments, headers and CSP
+summary: explicit imports from `nuxt/server`, `event.req` as a web request, typed bodies, `status`/`statusText`, no comma in export-line comments, headers and CSP, no file deleted under the owner's dev server
 
 - In `server/`, import `defineEventHandler`, `readBody`, `getQuery`, `createError` … from `nuxt/server`, and define
   plugins with `definePlugin` from `nitro`; `server/utils/` stays auto-imported.
@@ -89,11 +95,15 @@ summary: explicit imports from `nuxt/server`, `event.req` as a web request, type
   for API routes. Drops once a CSP module (e.g. `nuxt-security`) declares Nuxt 5 support.
 - After renaming or removing an export in `server/utils/`, restart your own test server (its port as
   `R-safe-dev-server` says) before tests against it count; the owner's server only after asking. No transitional alias for the old name. Never set `NUXT_IGNORE_LOCK` or `NUXT_LOCK=0`.
+- Deleting a file from an auto-imported folder while the owner's dev server runs makes every page answer 500 until
+  a restart: the running module graph keeps the old import. As the assistant never restarts that server, empty the
+  file and leave it, delete it after the owner's next restart, or ask first. A test server started fresh per run is
+  not affected.
 - Every runtime dependency goes into `package.json`, even one that is already there transitively.
 
 ## `CR-nuxt5-app` — Pages, routing, data fetching, head
 
-summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route targets, Unhead 3, no `baseUrl`
+summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route targets, Unhead 3 and its og hint, no `baseUrl`
 
 - `import.meta.*` instead of `process.*` (`import.meta.client`, `import.meta.dev` …).
 - `query` instead of `params` in the options of `$fetch`/`useFetch`.
@@ -104,17 +114,24 @@ summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route 
   `localePath({ name, params, query })` or `<NuxtLinkLocale :to="{ name: … }">` — for `navigateTo`, `router.push`,
   `NuxtLink` and a Nuxt UI `to` as well; a plain path gets no locale prefix and ends in a 404. For the same reason,
   build `definePageMeta({ redirect })` relative to the current path.
-- Unhead 3: no `hid`/`vmid`, deduplicate with `key`; a dev hint about `og:*` or the description is a finding.
+- Unhead 3: no `hid`/`vmid`, deduplicate with `key`; a dev hint about `og:*` or the description is a finding,
+  except the known case below.
+- Unhead 3 reports `og-missing-title` on a page that carries other `og:` meta tags (often set app-wide) but no
+  `og:title` (checked in Unhead 3.4.3, the validate plugin in `dist/plugins.mjs`). On a page that deliberately has
+  no `og:title` (private page, error page), leave out the other `og:` tags there too; where that is not possible,
+  treat the hint as a known false positive and re-check it after each Unhead update. Setting
+  `rules: { 'og-missing-title': 'off' }` on the validate plugin silences it for every page, so it hides real cases.
 - Every page sets its title, a public page its description too; the fallbacks (title template, `og:site_name`,
   default description) go into `app.vue` **and** `error.vue`, since Nuxt renders `error.vue` in place of `app.vue`.
   A head value that is missing is left out, never passed as `undefined` — `useSeoMeta({ description: undefined })`
-  removes the fallback.
+  removes the fallback (so the `og:title` case above is solved by leaving tags out, not by `undefined`).
+- Pin `workspaceDir` as the security line in `CR-nuxt-basics` says; it holds for Nuxt 5 as well.
 - No `compilerOptions.baseUrl` in `tsconfig.json` — Nuxt ignores it; aliases go into `nuxt.config.ts` only
   (`CR-nuxt-basics`).
 
 ## `CR-nuxt5-checks` — Checks after every Nuxt update
 
-summary: the full check chain, the type error list compared rather than counted, warnings, copies and `invalid` in the tree, workarounds against upstream, a build before commits to auto-imported folders or `nuxt.config`, a record
+summary: the full check chain, the type error list compared rather than counted, warnings (a known listener warning), copies (how to count, the expected `@nuxt/schema` hit) and `invalid` in the tree, workarounds against upstream, a build before commits to auto-imported folders or `nuxt.config`, a record
 
 - Save the typecheck output before the update and compare the errors afterwards — the list, not the count.
 - Then `npm run lint`, `typecheck`, `test`, `build`, `dev` (main pages answer 200, no hydration warning), the main
@@ -127,6 +144,17 @@ summary: the full check chain, the type error list compared rather than counted,
   `CR-nuxt-tests` says, never into the owner's `.nuxt/` while their dev server runs (`R-safe-dev-server`).
 - Read the warnings (`NUXT_B8013`, `NUXT_B9003`, `[unhead]`), check for duplicate copies, run
   `python .act/scripts/security_scan.py --deps`.
+- Count copies of a package with `npm ls <package>` / `pnpm why <package>`; folders under `node_modules/.pnpm` left from
+  earlier installs stay until pnpm prunes them (`modulesCacheMaxAge`) and are not copies.
+- Under the nightly, common modules still pull `@nuxt/kit` 4.x and with it an `@nuxt/schema` 4.x: the dependency scan
+  reports the `workspaceDir` advisory (`CR-nuxt-basics`) on that copy, not on the nightly, so the hit is expected. Lift
+  the copy as `CR-nuxt5-channel` describes for a single package. Drops once the common modules depend on a Nuxt 5 kit.
+- A `MaxListenersExceededWarning` about `close` listeners on the server response in the nightly's `nuxt dev` is
+  toolchain noise: the listeners come from the CLI, Vite, the server layer and stream helpers (with a TTY also the CLI's
+  interface), their number depends on the kind of request, not on uptime, and falls back to none once the response
+  closes; application code does not reach the response. Plain CLI output without the interface avoids it. Investigate
+  only if it also shows in the production build or grows with a stream's lifetime. Drops once the warning no longer
+  appears in `nuxt dev` on a current nightly.
 - `npm ls --all 2>&1 | grep invalid`: fix a stale resolution with `npm update <package>` (with pnpm: `pnpm why
   <package>`, `pnpm update <package>`, under the pnpm line of `CR-nuxt5-channel`); entries already known stand
   in the upgrade log, report only new ones.

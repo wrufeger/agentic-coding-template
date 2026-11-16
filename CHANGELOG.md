@@ -82,6 +82,11 @@ with a model each.
   `doctor.py --accept skill:<name>` (`own-rules-review`); a kept one shows as stale when the template skill changes.
 - `act-update` sets the update's new and changed rules and skills against your own rules, overrides and skills in
   one inbox question: drop, keep or adapt; nothing is deleted (`own-rules-review`, default `warn`).
+- Coding rules for MySQL and MariaDB (`CR-sql-mariadb`): gap locks on range writes, error 1020 under snapshot
+  isolation, ENUM changes on versioned tables, `CONVERT_TZ` without zone tables; uncheck it on other engines.
+- `CR-sql-basics`: no network call inside a transaction that holds row locks; resolve outside values first.
+- Nuxt rules: pin `workspaceDir` (advisory `GHSA-mjrq-cffv-q4qc`), move one package without moving the nightly,
+  count copies with `pnpm why`, two known dev warnings, no comment between `v-if` branches.
 
 ### Changed
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
