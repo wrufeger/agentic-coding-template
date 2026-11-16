@@ -40,6 +40,7 @@ unchecked set into a new project only when it has such a reason.
 | tied to a framework version | its own rule set with group IDs |
 | origin, incident, evidence, IDs | project docs, not loaded |
 | derivable from code, stack description | nowhere, or `stack` in `docs/ai/config.md` |
+| useful for every project on the template | feedback to the template (`act-feedback`) |
 | duplicates a template rule | delete it |
 `act-doctor` warns above `own-rules-budget` (`docs/ai/config.md`). -->
 

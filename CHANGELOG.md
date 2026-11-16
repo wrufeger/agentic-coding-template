@@ -45,6 +45,8 @@ with a model each.
   as the message names.
 - Copilot projects: after `act-update`, compare the models in `.github/agents/` with `/model` and put differences in
   the `Copilot` column of `docs/ai/config.md` § Roles.
+- Each skill override under `docs/ai/local/skills/` is an `act-doctor` finding until you keep it with
+  `python .act/scripts/doctor.py --accept skill:<name>` or delete it.
 
 ### Added
 - Rust coding rules: new group `CR-rust-async` (no blocking in tasks, bounded channels, cancel-safe `select!`,
@@ -76,6 +78,10 @@ with a model each.
   default `warn`).
 - `usage.py --outcome <role> <tier> reworked|escalated --reason assignment|edge-case|worker|decision` records why a
   result was reworked; `--show` lists the reasons, and with `feedback-scope` `c` a send counts them per template role.
+- `act-doctor` names a local skill that overrides a template skill of the same name until you keep it with
+  `doctor.py --accept skill:<name>` (`own-rules-review`); a kept one shows as stale when the template skill changes.
+- `act-update` sets the update's new and changed rules and skills against your own rules, overrides and skills in
+  one inbox question: drop, keep or adapt; nothing is deleted (`own-rules-review`, default `warn`).
 
 ### Changed
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
@@ -132,6 +138,8 @@ with a model each.
   `Port`, `User`, `UserKnownHostsFile=/dev/null` …) no longer make the write checks read the remote command as local.
 - The write guard no longer refuses PowerShell `Open('Open','Read')` or a name-only wildcard that cannot match `.act`
   (`Get-Item *.log | Remove-Item`) when the command changes no folder.
+- `act-doctor`: the own-rules size warning suggests sending what would help every project as feedback
+  (`act-feedback`); a stale override asks whether the new template text makes it unnecessary.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

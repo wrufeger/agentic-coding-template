@@ -13,18 +13,20 @@ model and runs only on request or for what an update just touched.
 `python .act/scripts/doctor.py` — what it checks and its options (`--inbox`, `--json`, `--accept ID`,
 `--accept-all`): `--help` and the script's header. `update.py` runs it as its step 8; running it again afterwards
 is redundant unless something was fixed in between. A stale override is accepted (`--accept`) only once the human
-has read the changed template text.
+has read the changed template text; a local skill override is kept with `--accept skill:<name>`.
 
 Optional: `agnix`, an external linter for agent files, may be run as a second opinion, never installed unasked
 (`R-code-tools`). Its stock rules `XML-001`, `REF-001`, `CDX-AG-005` and `CC-AG-019` raise known false alarms
 here (placeholders, `.act/bridges/` sources, the role fields `tier`, `reasoning`, `variant-of`); switch them off
 and read the rest as hints. `doctor.py` decides.
 
-## Content (on request, or for rules an update just changed)
+## Content (on request, or for rules and skills an update just changed)
 
-For each new or changed template rule ID, compare it against the project's own rules (`[+]` and `replaces`
-entries in `docs/ai/rules.md`) — only that cross-product. Same comparison, other direction, for two projects'
-own rules on `act-load-settings`. Three findings, three offers, **never a silent fix**:
+For each new or changed template rule ID **and skill**, compare it against the project's own rules (the sections
+marked `act:own-rules` and `act:overrides` in `docs/ai/rules.md` and `docs/project/coding_rules.md`, `replaces`
+entries), its overrides under `docs/ai/local/` and its own skills — only that cross-product. After an update,
+`act-update` bundles all hits into one question (its step 6). Same comparison, other direction, for two
+projects' own rules on `act-load-settings`. Three findings, three offers, **never a silent fix**:
 
 - **matches** the template rule → offer to drop the project's own rule and check the template one.
 - **goes beyond** it → offer to trim the project's rule to the remainder (diff proposed, the wording stays the

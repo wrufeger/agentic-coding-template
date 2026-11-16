@@ -470,7 +470,7 @@ options:
   --inbox       also write docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md if there are findings,
                 and one inbox question per new tier proposal and per check that refused workers
                 often
-  --accept ID   accept the current template text for ID (repeatable)
+  --accept ID   accept the current template text for ID, a rule id or skill:<name> (repeatable)
   --accept-all  accept the current template text for every stale override/off
 ```
 

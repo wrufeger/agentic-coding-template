@@ -35,7 +35,13 @@ already past the newest release keeps its state.
    In a Copilot project (`copilot` in `tools`) the update also writes `.github/agents/<role>.agent.md`, and
    `update.py --catch-up --yes` refreshes them after a change in `docs/ai/config.md` § Roles; an own file there named
    like a role but without `model:`/`models:` stays unchanged and becomes an inbox question.
-6. A template bug noticed along the way: an `act-feedback` entry right away (its immediate trigger).
+6. Unless `own-rules-review` (`docs/ai/config.md` § Checks) is `off`: if the plan of step 2 listed added or
+   changed rules (ids with `+` or `~` under `rules:` and `coding:`) or skills (paths under `skills:`), run
+   `act-doctor`'s content
+   check (§ Content) on exactly those. All hits go into **one** inbox question for this update: one sub-item per
+   hit, quoting both texts (cut to the matching lines), options drop · keep (name the difference) · adapt.
+   Nothing is deleted or switched off (`R-work-override`). No such rule or skill in the plan: skip the step.
+7. A template bug noticed along the way: an `act-feedback` entry right away (its immediate trigger).
 
 ## `.act/` pulled in some other way
 
