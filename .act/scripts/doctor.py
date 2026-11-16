@@ -2545,11 +2545,12 @@ def remember_tier_proposals(root: Path, filed: dict[str, int]) -> bool:
 _REFUSAL_WINDOW_DAYS = 7
 _REFUSAL_THRESHOLD = 3
 _REFUSAL_MEMORY_FILE = Path(".act-local") / "refusal-proposals.json"
-_WORKER_LINE_RE = re.compile(r"^- `([a-z_]+)`: (.+)$")
+_WORKER_LINE_RE = re.compile(r"^- `([a-z_]+)`(?: \(`([a-z-]+)`\))?: (.+)$")
 
 
 def _worker_lines(root: Path) -> dict[str, str]:
-    """check module name -> the one sentence a worker is told beforehand, from topics/checks.md."""
+    """check module name -> the one sentence a worker is told beforehand, from topics/checks.md; a sentence for one
+    refusal class of a check is keyed `<check>:<class>`."""
     try:
         text = (root / ".act" / "rules" / "topics" / "checks.md").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
@@ -2559,7 +2560,7 @@ def _worker_lines(root: Path) -> dict[str, str]:
     for line in (text[start:].splitlines()[1:] if start >= 0 else []):
         match = _WORKER_LINE_RE.match(line)
         if match:
-            lines[match.group(1)] = match.group(2).strip()
+            lines[match.group(1) + (f":{match.group(2)}" if match.group(2) else "")] = match.group(3).strip()
         elif line.strip() and not line.startswith("- "):
             break
     return lines
@@ -2611,7 +2612,8 @@ def _new_refusal_proposals(root: Path) -> list[tuple[str, dict[str, int]]]:
     return found
 
 
-def refusal_question_text(check: str, workers: dict[str, int], line: str, language: str) -> tuple[str, str]:
+def refusal_question_text(check: str, workers: dict[str, int], line: str, language: str,
+                          classes: dict[str, int] | None = None) -> tuple[str, str]:
     """(title, body) of the question for a check that refused workers often. The first option, the
     recommended one, adopts `line`; no option changes the check."""
     def loc(en: str, de: str) -> str:
@@ -2620,24 +2622,27 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
     total = sum(workers.values())
     split = ", ".join(f"`{role}` {number}" for role, number in sorted(workers.items(), key=lambda item: (-item[1], item[0])))
     top = sorted(workers.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    class_split = ", ".join(f"`{word}` {number}" for word, number in
+                            sorted((classes or {}).items(), key=lambda item: (-item[1], item[0])))
     title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days: tell them beforehand?",
                 f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt: ihnen vorher sagen, was nicht geht?")
     hint = loc(f"The check `{check}` refused workers {total} times in the last {_REFUSAL_WINDOW_DAYS} days ({split}); only "
-               "the counts are kept, no command and no path. A refusal shows that the check works, so the check stays as "
+               "the counts are kept, no command and no path" + (f", and the classes of the refusals ({class_split})" if class_split else "") + ". A refusal shows that the check works, so the check stays as "
                "it is. The proposal is to tell the worker beforehand what the check does not allow, so it does not run "
                "into it.",
                f"Die Prüfung `{check}` hat in den letzten {_REFUSAL_WINDOW_DAYS} Tagen Worker {total}-mal gesperrt "
-               f"({split}); gezählt wird nur, nie ein Befehl oder Pfad. Eine Sperre zeigt, dass die Prüfung greift, "
+               f"({split}); gezählt wird nur, nie ein Befehl oder Pfad" + (f", dazu die Art der Sperren ({class_split})" if class_split else "") + ". Eine Sperre zeigt, dass die Prüfung greift, "
                "sie bleibt also, wie sie ist. Vorgeschlagen ist, dem Worker vorher zu sagen, was die Prüfung nicht "
                "erlaubt, damit er gar nicht erst in die Sperre läuft.")
     if top == "worker":  # no role name is known, so there is no role file to name
         where_en = "into the text of the assignment header (the brief)"
         where_de = "in den Text des Auftragskopfs (die Beauftragung) aufnehmen"
     else:
-        where_en = (f"into the role file of `{top}` (a project version under `docs/ai/local/agents/{top}.md`) "
-                    "or into the text of the assignment header")
-        where_de = (f"in die Rollendatei von `{top}` (Projektfassung unter `docs/ai/local/agents/{top}.md`) "
-                    "oder in den Text des Auftragskopfs aufnehmen")
+        base = top[:-len("-high")] if top.endswith("-high") else top
+        where_en = (f"into the body of the role's bridge `.claude/agents/{base}.md` (and `{base}-high.md` where the role "
+                    "has a high variant; no update replaces the body) or into the text of the assignment header")
+        where_de = (f"in den Text der Rollen-Bridge `.claude/agents/{base}.md` (und `{base}-high.md`, wo die Rolle eine "
+                    "High-Variante hat; kein Update ersetzt den Text) oder in den Text des Auftragskopfs aufnehmen")
     lines = [
         hint, "",
         "- **a)** " + loc(f"**Recommended:** Adopt: put this sentence {where_en}: \"{line}\" "
@@ -2667,11 +2672,18 @@ def file_refusal_questions(root: Path) -> list[Path]:
         return []
     language = actlib.docs_language(root)
     lines = _worker_lines(root)
+    try:
+        import usage
+        class_counts = usage.refusal_classes(root, _REFUSAL_WINDOW_DAYS)
+    except Exception:  # noqa: BLE001 -- no classes, the sentence of the check
+        class_counts = {}
     written: list[Path] = []
     for check, workers in new:
-        line = lines.get(check) or (f"Before a call that `{check}` may refuse, read what it allows in "
+        classes = class_counts.get(check) or {}
+        top_class = sorted(classes.items(), key=lambda item: (-item[1], item[0]))[0][0] if classes else ""
+        line = lines.get(f"{check}:{top_class}") or lines.get(check) or (f"Before a call that `{check}` may refuse, read what it allows in "
                                     "`.act/rules/topics/checks.md`; a refusal is not retried another way.")
-        title, body = refusal_question_text(check, workers, line, language)
+        title, body = refusal_question_text(check, workers, line, language, classes)
         try:
             path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True,
                                            slug=f"worker-refusals-{check}")

@@ -104,6 +104,18 @@ def _note_hit(row: str, reason: str, target: str = "-", acts: bool = True) -> No
     HITS[row] = {"reason": reason, "target": target, "acts": acts}
 
 
+# The class of the refusal a check is about to return 2 for, from this fixed set (the dispatcher counts it next to the
+# refusal, see usage.record_refusal). A word of the set, never a path, a command or a message.
+REFUSAL_CLASSES = frozenset({"protected-path", "outside-scope", "inline-code", "read-only-scope", "scope-unbound"})
+REFUSAL_CLASS: dict[str, str] = {}
+
+
+def _note_refusal_class(refusal_class: str) -> None:
+    """Name the class of the refusal this check is about to return 2 for; a word outside REFUSAL_CLASSES is dropped."""
+    if refusal_class in REFUSAL_CLASSES:
+        REFUSAL_CLASS["class"] = refusal_class
+
+
 def _note_only(row: str) -> None:
     """The row printed a plain note that is no `warn` hit (an informational line of a check whose row says `warn`)."""
     MODES_SEEN[row] = "note"

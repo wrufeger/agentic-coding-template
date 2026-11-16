@@ -35,13 +35,22 @@ come again.
 
 **Refusals counted.** Every refusal of a check is counted silently in `.act-local/usage.json` (`checks.<check>.refusals`,
 per day and role, `main` for the main session; the check's module name and the role name only, never a command or a
-path; days older than 30 are dropped). Counting never changes a check's verdict, also when it fails. `doctor.py --inbox`
+path; days older than 30 are dropped). Next to it a class per refusal is counted (`checks.<check>.classes`, per day): a
+word of a fixed set the check names itself (`protected-path`, `outside-scope`, `inline-code`, `read-only-scope`,
+`scope-unbound`; a check that names none is counted without one), never text of the call. Counting never changes a check's verdict, also when it fails. `doctor.py --inbox`
 files one question when the same check refused workers at least 3 times within 7 days, not again while one is open and
-not within 7 days of the last one. Its proposal never loosens the check: it proposes one sentence for the worker's role
-file or the assignment header that tells the worker beforehand what the check does not allow, with the options adopt,
-reword, do nothing. The sentences are these (one per check; a check without one gets a generic sentence):
+not within 7 days of the last one. Its proposal never loosens the check: it proposes one sentence for the body of the
+role's bridge (`.claude/agents/<role>.md`, which an update never replaces; a `<role>-high.md` the role's row no longer
+calls for is removed with a backup; a file `docs/ai/local/agents/<role>.md` with a template role's name is not read,
+it is the place of an own role) or the assignment header that tells the worker beforehand what the check does not allow, with the options adopt,
+reword, do nothing. The sentence follows the most frequent class of the window where one is listed below as
+`<check> (<class>)`, else it is the check's own; a check without one gets a generic sentence.
+The sentences are these:
 
 - `write_guard`: Never write under `.act/` (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`.
+- `write_scope` (`inline-code`): Write a file with the Write or Edit tool inside your `Write scope:`, not through inline interpreter code; name any other file and the change it needs in your result.
+- `write_scope` (`read-only-scope`): Your assignment is read-only (`Write scope: none`): write no file; return the content or the change in your result.
+- `write_scope` (`scope-unbound`): If a write is refused because no write scope is bound to you, do not retry another way; say so in your result and name the file and the change it needs.
 - `git_metadata_guard`: Never write `.git/hooks`, `.git/config` or a git config key that starts a program, nor Claude settings, agents, skills or commands, Copilot roles under `.github/agents/`, `.vscode/tasks.json`, `.devcontainer`, `.envrc` or `.mcp.json`; name the change you need in your result.
 - `write_scope`: Write only inside the `Write scope:` of your assignment, also through a script, an interpreter or a redirect; name any other file and the change it needs in your result.
 - `worker_docs_ai`: Never write under `docs/ai/`; the orchestrator records it, return your result instead.

@@ -23,7 +23,7 @@ import actlib
 
 from .command_parse import Parse, parse_for
 from .inline_code import WHOLE_FOLDER
-from .common import _TOOL_PATH_FIELDS, _check_mode
+from .common import _TOOL_PATH_FIELDS, _check_mode, _note_refusal_class
 from .common import _is_unplaced_target, _unplaced_reason
 from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, lists_files, ps_fed_writes, shell_facts
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
@@ -914,5 +914,6 @@ def check_write_guard(payload: dict) -> int:
         print(message)
         return 0
 
+    _note_refusal_class("protected-path")
     print(message, file=sys.stderr)
     return 2

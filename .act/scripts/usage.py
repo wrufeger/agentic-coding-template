@@ -76,8 +76,10 @@
 #    "checklists": {"<checklist>": {"count": n, "first_used": ..., "last_used": ...}},
 #    "checks":     {"<check>":     {"count": n, "first_used": ..., "last_used": ...,
 #                                    "kinds": {"<kind>": n, ...},
-#                                    "refusals": {"YYYY-MM-DD": {"<role>|main": n}}}}}
-#   (refusals: how often the check refused a call, per day and role; written by record_refusal(), days older
+#                                    "refusals": {"YYYY-MM-DD": {"<role>|main": n}},
+#                                    "classes":  {"YYYY-MM-DD": {"<class word>": n}}}}}
+#   (refusals: how often the check refused a call, per day and role; classes: the same refusals per day and class
+#    word the check named, e.g. `outside-scope`; written by record_refusal(), days older
 #    than 30 are dropped. Such an entry carries no count: a refusal is not a use of the check.)
 #   An empty string key ("" under "tiers"/"models") means "no Tier: line found in the prompt" /
 #   "tool_input.model was absent" — kept distinct from an actual value, on purpose, so a tip or a
@@ -101,8 +103,9 @@
 #   "kinds" sub-count (see schema above). Best-effort, like every write in this module: never
 #   raises, so a bookkeeping failure can never put a check's own 0/2 PreToolUse contract at risk.
 #
-# record_refusal(root, check, role) -- the dispatcher's silent count of a check's refusal (kind "refusal"):
-#   identifiers only (the check's module name, the worker's role name or `main`), never a command or a path. `doctor.py
+# record_refusal(root, check, role, refusal_class) -- the dispatcher's silent count of a check's refusal (kind "refusal"):
+#   identifiers only (the check's module name, the worker's role name or `main`, a class word the check named), never
+#   a command or a path. `doctor.py
 #   --inbox` reads refusal_counts() to ask when one check refused workers often. Best-effort like record().
 #
 # Concurrency: recording (record_event()/record()) never opens usage.json — see .act/hooks/checks/
@@ -249,13 +252,17 @@ def record_event(root: Path, category: str, key: str, **fields: str) -> None:
     _write_event(root, category, key, **fields)
 
 
-def record_refusal(root: Path, check: str, role: str) -> None:
+def record_refusal(root: Path, check: str, role: str, refusal_class: str = "") -> None:
     """Count one refusal of `check` for `role` (a worker's role name, `worker` when it has none, or `main`) on
-    today's date. Never raises."""
+    today's date, and under `refusal_class` (a plain lowercase word the check named; anything else, or "", is
+    counted without a class). Never raises."""
     try:
         role = role.rsplit(":", 1)[-1]  # `plugin:reviewer` is counted as `reviewer`
         if _ROLE_WORD_RE.match(role):
-            _write_event(root, "checks", check, kind="refusal", role=role)
+            word = refusal_class if isinstance(refusal_class, str) and _CLASS_WORD_RE.match(refusal_class) else ""
+            if role == "main":  # classes feed the worker question only, so the main session adds none
+                word = ""
+            _write_event(root, "checks", check, kind="refusal", role=role, cls=word)
     except Exception:  # noqa: BLE001 -- bookkeeping must never reach a check's verdict
         pass
 
@@ -489,8 +496,9 @@ def _read_store(root: Path) -> dict:
 
 # Fields of a store entry that hold a mapping, and the type their values must have.
 _ENTRY_MAPS = {"tiers": int, "models": int, "kinds": int, "runs": list, "outcomes": dict, "recent": list,
-               "refusals": dict, "reasons": dict}
+               "refusals": dict, "classes": dict, "reasons": dict}
 _REFUSAL_DAYS_KEPT = 30  # days of refusal counts kept per check
+_CLASS_WORD_RE = re.compile(r"\A[a-z][a-z-]{0,30}\Z")  # a refusal class as the count's key: a plain lowercase word
 _ROLE_WORD_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_-]{0,40}\Z")  # a role name as the count's key: a plain word, never text
 # How many of the latest outcomes per role/tier are kept in order (roles.<name>.recent); the tier
 # proposal in doctor.py looks at exactly this window.
@@ -551,6 +559,16 @@ def _sanitize_store(store: dict, path: Path) -> None:
                                 problems.append(f"{cat}.{name}.{field}.{tier_key or '?'}.{kind} is "
                                                 f"{number!r}, not a number")
                                 del counts[kind]
+                elif field == "classes":
+                    # Per day a mapping class word -> count; a word or count of another shape is dropped.
+                    for day in list(value):
+                        words = value[day]
+                        for word in list(words):
+                            if (not _CLASS_WORD_RE.match(word) or isinstance(words[word], bool)
+                                or not isinstance(words[word], int)):
+                                problems.append(f"{cat}.{name}.{field}.{day}.{word} is {words[word]!r}, not a count "
+                                                "of a class word")
+                                del words[word]
                 elif field == "refusals":
                     # Per day a mapping role -> count; a day or role of another shape is dropped.
                     for day in list(value):
@@ -645,6 +663,10 @@ def _fold_refusal(store: dict, check: str, event: dict) -> None:
     days = bucket.setdefault("refusals", {})
     counts = days.setdefault(day, {})
     counts[role] = counts.get(role, 0) + 1
+    word = event.get("cls")
+    if isinstance(word, str) and _CLASS_WORD_RE.match(word):
+        class_counts = bucket.setdefault("classes", {}).setdefault(day, {})
+        class_counts[word] = class_counts.get(word, 0) + 1
 
 
 def _prune_refusals(store: dict) -> bool:
@@ -654,6 +676,12 @@ def _prune_refusals(store: dict) -> bool:
     dropped = False
     for check in list(store["checks"]):
         entry = store["checks"][check]
+        if isinstance(entry, dict) and isinstance(entry.get("classes"), dict):
+            for old in [name for name in entry["classes"] if name < cutoff]:
+                del entry["classes"][old]
+                dropped = True
+            if not entry["classes"]:
+                del entry["classes"]
         days = entry.get("refusals") if isinstance(entry, dict) else None
         if not isinstance(days, dict):
             continue
@@ -679,6 +707,21 @@ def refusal_counts(root: Path, days: int = 7) -> dict[str, dict[str, int]]:
                 for role, number in roles.items():
                     if isinstance(number, int) and not isinstance(number, bool):
                         found.setdefault(check, {})[role] = found.setdefault(check, {}).get(role, 0) + number
+    return found
+
+
+def refusal_classes(root: Path, days: int = 7) -> dict[str, dict[str, int]]:
+    """check -> {class word: refusals} over the last `days` days (today included), from the store with the pending
+    events folded in. Only checks with at least one classed refusal in the window appear."""
+    store = consolidate(root)
+    first = (date.today() - timedelta(days=max(0, days - 1))).isoformat()
+    found: dict[str, dict[str, int]] = {}
+    for check, entry in (store.get("checks") or {}).items():
+        for day, words in ((entry.get("classes") if isinstance(entry, dict) else None) or {}).items():
+            if day >= first and isinstance(words, dict):
+                for word, number in words.items():
+                    if isinstance(number, int) and not isinstance(number, bool):
+                        found.setdefault(check, {})[word] = found.setdefault(check, {}).get(word, 0) + number
     return found
 
 

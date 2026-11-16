@@ -80,7 +80,7 @@ import actlib
 from . import inline_code as _inline_code
 from .brace_expand import literal_brace_variants
 from .command_parse import parse_for
-from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _is_unplaced_target
+from .common import _TOOL_PATH_FIELDS, _WORKER_TOOL_NAMES, _check_mode, _is_unplaced_target, _note_refusal_class
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
     _Word,
@@ -1255,6 +1255,7 @@ def check_worker_write_scope(payload: dict) -> int:
         if mode == "warn":
             print(message)
             return 0
+        _note_refusal_class("scope-unbound")
         print(message, file=sys.stderr)
         return 2
 
@@ -1267,6 +1268,7 @@ def check_worker_write_scope(payload: dict) -> int:
         if mode == "warn":
             print(message)
             return 0
+        _note_refusal_class("scope-unbound")
         print(message, file=sys.stderr)
         return 2
 
@@ -1316,6 +1318,7 @@ def check_worker_write_scope(payload: dict) -> int:
         if mode == "warn":
             print(message)
             return 0
+        _note_refusal_class("read-only-scope" if scope.get("mode") == "none" else "outside-scope")
         print(message, file=sys.stderr)
         return 2
     for raw_path, base, language in inline_targets:
@@ -1328,6 +1331,7 @@ def check_worker_write_scope(payload: dict) -> int:
         if mode == "warn":
             print(message)
             return 0
+        _note_refusal_class("read-only-scope" if scope.get("mode") == "none" else "inline-code")
         print(message, file=sys.stderr)
         return 2
     return 0

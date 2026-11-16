@@ -1457,8 +1457,12 @@ def _report_reset_edits(root: Path, backup_dir: Path, reset: list[str]) -> Optio
         "reset to the template's version (or removed, where the new value no longer calls for "
         f"them); the edited content is under `{backup_label}/<path>` (gitignored). For an edit "
         "that should survive future config changes, put it under `docs/ai/local/` instead — "
-        "`docs/ai/local/skills/<name>/<file>` for a skill, `docs/ai/local/agents/<role>.md` for a "
-        "role (see `.act/skills/README.md`).\n\n"
+        "`docs/ai/local/skills/<name>/<file>` for a skill. An addition to a template role goes into the body of "
+        "its bridge (`.claude/agents/<role>.md`), which no update replaces; a `<role>-high.md` the role's row "
+        "or the template no longer calls for is removed with a backup like the files below, so put its "
+        "addition back into the base bridge or into the variant once it exists again. An own role's addition "
+        "goes into `docs/ai/local/agents/<role>.md` (a file there with a template role's name is skipped "
+        "and never read).\n\n"
         + "\n".join(f"- `{rel}`" for rel in reset) + "\n"
     )
     try:

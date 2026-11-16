@@ -1011,6 +1011,14 @@ def _note_check_outcome(module_name: str, payload: dict, result: int, printed: s
         _note_incident("check-slow", module_name, payload)
 
 
+def _refusal_class_seen() -> str:
+    """checks.common.REFUSAL_CLASS's word for the refusal just returned, or "" (a check that names none, or a
+    module not loaded or lacking it). Never raises."""
+    classes = getattr(sys.modules.get("checks.common"), "REFUSAL_CLASS", None)
+    word = classes.get("class") if isinstance(classes, dict) else None
+    return word if isinstance(word, str) else ""
+
+
 def _count_refusal(module_name: str, payload: dict) -> None:
     """Count one refusal of a check, silently, per check, role and day in usage.json (identifiers only: the
     check's module name and the worker's role name or `main`; no command, no path). A refusal is no incident, but a check that
@@ -1024,7 +1032,7 @@ def _count_refusal(module_name: str, payload: dict) -> None:
         if payload.get("agent_id"):
             agent_type = payload.get("agent_type")
             role = agent_type if isinstance(agent_type, str) and agent_type else "worker"
-        usage.record_refusal(actlib.repo_root(), module_name, role)
+        usage.record_refusal(actlib.repo_root(), module_name, role, _refusal_class_seen())
     except Exception:  # noqa: BLE001 -- counting must never change a verdict
         pass
 
@@ -1159,6 +1167,7 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
             import io
             _modes_seen().clear()
             _hits_seen().clear()
+            getattr(sys.modules.get("checks.common"), "REFUSAL_CLASS", {}).clear()
             real_stdout, printed = sys.stdout, io.StringIO()
             sys.stdout = printed  # what the check prints is passed on below, and looked at for a `warn` hit
             try:

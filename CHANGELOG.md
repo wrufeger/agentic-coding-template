@@ -156,6 +156,8 @@ with a model each.
 - `doctor.py --accept <id>` with nothing to accept for that id stops with exit 2 and names it.
 - Board: the backlog list shows the newest five with “… +N more” and the summary counts all;
   `entries.py archive T<n>` names the task's still-open entries with their archive commands.
+- Refusal questions pick their suggestion by the most frequent kind of refusal (protected path, outside the scope,
+  inline code, read-only scope); the counter still stores no path or command.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
@@ -214,6 +216,8 @@ with a model each.
   report is written with LF.
 - `worker-scope-overlap` no longer blocks for three hours because of a worker of an ended session: another
   session's worker whose transcript has been quiet for 15 minutes counts as ended.
+- Refusal questions name the body of the role's bridge (`.claude/agents/<role>.md`) as the place for an addition;
+  a `docs/ai/local/agents/<role>.md` with a template role's name is never read.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
