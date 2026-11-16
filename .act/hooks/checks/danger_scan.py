@@ -679,23 +679,29 @@ def check_danger_scan(payload: dict) -> int:
     except RuntimeError:
         return 0
 
-    enabled_sets = _enabled_coding_sets(root)
-    patterns = _active_patterns(enabled_sets)
-    if not patterns:
-        return 0
-
     cwd_raw = payload.get("cwd")
     base_cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else str(root)
     started = time.monotonic()
     deadline = _check_deadline(payload, _TIME_BUDGET)
-    # booked keys are dropped while collecting, so they never count toward the cap and cannot hide a new hit
-    booked = _load_baseline(root)
     all_findings: list[dict] = []
     timed_out = False
     try:
         invocations = _git_commit_invocations(
             command, base_cwd, deadline, {}, chain_tokens=parse_for(payload, command).chain_tokens(),
         )
+    except _GitTimedOut:
+        timed_out = True  # a git alias could not be looked up in time: the call may be a commit
+        invocations = []
+    if not invocations and not timed_out:
+        return 0  # no commit: the rule sets are not even read, so a broken one never blocks a `git status`
+
+    # a commit (or a call that may be one): the rule sets are loaded now; a crash here refuses the call, naming it
+    patterns = _active_patterns(_enabled_coding_sets(root))
+    if not patterns:
+        return 0
+    # booked keys are dropped while collecting, so they never count toward the cap and cannot hide a new hit
+    booked = _load_baseline(root)
+    try:
         for invocation in invocations:
             if time.monotonic() >= deadline:
                 timed_out = True  # an invocation is still unscanned
@@ -707,9 +713,6 @@ def check_danger_scan(payload: dict) -> int:
                 break
     except _GitTimedOut:
         timed_out = True  # a git alias could not be looked up in time: the call may be a commit
-        invocations = []
-    if not invocations and not timed_out:
-        return 0
 
     def refuse_for_time() -> int:
         print(_time_limit_refusal("danger-scan", max(deadline - started, 0.0), "security-check"), file=sys.stderr)

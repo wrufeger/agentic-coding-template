@@ -142,7 +142,7 @@ _LOCK_WAIT = 1.0            # seconds to wait for the lock of another hook proce
 _LOCK_STALE = 15.0          # seconds after which a lock is orphaned
 _NOTE_TTL = 86400.0         # seconds a queued orchestrator note stays valid
 _KEPT_TTL = 30 * 86400.0    # seconds a kept copy stays
-_GIT_TIMEOUT = 15
+_GIT_TIMEOUT = 7            # seconds for ALL git calls of one run together (Claude Code ends a hook after 10 s)
 _WATCH_DIR = "protected-watch"
 
 _KIND_FILE = "f"
@@ -672,6 +672,44 @@ def _limit_note(text: str) -> None:
         _LIMIT_NOTES.append(text)
 
 
+_GIT_STARTED: list[float] = []  # the clock of the run's start (begin_run): one shared deadline for every call
+
+
+def _reset_git_budget() -> None:
+    """A new run (a hook call, a snapshot) gets the whole git time again."""
+    del _GIT_STARTED[:]
+
+
+def begin_run() -> None:
+    """Start a run of its own with a whole git budget and no notes left from an earlier one (the SessionStart
+    snapshot, for dispatch.py; run() does the same for a tool call)."""
+    _reset_git_budget()
+    _GIT_STARTED.append(time.monotonic())  # the clock starts here: file reads and the lock wait count too
+    del _LIMIT_NOTES[:]
+
+
+def take_limit_notes() -> list[str]:
+    """The lines about git calls that ran out of time since begin_run(), for the caller to put into its output
+    (snapshot() only files them); the list is empty afterwards."""
+    taken = list(_LIMIT_NOTES)
+    del _LIMIT_NOTES[:]
+    return taken
+
+
+def _git_config(args: list[str], config_path: str) -> "subprocess.CompletedProcess[bytes]":
+    """`git config --file <config_path> <args>`, bounded by what is left of the run's shared _GIT_TIMEOUT:
+    raises subprocess.TimeoutExpired, without starting git, when nothing is left."""
+    import subprocess
+
+    if not _GIT_STARTED:
+        _GIT_STARTED.append(time.monotonic())
+    left = _GIT_TIMEOUT - (time.monotonic() - _GIT_STARTED[0])
+    command = ["git", "config", "--file", config_path, *args]
+    if left <= 0:
+        raise subprocess.TimeoutExpired(command, _GIT_TIMEOUT)
+    return subprocess.run(command, capture_output=True, timeout=left, cwd=os.path.dirname(config_path))
+
+
 def _config_keys(config_path: str) -> dict | None:
     """What the config file says about the keys that start code, or None when that cannot be told (no git,
     no key list): the caller then compares the whole file.
@@ -684,10 +722,7 @@ def _config_keys(config_path: str) -> dict | None:
     if guard is None:
         return None
     try:
-        done = subprocess.run(
-            ["git", "config", "--file", config_path, "--list", "-z"], capture_output=True, timeout=_GIT_TIMEOUT,
-            cwd=os.path.dirname(config_path),
-        )
+        done = _git_config(["--list", "-z"], config_path)
     except subprocess.TimeoutExpired:
         # nothing is left unchecked: the caller compares the whole file instead of the code-starting keys
         _limit_note(f"[act] protected_watch incomplete (time limit {_GIT_TIMEOUT:g} s); the git config is compared "
@@ -722,10 +757,7 @@ def _git_config_run(config_path: str, args: list[str]) -> bool:
     import subprocess
 
     try:
-        done = subprocess.run(
-            ["git", "config", "--file", config_path, *args], capture_output=True, timeout=_GIT_TIMEOUT,
-            cwd=os.path.dirname(config_path),
-        )
+        done = _git_config(args, config_path)
     except subprocess.TimeoutExpired:
         # the caller reports the restore as failed (restore-failed), so the change is not left unnoticed
         _limit_note(f"[act] protected_watch incomplete (time limit {_GIT_TIMEOUT:g} s); a git config key could not "
@@ -1607,7 +1639,7 @@ def run(event: str, payload: dict) -> dict | None:
     root = _project_root()
     context: list[str] = []
     message: list[str] = []
-    del _LIMIT_NOTES[:]
+    begin_run()
     try:
         found = watch(event, payload, root)
     except Exception as exc:  # noqa: BLE001 -- a watcher bug must never block or corrupt the hook output

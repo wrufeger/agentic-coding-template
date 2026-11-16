@@ -62,13 +62,16 @@ def handle(root: Path, payload: dict) -> Optional[str]:
         if not wanted:
             return None
         done, _unknown = advisory.acknowledge(root, wanted)
+        limits = advisory._limit_lines()  # a time limit that ran out (the board rewrite): said with the reason
     except Exception as exc:  # noqa: BLE001 -- a failure here must never eat the user's message
         print(f"[act] advisory acknowledgement failed, message passed through ({exc!r})", file=sys.stderr)
         return None
     if not done:
         return None
     if len(done) == 1:
-        return (f"act: advisory {done[0]} acknowledged — it no longer shows at session start, in the status "
+        text = (f"act: advisory {done[0]} acknowledged — it no longer shows at session start, in the status "
                 "line or on the board.")
-    return (f"act: advisories {', '.join(done)} acknowledged — they no longer show at session start, in the "
-            "status line or on the board.")
+    else:
+        text = (f"act: advisories {', '.join(done)} acknowledged — they no longer show at session start, in the "
+                "status line or on the board.")
+    return "\n".join([text, *limits])

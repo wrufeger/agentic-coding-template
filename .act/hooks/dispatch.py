@@ -1385,14 +1385,34 @@ def _model_switch_output(event: str, payload: dict) -> None:
         _model_switch_failed(event, f"{type(exc).__name__}: {exc}")
 
 
-def _snapshot_protected_files(payload: dict) -> None:
+def _snapshot_protected_files(payload: dict) -> list[str]:
     """SessionStart: the reference state for checks.protected_watch, taken after the session handler has
-    refreshed the bridges (so its own writes are not reported as a change)."""
+    refreshed the bridges (so its own writes are not reported as a change). Returns the lines about git
+    calls that ran out of time, for the caller to put into the one SessionStart object."""
     try:
         from checks import protected_watch
+        protected_watch.begin_run()
         protected_watch.snapshot(session=payload.get("session_id"))
+        return protected_watch.take_limit_notes()
     except Exception as exc:  # noqa: BLE001
         print(f"[act] protected-watch snapshot skipped ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return []
+
+
+def _add_notes_to_session_output(written: str, notes: list[str]) -> str:
+    """The SessionStart object in `written` with `notes` appended to additionalContext and systemMessage;
+    `written` unchanged when there are no notes or it is not one JSON object (the notes then go to stderr)."""
+    if not notes:
+        return written
+    try:
+        output = json.loads(written)
+        specific = output["hookSpecificOutput"]
+        specific["additionalContext"] = "\n".join([specific.get("additionalContext", ""), *notes]).lstrip("\n")
+        output["systemMessage"] = "\n".join([output.get("systemMessage", ""), *notes]).lstrip("\n")
+        return json.dumps(output, ensure_ascii=False) + "\n"
+    except (ValueError, KeyError, TypeError, AttributeError):
+        print("\n".join(notes), file=sys.stderr)
+        return written
 
 
 def _run_worker_rules(part_arg: str) -> int:
@@ -1494,8 +1514,16 @@ def main(argv: list[str]) -> int:
         _emit_post_tool_use_notes(event, payload, watch, queued)
         return 0  # notes never block
     if event == "SessionStart":
-        code = refresh_session(payload)
-        _snapshot_protected_files(payload)
+        import io
+        real_stdout = sys.stdout
+        held = io.StringIO()
+        sys.stdout = held  # the one SessionStart object is held until the snapshot has said what ran out of time
+        try:
+            code = refresh_session(payload)
+            notes = _snapshot_protected_files(payload)
+        finally:
+            sys.stdout = real_stdout
+        sys.stdout.write(_add_notes_to_session_output(held.getvalue(), notes))
         return code
     if event in ("SubagentStop", "Stop"):
         _model_switch_output(event, payload)

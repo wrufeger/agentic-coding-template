@@ -670,7 +670,42 @@ def _todo_body(advisory: Advisory, version: str) -> str:
     return "\n".join(lines)
 
 
-HISTORY_BUDGET = 4.0     # seconds in all for the history search of a todo (it runs at the session start)
+_LIMIT_HITS: list[tuple[float, str]] = []  # (seconds, what was not looked at) of the limits that ran out in this run
+
+
+def _note_limit(seconds: float, what: str = "") -> None:
+    """Remember that a time limit ran out, so the command line says so instead of staying silent."""
+    if (seconds, what) not in _LIMIT_HITS:
+        _LIMIT_HITS.append((seconds, what))
+
+
+def _limit_lines() -> list[str]:
+    """The `incomplete (time limit <n> s)` lines of this run, one per limit that ran out; the list is empty
+    afterwards."""
+    lines = [f"incomplete (time limit {seconds:g} s)" + (f"; {what}" if what else "") for seconds, what in _LIMIT_HITS]
+    del _LIMIT_HITS[:]
+    return lines
+
+
+def _print_limits() -> None:
+    for line in _limit_lines():
+        print(line)
+
+
+def _git_sub(args: list[str]) -> str:
+    """The git subcommand of an argument list (the first word that is no option and no `-c` value)."""
+    skip = False
+    for arg in args:
+        if skip:
+            skip = False
+        elif arg == "-c":
+            skip = True
+        elif not arg.startswith("-"):
+            return arg
+    return "git"
+
+
+HISTORY_BUDGET = 4.0    # seconds in all for the history search of a todo (it runs at the session start)
 HISTORY_COMMITS = 2000  # commits that touched the inbox or the archive, newest first, that are looked at
 HISTORY_CANDIDATES = 3  # deleted files of that advisory whose last content is read
 HISTORY_MIN_LEFT = 0.5  # seconds: with less left a git call is not started
@@ -680,6 +715,7 @@ def _history_call(args: list[str], root: Path, deadline: float) -> Optional[byte
     """stdout of `git <args>` in `root` when it exited 0 within what is left of the budget, else None."""
     left = deadline - time.monotonic()
     if left < HISTORY_MIN_LEFT:
+        _note_limit(HISTORY_BUDGET, "the git history was not searched to the end for an earlier todo of this advisory")
         return None
     try:
         outcome = run_git(args, root, timeout=left, project=root)
@@ -796,6 +832,7 @@ def session_report(root: Path, file_todos: bool = True) -> SessionReport:
             changed = True
     if changed:
         _write_json(seen_path(root), seen)
+    report.notes.extend(_limit_lines())  # a limit that ran out in the history search: said, not silent
     return report
 
 
@@ -812,7 +849,9 @@ def _refresh_board(root: Path) -> None:
         return
     try:
         subprocess.run([sys.executable, str(board_script)], cwd=root, timeout=BOARD_TIMEOUT, capture_output=True)
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        _note_limit(BOARD_TIMEOUT, "the board was not rewritten")
+    except OSError:
         pass
 
 
@@ -872,7 +911,10 @@ def run_git(args: list[str], cwd: Path, timeout: float = GIT_TIMEOUT,
                     stderr=subprocess.DEVNULL, timeout=timeout, env=_git_env(),
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             return result.returncode, out_path.read_bytes()
-        except (OSError, subprocess.TimeoutExpired):
+        except subprocess.TimeoutExpired:
+            _note_limit(timeout, f"`git {_git_sub(args)}` did not finish, so the source was not fully read")
+            return None
+        except OSError:
             return None
 
 
@@ -1130,6 +1172,7 @@ def _cmd_ack(root: Path, ids: list[str]) -> int:
         print(f"{adv_id}: no such advisory in the cache")
     if not done and not unknown:
         print("no active advisory")
+    _print_limits()
     return 1 if unknown else 0
 
 
@@ -1138,6 +1181,7 @@ def _cmd_refresh(root: Path) -> int:
     print(f"refresh: {result.status}" + (f" ({result.detail})" if result.detail else ""))
     for rejection in result.rejected:
         print(f"rejected {rejection.id or 'file'}: {rejection.reason}")
+    _print_limits()
     return 0 if result.status in ("updated", "unchanged", "cleared", "disabled") else 1
 
 

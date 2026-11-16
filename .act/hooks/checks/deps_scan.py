@@ -152,7 +152,9 @@ from . import session
 from .board_refresh import _base_cwd, _targets_own_project
 from .command_parse import parse_for
 from .command_words import _strip_command_prefix
-from .common import _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command, _time_limit_refusal
+from .common import (
+    _is_worker, _pop_pending_notes, _queue_pending_note, _shell_command, _time_limit_note, _time_limit_refusal,
+)
 from .secret_scan import (
     _GitTimedOut,
     _check_deadline,
@@ -926,6 +928,11 @@ def _record_integration_heads(payload: dict, root: Path, command: str) -> None:
         head = _run_git(["rev-parse", "-q", "--verify", "HEAD"], toplevel, min(_GIT_TIMEOUT, deadline - time.monotonic()))
         if head and head.strip():
             heads[toplevel] = head.strip()
+    if time.monotonic() >= deadline:  # git was not asked (or not answered) in time: the post-call scan uses the reflog
+        _queue_note(payload, _time_limit_note(
+            "deps_scan", _RECORD_TIME_BUDGET,
+            "the HEAD before this merge, pull or cherry-pick was not recorded for every repository; the scan "
+            "of the lock files it brings in falls back to the reflog"))
     if heads and actlib.local_write_ok(root, path):
         _prune_heads(path.parent)
         security_scan._write_json(root, path, {"heads": heads, "written": time.time()})
@@ -1174,43 +1181,49 @@ def _scan_touched(root: Path, paths: "list[Path]", inline: bool) -> None:
         security_scan.clear_running_marker(root, state_hash)
 
 
-def _scan_after_integration(payload: dict) -> None:
+def _scan_after_integration(payload: dict) -> Optional[str]:
+    """The scan after an integration call; the note of a time limit nothing could take over, else None."""
     if _is_worker(payload):
-        return  # a worker's git access is read-only; it never brings anything in
+        return None  # a worker's git access is read-only; it never brings anything in
     shell = _shell_command(payload)
     if shell is None:
-        return
+        return None
     command = shell[1]
     if "git" not in command or not any(word in command for word in _INTEGRATION_SUBCOMMANDS):
-        return
+        return None
     if actlib.security_check_level(actlib.read_config()) not in ("deps", "full"):
-        return
+        return None
     try:
         root = actlib.repo_root().resolve()
     except (RuntimeError, OSError):
-        return
+        return None
     recorded = _take_recorded_heads(root, payload.get("tool_use_id"))
     calls = _integration_calls(command, _base_cwd(payload), payload)
     if not calls or not security_scan.available_tools():
-        return
+        return None
     own = [call for call in calls if call.target is not None and _targets_own_project(call.target, root)]
     if not own:
-        return
+        return None
 
     deadline = time.monotonic() + _NOTE_TIME_BUDGET
     touched = _list_integration_touched(own, deadline, recorded)
     paths, _unreadable = _readable_lock_files(root, sorted(touched), deadline)
     if time.monotonic() >= deadline:
         # git may not have answered in time: the listing above can be incomplete, so it is not used
-        _hand_off_discovery(root, own, recorded)
-        return
+        if _hand_off_discovery(root, own, recorded):
+            return None  # the detached worker redoes the listing and reports a finding in the inbox
+        return _time_limit_note(
+            "deps_scan", _NOTE_TIME_BUDGET,
+            "the lock files this merge, pull or cherry-pick brought in were not looked at and no background scan "
+            "could be started")
     _scan_touched(root, paths, inline=False)
+    return None
 
 
 def note_deps_merge_scan(payload: dict) -> Optional[str]:
     """PostToolUse (and PostToolUseFailure) companion for a `git merge|pull|cherry-pick`: scans the
-    lock files it brought in, in the background, and files a finding as an inbox report. Never
-    returns a note -- the inbox is the channel -- and never blocks. Registered in dispatch.py's own
+    lock files it brought in, in the background, and files a finding as an inbox report. Returns a
+    note only when the time limit ran out and no background worker could take over -- the inbox is
+    the channel otherwise -- and never blocks. Registered in dispatch.py's own
     _POST_TOOL_USE_NOTES; an exception here is logged and skipped by the caller."""
-    _scan_after_integration(payload)
-    return None
+    return _scan_after_integration(payload)

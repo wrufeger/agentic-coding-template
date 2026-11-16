@@ -231,6 +231,12 @@ with a model each.
   would write.
 - The daily session-start markers no longer crash on a marker file that is not UTF-8, and the context hint no
   longer writes its state through an `.act-local` that is a link or leaves the project.
+- A time limit that runs out after a `git merge`/`pull` scan, in `advisory.py` (also an acknowledgement typed in
+  the prompt) or in the protected-files watcher now gives a line `incomplete (time limit <n> s)` instead of silence.
+- The protected-files watcher's git calls share one 7 s budget, so its "incomplete" line can appear before Claude
+  Code ends the hook; at session start that line goes into the one session-start message instead of being lost.
+- The danger scan (`security-check`) loads the coding rule sets only for a commit, so a broken `rules.py` or a `coding_rules.md` in
+  cp1252 no longer blocks every shell command with `git` in it; a commit still blocks with the crash message.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
