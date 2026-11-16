@@ -209,9 +209,29 @@ def load_tiers(root: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def bump(scale: list[str], value: str, steps: int = 1) -> str:
-    """One step up `scale` from `value`, capped at the last entry. `value` not found in `scale`
-    (or an empty scale) is returned unchanged."""
+# A reasoning value that means "no effort line, the tool's own default". `default` is the current
+# spelling; `none` is read the same way (an older project file may still carry it) and an empty
+# value says nothing at all.
+NO_EFFORT_VALUES = ("", "default", "none")
+
+
+def no_effort(value: str) -> bool:
+    """True when `value` asks for no effort line (`default`, the older `none`, or empty)."""
+    return (value or "").strip() in NO_EFFORT_VALUES
+
+
+def reasoning_default(tool_data: Optional[dict]) -> str:
+    """The scale level a `default` reasoning counts as for a bump (`reasoning_default` in the
+    tool's table of .act/tiers.json); empty when the table names none."""
+    return str((tool_data or {}).get("reasoning_default") or "")
+
+
+def bump(scale: list[str], value: str, steps: int = 1, start: str = "") -> str:
+    """One step up `scale` from `value`, capped at the last entry. A `value` that asks for no effort
+    line (`default`, `none`, empty) counts as `start` when that is on the scale. `value` not found
+    in `scale` (or an empty scale) is returned unchanged."""
+    if no_effort(value) and start in scale:
+        value = start
     if not scale or value not in scale:
         return value
     index = min(scale.index(value) + steps, len(scale) - 1)
@@ -260,12 +280,12 @@ def resolve_tier_models(
         return [], None, ("tier" if tiers_table else None)
     models = tier_models(entry)
     scale = tool_data.get("reasoning_scale") or []
-    if reasoning and reasoning != "none" and scale and reasoning not in scale:
+    if not no_effort(reasoning) and scale and reasoning not in scale:
         return [], None, "reasoning"
-    value = reasoning if reasoning in scale else (scale[0] if scale else reasoning)
+    value = reasoning if (reasoning in scale or not scale) else ""
     if entry.get("bump_reasoning"):
-        value = bump(scale, value, 1)
-    if not value or value == "none":
+        value = bump(scale, value, 1, reasoning_default(tool_data))
+    if no_effort(value):
         return models, None, None
     return models, value, None
 
@@ -283,7 +303,7 @@ def resolve_tier(
     - "tool": `tool` has no entry in `tiers_data` at all (a tool tiers.json never heard of, unlike
       the researched-but-empty case above).
     - "tier": `tool` is configured, but `tier` is not one of its known tiers (e.g. a typo).
-    - "reasoning": `tier` resolved fine, but `reasoning` is non-empty, not "none", and not one of
+    - "reasoning": `tier` resolved fine, but `reasoning` is non-empty, not `default`/"none", and not one of
       the tool's `reasoning_scale` values -- previously this silently fell back to the scale's
       first entry instead of being reported, which is the bug this case exists to prevent."""
     models, effort, problem = resolve_tier_models(tiers_data, tool, tier, reasoning)
@@ -406,20 +426,22 @@ def effective_model_effort(
         models, effort, problem, tier, reasoning = effective_copilot_models(
             root, role, template_tier, template_reasoning, tiers_data, overrides, bump_variant)
         return (models[0] if models else None), effort, problem, tier, reasoning
-    scale = (tool_table(tiers_data, tool) or {}).get("reasoning_scale") or []
+    tool_data = tool_table(tiers_data, tool) or {}
+    scale = tool_data.get("reasoning_scale") or []
+    start = reasoning_default(tool_data)
     override = overrides.get(role, {})
 
     if "model" in override:
         reasoning = override.get("reasoning", template_reasoning)
         if bump_variant:
-            reasoning = bump(scale, reasoning, 1)
-        effort = reasoning if reasoning and reasoning != "none" else None
+            reasoning = bump(scale, reasoning, 1, start)
+        effort = None if no_effort(reasoning) else reasoning
         return override["model"], effort, None, "", reasoning
 
     tier = override.get("tier", template_tier)
     reasoning = override.get("reasoning", template_reasoning)
     if bump_variant:
-        reasoning = bump(scale, reasoning, 1)
+        reasoning = bump(scale, reasoning, 1, start)
     model, effort, problem = resolve_tier(tiers_data, tool, tier, reasoning)
     return model, effort, problem, tier, reasoning
 
@@ -436,15 +458,17 @@ def effective_copilot_models(
     `[model]`. The `model` cell is Claude Code's and is ignored here. `bump_variant` bumps the
     reasoning one step further, for the role's "-high" file."""
     del root
-    scale = (tool_table(tiers_data, "copilot") or {}).get("reasoning_scale") or []
+    tool_data = tool_table(tiers_data, "copilot") or {}
+    scale = tool_data.get("reasoning_scale") or []
+    start = reasoning_default(tool_data)
     override = overrides.get(role, {})
     tier = override.get("tier", template_tier)
     reasoning = override.get("reasoning", template_reasoning)
     if bump_variant:
-        reasoning = bump(scale, reasoning, 1)
+        reasoning = bump(scale, reasoning, 1, start)
     listed = override.get("copilot")
     if listed:
-        effort = reasoning if reasoning and reasoning != "none" else None
+        effort = None if no_effort(reasoning) else reasoning
         return list(listed), effort, None, tier, reasoning
     models, effort, problem = resolve_tier_models(tiers_data, "copilot", tier, reasoning)
     return models, effort, problem, tier, reasoning
@@ -804,7 +828,7 @@ def skill_copy_text(
     frontmatter line (a value of the tool's `reasoning_scale`) is replaced by the tool's own field
     (`reasoning_field` in .act/tiers.json, Claude Code: `effort`). A row naming the skill in
     docs/ai/config.md § Roles (`overrides[skill]["reasoning"]`) wins over the source's own value. No
-    level at all, a level that is "none" or not on the scale, or a tool with an empty
+    level at all, a level that is `default`, "none" or not on the scale, or a tool with an empty
     `reasoning_field` (no researched mapping) leaves the text exactly as it is -- including the source
     `reasoning` line in the last two cases -- so the skill simply inherits the session's setting.
     Line terminators and every other line are kept byte for byte; an `effort:` line the source carries
@@ -825,7 +849,7 @@ def skill_copy_text(
         if match:
             source_level = match.group(1).strip("'\"")
     level = (overrides.get(skill) or {}).get("reasoning") or source_level
-    if not level or level == "none" or level not in scale:
+    if no_effort(level) or level not in scale:
         return text
 
     eol = lines[0][len(lines[0].rstrip("\r\n")):] or "\n"

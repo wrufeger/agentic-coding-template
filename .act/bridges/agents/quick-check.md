@@ -2,7 +2,7 @@
 name: quick-check
 description: Fixed, read-only lookups without judgment (git status, tests, files, line counts).
 tier: light
-reasoning: none
+reasoning: default
 tools: Read, Grep, Glob, Bash
 omitClaudeMd: true
 ---

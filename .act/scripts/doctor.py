@@ -115,6 +115,17 @@
 #               override-stale. A folder that only adds files, and an own skill, are no finding. The
 #               switch `own-rules-review` in docs/ai/config.md § Checks (warn (default) | block (= warn) |
 #               off) skips the shadow finding with `off`; stale reports are not affected. Never a block.
+#          27. a reasoning value `none` left in a project file (reasoning-none): the Reasoning cell of
+#               docs/ai/config.md § Roles and the `reasoning:` line of docs/ai/local/agents/*.md and
+#               docs/ai/local/skills/*/SKILL.md. `none` is read as `default` (no effort line, the tool's
+#               own level); one finding names every place, until the value is `default` or the finding
+#               is accepted.
+#          28. an answered question edited since the last commit (answered-edited): a `kind: question`
+#               entry directly in docs/ai/inbox/ with `status: answered` or `done` whose text between
+#               the header and the answer label (a line starting `**Answer:**`/`**Antwort:**`), or whose
+#               answer, differs from HEAD; text appended to the answer does not count, nor do line endings
+#               or trailing spaces. No finding without git, without the file or the label in HEAD. A hint
+#               only, never a block.
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -249,6 +260,8 @@ KIND_LABELS: dict[str, str] = {
     "docs-concept-decided": "Concepts whose questions are all answered (archive once built)",
     "own-rules-size": "Always-loaded own rules over the size budget (own-rules-budget)",
     "changelog-length": "Changelog entries under [Unreleased] over the length limit (changelog-length)",
+    "reasoning-none": "Project files that still carry the reasoning value `none` (read as `default`)",
+    "answered-edited": "Answered questions whose text or answer changed since the last commit",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -298,6 +311,8 @@ KIND_LABELS_DE: dict[str, str] = {
     "docs-concept-decided": "Konzepte, deren Fragen alle beantwortet sind (archivieren, sobald gebaut)",
     "own-rules-size": "Immer geladene eigene Regeln über dem Größenbudget (own-rules-budget)",
     "changelog-length": "Changelog-Einträge unter [Unreleased] über der Längengrenze (changelog-length)",
+    "reasoning-none": "Projektdateien, die noch den Reasoning-Wert `none` tragen (gelesen als `default`)",
+    "answered-edited": "Beantwortete Fragen, deren Text oder Antwort sich seit dem letzten Commit geändert hat",
 }
 
 
@@ -2546,6 +2561,12 @@ _REFUSAL_WINDOW_DAYS = 7
 _REFUSAL_THRESHOLD = 3
 _REFUSAL_MEMORY_FILE = Path(".act-local") / "refusal-proposals.json"
 _WORKER_LINE_RE = re.compile(r"^- `([a-z_]+)`(?: \(`([a-z-]+)`\))?: (.+)$")
+# Checks whose sentence the template's own role files already carry, with the roles whose files say it: a
+# refusal question about one of them for such a role recommends a report to the template instead of a local copy
+# of the sentence (the role file says it already; a project line would only repeat it).
+_ROLE_FILE_COVERED: dict[str, frozenset[str]] = {
+    "worker_git_write": frozenset({"builder", "builder-high", "test-writer"}),
+}
 
 
 def _worker_lines(root: Path) -> dict[str, str]:
@@ -2613,9 +2634,11 @@ def _new_refusal_proposals(root: Path) -> list[tuple[str, dict[str, int]]]:
 
 
 def refusal_question_text(check: str, workers: dict[str, int], line: str, language: str,
-                          classes: dict[str, int] | None = None) -> tuple[str, str]:
+                          classes: dict[str, int] | None = None, feedback_local: bool = False) -> tuple[str, str]:
     """(title, body) of the question for a check that refused workers often. The first option, the
-    recommended one, adopts `line`; no option changes the check."""
+    recommended one, adopts `line`; no option changes the check. For a check whose sentence the template's own role
+    files carry (_ROLE_FILE_COVERED) and a top role among those, the recommended option is a report to the template
+    instead (a backlog entry here with `feedback: local`), and adopting the line becomes the second."""
     def loc(en: str, de: str) -> str:
         return actlib.localized(language, en, de)
 
@@ -2626,14 +2649,21 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
                             sorted((classes or {}).items(), key=lambda item: (-item[1], item[0])))
     title = loc(f"`{check}` refused workers {total} times in {_REFUSAL_WINDOW_DAYS} days: tell them beforehand?",
                 f"`{check}` hat Worker in {_REFUSAL_WINDOW_DAYS} Tagen {total}-mal gesperrt: ihnen vorher sagen, was nicht geht?")
+    covered_role = top in _ROLE_FILE_COVERED.get(check, frozenset())
+    proposal_en = ("The template's role file already tells the worker this, so the proposal is a report to the "
+                   "template." if covered_role else
+                   "The proposal is to tell the worker beforehand what the check does not allow, so it does not run "
+                   "into it.")
+    proposal_de = ("Die Rollendatei der Vorlage sagt dem Worker das schon, vorgeschlagen ist also eine Meldung an die "
+                   "Vorlage." if covered_role else
+                   "Vorgeschlagen ist, dem Worker vorher zu sagen, was die Prüfung nicht erlaubt, damit er gar nicht "
+                   "erst in die Sperre läuft.")
     hint = loc(f"The check `{check}` refused workers {total} times in the last {_REFUSAL_WINDOW_DAYS} days ({split}); only "
                "the counts are kept, no command and no path" + (f", and the classes of the refusals ({class_split})" if class_split else "") + ". A refusal shows that the check works, so the check stays as "
-               "it is. The proposal is to tell the worker beforehand what the check does not allow, so it does not run "
-               "into it.",
+               "it is. " + proposal_en,
                f"Die Prüfung `{check}` hat in den letzten {_REFUSAL_WINDOW_DAYS} Tagen Worker {total}-mal gesperrt "
                f"({split}); gezählt wird nur, nie ein Befehl oder Pfad" + (f", dazu die Art der Sperren ({class_split})" if class_split else "") + ". Eine Sperre zeigt, dass die Prüfung greift, "
-               "sie bleibt also, wie sie ist. Vorgeschlagen ist, dem Worker vorher zu sagen, was die Prüfung nicht "
-               "erlaubt, damit er gar nicht erst in die Sperre läuft.")
+               "sie bleibt also, wie sie ist. " + proposal_de)
     if top == "worker":  # no role name is known, so there is no role file to name
         where_en = "into the text of the assignment header (the brief)"
         where_de = "in den Text des Auftragskopfs (die Beauftragung) aufnehmen"
@@ -2643,6 +2673,41 @@ def refusal_question_text(check: str, workers: dict[str, int], line: str, langua
                     "has a high variant; no update replaces the body) or into the text of the assignment header")
         where_de = (f"in den Text der Rollen-Bridge `.claude/agents/{base}.md` (und `{base}-high.md`, wo die Rolle eine "
                     "High-Variante hat; kein Update ersetzt den Text) oder in den Text des Auftragskopfs aufnehmen")
+    if covered_role:
+        if feedback_local:
+            report_en = ("a backlog entry in this project (`feedback: local`, `.act/rules/topics/feedback.md`) "
+                         "with the counts above")
+            report_de = ("ein Backlog-Eintrag in diesem Projekt (`feedback: local`, `.act/rules/topics/feedback.md`) "
+                         "mit den obigen Zahlen")
+        else:
+            report_en = "a report to the template with the counts above (`act-feedback`)"
+            report_de = "eine Meldung an die Vorlage mit den obigen Zahlen (`act-feedback`)"
+        covered = [
+            hint, "",
+            "- **a)** " + loc(f"**Recommended:** Report: file {report_en}. The template's role file of `{top}` already "
+                              f"says this sentence, so a local line would only repeat it; the workers still ran into "
+                              "the check, which is worth knowing upstream. Effort: one report, a few minutes.",
+                              f"**Empfehlung:** Melden: {report_de} anlegen. Die Rollendatei der Vorlage für `{top}` sagt "
+                              "diesen Satz schon, eine lokale Zeile würde ihn nur wiederholen; die Worker sind trotzdem "
+                              "in die Prüfung gelaufen, das ist für die Vorlage wissenswert. Aufwand: eine Meldung, "
+                              "ein paar Minuten."),
+            "",
+            "- **b)** " + loc(f"Adopt anyway: put this sentence {where_en}: \"{line}\" Effort: one line, a few minutes.",
+                              f"Trotzdem übernehmen: diesen Satz {where_de}: \"{line}\" Aufwand: eine Zeile, ein paar "
+                              "Minuten."),
+            "",
+            "- **c)** " + loc("Reword: say in the answer how the sentence should read or where it belongs. Effort: one "
+                              "sentence from you.",
+                              "Anders formulieren: in der Antwort sagen, wie der Satz lauten soll oder wo er hingehört. "
+                              "Aufwand: ein Satz von dir."),
+            "",
+            "- **d)** " + loc(f"Do nothing. The check stays unchanged; a new question about `{check}` comes at the earliest "
+                              f"{_REFUSAL_WINDOW_DAYS} days after this one, if it keeps refusing workers. Effort: none.",
+                              f"Nichts tun. Die Prüfung bleibt unverändert; eine neue Frage zu `{check}` kommt frühestens "
+                              f"{_REFUSAL_WINDOW_DAYS} Tage nach dieser, wenn sie weiter Worker sperrt. Aufwand: keiner."),
+            "",
+        ]
+        return title, "\n".join(covered) + "\n"
     lines = [
         hint, "",
         "- **a)** " + loc(f"**Recommended:** Adopt: put this sentence {where_en}: \"{line}\" "
@@ -2671,6 +2736,7 @@ def file_refusal_questions(root: Path) -> list[Path]:
     if not new:
         return []
     language = actlib.docs_language(root)
+    feedback_local = (actlib.read_config(root).get("feedback") or "").strip().lower() == "local"
     lines = _worker_lines(root)
     try:
         import usage
@@ -2683,7 +2749,7 @@ def file_refusal_questions(root: Path) -> list[Path]:
         top_class = sorted(classes.items(), key=lambda item: (-item[1], item[0]))[0][0] if classes else ""
         line = lines.get(f"{check}:{top_class}") or lines.get(check) or (f"Before a call that `{check}` may refuse, read what it allows in "
                                     "`.act/rules/topics/checks.md`; a refusal is not retried another way.")
-        title, body = refusal_question_text(check, workers, line, language, classes)
+        title, body = refusal_question_text(check, workers, line, language, classes, feedback_local)
         try:
             path, _ = entries.create_entry(root, "question", title, body=body, answer_block=True,
                                            slug=f"worker-refusals-{check}")
@@ -2699,6 +2765,132 @@ def file_refusal_questions(root: Path) -> list[Path]:
         except OSError:
             print(f"doctor.py: could not write {_REFUSAL_MEMORY_FILE.as_posix()}", file=sys.stderr)
     return written
+
+
+def _reasoning_none_places(root: Path) -> list[tuple[str, Optional[int], str]]:
+    """(file, line, what) for each place of the project that still carries the reasoning value `none`: the
+    Reasoning cell of a row of docs/ai/config.md § Roles, the `reasoning:` frontmatter line of an own role
+    (docs/ai/local/agents/*.md) and of an own skill (docs/ai/local/skills/*/SKILL.md) -- the files tiers.py,
+    init.py and update.py read a reasoning value from that the project owns (a template role or skill file is
+    replaced by an update)."""
+    places: list[tuple[str, Optional[int], str]] = []
+    config = root / "docs" / "ai" / "config.md"
+    if config.is_file():
+        try:
+            rows = tiers.read_role_overrides(root, [])
+        except Exception:  # noqa: BLE001 -- unreadable table: nothing to name
+            rows = {}
+        for role, row in rows.items():
+            if str(row.get("reasoning", "")) == "none":
+                places.append((_rel(config, root), None, f"Reasoning cell of the row `{role}` in § Roles"))
+    local = root / "docs" / "ai" / "local"
+    files: list[Path] = []
+    if (local / "agents").is_dir():
+        files += [p for p in sorted((local / "agents").glob("*.md")) if p.name.lower() != "readme.md"]
+    if (local / "skills").is_dir():
+        files += [d / "SKILL.md" for d in sorted((local / "skills").iterdir()) if (d / "SKILL.md").is_file()]
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").lstrip("﻿").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        span = _frontmatter_span(lines)
+        if span is None:
+            continue
+        for number in range(span[0], span[1]):
+            if re.match(r"^reasoning:\s*['\"]?none['\"]?\s*(?:#.*)?$", lines[number]):
+                places.append((_rel(path, root), number + 1, "`reasoning:` frontmatter line"))
+    return places
+
+
+def check_reasoning_none(root: Path) -> list[Finding]:
+    """One finding naming every place of the project that still carries the reasoning value `none`. The
+    value is read as `default` (no effort line, the tool's own level); the finding asks to write `default`."""
+    places = _reasoning_none_places(root)
+    if not places:
+        return []
+    where = "; ".join(f"{path}{':' + str(line) if line else ''} ({what})" for path, line, what in places)
+    first_path, first_line, _ = places[0]
+    return [Finding(
+        path=first_path, line=first_line, kind="reasoning-none",
+        message=(f"the reasoning value `none` is read as `default` (no effort line, the tool's own level); write "
+                 f"`default` in {len(places)} place(s): {where}"),
+    )]
+
+
+# ---------------------------------------------------------------------------
+# An answered question edited after its last commit: a hint only, never a block. The human's words stay
+# untouched (R-human-text); text appended below the answer label does not count.
+# ---------------------------------------------------------------------------
+
+_ANSWER_LABELS = ("**Answer:**", "**Antwort:**")
+
+
+def _body_lines(text: str) -> list[str]:
+    """The lines of `text` after the header, line ends normalized (no CR, no trailing whitespace)."""
+    body = actlib.split_header(text.replace("\r\n", "\n"))[1]
+    return [line.rstrip() for line in body.split("\n")]
+
+
+def _split_at_label(lines: list[str]) -> Optional[tuple[list[str], list[str]]]:
+    """(lines above the first line that starts with an answer label, the rest of that line after the label
+    followed by the lines below it), trailing blank lines dropped, or None without such a line."""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        label = next((lab for lab in _ANSWER_LABELS if stripped.startswith(lab)), None)
+        if label:
+            rest = stripped[len(label):].strip()
+            above, below = lines[:index], ([rest] if rest else []) + lines[index + 1:]
+            while above and not above[-1]:
+                above = above[:-1]
+            while below and not below[-1]:
+                below = below[:-1]
+            return above, below
+    return None
+
+
+def check_answered_edits(root: Path) -> list[Finding]:
+    """A `kind: question` file directly in docs/ai/inbox/ with `status: answered` or `done` whose text above the
+    answer label, or whose answer, differs from the last commit (`HEAD`); text appended below the answer does
+    not count. Silent without git, without the file in `HEAD`, or without an answer label line there."""
+    inbox = root / actlib.INBOX_DIR
+    if not inbox.is_dir():
+        return []
+    findings: list[Finding] = []
+    for path in sorted(inbox.glob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        header = actlib.header_block(text)
+        status = _STATUS_FIELD_RE.search(header)
+        if not re.search(r"(?im)^kind:\s*question\s*$", header) or not status \
+                or status.group(1).lower() not in ("answered", "done"):
+            continue
+        rel = _rel(path, root)
+        old_text = _git_out(root, "show", f"HEAD:./{rel}")
+        if old_text is None:
+            continue
+        old = _split_at_label(_body_lines(old_text))
+        if old is None:
+            continue
+        new = _split_at_label(_body_lines(text))
+        parts: list[str] = []
+        if new is None:
+            parts.append("the answer label is gone")
+        else:
+            if new[0] != old[0]:
+                parts.append("the question text above the answer label changed")
+            if not "\n".join(new[1]).startswith("\n".join(old[1])):
+                parts.append("the answer below the label changed (text appended below it does not count)")
+        if parts:
+            findings.append(Finding(
+                path=rel, line=None, kind="answered-edited",
+                message=("answered question edited since the last commit: " + "; ".join(parts)
+                         + ". The human's words stay as they are (R-human-text): check the change, or restore "
+                           "the file from the last commit"),
+            ))
+    return findings
 
 
 def check_tier_proposal(root: Path) -> list[Finding]:
@@ -3027,8 +3219,10 @@ def check_frontmatter(root: Path) -> list[Finding]:
             if tier and tier_set and tier not in tier_set:
                 add("frontmatter-field", f"`tier: {tier}` is none of {', '.join(sorted(tier_set))} (.act/tiers.json)")
             level = fields.get("reasoning", "").strip()
-            if level and reasoning_set and level not in reasoning_set:
-                add("frontmatter-field", f"`reasoning: {level}` is none of {', '.join(sorted(reasoning_set))} (.act/tiers.json)")
+            if level == "none" and in_project:
+                pass  # still read as `default`; the one finding of check_reasoning_none() names it
+            elif level and reasoning_set and level != "default" and level not in reasoning_set:
+                add("frontmatter-field", f"`reasoning: {level}` is none of default, {', '.join(sorted(reasoning_set))} (.act/tiers.json)")
             for bare in _tool_name_list(fields.get("tools", "")):
                 if bare == "*" or bare in _KNOWN_TOOL_NAMES or bare.startswith("mcp__"):
                     continue
@@ -3163,6 +3357,8 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_script_docs(root)
     findings += check_skill_lint(root)
     findings += check_frontmatter(root)
+    findings += check_reasoning_none(root)
+    findings += check_answered_edits(root)
     findings += check_tier_proposal(root)
     findings += check_template_remote(root)
 

@@ -18,7 +18,9 @@ frontmatter (`builder` and `reviewer`; the key is read by the scripts and never 
 generated file) gets a second file, `.claude/agents/<name>-high.md`
 (`agent_bridge_variant_targets()`), with the same resolution and the reasoning bumped one step
 further — the runtime choice of giving one assignment more reasoning without ever writing a real
-model ID into an assignment. A project's own role (bridge under `docs/ai/local/agents/`) keeps a
+model ID into an assignment. `reasoning: default` means no effort line (the tool's own level); a
+bump from it starts at `reasoning_default` of the tool's table in `.act/tiers.json`, so the variant of a
+`default` role gets `high`. A project's own role (bridge under `docs/ai/local/agents/`) keeps a
 variant as before whenever its bridge has a `tier`. No variant is generated for a template role
 without that key, nor for one whose reasoning is already the top of the tool's reasoning scale.
 `update.py` removes a generated variant (frontmatter `variant-of:`) whose template role no longer

@@ -49,6 +49,8 @@ with a model each.
   `python .act/scripts/doctor.py --accept skill:<name>` or delete it.
 - If `.act-local` is a link out of the project, a worker start with a `Write scope:` or `Tests:` line is now
   refused; make it a plain folder, or set `worker-write-scope` and `worker-scope-overlap` to `warn`.
+- Reasoning `none` in `docs/ai/config.md` § Roles or a local role or skill file is read as `default` now; `act-doctor`
+  names each place, write `default` there.
 
 ### Added
 - Rust coding rules: new group `CR-rust-async` (no blocking in tasks, bounded channels, cancel-safe `select!`,
@@ -93,6 +95,10 @@ with a model each.
   system-versioned table needs `system_versioning_alter_history = KEEP` for its session.
 - `CR-nuxt-basics`: export names unique across auto-imported folders, and exactly one root element per page; both
   break with only a warning.
+- Reasoning value `default` (no effort line, the tool's own level) replaces `none` on the ladder; the `-high` variant
+  of such a role gets `high` instead of `low`.
+- `act-doctor` hints at an answered question whose text or answer changed since the last commit; text appended to
+  the answer does not count.
 
 ### Changed
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
@@ -171,6 +177,8 @@ with a model each.
   the builder role name a script file, a heredoc and an interpreter as detours a refused write never takes.
 - The main session hands the research for `act-prepare`, `act-idea` and `act-bug` to `explorer` as a whole, and
   after starting workers ends its turn with one line saying how many run, so you can talk to it meanwhile.
+- The question about workers often stopped by the read-only git check recommends a report to the template, since
+  the role files already tell them.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

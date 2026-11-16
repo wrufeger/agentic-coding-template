@@ -5,8 +5,8 @@ file the skill needs in the same directory (references, scripts, templates). `SK
 with YAML frontmatter — `name`, `description` — following the open Agent Skills format; the body
 below the frontmatter is the skill's instructions, written tool-neutral.
 
-A skill may carry `reasoning: <level>` (a value of `reasoning_scale` in `.act/tiers.json`: `none`, `low`,
-`medium`, `high`, `xhigh`, `max`) to ask for that thinking level while it runs. The project copy for a tool
+A skill may carry `reasoning: <level>` (a value of `reasoning_scale` in `.act/tiers.json`: `low`,
+`medium`, `high`, `xhigh`, `max`, or `default` for the tool's own level) to ask for that thinking level while it runs. The project copy for a tool
 with a researched mapping (`reasoning_field` in `tiers.json`, Claude Code: `effort`) gets that field in place
 of the `reasoning` line; the `.agents/skills/` mirror stays verbatim, and a skill without the key inherits the
 session. A row naming the skill in `docs/ai/config.md` § Roles overrides the level for one project.
