@@ -11,9 +11,10 @@ nothing**: ends with a backlog item and, if picked up now, a task; building happ
 `act-prepare`.
 
 1. **Keep the wording verbatim** — the later yardstick, not the assistant's summary of it.
-2. **Check what exists first** (`explorer` role): does this partly exist already, which files
-   would be affected, and — above all — does it conflict with a decision in
-   `docs/project/decisions.md`? A conflict makes this an ADR revision, not a feature.
+2. **Check what exists first** (`explorer` role, the whole research; the main session reads only its
+   result, `R-cost-delegate`): does this partly exist already, which files would be affected, and —
+   above all — does it conflict with a decision in `docs/project/decisions.md`? A conflict makes this
+   an ADR revision, not a feature.
 3. **Write a concept** at `docs/project/concepts/<topic>.md` (images linked from the idea move into
    the concept's folder with it, the idea's id or topic in front of a generic name like `img.png`,
    and the links are adjusted): starting point with findings — who

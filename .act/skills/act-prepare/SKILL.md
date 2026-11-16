@@ -10,18 +10,19 @@ questions, stated assumptions) and `R-work-handover`. **In one sentence:** the h
 everything open **once**, then the block runs unattended. The costliest mistake is a question the
 code already answers, so research comes before the question round, never after.
 
-**Short path — one task, no open question:** bound the scope in a sentence, one `explorer` look at what exists,
-at `decisions.md` and at `docs/project/learnings/` (grep `area:`/`tags:`), and a check that the backlog entries
-in scope have no open `decision:` point, then `entries.py new task <title>` with goal, acceptance criterion, steps and size
-(step 3). Ready by step 4's test: say so and hand it over. No question round, no ADR, no order plan. Anything
-open or conflicting: the full path below.
+**Short path — one task, no open question:** bound the scope in a sentence, one `explorer` look at what exists, at
+`decisions.md` and at `docs/project/learnings/` (grep `area:`/`tags:`; the whole research goes to it,
+`R-cost-delegate`), and a check that the backlog entries in scope have no open `decision:` point, then
+`entries.py new task <title>` with goal, acceptance criterion, steps and size (step 3). Ready by step 4's test:
+say so and hand it over. No question round, no ADR, no order plan. Anything open or conflicting: the full path
+below.
 
 1. **Bound the scope** — what's in, what's explicitly not, both written down.
-2. **Research what exists, in parallel** — several `explorer` roles in one message: what already
-   exists, which files are affected, does anything in `docs/project/decisions.md` conflict, where
-   does the code differ from the docs. Also grep `docs/project/learnings/` (headers `area:`,
-   `tags:`) for the topic and read only the hits; a note whose `retire_when` is met gets reported,
-   not followed.
+2. **Research what exists, in parallel** — several `explorer` roles in one message (the main session
+   reads only their results, `R-cost-delegate`): what already exists, which files are affected, does
+   anything in `docs/project/decisions.md` conflict, where does the code differ from the docs. The
+   explorer also greps `docs/project/learnings/` (headers `area:`, `tags:`) for the topic and reads
+   only the hits; a note whose `retire_when` is met gets reported, not followed.
 3. **Cut it into tasks or stories.** Each task: one-sentence goal, checkable acceptance criterion,
    steps as bullets, and a size as duration and tokens with its assumption (`python .act/scripts/usage.py
    --estimates`, as in `act-idea`). Something bigger with its own justification becomes a story

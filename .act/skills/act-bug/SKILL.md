@@ -11,10 +11,11 @@ cleanup found along the way, and not for a fix nobody could actually trigger.
 1. **Reproduce first.** Search only once the bug triggers — locally, as a test case, or from a log
    excerpt the human gives. No reproduction yet: skip straight to the report below.
 2. **Localize.** Affected layer, since when (`git log`, `git bisect` between known-good and current).
-   Cause not obvious after a quick look: delegate the hypothesis search to the `debugger` role
-   instead of guessing. Also grep `docs/project/learnings/` (headers `area:`, `tags:`) for the
-   area and symptom keywords and read only the hits; a note whose `retire_when` is met gets
-   reported, not followed.
+   Locating it across more than three files or in an unknown spot goes to `explorer` as a whole
+   (`R-cost-delegate`); the explorer also greps `docs/project/learnings/` (headers `area:`, `tags:`)
+   for the area and symptom keywords and reads only the hits; a note whose `retire_when` is met gets
+   reported, not followed. Cause not obvious after a quick look: delegate the hypothesis search to
+   the `debugger` role instead of guessing.
 3. **Name the cause**, not just where it surfaces. Several candidates: check the likeliest first.
 4. **Pick the seam.** Before writing the test, decide which interface it will exercise — one seam
    per cycle, not an implementation detail. That's what keeps the test from re-breaking on the next

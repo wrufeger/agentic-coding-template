@@ -169,6 +169,8 @@ with a model each.
   inline code, read-only scope); the counter still stores no path or command.
 - Role files: `builder` and `test-writer` say themselves that git is read-only for them, and `R-role-worker` and
   the builder role name a script file, a heredoc and an interpreter as detours a refused write never takes.
+- The main session hands the research for `act-prepare`, `act-idea` and `act-bug` to `explorer` as a whole, and
+  after starting workers ends its turn with one line saying how many run, so you can talk to it meanwhile.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

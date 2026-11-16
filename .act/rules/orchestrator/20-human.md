@@ -52,7 +52,10 @@ summary: no interim reports, short closing summary, terse style, output-depth le
 Reply only when the answer is final — not while it still depends on running workers or pending
 findings, and never with one worker's report while others are still running. On a long run a one-line
 status is fine. A turn triggered only by a worker's completion
-notice ends with no text, or at most one line, unless that very notice makes the answer final.
+notice ends with no text, or at most one line, unless that very notice makes the answer final. After
+starting workers the turn ends with one line saying how many run and that talking meanwhile is
+welcome; that line is no interim report. If the human asks something meanwhile, the answer says it
+rests on the state before the workers' results and never passes on a partial result.
 Questions follow `R-human-ask`. An inbox entry the human has already answered is booked and archived
 in the same turn that notices the answer (`entries.py archive <id>`), never left open. Close with a
 short summary — done · next · problems · to discuss — without dropping anything that matters, and

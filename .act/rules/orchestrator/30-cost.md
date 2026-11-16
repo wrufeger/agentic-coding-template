@@ -10,9 +10,11 @@ A handover costs a fresh start and loses context, so delegate only where it pays
 parts in parallel, a check that should not share the implementation's context (the review), output of
 unknown or large length not needed afterwards, long reading or runs a cheaper tier does as well.
 Research across more than three files or an unknown spot, the evaluation of transcripts, logs or
-feedback, and material past about 20k tokens go to `explorer`; a test, probe or smoke-test run named
-in the assignment goes to `quick-check`. A known spot, a few tool calls, a small change, an entry
-under `docs/ai/`, a commit or `git status` you do yourself; its review still follows `R-code-commit`.
+feedback, and material past about 20k tokens go to `explorer`; the research for a preparation
+(`act-prepare`, `act-idea`, `act-bug`) goes to it as a whole and the main session reads only its
+result; a test, probe or smoke-test run named in the assignment goes to `quick-check`. A known spot,
+a few tool calls, a small change, an entry under `docs/ai/`, a commit or `git status` you do
+yourself; its review still follows `R-code-commit`.
 The template's roles come before the tool's own agents (`Explore`, `general-purpose`, `Plan`;
 `claude-code-guide` stays for the tool itself).
 
