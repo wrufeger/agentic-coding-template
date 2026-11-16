@@ -800,7 +800,7 @@ def _downgrade_warning(checkout: Path, fetched: Optional[str], source: str) -> O
 
 _PLAN_FILE = "update-plan.json"
 _PLAN_MAX_AGE_S = 3600
-_REMOTE_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_REMOTE_URL = re.compile(r"^(?!file://)[A-Za-z][A-Za-z0-9+.-]*://", re.IGNORECASE)  # file:// is a local folder
 _REMOTE_SCP = re.compile(r"^[^@/\s]+@[^:/\s]+:")
 
 

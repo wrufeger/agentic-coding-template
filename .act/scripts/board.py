@@ -510,16 +510,33 @@ def read_other_boards(root: Path, own_name: str) -> list[tuple[str, list[str]]]:
     return found
 
 
-def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list[str]]:
-    """Same idea as read_task_titles(), for docs/ai/work/backlog/."""
+def _backlog_files(root: Path) -> Optional[list[Path]]:
+    """Every backlog entry file, newest first by "created:" or, failing that, the timestamp in the file name
+    (_timeline_key(); an entry with neither sorts last); None without the folder."""
     backlog_dir = root / BACKLOG_DIR
     if not backlog_dir.is_dir():
         return None
-    files = sorted(
+    return sorted(
         (p for p in backlog_dir.glob("*.md") if p.name.lower() != "readme.md"),
-        key=lambda p: _timeline_key(_read_created(p), p.name, newest_first=False),
+        key=lambda p: _timeline_key(_read_created(p), p.name, newest_first=True),
     )
-    return [(_first_heading(path) or path.stem) for path in files[:limit]]
+
+
+def read_backlog_titles(root: Path, limit: int = BACKLOG_LIMIT) -> Optional[list[str]]:
+    """Same idea as read_task_titles(), for docs/ai/work/backlog/: the newest `limit` titles. A list cut short
+    ends with a `… +N more` line that names the folder, so the cut is never silent."""
+    files = _backlog_files(root)
+    if files is None:
+        return None
+    titles = [(_first_heading(path) or path.stem) for path in files[:limit]]
+    if len(files) > limit:
+        titles.append(f"… +{len(files) - limit} more ({BACKLOG_DIR.as_posix()}/)")
+    return titles
+
+
+def count_backlog(root: Path) -> int:
+    """How many backlog entries there are, whatever the list shows."""
+    return len(_backlog_files(root) or [])
 
 
 # ---------------------------------------------------------------------------
@@ -1150,7 +1167,7 @@ def main(argv: list[str]) -> int:
     waiting_total = (
         waiting_mine_total + waiting_all_total + waiting_other_count if waiting_mine is not None else 0
     )
-    backlog_count = len(backlog_titles) if backlog_titles is not None else 0
+    backlog_count = count_backlog(root)
     rel = board_path.relative_to(root).as_posix()
     if board_rel.parts[0] == ".act-local" and local_blocked:
         print(f"board: wrote nothing to {rel} ({local_blocked[0]})", file=sys.stderr)

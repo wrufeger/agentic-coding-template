@@ -252,12 +252,12 @@ def _commits_ahead_of(root: Path, ref: str) -> Optional[int]:
         return None
 
 
-_REMOTE_ADDRESS = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://|^[^@/\s]+@[^:/\s]+:")
+_REMOTE_ADDRESS = re.compile(r"^(?!file://)[A-Za-z][A-Za-z0-9+.-]*://|^[^@/\s]+@[^:/\s]+:", re.IGNORECASE)
 
 
 def _is_remote_address(value: str) -> bool:
-    """Whether `value` is a remote git address (a URL with a scheme, or `user@host:path`); anything
-    else -- a drive path, an absolute or relative folder -- is a local folder."""
+    """Whether `value` is a remote git address (a URL with a scheme other than file://, or `user@host:path`); anything
+    else -- a file:// URL, a drive path, an absolute or relative folder -- is a local folder."""
     return bool(_REMOTE_ADDRESS.match(value))
 
 
@@ -3029,15 +3029,23 @@ def step_materialize(
 
     for dest_rel, src in copy_targets(root, cfg["tools"]).items():
         dest = root / dest_rel
-        message, created = _write_copy_file(
-            src, dest, plan, root,
-            data=None if plan else skill_copy_bytes(root, dest_rel, src, tiers_data, overrides),
-        )
+        copy_data = None if plan else skill_copy_bytes(root, dest_rel, src, tiers_data, overrides)
+        message, created = _write_copy_file(src, dest, plan, root, data=copy_data)
         messages.append(message)
         if created or dest.is_file():
             touched.append(dest)
+        # Record only a destination this run wrote or whose bytes are what init would write: a
+        # foreign file left in place must not be recorded as the template's copy, or the next
+        # update would count it as unedited and replace it without a backup.
         if not plan and dest.is_file():
-            copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.lock_hash(dest.read_bytes())}
+            current = dest.read_bytes()
+            if created or actlib.fold_crlf(current) == actlib.fold_crlf(copy_data):
+                copies[dest_rel] = {"source": _copy_source_label(root, src), "sha256": actlib.lock_hash(current)}
+            else:
+                messages.append(
+                    f"{_relative_label(dest, root)}: differs from the template's copy, not recorded as a copy "
+                    "(update leaves it alone unless it matches the template's copy)"
+                )
 
     for dest_rel, src in agent_bridge_targets(root, cfg["tools"]).items():
         role = bridge_target_parts(dest_rel)[1]

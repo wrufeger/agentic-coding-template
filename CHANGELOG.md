@@ -151,6 +151,9 @@ with a model each.
   count a live-system call as reading only for a subcommand documented as reading.
 - `R-safe-no-shell-delete`: no unguarded variable in a delete target (`"${D:?}"` or a fixed path);
   `R-safe-dev-server`: a browser session opened for a check is closed after use.
+- `doctor.py --accept <id>` with nothing to accept for that id stops with exit 2 and names it.
+- Board: the backlog list shows the newest five with “… +N more” and the summary counts all;
+  `entries.py archive T<n>` names the task's still-open entries with their archive commands.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
@@ -202,6 +205,11 @@ with a model each.
   `update.py` refuses a source that is itself a set-up project and names `--source <address>`.
 - An update or `init.py` no longer ends in a traceback when `.gitignore` ignores a file it writes (an allowlist such
   as `*`, `!docs/`): it stays out of the commit, which names it; an ignored `CHANGELOG.md` is not created.
+- `init` no longer records a file it finds at a skill copy destination as the template's copy, so the next
+  `act-update` no longer replaces it without a backup; it reports it as not taken over.
+- A `file://` template source counts as a local folder in `init` and `act-update`.
+- `act-doctor` names an unreadable skill file or folder instead of crashing or dropping a kept override; its inbox
+  report is written with LF.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a

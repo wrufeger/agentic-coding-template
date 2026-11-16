@@ -88,7 +88,9 @@
 #     checks call instead of repeating the scan.
 #   "archive": for a task, a backlog item or an inbox entry (found by id or path; directly in its
 #     folder), or a concept file (below). Always moves the file to docs/ai/work/archive/ - nothing is
-#     deleted; `compact` folds it into its monthly file later. An inbox entry gets `status: done` in its
+#     deleted; `compact` folds it into its monthly file later. After a task, it names each still-open backlog item
+#     or inbox entry that carries the task id as a whole word in its title or a header field, with the archive
+#     command for it (a hint: exit code and archive unchanged). An inbox entry gets `status: done` in its
 #     header (either header form), a task gets `finished: <timestamp>` (right below `started:`, else
 #     below `created:`; an existing `finished:` stays), a backlog item keeps its header; every moved file
 #     gets the header field `archived: <date>` (an existing one is replaced). Non-Markdown
@@ -1625,6 +1627,32 @@ def _incoming_links(root: Path, old: Path, new: Path) -> dict[Path, str]:
     return changed
 
 
+def _open_entries_naming_task(root: Path, task_id: str) -> list[tuple[str, str]]:
+    """(id, title) of every open backlog item and inbox entry that names `task_id` as a whole word (never as part of
+    a longer id with more digits) in its first heading or a header field. An inbox entry with `status: done` is not open; an entry
+    without an id cannot be archived by id and is left out. Ordered by id."""
+    word = re.compile(rf"(?<![A-Za-z0-9]){re.escape(task_id)}(?![A-Za-z0-9])")
+    found: list[tuple[str, str]] = []
+    for folder in (root / KIND_DIR["backlog"], root / actlib.INBOX_DIR):
+        if not folder.is_dir():
+            continue
+        for path in sorted(folder.glob("*.md")):
+            text = _safe_read(path)
+            if path.name.lower() == "readme.md" or text is None:
+                continue
+            entry_id = _entry_id(text)
+            if entry_id is None or entry_id.startswith("T"):
+                continue
+            header = actlib.header_block(text)
+            if re.search(r"(?m)^status:\s*done\s*$", header):
+                continue
+            title = _first_heading(path) or ""
+            own = "\n".join(line for line in header.split("\n") if not line.startswith("id:"))
+            if word.search(title) or word.search(own):
+                found.append((entry_id, title))
+    return sorted(found, key=lambda item: (item[0][0], int(re.sub(r"\D", "", item[0]) or 0), item[0]))
+
+
 def cmd_archive(root: Path, ref: str) -> int:
     try:
         entry = _find_archivable(root, ref)
@@ -1687,6 +1715,10 @@ def cmd_archive(root: Path, ref: str) -> int:
             status = 1
             continue
         print(f"entries: relinked links to {label} in {_rel(path, root)}")
+    if plan.entry_id and plan.entry_id.startswith("T") and not plan.inbox:
+        for other_id, other_title in _open_entries_naming_task(root, plan.entry_id):
+            print(f"entries: still open and names {plan.entry_id}: {other_id} {other_title} - "
+                  f"python .act/scripts/entries.py archive {other_id}")
     return status
 
 

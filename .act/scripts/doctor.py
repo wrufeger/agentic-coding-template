@@ -261,7 +261,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "import": "Regeldateien, die Claude Code nicht lädt (rules.py --imports)",
     "dead-id": "Tote Kennungen (überschrieben/aus, aber aus der Vorlage verschwunden)",
     "use-missing": "Abgewählter Regelsatz mit fehlendem Ziel",
-    "override-stale": "Überschriebene Regel oder überschriebener Skill, deren Vorlagentext sich geändert hat",
+    "override-stale": "Überschriebene Regeln oder Skills, deren Vorlagentext sich geändert hat",
     "ref-missing": "Kaputte Verweise",
     "duplicate-unit": "Doppelte Scripte/Agenten/Skills",
     "duplicate-id": "Doppelte Eintragskennungen (Aufgabe/Backlog/Frage)",
@@ -465,26 +465,51 @@ def check_dead_and_stale(
 
 
 SKILL_KEY_PREFIX = "skill:"
+UNKNOWN_SKILLS = "*"  # stands in `unreadable` for "the local skills folder could not be listed"
+_REPORTED_READ_ERRORS: set[str] = set()
 
 
-def skill_overrides(root: Path) -> dict[str, tuple[list[str], str]]:
+def _report_read_error(message: str) -> None:
+    """Prints a read error once per run, however often the skill folders are scanned."""
+    if message not in _REPORTED_READ_ERRORS:
+        _REPORTED_READ_ERRORS.add(message)
+        print(message, file=sys.stderr)
+
+
+def skill_overrides(root: Path) -> tuple[dict[str, tuple[list[str], str]], set[str]]:
     """Local skill overrides: name -> (sorted posix paths below the skill folder that exist in both
     docs/ai/local/skills/<name>/ and .act/skills/<name>/, sha256 of the template-side files). The hash
     feeds `path + NUL + file bytes + NUL` per path. A local folder that only adds files no template
-    file matches is no override and is left out, as is an own skill (no template folder of that name)."""
+    file matches is no override and is left out, as is an own skill (no template folder of that name).
+    The second value names the skills whose files could not be read (UNKNOWN_SKILLS when the local skills
+    folder itself could not be listed): they are not checked, but a baseline recorded for them is kept."""
+    unreadable: set[str] = set()
     local = root / "docs" / "ai" / "local" / "skills"
     template = root / ".act" / "skills"
     found: dict[str, tuple[list[str], str]] = {}
     if not local.is_dir() or not template.is_dir():
-        return found
-    for folder in sorted(p for p in local.iterdir() if p.is_dir()):
+        return found, unreadable
+    try:
+        folders = sorted(p for p in local.iterdir() if p.is_dir())
+    except OSError as exc:
+        _report_read_error(f"doctor.py: cannot list docs/ai/local/skills ({type(exc).__name__}: {exc}); "
+                           f"local skill overrides not checked")
+        unreadable.add(UNKNOWN_SKILLS)
+        return found, unreadable
+    for folder in folders:
         base = template / folder.name
         if not base.is_dir():
             continue
-        shared = sorted(
-            f.relative_to(folder).as_posix() for f in folder.rglob("*")
-            if f.is_file() and "__pycache__" not in f.parts and (base / f.relative_to(folder)).is_file()
-        )
+        try:
+            shared = sorted(
+                f.relative_to(folder).as_posix() for f in folder.rglob("*")
+                if f.is_file() and "__pycache__" not in f.parts and (base / f.relative_to(folder)).is_file()
+            )
+        except OSError as exc:
+            _report_read_error(f"doctor.py: cannot list docs/ai/local/skills/{folder.name} "
+                               f"({type(exc).__name__}: {exc}); skill override not checked")
+            unreadable.add(folder.name)
+            continue
         if not shared:
             continue
         digest = hashlib.sha256()
@@ -492,17 +517,26 @@ def skill_overrides(root: Path) -> dict[str, tuple[list[str], str]]:
             for rel in shared:
                 digest.update(rel.encode("utf-8") + b"\0" + (base / rel).read_bytes() + b"\0")
         except OSError as exc:
-            print(f"doctor.py: cannot read template skill file .act/skills/{folder.name}/{rel} "
-                  f"({type(exc).__name__}); skill override not checked", file=sys.stderr)
+            _report_read_error(f"doctor.py: cannot read template skill file .act/skills/{folder.name}/{rel} "
+                               f"({type(exc).__name__}: {exc}); skill override not checked")
+            unreadable.add(folder.name)
             continue
         found[folder.name] = (shared, digest.hexdigest())
-    return found
+    return found, unreadable
 
 
 def own_rules_review_mode(root: Path) -> str:
     """The `own-rules-review` switch: off | warn | block; a missing or invalid value means warn."""
     value = _config_word(root, "own-rules-review", "warn")
     return value if value in ("off", "warn", "block") else "warn"
+
+
+class UnknownAcceptId(Exception):
+    """`--accept` named rule ids with no override, no off entry and no recorded baseline."""
+
+    def __init__(self, ids: list[str]) -> None:
+        super().__init__(", ".join(ids))
+        self.ids = ids
 
 
 def apply_override_hashes(
@@ -516,11 +550,17 @@ def apply_override_hashes(
     recorded: dict[str, str] = dict(lock.get("overrides") or {})
     # Only IDs still overridden keep their baseline: a dropped and later re-added override
     # starts from a fresh sighting instead of being reported as stale.
-    skills = skill_overrides(root)
+    skills, unreadable = skill_overrides(root)
     review = own_rules_review_mode(root)
     to_write = {gid: h for gid, h in recorded.items()
-                if gid in candidates or (gid.startswith(SKILL_KEY_PREFIX) and gid[len(SKILL_KEY_PREFIX):] in skills)}
+                if gid in candidates or (gid.startswith(SKILL_KEY_PREFIX)
+                    and (gid[len(SKILL_KEY_PREFIX):] in skills or gid[len(SKILL_KEY_PREFIX):] in unreadable
+                         or UNKNOWN_SKILLS in unreadable))}
     findings: list[Finding] = []
+    unknown = sorted(g for g in accept_ids if not g.startswith(SKILL_KEY_PREFIX)
+                     and g not in candidates and g not in recorded)
+    if unknown:
+        raise UnknownAcceptId(unknown)
 
     def stale(gid: str, project_path: str, project_line: Optional[int]) -> Finding:
         return Finding(
@@ -2489,7 +2529,7 @@ def remember_tier_proposals(root: Path, filed: dict[str, int]) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         data = {key: {"count": count, "filed": filed_on} for key, (count, filed_on) in memory.items()}
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     except OSError:
         return False
     return True
@@ -3053,7 +3093,7 @@ def write_inbox(root: Path, findings: list[Finding]) -> Optional[Path]:
         lines.extend(f"- {f.render()}" for f in group)
         lines.append("")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+    dest.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8", newline="\n")
     return dest
 
 
@@ -3184,14 +3224,20 @@ def main(argv: list[str]) -> int:
             return 2
 
     accept_ids = set(args.accept)
-    known_skills = skill_overrides(root)
+    known_skills, skills_unreadable = skill_overrides(root)
     for gid in sorted(accept_ids):
-        if gid.startswith(SKILL_KEY_PREFIX) and gid[len(SKILL_KEY_PREFIX):] not in known_skills:
+        if gid.startswith(SKILL_KEY_PREFIX) and gid[len(SKILL_KEY_PREFIX):] not in known_skills \
+                and gid[len(SKILL_KEY_PREFIX):] not in skills_unreadable and UNKNOWN_SKILLS not in skills_unreadable:
             print(f"doctor.py: --accept {gid}: no local override docs/ai/local/skills/"
                   f"{gid[len(SKILL_KEY_PREFIX):]}/ of a file of the template skill .act/skills/"
                   f"{gid[len(SKILL_KEY_PREFIX):]}/", file=sys.stderr)
             return 2
-    findings, effective = run(root, accept_ids, args.accept_all)
+    try:
+        findings, effective = run(root, accept_ids, args.accept_all)
+    except UnknownAcceptId as exc:
+        print(f"doctor.py: --accept {', '.join(exc.ids)}: no override, off entry or recorded baseline for this "
+              f"id (nothing was written)", file=sys.stderr)
+        return 2
 
     if args.inbox:
         # A tier proposal is a decision, so it goes into a question of its own, not into the
