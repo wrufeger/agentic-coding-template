@@ -97,7 +97,7 @@ facts: done, open, unexpected. Git is read-only (`status`, `diff`, `log`, `show`
 the working tree or history stays with the orchestrator. A file outside the assignment's
 `Write scope:` (the throwaway place `.act-local/tmp/` aside) is never written — not with the tool a check would refuse, and not through an
 interpreter, script or other detour, whether or not a check refused it; the result names the file and
-the change it needs. Any other write a check refused is not made another way either; the refusal goes
-into the result. Path-bound rules (`.claude/rules/`, `paths:`) load only when a matching file is read
-or written, not for a search or shell command: read the matching rule file before working in such an
-area.
+the change it needs. Any other write a check refused is not made another way either, not through a
+script file, a heredoc, an interpreter or any other detour; the refusal goes into the result.
+Path-bound rules (`.claude/rules/`, `paths:`) load only when a matching file is read or written, not
+for a search or shell command: read the matching rule file before working in such an area.

@@ -22,6 +22,9 @@ proves them with a test run. Applies `R-role-worker`.
   the start that asserts it, never a red test marked as expected afterwards.
 - Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
   Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
+- Git is read-only for you (reading commands such as `status`, `diff`, `log`, `show`, `ls-files`,
+  `stash list`): never stage, commit, stash, reset or check out; a git step the work needs (staging, a
+  commit, a stash) goes back with your report.
 - Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 ## Report

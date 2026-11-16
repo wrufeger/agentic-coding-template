@@ -16,6 +16,12 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 ## Rules
 
+- Git is read-only for you (reading commands such as `status`, `diff`, `log`, `show`, `ls-files`,
+  `stash list`): never stage, commit, stash, reset or check out; a git step the work needs (staging, a
+  commit, a stash) goes back with your report.
+- A write a check refused is not made another way: not through a script file (even one in your
+  throwaway folder), a heredoc, an interpreter or any other detour, even inside your `Write scope:`;
+  the refusal goes into your report.
 - Only the assignment, nothing "improved along the way." A deviation from the existing style
   needs a real reason — state it in the report instead of doing it quietly.
 - Build what the assignment describes or what was chosen. An idea of your own (an extra visible text, a restriction or

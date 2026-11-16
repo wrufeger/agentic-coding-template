@@ -163,6 +163,8 @@ with a model each.
   `entries.py archive T<n>` names the task's still-open entries with their archive commands.
 - Refusal questions pick their suggestion by the most frequent kind of refusal (protected path, outside the scope,
   inline code, read-only scope); the counter still stores no path or command.
+- Role files: `builder` and `test-writer` say themselves that git is read-only for them, and `R-role-worker` and
+  the builder role name a script file, a heredoc and an interpreter as detours a refused write never takes.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).
