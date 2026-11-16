@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import actlib
+
 __all__ = ["emit", "role_omits_claude_md"]
 
 _ROLE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -34,7 +36,6 @@ _NAME_LINE = re.compile(r"^name\s*:\s*(?P<value>[^#]+?)\s*(?:#.*)?$")
 
 
 def _project_root(payload: dict) -> Path:
-    import actlib
     for candidate in (os.environ.get("CLAUDE_PROJECT_DIR"), payload.get("cwd")):
         if candidate:
             try:
@@ -45,7 +46,6 @@ def _project_root(payload: dict) -> Path:
 
 
 def _frontmatter_lines(path: Path) -> list[str]:
-    import actlib
     return actlib.frontmatter_lines(path.read_text(encoding="utf-8")) or []
 
 

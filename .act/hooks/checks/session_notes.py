@@ -223,7 +223,7 @@ def _docs_audit_note(root: Path, config: dict[str, str]) -> Optional[str]:
     note", but a session start recurs many times a day -- including a resume/compact, which is not
     a fresh session in any way that matters here) via `.act-local/cache.json`'s
     `docs_audit_overdue_last_noted`, the same per-day-state pattern `_check_update_awareness`'s
-    `_already_checked_today` uses for its own once-a-day network check."""
+    `checked_today` (state_files.py) uses for its own once-a-day network check."""
     if not (root / "docs" / "project").is_dir():
         return None
     raw = config.get("docs-audit-due", "").strip()

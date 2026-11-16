@@ -49,6 +49,8 @@ def _prune(sessions: dict) -> dict:
 
 def _write_state(root: Path, state: dict) -> None:
     path = _state_path(root)
+    if not actlib.local_write_ok(root, path):
+        return  # .act-local is a link or leaves the project: nothing is written through it
     write_json_atomic(path, state, prefix=".context-hint-", sort_keys=True)
 
 

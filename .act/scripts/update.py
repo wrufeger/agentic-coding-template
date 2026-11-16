@@ -97,10 +97,7 @@ def _categorize(rel_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
-    result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        errors="replace",  # a name that is not UTF-8 never equals a known path; at worst git rejects it later
-    )
+    result = actlib.git_run(cwd, args)  # replacement characters: a name that is not UTF-8 never equals a known path
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result
@@ -1105,6 +1102,49 @@ def _has_unsaved_changes(root: Path, rel: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+# Files other than the coding rules that a step may write into although the owner has not committed
+# their own changes: the update writes into them but leaves them out of its commit.
+_OWNER_HELD_FILES = (rules.AREAS["core"].project_file, ".gitignore", ".gitattributes")
+
+
+def _unsaved_owner_files(root: Path) -> frozenset[str]:
+    """Which of _OWNER_HELD_FILES have changes no commit holds yet; taken before a run writes anything."""
+    return frozenset(rel for rel in _OWNER_HELD_FILES if _has_unsaved_changes(root, rel))
+
+
+def _held_back_note(rel: str, plan: bool) -> str:
+    wrote = "would write into it but leave it" if plan else "wrote into it but left it"
+    return f"{rel} had changes that are not committed, so the update {wrote} out of its commit; review and commit it yourself"
+
+
+def _plan_writes_owner_file(root: Path, rel: str, act_dir: Path) -> bool:
+    """Would this run's steps write `rel` (one of _OWNER_HELD_FILES)? Judged without writing, from the
+    fetched .act/ in `act_dir`: a .gitignore/.gitattributes block that still has lines to add or replace
+    (the same merge init.py's _append_block applies), or a docs/ai/rules.md the rule steps would change."""
+    if rel == rules.AREAS["core"].project_file:
+        return (step_move_core_entries(root, True)[0].startswith("would")
+                or step_add_missing_core_entries(root, True, act_dir)[0].startswith("would"))
+    bridge = {".gitignore": "gitignore-lines", ".gitattributes": "gitattributes"}.get(rel)
+    if bridge is None:
+        return False
+    try:
+        block = (act_dir / "bridges" / bridge).read_text(encoding="utf-8")
+        path = root / rel
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        applied = dict(actlib.read_lock().get("bridges_applied", {})).get(rel)
+        return bool(actlib.merge_text_block(existing, block, applied)[1])
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _print_plan_held_notes(root: Path, act_dir: Path) -> None:
+    """Under --plan: one note per file with uncommitted changes that the update would write into and
+    leave out of its commit; a file the plan would not write gets none (as in the real run)."""
+    for rel in sorted(_unsaved_owner_files(root)):
+        if _plan_writes_owner_file(root, rel, act_dir):
+            print(f"[act]   note: {_held_back_note(rel, True)}")
+
+
 def step_list_new_coding_entries(
     root: Path, plan: bool, act_dir: Optional[Path] = None, unsaved: Optional[bool] = None,
     notes: Optional[list[str]] = None,
@@ -1208,7 +1248,9 @@ def step_move_core_entries(root: Path, plan: bool) -> tuple[str, list[Path]]:
     return f"{verb} in {rel}: {'; '.join(messages)}", ([] if plan else [path])
 
 
-def step_add_missing_core_entries(root: Path, plan: bool) -> tuple[str, list[Path], list[str]]:
+def step_add_missing_core_entries(
+    root: Path, plan: bool, act_dir: Optional[Path] = None,
+) -> tuple[str, list[Path], list[str]]:
     """Enter into docs/ai/rules.md what the replaced .act/rules/ added and the file does not know: a rule
     as a checkbox line, a rule file as an import block (rules.add_missing_core_entries). A copy that is
     still exactly its generated one is skipped here (the bridge refresh re-derives it; step_doctor then
@@ -1221,7 +1263,7 @@ def step_add_missing_core_entries(root: Path, plan: bool) -> tuple[str, list[Pat
     try:
         if actlib.generated_unchanged(path, actlib.read_cache()["generated"].get(rel, "")):
             return "", [], []
-        result = rules.add_missing_core_entries(root, write=not plan, no_record="git")
+        result = rules.add_missing_core_entries(root, write=not plan, no_record="git", act_dir=act_dir)
     except (OSError, UnicodeDecodeError) as exc:
         return f"rules not checked ({exc.__class__.__name__}: {exc})", [], []
     notes = [f"{rel}: {problem}" for problem in result.problems]
@@ -1513,12 +1555,6 @@ def _dest_skill_dir(new_init, dest_rel: str) -> Optional[str]:
     return None
 
 
-def _fold(data: bytes) -> bytes:
-    """CRLF folded to LF, unless binary — the same rule as manifest.content_hash() (a checkout
-    with core.autocrlf=true writes every copy with CRLF; that is not an edit)."""
-    return actlib.fold_crlf(data)
-
-
 def _unedited(current: bytes, recorded_sha: Optional[str]) -> bool:
     return actlib.matches_lock_hash(current, recorded_sha)
 
@@ -1702,7 +1738,7 @@ def step_refresh_copies(
             failed.append(dest_rel)
             continue
         if _unedited(current, old_entry.get("sha256")):
-            if _fold(current) != _fold(data):
+            if actlib.fold_crlf(current) != actlib.fold_crlf(data):
                 if not _write_bytes(dest_path, data):
                     new_copies[dest_rel] = old_entry
                     failed.append(dest_rel)
@@ -1737,7 +1773,7 @@ def step_refresh_copies(
             failed.append(dest_rel)
             continue
         if existing is not None:
-            if _fold(existing) == _fold(data):
+            if actlib.fold_crlf(existing) == actlib.fold_crlf(data):
                 # byte-identical already — e.g. written by an earlier run that stopped midway
                 _record(dest_rel, source_path, data)
                 adopted.append(dest_rel)
@@ -3507,6 +3543,7 @@ def _finish_update(
 ) -> int:
     # before any step below writes: what the owner has not committed in the coding rules is theirs
     coding_unsaved = _has_unsaved_changes(root, rules.AREAS["coding"].project_file)
+    held_unsaved = _unsaved_owner_files(root)  # rules.md, .gitignore, .gitattributes: same, see the commit below
     sync_summary, new_copies, sync_touched = sync_dependent_files(root, always_run=True, notes=notes)
     # Own skills/roles written by hand under docs/ai/local/ get their tool copies/bridge too; the
     # entries are merged into new_copies because step_lock() below writes that value as a whole.
@@ -3558,6 +3595,13 @@ def _finish_update(
     commit_paths.extend(hooks_gitfiles_touched)
     commit_paths.extend(doctor_touched)
     commit_paths.extend(doctor_inbox_paths)
+    if held_unsaved:
+        # a file with the owner's uncommitted changes is written into but not committed here
+        held_paths = {root / rel for rel in held_unsaved}
+        left_out = sorted(rel for rel in held_unsaved if root / rel in commit_paths)
+        commit_paths = [path for path in commit_paths if path not in held_paths]
+        if not no_commit:
+            notes.extend(_held_back_note(rel, False) for rel in left_out)
     rescue_dir = root / "docs" / "ai" / "local"
     if rescue_active and rescue_dir.is_dir():
         commit_paths.append(rescue_dir)
@@ -3638,6 +3682,7 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
             + _plan_methods_part(root)
         )
         print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
+        _print_plan_held_notes(root, act_dir)
         print("[act]   [8/10] " + _plan_migrations_summary(act_dir))
         print("[act]   [9/10] " + step_doctor(root, True)[0])
         print("[act]   [10/10] " + step_lock(root, True, source, {}, None))
@@ -3883,6 +3928,7 @@ def main(argv: list[str]) -> int:
                 + _plan_methods_part(root, new_act_dir)
             )
             print("[act]   [7/10] " + step_hooks_and_gitfiles(root, True)[0])
+            _print_plan_held_notes(root, new_act_dir)
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [9/10] " + step_doctor(root, True)[0])
             print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit, ref=lock_ref))

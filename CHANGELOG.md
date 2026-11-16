@@ -226,6 +226,11 @@ with a model each.
 - `encoding-hint` no longer reports a UTF-8 file as cp1252 when a character straddles its 64 KiB read window.
 - On Windows, `init`, `act-adopt`, `act-feedback` and `rules.py` write project files
   (`.claude/settings.json`, `docs/ai/config.md`, `coding_rules.md`, adopt reports, backlog entries) with LF.
+- `act-update` keeps your uncommitted changes to `docs/ai/rules.md`, `.gitignore` and `.gitattributes` out of
+  its commit: it still writes its addition and names each such file to commit yourself; `--plan` names the ones it
+  would write.
+- The daily session-start markers no longer crash on a marker file that is not UTF-8, and the context hint no
+  longer writes its state through an `.act-local` that is a link or leaves the project.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a

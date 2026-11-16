@@ -1355,17 +1355,19 @@ ADD_MISSING_COMMAND = "python .act/scripts/rules.py --add-missing"
 ADD_NEW_CODING_COMMAND = "python .act/scripts/rules.py --add-new-coding"
 
 
-def core_rule_files(root: Path) -> dict[str, TemplateSet]:
+def core_rule_files(root: Path, act_dir: Optional[Path] = None) -> dict[str, TemplateSet]:
     """The template's rule files docs/ai/rules.md can import, by root-relative path: every *.md directly
-    under .act/rules/shared/ and .act/rules/orchestrator/ (topics/ holds detail pages, not rules)."""
+    under .act/rules/shared/ and .act/rules/orchestrator/ (topics/ holds detail pages, not rules).
+    With `act_dir` they are read from that .act/ (a fetched one, to preview an update), keyed as if
+    it were installed."""
     found: dict[str, TemplateSet] = {}
     for layer in CORE_RULE_LAYERS:
-        base = root / ".act" / "rules" / layer
+        base = (act_dir or root / ".act") / "rules" / layer
         if not base.is_dir():
             continue
         for path in sorted(base.glob("*.md")):
             try:
-                found[path.relative_to(root).as_posix()] = parse_template_set(path, "template")
+                found[f".act/rules/{layer}/{path.name}"] = parse_template_set(path, "template")
             except (OSError, UnicodeDecodeError):
                 continue
     return found
@@ -1413,7 +1415,9 @@ def _block_end(lines: list[str], index: int) -> int:
     return _line_block(lines, index)[-1]
 
 
-def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "name") -> CoreAdd:
+def add_missing_core_entries(
+    root: Path, write: bool = True, no_record: str = "name", act_dir: Optional[Path] = None,
+) -> CoreAdd:
     """Enter into an edited docs/ai/rules.md every rule and every rule file of the template that the
     file does not know. A rule of an imported file gets `  - [x] `ID`` after the nearest listed rule
     that precedes it in the template file (else right below the import); a rule file gets its import
@@ -1431,13 +1435,15 @@ def add_missing_core_entries(root: Path, write: bool = True, no_record: str = "n
     `no_record` says what happens in a project whose lock has no record yet: "git" takes the rule files
     committed in HEAD as offered (so only a file new since then is entered) and falls back to "name"
     without git; "name" enters no file and lists the not imported ones in `unlisted` (no record is
-    written); "git-or-all" is "git", and without git every file counts as new."""
+    written); "git-or-all" is "git", and without git every file counts as new.
+
+    `act_dir`: read the template's rule files from that .act/ (a fetched one, to preview an update)."""
     area = AREAS["core"]
     result = CoreAdd()
     path = root / area.project_file
     if not path.is_file():
         return result
-    files = core_rule_files(root)
+    files = core_rule_files(root, act_dir)
     project = parse_project_file(path, area)
     recorded = actlib.read_rules_offered(root)
     tracking = True  # whether a record is kept (False: none in the lock and nothing to start one from)

@@ -397,6 +397,7 @@ def _read_json(path: Path, retry: bool = False) -> Optional[dict]:
     (read_text_retrying), for a file another process has just renamed into place."""
     if not path.is_file():
         return None
+    # utf-8-sig on purpose: a BOM is accepted, a file saved by Windows PowerShell 5.1 states the intent as plainly
     try:
         data = json.loads(read_text_retrying(path, "utf-8-sig") if retry else path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):

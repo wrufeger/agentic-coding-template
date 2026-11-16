@@ -170,10 +170,7 @@ def _git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Completed
     # parent instead of crashing with NotADirectoryError.
     while not cwd.is_dir() and cwd != cwd.parent:
         cwd = cwd.parent
-    result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-        errors="replace",  # a name that is not UTF-8 never equals a known path; at worst git rejects it later
-    )
+    result = actlib.git_run(cwd, args)  # replacement characters: a name that is not UTF-8 never equals a known path
     if check and result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result

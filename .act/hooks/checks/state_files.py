@@ -43,7 +43,7 @@ def checked_today(path: Path) -> bool:
     """True when the marker file at `path` says `last_checked` is today."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, ValueError):  # ValueError: not valid JSON, or not UTF-8 (UnicodeDecodeError)
         return False
     return isinstance(data, dict) and data.get("last_checked") == date.today().isoformat()
 

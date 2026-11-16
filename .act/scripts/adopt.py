@@ -193,9 +193,8 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     # — the owner's later `git commit` does not get it, hence long_legacy_paths() before --apply.
     # --literal-pathspecs: a path is a path, never a pattern — `notes[1].md` must not match
     # `notes1.md` in `ls-files`, `add` or `rm` (every git call of this script goes through here).
-    result = subprocess.run(["git", "--literal-pathspecs", "-c", "core.quotePath=false",
-                             "-c", "core.longpaths=true", "-C", str(root), *args],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    result = actlib.git_run(root, ["--literal-pathspecs", *args],
+                            config=["core.quotePath=false", "core.longpaths=true"])
     if check and result.returncode != 0:
         shown = " ".join(args[:4]) + (" …" if len(args) > 4 else "")
         raise RuntimeError(f"git {shown} failed (exit {result.returncode}): {result.stderr.strip()[:400]}")
