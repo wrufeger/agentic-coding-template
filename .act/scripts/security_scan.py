@@ -326,19 +326,22 @@ def _write_json(root: Path, path: Path, data: dict) -> bool:
     return True
 
 
-def write_running_marker(root: Path, state_hash: str, stale_after: float) -> bool:
+def write_running_marker(root: Path, state_hash: str, stale_after: float, attempt: int = 1) -> bool:
     """Marks a scan of <state_hash> as in flight; `stale_after` (epoch seconds) is when a reader
     may treat it as dead -- the writer derives it from `scan_time_limit`, the reader only compares.
-    False when the marker could not be written (the caller then does not spawn: a worker nobody
-    can see would only be waited for by no one)."""
+    `attempt` counts how often a scan of this state was started (1 = the first; a retry after a dead
+    marker writes 2). False when the marker could not be written (the caller then does not spawn: a
+    worker nobody can see would only be waited for by no one)."""
     return _write_json(
-        root, running_marker_path(root, state_hash), {"started": time.time(), "stale_after": stale_after},
+        root, running_marker_path(root, state_hash),
+        {"started": time.time(), "stale_after": stale_after, "attempt": attempt},
     )
 
 
 def read_running_marker(root: Path, state_hash: str) -> Optional[dict]:
-    """{"started": float, "stale_after": float} for a scan of <state_hash> still marked as running,
-    None when there is no (readable, well-formed) marker."""
+    """{"started": float, "stale_after": float, "attempt": int} for a scan of <state_hash> still
+    marked as running, None when there is no (readable, well-formed) marker. A marker without an
+    attempt, or with one that is not a positive int (an older version wrote it), counts as attempt 1."""
     data = actlib._read_json(running_marker_path(root, state_hash))
     if data is None:
         return None
@@ -346,7 +349,10 @@ def read_running_marker(root: Path, state_hash: str) -> Optional[dict]:
     stale_after = data.get("stale_after")
     if not isinstance(started, (int, float)) or not isinstance(stale_after, (int, float)):
         return None
-    return {"started": float(started), "stale_after": float(stale_after)}
+    attempt = data.get("attempt")
+    if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
+        attempt = 1
+    return {"started": float(started), "stale_after": float(stale_after), "attempt": attempt}
 
 
 def clear_running_marker(root: Path, state_hash: str) -> None:

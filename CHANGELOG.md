@@ -257,6 +257,8 @@ with a model each.
   cp1252 no longer blocks every shell command with `git` in it; a commit still blocks with the crash message.
 
 ### Security
+- A commit whose background dependency scan never finished starts one fresh scan; if that dies too, the commit is
+  refused (it passed as "not checked"). To drop only this scan: `security-check: local`.
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
   worker's `docs/ai/` or `.claude/settings.local.json` is judged there too.
 - The bash reading takes `$$` (the process id) as one unit, so a quote right after it stays a plain quote, and

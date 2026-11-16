@@ -37,9 +37,13 @@
 #          changed while the tool ran (digest before and after, review 2 C1). A marker past its
 #          own `stale_after` (the tools' own timeouts, `security_scan.scan_time_limit`, plus
 #          `_WORKER_MARGIN_SECONDS` — never a fixed guess a multi-tool scan could outrun, review 2
-#          m6) is a dead worker: the marker is cleared and the commit let through with a "not
-#          checked" note (the next commit spawns afresh), nothing cached. A spawn that fails clears its marker at
-#          once and refuses the commit unchecked (what crashed, how to switch the check off, doctor.py),
+#          m6) is a dead worker. The marker counts attempts: the first death clears it and starts
+#          one fresh attempt (marker with attempt 2, same wait, the "running" denial says it is a
+#          fresh attempt); the death of that attempt too clears the marker, caches nothing and
+#          refuses the commit unchecked (exit 2: started twice, never finished,
+#          `security_scan.py --deps`, `security-check: local` to drop only this scan), so no silent
+#          pass; the commit after that starts afresh at attempt 1. A spawn that fails clears its
+#          marker at once and refuses the commit unchecked (what crashed, how to switch the check off, doctor.py),
 #          rather than leaving every later commit waiting on a worker that never existed (m6). With
 #          no scan tool installed at all the engine cannot start a subprocess anyway, so its
 #          missing-tool answer is taken directly, without a worker.
@@ -126,10 +130,13 @@
 #     Claude Code 2.1.319 on Windows, 2026-11-06: hook processes run in no job object). On Windows a
 #     hook that Claude Code ends at its timeout takes its whole process tree with it, this worker
 #     included (not probed elsewhere, where the worker runs in a session of its own): the running
-#     marker then waits out `stale_after` and the next commit goes through with the "not checked"
-#     note. Spawning the worker so that it escapes that tree would gain little: a PreToolUse hook
-#     that times out lets its call through anyway (non-blocking error, same probe); a surviving
-#     worker would only fill the cache for the next commit.
+#     marker then waits out `stale_after`, the next commit starts one fresh attempt and, if that one
+#     dies too, is refused unchecked. Spawning the worker so that it escapes that tree would gain
+#     little: a PreToolUse hook that times out lets its call through anyway (non-blocking error, same
+#     probe); a surviving worker would only fill the cache for the next commit;
+#   - the merge scan after a tool call (`note_deps_merge_scan`) only notes: it clears a dead marker
+#     and returns whatever its attempt count, which resets the count (a commit after it starts again
+#     at attempt 1).
 
 from __future__ import annotations
 
@@ -207,12 +214,14 @@ _WORKER_MARGIN_SECONDS = 60.0
 @dataclasses.dataclass
 class _Outcome:
     """What `_resolve_scan` found out for one commit's touched lock files: `status` is "result"
-    (with `result` set), "running" (a scan is in flight, deny once), "dead" (a marker outlived its
-    own stale limit -- cleared, fail open with a note), "spawn_failed" (no worker could be started, the
-    commit refused) or "unhashable" (a file changed between being listed and being digested, fail open) or "linked"
-    (the running marker cannot be written because `.act-local` or its scan-cache folder is a link or
-    junction, `detail` names it; a scan cannot be handed to a worker and the hook's own time does not
-    suffice for one, so the commit is held, not let through unchecked)."""
+    (with `result` set), "running" (a scan is in flight, deny once; `detail` is "retried" when a marker
+    that outlived its stale limit was replaced by a fresh second attempt), "dead" (the marker of a second
+    attempt outlived its stale limit too -- cleared, the commit refused unchecked), "spawn_failed" (no
+    worker could be started, the commit refused) or "unhashable" (a file changed between being listed
+    and being digested, fail open) or "linked" (the running marker cannot be written because
+    `.act-local` or its scan-cache folder is a link or junction, `detail` names it; a scan cannot be
+    handed to a worker and the hook's own time does not suffice for one, so the commit is held, not
+    let through unchecked)."""
     status: str
     result: Optional[security_scan.ScanResult] = None
     detail: str = ""
@@ -350,13 +359,18 @@ def _resolve_scan(root: Path, paths: "list[Path]", payload: dict) -> _Outcome:
 
     now = time.time()
     marker = security_scan.read_running_marker(root, state_hash)
-    if marker is not None:
-        if now > marker["stale_after"]:
-            security_scan.clear_running_marker(root, state_hash)
-            return _Outcome("dead")  # the marker is gone, so a later commit spawns afresh
-    else:
+    attempt = 1
+    retried = False
+    if marker is not None and now > marker["stale_after"]:
+        security_scan.clear_running_marker(root, state_hash)
+        if marker["attempt"] >= 2:
+            return _Outcome("dead")  # started twice, never finished: the marker is gone, the next commit starts afresh
+        attempt = 2  # first death: one fresh attempt, spawned below like a first one
+        retried = True
+        marker = None
+    if marker is None:
         stale_after = now + security_scan.scan_time_limit(lock_files) + _WORKER_MARGIN_SECONDS
-        if not security_scan.write_running_marker(root, state_hash, stale_after):
+        if not security_scan.write_running_marker(root, state_hash, stale_after, attempt):
             linked = actlib.link_problem(root, security_scan.running_marker_path(root, state_hash))
             if linked:
                 return _Outcome("linked", detail=linked)
@@ -371,7 +385,7 @@ def _resolve_scan(root: Path, paths: "list[Path]", payload: dict) -> _Outcome:
         cached = _current_cache(root, state_hash, today)
         if cached is not None:
             return _Outcome("result", cached)
-    return _Outcome("running")
+    return _Outcome("running", detail="retried" if retried else "")
 
 
 # ---------------------------------------------------------------------------
@@ -702,8 +716,11 @@ def _check(payload: dict, root: Path, command: str) -> int:
     outcome = _resolve_scan(root, paths, payload)
     if outcome.status == "running":
         names = ", ".join(_display(path, root) for path in paths)
+        fresh = (
+            " (a fresh attempt: the previous one never finished)" if outcome.detail == "retried" else ""
+        )
         print(
-            f"[act] security-check (deps): dependency scan running for {names} -- commit again in a moment",
+            f"[act] security-check (deps): dependency scan running for {names}{fresh} -- commit again in a moment",
             file=sys.stderr,
         )
         return 2
@@ -716,8 +733,16 @@ def _check(payload: dict, root: Path, command: str) -> int:
         )
         return 2
     if outcome.status == "dead":
-        _note(payload, "[act] security-check (deps): a previous scan attempt never finished -- not checked this time")
-        return 0
+        names = ", ".join(_display(path, root) for path in paths)
+        print(
+            f"[act] security-check (deps): the dependency scan for {names} was started twice and never finished "
+            "(most likely ended together with a hook that ran out of time, or the tool hangs), so the commit is "
+            "refused unchecked. Commit again to start a fresh scan; run .act/scripts/security_scan.py --deps to see "
+            "whether the tool finishes on its own; to switch only the dependency scan off, set "
+            "`security-check: local` in docs/ai/config.md § Checks.",
+            file=sys.stderr,
+        )
+        return 2
     if outcome.status == "spawn_failed":
         print(
             "[act] security-check (deps): the dependency scan could not be started, so the commit is refused "
