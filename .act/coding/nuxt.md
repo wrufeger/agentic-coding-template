@@ -73,6 +73,14 @@ summary: directory layout, data fetching, typed handlers, runtime config, pitfal
     value outlives the request and is shared between users — the next request sees the previous one's
     data. Use `useState` for state that must survive the request.
   - Forms with `@submit.prevent` also need `method="post"` (see `CR-vue-basics`).
+  - Export names in auto-imported folders (`composables/`, `utils/`, `server/utils/`, `shared/utils/`) are unique
+    across all their files. When two files export the same name, one of them wins without an error, only a
+    warning about duplicated imports appears, and lint and typecheck can stay green. Give each area a prefix, and
+    treat that warning in dev, build or typecheck output as a finding.
+  - A page component has exactly one root element; an HTML comment counts as one. With more, Nuxt only warns in
+    dev (on the Nuxt 5 nightly: `NUXT_E4004`) and the page breaks on a client-side route change, while opening it
+    directly and tests of the single page stay green. After adding or rebuilding a page, check the browser console
+    and the dev output for that warning; it is a finding.
   - **Windows:** an aborted dev server can keep its port bound; the next start moves to the next free
     port and HMR/WebSocket errors follow. If it is a server the assistant started itself, end exactly
     that process instead of configuring a custom HMR port. Find the listening PID with

@@ -48,7 +48,7 @@ summary: versioned naming, idempotent, reversible, one tool
 
 ## `CR-sql-mariadb` — MySQL and MariaDB (InnoDB) pitfalls
 
-summary: gap locks on range writes, error 1020 under snapshot isolation, ENUM changes on versioned tables, `CONVERT_TZ` without zone tables
+summary: gap locks on range writes, error 1020 under snapshot isolation, `LOCK IN SHARE MODE` instead of `FOR SHARE`, `ALTER` and ENUM changes on versioned tables, `CONVERT_TZ` without zone tables
 
 - InnoDB (default isolation level `REPEATABLE READ`): a range `UPDATE` or `DELETE` on a table that others insert into
   takes gap locks and can deadlock with a concurrent `INSERT`. Read the ids first without a lock, then change by `WHERE
@@ -61,6 +61,15 @@ summary: gap locks on range writes, error 1020 under snapshot isolation, ENUM ch
   are not rolled back. Locking the parent row (`FOR UPDATE`) before the first unlocked read avoids the foreign-key
   case. Safeguard: run every transaction through one retry helper or give it a marker comment stating why it needs
   none, and let a fast unit test find transactions with neither.
+- MariaDB: a shared read lock is written `LOCK IN SHARE MODE`; the MySQL 8 form `FOR SHARE` is a syntax error
+  there. A query builder's `forShare()` (Kysely, for one) emits the MySQL form, and the error shows only at run
+  time against a real database: append the lock clause raw at the end of the query instead (Kysely:
+  ``.modifyEnd(sql`lock in share mode`)``); MySQL 8 accepts that form too. `FOR UPDATE` is the same in both.
+- MariaDB, system-versioned table: an `ALTER TABLE` that changes its columns is refused by default. Set
+  `system_versioning_alter_history = KEEP` for the session just around the `ALTER`, on the same connection taken
+  from the pool, and reset it in a `finally`; a migration run at application start otherwise aborts every start.
+  `KEEP` leaves the history rows as they are, so a change that contradicts old values still fails (the `ENUM` case
+  below).
 - MariaDB, system-versioned table: dropping a value from an `ENUM` fails on history rows, including rows just
   replaced. Keep the value in the type, move the current rows, reject the old value in the application, and change
   the default with `ALTER COLUMN … SET DEFAULT`. Test the migration against a database that has such history rows.

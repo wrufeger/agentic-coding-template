@@ -89,6 +89,10 @@ with a model each.
 - `CR-sql-basics`: no network call inside a transaction that holds row locks; resolve outside values first.
 - Nuxt rules: pin `workspaceDir` (advisory `GHSA-mjrq-cffv-q4qc`), move one package without moving the nightly,
   count copies with `pnpm why`, two known dev warnings, no comment between `v-if` branches.
+- `CR-sql-mariadb`: a shared lock on MariaDB is `LOCK IN SHARE MODE`, not `FOR SHARE`, and an `ALTER` on a
+  system-versioned table needs `system_versioning_alter_history = KEEP` for its session.
+- `CR-nuxt-basics`: export names unique across auto-imported folders, and exactly one root element per page; both
+  break with only a warning.
 
 ### Changed
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
