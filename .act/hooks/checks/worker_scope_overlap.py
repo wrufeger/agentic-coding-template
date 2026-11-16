@@ -49,6 +49,13 @@
 # A worker that crashed without a stop leaves its entry until the TTL; the message names the way to free it
 # at once (stop it with TaskStop).
 #
+# A session that ends takes its workers with it, but their entries stay, and TaskStop of a later session does not
+# know them. An entry stores the session id of its start ("session"). In another session an entry counts as ended
+# when its worker's transcript (<project folder>/<session>/subagents/agent-<id>.jsonl, the worker found through
+# its meta.json "toolUseId") does not exist or has not grown for _OTHER_SESSION_QUIET; a folder or file that
+# cannot be read counts as still running (fail closed) and the refusal says so. An entry of the current session,
+# or one without a stored session (older code), counts as before (the TTL).
+#
 # The orchestrator gets a note, never a refusal (check_main_session_overlap, same switch; `off` silences it, a
 # `block` row counts as `warn` for it): a Write/Edit/MultiEdit/NotebookEdit path, or a write target of its
 # Bash/PowerShell command (the scanners write_scope uses), that falls under the `Tests:` of a running worker, and
@@ -66,6 +73,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -99,6 +107,7 @@ from .write_scope import (
     _split_glob_prefix,
     _store_worker_scope_entry,
     _target_forms,
+    _unrecordable_scope_message,
     _worker_scope_file,
     _worker_scopes_dir,
 )
@@ -113,6 +122,7 @@ __all__ = [
 # entry that would otherwise lock its area for a day. Longer than a normal assignment.
 _OVERLAP_ENTRY_TTL = timedelta(hours=3)
 _FUTURE_SLACK = timedelta(minutes=5)  # a timestamp further ahead is invalid, not "running"
+_OTHER_SESSION_QUIET = timedelta(minutes=15)  # an other-session worker whose transcript has not grown this long ended
 _TABLE_LIMIT = 250_000  # pattern length product up to which two globs are compared exactly
 
 
@@ -243,6 +253,72 @@ def _entry_is_running(entry: dict) -> bool:
         return False
 
 
+def _worker_transcript_state(entry: dict, tool_use_id: str, payload: dict) -> tuple[str, str]:
+    """("running" | "ended" | "unreadable", detail) of an entry that is running by its time. Only an entry that
+    stores another session than the payload's is looked at (the transcripts of that session are found next to the
+    transcript of the start that stored the entry, else next to the payload's); every other entry is "running",
+    detail "". Within _OTHER_SESSION_QUIET of the entry's time the worker counts as running, detail "young": its
+    transcript and meta.json appear seconds after the entry. Later: "ended" when that session's own transcript
+    exists (the session is known here) and the worker has no meta.json or transcript, or its transcript's mtime
+    (not older than the entry) is older than _OTHER_SESSION_QUIET; a session transcript that is missing is "running".
+    "unreadable": a folder or file that failed with anything but "not found", or a meta.json that is not valid
+    JSON while no other one is the worker's; detail names it. A running other-session worker has detail
+    "other"."""
+    stored = entry.get("session")
+    current = payload.get("session_id")
+    stored_path = entry.get("transcript_path")
+    transcript = stored_path if isinstance(stored_path, str) and stored_path else payload.get("transcript_path")
+    if (
+        not isinstance(stored, str)
+        or not _SAFE_ID_RE.match(stored)
+        or not isinstance(current, str)
+        or stored == current
+        or not isinstance(transcript, str)
+        or not transcript
+    ):
+        return "running", ""
+    now = datetime.now(timezone.utc)
+    when = _entry_time(entry)
+    if when is not None and now - when <= _OTHER_SESSION_QUIET:
+        return "running", "young"
+    project_dir = Path(transcript).parent
+    folder = project_dir / stored / "subagents"
+    try:
+        names = sorted(name for name in os.listdir(folder) if name.startswith("agent-") and name.endswith(".meta.json"))
+    except FileNotFoundError:
+        # the session folder may be missing for a session that never had workers on disk: ended only if the
+        # session itself is known in this project folder
+        return ("ended", "") if (project_dir / f"{stored}.jsonl").is_file() else ("running", "")
+    except OSError as exc:
+        return "unreadable", f"{folder}: {type(exc).__name__}"
+    damaged = ""
+    for name in names:
+        try:
+            with open(folder / name, "r", encoding="utf-8") as handle:
+                meta = json.load(handle)
+        except (ValueError, UnicodeDecodeError):
+            damaged = damaged or f"{folder / name}: not valid JSON"  # may be this worker's own: not "ended"
+            continue
+        except OSError as exc:
+            return "unreadable", f"{folder / name}: {type(exc).__name__}"
+        if not isinstance(meta, dict) or meta.get("toolUseId") != tool_use_id:
+            continue
+        agent_file = folder / (name[: -len(".meta.json")] + ".jsonl")
+        try:
+            modified = datetime.fromtimestamp(agent_file.stat().st_mtime, timezone.utc)
+        except FileNotFoundError:
+            return "ended", ""
+        except (OSError, OverflowError, ValueError) as exc:
+            return "unreadable", f"{agent_file}: {type(exc).__name__}"
+        if when is not None:
+            modified = max(modified, when)
+        quiet = now - modified
+        return ("ended", "") if quiet > _OTHER_SESSION_QUIET else ("running", "other")
+    if damaged:
+        return "unreadable", damaged
+    return "ended", ""
+
+
 def check_worker_scope_overlap(payload: dict) -> int:
     """Check 1d: refuse an Agent/Task start whose write scope overlaps a running worker's
     (R-cost-delegate). Only the orchestrator's own calls are looked at. Parallel starts of one
@@ -267,6 +343,18 @@ def check_worker_scope_overlap(payload: dict) -> int:
         return 0
 
     new = _assignment_scope(prompt, root)
+    session = payload.get("session_id")
+    if isinstance(session, str) and _SAFE_ID_RE.match(session):
+        new = dict(new, session=session)  # kept in the entry: a later session tells a dead worker from a live one
+        transcript_path = payload.get("transcript_path")
+        if isinstance(transcript_path, str) and transcript_path:
+            new = dict(new, transcript_path=transcript_path)  # where that session's transcripts live
+    unrecordable = _unrecordable_scope_message(root, tool_use_id, new)
+    if unrecordable is not None:
+        if mode == "block":
+            print(unrecordable, file=sys.stderr)
+            return 2
+        print(unrecordable)
     _record_worker_scope(root, tool_use_id, new)  # claim first, then look at the others
     own_file = _worker_scope_file(root, tool_use_id)
     own_entry = _read_json_object(own_file) if own_file is not None else None
@@ -285,10 +373,33 @@ def check_worker_scope_overlap(payload: dict) -> int:
         other_when = _entry_time(entry)
         if other_when is None or (other_when, path.stem) > own_key:
             continue  # started after this one: that start yields, not this one
+        state, detail = _worker_transcript_state(entry, path.stem, payload)
+        if state == "ended":
+            continue  # a worker of an earlier session that is no longer writing
         free = (
             "If that worker is no longer wanted, stop it with TaskStop: that frees it at once. A worker that "
             f"crashed without any stop frees it after {_OVERLAP_ENTRY_TTL}."
         )
+        if state == "unreadable":
+            free = (
+                "That worker belongs to an earlier session and its transcript could not be read "
+                f"({detail}), so it counts as still running: wait until the problem is gone, or test/write an "
+                "isolated copy (a clone or worktree)."
+            )
+        elif detail == "young":
+            free = (
+                "That worker belongs to an earlier session and started less than "
+                f"{int(_OTHER_SESSION_QUIET.total_seconds() // 60)} minutes ago (its transcript may not exist "
+                "yet), so it counts as still running: wait until that time has passed, or test/write an isolated "
+                "copy (a clone or worktree)."
+            )
+        elif detail == "other":
+            free = (
+                "That worker belongs to an earlier session whose transcript changed less than "
+                f"{int(_OTHER_SESSION_QUIET.total_seconds() // 60)} minutes ago, so it counts as still running: "
+                "wait until the transcript has been quiet that long (the worker ended with its session), or "
+                "test/write an isolated copy (a clone or worktree)."
+            )
         clash = _scopes_overlap(new, entry)
         reads = _tests_overlap(new, entry)
         writes = None if reads else _tests_overlap(entry, new)
@@ -298,9 +409,7 @@ def check_worker_scope_overlap(payload: dict) -> int:
                 f"(worker {path.stem}) — parallel workers need separate write scopes (R-cost-delegate): give "
                 "each assignment its own line `Write scope: <glob>[, <glob> ...]`, e.g. `Write scope: "
                 "src/api/**` (syntax: .act/rules/topics/checks.md); or merge both tasks into one assignment "
-                "with one write scope; or start this one after the other has ended. If that worker is no longer "
-                "wanted, stop it with TaskStop: that frees its scope at once. A worker that crashed without any "
-                f"stop frees it after {_OVERLAP_ENTRY_TTL}."
+                "with one write scope; or start this one after the other has ended. " + free
             )
         elif reads is not None:
             message = (
@@ -582,7 +691,7 @@ def _queue_hint(root: Path, tool_use_id: object, text: str, payload: "dict | Non
     """Owe `text` to this call's PostToolUse (note_main_session_overlap); old leftovers (a call refused by a later
     check never gets one) are removed on the way. Without a usable tool_use_id nothing is queued."""
     path = _hint_file(root, tool_use_id) if isinstance(tool_use_id, str) else None
-    if path is None:
+    if path is None or not actlib.local_write_ok(root, path):  # behind a link out of the project: nothing queued
         return
     _queue_pending_note(path, text, payload)
     try:
@@ -681,8 +790,8 @@ def note_main_session_overlap(payload: dict) -> Optional[str]:
         path = _hint_file(actlib.repo_root(), tool_use_id)
     except RuntimeError:
         return None
-    if path is None or not path.is_file():
-        return None
+    if path is None or not path.is_file() or not actlib.local_write_ok(actlib.repo_root(), path):
+        return None  # behind a link out of the project nothing is read or removed
     # a row switched off after the hint was queued: nothing is said, the file still goes
     notes = [] if _main_session_mode(actlib.read_config()) == "off" else _pop_pending_notes(path, payload)
     try:
@@ -694,7 +803,7 @@ def note_main_session_overlap(payload: dict) -> Optional[str]:
 
 def _remove_worker_scope(root: Path, tool_use_id: str) -> None:
     path = _worker_scope_file(root, tool_use_id)
-    if path is None:
+    if path is None or not actlib.local_write_ok(root, path):  # behind a link out of the project: nothing removed
         return
     for _attempt in range(20):
         try:

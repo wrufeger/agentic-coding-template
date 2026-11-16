@@ -598,6 +598,18 @@ it counts as running once more. A call that cannot be bound to an entry (no `met
 entry under its `toolUseId`) is refused as before while a restricted scope is registered for a running
 worker.
 
+An entry stores the session of its start. A worker of an earlier session (its session ended, so the worker did
+with it) no longer counts once its entry is older than 15 minutes and its transcript below the project's Claude Code
+folder is missing or has not grown for 15 minutes (a transcript counts as grown no earlier than the entry's time). In
+its first 15 minutes it always counts as running: its transcript appears seconds after the entry. A missing session
+folder counts as ended only when that session's own transcript exists in the project folder. One whose transcript,
+folder or `meta.json` cannot be read or parsed counts as running, and the refusal says so. An entry without a stored
+session counts for three hours as before.
+
+A start that names a `Write scope:` or `Tests:` line while `.act-local` is a link out of the project cannot record
+it, so the scope would go unenforced: `worker-write-scope` and `worker-scope-overlap` refuse that start in `block`
+mode (remove the link, or switch the row off for one run) and give one note line in `warn` mode.
+
 Limit: the restart of a continued worker is not checked against the scopes of the workers started
 meanwhile, so the orchestrator keeps those apart itself.
 

@@ -96,7 +96,7 @@ __all__ = [
     "_external_pattern", "_scope_pattern", "_parse_write_scope", "_parse_pattern_list", "_parse_tests_scope", "_assignment_scope", "_worker_scopes_dir",
     "_worker_scope_file", "_read_json_object", "_entry_is_fresh", "_scope_file_is_prunable",
     "_prune_worker_scope_files", "_store_worker_scope_entry", "_entry_has_ended",
-    "_record_worker_scope", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
+    "_record_worker_scope", "_unrecordable_scope_message", "_read_worker_scope_entry", "_recent_restricted_scope_registered",
     "_scope_via_meta", "_scope_via_transcript", "_resolve_worker_scope",
     "_WORKFLOW_TASK_RE", "_WORKFLOW_SCAN_LINES", "_record_content", "_workflow_task_text",
     "_agent_assignment_text",
@@ -454,8 +454,10 @@ def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
     needed. `skip` is the file just written in this same call, left alone unconditionally (it
     cannot be stale — it was just stamped with the current time)."""
     try:
+        if not actlib.local_write_ok(actlib.repo_root(), dir_path):
+            return  # behind a link out of the project nothing is removed
         candidates = list(dir_path.glob("*.json"))
-    except OSError:
+    except (OSError, RuntimeError):
         return
     for path in candidates:
         if path == skip:
@@ -470,8 +472,11 @@ def _prune_worker_scope_files(dir_path: Path, skip: Path) -> None:
 def _store_worker_scope_entry(path: Path, entry: dict) -> bool:
     """Write one worker-scopes entry to `path`, via a temp file plus os.replace in the same directory, so a
     concurrent reader never observes a partially written file -- os.replace is an atomic rename on both POSIX
-    and Windows. False if it could not be written (the temp file is removed again)."""
+    and Windows. False if it could not be written (the temp file is removed again), or if `.act-local` leads out
+    of the project (actlib.local_write_ok): nothing is written through a link."""
     try:
+        if not actlib.local_write_ok(actlib.repo_root(), path):
+            return False
         path.parent.mkdir(parents=True, exist_ok=True)
         # suffix ".tmp", not ".json": _prune_worker_scope_files globs "*.json", and a temp file
         # that matched that pattern was briefly visible (between creation and the os.replace
@@ -479,7 +484,7 @@ def _store_worker_scope_entry(path: Path, entry: dict) -> bool:
         # replace runs, dropping this write silently (2026-09-23 review, t26_race.py: 8 parallel
         # starts sometimes wrote as few as 4 of 8 files under the old ".json"-suffixed temp name).
         fd, tmp_name = tempfile.mkstemp(prefix=".tmp-", suffix=".tmp", dir=str(path.parent))
-    except OSError:
+    except (OSError, RuntimeError):
         return False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -516,6 +521,23 @@ def _record_worker_scope(root: Path, tool_use_id: str, scope: dict) -> None:
     entry["ts"] = datetime.now(timezone.utc).isoformat()
     if _store_worker_scope_entry(path, entry):
         _prune_worker_scope_files(path.parent, skip=path)
+
+
+def _unrecordable_scope_message(root: Path, tool_use_id: str, scope: dict) -> Optional[str]:
+    """A message when this start names a restricted `Write scope:` (or a `Tests:` line) that cannot be
+    recorded because `.act-local` leads out of the project (actlib.local_write_ok): the scope would then go
+    unenforced without a word. None when the scope is unrestricted or can be recorded."""
+    if scope.get("mode") == "unrestricted" and not scope.get("tests"):
+        return None
+    path = _worker_scope_file(root, tool_use_id)
+    if path is None or actlib.local_write_ok(root, path):
+        return None
+    return (
+        "[act] this assignment names a `Write scope:` or `Tests:` line, but worker scopes cannot be recorded "
+        "while `.act-local` is a link out of the project, so the scope would not be enforced: remove the link, "
+        "or switch the row off for one run (`worker-write-scope`, `worker-scope-overlap` in docs/ai/config.md "
+        "§ Checks)."
+    )
 
 
 def _read_worker_scope_entry(root: Path, tool_use_id: str) -> Optional[dict]:
@@ -1143,6 +1165,18 @@ def check_worker_write_scope(payload: dict) -> int:
             prompt = tool_input.get("prompt")
             if isinstance(tool_use_id, str) and tool_use_id and isinstance(prompt, str):
                 scope = _assignment_scope(prompt, root)
+                session = payload.get("session_id")
+                if isinstance(session, str) and _SAFE_ID_RE.match(session):
+                    scope = dict(scope, session=session)  # as worker_scope_overlap records it
+                transcript = payload.get("transcript_path")
+                if isinstance(transcript, str) and transcript:
+                    scope = dict(scope, transcript_path=transcript)
+                unrecordable = _unrecordable_scope_message(root, tool_use_id, scope)
+                if unrecordable is not None:
+                    if mode == "block":
+                        print(unrecordable, file=sys.stderr)
+                        return 2
+                    print(unrecordable)
                 _record_worker_scope(root, tool_use_id, scope)
         return 0
 

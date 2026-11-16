@@ -47,6 +47,8 @@ with a model each.
   the `Copilot` column of `docs/ai/config.md` § Roles.
 - Each skill override under `docs/ai/local/skills/` is an `act-doctor` finding until you keep it with
   `python .act/scripts/doctor.py --accept skill:<name>` or delete it.
+- If `.act-local` is a link out of the project, a worker start with a `Write scope:` or `Tests:` line is now
+  refused; make it a plain folder, or set `worker-write-scope` and `worker-scope-overlap` to `warn`.
 
 ### Added
 - Rust coding rules: new group `CR-rust-async` (no blocking in tasks, bounded channels, cancel-safe `select!`,
@@ -210,6 +212,8 @@ with a model each.
 - A `file://` template source counts as a local folder in `init` and `act-update`.
 - `act-doctor` names an unreadable skill file or folder instead of crashing or dropping a kept override; its inbox
   report is written with LF.
+- `worker-scope-overlap` no longer blocks for three hours because of a worker of an ended session: another
+  session's worker whose transcript has been quiet for 15 minutes counts as ended.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
@@ -246,6 +250,8 @@ with a model each.
   places.
 - The write guard and the worker scope read a name assigned once to a literal (`f=.act/x && echo y > $f`, also with
   `local`, `declare`, `export`); `outside-root` judges every word of a brace expansion (`cat /x/{a,b}.txt`).
+- Worker scopes are never written through a linked `.act-local`; a scope that cannot be recorded refuses the
+  start instead of going unenforced (`warn`: a note).
 
 
 ## [2.5.0] - 2026-11-05
