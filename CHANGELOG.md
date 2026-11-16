@@ -218,6 +218,7 @@ with a model each.
   session's worker whose transcript has been quiet for 15 minutes counts as ended.
 - Refusal questions name the body of the role's bridge (`.claude/agents/<role>.md`) as the place for an addition;
   a `docs/ai/local/agents/<role>.md` with a template role's name is never read.
+- `encoding-hint` no longer reports a UTF-8 file as cp1252 when a character straddles its 64 KiB read window.
 
 ### Security
 - Inline code: `tarfile.open` and `zipfile.ZipFile` opened for writing count as writes; a glob that can reach a
@@ -256,6 +257,8 @@ with a model each.
   `local`, `declare`, `export`); `outside-root` judges every word of a brace expansion (`cat /x/{a,b}.txt`).
 - Worker scopes are never written through a linked `.act-local`; a scope that cannot be recorded refuses the
   start instead of going unenforced (`warn`: a note).
+- `outside-root` reads a lone `/` after a PowerShell command name as a path (`gc $a / $X`) and a write to `C:$X`
+  as drive-relative; `git-metadata-guard` resolves glob and `$(…)` targets, so `.claude/agents/` stays protected.
 
 
 ## [2.5.0] - 2026-11-05

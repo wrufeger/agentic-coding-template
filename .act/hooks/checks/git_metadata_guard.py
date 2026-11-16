@@ -130,6 +130,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import glob as globlib
 import os
 import re
@@ -167,6 +168,8 @@ _RAW_CLAUDE_RE = re.compile(
 )
 _RAW_LAUNCH_RE = re.compile(r"\.vscode[\\/]tasks\.json|\.devcontainer|\.envrc|\.mcp\.json", re.IGNORECASE)
 _RAW_TASKS_RE = re.compile(r"\.vscode[\\/]tasks\.json", re.IGNORECASE)
+# A glob character in a target: the shell expands it to names the text does not show (`.claude/agents*/`).
+_GLOB_CHAR_RE = re.compile(r"[*?\[]")
 
 _LAUNCH_REASON = "a file that starts code when the folder is opened (workers may not change it)"
 _TASKS_REASON = "the VS Code tasks file with a shell write (it can start code when the folder is opened)"
@@ -684,6 +687,123 @@ def _resolve_below_parent(raw: str, base: str, parents: dict) -> Optional[Path]:
     return landing
 
 
+def _raw_reason(text: str, worker: bool, shell: bool) -> Optional[str]:
+    """Why `text`, a target that cannot be placed or the part of a command that builds one, is refused by
+    what it spells (the raw-text fallback), or None."""
+    if _RAW_GIT_RE.search(text):
+        return "a git hook or the repository config"
+    if worker and _RAW_CLAUDE_RE.search(text):
+        return "the Claude settings, roles or skills (workers may not change them)"
+    if worker and _RAW_LAUNCH_RE.search(text):
+        return _LAUNCH_REASON
+    if shell and _RAW_TASKS_RE.search(text):
+        return _TASKS_REASON
+    return None
+
+
+_WORD_END_RE = re.compile(r"[^\s;|&<>)]*")
+
+
+def _substitution_words(command: str, deadline: float) -> list[tuple[str, bool]]:
+    """The words of `command` that hold a `$(...)`, each with whether a redirection operator stands right before
+    it: from the start of the word to the end of the word that follows the closing parenthesis
+    (`$(echo .github/agents)/a.md`). The shell scanner cuts a write target at its `$(` and leaves only `$`, so
+    what the substitution spells is read from the command text. A parenthesis inside a quote is counted like
+    any other: the span may end early or late, and the word read stays a text search, never a path. Past
+    `deadline` (a monotonic instant) it gives up with `_CopySourceTooLarge`."""
+    words: list[tuple[str, bool]] = []
+    index = command.find("$(")
+    while index != -1:
+        if time.monotonic() > deadline:
+            raise _CopySourceTooLarge(command[:80])
+        start = index
+        while start > 0 and not command[start - 1].isspace() and command[start - 1] not in ";|&<>":
+            start -= 1
+        depth = 0
+        end = len(command)
+        for position in range(index + 1, len(command)):
+            char = command[position]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    end = position + 1
+                    break
+        end = _WORD_END_RE.match(command, end).end() if end < len(command) else end
+        words.append((command[start:end], command[:start].rstrip().endswith(">")))
+        index = command.find("$(", index + 2)
+    return words
+
+
+def _substitution_reason(raw: str, words: list[tuple[str, bool]], worker: bool) -> Optional[str]:
+    """Why the write target `raw` that the scanner cut at a `$(` (it ends in `$`) is refused by what its
+    substitution spells, or None. Only the words that start like the target are read (`raw` without its `$`, then
+    `$(`), and of those only the ones behind a redirection operator when there are such; with no word that
+    starts like it every word is read."""
+    head = raw[:-1] + "$("
+    matching = [(word, redirected) for word, redirected in words if word.lstrip("\"'").startswith(head)]
+    pool = matching or words
+    redirected_only = [word for word, redirected in pool if redirected]
+    for word in redirected_only or [word for word, _redirected in pool]:
+        reason = _raw_reason(word, worker, shell=True)
+        if reason:
+            return reason
+    return None
+
+
+# The names a glob segment of a write target can stand for that mean something below a protected folder; the
+# shell expands the glob to what exists, the text does not say.
+_GLOB_NAMES = (
+    ".git", "git~1", "hooks", "config", "config.worktree", "modules", "worktrees", ".claude", "agents", "skills",
+    "commands", "settings.json", "settings.local.json", ".github", ".vscode", "tasks.json", ".devcontainer",
+    ".envrc", ".mcp.json",
+)
+_GLOB_COMBINATIONS = 64
+
+
+def _glob_name_matches(name: str, pattern: str) -> bool:
+    """True when the glob segment `pattern` can expand to `name`. A name that starts with a dot is matched only by
+    a pattern that starts with one, as in the shell; the short name of `.git` only by a pattern that spells its `~`;
+    the case is ignored (a folder is the same on Windows)."""
+    if (name.startswith(".") and not pattern.startswith(".")) or (name == "git~1" and "~" not in pattern):
+        return False
+    return fnmatch.fnmatchcase(name.lower(), pattern.lower())
+
+
+def _glob_reason(
+    raw: str, base: str, gitdirs: list[Path], claude_dirs: list[Path], worker: bool, shell: bool,
+) -> Optional[str]:
+    """Why a write to the glob target `raw` is refused: the folder before its first glob segment is resolved
+    against `base` like any target; each glob segment is replaced by the protected names it matches (_GLOB_NAMES)
+    and every path made that way is judged as a resolved path (_path_reason), so only the protected folders of
+    this project count, never a folder of the same name elsewhere. At most `_GLOB_COMBINATIONS` paths."""
+    parts = re.split(r"[\\/]+", raw)
+    first = next((number for number, part in enumerate(parts) if _GLOB_CHAR_RE.search(part)), None)
+    if first is None:
+        return None
+    lead = raw[: len(raw) - len(raw.lstrip("\\/"))]
+    prefix_parts = [part for part in parts[:first] if part]
+    prefix = lead + "/".join(prefix_parts) if prefix_parts or lead else "."
+    folder = _resolve_path(prefix, base)
+    if folder is None:
+        return None
+    candidates = [folder]
+    for part in (part for part in parts[first:] if part):
+        if _GLOB_CHAR_RE.search(part):
+            names = [name for name in _GLOB_NAMES if _glob_name_matches(name, part)]
+        else:
+            names = [part]
+        candidates = [candidate / name for candidate in candidates for name in names][:_GLOB_COMBINATIONS]
+        if not candidates:
+            return None
+    for candidate in candidates:
+        reason = _path_reason(candidate, gitdirs, claude_dirs if worker else [], worker, shell)
+        if reason:
+            return reason
+    return None
+
+
 def _target_reason(
     raw: str, base: Optional[str], gitdirs: list[Path], claude_dirs: list[Path], worker: bool,
     literal: bool = False, shell: bool = False, parents: Optional[dict] = None,
@@ -691,17 +811,15 @@ def _target_reason(
     """Why a write to the (possibly relative or dynamic) target `raw` is refused, or None. A file
     tool's path is `literal`: `$` and `~` in it are ordinary characters, not shell syntax. With
     `parents` (a dict kept for one call) the directory part of `raw` is resolved once for all the
-    files of a copy (`_resolve_below_parent`)."""
+    files of a copy (`_resolve_below_parent`). A target with a glob character is read as well by the
+    protected names its glob segments can stand for (`_glob_reason`); when none is protected the path is
+    resolved as before."""
     if base is None or (not literal and _is_dynamic_target(raw)):
-        if _RAW_GIT_RE.search(raw):
-            return "a git hook or the repository config"
-        if worker and _RAW_CLAUDE_RE.search(raw):
-            return "the Claude settings, roles or skills (workers may not change them)"
-        if worker and _RAW_LAUNCH_RE.search(raw):
-            return _LAUNCH_REASON
-        if shell and _RAW_TASKS_RE.search(raw):
-            return _TASKS_REASON
-        return None
+        return _raw_reason(raw, worker, shell)
+    if not literal and _GLOB_CHAR_RE.search(raw):
+        glob_reason = _glob_reason(raw, base, gitdirs, claude_dirs, worker, shell)
+        if glob_reason:
+            return glob_reason
     resolved = _resolve_below_parent(raw, base, parents) if parents is not None else _resolve_path(raw, base)
     if resolved is None:
         return "a target that cannot be placed" if (
@@ -1329,10 +1447,18 @@ def _shell_command_reason(
             shell_command, powershell, copy_base if copy_known else None, deadline, gitdirs + claude_dirs, parse,
         )
     ]
+    substitutions: Optional[list[tuple[str, bool]]] = None  # read once, for the first target cut at a `$(`
     for raw, base in targets:
         reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True)
         if reason:
             return f"writes {reason}", shell_command
+        if not powershell and raw.endswith("$"):
+            # The scanner cut this target at a `$(`: what the substitution spells is in the command text.
+            if substitutions is None:
+                substitutions = _substitution_words(shell_command, deadline)
+            reason = _substitution_reason(raw, substitutions, worker)
+            if reason:
+                return f"writes {reason}", shell_command
     parents: dict = {}
     for count, (raw, base) in enumerate(copy_targets, 1):
         reason = _target_reason(raw, base, gitdirs, claude_dirs, worker, shell=True, parents=parents)

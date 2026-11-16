@@ -53,6 +53,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import re
 import sys
@@ -81,6 +82,8 @@ __all__ = [
 ]
 
 _READ_CHUNK_SIZE = 64 * 1024
+# Bytes read past the chunk: they complete a character the chunk cuts (the longest has 4 bytes, 1 is in the chunk).
+_UTF8_TAIL = 3
 _HINTS_DIRNAME = "encoding-hints"
 # A session_id/agent_id/tool_use_id becomes part of an entry's filename (see _hints_file,
 # _pending_file); validated first, same reasoning as checks/write_scope.py's _SAFE_ID_RE for the
@@ -183,16 +186,22 @@ def _looks_non_utf8(target: Path) -> Optional[str]:
     """The guessed 8-bit encoding name when the file exists and its first _READ_CHUNK_SIZE bytes
     do not decode as UTF-8; None when the file is missing, unreadable, or already UTF-8 — in each
     of those cases there is nothing to say, never grounds to fail closed (this check only ever
-    notes or, in `block` mode, stops once — see the module header)."""
+    notes or, in `block` mode, stops once — see the module header). When the file is longer than the
+    chunk, the cut may fall inside a multi-byte character: up to 3 bytes past the chunk are read too (the
+    longest UTF-8 character has 4 bytes), so a character that they complete is valid, and only what is
+    incomplete at the end of that window, which the file goes on after, is not an error; a file that ends
+    inside a character still is, and so is a cut character that the bytes after it do not complete."""
+    window = _READ_CHUNK_SIZE + _UTF8_TAIL
     try:
         if not target.is_file():
             return None
         with open(target, "rb") as handle:
-            chunk = handle.read(_READ_CHUNK_SIZE)
+            data = handle.read(window + 1)  # one byte more than the window tells whether the file goes on
     except OSError:
         return None
+    chunk = data[:window]
     try:
-        chunk.decode("utf-8")
+        codecs.getincrementaldecoder("utf-8")().decode(chunk, final=len(data) <= window)
     except UnicodeDecodeError:
         return _guess_encoding(chunk)
     return None

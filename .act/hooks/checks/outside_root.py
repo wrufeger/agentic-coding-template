@@ -123,7 +123,9 @@
 #     path hidden behind one of those words goes unseen. A lone `/` is the root, except as the
 #     operator of `expr`/`let`, inside `$((...))`/`((...))`, in a PowerShell expression, and as the
 #     value of a delimiter option (`cut -d /`); on Windows a one-segment word such as `/c` or `/s`
-#     is a switch. A `file:` URL is not a URL here but the path it names (`file:///home/u/x` is
+#     is a switch; a statement that starts with a command name never holds a division (`gc $a / $X` reads the
+#     root), one that starts with a variable, a number, a parenthesis, a type or a quote does. A write to a
+#     drive-relative word with a variable (`C:$X`) is judged as the drive's root. A `file:` URL is not a URL here but the path it names (`file:///home/u/x` is
 #     `/home/u/x`, `file://host/share/x` is `//host/share/x`, percent-decoded). The words of a
 #     `for` loop are no paths when every use of the variable in the loop is the tail of a
 #     `<scheme>://<host>` URL inside its literal body (`for p in /a /b; do curl "https://host$p"; done`).
@@ -169,6 +171,7 @@ from .secret_read import (
 )
 from .shell_targets import (
     _GIT_WRITES_WORKER_SCOPE,
+    _SHELL_NAMES,
     _command_name,
     _heredoc_may_feed_shell,
     _operands,
@@ -217,6 +220,10 @@ _BARE_SLASHES_RE = re.compile(r"^/+$")
 # (see `_file_url_path`); one slash (`file:/x`) too.
 _FILE_URL_RE = re.compile(r"^file:/", re.IGNORECASE)
 _DRIVE_ONLY_RE = re.compile(r"^[A-Za-z]:$")
+# A drive letter, a colon and then a variable, no slash (`C:$X`, `C:${X}`, `C:$env:X`): the current folder of
+# that drive plus the value, a place the text does not show. Another colon later in the word (`s:$HOME:x:`)
+# makes it text, not a path. More path may follow the variable (`C:$X/a.txt`): still the drive's current folder.
+_DRIVE_RELATIVE_DYNAMIC_RE = re.compile(r"^[A-Za-z]:\$(?:env:)?[^\\/\s:]*(?:[\\/][^\s:]*)?$", re.IGNORECASE)
 _URL_DRIVE_PATH_RE = re.compile(r"^/[A-Za-z]:(?:[\\/]|$)")
 _DYNAMIC_RE = re.compile(r"[$`{]|%[A-Za-z_][A-Za-z0-9_]*%")
 # (`//ve` is how Git Bash spells the Windows switch `/ve`, so that it is not turned into a path.)
@@ -464,6 +471,8 @@ def _resolve_text(raw: str, base: Optional[str], bash: bool, mode: str = "shell"
     # `\\localhost\C$\x`): the prefix holds a `?` that the glob cut below would take for a wildcard,
     # the share a `$` that the dynamic cut would.
     text = _to_native_path(text)
+    if mode == "shell" and _DRIVE_RELATIVE_DYNAMIC_RE.match(text):
+        text = text[:2] + "/"  # the folder of the drive is unknown: anything on the drive, as `C:/$X` is
     if mode == "shell":
         text = _dynamic_prefix(text)
     if mode != "file":
@@ -519,6 +528,8 @@ def _looks_like_path(candidate: str, strict: bool = False) -> bool:
         return True
     if strict:
         return False
+    if _DRIVE_RELATIVE_DYNAMIC_RE.match(text):
+        return True  # `C:$X`: the folder of a drive plus a variable, resolved as the drive's root (_resolve_text)
     return ".." in _SEGMENT_SPLIT_RE.split(text)
 
 
@@ -973,7 +984,9 @@ def _program_word(words: list[str]) -> str:
 def _command_split(words: list[str]) -> Optional[tuple[str, list[str]]]:
     """(command name, its arguments) of one simple command's words, or None when there is none. A
     PowerShell assignment prefix (`$x = Get-Content ...`) and the call operator `&` are looked
-    through; the program word itself is no path."""
+    through; the program word itself is no path. Name and arguments are plain strings, taken from the words as
+    they read: the marks of a word (`bare`, `live`, `raw`) would give the command another name (`` `x`echo `` is
+    not `echo` here, so its words are read) and belong to _ps_command_mode alone (_marked_arguments)."""
     words = [str(word) for word in words]
     while len(words) > 2 and _PS_ASSIGN_RE.match(words[0]) and words[1] == "=":
         words = words[2:]
@@ -984,12 +997,46 @@ def _command_split(words: list[str]) -> Optional[tuple[str, list[str]]]:
     return _command_name(words[0]), words[1:]
 
 
+def _marked_arguments(words: list[str], count: int) -> list[str]:
+    """The last `count` words of one simple command as their reader made them, quoting marks kept (`live`, `raw`):
+    the arguments that _command_split hands out as plain strings, word for word. For _ps_command_mode only."""
+    return list(words)[max(0, len(words) - count):]
+
+
+def _program_quoted(words: list[str]) -> bool:
+    """True when the first word of a statement (after an assignment prefix) was quoted or escaped, so that it is a
+    string and no command name: `'Get-Content' / $X`. A word behind the call operator `&` is a command, quoted
+    or not."""
+    words = list(words)
+    while len(words) > 2 and _PS_ASSIGN_RE.match(str(words[0])) and words[1] == "=":
+        words = words[2:]
+    return bool(words) and words[0] != "&" and _quoted_at(words[0], 0)
+
+
+def _quoted_at(word: str, position: int) -> bool:
+    """True when the character at `position` of `word` stood inside quotes or after an escape. Two readers make
+    words: the shell lexer marks each character (`live`), the PowerShell tokenizer keeps the word as written
+    (`raw`: the quote is there when the text before `position` is the same in both). A plain string says
+    nothing. A leading backslash or `/` is a path, never a quote mark."""
+    if position >= len(word) or word[position] in "\\/":
+        return False
+    raw = getattr(word, "raw", None)
+    if raw is not None:
+        return raw[:position] == word[:position] and raw[position:position + 1] in ("'", '"')
+    live = getattr(word, "live", None)
+    return live is not None and position < len(live) and live[position] != "L"
+
+
 class _Words(list):
     """The words of one simple command. `feeds_xargs` marks one whose output goes into `xargs`: the
     words of an `echo` there are file names, not text."""
 
     feeds_xargs: bool = False
     literal_values: bool = False  # the words are assignments in front of a command: no brace expansion in them
+    # The words were read from PowerShell text (the PowerShell tokenizer, or the shell lexer reading what a
+    # PowerShell call holds as PowerShell text): only there is a quoted first word a string (_program_quoted).
+    # Text of bash, sh or cmd is never marked, however its words were read.
+    ps_text: bool = False
 
 
 _OPERAND_START_RE = re.compile(r"^[(\[]*[\d$]")
@@ -1057,7 +1104,61 @@ def _paren_open(words: list[str]) -> bool:
     return text.count("(") > text.count(")")
 
 
-def _is_division(name: str, args: list[str], index: int, powershell: bool = False) -> bool:
+# A word that starts an expression in PowerShell, not a command: a variable, a parenthesis, a type, a property or
+# a quote, a number (`-5`, `.5`), a sub-expression or a script block. Anything else that starts a statement is the
+# name of a command, and what follows it is read as arguments (command mode).
+_PS_EXPRESSION_START_RE = re.compile(r"^(?:[$(\[.'\"@{+-]|\d)")
+# A word that ends a statement or starts a new one, and an assignment operator: what follows begins a statement.
+_PS_STATEMENT_BREAK_RE = re.compile(r"^(?:[;|]|&&|\|\||[+*/%-]?=)$")
+# Keywords in front of a statement or an expression: the word after them starts it, they name no command.
+_PS_STATEMENT_KEYWORDS = frozenset({
+    "if", "elseif", "while", "foreach", "for", "switch", "return", "throw", "exit", "param",
+})
+
+
+def _ps_command_mode(words: list[str], quoted_first: bool = False) -> bool:
+    """True when the statement that `words` (the words of a command up to a lone `/`) belong to is in command
+    mode there: the first token of the innermost statement still open names a command (`gc`, `Select-String`).
+    A statement starts at the beginning, after an assignment operator or `;`/`|`/`&&`/`||` of its own level, inside
+    each parenthesis that is open and inside each script block `{ ... }` that is open; a keyword (`if`, `return`,
+    `foreach` ...) starts none, the word after it decides. PowerShell reads a statement by its first token: a command
+    name makes the rest arguments, so a `/` there is an argument; a variable, a number, a parenthesis, a type, a
+    property or a quote makes an expression, where `/` is the operator, as after a parenthesis that closes. A
+    quoted token is a string (`quoted_first`: the first word of `words` was quoted, a later word says it by its
+    own `live` marks). Parentheses are not followed through quotes; a brace only where it is live."""
+    firsts: list[Optional[str]] = [None]  # the first token of the open statement, one per open parenthesis or block
+    for number, word in enumerate(words):
+        if _PS_STATEMENT_BREAK_RE.match(word):
+            firsts[-1] = None
+            continue
+        if firsts[-1] is None and word.lower() in _PS_STATEMENT_KEYWORDS and not (number == 0 and quoted_first):
+            continue
+        live = getattr(word, "live", None)
+        for position, char in enumerate(word):
+            live_char = live is None or position >= len(live) or live[position] == "L"
+            if char == ")" or (char == "}" and live_char):
+                if len(firsts) > 1:
+                    firsts.pop()
+                elif char == ")":
+                    # A parenthesis opened before these words (the scanner cuts a command line at each `|`):
+                    # what follows its end is an expression, `(Get-Item a | Measure-Object Length -Sum).Sum / 1MB`.
+                    firsts[0] = "("
+                else:
+                    firsts[0] = None  # a block that was opened before these words ends: a new statement
+                continue
+            if firsts[-1] is None:
+                quoted = (quoted_first and number == 0 and position == 0) or _quoted_at(word, position)
+                firsts[-1] = "'" if quoted else word[position:]
+            if char == "(" or (char == "{" and live_char):
+                firsts.append(None)
+    first = firsts[-1]
+    return first is not None and not _PS_EXPRESSION_START_RE.match(first)
+
+
+def _is_division(
+    name: str, args: list[str], index: int, powershell: bool = False, quoted_name: bool = False,
+    marked: Optional[list[str]] = None,
+) -> bool:
     """True when the lone `/` at `args[index]` is the operator of an expression, not the root. Allow-list,
     with a number, variable or parenthesis after the `/` in every form: `expr` and `let` (`expr 6 / 2`, an
     argument before it); in the shell an arithmetic expression `$(( ... ))` or `(( ... ))`, which is cut out of the
@@ -1065,18 +1166,23 @@ def _is_division(name: str, args: list[str], index: int, powershell: bool = Fals
     statement that is an expression itself (its first word starts like a number, a variable, a parenthesis,
     a type or a property: `$x / 1MB`, `(Get-Item a).Length / 1MB`), an open parenthesis before the `/`
     (`Write-Output ((Get-Item a).Length / 1MB)`) or a number, variable or closed parenthesis right before it
-    (`x = 7 / 2`; limit: `Get-ChildItem $dir / 2` passes). Anything else, `ls -la / 2`, `du -sh / $X`, `ls /`, is the
-    root: a number or a variable behind it does not make it a division."""
+    (`x = 7 / 2`). A statement in command mode (_ps_command_mode: it starts with a command name, also after
+    `=`, `;` or an open parenthesis: `Get-ChildItem $dir / 2`, `(gc $a / $X)`) never has a division: the `/` is an
+    argument. Anything else, `ls -la / 2`, `du -sh / $X`, `ls /`, is the root: a number or a variable behind it
+    does not make it a division. `quoted_name`: the program word was quoted, a string and so an expression.
+    `marked`: the same arguments with their quoting marks (_marked_arguments), read by _ps_command_mode alone;
+    without them, or when they do not line up with `args`, every word counts as written bare."""
     following = args[index + 1] if index + 1 < len(args) else ""
     if not _OPERAND_START_RE.match(following):
         return False
     before = [name, *args[:index]]
     if name in _DIVISION_COMMANDS:
         return index > 0
-    if not powershell:
+    written = marked if marked is not None and len(marked) == len(args) else args
+    if not powershell or _ps_command_mode([name, *written[:index]], quoted_name):
         return False
     left = args[index - 1] if index > 0 else name
-    return (name[:1] in ("(", "$", "[", ".") or name[:1].isdigit() or _paren_open(before)
+    return (name[:1] in ("(", "$", "[", ".") or name[:1].isdigit() or quoted_name or _paren_open(before)
             or bool(_PS_OPERAND_END_RE.match(left)))
 
 
@@ -1431,12 +1537,14 @@ def _root_entry_exists(first: str, base: Optional[str], bash: bool) -> bool:
 
 def _read_candidates(
     name: str, args: list[str], feeds_xargs: bool = False, powershell: bool = False,
-    program: str = "", route_absent: Optional[Callable[[str], bool]] = None,
+    program: str = "", route_absent: Optional[Callable[[str], bool]] = None, quoted_name: bool = False,
+    marked: Optional[list[str]] = None,
 ) -> list[tuple[str, bool]]:
     """(word, strict) pairs of a simple command that may name a place; `strict` marks a string
     literal of inline interpreter code, where a `..` is no path. With `route_absent` (does the first
     segment of this word name nothing?) a URL route behind the script of a script call is left out
-    (_script_arg_start); `program` is the program word as written."""
+    (_script_arg_start); `program` is the program word as written, `quoted_name` says it was quoted, `marked`
+    are the arguments with their quoting marks (both only for _is_division)."""
     if name in _TEXT_COMMANDS and not feeds_xargs:
         return []
     skip = _non_path_positions(name, args)
@@ -1452,7 +1560,8 @@ def _read_candidates(
             continue  # a URL route for a script: text it works on, no place it reads
         for position, candidate in enumerate(_candidate_words(word)):
             if candidate.strip().strip("'\"") == "/" and (
-                position or _is_division(name, args, index, powershell) or _is_separator_value(name, args, index)
+                position or _is_division(name, args, index, powershell, quoted_name, marked)
+                or _is_separator_value(name, args, index)
             ):
                 # `--grep=/` (the value of an option), `6 / 2` (a division) and `cut -d /` (a delimiter)
                 # name no place
@@ -1756,8 +1865,10 @@ def _scan_from(
                 _root_entry_exists(first, base, judge.bash) for base in judge.capped(bases or [None])
             )
 
+        ps_text = bool(getattr(words, "ps_text", False))  # a quoted first word is a string only in PowerShell text
         for text, strict in _read_candidates(
             name, args, feeds, not judge.bash, _program_word(words), None if in_wsl else route_absent,
+            ps_text and _program_quoted(words), _marked_arguments(words, len(args)) if ps_text else None,
         ):
             expand = not getattr(words, "literal_values", False)
             if expand and (strict or (text not in lives and _cut_from_quoted_word(text, words))):
@@ -1928,23 +2039,78 @@ def _shell_word_lists(parse: Parse) -> list[list[str]]:
 _CODE_INTERPRETERS = _INTERPRETERS - {"pwsh", "powershell"}
 
 
-def _ps_lists(parse: Parse, depth: int = 0) -> list[list[str]]:
+# Programs that run their text as PowerShell: the words read from it stand for PowerShell text (_Words.ps_text).
+_PS_TEXT_PROGRAMS = frozenset({"pwsh", "powershell", "iex", "invoke-expression"})
+# Programs whose text the shell lexer reads again as commands of another language or shell (command_words'
+# nested reading), so the lists it hands out after one of them are no PowerShell text.
+_FOREIGN_TEXT_PROGRAMS = _SHELL_NAMES | {"eval", "find", "parallel", "cmd"}
+
+
+def _ps_lists(parse: Parse, depth: int = 0, ps_text: bool = True) -> list[list[str]]:
     """`Parse.ps_words(2)` with one change: in the `-c` text of a language interpreter (`python -c "print(7
     // 2)"`) a word of only slashes is an operator or a comment of that language, not a path, so it is
     left out. The text of a nested shell or PowerShell (`pwsh -c "ls //"`) is a command line and keeps
-    every word."""
+    every word. Each list says whether it was read from PowerShell text (`ps_text`): the text itself is, the
+    `-c` text of a call is only when the program is `pwsh` or `powershell` (`bash -c "'ls' / 2"` holds bash
+    text, which the PowerShell tokenizer reads as it can)."""
     lists: list[list[str]] = []
     for words in parse.ps_words(2):  # 2: the nested text is read here, not there
-        lists.append(words)
+        marked = _Words(words)
+        marked.ps_text = ps_text
+        lists.append(marked)
         inner = _extract_ps_command_flag(words[1:]) if depth < 2 else None
         if not inner:
             continue
-        nested = _ps_lists(Parse(parse.tool_name, inner), depth + 1)  # the nested text: its own reading
+        # the nested text: its own reading
+        nested = _ps_lists(Parse(parse.tool_name, inner), depth + 1, ps_text and _runs_ps_text(words))
         if _command_name(words[0]) in _CODE_INTERPRETERS:
             trimmed = ([word for word in item if not _BARE_SLASHES_RE.match(word)] for item in nested)
-            nested = [item for item in trimmed if item]
+            kept = []
+            for item, before in zip(trimmed, nested):
+                if item:
+                    cut = _Words(item)
+                    cut.ps_text = bool(getattr(before, "ps_text", False))
+                    kept.append(cut)
+            nested = kept
         lists.extend(nested)
     return lists
+
+
+def _runs_ps_text(words: list[str]) -> bool:
+    """True when the program of one simple command runs its text as PowerShell (`pwsh`, `powershell`, `iex`),
+    looked through an assignment prefix, the call operator `&` and wrapper commands."""
+    plain = [str(word) for word in words]
+    while len(plain) > 2 and _PS_ASSIGN_RE.match(plain[0]) and plain[1] == "=":
+        plain = plain[2:]
+    if plain and plain[0] == "&":
+        plain = plain[1:]
+    stripped = _strip_command_prefix(plain)
+    return bool(stripped) and _command_name(stripped[0]) in _PS_TEXT_PROGRAMS
+
+
+def _mark_shell_lists(lists: list[list[str]]) -> list[list[str]]:
+    """The shell lexer's lists of a PowerShell call's text, each marked as PowerShell text (_Words.ps_text) unless
+    it comes after a program that runs text of another language (`bash -c "'ls' / 2"`: the lexer reads the nested
+    text after the call, in order). The lexer hands out the top-level commands and the nested texts in one list
+    without a depth, so a program of that kind anywhere before a list takes it out of PowerShell text: a
+    quoted first word is then no string there, and the call is read the way it always was."""
+    marked: list[list[str]] = []
+    foreign = False
+    for words in lists:
+        item = _Words(words)
+        item.feeds_xargs = bool(getattr(words, "feeds_xargs", False))
+        item.literal_values = bool(getattr(words, "literal_values", False))
+        item.ps_text = not foreign
+        marked.append(item)
+        plain = [str(word) for word in words]
+        while len(plain) > 2 and _PS_ASSIGN_RE.match(plain[0]) and plain[1] == "=":
+            plain = plain[2:]
+        if plain and plain[0] == "&":
+            plain = plain[1:]
+        stripped = _strip_command_prefix(plain)
+        if stripped and _command_name(stripped[0]) in _FOREIGN_TEXT_PROGRAMS:
+            foreign = True
+    return marked
 
 
 # --- loop words that are only the tail of a URL ---------------------------------------------------
@@ -2101,8 +2267,9 @@ def _shell_findings(judge: _Judge, tool: str, command: str, cwd: str, parse: Par
             judge.scanner_failed(exc)
     try:
         # The inside of a shell arithmetic expression is no command line (PowerShell has none of that syntax).
-        groups.append(_shell_word_lists(parse.for_text(
-            command if powershell else _without_url_loop_words(_without_arithmetic(command)))))
+        shell_lists = _shell_word_lists(parse.for_text(
+            command if powershell else _without_url_loop_words(_without_arithmetic(command))))
+        groups.append(_mark_shell_lists(shell_lists) if powershell else shell_lists)
     except Exception as exc:  # noqa: BLE001
         judge.scanner_failed(exc)
     for lists in groups:
