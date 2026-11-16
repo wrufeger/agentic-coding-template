@@ -1044,6 +1044,16 @@ def _is_reader_failure(exc: BaseException) -> bool:
     return isinstance(reader_failure, type) and isinstance(exc, reader_failure)
 
 
+def _inline_size_notes() -> "list[str]":
+    """The notes of inline programs too large to be read (checks.inline_code.take_size_notes), once per call; []
+    when that module was not loaded in this process. Never raises."""
+    take = getattr(sys.modules.get("checks.inline_code"), "take_size_notes", None)
+    try:
+        return list(take()) if callable(take) else []
+    except Exception:  # noqa: BLE001 -- a note that fails is no reason to touch the verdict
+        return []
+
+
 def _guard_applies(module_name: str, payload: dict) -> bool:
     """True when a guard of _FAIL_CLOSED that cannot be used refuses this call: the mcp_ide rule for an `mcp__` call,
     what the guard itself judges (_REFUSING_SCOPE, as for the hook's time limit) for the two read guards, else a tool
@@ -1407,7 +1417,8 @@ def _run_worker_rules(part_arg: str) -> int:
 
 
 def _report_check_failures(payload: dict, held: str) -> None:
-    """A PreToolUse call goes ahead although a check failed (it was skipped, see _check_failed): tell the
+    """A PreToolUse call goes ahead although a check failed (it was skipped, see _check_failed), or with a
+    note such as an inline program too large to read (_inline_size_notes): tell the
     human with a systemMessage now and leave the same text for this call's PostToolUse, which hands it to
     the model as additionalContext (_queue_failure_notes). `held` is what the checks printed meanwhile;
     it joins the message instead of standing in front of the JSON object. Nothing here can raise."""
@@ -1464,6 +1475,8 @@ def main(argv: list[str]) -> int:
             _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
         finally:
             sys.stdout = real_stdout
+        if result == 0:
+            _CHECK_FAILURES.extend(_inline_size_notes())  # a note, not a failure: same way to the model
         if result == 0 and _CHECK_FAILURES:
             _report_check_failures(payload, held.getvalue())
         elif held.getvalue():

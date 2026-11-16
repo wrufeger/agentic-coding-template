@@ -534,7 +534,7 @@ unknown target passes): a string that is merely mentioned (an import line, a com
 only reads, the system temp folder in a text) is no target, and neither is a path the text does not show - a name
 bound twice, a loop variable, a parameter, `sys.argv`, a join or f-string with a variable part, a call's result -, a
 literal that holds a `$` or a backtick, or code that cannot be read as Python (or a program
-larger than the reader takes). Shown is: a string literal; `Path(...)`, `os.path.join(...)` (Node `path.join(...)`, read the way Node joins: a later
+larger than the reader takes, 32 KB; it passes with a note "inline program over 32 KB not checked", once per call). Shown is: a string literal; `Path(...)`, `os.path.join(...)` (Node `path.join(...)`, read the way Node joins: a later
 part with a leading `/` stays a part, on Windows `\` splits as well) of such parts; a name bound exactly once, by a plain assignment (Node `const NAME = "literal"`), to such a value and used
 unchanged (not where the program calls `exec`, `eval`, `getattr`, `setattr`, `__import__` ... or stores an attribute on
 a module); and the files of `<folder>.glob('<literal>')`, `.rglob(...)`, `glob.glob('<literal>')` with a literal folder
@@ -583,6 +583,9 @@ before. An error of the reader's own program (a bug of the check, not a text it 
 different: `worker-write-scope` and `git-metadata-guard` then name the error and, in block mode, refuse the
 call (in warn mode they only warn), since inline code that was never judged must not pass as code without a
 write call; `.act/scripts/doctor.py` or the owner decides how to go on.
+
+A Python program larger than 32 KB is not read, is not refused and passes with a note to the model, once per call
+(`inline program over 32 KB not checked`): what it writes is not judged. Node and PowerShell inline code have no such limit.
 
 A shell target with a variable is unknown and passes, unless the same command assigns the name exactly once, as a
 simple literal: `f=v`, `export|local|declare|typeset|readonly [-r -x -g] f=v`, or several names in one

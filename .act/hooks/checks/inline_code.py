@@ -50,7 +50,7 @@
 # is not in the lists above (`.write(`, `Path.replace`, `fs.openSync`, the files `tarfile` or `zipfile` extract); a
 # program that changes directory in any form but the one above (a second `chdir`, one in a branch, a loop or a
 # function, `fchdir`, a folder that is no literal), whose names are unknown after it; a program larger than
-# _PROGRAM_SIZE_LIMIT, which is not read at all (no target, no refusal); code that imports a name under another
+# _PROGRAM_SIZE_LIMIT, which is not read at all (no target, no refusal; it passes with a note); code that imports a name under another
 # one; any other interpreter (perl, ruby, php, deno, bun). Best effort: it catches the common form.
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ from typing import NamedTuple, Optional
 __all__ = [
     "PYTHON", "NODE", "SOURCE_CODE", "SOURCE_STDIN", "SOURCE_NONE",
     "interpreter_language", "code_source", "code_source_at", "write_targets", "WHOLE_FOLDER",
-    "mentions_interpreter", "report_skipped", "ReaderFailure",
+    "mentions_interpreter", "report_skipped", "ReaderFailure", "take_size_notes",
     "CALL_RUN", "CALL_WRITE", "CALL_CODE", "ProgramCall", "PythonProgram", "read_python_program",
 ]
 
@@ -688,7 +688,7 @@ def _resolved_is_path(value: str) -> bool:
 # in the header of this file shows it). A value the reading cannot see is not reported, and a CALL_WRITE call with
 # such a path says so (ProgramCall.unknown_path); the write checks let it pass (an unknown target is no refusal). A program that does not
 # parse as Python, is larger than _PROGRAM_SIZE_LIMIT or nests deeper than the interpreter can walk is not read at
-# all (None back).
+# all (None back); one that is too large also leaves a note for the model (take_size_notes), the verdicts stay.
 #
 # Families (the callee is looked up through the program's own imports: `import subprocess as sp`,
 # `from os import system as run`, `from os import *`; a dotted chain whose root is not a plain name -
@@ -720,7 +720,7 @@ CALL_RUN = "run"      # a command line the program hands to a shell or a program
 CALL_WRITE = "write"  # a path the program writes, creates, moves, links or deletes
 CALL_CODE = "code"    # Python text the program runs itself (`exec`, `eval`)
 
-_PROGRAM_SIZE_LIMIT = 32_768   # characters of one program read as Python (parsing costs ~3 ms per KB); a larger one is not read: it gives no target and passes
+_PROGRAM_SIZE_LIMIT = 32_768   # characters of one program read as Python (parsing costs ~3 ms per KB); a larger one is not read: it gives no target and passes with a note (take_size_notes)
 _LITERAL_FOLD_DEPTH = 64       # `"a" + "b" + ...` chains folded this deep; deeper is not a literal
 
 # (module, function) -> how the arguments are read: "line" (the first argument is a command line),
@@ -1781,12 +1781,27 @@ def _harmless_blocker(tree: ast.AST) -> Optional[str]:
     return None
 
 
+_SIZE_NOTE = "[act] inline program over 32 KB not checked: it was not read, so what it writes is not judged"
+_size_notes: list[str] = []
+
+
+def take_size_notes() -> list[str]:
+    """The notes left by programs that were too large to read, each once however many checks skipped the
+    program; the list is emptied. The dispatcher hands them to the model with the call's other notes."""
+    taken = list(_size_notes)
+    _size_notes.clear()
+    return taken
+
+
 def read_python_program(code: str) -> Optional[PythonProgram]:
     """`code` read as Python: every call that runs a command, writes a file or runs Python text (the
     families in the section comment above), in source order, and whether the program is harmless by the
     allow-list above. None when the text is not read as Python: it does not parse (a syntax error, a
-    null byte), is larger than _PROGRAM_SIZE_LIMIT, or nests deeper than can be walked."""
+    null byte), is larger than _PROGRAM_SIZE_LIMIT (it passes with a note, see take_size_notes), or nests
+    deeper than can be walked."""
     if len(code) > _PROGRAM_SIZE_LIMIT:
+        if _SIZE_NOTE not in _size_notes:
+            _size_notes.append(_SIZE_NOTE)
         return None
     try:
         tree = ast.parse(code)
