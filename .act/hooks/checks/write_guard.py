@@ -30,8 +30,9 @@ from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolut
 from .shell_targets import _resolve_path
 
 __all__ = [
-    "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_bash_targets_protected_path",
-    "_powershell_targets_protected_path", "_unplaced_message", "_targets_protected_path", "_is_under_project_act",
+    "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_UNKNOWN_FOLDER_MESSAGE",
+    "_bash_targets_protected_path", "_powershell_targets_protected_path", "_unplaced_message",
+    "_targets_protected_path", "_is_under_project_act",
     "_resolve_against", "_guard_root", "check_write_guard",
 ]
 
@@ -447,8 +448,11 @@ def _bash_targets_protected_path(
     uses them to switch branches, unstage, and fetch the template's own version of a .act/ file
     back. A target whose directory is unknown (after `pushd`, a `cd $VAR`, inside a subshell, ...),
     that contains a variable, or whose own project `root` could not be determined is denied only
-    if its own text names .act/ (a variable the command assigns exactly once, as a literal, is first read as
-    that value, _assigned_value_refusal) — everything else about it cannot be decided here (a
+    if its own text names .act/, with _UNKNOWN_FOLDER_MESSAGE (also where the scanner yields a target that
+    resolves into .act/ with a known folder and the same target with none: the message changes, the verdict
+    does not; a variable the command assigns exactly once, as a
+    literal, before its first use is read as that value alone, in both directions: refused when the value is,
+    passed when the value is, _judge_target) — everything else about it cannot be decided here (a
     *determinable* target is resolved and checked against `root`'s own .act/ only, never against
     the raw text — a sibling checkout's .act/ is not this project's to protect). A dynamic target that is a
     list the scan cannot read (an `xargs` input, a `$(...)` or backtick span) passes only when its source
@@ -469,9 +473,14 @@ def _bash_targets_protected_path(
             read.append(shell_facts(tokens) if tokens is not None else ShellFacts())
         return read[0]
 
-    for raw, base in parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD):
+    targets = list(parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD))
+    for raw, base in targets:
         message = _judge_target(raw, base, root, command, facts)
         if message is not None:
+            if message.startswith(_WRITE_GUARD_MESSAGE) and base is not None and (raw, None) in targets:
+                # the scanner also yields this target with no known folder (after `cd $VAR`, `pushd`, in a
+                # subshell): the folder is not known, so say that; the verdict stays
+                message = _UNKNOWN_FOLDER_MESSAGE + message[len(_WRITE_GUARD_MESSAGE):]
             return message
     if re.search(r"mapfile|readarray", command, re.IGNORECASE):
         for callback, binding in facts().callbacks:
@@ -513,7 +522,14 @@ def _find_deletes(words: list[str]) -> bool:
 # Limit: the assignment is read wherever it stands in the text, so one that bash does not run before the write
 # (inside `( ... )`, in a later pipeline stage, in a branch that does not run, after `unset`, in a heredoc body
 # or a quoted string, `local` outside a function, a name only a child `bash -c` sees, a quoted `'$f'` or `\$f`
-# target, a non-ASCII name) can be taken as the value: a possible false block on a constructed command.
+# target, a non-ASCII name) can be taken as the value: a possible false block on a constructed command. The
+# write-guard also lets a target pass on that reading (_judge_target), only for an assignment that stands before
+# the first use of its name, and only for a value bash leaves alone (no white space, no `*`, `?`, `[`; never the
+# names PWD and OLDPWD, which `cd` resets). Further classes of that limit, all constructed commands and not
+# accidental ones: an assignment bash does not run before the write, an `unset` between the assignment and the
+# write, an assignment in a heredoc body or a quoted string, a function body that is never called, a name that is
+# not exported and is used inside the text of a child shell (`bash -c`, a quoted heredoc fed to a shell), and a
+# rebinding the count does not see (`printf -v`, `eval "..."`, `source`).
 _LITERAL_VALUE = r"""(?:"[^"$`\\\n]*"|'[^'\n]*'|[\w./:+@%-]+)"""
 _ASSIGN_WORD = rf"[A-Za-z_]\w*={_LITERAL_VALUE}"
 _ASSIGNMENT_COMMAND_RE = re.compile(
@@ -579,30 +595,81 @@ def _assigned_value_refusal(
 ) -> Optional[str]:
     """The refusal message when a variable of the target `raw` is assigned once, as a literal, in `command` and
     the resulting target is a write to `.act/` (`f=.act/x && echo y > $f`): it is judged as a target written
-    out. A value that gives no such verdict, and a variable the command does not bind to one literal, change
-    nothing - the target is judged as it stands."""
+    out. This is the refusal-only reading, used where the assignment does not stand before the first use of the
+    name (`cp a $f/.act/x; f=...`, _assigned_before_use): a value that gives no such verdict, and a variable
+    the command does not bind to one literal, change nothing - the target is judged as it stands."""
     text = _assigned_text(raw, command)
     if text is None:
         return None
-    message = _judge_target(text, base, root, command, None)
-    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE):
-        return f"{message} (the target `{raw}` was read as `{text}`: the command assigns that value to the name)"
+    message = _judge_text(text, base, root, command, None)
+    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE, _UNKNOWN_FOLDER_MESSAGE):
+        return _read_as(message, raw, text)
     return None
+
+
+def _assigned_before_use(raw: str, command: str) -> bool:
+    """True when each literal binding that the target `raw` names stands in `command` before the first use of its
+    name (`$NAME` or `${NAME}`): bash then runs the assignment first, so the value is what the write sees. A
+    value with white space or one of `*`, `?`, `[` (bash splits or expands it) and the names `PWD` and `OLDPWD`
+    (bash resets them on `cd`) never count."""
+    values = _assigned_literals(command)
+    names = {m.group(1) or m.group(2) for m in _VARIABLE_USE_RE.finditer(str(raw))} & set(values)
+    for name in names:
+        if name in ("PWD", "OLDPWD") or re.search(r"[\s*?\[]", values[name]):
+            return False
+        assigned = next((m.end() for m in _NAME_ASSIGNED_RE.finditer(command) if m.group(1) == name), None)
+        used = next((m.start() for m in _VARIABLE_USE_RE.finditer(command) if (m.group(1) or m.group(2)) == name), None)
+        if assigned is None or used is None or assigned > used:
+            return False
+    return True
+
+
+def _read_as(message: str, raw: str, text: str) -> str:
+    """`message` with the note that the target `raw` was read as `text`, for a refusal that comes from the value
+    of a variable; any other message stays as it is."""
+    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE, _UNKNOWN_FOLDER_MESSAGE):
+        return f"{message} (the target `{raw}` was read as `{text}`: the command assigns that value to the name)"
+    return message
 
 
 def _judge_target(
     raw: str, base: Optional[str], root: Optional[Path], command: str, facts: Optional[Callable[[], ShellFacts]],
 ) -> Optional[str]:
     """The refusal message for one write target of `command` (raw text, the directory it is relative to), or
-    None. `facts` reads the loop and `read` variables of the command (list_feeds.shell_facts) when asked for."""
+    None. `facts` reads the loop and `read` variables of the command (list_feeds.shell_facts) when asked for.
+    A variable the command assigns exactly once, as a literal, before its first use counts as written out: the
+    target is judged only as the text with the values in place (_assigned_text), with the same `base`, `root`
+    and `facts`, and that verdict stands, refusing (with the note of what it was read as) or passing
+    (`T=<throwaway copy>; cp a $T/.act/x`). Where an assignment does not stand before the first use, the value
+    only refuses (_assigned_value_refusal) and the raw target is judged as it stands. Limit for the pass
+    direction, all constructed commands and not accidental ones: an assignment that bash does not run before the
+    write (inside `( ... )`, a later pipeline stage, a branch that does not run), an `unset` between the
+    assignment and the write, an assignment in a heredoc body or a quoted string, a function body that is never
+    called, a name that is not exported and is used inside the text of a child shell (`bash -c`, a quoted
+    heredoc fed to a shell), a rebinding the count does not see (`printf -v`, `eval "..."`, `source`). A value
+    with white space or a glob character, and the names PWD and OLDPWD, never count (_assigned_before_use)."""
     if _is_unplaced_target(raw):
         return _unplaced_message(raw)
+    text = _assigned_text(raw, command)
+    if text is not None and _assigned_before_use(raw, command):
+        message = _judge_text(text, base, root, command, facts)
+        return _read_as(message, raw, text) if message is not None else None
     message = _assigned_value_refusal(raw, base, root, command)
     if message is not None:
         return message
+    return _judge_text(raw, base, root, command, facts)
+
+
+def _judge_text(
+    raw: str, base: Optional[str], root: Optional[Path], command: str, facts: Optional[Callable[[], ShellFacts]],
+) -> Optional[str]:
+    """The verdict on the target text `raw` as it stands (no variable of the command is replaced here):
+    _UNKNOWN_FOLDER_MESSAGE when it names .act/ but its folder is not known (base unknown, a dynamic target, no
+    project root), _WRITE_GUARD_MESSAGE when it resolves into the project's own .act/, _LIST_MESSAGE for a list
+    that is not shown, None when it passes."""
     if base is None or _is_dynamic_target(raw) or root is None:
         if _names_protected_path(raw, root):
-            return _WRITE_GUARD_MESSAGE
+            return _UNKNOWN_FOLDER_MESSAGE
         if not _list_is_shown(raw, command, base, root):
             return _LIST_MESSAGE
         return _bound_refusal(raw, facts().bindings, base, root) if facts and _BOUND_VARIABLE_RE.search(raw) else None
@@ -695,6 +762,15 @@ def _find_run_refusal(
 _WRITE_GUARD_MESSAGE = (
     "[act] .act/ belongs to the template and is replaced on update. Put your version in "
     "docs/ai/local/<same path> — it wins over the template."
+)
+_UNKNOWN_FOLDER_MESSAGE = (
+    "[act] write-guard refused -- the target names .act/ but its folder is not known (a variable, a substitution, "
+    "or a relative path after cd to a variable), so it may be this project's own .act/ (the template's files, "
+    "replaced on update). A throwaway copy under .act-local/tmp/ passes when the command shows the place: write "
+    "the path out (cp a .act-local/tmp/<task>/tpl/.act/x), or set the variable once to a literal before its first "
+    "use (T=.act-local/tmp/<task>/tpl; cp a $T/.act/x), and cd only to a folder written out. A change to this "
+    "project's own .act/ goes to docs/ai/local/<same path>. Never route the write through a script file or an "
+    "interpreter instead."
 )
 _ROOT_REMOVAL_MESSAGE = (
     "[act] this removes the project root or a folder that holds it, the template's .act/ included. "

@@ -179,6 +179,8 @@ with a model each.
   after starting workers ends its turn with one line saying how many run, so you can talk to it meanwhile.
 - The question about workers often stopped by the read-only git check recommends a report to the template, since
   the role files already tell them.
+- `template-write-guard` lets a write into a throwaway copy pass when a variable set once to a literal before its
+  first use names it (`T=.act-local/tmp/x; cp a $T/.act/y`); an unknown folder gets a message with the ways out.
 
 ### Removed
 - The config key `done-entries` (projects behave as `keep` did) and `entries.py purge` (a call prints a notice).

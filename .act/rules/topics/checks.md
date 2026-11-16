@@ -47,7 +47,7 @@ reword, do nothing. The sentence follows the most frequent class of the window w
 `<check> (<class>)`, else it is the check's own; a check without one gets a generic sentence.
 The sentences are these:
 
-- `write_guard`: Never write under `.act/` (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`.
+- `write_guard`: Never write under `.act/` of this project (the template's own files); a project-specific version goes into `docs/ai/local/<same path>`. In a throwaway copy under `.act-local/tmp/`, show the place in the command: the path written out, or a variable set once to a literal before its first use; `cd` only to a folder written out.
 - `write_scope` (`inline-code`): Write a file with the Write or Edit tool inside your `Write scope:`, not through inline interpreter code; name any other file and the change it needs in your result.
 - `write_scope` (`read-only-scope`): Your assignment is read-only (`Write scope: none`): write no file; return the content or the change in your result.
 - `write_scope` (`scope-unbound`): If a write is refused because no write scope is bound to you, do not retry another way; say so in your result and name the file and the change it needs.
@@ -342,15 +342,27 @@ and run `icacls <path> /reset` in the `finally`. A throwaway project below `.act
 the template's `.act/` write-guard lets a write into it pass (conditions in `write_guard.py`); a `shutil.rmtree` of the
 project root or of a folder that holds it is refused. Limit: a relative
 `.act/` target after `cd $VAR/...` (a variable, `P=<dir> cd $P/x` too) is judged against the project root and
-refused; `cd <literal folder> && cp ... .act/...` into such a project passes, so write the folder out.
+refused (the verdict is the same as for the project's own `.act/`), with the message that says its folder is not
+known, because the scan yields that target with no known folder as well; `cd <literal folder> && cp ...
+.act/...` into such a project passes, so write the folder out.
 
 The write-guard reads shell names the same way: a target made of a name that the command assigns exactly once, as
-a literal, naming `.act/` (`f=.act/x && echo y > $f`, also `local`/`declare`/`export`/`readonly f=...`) is refused
-like the written-out path, and the refusal names the target as typed and the value it was read as. A name assigned
-more than once, also with literals only, or bound any other way stays unknown and passes. Limit, for both checks:
-the assignment is read wherever it stands in the text, so one that bash does not run before the write (inside
-`( … )`, a later pipeline stage, a branch that does not run, after `unset`, a heredoc body or quoted string,
-`local` outside a function, a name only a child `bash -c` sees, a quoted `'$f'` target) can be taken as the value.
+a literal, before its first use (`f=.act/x && echo y > $f`, also `local`/`declare`/`export`/`readonly f=...`) is
+judged only as the text with the value in place, in both directions: refused like the written-out path (the refusal
+names the target as typed and the value it was read as), or passed like it (`T=.act-local/tmp/job/tpl; cp a
+$T/.act/x`; any value counts, `T=.` refuses like `./.act/x`). A name assigned more than once, also with literals
+only, assigned after its first use, or bound any other way stays unknown: its value can only refuse, and the raw
+target is judged as it stands. A target naming `.act/` whose folder is not known is refused with a message of its
+own that shows the two ways out: the path written out, or a variable set once to a literal before its first use.
+Limit, for both checks: the assignment is read wherever it stands in the text, so one that bash does not run before
+the write (inside `( … )`, a later pipeline stage, a branch that does not run, after `unset`, a heredoc body or
+quoted string, `local` outside a function, a name only a child `bash -c` sees, a quoted `'$f'` target) can be taken
+as the value; for the write-guard's pass direction such an assignment, an `unset` between the assignment and the
+write, an assignment in a heredoc body or a quoted string, a function body that is never called, a name that is not
+exported and is used inside the text of a child shell, and a rebinding the count does not see (`printf -v`,
+`eval "…"`, `source`) are constructed commands, not accidental ones. A value with white space or a glob character
+(`*`, `?`, `[`), and the names `PWD` and `OLDPWD` (bash resets them on `cd`), never count as written out: such a
+target is judged as before, the value only refusing.
 
 `act-local-tidy` (switch `act-local-tidy`; `warn` only reports what would go, `off` skips) runs once a day at session
 start in a detached process; the next start reports the result in one line. It removes `.act-local/tmp/` entries older
