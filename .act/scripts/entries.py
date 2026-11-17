@@ -1251,6 +1251,7 @@ def _rewrite_segment(segment: str, base: Path, mapper: LinkMapper) -> str:
     return _HTML_SRC_RE.sub(fix_html, _MD_LINK_RE.sub(fix_markdown, segment))
 
 
+# also used by compact_check.py - keep the name and signature
 def _rewrite_links(text: str, base: Path, mapper: LinkMapper) -> str:
     """Apply `mapper(target path, resolved path)` to every local link outside a fenced code block
     and inline code; it returns the new link path (relative, "/" separators) or None to keep the
@@ -2134,6 +2135,7 @@ def _porcelain_paths(output: str) -> set[str]:
     return names
 
 
+# also used by compact_check.py - keep the name and signature
 def _compact_mapper(archive: Path, targets: dict[str, tuple[str, str]], dest_base: Path,
                     everything: bool) -> LinkMapper:
     """Link mapper for text that ends up in `dest_base`: a link to a merged entry (a key of `targets`) becomes

@@ -126,6 +126,9 @@
 #               answer, differs from HEAD; text appended to the answer does not count, nor do line endings
 #               or trailing spaces. No finding without git, without the file or the label in HEAD. A hint
 #               only, never a block.
+#          29. a tool copy of a project's own skill (docs/ai/local/skills/) that differs from both its
+#               source and its recorded hash — edited by hand, so neither the session start nor an
+#               update refreshes it (own-copy-drift; a template skill's override copy reads "skill copy").
 #          Finding 6's `act:ref` scan skips fenced code blocks and inline code spans (D2) — those
 #          markers are illustration, not a live reference, and used to be reported as broken.
 #          The content-based half of the reconcile skill (contradictions, near-duplicate rules,
@@ -187,6 +190,7 @@ import script_docs
 import settings_load
 import skills
 import tiers
+import unit_copies
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +230,7 @@ KIND_LABELS: dict[str, str] = {
     "override-stale": "Overridden rule or skill whose template text has changed",
     "ref-missing": "Broken references",
     "duplicate-unit": "Duplicate scripts/agents/skills",
+    "own-copy-drift": "Tool copies of an own skill that differ from both their source and their recorded hash",
     "duplicate-id": "Duplicate entry ids (task/backlog/question/todo)",
     "entry-unreadable": "Entry files that cannot be read as UTF-8",
     "orphan-file": "Files in the inbox or concept folder that no Markdown file under docs/ links",
@@ -277,6 +282,7 @@ KIND_LABELS_DE: dict[str, str] = {
     "override-stale": "Überschriebene Regeln oder Skills, deren Vorlagentext sich geändert hat",
     "ref-missing": "Kaputte Verweise",
     "duplicate-unit": "Doppelte Scripte/Agenten/Skills",
+    "own-copy-drift": "Werkzeugkopien eines eigenen Skills, die weder ihrer Quelle noch ihrem festgehaltenen Hash entsprechen",
     "duplicate-id": "Doppelte Eintragskennungen (Aufgabe/Backlog/Frage)",
     "entry-unreadable": "Eintragsdateien, die sich nicht als UTF-8 lesen lassen",
     "orphan-file": "Dateien in Inbox oder Konzeptordner, auf die keine Markdown-Datei unter docs/ verweist",
@@ -883,6 +889,52 @@ def check_duplicate_units(root: Path) -> list[Finding]:
         findings.append(Finding(
             path=locations, line=None, kind="duplicate-unit",
             message=f"'{name}' present without a matching .act/ source, generated copy, or role bridge",
+        ))
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# 29. Tool copy of an own skill edited by hand — differs from its source and from its recorded hash
+# ---------------------------------------------------------------------------
+
+def check_own_copy_drift(root: Path) -> list[Finding]:
+    """A tool copy of an own skill (lock `copies` entry whose source is under docs/ai/local/skills/)
+    that differs from what its source would write and from its recorded hash: it was edited by
+    hand, so neither the session start nor an update touches it. Cheap: reads only the recorded
+    copies and their sources; a missing, unreadable or linked file or folder is not this check's
+    finding. A copy of a template skill's override (source folder named like a template skill) is
+    reported as "skill copy": only update.py refreshes those, the session start does not."""
+    findings: list[Finding] = []
+    copies = (actlib.read_lock_at(root) or {}).get("copies", {})
+    if not isinstance(copies, dict):
+        return findings
+    prefix = "docs/ai/local/skills/"
+    tiers_data = overrides = None
+    for dest_rel, entry in sorted(copies.items()):
+        source_rel = entry.get("source") if isinstance(entry, dict) else None
+        if not isinstance(source_rel, str) or not source_rel.startswith(prefix):
+            continue
+        dest, src = root / dest_rel, root / source_rel
+        is_override = (root / ".act" / "skills" / source_rel[len(prefix):].split("/")[0]).is_dir()
+        label = "skill copy" if is_override else "own skill copy"
+        try:
+            if (unit_copies.dest_is_linked(root, dest_rel) or src.is_symlink()
+                    or not dest.is_file() or not src.is_file()):
+                continue
+            if tiers_data is None:
+                tiers_data, overrides = tiers.load_tiers(root), tiers.read_role_overrides(root)
+            current = dest.read_bytes()
+            expected = init.skill_copy_bytes(root, dest_rel, src, tiers_data, overrides)
+        except (OSError, ValueError):
+            continue
+        if actlib.fold_crlf(current) == actlib.fold_crlf(expected):
+            continue
+        if actlib.matches_lock_hash(current, entry.get("sha256")):
+            continue  # unedited, its source moved on: the next session start refreshes it
+        findings.append(Finding(
+            path=dest_rel, line=None, kind="own-copy-drift",
+            message=f"{label} {dest_rel} differs from its source {source_rel} and from its recorded "
+                    "hash — edit the source, then refresh the copy",
         ))
     return findings
 
@@ -3333,6 +3385,7 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_act_refs(root)
     findings += check_bridge_files(root)
     findings += check_duplicate_units(root)
+    findings += check_own_copy_drift(root)
     findings += check_duplicate_entry_ids(root)
     findings += check_legacy_questions_dir(root)
     findings += check_local_role_frontmatter(root)

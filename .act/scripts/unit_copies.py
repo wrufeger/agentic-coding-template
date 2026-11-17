@@ -7,7 +7,10 @@
 #          and update.py do), a role under docs/ai/local/agents/<name>.md gets its Claude Code bridge
 #          under .claude/agents/. Called from the session start (hooks/checks/session.py) and from
 #          update.py, so a hand-made unit needs no import step.
-# Rules:   idempotent; a copy that exists with other content is never overwritten (reported); a name
+# Rules:   idempotent; an untracked copy that exists with other content is never overwritten (reported);
+#          a tracked copy that still equals its recorded hash follows a changed source (refreshed), a
+#          stale hash on a copy that equals its source is re-recorded silently, a copy edited by hand
+#          (differs from both) is left alone (doctor.py names it); a name
 #          that is a template skill/role is that unit's override, not an own unit, and is skipped
 #          with a note; nothing is ever deleted here (a removed own unit's copies stay, update.py's
 #          refresh decides about unedited ones); never raises out of ensure_own_unit_copies(); a
@@ -97,16 +100,36 @@ def _link_like(directory: Path, base: Path) -> bool:
         return True
 
 
+def dest_is_linked(root: Path, dest_rel: str) -> bool:
+    """True if the file `dest_rel` (root-relative), or any folder above it below `root`, is a symlink
+    or a junction — a write there would land outside the project's own tree."""
+    dest = root / dest_rel
+    try:
+        if dest.is_symlink():
+            return True
+        return any(_link_like(folder, folder.parent) for folder in dest.parents
+                   if folder != root and root in folder.parents)
+    except OSError:
+        return True
+
+
 def ensure_own_unit_copies(
     root: Path, history_check: Optional[Callable[[list[str]], set[str]]] = None,
 ) -> tuple[list[str], dict[str, dict], list[Path]]:
-    """Create the missing tool copies of every own skill and own role.
+    """Create the missing tool copies of every own skill and own role, and bring a tracked, unedited
+    copy of an own skill up to its source.
 
-    Returns (messages, recorded, touched): one line per thing worth saying (created, edited copy
-    kept, name collision), the "copies" entries this call added to .act-lock.json (the caller of an
-    update merges them into the value it writes itself), and the files it created. A call with
-    nothing missing returns ([], {}, []) and writes nothing — a second call changes nothing. Any
-    error ends in one message line, never an exception.
+    Returns (messages, recorded, touched): one line per thing worth saying (created, refreshed, foreign
+    copy kept, name collision), the "copies" entries this call added or changed in .act-lock.json (the
+    caller of an update merges them into the value it writes itself), and the files it created or
+    refreshed. A call with nothing to do returns ([], {}, []) and writes nothing — a second call
+    changes nothing. Any error ends in one message line, never an exception.
+
+    A tracked copy (key in the lock's copies) of an own skill: if it still matches its recorded hash
+    and differs from what its source would write, it is overwritten and re-recorded ("refreshed from
+    its source"); if it already equals that, a stale recorded hash is re-recorded silently; if it
+    differs from both (edited by hand), it is left alone, no write, no message. A tracked copy that
+    is missing stays for update.py to decide.
 
     A destination listed in the lock's removed_by_user is never recreated; `history_check` (update.py's
     _paths_in_git_history) additionally names destinations that were committed once and are missing
@@ -138,6 +161,7 @@ def ensure_own_unit_copies(
 
         # every copy that is missing and may be made: (dest key, source file) / (bridge, role file, source)
         skill_jobs: list[tuple[str, Path]] = []
+        tracked_jobs: list[tuple[str, Path]] = []  # tracked copies of own skills: followed to their source
         role_jobs: list[tuple[str, Path, Path]] = []
         skills_base = root / "docs" / "ai" / "local" / "skills"
         for skill_dir in skills:
@@ -160,8 +184,11 @@ def ensure_own_unit_copies(
                     if not init._skill_target_active(gate, tools):
                         continue
                     key = f"{dest_root}/{rel}"
-                    if key in copies or key in removed_by_user:
-                        continue  # tracked: update.py refreshes it; removed by hand: stays removed
+                    if key in removed_by_user:
+                        continue  # removed by hand: stays removed
+                    if key in copies:
+                        tracked_jobs.append((key, src))  # tracked: follows its source, below
+                        continue
                     skill_jobs.append((key, src))
 
         own_dir = (root / "docs" / "ai" / "local" / "agents").resolve()
@@ -207,6 +234,27 @@ def ensure_own_unit_copies(
             recorded[key] = entry
             touched.append(dest)
             messages.append(f"{key}: created")
+        for key, src in tracked_jobs:
+            dest = root / key
+            if dest_is_linked(root, key) or not dest.is_file():
+                continue  # missing: update.py decides; a link (file or folder) is never written through
+            try:
+                data = init.skill_copy_bytes(root, key, src, tiers_data, overrides)
+                new_hash = actlib.lock_hash(data)
+                old_hash = copies[key].get("sha256") if isinstance(copies[key], dict) else None
+                current = dest.read_bytes()
+                entry = {"source": src.relative_to(root).as_posix(), "sha256": new_hash}
+                if actlib.fold_crlf(current) == actlib.fold_crlf(data):
+                    if old_hash != new_hash:
+                        recorded[key] = entry  # stale hash on a copy equal to its source: re-recorded
+                elif actlib.matches_lock_hash(current, old_hash):
+                    dest.write_bytes(data)  # unedited, and its source moved on
+                    recorded[key] = entry
+                    touched.append(dest)
+                    messages.append(f"{key}: refreshed from its source")
+                # else: edited by hand (differs from both) — left alone, doctor.py names it
+            except OSError as exc:  # one unwritable copy must not stop the rest
+                messages.append(f"{key}: not refreshed ({exc.__class__.__name__}: {exc})")
         if recorded:
             copies.update(recorded)
             actlib.write_lock({"copies": copies})

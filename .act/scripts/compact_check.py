@@ -7,7 +7,8 @@
 #          version, date, path or number of the original, nor a line of the human's own words. Only text
 #          that is recognisably the assistant's may go (a paragraph opening with a bold label such as "**Context**"
 #          and the option list directly below it); every other non-empty line of the original, marked
-#          or not, counts as the human's and must stand verbatim. A note, and a todo captured from a
+#          or not, counts as the human's and must stand verbatim; it also counts if it stands in the link form
+#          `compact` writes (a link to a folded file pointing at its collection and anchor). A note, and a todo captured from a
 #          chat prefix, are the human's in full (a note up to the assistant's first reply block). The
 #          original is read with `git show <hash>:<folder>/<file>` from the commit the collection's
 #          head names. Stdlib only.
@@ -20,20 +21,22 @@
 #     working tree without a section in any collection. Then, for every month with a Q-, T-, B- or U- collection, the overview
 #     archive/YYYY-MM.md must exist and name every id of that month's collections.
 #     --restore writes the full body of each section that lost something back (heading and header line stay)
-#     and then reports only what is still wrong. --month limits the check to one month, --no-overview skips
+#     (its links in the form `compact` writes) and then reports only what is still wrong. --month limits the check to one month, --no-overview skips
 #     the overview. Exit 0: nothing wrong (after a restore: nothing left wrong), 1: a problem, 2: usage error.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import actlib  # noqa: E402
+import entries  # noqa: E402  (the link rewrite `compact` applies is reused, not copied)
 
 ARCHIVE_DIR = Path("docs/ai/work/archive")
 _COLLECTION_NAME_RE = re.compile(r"^(Q|T|B|U|other|ledger)-(\d{4}-\d{2})\.md$")
@@ -195,12 +198,48 @@ def head_sources(lines: list[str]) -> list[tuple[str, str]]:
     return list(reversed(pairs))
 
 
-def original_text(root: Path, sources: list[tuple[str, str]], file_name: str) -> Optional[str]:
+def original_text(root: Path, sources: list[tuple[str, str]], file_name: str) -> Optional[tuple[str, str]]:
+    """(text, folder) of the original single file: the first commit of the head that holds it."""
     for commit, folder in sources:
         text = git_show(root, commit, f"{folder}/{file_name}")
         if text is not None:
-            return text
+            return text, folder
     return None
+
+
+LinkTargets = dict[str, tuple[str, str]]
+
+
+def link_targets(root: Path, collections: list[Path]) -> LinkTargets:
+    """Where every folded single file went, as `compact` maps it: the normalised path of the old file ->
+    (collection file name, anchor). Taken from the collections themselves: each section's `file:` field and the
+    folders of the commits named in the head."""
+    found: LinkTargets = {}
+    ambiguous: set[str] = set()
+    for path in collections:
+        try:
+            lines = path.read_bytes().decode("utf-8").replace("\r\n", "\n").split("\n")
+        except (OSError, UnicodeDecodeError):
+            continue  # reported by check_collection
+        sources = head_sources(lines)
+        for section in split_sections(lines):
+            if section.file_name:
+                for _commit, folder in sources:
+                    key = os.path.normcase(os.path.normpath(root / folder / section.file_name))
+                    if found.setdefault(key, (path.name, section.anchor)) != (path.name, section.anchor):
+                        ambiguous.add(key)
+    for key in ambiguous:  # one name, several folded files: nothing says which one a link meant
+        del found[key]
+    return found
+
+
+def link_rewriter(root: Path, folder: str, targets: LinkTargets) -> Callable[[str], str]:
+    """The link rewrite `compact` applied to a body that stood in `folder`, for the same mapping."""
+    archive = root / ARCHIVE_DIR
+    base = root / folder
+    rebase = os.path.normcase(os.path.normpath(base)) != os.path.normcase(os.path.normpath(archive))
+    mapper = entries._compact_mapper(archive, targets, archive, rebase)
+    return lambda text: entries._rewrite_links(text, base, mapper)
 
 
 def split_original(text: str) -> tuple[str, str]:
@@ -216,23 +255,41 @@ def split_original(text: str) -> tuple[str, str]:
     return "", body.strip("\n")
 
 
-def missing_in(original: str, section: Section) -> list[str]:
-    """What the original body has and the section lacks: tokens first, then the human's lines."""
+def missing_in(original: str, section: Section, rewrite: Callable[[str], str] = lambda text: text) -> list[str]:
+    """What the original body has and the section lacks: tokens first, then the human's lines. A link `compact`
+    rewrites counts as present in its original or its rewritten form (`rewrite` gives the latter); a link changed
+    to anything else is still missing."""
     _title, body = split_original(original)
+    rewritten = rewrite(body)
     short = section.text
-    lacking = sorted(tokens(body) - tokens(short), key=lambda t: (len(t), t))
+    short_tokens = tokens(short)
+    before, after = tokens(body), tokens(rewritten)
+    missing = (before - short_tokens) & (after - short_tokens)
+    if (before - after) - short_tokens:  # a token the rewrite removed counts as present only with what replaced it
+        missing |= (after - before) - short_tokens
+    lacking = sorted(missing, key=lambda t: (len(t), t))
     folded = " ".join(short.split())
     present = {" ".join(line.split()) for line in short.split("\n")}
     # a short line ("a", "1a 2a") counts only as a whole line, or it would be found inside any other text; a
     # long one may also stand inside a reflowed paragraph
-    lacking += [f"line \"{line[:60]}\"" for line in human_lines(body, actlib.header_block(original))
-                if line not in present and (len(line) < _REFLOW_MIN or line not in folded)]
+    header = actlib.header_block(original)
+    plain = human_lines(body, header)
+    moved = human_lines(rewritten, header)
+    if len(moved) != len(plain):  # the rewrite works line by line, so this does not happen; compare plainly if it does
+        moved = plain
+
+    def stands(line: str) -> bool:
+        return line in present or (len(line) >= _REFLOW_MIN and line in folded)
+
+    lacking += [f"line \"{line[:60]}\"" for line, new in zip(plain, moved) if not stands(line) and not stands(new)]
     return lacking
 
 
-def restored_section(section: Section, original: str) -> list[str]:
-    """Anchor, heading and header line of `section` followed by the full body of `original`."""
+def restored_section(section: Section, original: str, rewrite: Callable[[str], str] = lambda text: text) -> list[str]:
+    """Anchor, heading and header line of `section` followed by the full body of `original`, its links written as
+    `compact` writes them, so no restored section points to a single file that is gone."""
     _title, body = split_original(original)
+    body = rewrite(body)
     lines = section.lines[:3]
     if body:
         lines += ["", *body.split("\n")]
@@ -245,7 +302,7 @@ def restored_section(section: Section, original: str) -> list[str]:
     return lines
 
 
-def check_collection(root: Path, path: Path, restore: bool) -> tuple[int, list[str], list[str]]:
+def check_collection(root: Path, path: Path, restore: bool, targets: LinkTargets) -> tuple[int, list[str], list[str]]:
     """(sections checked, problems still standing, restored anchors) for one collection file."""
     name = path.name
     raw = path.read_bytes().decode("utf-8")
@@ -261,16 +318,18 @@ def check_collection(root: Path, path: Path, restore: bool) -> tuple[int, list[s
         if not file_name:
             problems.append(f"{section.anchor} in {name}: no `file:` field in the header line")
             continue
-        original = original_text(root, sources, file_name)
-        if original is None:
+        found_original = original_text(root, sources, file_name)
+        if found_original is None:
             problems.append(f"{section.anchor} in {name}: original {file_name} not found in Git "
                             f"(commits named in the head: {', '.join(c for c, _f in sources) or 'none'})")
             continue
-        lacking = missing_in(original, section)
+        original, folder = found_original
+        rewrite = link_rewriter(root, folder, targets)
+        lacking = missing_in(original, section, rewrite)
         if not lacking:
             continue
         if restore:
-            replacements.append((section, restored_section(section, original)))
+            replacements.append((section, restored_section(section, original, rewrite)))
             restored.append(f"{section.anchor} in {name}")
         else:
             shown = ", ".join(lacking[:12]) + (f" (+{len(lacking) - 12} more)" if len(lacking) > 12 else "")
@@ -373,10 +432,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     checked = 0
     problems: list[str] = []
     restored: list[str] = []
+    targets = link_targets(root, every_collection)
     for month, paths in sorted(by_month.items()):
         for path in paths:
             try:
-                count, found, done = check_collection(root, path, args.restore)
+                count, found, done = check_collection(root, path, args.restore, targets)
             except UnicodeDecodeError as error:
                 problems.append(f"{path.name} is not valid UTF-8: {error}")
                 continue

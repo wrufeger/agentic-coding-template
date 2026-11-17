@@ -103,6 +103,8 @@ with a model each.
   the answer does not count.
 
 ### Changed
+- A tool copy of one of your own skills follows its source: the session start refreshes an unedited copy, and
+  `act-doctor` flags one edited by hand. Change the source in `docs/ai/local/skills/`, not the copy.
 - Sentences every role repeated (LF writes from Python, `git -C`, `Tests:` line, skipping build folders, live-system
   reads) now sit in `R-role-worker`, `R-code-encoding`, `R-work-bounded-output` and `R-safe-approval`.
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
@@ -191,6 +193,9 @@ with a model each.
 - Migrations `001` to `004` for projects older than `v2.2.0`; `005` to `008` stay.
 
 ### Fixed
+- `compact_check.py` accepts a link that `entries.py compact` rewrote, so `act-compact` is no longer held by that
+  false alarm; `--restore` writes links in that form.
+- `update` no longer reports a skill copy that already matches the new version as "kept (edited locally)".
 - The write checks read ANSI-C quoting (`$'...'`) the way bash does: a relative target after a `cd` is judged from
   the folder the `cd` reached, which ends a false `outside-root` report.
 - `git commit -m $'...'` is read as written instead of scanning unstaged files; where the quote pass cannot place a

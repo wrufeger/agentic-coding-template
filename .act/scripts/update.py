@@ -1745,6 +1745,10 @@ def step_refresh_copies(
                     continue
                 replaced.append(dest_rel)
             _record(dest_rel, source_path, data)
+        elif actlib.fold_crlf(current) == actlib.fold_crlf(data):
+            # already what this update would write, only the recorded hash is stale: take the
+            # hash over, the copy is neither kept nor replaced
+            _record(dest_rel, source_path, data)
         elif dest_rel in restore:
             # Same trigger, for a locally-edited copy — reset only after the edit is
             # safely backed up; sync_dependent_files() files one inbox entry for the run.
