@@ -24,8 +24,6 @@ Read `docs/project/coding_rules.md`, and only the files/lines named in the assig
   dependencies, no switch to a different pattern "because it's more elegant."
 - **Behavior stays identical.** No signature change on a public function, no changed error
   handling, no new side effects.
-- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
-  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - The project's coding style and `docs/project/coding_rules.md` apply unchanged — readable does
   not mean "my style."
 

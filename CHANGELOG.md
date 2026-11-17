@@ -30,6 +30,8 @@ with a model each.
 
 ### Upgrading
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
+- If `docs/ai/local/` overrides `.act/rules/shared/00-core.md`, `10-safety.md` or `20-code.md`, copy in the new
+  sentences of `R-role-worker`, `R-work-bounded-output`, `R-safe-approval` and `R-code-encoding`.
 - An absolute `outside-root-allow` entry outside the project and home is read-only now; writes there are refused.
 - A commit touching a lock file is held while the scan cache folder is a link; the message names it, or set
   `security-check: off`.
@@ -101,6 +103,8 @@ with a model each.
   the answer does not count.
 
 ### Changed
+- Sentences every role repeated (LF writes from Python, `git -C`, `Tests:` line, skipping build folders, live-system
+  reads) now sit in `R-role-worker`, `R-code-encoding`, `R-work-bounded-output` and `R-safe-approval`.
 - `R-code-checks-intact`: no commit or push while a test or probe is red, known or not; a test that ran red changes
   only with your approval; time-outs are re-run once; two failed fixes escalate, then ask you. Off: uncheck it in `docs/ai/rules.md`.
 - A tier proposal from `act-doctor` no longer counts reworks given the reason `assignment`, `edge-case` or `decision`;

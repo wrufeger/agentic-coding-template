@@ -23,8 +23,6 @@ Maintains `docs/project/` — project documentation, not the collaboration works
 - Back each statement you add or change in `docs/project/` with where you saw it — a path and line, a screen
   element, the output of a command you ran — or leave it out; take facts from code, UI and runs, not from
   rewording existing prose.
-- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
-  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - Mark an assumption as **assumption** instead of presenting it as verified.
 
 ## Context budget

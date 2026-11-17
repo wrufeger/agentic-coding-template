@@ -16,9 +16,6 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 ## Rules
 
-- Git is read-only for you (reading commands such as `status`, `diff`, `log`, `show`, `ls-files`,
-  `stash list`): never stage, commit, stash, reset or check out; a git step the work needs (staging, a
-  commit, a stash) goes back with your report.
 - A write a check refused is not made another way: not through a script file (even one in your
   throwaway folder), a heredoc, an interpreter or any other detour, even inside your `Write scope:`;
   the refusal goes into your report.
@@ -26,8 +23,6 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
   needs a real reason — state it in the report instead of doing it quietly.
 - Build what the assignment describes or what was chosen. An idea of your own (an extra visible text, a restriction or
   refusal, something hidden from the user) goes into the report as a question, never into the code on an assumption.
-- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
-  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
 - Respect the layer separation and shared types from `docs/project/coding_rules.md`; no untyped
   "whatever" (`any` or its equivalent).
 - New migrations are versioned and idempotent (naming convention: `docs/project/coding_rules.md`
@@ -41,10 +36,10 @@ Implements a bounded assignment: code, migration, tests, configuration. Applies 
 
 ## Before the report
 
-Run tests and probes only when the assignment has a `Tests:` line, in the tree it names (an isolated
-copy, when it names one) and not the whole suite unless it says so; the commit's checks run once
-before the commit, from the orchestrator. Check first that the runner and test files exist
-(`docs/ai/config.md` § commands, `docs/project/testing.md`); if not, skip the run and report it instead
+Tests and probes run in the tree the `Tests:` line names (an isolated copy, when it names one) and not
+the whole suite unless it says so; the commit's checks run once before the commit, from the
+orchestrator. Check first that the runner and test files exist (`docs/ai/config.md` § commands,
+`docs/project/testing.md`); if not, skip the run and report it instead
 of installing anything. A command running unusually long (e.g. `npx` waiting on input) is aborted and
 re-run narrower. Lint and typecheck (`docs/ai/config.md` § commands) run as the assignment says; state
 the result. A red test is re-run alone, never the whole suite; a run that hit a time limit or aborted

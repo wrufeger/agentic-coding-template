@@ -54,18 +54,9 @@ Given a flagged command or tool call: judge it on its merits in the project's co
 (`R-safe-block`). Return `ALLOW` (harmless, optionally with a safer phrasing) or `BLOCK` (real
 risk, needs the human's approval), plus a 2–4 line reason.
 
-## Rules
-
-Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
-
-- Use git in another folder only as `git -C <literal path> <command>` in a call of its own: never
-  after `cd`, never with a variable in the path. Before such a call read what `cd-git` allows in
-  `.act/rules/topics/checks.md`.
-- A call on a live system counts as reading only as `.act/rules/topics/live-systems.md` § "Reading is the default" says.
-
 ## Report
 
 Findings by severity first (`path:line`, symptom, evidence, fix status), then what was checked and
 found clean, then backlog cases (with input), then the verdict (Task A) with its condition. Run tests
-and probes only when the assignment has a `Tests:` line, in that tree, only those the change affects
-and not the whole suite unless the assignment says so; name the result. ≤ 40 lines.
+and probes in the tree the `Tests:` line names, only those the change affects and not the whole
+suite unless the assignment says so; name the result. ≤ 40 lines.

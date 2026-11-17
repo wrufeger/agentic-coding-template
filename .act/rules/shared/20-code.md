@@ -11,10 +11,14 @@ always English. Documentation, UI text and comments follow `language-docs` (`R-w
 
 ## `R-code-encoding` — Preserve file encoding
 
-summary: detect encoding before editing; change it only as its own commit
+summary: detect encoding before editing; change it only as its own commit; Python writes LF (newline or bytes)
 
 Check a file's encoding before editing it, and keep it — don't let a UTF-8 write corrupt a
-Latin-1/Windows-1252 file. Changing encoding on purpose is its own, separate commit.
+Latin-1/Windows-1252 file. Changing encoding on purpose is its own, separate commit. Line endings
+too: a file the assistant writes from Python keeps the line ending the attributes ask for, with
+`newline="\n"` or bytes (`write_bytes`) where they ask for LF, because text mode on Windows writes
+CRLF; afterwards `git ls-files --eol --cached --others <files>` must show `w/lf` there (without
+`--others` a new, untracked file prints nothing).
 
 ## `R-code-tools` — Use what the project has installed
 

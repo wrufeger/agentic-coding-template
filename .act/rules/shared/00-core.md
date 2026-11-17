@@ -55,13 +55,14 @@ diagnosis, not on the first plausible explanation.
 
 ## `R-work-bounded-output` — Keep output of unknown length out of the context
 
-summary: cut unbounded output (head/tail/grep or a throwaway file); read only failures; large files in excerpts; no images in the orchestrator
+summary: cut unbounded output (head/tail/grep or a throwaway file); read only failures; large files in excerpts; skip build/dependency directories and generated artifacts; no images in the orchestrator
 
 Output of unknown length is cut with `head`/`tail`/`grep`, or written to a file in the task's
 throwaway folder (`R-work-throwaway`; with no task `.act-local/tmp/<YYYYMMDD>-<slug>/`) and read from
 there — a worker whose assignment names no such folder cuts instead; it never goes whole into the
-context. Of build and test output read only the
-failures; read a large file in excerpts (`offset`/`limit`). Every line in the context is read again
+context. Of build and test output read only the failures; read a large file in excerpts
+(`offset`/`limit`). Build and dependency directories (see `.gitignore`) and generated artifacts are
+left out of a search or listing unless the work is about them. Every line in the context is read again
 with each following step. The orchestrator does not read an image or screenshot into its own context: a
 worker returns it as text — `quick-check` for numbers, status lines and dialogs, `explorer` for verbatim
 text; a worker reads images itself. Exception: the image is the subject itself (design, accessibility)
@@ -85,7 +86,7 @@ to the system temp directory or directly under `.act-local/` gets a note (checke
 
 ## `R-role-worker` — What a worker may and may not do
 
-summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git, nothing outside the Write scope, no sub-workers
+summary: bounded assignment, evidence, no commits, no docs/ai/, read-only git (-C form for another folder), tests only on a Tests: line, nothing outside the Write scope, no sub-workers
 
 A worker (sub-agent) works from a bounded assignment and returns its whole result **plus evidence**
 — at most 40 lines, no raw dumps, never "see above", every assumption marked **assumption**. It never
@@ -93,8 +94,13 @@ commits, never writes to `docs/ai/`, never starts another worker (a better split
 result), and never asks the human directly: open questions, and any fault it notices in how the work
 runs (`R-work-process-error`), come back with its result. If the human addresses it directly, it
 answers only "please ask the orchestrator" and carries on; asked for status, it answers at once with
-facts: done, open, unexpected. Git is read-only (`status`, `diff`, `log`, `show`); whatever changes
-the working tree or history stays with the orchestrator. A file outside the assignment's
+facts: done, open, unexpected. Git is read-only (reading commands such as `status`, `diff`, `log`, `show`,
+`ls-files`, `stash list`): never stage, commit, stash, reset or check out; a git step the work needs
+(staging, a commit, a stash) goes back with the result, and whatever changes the working tree or history
+stays with the orchestrator. Git in another folder runs only as `git -C <literal path> <command>` in a
+call of its own: never after `cd`, never with a variable in the path; before such a call read what
+`cd-git` allows in `.act/rules/topics/checks.md`. Tests and probes run only when the assignment has a
+`Tests:` line, and in the tree it names. A file outside the assignment's
 `Write scope:` (the throwaway place `.act-local/tmp/` aside) is never written — not with the tool a check would refuse, and not through an
 interpreter, script or other detour, whether or not a check refused it; the result names the file and
 the change it needs. Any other write a check refused is not made another way either, not through a

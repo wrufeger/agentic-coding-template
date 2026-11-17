@@ -23,10 +23,6 @@ is a separate assignment (`builder`). Applies `R-role-worker`.
   the cause counts as found only once the causal chain is shown.
 - **A check that finds nothing proves nothing alone.** Show it catches the case — a search that finds a known
   occurrence, a test that fails on the broken state — before a hypothesis is discarded on its silence.
-- **Git elsewhere:** git in another folder only as `git -C <literal path> <command>` in a call of its own: never
-  after `cd`, never with a variable in the path. Before such a call read what `cd-git` allows in
-  `.act/rules/topics/checks.md`.
-- A call on a live system counts as reading only as `.act/rules/topics/live-systems.md` § "Reading is the default" says.
 - **No leftover changes "to try something."** Trial log output, breakpoints, or test code come
   back out before the report; the working tree ends unchanged or clean.
 - Two rounds without a proven cause: report that openly — what was ruled out, what hypotheses

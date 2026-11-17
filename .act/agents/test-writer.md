@@ -20,16 +20,9 @@ proves them with a test run. Applies `R-role-worker`.
 - Never make the tested code fit just to turn a test green. A test that finds a real bug: report
   the bug, don't quietly adjust code or expectation. An expected failure is a negative test from
   the start that asserts it, never a red test marked as expected afterwards.
-- Files written from Python use `newline="\n"` or bytes (`write_bytes`): on Windows, text mode writes CRLF.
-  Afterwards `git ls-files --eol <files>` must show `w/lf` wherever the attributes ask for LF.
-- Git is read-only for you (reading commands such as `status`, `diff`, `log`, `show`, `ls-files`,
-  `stash list`): never stage, commit, stash, reset or check out; a git step the work needs (staging, a
-  commit, a stash) goes back with your report.
-- Ignore build/dependency directories (see `.gitignore`) and generated artifacts.
 
 ## Report
 
-Run the tests in the tree the assignment's `Tests:` line names and show the result (evidence, no success
-claim without output). ≤ 40 lines: tests
+Run the tests and show the result (evidence, no success claim without output). ≤ 40 lines: tests
 written per file with a short reason, edge cases covered, real bugs found (kept separate from the
 tests that found them), assumptions, what's open.

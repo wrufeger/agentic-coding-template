@@ -4,12 +4,14 @@ summary: approval, secrets, project root, deletion, git hooks, dev server, safeg
 
 ## `R-safe-approval` — Approval before anything irreversible or outward-facing
 
-summary: dated approval and a way back before irreversible or outward actions; a backup where something can be lost
+summary: dated approval and a way back before irreversible or outward actions; a backup where something can be lost; a call on a live system is reading only when its docs or code show so
 
 Writing to a live system, permanent deletion, deployment, and rights/access changes need the human's
 dated approval for this exact case, plus a stated way back and, where something can be lost, a backup
 beforehand. A PR, issue or comment overwrites nothing: approval and a way back, no backup. Reading
-stays free. Details: `topics/live-systems.md`.
+stays free, but a call on a live system counts as reading only as `topics/live-systems.md` §
+"Reading is the default" says: when the program's docs or code show that for exactly that subcommand.
+Details: `topics/live-systems.md`.
 
 ## `R-safe-no-secret-cli` — Never a secret on the command line
 
