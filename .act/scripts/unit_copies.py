@@ -42,6 +42,12 @@ def _tools(config_tools: str) -> list[str]:
     return sorted({actlib.normalize_tool(t) for t in raw})
 
 
+def copy_tools() -> list[str]:
+    """The tools to write copies for, as the own-unit copies use them (the lock's `applied.tools`, else
+    docs/ai/config.md § Project `tools`); package_load.py writes the copies of packages to the same targets."""
+    return _tools(actlib.read_config().get("tools", ""))
+
+
 def _template_names(root: Path, sub: str) -> set[str]:
     base = root / ".act" / sub
     if not base.is_dir():

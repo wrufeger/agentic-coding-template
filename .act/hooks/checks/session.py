@@ -15,7 +15,9 @@
 #          orchestrator-only rules when docs/ai/rules.md does not import them (all gated by
 #          their own docs/ai/config.md row, see _check_mode), and the scope of docs/ai/config.md
 #          § Scope (`profile`, `exclude`; act_profile.py): the import lines of excluded rule files,
-#          one line naming the cut, topics left out. refresh_session() is
+#          one line naming the cut, topics left out, and the packages of docs/ai/config.md § Packages
+#          (a zip fetched into .act-local/packages/ unpacked once to a resting folder, a package whose folder
+#          is missing or not intact, a newer zip, one summary line; never an activation). refresh_session() is
 #          the single SessionStart entry point dispatch.py calls; everything below feeds into it.
 #          Unlike the PreToolUse checks, this is not a list of independent pass/fail gates — every
 #          sub-step is its own best-effort note or side effect, and refresh_session() must never
@@ -77,7 +79,7 @@ from .session_context import (
     _EXCERPT_MARK, _IDE_SERVER_EXACT_NAMES, _IDE_SERVER_NAME_HINTS, _TOPIC_SWITCHES, _active_topics,
     _board_excerpt_block, _chat_language_line, _compact_note, _env_override_note, _ide_mcp_connected,
     _ideas_ensure_notes, _ideas_note, _ideas_pending, _identity_note, _is_ide_server_name, _output_depth_line,
-    _outside_root_note, _same_project_path, _scope_notes, _servers_match_ide_hint, _user_mcp_servers,
+    _outside_root_note, _package_notes, _same_project_path, _scope_notes, _servers_match_ide_hint, _user_mcp_servers,
 )
 
 __all__ = [
@@ -112,6 +114,7 @@ __all__ = [
     "_ide_mcp_connected",
     "_active_topics",
     "_scope_notes",
+    "_package_notes",
     "_bootstrap_marker",
     "_first_line",
     "_is_bootstrap_copy",
@@ -728,6 +731,13 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
             warn_notes.extend(scope_pending)
         except Exception as exc:  # noqa: BLE001 - the scope is a best-effort step, never a reason to end the session
             print(f"[act] note: scope not applied ({exc.__class__.__name__})")
+        try:
+            package_lines, package_pending = _package_notes(root, config, mode == "block")
+            for package_line in package_lines:
+                print(package_line)
+            warn_notes.extend(package_pending)
+        except Exception as exc:  # noqa: BLE001 - packages are a best-effort step, never a reason to end the session
+            print(f"[act] note: package notes not applied ({exc.__class__.__name__})")
         old_note = _old_imports_note(root)
         if old_note:
             state["old_imports"] = True

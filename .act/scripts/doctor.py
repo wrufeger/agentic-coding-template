@@ -190,6 +190,7 @@ import script_docs
 import settings_load
 import skills
 import tiers
+import package_load
 import unit_copies
 
 
@@ -267,6 +268,11 @@ KIND_LABELS: dict[str, str] = {
     "changelog-length": "Changelog entries under [Unreleased] over the length limit (changelog-length)",
     "reasoning-none": "Project files that still carry the reasoning value `none` (read as `default`)",
     "answered-edited": "Answered questions whose text or answer changed since the last commit",
+    "package-settings": "Package settings blocks in docs/ai/config.md whose package has no entry in the lock",
+    "package-broken": "Packages in the lock that do not load (folder missing or different from the lock)",
+    "package-version": "Packages that need a newer template than the installed one",
+    "package-unit-twice": "Units (skill, role, rule ...) that more than one package brings",
+    "package-copy": "Package copies that differ from what loading the packages gives",
 }
 KIND_ORDER = list(KIND_LABELS)
 
@@ -319,6 +325,11 @@ KIND_LABELS_DE: dict[str, str] = {
     "changelog-length": "Changelog-Einträge unter [Unreleased] über der Längengrenze (changelog-length)",
     "reasoning-none": "Projektdateien, die noch den Reasoning-Wert `none` tragen (gelesen als `default`)",
     "answered-edited": "Beantwortete Fragen, deren Text oder Antwort sich seit dem letzten Commit geändert hat",
+    "package-settings": "Einstellungsblöcke eines Pakets in docs/ai/config.md, das keinen Lock-Eintrag hat",
+    "package-broken": "Pakete im Lock, die nicht laden (Ordner fehlt oder weicht vom Lock ab)",
+    "package-version": "Pakete, die eine neuere Vorlage brauchen als die installierte",
+    "package-unit-twice": "Einheiten (Skill, Rolle, Regel ...), die mehr als ein Paket mitbringt",
+    "package-copy": "Paketkopien, die von dem abweichen, was das Laden der Pakete ergibt",
 }
 
 
@@ -1459,6 +1470,8 @@ def check_imports(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     reported: set[tuple[str, Optional[int]]] = set()
     for entry in unresolved:
+        if "/.act-local/packages/" in entry or " .act-local/packages/" in entry:
+            continue  # a package that does not load is named by check_packages, with its fix
         match = _UNRESOLVED_RE.match(entry)
         path, line, message = (match.group("path"), int(match.group("line")) or None, match.group("message")) \
             if match else ("CLAUDE.md", None, entry)
@@ -1505,6 +1518,101 @@ def check_imports(root: Path) -> list[Finding]:
                 message=(f"checked set {pset.path} is not loaded by Claude Code — write it as "
                          f"{rules.import_path(pset.path, coding_rel, root)} (the session start does this)"),
             ))
+    return findings
+
+
+def _version_tuple(text: str) -> Optional[tuple[int, int, int]]:
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", text.strip())
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3))) if match else None
+
+
+def check_packages(root: Path) -> list[Finding]:
+    """Packages of the lock (`packages`) that do not load or load wrongly: an entry whose folder is missing
+    (fix: `python .act/scripts/packages.py fetch <id>`, then `add`) or one of whose files differs from the lock
+    (fix: `add` again, or `remove`) — such a package loads nothing, its copies stay as they are; a package
+    that needs a newer template than the installed one; a unit that two entries both bring; and a copy that
+    differs from what loading gives (the next session start writes it; a copy edited by hand is named too)."""
+    packages = actlib.read_packages(root)
+    findings: list[Finding] = []
+    if not packages and not (root / ".act-local" / "packages").is_dir():
+        return findings
+    plan = package_load.plan_for(root, packages)
+    for package_id, why in sorted(plan.problems.items()):
+        missing = why[0].endswith("is missing")
+        fix = (f"python .act/scripts/packages.py fetch {package_id}, then `add {package_id}`" if missing and "folder" in why[0]
+               else f"python .act/scripts/packages.py add {package_id} again, or `remove {package_id}`")
+        findings.append(Finding(
+            path=".act-lock.json", line=None, kind="package-broken",
+            message=f"package {package_id} is not loaded ({'; '.join(why[:3])}) — its import lines and copies stay "
+                    f"as they are; fix: {fix}"))
+    try:
+        installed = _version_tuple(next(
+            (line.partition("=")[2] for line in (root / ".act" / "VERSION").read_text(encoding="utf-8").splitlines()
+             if line.partition("=")[0].strip() == "version"), ""))
+    except (OSError, UnicodeDecodeError):
+        installed = None
+    for package_id, entry in sorted(packages.items()):
+        package = package_load.read_package(root, package_id, entry)
+        if not package.intact or installed is None:
+            continue
+        match = re.search(r"(?m)^requires-template:\s*>=\s*(\d+\.\d+\.\d+)\s*$", package.text("package.md"))
+        need = _version_tuple(match.group(1)) if match else None
+        if need is not None and need > installed:
+            findings.append(Finding(
+                path=".act-lock.json", line=None, kind="package-version",
+                message=f"package {package_id} requires template >={match.group(1)}, the installed template is "
+                        f"{'.'.join(str(n) for n in installed)} — update the template (act-update) or `remove {package_id}`"))
+    owners: dict[str, list[str]] = {}
+    for package_id, entry in sorted(packages.items()):
+        units = entry.get("units") if isinstance(entry.get("units"), list) else []
+        extends = {u for u in entry.get("extends", []) if isinstance(u, str)} if isinstance(entry.get("extends"), list) else set()
+        for unit in units:
+            if isinstance(unit, str):
+                owners.setdefault(unit, []).append(f"{package_id}{' (extends)' if unit in extends else ''}")
+    for unit, who in sorted(owners.items()):
+        if len(who) > 1 and not all(item.endswith("(extends)") for item in who):
+            kind, _, name = unit.partition(":")
+            findings.append(Finding(
+                path=".act-lock.json", line=None, kind="package-unit-twice",
+                message=f"{kind} `{name}` is brought by more than one package ({', '.join(who)}) — `remove` one of them"))
+    for rel in sorted(plan.copies):
+        findings.append(Finding(
+            path=rel, line=None, kind="package-copy",
+            message=f"{rel} differs from what loading the packages gives — the next session start writes it "
+                    "(a copy edited by hand is kept, see below)"))
+    for message in plan.messages:
+        path = message.split(":", 1)[0]
+        findings.append(Finding(path=path, line=None, kind="package-copy", message=message))
+    return findings
+
+
+_PACKAGE_SETTINGS_RE = re.compile(r"^\s*<!--\s*act:package-settings\s+([a-z][a-z0-9-]*)\s*-->\s*$")
+
+
+def check_package_settings(root: Path) -> list[Finding]:
+    """A `<!-- act:package-settings <id> -->` block in docs/ai/config.md whose package has no entry in the lock (the
+    package was taken out or the lock was restored without it): the answers in it belong to nothing. Fix: remove the
+    block by hand, or put the package back with `packages.py add <id>`. Skipped while the lock cannot be read (the
+    answers may belong to a package it records)."""
+    path = root / "docs" / "ai" / "config.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    if (root / ".act-lock.json").exists() and actlib.read_lock_at(root) is None:
+        return []
+    packages = actlib.read_packages(root)
+    findings: list[Finding] = []
+    for number, line in enumerate(lines, start=1):
+        found = _PACKAGE_SETTINGS_RE.match(line)
+        if found and found.group(1) not in packages:
+            package_id = found.group(1)
+            findings.append(Finding(
+                path="docs/ai/config.md", line=number, kind="package-settings",
+                message=f"the settings block of package {package_id} has no package behind it: .act-lock.json records "
+                        f"no {package_id} — fix: remove the block (from `<!-- act:package-settings {package_id} -->` "
+                        f"to `<!-- /act:package-settings {package_id} -->`) by hand, or "
+                        f"`python .act/scripts/packages.py add {package_id}` to bring the package back"))
     return findings
 
 
@@ -3400,6 +3508,8 @@ def run(root: Path, accept_ids: set[str], accept_all: bool) -> tuple[list[Findin
     findings += check_config_values(root)
     findings += check_methods(root)
     findings += check_imports(root)
+    findings += check_packages(root)
+    findings += check_package_settings(root)
     findings += check_worker_rules(root)
     findings += check_status_values(root)
     findings += check_revisit_dates(root)

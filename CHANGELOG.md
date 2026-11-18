@@ -10,6 +10,52 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
+Packages: rules, skills, roles and checks you add to a project after a plan and your yes, and take out again.
+
+### Highlights
+- **Packages:** `/act-packages` lists, fetches and installs a package (zip, folder or id) after its plan, a diff of
+  every project file and your yes in chat; `remove` puts the project back byte for byte. Format:
+  `.act/formats/package.md`.
+- **Signed and scanned:** a package's origin is checked with `ssh-keygen -Y verify`; `packages-unverified` (`block`
+  default, `scan`, `allow`) decides about one without a valid signature; `package_scan.py` lists what it can do.
+- **Packages take effect at the next session:** their rules are imported in marked blocks of `docs/ai/rules.md`,
+  rules they disable are unchecked, skill and role copies and check modules follow; all of it goes with `remove`.
+
+### Added
+- `packages.py plan <zip|folder>` checks a package against the template and shows what installing it would do, with
+  every reason when it is refused; `packages.py list` shows active and resting packages.
+- Package names: ids may not start with `act`, settings keys carry the package id, and two packages may extend the
+  same template unit but not replace it.
+- `packages.py fetch <id>` loads a zip and its signature from `packages-sources` into `.act-local/packages/`;
+  `packages.py index` lists a source's packages (contents, tools, stack, red marks).
+- Packages can bring PreToolUse check modules, checked against the lock; one that crashes or runs out of time refuses
+  with a message. `secret-read-allow` frees listed files from `secret-read`.
+- `packages.py settings <id>` keeps a package's answers in a block of `docs/ai/config.md`; `act-update` gets a
+  package step (requirements, newer zip).
+- The session start unpacks a fetched package zip into a resting folder and names missing, broken and newer packages;
+  it never activates a package or runs its code.
+- A project can trust a signing key of its own in `docs/ai/local/package-signers` without editing `.act/`.
+- `init.py --target` and `act-adopt` carry a project's packages into the new project as resting folders (and
+  zips); each is named at the first session start, and `/act-packages add <id>` activates it after your yes.
+- `act-doctor` names packages that are broken, need a newer template or bring a unit twice, and settings blocks of a
+  package that is not installed.
+
+### Changed
+- `protected-watch` also watches the package record in `.act-lock.json`; package copies pass only on the
+  orchestrator's calls and only when they equal what the active packages give.
+- `R-safe-foreign-text`: the `install.md` of a package you said yes to counts as your instruction for that
+  installation only.
+
+### Fixed
+- Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is
+  started once more and then refuses the commit.
+
+### Security
+- A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is
+  written; `template-write-guard` also protects `.act-local/packages/`.
+- A package's `install.py` runs only in `add --yes`, never at session start or in a check, and is stopped with
+  everything it started after 300 s.
+
 ## [2.6.0] - 2026-11-18
 
 Formats and a changelog for every project, `Tests:` lines for workers, a daily incident log, shorter core rules,

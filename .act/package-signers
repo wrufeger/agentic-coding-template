@@ -1,0 +1,12 @@
+# Keys that vouch for packages (OpenSSH "allowed signers" format). `packages.py` checks the signature of a package
+# zip against the lines of this file with `ssh-keygen -Y verify -I act-packages -n act-package`; while no key
+# line stands here, every package counts as unverified and `packages-unverified` in docs/ai/config.md decides
+# whether one is admitted.
+#
+# One key per line, no comment on the same line:
+#   act-packages namespaces="act-package" ssh-ed25519 AAAA...
+# The identity must read `act-packages`; `namespaces="act-package"` keeps the key from vouching for anything else.
+# A public key is made with `ssh-keygen -t ed25519`; the public half (the `.pub` file, one line starting with
+# `ssh-ed25519`) is what goes behind the first two words. Never put a private key here.
+#
+# The template ships this file without a key line: the key of the package signer is added by its owner.

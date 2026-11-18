@@ -60,6 +60,19 @@
 #          matches a path inside the home directory only; it is compared lexically (no symlink or
 #          8.3 short-name resolution).
 #
+# Allow list: the `secret-read-allow` row of docs/ai/config.md (default `none`; only the owner writes it, a package
+#          cannot set it) lists files that may be read: a comma-separated list, each entry a file relative to the
+#          project root, starting with `~` (or `$HOME`, `%USERPROFILE%`, ...), or absolute. A `*` is allowed only in
+#          the last part of the path (`config/*.env`). An entry is ignored (it allows nothing) when it holds `**`,
+#          `?`, `[`, `{`, a `*` before the last part, a last part that is only `*`, a trailing slash, an NTFS stream
+#          or names a folder. A target that equals an entry, resolved the way every target is (relative paths against
+#          the call's `cwd`, `~`, `..`, either slash style, case folded on Windows and macOS only), is not refused;
+#          every other secret file stays refused, also one next to a listed file or below it. The real path counts
+#          too: a target that reaches another file through a link (`link/../.env` with `link` leading elsewhere, a
+#          listed name that is itself a link to another secret file) is refused; a link to a file that is no secret
+#          is not. A Grep `glob` is never matched against the list, nor are the values of grep's `--include` and
+#          rg's `-g`, `--glob`, `--iglob`: they name files by pattern anywhere below the search path.
+#
 # Failure: this check is one of dispatch.py's fail-closed guards for Bash and PowerShell. If the
 #          module cannot be imported or raises while it looks at such a call, the dispatcher refuses
 #          the call (a broken check must not let `cat .env` through) and reports the failure to the
@@ -216,9 +229,9 @@ def _home_roots() -> list[str]:
     return roots
 
 
-def _normalize(path: str, cwd: Optional[str]) -> Optional[str]:
-    """`path` as an absolute, lexically normalized, forward-slash, case-folded string; None for a
-    relative path with no `cwd` to join it onto."""
+def _normalize(path: str, cwd: Optional[str], fold: bool = True) -> Optional[str]:
+    """`path` as an absolute, lexically normalized, forward-slash, case-folded string (`fold`; the allow list
+    folds on Windows and macOS only); None for a relative path with no `cwd` to join it onto."""
     text = path.replace("\\", "/")
     lowered_prefix = text[:8].lower()
     if lowered_prefix.startswith("//?/unc/"):
@@ -229,7 +242,96 @@ def _normalize(path: str, cwd: Optional[str]) -> Optional[str]:
         if cwd is None:
             return None
         text = f"{_to_native_path(cwd).replace(chr(92), '/')}/{text}"
-    return os.path.normcase(os.path.normpath(text)).replace("\\", "/").lower()
+    normalized = os.path.normcase(os.path.normpath(text)).replace("\\", "/")
+    return normalized.lower() if fold else normalized
+
+
+# The files `secret-read-allow` lists, as (folder, name or name pattern) pairs in `_allow_key` form; set by
+# check_secret_read for the duration of one call, empty otherwise (every other caller of secret_label stays strict).
+_ALLOW: "list[tuple[str, str, bool]]" = []
+_ALLOW_FOLDS = sys.platform in ("win32", "darwin")  # the file systems that treat `.ENV` and `.env` as one file
+_ALLOW_BAD_CHARS = ("**", "?", "[", "]", "{", "}", "\0", "\n", "\r")
+
+
+def _allow_key(path: str, cwd: Optional[str]) -> Optional[tuple[str, str]]:
+    """(folder, name) of `path` as the allow list compares them: home token expanded, made absolute against `cwd`,
+    normalized; None when there is no `cwd` for a relative path."""
+    expanded, _ = _expand_home(path)
+    normalized = _normalize(expanded, cwd, fold=_ALLOW_FOLDS)
+    if not normalized:
+        return None
+    folder, _, name = normalized.rpartition("/")
+    return folder, name
+
+
+def _allow_entries(value: str, root: Path) -> "list[tuple[str, str, bool]]":
+    """The usable entries of the `secret-read-allow` value as (folder, name or name pattern, has `*`); `none` or
+    empty = nothing. An entry that does not follow the format (see this module's header) is left out."""
+    text = value.strip().strip("`").strip()
+    if not text or text.lower() == "none":
+        return []
+    entries: list[tuple[str, str, bool]] = []
+    for part in text.split(","):
+        part = part.strip().strip("`'\" ").strip()
+        slashed = part.replace("\\", "/")
+        head, _, last = slashed.rpartition("/")
+        if (not part or any(bad in part for bad in _ALLOW_BAD_CHARS) or "*" in head or slashed.endswith("/")
+                or not last.strip("*") or last in (".", "..") or ":" in last):
+            continue
+        key = _allow_key(part, str(root))
+        if key is None:
+            continue
+        has_star = "*" in last
+        if not has_star:
+            expanded, _ = _expand_home(part)
+            absolute = expanded if re.match(r"^(/|[A-Za-z]:[/\\])", expanded) else f"{root}/{expanded}"
+            try:
+                if os.path.isdir(_to_native_path(absolute)):
+                    continue  # names a folder
+            except (OSError, ValueError):
+                continue
+        entries.append((key[0], key[1], has_star))
+    return entries
+
+
+def _is_allowed(expanded: str, cwd: Optional[str]) -> bool:
+    """True when the target `expanded` (home token already expanded, stream cut off) is a file that
+    `secret-read-allow` lists."""
+    if not _ALLOW:
+        return False
+    key = _allow_key(expanded, cwd)
+    if key is None:
+        return False
+    folder, name = key
+    for entry_folder, entry_name, has_star in _ALLOW:
+        if folder != entry_folder:
+            continue
+        if (fnmatch.fnmatchcase(name, entry_name) if has_star else name == entry_name):
+            return _real_file_ok(expanded, cwd, folder, name)
+    return False
+
+
+def _real_file_ok(expanded: str, cwd: Optional[str], folder: str, name: str) -> bool:
+    """True when the listed target (`expanded`, as the call wrote it; `folder` and `name` as the allow list reads
+    it) reaches the file it names: the real path of the target equals the real path of its folder plus its name, or
+    is no secret file. A `..` behind a link, or a listed name that is a link to another secret file, is not it.
+    False when a real path cannot be worked out."""
+    text = expanded.replace("\\", "/")
+    if not (text.startswith("/") or re.match(r"^[A-Za-z]:/", text)):
+        if cwd is None:
+            return False
+        text = f"{_to_native_path(cwd).replace(chr(92), '/')}/{text}"
+    try:
+        real = os.path.realpath(_to_native_path(text))
+        expected = os.path.join(os.path.realpath(_to_native_path(folder)), name)
+        left, right = os.path.normcase(real), os.path.normcase(expected)
+        if _ALLOW_FOLDS:
+            left, right = left.lower(), right.lower()
+        if left == right:
+            return True
+        return secret_label(real, None, allow=False) is None
+    except (OSError, ValueError):
+        return False
 
 
 def _expand_home(word: str) -> tuple[str, bool]:
@@ -281,9 +383,10 @@ def _home_label(normalized: str) -> Optional[str]:
     return None
 
 
-def secret_label(raw: str, cwd: Optional[str]) -> Optional[str]:
+def secret_label(raw: str, cwd: Optional[str], allow: bool = True) -> Optional[str]:
     """Why the path `raw` (as written in a tool call or command) counts as a secret file or
-    directory, or None. Never raises."""
+    directory, or None; a file that `secret-read-allow` lists is none (`allow`, while check_secret_read runs).
+    Never raises."""
     word = raw.strip().strip("'\"")
     if not word or "\0" in word:
         return None
@@ -294,10 +397,12 @@ def secret_label(raw: str, cwd: Optional[str]) -> Optional[str]:
             expanded = head + slash + last.split(":", 1)[0]
         name = expanded.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
         label = _basename_label(name)
-        if label:
-            return label
-        normalized = _normalize(expanded, cwd)
-        return _home_label(normalized) if normalized else None
+        if not label:
+            normalized = _normalize(expanded, cwd)
+            label = _home_label(normalized) if normalized else None
+        if label and allow and _is_allowed(expanded, cwd):
+            return None
+        return label
     except (OSError, ValueError):
         return None
 
@@ -317,7 +422,7 @@ def _glob_variant_label(pattern: str, cwd: Optional[str]) -> Optional[str]:
     its own (`*` and `**/*` reach everything and are not refused)."""
     name = pattern.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
     if not any(char in name for char in _WILDCARD_CHARS):
-        return secret_label(pattern, cwd)
+        return secret_label(pattern, cwd, allow=False)  # a name anywhere below the search path, not one file
     if not name.strip(_WILDCARD_CHARS + "."):
         return None
     lowered = name.lower()
@@ -368,6 +473,77 @@ _GREP_VALUE_LONG = frozenset({
 # operand is a file. Long names are matched by prefix, since GNU tools accept an abbreviation.
 _GREP_PATTERN_SHORT = frozenset("ef")
 _GREP_PATTERN_LONG = ("--regexp", "--file")
+
+
+# The options of the search tools whose value is a glob naming files below the search path, not a file to read:
+# grep's `--include`, rg's `-g`, `--glob`, `--iglob`. A long name counts by its prefix of at least four characters
+# (GNU tools take an abbreviation); over-reading it can only refuse more.
+_GLOB_OPTIONS_LONG = ("--include", "--glob", "--iglob")
+
+
+def _glob_option_values(args: list[str], family: str) -> "tuple[set[int], list[str]]":
+    """(indexes of the words of `args` that are or hold the value of a glob option, those values): `--include=X`,
+    `--include X`, `--glob=X`, `--iglob X`, rg's `-g X`, `-gX`, `-g=X` and `-g` inside a cluster of short options.
+    The words are no file operands: the caller judges the values as globs (never against `secret-read-allow`)."""
+    short_value = _GREP_VALUE_SHORT[family]
+    glob_short = "g" if family == "rg" else ""
+    indexes: set[int] = set()
+    values: list[str] = []
+    index = 0
+    options_done = False
+    while index < len(args):
+        arg = args[index]
+        if options_done or not arg.startswith("-") or arg == "-":
+            index += 1
+            continue
+        if arg == "--":
+            options_done = True
+            index += 1
+            continue
+        if arg.startswith("--"):
+            name, has_value, value = arg.partition("=")
+            is_glob = len(name) >= 4 and any(long_name.startswith(name) for long_name in _GLOB_OPTIONS_LONG)
+            if is_glob and has_value:
+                values.append(value)
+                indexes.add(index)
+            elif not has_value and (is_glob or name in _GREP_VALUE_LONG):
+                if is_glob and index + 1 < len(args):
+                    values.append(args[index + 1])
+                    indexes.add(index + 1)
+                index += 1  # the option's value is the next word
+            index += 1
+            continue
+        position = 1
+        while position < len(arg):
+            char = arg[position]
+            if char in short_value:
+                if char in glob_short:
+                    value = arg[position + 1:]
+                    if value.startswith("="):
+                        value = value[1:]
+                    if value:
+                        values.append(value)
+                        indexes.add(index)
+                    elif index + 1 < len(args):
+                        values.append(args[index + 1])
+                        indexes.add(index + 1)
+                        index += 1
+                elif position == len(arg) - 1:
+                    index += 1  # the option's value is the next word
+                break
+            position += 1
+        index += 1
+    return indexes, values
+
+
+def _glob_value_label(value: str, cwd: Optional[str]) -> Optional[str]:
+    """Why the value of a glob option names a secret file, or None: judged with `secret-read-allow` off, as a word
+    and as a glob (`_glob_label`)."""
+    for candidate in _candidate_words(value):
+        label = secret_label(candidate, cwd, allow=False)
+        if label:
+            return label
+    return _glob_label(value, cwd)
 
 
 def _grep_pattern_index(args: list[str], family: str) -> Optional[int]:
@@ -469,10 +645,17 @@ def _command_label(
         elif name in _READ_COMMANDS:
             literals = [str(word) for word in words[1:]]
             if name in _GREP_FAMILY:
-                # The first operand is the search pattern, not a file to read.
-                pattern_at = _grep_pattern_index(literals, _GREP_FAMILY[name])
-                if pattern_at is not None:
-                    del literals[pattern_at]
+                # The first operand is the search pattern, not a file to read; the value of a glob option names
+                # files below the search path, so it is judged as a glob with the allow list off.
+                family = _GREP_FAMILY[name]
+                glob_at, glob_values = _glob_option_values(literals, family)
+                for value in glob_values:
+                    label = _glob_value_label(value, cwd)
+                    if label:
+                        return value, label
+                pattern_at = _grep_pattern_index(literals, family)
+                literals = [lit for position, lit in enumerate(literals)
+                            if position != pattern_at and position not in glob_at]
             if name in _COPY_COMMANDS:
                 positional = [i for i, lit in enumerate(literals) if not lit.startswith("-")]
                 if len(positional) > 1:
@@ -539,6 +722,11 @@ def check_secret_read(payload: dict) -> int:
         return 0
     cwd_raw = payload.get("cwd")
     cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw else None
+    _ALLOW.clear()
+    try:
+        _ALLOW.extend(_allow_entries(str(config.get("secret-read-allow", "")), actlib.repo_root()))
+    except (RuntimeError, OSError, ValueError):
+        _ALLOW.clear()  # no project root or an unreadable entry: nothing is allowed, every secret file stays refused
     try:
         hit = _tool_hits(payload, cwd)
     except Exception as exc:  # noqa: BLE001 — re-raised for every tool but the shell, refused for it
@@ -554,6 +742,8 @@ def check_secret_read(payload: dict) -> int:
             file=sys.stderr,
         )
         return 2
+    finally:
+        _ALLOW.clear()  # the allow list holds for this one call only
     if hit is None:
         return 0
     path, label = hit

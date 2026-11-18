@@ -563,6 +563,64 @@ def write_lock(data: dict) -> dict:
     return _write_json_merged(path, data)
 
 
+# The lock's `packages` record: per installed package id, {"version", "source", "sha256", "check", "files":
+# {"<relpath in the package>": "<sha256>"}, "units": ["<kind>:<name>", ...], "config": ["<config line>", ...]}.
+# Not part of _default_lock(): a lock without the key is a project without packages, and every reader below
+# answers {} for it, so no existing lock changes. Like read_rules_cut()/write_rules_cut(), the writers only
+# touch an existing, readable lock.
+PACKAGES_LOCK_KEY = "packages"
+
+
+def package_hash(files: "dict[str, str]") -> str:
+    """The package's own hash for the lock: SHA-256 over the sorted lines (`<relpath>`, a NUL byte, `<file sha256>`, a newline), one
+    per file of the package (relpath with `/`, file hash as lock_hash() gives it). The same files give the
+    same value on every machine."""
+    lines = sorted(f"{rel}\0{digest}\n" for rel, digest in files.items())
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def _raw_packages(root: Path) -> Optional[dict]:
+    """The lock's `packages` value as it stands (entries that are not dicts kept, so a rewrite drops none),
+    {} when the lock has none, None when the lock cannot be read or the value is not a JSON object."""
+    data = _read_json(root / ".act-lock.json")
+    if data is None:
+        return None
+    packages = data.get(PACKAGES_LOCK_KEY)
+    if packages is None:
+        return {}
+    return packages if isinstance(packages, dict) else None
+
+
+def read_packages(root: Path) -> "dict[str, dict]":
+    """The lock's `packages` record at `root`, per package id; {} when the lock or the key is missing or
+    unreadable. Only entries that are JSON objects are returned. Takes `root` explicitly."""
+    packages = _raw_packages(root) or {}
+    return {str(key): value for key, value in packages.items() if isinstance(value, dict)}
+
+
+def merge_package(root: Path, package_id: str, entry: dict) -> bool:
+    """Put `entry` under `package_id` in the lock's `packages` record (replacing that package's earlier
+    entry, keeping every other package and every other lock key). Only an existing, readable lock is
+    written; returns whether the lock now holds the entry."""
+    packages = _raw_packages(root)
+    if packages is None:
+        return False
+    packages[package_id] = entry
+    _write_json_merged(root / ".act-lock.json", {PACKAGES_LOCK_KEY: packages})
+    return True
+
+
+def drop_package(root: Path, package_id: str) -> bool:
+    """Remove `package_id` from the lock's `packages` record (the key stays, possibly empty). Only an
+    existing, readable lock is written; returns whether the lock no longer holds the package."""
+    packages = _raw_packages(root)
+    if packages is None:
+        return False
+    packages.pop(package_id, None)
+    _write_json_merged(root / ".act-lock.json", {PACKAGES_LOCK_KEY: packages})
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Pending template update — the result of the session-start background check
 # (.act-local/update-check-result.json), read by the session start, the board and the status line
@@ -1133,6 +1191,7 @@ def _build_config_schema() -> dict[str, ConfigKey]:
             default="warn" if check == "outside-root" else "block",
             effect=nxt if check in ("session-start-refresh", "orchestrator-rules") else "now")
     add("outside-root-allow", "Checks", default="none")
+    add("secret-read-allow", "Checks", default="none")
     add("act-local-tidy", "Checks", values=_MODE3, default="block", effect=nxt)
     add("act-local-keep", "Checks", default="none", effect=nxt)
     add("security-check", "Checks", values=("off", "local", "deps", "full"), default="local")
@@ -1159,6 +1218,10 @@ def _build_config_schema() -> dict[str, ConfigKey]:
     add("feedback-scope", "Feedback", pattern=r"\s*[abc]\s*(?:,\s*[abc]\s*)*", default="a,b,c")
     add("update-channel", "Update", values=("release", "latest"), default="release")
     add("advisory-check", "Update", values=_ON_OFF, default="on")
+    add("packages-unverified", "Packages", values=("block", "scan", "allow"), default="block")
+    add("packages-sources", "Packages",
+        default="https://github.com/wrufeger/act-packages/releases/latest/download/")
+    add("packages-update", "Packages", values=("ask", "off"), default="ask")
     add("archive-compact", "Archive", values=("off",), pattern=r"\d+\s*d\s+\d+", default="30d 300", effect=nxt)
     add("tips", "Tips", values=("never", "occasionally", "regularly"), default="occasionally")
     return {entry.key: entry for entry in entries}

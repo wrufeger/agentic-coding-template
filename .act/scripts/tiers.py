@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -499,6 +500,12 @@ _MODEL_LINE_RE = re.compile(r"^model:\s*")
 _EFFORT_LINE_RE = re.compile(r"^effort:\s*")
 
 
+def apply_resolved_fields(text: str, model: str, effort: Optional[str]) -> Optional[str]:
+    """Public name of `_apply_resolved_fields` for the callers outside this module (the package load applies the same
+    refresh step to a role file it writes): rewrites only the `model:` and `effort:` lines, None when nothing changes."""
+    return _apply_resolved_fields(text, model, effort)
+
+
 def _apply_resolved_fields(text: str, model: str, effort: Optional[str]) -> Optional[str]:
     """Rewrite only the `model:`/`effort:` *lines* of an already-frontmattered file's text --
     every other line (a comment, a folded-scalar continuation like `description: >` plus its
@@ -689,6 +696,45 @@ def describe_unresolved_tier(role: str, tool: str, tier: str, reasoning: str, pr
     return f"role '{role}': reasoning '{reasoning}' is not on '{tool}'s reasoning_scale in .act/tiers.json -- left as it is"
 
 
+def package_role_files(root: Path, names: "set[str] | list[str]") -> "tuple[dict[str, Path], set[str]]":
+    """For the template roles in `names` that an active package replaces (`pre-template/agents/<name>.md` in its
+    folder under .act-local/packages/): (the package's file by role, the roles that cannot be read). The file then
+    stands where the template's bridge stands for the role's tier and reasoning, so a refresh keeps the package's
+    choice for the role and for its "-high" variant. Only a plain file of a plain folder whose hash is the one the
+    lock records counts; the role of a package that is broken or whose folder is missing is in the second set, and a
+    refresh leaves it as it is (what the package gave stays until the package is whole again). A package with no
+    lock entry changes nothing. With two packages the later entry of the lock wins, as it does where the role's copy
+    is written."""
+    found: dict[str, Path] = {}
+    frozen: set[str] = set()
+    try:
+        packages = actlib.read_packages(root)
+    except (OSError, ValueError):
+        return found, frozen
+    for package_id, entry in packages.items():
+        files = entry.get("files")
+        if not isinstance(files, dict):
+            continue
+        folder = root / ".act-local" / "packages" / package_id
+        for rel, recorded in files.items():
+            parts = rel.split("/") if isinstance(rel, str) else []
+            if len(parts) != 3 or parts[:2] != ["pre-template", "agents"] or not parts[2].endswith(".md") \
+                    or parts[2][: -len(".md")] not in names or not isinstance(recorded, str):
+                continue
+            path = folder / rel
+            role = parts[2][: -len(".md")]
+            try:
+                if any(actlib.is_redirect(os.lstat(p)) for p in (folder, folder / parts[0], folder / parts[0] / parts[1], path)):
+                    frozen.add(role)
+                elif actlib.lock_hash(path.read_bytes()) == recorded:
+                    found[role] = path
+                else:
+                    frozen.add(role)
+            except OSError:
+                frozen.add(role)
+    return found, frozen
+
+
 def refresh_project_bridge_frontmatter(
     root: Path, tool: str = "claude-code", apply: bool = True, notes: Optional[list[str]] = None
 ) -> list[str]:
@@ -736,6 +782,11 @@ def refresh_project_bridge_frontmatter(
     tiers_data = load_tiers(root)
     overrides = read_role_overrides(root, notes=notes)
     template_roles = {name: bridges_dir / f"{name}.md" for name in role_bridge_names(root)}
+    frozen_roles: set[str] = set()
+    if not copilot:  # a role an active package replaces keeps the package's tier and reasoning (Claude Code files only)
+        replaced, frozen_roles = package_role_files(root, set(template_roles))
+        template_roles.update(replaced)
+        frozen_roles -= set(replaced)
 
     seen_notes: set[str] = set()
 
@@ -762,6 +813,8 @@ def refresh_project_bridge_frontmatter(
         is_variant = stem.endswith("-high") and dest_fields.get("variant-of") == stem[: -len("-high")]
         base_role = stem[: -len("-high")] if is_variant else stem
 
+        if base_role in frozen_roles:
+            continue  # the package that replaces this role is not whole: its file stays as it is
         if base_role in template_roles:
             try:
                 tmpl_fields, _, _ = split_frontmatter(template_roles[base_role].read_text(encoding="utf-8"))

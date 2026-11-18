@@ -9,12 +9,12 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `act_local_tidy.py` | Keeps `.act-local/` small. Throwaway material (probes, scratch projects, old backups, leftovers of earlier versions) piles up there without… | direct (session start runs it daily in the background; `--task` is a step of skill `act-commit`) |
 | `act_profile.py` | The scope of the template inside one project — docs/ai/config.md § Scope: `profile` (minimal \| standard \| full) and `exclude` (a comma list… | library |
 | `actlib.py` | Shared library for every script under .act/scripts/ and .act/hooks/ — the single place that knows how to resolve template vs. project… | library |
-| `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout or from a project… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt.py` | Mechanical executor of an approved adoption table (skill `act-adopt`, steps 4 and 7). Runs from a template checkout or from a project… | direct (used by skill `act-adopt` (stage 6); `--carry packages` takes the packages of the project it runs from into the target as resting folders (and zips), never active) |
 | `adopt_baseline.py` | Baseline check of an existing project before its first commit with this template (skill `act-adopt`). A project taken over has never been… | direct (used by skill `act-adopt` (step 7b, before the first commit)) |
 | `adopt_config.py` | Carry the settings of an older German AI-CONFIG.md (the predecessor template's control file) over into the project's docs/ai/config.md… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_entries.py` | Batch writer for the content step of an adoption (skill `act-adopt`). The model reads the old material in whatever format it has and writes… | direct (used by skill `act-adopt` (stage 6)) |
 | `adopt_passages.py` | Mechanical insertion of an adopted project's own passages into docs/project/coding_rules.md and docs/README.md (skill `act-adopt`, step 6… | direct (used by skill `act-adopt` (stage 6)) |
-| `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6)) |
+| `adopt_scan.py` | Read-only sighting of an existing project's documentation and AI-tooling material, before adoption (skill `act-adopt`). Walks the target… | direct (used by skill `act-adopt` (stage 6); names the packages a target already has) |
 | `advisory.py` | Warnings from the template author to projects running an affected template version ("advisories"). The template source carries an orphan… | direct (session start fetches daily in the background; `--ack` also by the chat sentences) |
 | `board.py` | Generate the board — a fully derived snapshot (current branch, last commit, dirty state, recent journal entries, one "Waiting for you" list… | direct |
 | `compact_check.py` | Check the sections of the archive collection files (`entries.py compact`) against their full text, and the monthly overview against the ids… | skill `act-compact` |
@@ -33,11 +33,14 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `ideas.py` | The per-person ideas file `docs/ai/concept/ideas-<identity>.md` — one versioned file for every person on a project, written by that person… | direct (session start and init call it; run by hand to record entries as processed) |
 | `incidents.py` | The incident log. Hooks and scripts note what went wrong without stopping anyone and that the human should see later: a protected file a… | library |
 | `info.py` | Show, in a compact block, which project this session works in and its state: project name, folder and host, the session name the project… | skill `act-info` |
-| `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct |
+| `init.py` | Turn a checkout of this template into a project ("here, in this clone"), or dock onto an existing/empty directory ("--target"). Ten steps… | direct (`--target` from a project carries its packages resting (`--carry packages`: folder and zip, no lock entry) and loads the packages of the target's own lock; it never activates a resting folder) |
 | `integrations.py` | Find out which ways lead from this project to its repo host and issue tracker (REST access through forge.py, MCP servers) and what each one… | skill `act-integrations` (`status` alone is direct) |
 | `log.py` | Write one line to ai.log at the project root (AGENTS.md § "Logging (optional)", .act/rules/topics/logging.md) and the small tools to read… | direct |
 | `manifest.py` | Generate or verify .act/MANIFEST.json — a SHA-256 hash per file under .act/, used to detect local edits to the template before an update… | direct |
 | `move_doc.py` | Moves a document (a file, or a folder with everything in it) below docs/ to a new place and pulls the references along, so a reorganisation… | skill `act-audit-docs` |
+| `package_load.py` | Loading of the active packages (the lock's `packages` record, folders under .act-local/packages/): what a package brings takes effect in… | library |
+| `package_scan.py` | The static scan of a package folder: what in it can act on the project beyond text. It only reads the folder - it never imports, runs or… | direct (reads the folder only, runs nothing in it) |
+| `packages.py` | Gets a package, reads it and makes it active or inactive: validates a package folder or zip against the template and prints what installing… | direct (`plan`, `list`, `index`, `settings` without pairs and `add`/`remove` without `--yes` write nothing into the project; `settings <id> <key>=<value>` writes `docs/ai/config.md` only; `fetch` writes `.act-local/packages/<id>-<version>.zip` and `.zip.sig` only; `add --yes` also runs the package's `install.py`) |
 | `rules.py` | Read the *effective* rules — the template's rule sets after the project's own checkboxes, replacements and additions are applied. One… | direct |
 | `script_docs.py` | Generate .act/scripts/README.md — a reference for every script under .act/scripts/, built from each script's own `--help` output plus a… | direct |
 | `security_deep.py` | Security check "Art C": a deep, cross-language scan with Semgrep over the files changed since a ref (default: the latest tag) or the whole… | direct (used by skill `act-release` with `security-check: full`) |
@@ -51,7 +54,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 | `skills.py` | List the project's skills like a man page (name + one-line description from each `SKILL.md`'s frontmatter), or print one skill's `SKILL.md`… | direct (used by skill `act` and by dispatch.py's `/act` fast path) |
 | `tiers.py` | Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one… | library |
 | `unit_copies.py` | tool copies for a project's own skills and roles — a skill written by hand under docs/ai/local/skills/<name>/ gets its copies under… | direct (session start and update.py call it; run by hand to create the copies at once) |
-| `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`)) |
+| `update.py` | Pull a newer state of the template into an already-initialized project. Ten steps, always in the same order: fetch the template into a temp… | skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`); names each active package's `requires-template` and a newer zip, fetches no package and runs no package code) |
 | `usage.py` | Local usage counter — how often each role starts, at which tier/model; how often each skill, slash command, script and checklist is used… | direct |
 
 ## Libraries (no CLI, imported only)
@@ -61,6 +64,7 @@ One row per script under `.act/scripts/`; the per-script sections below are each
 - `feedback_privacy.py` — The privacy checks that decide whether a string may leave the project as part of a feedback payload (.act/scripts/feedback.py) — patterns…
 - `frontmatter.py` — One shared frontmatter parser for every "---\n...\n---\n" block under .act/ and docs/ai/local/ -- used to be two: tiers.py's…
 - `incidents.py` — The incident log. Hooks and scripts note what went wrong without stopping anyone and that the human should see later: a protected file a…
+- `package_load.py` — Loading of the active packages (the lock's `packages` record, folders under .act-local/packages/): what a package brings takes effect in…
 - `settings_format.py` — Data model, parser and serializer for the settings file ("settings.md") — the portable snapshot of a project's own rule deviations (and, in…
 - `tiers.py` — Resolve a role's tier/reasoning -- never a real model name anywhere else under .act/ -- into a concrete model alias/effort pair for one…
 
@@ -87,7 +91,7 @@ options:
 
 ## `adopt.py`
 
-Call: direct (used by skill `act-adopt` (stage 6))
+Call: direct (used by skill `act-adopt` (stage 6); `--carry packages` takes the packages of the project it runs from into the target as resting folders (and zips), never active)
 
 ```text
 usage: adopt.py [-h] --target DIR (--apply | --finish | --abort) [--plan] [--force]
@@ -115,8 +119,8 @@ options:
                         with --apply: update channel (release or latest), passed on to init.py;
                         default release
   --carry LIST          with --apply: what init.py carries over from the project this runs from,
-                        comma-separated (skills, rules, exceptions, overrides, topics, agents; all
-                        = default, none), passed on to init.py --carry
+                        comma-separated (skills, rules, exceptions, overrides, topics, agents,
+                        packages; all = default, none), passed on to init.py --carry
 
 TABLE <target>/.act-local/adopt/table.json — {"rows": [...]}, exactly one row per scan.json row:
   path       as in scan.json          class   as in scan.json (must match)
@@ -161,7 +165,10 @@ Source/test/content trees (first path segment): __tests__, app, apps, assets, cl
   own first commit instead); existing CLAUDE.md/AGENTS.md stay until --finish.
   --carry <list> goes on to init.py: when this runs from a project (not the template checkout), init.py
   takes over that project's own skills, rules, exceptions, overrides, topics and agents (own roles and
-  own lines in the role bridges) unless --carry names fewer.
+  own lines in the role bridges) and its active packages, carried resting (the folder under .act-local/packages/
+  and the zip with its signature where the project has them; no lock entry, check row or copy: the new project's
+  session start names each with `/act-packages add <id>`, and the owner says yes there; a package with neither
+  folder nor zip there is named in the inbox with the fetch) unless --carry names fewer.
   A target equal to the project this runs from, or inside it (also through a symlink or junction), is
   refused in every mode.
 --finish: every adopt row done with its target on disk; adopted ai-config files that init has a
@@ -287,7 +294,7 @@ options:
 
 ## `adopt_scan.py`
 
-Call: direct (used by skill `act-adopt` (stage 6))
+Call: direct (used by skill `act-adopt` (stage 6); names the packages a target already has)
 
 ```text
 usage: adopt_scan.py [-h] [--target DIR] [--json]
@@ -851,7 +858,7 @@ options:
 
 ## `init.py`
 
-Call: direct
+Call: direct (`--target` from a project carries its packages resting (`--carry packages`: folder and zip, no lock entry) and loads the packages of the target's own lock; it never activates a resting folder)
 
 ```text
 usage: init.py [-h] [--target TARGET] [--plan] [--non-interactive] [--no-commit] [--no-local]
@@ -876,7 +883,9 @@ options:
                         groups switched off, with reason), overrides (`replaces` lines and the
                         other docs/ai/local/ files: rule, script, checklist overrides), topics
                         (docs/ai/local/rules/topics/), agents (own roles in docs/ai/local/agents/
-                        and own lines in the role bridges); none = nothing
+                        and own lines in the role bridges), packages (the source's active
+                        packages, carried resting: folder and zip, no lock entry; `/act-packages
+                        add <id>` activates each); none = nothing
   --no-profile          don't offer the owner profile at %APPDATA%\act\settings.md /
                         ~/.config/act/settings.md (on by default)
   --profile             apply the owner profile without asking (its entries are shown first).
@@ -971,6 +980,140 @@ options:
   -h, --help   show this help message and exit
   --apply      do it; without it only the plan is printed
   --root ROOT  project root (default: current folder)
+```
+
+## `package_scan.py`
+
+Call: direct (reads the folder only, runs nothing in it)
+
+```text
+usage: package_scan.py <package folder>
+```
+
+## `packages.py`
+
+Call: direct (`plan`, `list`, `index`, `settings` without pairs and `add`/`remove` without `--yes` write nothing into the project; `settings <id> <key>=<value>` writes `docs/ai/config.md` only; `fetch` writes `.act-local/packages/<id>-<version>.zip` and `.zip.sig` only; `add --yes` also runs the package's `install.py`)
+
+```text
+usage: packages.py [-h] {plan,fetch,index,add,remove,list,settings} ...
+
+Validate a package zip or folder against the template and print the plan, fetch a package zip with
+its signature into .act-local/packages/, list what a source's index offers, add a package (plan
+and diff first, then --yes with the code shown), remove one, show or set a package's settings, or
+list the packages the lock records and the folders resting there. Only `add --yes` runs package
+code (its install.py).
+
+positional arguments:
+  {plan,fetch,index,add,remove,list,settings}
+    plan                stage a package zip or folder, check its origin and admission and print
+                        what installing it would do (exit 1 with every reason when it is refused)
+    fetch               download a package zip and its signature into .act-local/packages/ (never
+                        unpacks, never activates) and print its origin
+    index               list the packages of the first source whose index.json answers (id,
+                        version, contents, tools, stack, RED reason), marking the active and
+                        resting ones; writes nothing
+    add                 show what installing a package changes (plan, origin, a diff of every
+                        project file) and with --yes <code> install it; the same id again is an
+                        update
+    remove              show what taking a package out changes and with --yes <id> do it
+    list                packages in the lock (id, version, source, check) and folders resting
+                        under .act-local/packages/ that the lock does not record
+    settings            show or set the settings an active package asks for (its `## settings`
+                        section), kept in docs/ai/config.md
+
+options:
+  -h, --help            show this help message and exit
+```
+
+### `packages.py plan`
+
+```text
+usage: packages.py plan [-h] source
+
+positional arguments:
+  source      the package zip, or the package folder (package.md, pre-template/, post-template/,
+              install.py, install.md)
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `packages.py fetch`
+
+```text
+usage: packages.py fetch [-h] [--source SOURCE] id
+
+positional arguments:
+  id               the package id
+
+options:
+  -h, --help       show this help message and exit
+  --source SOURCE  one place instead of `packages-sources`: an https:// address or a local folder
+                   holding index.json
+```
+
+### `packages.py index`
+
+```text
+usage: packages.py index [-h] [--source SOURCE] [--json]
+
+options:
+  -h, --help       show this help message and exit
+  --source SOURCE  one place instead of `packages-sources`: an https:// address or a local folder
+                   holding index.json
+  --json           print the same as JSON
+```
+
+### `packages.py add`
+
+```text
+usage: packages.py add [-h] [--yes CODE] source
+
+positional arguments:
+  source      a package zip (with <zip>.sig next to it), a package folder, or a package id: the
+              newest .act-local/packages/<id>-<version>.zip, else the resting folder .act-
+              local/packages/<id>/ (a folder named like an id: ./<name>)
+
+options:
+  -h, --help  show this help message and exit
+  --yes CODE  install exactly the package whose code this is (the first 12 hex digits of its
+              sha256, shown by the run without --yes)
+```
+
+### `packages.py remove`
+
+```text
+usage: packages.py remove [-h] [--keep] [--yes ID] id
+
+positional arguments:
+  id          the package id
+
+options:
+  -h, --help  show this help message and exit
+  --keep      keep the folder .act-local/packages/<id>/ (it rests, nothing loads from it)
+  --yes ID    take the package out; the value is the package id again
+```
+
+### `packages.py list`
+
+```text
+usage: packages.py list [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### `packages.py settings`
+
+```text
+usage: packages.py settings [-h] id [KEY=VALUE ...]
+
+positional arguments:
+  id          the package id
+  KEY=VALUE   a key the package declares and its value (one line, no `|`); without any: show
+
+options:
+  -h, --help  show this help message and exit
 ```
 
 ## `rules.py`
@@ -1292,7 +1435,7 @@ options:
 
 ## `update.py`
 
-Call: skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`))
+Call: skill `act-update` (`--plan` and `--versions` alone are direct (skill `act-version`); names each active package's `requires-template` and a newer zip, fetches no package and runs no package code)
 
 ```text
 usage: update.py [-h] [--source SOURCE] [--ref REF] [--channel {release,latest}] [--versions]

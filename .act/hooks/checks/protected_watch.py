@@ -13,7 +13,14 @@
 #   - `.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**` of the
 #     project; `.github/agents/**` (Copilot role files) of the project, treated the same way;
 #   - `.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the
-#     project root.
+#     project root;
+#   - `.act-lock.json`, only its keys `packages` and `package_copies` (the record of the active packages: the one
+#     gate to what a package brings, so a package folder of `.act-local/packages/` is loaded only when the lock
+#     names it). Every other key of the lock changes all the time and is not compared: a change of them is no
+#     change. A worker's change of the two keys is put back by writing their snapshot values into the lock as it
+#     stands (a key the snapshot lacked is removed, the rest of the lock stays as the call left it, the file is never
+#     put back as a whole); the orchestrator's (`packages.py`) is reported, with a command that restores the two
+#     keys the same way. A lock that cannot be read is not compared, and a lock that is gone is no change.
 #   `.git/config` is compared only on the keys that start code (git_metadata_guard._dangerous_reason, the
 #   list is imported from there, not copied): git itself rewrites the file for `push -u`, `remote add`
 #   and so on, and that is no change worth a report. Without a usable `git` the whole file is compared.
@@ -79,6 +86,12 @@
 #     `tools`, plus own skills from the lock's `copies`), not in the lock's `removed_by_user`, and whose bytes
 #     equal what the step writes from its source, is not reported; the new state becomes the reference. Anything
 #     else is reported as before; a worker's call restores it like any other change.
+#     The same for the copies the loading of packages gives (`_package_copies`, the orchestrator's call only): a
+#     changed or added file under `.claude/skills/`, `.claude/agents/` or `.agents/skills/` whose bytes equal
+#     what the active packages give that path (package_load.copy_content: computed from the lock and the
+#     hash-checked package folders, never from the file or from a note a writer could have made) is not
+#     reported; a removed file only where the active packages give no file at that path. A worker's call gets
+#     no exception: a package copy it changes is put back like any other change.
 #   - a restore that fails (read-only file, a path through a link, no copy): the old entry stays the reference,
 #     so the change is reported again at the next call, and a temp file the write left behind is removed.
 #   Mode `off` (or a missing snapshot) does nothing. SessionStart calls `snapshot()` after the session
@@ -137,7 +150,7 @@ _MAX_COPY = 2_000_000       # bytes: larger files are hashed but not copied
 _MAX_FILES = 4000           # files listed at most
 _MAX_LISTED = 12            # files named in one message
 _MAX_NOTE = 65536           # bytes of one queued note that are read
-_STATE_VERSION = 2          # state.json layout; an older one is taken afresh
+_STATE_VERSION = 3          # state.json layout; an older one is taken afresh
 _LOCK_WAIT = 1.0            # seconds to wait for the lock of another hook process
 _LOCK_STALE = 15.0          # seconds after which a lock is orphaned
 _NOTE_TTL = 86400.0         # seconds a queued orchestrator note stays valid
@@ -148,6 +161,9 @@ _WATCH_DIR = "protected-watch"
 _KIND_FILE = "f"
 _KIND_CONFIG = "c"
 _KIND_LINK = "l"            # a symlink, junction or other name-surrogate reparse point: listed, never entered
+_KIND_LOCK = "j"            # `.act-lock.json`: watched on the keys of _LOCK_KEYS only
+_LOCK_FILE = ".act-lock.json"
+_LOCK_KEYS = ("packages", "package_copies")  # the package record: the one gate to what a package brings
 _REPARSE_POINT = 0x400      # FILE_ATTRIBUTE_REPARSE_POINT (st_file_attributes)
 _NAME_SURROGATE = 0x20000000  # reparse tag bit: the point stands for another file system object
 _PLAIN_CHARS = "_./:@+=-"   # besides ASCII letters and digits: an argument of only these needs no quoting
@@ -468,6 +484,8 @@ def _scan(root: str, gitdirs: list[str]) -> dict:
     for name in _ROOT_FILES:
         if name in names:
             _add_item(found, names[name], _KIND_FILE)
+    if _LOCK_FILE in names:
+        _add_item(found, names[_LOCK_FILE], _KIND_LOCK)
     if ".devcontainer" in names:
         _walk(names[".devcontainer"], found)
     if ".vscode" in names:
@@ -541,6 +559,8 @@ def _read_hash(path: str) -> tuple[str, bytes | None]:
 def _fingerprint(path: str, kind: str) -> tuple[str, bytes | None]:
     """(digest, content) of a watched item. A link is not opened: its digest is the hash of its target text
     (`?` when that cannot be read); there is no content."""
+    if kind == _KIND_LOCK:
+        return _lock_fingerprint(path)
     if kind != _KIND_LINK:
         return _read_hash(path)
     import hashlib
@@ -550,6 +570,33 @@ def _fingerprint(path: str, kind: str) -> tuple[str, bytes | None]:
     except OSError:
         return "?", None
     return hashlib.sha256(b"link:" + target.encode("utf-8", errors="replace")).hexdigest(), None
+
+
+def _lock_keys_of(data: bytes | None) -> dict | None:
+    """The watched keys (_LOCK_KEYS) of the bytes of a lock, those that are present; None when the bytes are
+    no JSON object (a merge conflict left in the file, a few corrupted bytes)."""
+    if data is None:
+        return None
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))  # a BOM is accepted, like the lock readers do
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    return {key: doc[key] for key in _LOCK_KEYS if key in doc}
+
+
+def _lock_fingerprint(path: str) -> tuple[str, bytes | None]:
+    """(digest, content) of the lock as the watcher sees it: only the keys of _LOCK_KEYS, in a canonical form, so a
+    change of any other key leaves the digest as it was. ("?", None) when the lock cannot be read or parsed."""
+    import hashlib
+
+    _digest, data = _read_hash(path)
+    kept = _lock_keys_of(data)
+    if kept is None:
+        return "?", None
+    blob = json.dumps(kept, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b"lock:" + blob).hexdigest(), blob
 
 
 def _root_of(base: str) -> str:
@@ -846,6 +893,8 @@ def snapshot(root: str | None = None, session: object = None, trusted: bool = Tr
     files: dict = {}
     for path, info in scan.items():
         digest, data = _fingerprint(path, info[2])
+        if info[2] == _KIND_LOCK and digest == "?":
+            continue  # a lock that cannot be read has no package record to compare
         keys = _config_keys(path) if info[2] == _KIND_CONFIG else None
         files[path] = _entry(path, info, digest, data, base, keys)
     state = {"version": _STATE_VERSION, "root": root, "root_real": _real(root),
@@ -943,7 +992,8 @@ def _examine(base: str, files: dict, scan: dict) -> tuple[dict, list[dict]]:
         old = files.get(path)
         info = scan.get(path)
         if info is None:
-            changes.append({"path": path, "op": "removed", "old": old, "new": None, "kind": old["k"]})
+            if old["k"] != _KIND_LOCK:  # a lock that is gone activates nothing: no change to put back
+                changes.append({"path": path, "op": "removed", "old": old, "new": None, "kind": old["k"]})
             del new_files[path]
             continue
         if old is not None and old["m"] == info[0] and old["s"] == info[1] and not old.get("r"):
@@ -956,6 +1006,12 @@ def _examine(base: str, files: dict, scan: dict) -> tuple[dict, list[dict]]:
                 refreshed["r"] = True
             new_files[path] = refreshed
             continue
+        if info[2] == _KIND_LOCK:
+            if digest == "?":
+                continue  # not readable now: nothing to compare, the old entry stays the reference
+            if old is None and data == b"{}":  # a lock that has no package record: nothing watched in it
+                new_files[path] = _entry(path, info, digest, data, base, None)
+                continue
         keys = None
         if info[2] == _KIND_CONFIG:
             keys = _config_keys(path)
@@ -1151,6 +1207,56 @@ def _own_skill_copies(changes: list[dict], root: str) -> list[dict]:
     return found
 
 
+def _package_copies(changes: list[dict], root: str) -> list[dict]:
+    """The changes that are copies the loading of packages gives a path (package_load.copy_content: the full target
+    content of every package copy, computed from the lock and the hash-checked package folders alone): a file under
+    .claude/skills/, .claude/agents/ or .agents/skills/ that is added or modified with exactly those bytes (line
+    endings folded), or removed where the active packages give no file at that path. An allowlist, used for the
+    orchestrator's call only; nothing the file or a note says counts. A path the packages do not touch, other bytes,
+    a lock that cannot be read, or any error leaves the change out, so it is reported as before."""
+    wanted: list[tuple[dict, str]] = []
+    for change in changes:
+        for folder in (".claude/skills", ".claude/agents", ".agents/skills"):
+            parts = _parts_below(root.rstrip("/") + "/" + folder, change["path"])
+            if parts:
+                wanted.append((change, folder + "/" + "/".join(parts)))
+                break
+    if not wanted:
+        return []
+    from pathlib import Path
+
+    base, found, old_cwd = Path(root), [], os.getcwd()
+    try:
+        scripts = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+        if scripts not in sys.path:
+            sys.path.append(scripts)
+        import actlib  # noqa: WPS433 -- lazy on purpose: only a changed copy pays for it
+        import package_load
+
+        os.chdir(base)  # actlib.resolve() and the lock readers look at the working directory
+        packages = actlib.read_packages(base)
+        if not packages:
+            return []
+        targets = package_load.copy_content(base, packages)
+        for change, dest in wanted:
+            if dest not in targets:
+                continue
+            target = targets[dest]
+            if change["op"] == "removed":
+                ok = target is None
+            else:
+                data = change.get("data")
+                ok = (change["kind"] == _KIND_FILE and target is not None and isinstance(data, (bytes, bytearray))
+                      and actlib.fold_crlf(bytes(data)) == actlib.fold_crlf(target))
+            if ok:
+                found.append(change)
+    except Exception:  # noqa: BLE001 -- no verdict at all: every change is reported
+        return []
+    finally:
+        os.chdir(old_cwd)
+    return found
+
+
 def _anchors(state: dict, root: str) -> list[_Anchor]:
     """The places a restore may write below, fixed when the snapshot was taken: the project root (itself
     reached however the owner set it up) and the git directories recorded then, each with its real path.
@@ -1222,7 +1328,9 @@ def _restore(base: str, change: dict, stamp: str, new_files: dict, root: str, an
             data = _read_whole(path)
         result["kept"] = _keep(base, stamp, "changed", path, data)
     try:
-        if op == "added" and change["kind"] == _KIND_LINK:
+        if change["kind"] == _KIND_LOCK:
+            result["restored"] = _restore_lock(base, change, new_files, result, anchor.path)
+        elif op == "added" and change["kind"] == _KIND_LINK:
             _remove_link(path)
             del new_files[path]
             result.update(restored=True, how="the link was removed (what it pointed at was not touched)")
@@ -1246,6 +1354,38 @@ def _restore(base: str, change: dict, stamp: str, new_files: dict, root: str, an
     if not result["restored"]:
         _keep_reference(new_files, change)
     return result
+
+
+def _restore_lock(base: str, change: dict, new_files: dict, result: dict, anchor: str) -> bool:
+    """Put the watched keys of the lock (_LOCK_KEYS) back to the snapshot's values (a key the snapshot did not have
+    is removed), written into the lock as it stands now: every other key stays as the call left it, the file is
+    never put back as a whole. False (and a reason in result) when the snapshot copy or the lock cannot be read."""
+    path, old = change["path"], change["old"]
+    saved = _read_blob(base, old["h"]) if old else b"{}"
+    wanted = _lock_keys_of(saved)
+    if wanted is None:
+        result["how"] = "no copy of the snapshot version (copy missing): not restored"
+        return False
+    current = _read_whole(path)
+    try:
+        doc = json.loads(current.decode("utf-8-sig")) if current is not None else None
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        doc = None
+    if not isinstance(doc, dict):
+        result["how"] = "not restored (the lock cannot be read)"
+        return False
+    for key in _LOCK_KEYS:
+        if key in wanted:
+            doc[key] = wanted[key]
+        else:
+            doc.pop(key, None)
+    _write_atomic(path, (json.dumps(doc, indent=2, ensure_ascii=False) + "\n").encode("utf-8"), anchor)
+    digest, blob = _lock_fingerprint(path)
+    entry = _entry(path, _stat_info(path, _KIND_LOCK), digest, blob, base, None)
+    entry["r"] = True  # just written: hashed once more next time
+    new_files[path] = entry
+    result["how"] = "the package keys of the lock were put back to the version before the call (the rest of the lock stays)"
+    return True
 
 
 def _restore_whole(base: str, change: dict, new_files: dict, result: dict, anchor: str) -> bool:
@@ -1296,6 +1436,8 @@ def _shown(root: str, path: str) -> str:
 
 def _what(root: str, path: str) -> str:
     shown = _shown(root, path).lower()
+    if shown == _LOCK_FILE:
+        return "package record in the lock"
     if shown == ".git" or shown == "commondir" or shown.endswith("/commondir"):
         return "pointer to the git directory"
     if "/hooks/" in "/" + shown or shown.endswith("/hooks"):
@@ -1359,6 +1501,14 @@ def _restore_commands(base: str, change: dict, kept_before: str | None) -> list[
     """The commands (one per line) that put the file back to the version before the call (orchestrator
     case: a report)."""
     path, op = change["path"], change["op"]
+    if change["kind"] == _KIND_LOCK:  # only the package keys go back, into the lock as it is now
+        names = ", ".join(_py_literal(key) for key in _LOCK_KEYS)
+        before = f"json.load(open({_py_literal(kept_before)}))" if kept_before else "{}"
+        return [_python_command(
+            f"import json; p={_py_literal(path)}; d=json.load(open(p, encoding={_py_literal('utf-8-sig')})); "
+            f"[d.pop(k, None) for k in ({names},)]; d.update({before}); "
+            f"open(p, {_py_literal('w')}, encoding={_py_literal('utf-8')}, newline={_py_literal(chr(10))})"
+            f".write(json.dumps(d, indent=2, ensure_ascii=False) + chr(10))")]
     if op == "added" and change["kind"] == _KIND_LINK:
         literal = _py_literal(path)
         return [_python_command(f"import os; p={literal}; os.rmdir(p) if os.name == 'nt' and os.path.isdir(p) else os.unlink(p)")]
@@ -1434,9 +1584,10 @@ def watch(event: str, payload: dict, root: str | None = None) -> dict | None:
             if change["kind"] == _KIND_CONFIG and change["new"] is not None:
                 change["keys"] = _diff_keys(change["old"], change["new"])
         worker = bool(payload.get("agent_id"))
-        if not worker:  # the orchestrator's own skill copies (act-update, session start) are no news
-            own = _own_skill_copies(changes, root)
-            changes = [change for change in changes if not any(change is done for done in own)]
+        if not worker:  # the orchestrator's own skill copies and the copies packages give (act-update, session
+            own = _own_skill_copies(changes, root)  # start, packages.py) are no news; a worker's change is not
+            loaded = _package_copies(changes, root)
+            changes = [change for change in changes if not any(change is done for done in own + loaded)]
         if not changes:
             _save_state(base, state, new_files)
             return None
@@ -1465,7 +1616,7 @@ def watch(event: str, payload: dict, root: str | None = None) -> dict | None:
 
 
 _KIND_WORDS = (("pointer to the git directory", "git-pointer"), ("git hook", "git-hook"), ("git config", "git-config"),
-               ("Claude settings/role/skill", "claude-files"))
+               ("Claude settings/role/skill", "claude-files"), ("package record in the lock", "package-record"))
 
 
 def _log_restores(root: str, payload: dict, changes: list, results: list, restoring: bool) -> None:

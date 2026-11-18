@@ -181,6 +181,11 @@ RE_REPLACES_LOOSE = re.compile(r"^(?:-\s*|[*+]\s+)replaces\b.*$")
 # A core set is "@<path>" (imported), "`<path>`" (listed only) or a bare path; the "@" form is
 # written relative to docs/ai/ ("@../../.act/..."), the older "@.act/..." still parses.
 RE_CORE_SET = re.compile(r"^(?:@(?:\.\./)*|`)?(?P<path>\.act/\S+?\.md)`?$")
+# The two blocks of docs/ai/rules.md that hold what active packages bring (package_load.py writes them): the "@"
+# lines of each package's rule files, coding sets and topics, before the template's rule imports (pre) and
+# before the overrides (post). Nothing inside a block is a set line, an override or an own rule.
+RE_PACKAGES_START = re.compile(r"^<!--\s*act:packages-(?P<side>pre|post)\s*-->\s*$", re.IGNORECASE)
+RE_PACKAGES_END = re.compile(r"^<!--\s*/act:packages-(?P<side>pre|post)\s*-->\s*$", re.IGNORECASE)
 # An own rule is a "- ", "* " or "+ " bullet (a hand-written or adopted "*" list must not count as
 # prose and silently drop every rule in it).
 RE_BULLET = re.compile(r"^[-*+]\s+")
@@ -359,6 +364,8 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
     fence: Optional[str] = None
     fence_line = 0
     in_comment = False
+    block_end: Optional[int] = None  # index of the end mark of the package block being skipped
+    block_spans = package_block_spans(lines)[0]
 
     def flush_pending() -> None:
         if pending:
@@ -391,6 +398,13 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
         # An HTML comment (the template's own "one item per rule" hint) is neither rule nor text.
         if in_comment:
             in_comment = "-->" not in stripped
+            continue
+        if block_end is not None:
+            if i - 1 == block_end:
+                block_end = None
+            continue
+        if fence is None and (i - 1) in block_spans:
+            block_end = block_spans[i - 1]  # what active packages bring: neither a set line nor an own rule
             continue
         if fence is None and stripped.startswith("<!--") and not RE_SECTION_MARK.match(stripped):
             in_comment = "-->" not in stripped
@@ -429,7 +443,8 @@ def parse_project_file(path: Path, area: Area) -> ProjectFile:
                                          reason=use.group("reason"))
                 sets.append(current_set)
             else:
-                group = RE_GROUP_ID.match(rest)
+                # a rule an active package disables carries its mark after the id (apply_package_marks)
+                group = RE_GROUP_ID.match(act_profile.PACKAGE_MARK_RE.sub("", rest))
                 if not group:
                     findings.append((line_no, "expected '  - [ ] `ID`' with an optional ' — reason'"))
                     continue
@@ -1607,6 +1622,215 @@ def apply_core_cut(text: str, cut_files) -> tuple[str, list[str]]:
             lines[index] = rel + ("\r" if lines[index].endswith("\r") else "")
             switched.append(rel)
     return "\n".join(lines), switched
+
+
+# ---------------------------------------------------------------------------
+# What active packages bring into docs/ai/rules.md (package_load.py decides what, this is the text side):
+# two marked blocks of "@" lines and a mark on each rule line a package disables. Pure functions on text.
+# ---------------------------------------------------------------------------
+
+PACKAGES_PRE = "packages-pre"
+PACKAGES_POST = "packages-post"
+_IMPORT_FILE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_SAFE_VERSION_RE = re.compile(r"^[0-9A-Za-z.+-]{1,40}$")
+
+
+@dataclass
+class PackageImports:
+    """One package's part of a block: its id, version and the root-relative paths of the files to import."""
+    id: str
+    version: str
+    files: list[str]
+
+
+def package_import_line(rel: str, project_file: str = "docs/ai/rules.md") -> str:
+    """The "@" line for the root-relative file `rel`, written like the lines for the template's own files."""
+    return "@" + "../" * project_file.count("/") + rel
+
+
+def _package_block_lines(side: str, packages: "list[PackageImports]") -> list[str]:
+    lines: list[str] = []
+    for package in packages:
+        files = [rel for rel in package.files if all(_IMPORT_FILE_RE.match(part) for part in rel.split("/"))]
+        if not files:
+            continue
+        version = package.version if _SAFE_VERSION_RE.match(package.version) else "-"
+        lines += [f"<!-- package {package.id} {version} -->"] + [package_import_line(rel) for rel in files]
+    if not lines:
+        return []
+    return [f"<!-- act:{side} -->"] + lines + [f"<!-- /act:{side} -->"]
+
+
+def _top_level_lines(lines: list[str]) -> list[tuple[int, str]]:
+    """(index, stripped text) of every line outside fenced code and not indented."""
+    found: list[tuple[int, str]] = []
+    fence: Optional[str] = None
+    for index, line in enumerate(lines):
+        fence_match = RE_FENCE.match(line)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            continue
+        if line[:1] not in (" ", "\t"):
+            found.append((index, line.strip()))
+    return found
+
+
+def package_block_spans(lines: list[str]) -> "tuple[dict[int, int], list[tuple[int, str]]]":
+    """The packages-pre and packages-post blocks of the `lines` of docs/ai/rules.md: ({index of the start mark:
+    index of the end mark}, [(index, text) of every stray mark]). A block ends only at the end mark of its own
+    side; a start mark that finds no end mark of its side before the next start mark (or the end of the file) is
+    no block, and an end mark with no open start mark of its side is none either: those marks are stray, and
+    nothing is taken for a block between them. Only top-level lines count (not fenced, not indented)."""
+    spans: dict[int, int] = {}
+    stray: list[tuple[int, str]] = []
+    open_at: Optional[tuple[int, str, str]] = None  # (index, side, text) of the start mark still looking for its end
+    for index, text in _top_level_lines(lines):
+        start = RE_PACKAGES_START.match(text)
+        end = RE_PACKAGES_END.match(text)
+        if start:
+            if open_at is not None:
+                stray.append((open_at[0], open_at[2]))
+            open_at = (index, start.group("side").lower(), text)
+        elif end:
+            if open_at is not None and open_at[1] == end.group("side").lower():
+                spans[open_at[0]] = index
+                open_at = None
+            else:
+                stray.append((index, text))
+    if open_at is not None:
+        stray.append((open_at[0], open_at[2]))
+    return spans, sorted(stray)
+
+
+def stray_package_marks(text: str) -> list[tuple[int, str]]:
+    """(line number from 1, text) of every packages-pre/-post mark of docs/ai/rules.md `text` that is part of no
+    block (see package_block_spans): the owner deleted the other mark of its pair, or it stands on its own."""
+    return [(index + 1, mark) for index, mark in package_block_spans(text.split("\n"))[1]]
+
+
+def _without_package_blocks(lines: list[str]) -> list[str]:
+    """`lines` without the packages-pre and packages-post blocks (start mark to the end mark of the same side, and
+    the one blank line that follows or, at the end of the file, precedes); a stray mark (package_block_spans) and
+    everything around it is left as it is."""
+    spans = package_block_spans(lines)[0]
+    out: list[str] = []
+    index = 0
+    while index < len(lines):
+        end = spans.get(index)
+        if end is not None:
+            index = end + 1
+            if index < len(lines) - 1 and not lines[index].strip():
+                index += 1
+            elif index == len(lines) - 1 and out and not out[-1].strip():
+                out.pop()  # the block closed the file: the blank line before it was added with it
+            continue
+        out.append(lines[index])
+        index += 1
+    return out
+
+
+def _post_block_index(lines: list[str]) -> int:
+    """Where the post block goes: before the overrides mark (and before the heading directly above it), else
+    before the `## Overrides` heading, else at the end of the file."""
+    top = _top_level_lines(lines)
+    for position, (index, text) in enumerate(top):
+        mark = RE_SECTION_MARK.match(text)
+        if mark and mark.group("name").lower() == "overrides":
+            if position > 0:
+                before_index, before = top[position - 1]
+                heading = RE_TOP_HEADING.match(before)
+                if heading and all(not line.strip() for line in lines[before_index + 1:index]):
+                    return before_index
+            return index
+    for index, text in top:
+        heading = RE_TOP_HEADING.match(text)
+        if heading and heading.group("title").split("—", 1)[0].strip().lower() == "overrides":
+            return index
+    return len(lines) - 1 if lines and lines[-1] == "" else len(lines)
+
+
+def apply_package_blocks(text: str, pre: "list[PackageImports]", post: "list[PackageImports]") -> str:
+    """`text` of docs/ai/rules.md with the packages-pre block directly before the first `.act/` rule import
+    line and the packages-post block directly before the overrides (see _post_block_index), each one `@` line
+    per file, a line `<!-- package <id> <version> -->` before each package; no package on a side, no block
+    there. Any block already in the text is replaced; with nothing on either side the text comes back as it was
+    before the blocks were added (byte for byte). Line endings stay."""
+    tail = "\r" if "\r\n" in text else ""
+    lines = _without_package_blocks(text.split("\n"))
+    pre_lines = [line + tail for line in _package_block_lines(PACKAGES_PRE, pre)]
+    post_lines = [line + tail for line in _package_block_lines(PACKAGES_POST, post)]
+    post_at = len(lines)
+    if post_lines:
+        post_at = _post_block_index(lines)
+        if post_at >= len(lines) - 1:  # at the end of the file: a blank line before the block, none after
+            add = ([tail] if post_at > 0 and lines[post_at - 1].strip() else []) + post_lines
+        else:
+            add = post_lines + [tail]
+        lines[post_at:post_at] = add
+    if pre_lines:
+        imports = _core_import_lines(lines)
+        if imports:
+            at = imports[0][0]
+        else:  # no template rule import to stand before: directly before the post block, or where it would go
+            at = post_at if post_lines else _post_block_index(lines)
+        lines[at:at] = pre_lines + [tail]
+    return "\n".join(lines)
+
+
+def apply_package_marks(text: str, disabled: "dict[str, str]", active: "set[str]") -> str:
+    """`text` of docs/ai/rules.md with the rules `disabled` (rule id -> the package that disables it) switched
+    off and marked `<!-- act:package <id> -->`: only a checked rule is switched off; a rule already off, or one the
+    owner switched back on by hand (checked, mark kept), is left. A rule marked for a package that is no longer in
+    `active` is switched back on and loses its mark (the line is what it was before, byte for byte) -- unless
+    another package in `disabled` now wants it, then it is off and carries that package's mark at once, so one
+    call leaves the final state. A rule marked for an active package that `disabled` no longer lists (the new
+    version of the package dropped it) is switched back on and loses its mark; the caller therefore puts the
+    rules of a package it cannot read (its folder is missing or differs from the lock) into `disabled` under that
+    package, from the marks. One marked for one package and now disabled by another gets that package's mark.
+    Fenced code and indented prose are skipped. Line endings stay."""
+    lines = text.split("\n")
+    fence: Optional[str] = None
+    for index, raw in enumerate(lines):
+        fence_match = RE_FENCE.match(raw)
+        if fence is not None:
+            if fence_match and fence_match.group("fence")[0] == fence[0] and len(fence_match.group("fence")) >= len(fence):
+                fence = None
+            continue
+        if fence_match:
+            fence = fence_match.group("fence")
+            continue
+        tail = "\r" if raw.endswith("\r") else ""
+        line = raw[:-1] if tail else raw
+        mark = act_profile.PACKAGE_MARK_RE.search(line)
+        body = line[:mark.start()] if mark else line
+        checkbox = RE_CHECKBOX.match(body)
+        if not checkbox or checkbox.group("indent") == "":
+            continue
+        group = RE_GROUP_ID.match(checkbox.group("rest"))
+        if not group:
+            continue
+        position = checkbox.start("mark")
+        checked = checkbox.group("mark") in ("x", "X")
+        owner = mark.group("id") if mark else None
+        wanted = disabled.get(group.group("id"))
+        new = line
+        if owner is not None and owner not in active:
+            new = body[:position] + "x" + body[position + 1:]  # the package is gone: back on, mark off
+            if wanted is not None:  # ... but another package wants the rule off: its mark at once
+                new = f"{body[:position]} {body[position + 1:]} <!-- act:package {wanted} -->"
+        elif owner is not None and wanted is None:
+            new = body[:position] + "x" + body[position + 1:]  # the package no longer lists it: back on, mark off
+        elif wanted is not None and owner is None and checked:
+            new = f"{body[:position]} {body[position + 1:]} <!-- act:package {wanted} -->"
+        elif wanted is not None and owner is not None and owner != wanted and not checked:
+            new = f"{body} <!-- act:package {wanted} -->"
+        if new != line:
+            lines[index] = new + tail
+    return "\n".join(lines)
 
 
 def sync_core_cut(root: Path, write: bool = True) -> CoreCut:

@@ -1374,6 +1374,7 @@ def run(root: Path) -> tuple[list[Row], Optional[str], list[str]]:
     info = [f"not scanned: submodule {path}" for path in submodules]
     info += language_info(root) + own_system_info(rows) + foreign_id_info(root, rows, pred is not None)
     info += template_remote_info(root)
+    info += package_info(root)
     return rows, predecessor_hint(root, pred), info
 
 
@@ -1422,6 +1423,33 @@ def template_remote_info(root: Path) -> list[str]:
     return [f"predecessor leftover: git remote '{TEMPLATE_REMOTE_NAME}' points at the template repository ({url}) — "
             f"propose removing it (`git remote remove {TEMPLATE_REMOTE_NAME}`; update.py uses the source in "
             f".act-lock.json); {way}. Never removed automatically"]
+
+
+def package_info(root: Path) -> list[str]:
+    """One info line when the target already has packages (a project on the template): the ones its
+    `.act-lock.json` lists, the folders under `.act-local/packages/` (a folder the lock does not list is resting,
+    nothing loads from it) and the zips there. The skill names them to the owner; `init.py --target` loads the
+    lock's packages in the target again and never activates a resting folder. Reads names only."""
+    try:
+        active = actlib.read_packages(root)
+        base = root / ".act-local" / "packages"
+        names = sorted(os.listdir(base)) if base.is_dir() else []
+    except OSError:
+        return []
+    folders = [name for name in names if not name.startswith(".") and (base / name).is_dir()]
+    zips = [name for name in names if name.endswith(".zip") and (base / name).is_file()]
+    if not active and not folders and not zips:
+        return []
+    parts = []
+    if active:
+        parts.append("in .act-lock.json: " + ", ".join(f"{name} {entry.get('version', '?')}" for name, entry in sorted(active.items())))
+    if folders:
+        parts.append("folders in .act-local/packages/: " + ", ".join(
+            name + ("" if name in active else " (resting)") for name in folders))
+    if zips:
+        parts.append("zips there: " + ", ".join(zips))
+    return ["packages in the target: " + "; ".join(parts) + " — init.py loads the ones the lock lists; a resting folder or a "
+            "zip stays as it is, `/act-packages add <id>` is the owner's way to activate"]
 
 
 LANGUAGE_ROW_RE = re.compile(r"(?im)^\|\s*Sprache\s*\|\s*([^|]*?)\s*\|")

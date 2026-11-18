@@ -1,5 +1,5 @@
 """Session start, context lines: compact note, identity, environment overrides, output depth, board
-excerpt, chat language, active topics, ideas and the scope.
+excerpt, chat language, active topics, ideas, the scope and the packages.
 
 Split out of session.py, which keeps the entry point and the order of the sub-steps."""
 from __future__ import annotations
@@ -7,6 +7,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
+import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Callable, Optional
@@ -428,10 +431,28 @@ def _scope_notes(root: Path, write: bool, copies_moved: bool) -> tuple[list[str]
     to restore."""
     import act_profile  # deferred, see _active_topics
     import rules
-    cut = act_profile.read_cut(root)
-    core = rules.sync_core_cut(root, write=write)
+    import package_load
     printed: list[str] = []
     pending: list[str] = []
+    # What active packages bring (import blocks, disabled rules, skill and role copies) goes first: the scope below
+    # reads the marks it leaves. A package that is not intact is named every start, its files stay as they are.
+    try:
+        package_changed = package_load.sync_packages(root, write=write)
+    except Exception as exc:  # noqa: BLE001 - the scope below still runs
+        package_changed = []
+        printed.append(f"[act] note: packages not applied ({exc.__class__.__name__}: {exc})")
+    if package_changed:
+        if write:
+            printed.append(f"[act] note: packages: {', '.join(package_changed[:6])}"
+                           + (f" and {len(package_changed) - 6} more" if len(package_changed) > 6 else "")
+                           + " brought in line with the packages in .act-lock.json")
+        else:
+            pending.append(f"[act] note: packages: {len(package_changed)} file(s) would be brought in line with the "
+                           "packages in .act-lock.json (warn mode, not applied)")
+    for package_id, why in sorted(package_load.plan_for(root, actlib.read_packages(root)).problems.items()):
+        printed.append(_package_problem_line(root, package_id, why))
+    cut = act_profile.read_cut(root)
+    core = rules.sync_core_cut(root, write=write)
     if cut.warnings:
         printed.append("[act] note: scope (docs/ai/config.md § Scope): " + "; ".join(cut.warnings))
     if core.problem:
@@ -452,4 +473,315 @@ def _scope_notes(root: Path, write: bool, copies_moved: bool) -> tuple[list[str]
     if changed:
         line += " — changed at this start, takes effect from the next session"
     printed.append(line)
+    return printed, pending
+
+
+# ---------------------------------------------------------------------------
+# Packages (docs/ai/config.md § Packages, format: .act/formats/package.md) — what a session start says and does
+# about them. It never activates one and never runs package code (no install.py, no check module): what it may do
+# is unpack a zip that `packages.py fetch` (or the owner) put into .act-local/packages/ into a resting folder, so
+# the owner can see it, and name what needs a person: a package whose folder is missing or not intact, a newer
+# zip, a resting folder (once per id and version; `init.py --target` and `act-adopt` carry the packages of a source
+# project this way) and one summary line for the active packages. A resting folder is read by nothing until
+# `/act-packages add`.
+# ---------------------------------------------------------------------------
+
+_PACKAGES_DIR = ".act-local/packages"
+_ZIP_NAME_RE = re.compile(r"^([a-z][a-z0-9-]{1,30})-(\d+)\.(\d+)\.(\d+)\.zip\Z")
+_HEADER_VERSION_RE = re.compile(r"^version:[ \t]*(\d+\.\d+\.\d+)[ \t]*\r?$", re.MULTILINE)
+_ZIP_STAGE_LIMIT = 8 * 1024 * 1024  # bytes: a larger zip is not unpacked at a session start (`add` reads it directly)
+_STAGE_MIN_LEFT = 3.0               # seconds of the start's budget that must be left before a zip is staged
+_STAGE_RESERVE = 1.0                # seconds of the start's budget the unpacking leaves for the checks after it
+_ZIP_NOTES_KEY = "package_zip_notes"  # .act-local/cache.json: zips already reported, by name -> size:mtime
+_REST_NOTES_KEY = "package_rest_notes"  # .act-local/cache.json: resting folders already named, by id -> version text
+_PACKAGE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}\Z")
+_MODULE_LOADED = time.monotonic()
+
+
+def _start_left() -> float:
+    """Seconds left of the session start's time budget: checks.common._HOOK_BUDGET counted from when dispatch.py
+    began, from the load of this module when something else called (a probe)."""
+    started = getattr(sys.modules.get("__main__"), "_HOOK_STARTED", None)
+    if isinstance(started, bool) or not isinstance(started, (int, float)):
+        started = _MODULE_LOADED
+    budget = getattr(sys.modules.get("checks.common"), "_HOOK_BUDGET", 8.0)
+    return float(started) + float(budget) - time.monotonic()
+
+
+def _config_word(config: dict[str, str], key: str, default: str) -> str:
+    value = str(config.get(key, "")).strip().strip("`").strip().lower()
+    return value or default
+
+
+def _parse_version(text: str) -> "Optional[tuple[int, int, int]]":
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", text.strip())
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3))) if match else None
+
+
+def _version_text(version: "tuple[int, int, int]") -> str:
+    return ".".join(str(part) for part in version)
+
+
+def _package_problem_line(root: Path, package_id: str, why: list[str]) -> str:
+    """The note for an active package that is not loaded: a missing folder names the way to get it (fetch, then add),
+    anything else (a file differs from the lock, a link in the way) names doctor.py."""
+    folder = root / ".act-local" / "packages" / package_id
+    if not os.path.lexists(folder):
+        return (f"[act] note: package {package_id} is not loaded: its folder {_PACKAGES_DIR}/{package_id}/ is missing here "
+                f"(the folder is not versioned, a fresh clone has the lock only) — python .act/scripts/packages.py fetch "
+                f"{package_id}, then `/act-packages add {package_id}`")
+    return f"[act] note: package {package_id} is not loaded: {why[0]} — python .act/scripts/doctor.py"
+
+
+def _package_zips(root: Path) -> "dict[str, tuple[tuple[int, int, int], Path]]":
+    """The newest `<id>-<X.Y.Z>.zip` per id directly in .act-local/packages/ (plain files only)."""
+    base = root / ".act-local" / "packages"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return {}
+    found: dict[str, tuple[tuple[int, int, int], Path]] = {}
+    for name in names:
+        match = _ZIP_NAME_RE.match(name)
+        if not match:
+            continue
+        try:
+            info = os.lstat(base / name)
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or actlib.is_redirect(info):
+            continue
+        version = (int(match.group(2)), int(match.group(3)), int(match.group(4)))
+        if match.group(1) not in found or version > found[match.group(1)][0]:
+            found[match.group(1)] = (version, base / name)
+    return found
+
+
+def _resting_version(root: Path, package_id: str) -> "Optional[tuple[int, int, int]]":
+    """The version in the package.md of the folder .act-local/packages/<id>/ (a plain file in a plain folder), None
+    when there is none or it cannot be read."""
+    folder = root / ".act-local" / "packages" / package_id
+    path = folder / "package.md"
+    try:
+        if actlib.is_redirect(os.lstat(folder)) or actlib.is_redirect(os.lstat(path)):
+            return None
+        with open(path, "rb") as stream:
+            head = stream.read(4000).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    found = _HEADER_VERSION_RE.search(head)
+    return _parse_version(found.group(1)) if found else None
+
+
+def _resting_folders(root: Path) -> "tuple[dict[str, str], bool]":
+    """({id: version text}, complete) of the plain folders `.act-local/packages/<id>/` that hold a `package.md` (no
+    link; a name that is no package id, such as `.staging`, is skipped). The version is read from the head of the
+    package.md as _resting_version does, `unknown` when it cannot be read. `complete` is False when the start's time
+    ran out before every folder was looked at."""
+    base = root / ".act-local" / "packages"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return {}, True
+    found: dict[str, str] = {}
+    for name in names:
+        if not _PACKAGE_ID_RE.match(name):
+            continue
+        if _start_left() <= 0:
+            return found, False
+        try:
+            info = os.lstat(base / name)
+            if not stat.S_ISDIR(info.st_mode) or actlib.is_redirect(info) or not os.path.lexists(base / name / "package.md"):
+                continue
+        except OSError:
+            continue
+        version = _resting_version(root, name)
+        found[name] = _version_text(version) if version else "unknown"
+    return found, True
+
+
+def _zip_signature(path: Path) -> str:
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return ""
+    return f"{info.st_size}:{info.st_mtime_ns}"
+
+
+def _stage_zip(root: Path, package_id: str, version: "tuple[int, int, int]", zip_path: Path) -> "tuple[str, str]":
+    """Unpack one zip into a staging folder, read it, and only when it is valid move the package folder to
+    .act-local/packages/<id>/ (resting). Returns (outcome, line): `ready` (moved), `invalid` (refused; the first reason
+    is in the line), `later` (the time budget is spent while unpacking or after it, or the move to the final name was
+    refused: nothing moved, the next start tries again), `skip` (a folder of that name appeared meanwhile: nothing to
+    say). Nothing partial is ever left under the final name: the move is one rename of a folder that was complete and
+    checked. An OSError out of the staging is a zip that is not usable, reported once like any other."""
+    import package_scan
+    import packages
+    name = zip_path.name
+    if _start_left() < _STAGE_MIN_LEFT:
+        return "later", (f"[act] note: package zip {name} not unpacked: this session start's time is used up; "
+                         "it is tried again at the next start")
+    try:
+        staged = packages.stage(zip_path, root, lambda: _start_left() - _STAGE_RESERVE)
+    except packages.StageTimeout:
+        return "later", (f"[act] note: package zip {name} not unpacked: this session start's time ran out while unpacking; "
+                         "it is tried again at the next start")
+    except packages.PackageRefused as error:
+        return "invalid", f"[act] note: package zip {name} is not usable: {error.reasons[0]} — left as it was"
+    except (OSError, ValueError) as error:  # ValueError: the staging folder could not be removed again (discard refuses)
+        return "invalid", f"[act] note: package zip {name} is not usable ({error.__class__.__name__}) — left as it was"
+    try:
+        result = packages.analyze(staged.folder, root)
+        reasons = list(result.reasons) or packages.named_by_id(package_id, zip_path, result)
+        if reasons:
+            return "invalid", f"[act] note: package zip {name} is not usable: {reasons[0]} — left as it was"
+        original = packages.VERIFY_TIMEOUT
+        packages.VERIFY_TIMEOUT = max(1.0, min(float(original), _start_left() - 1.0))
+        try:
+            state, why = packages.origin(staged.copy, root, name)
+        finally:
+            packages.VERIFY_TIMEOUT = original
+        if state == "bad":
+            return "invalid", f"[act] note: package zip {name} is not usable: {why} — left as it was"
+        if state == "unverified" and "timed out" in why:
+            return "later", (f"[act] note: package zip {name} not unpacked: the signature check ran out of time; "
+                             "it is tried again at the next start")
+        findings = package_scan.scan(staged.folder)
+        if _start_left() < 0:
+            return "later", (f"[act] note: package zip {name} not unpacked: this session start's time is used up; "
+                             "it is tried again at the next start")
+        admitted, note = packages.admission(state, root)
+        target = root / ".act-local" / "packages" / package_id
+        if os.path.lexists(target):
+            return "skip", ""
+        if not actlib.local_write_ok(root, target):
+            return "invalid", f"[act] note: package zip {name} not unpacked: .act-local is a link or leaves the project"
+        try:
+            os.rename(staged.folder, target)
+        except OSError as error:
+            return "later", (f"[act] note: package zip {name} not unpacked ({error.__class__.__name__}): its folder could not be moved "
+                             "into place; it is tried again at the next start")
+        return "ready", (f"[act] package {package_id} {_version_text(version)} is ready, resting in {_PACKAGES_DIR}/{package_id}/ "
+                         f"(origin: {state}, {len(findings)} scan finding(s)"
+                         + ("" if admitted else f"; not admitted: {note}")
+                         + f"): nothing is active — see the plan with `/act-packages add {package_id}`")
+    except OSError as error:
+        return "invalid", f"[act] note: package zip {name} not unpacked ({error.__class__.__name__}) — left as it was"
+    finally:
+        try:
+            packages.discard(staged)
+        except (OSError, ValueError):
+            pass
+
+
+def _relaxations(manifest: "Optional[bytes]") -> "tuple[int, int]":
+    """(disabled rules, weaker checks) a package.md names, counted by package_scan as the static scan lists them (a
+    manifest larger than the scan reads counts for none)."""
+    import package_scan
+    return package_scan.relaxation_counts(package_scan.scan_text(manifest))
+
+
+def _packages_summary(root: Path, config: dict[str, str], active: "dict[str, dict]") -> str:
+    """One line for the active packages: names with versions, the relaxations they bring (the rules they disable and
+    the checks they set weaker, counted as the static scan counts them, but from the hash-checked `package.md` bytes of
+    each intact package only, never from other files that lie in its folder) and the value of `packages-unverified`."""
+    import package_load
+    disabled = weaker = 0
+    unreadable: list[str] = []
+    for package_id, entry in sorted(active.items()):
+        package = package_load.read_package(root, package_id, entry)
+        if not package.intact:
+            unreadable.append(package_id)
+            continue
+        package_disabled, package_weaker = _relaxations(package.data.get("package.md"))
+        disabled += package_disabled
+        weaker += package_weaker
+    names = ", ".join(f"{package_id} {entry.get('version', '?')}" for package_id, entry in sorted(active.items()))
+    mode = _config_word(config, "packages-unverified", "block")
+    shown = mode if mode in ("block", "scan", "allow") else f"{mode} (counts as block)"
+    line = (f"[act] packages: {names} · relaxations: {disabled + weaker} ({disabled} disabled rule(s), {weaker} weaker "
+            f"check(s)) · packages-unverified: {shown}")
+    if unreadable:
+        line += f" · not counted, not intact: {', '.join(unreadable)}"
+    return line
+
+
+def _package_notes(root: Path, config: dict[str, str], write: bool) -> tuple[list[str], list[str]]:
+    """(lines to print, lines for the warn digest) about packages at a session start. With `write` a zip
+    `<id>-<version>.zip` in .act-local/packages/ whose id has no folder and no lock entry is unpacked to a resting
+    folder once (see _stage_zip); without it (`session-start-refresh: warn`) nothing is written and the zip is only
+    named. A zip of an id that has a folder or a lock entry is never touched: when its version is higher, one line
+    names it (`packages-update: ask`). The last line summarizes the active packages. With `write` the staging folders
+    older than a day are removed first (packages.prune_staging). A resting folder `.act-local/packages/<id>/` of an id
+    that is not in the lock is named once per id and version (`rests in`; the `is ready` line of a zip unpacked at this
+    start counts as naming it), remembered under `package_rest_notes` in the cache (an id whose folder is gone is
+    dropped from it); without `write` the line is printed and nothing is remembered."""
+    printed: list[str] = []
+    pending: list[str] = []
+    if write and os.path.lexists(root / ".act-local" / "packages" / ".staging"):
+        import packages
+        packages.prune_staging(root)  # what an earlier start left behind when it was cut off; never raises
+    active = actlib.read_packages(root)
+    zips = _package_zips(root)
+    ask = _config_word(config, "packages-update", "ask") == "ask"
+    cache = actlib.read_cache()
+    remembered = cache.get(_ZIP_NOTES_KEY, {}) if zips else {}
+    remembered = remembered if isinstance(remembered, dict) else {}
+    rest_remembered = cache.get(_REST_NOTES_KEY, {})
+    rest_remembered = rest_remembered if isinstance(rest_remembered, dict) else {}
+    rest_noted = dict(rest_remembered)
+    noted = {name: sig for name, sig in remembered.items() if any(path.name == name for _v, path in zips.values())}
+    waiting: list[str] = []
+    for package_id, (version, zip_path) in sorted(zips.items()):
+        if package_id in active or os.path.lexists(root / ".act-local" / "packages" / package_id):
+            have = (_parse_version(str(active[package_id].get("version", ""))) if package_id in active
+                    else _resting_version(root, package_id))
+            if ask and have is not None and version > have:
+                printed.append(f"[act] package {package_id}: newer version {_version_text(version)} ready (have "
+                               f"{_version_text(have)}): `/act-packages add {package_id}` shows the plan and the diff")
+            continue
+        signature = _zip_signature(zip_path)
+        if noted.get(zip_path.name) == signature:
+            continue  # reported before, the zip has not changed since
+        if not write:
+            waiting.append(zip_path.name)
+            continue
+        if int(signature.split(":")[0] or 0) > _ZIP_STAGE_LIMIT:
+            noted[zip_path.name] = signature
+            printed.append(f"[act] note: package zip {zip_path.name} is larger than a session start unpacks "
+                           f"({int(signature.split(':')[0]) // (1024 * 1024)} MB): `/act-packages add {package_id}` reads it directly")
+            continue
+        outcome, line = _stage_zip(root, package_id, version, zip_path)
+        if line:
+            printed.append(line)
+        if outcome in ("ready", "invalid"):
+            noted[zip_path.name] = signature
+        if outcome == "ready":
+            rest_noted[package_id] = _version_text(version)  # the `is ready` line named the folder
+    resting, complete = _resting_folders(root)
+    if complete:
+        rest_noted = {package_id: version for package_id, version in rest_noted.items() if package_id in resting}
+    for package_id, version in sorted(resting.items()):
+        if package_id in active or rest_noted.get(package_id) == version:
+            continue
+        printed.append(f"[act] package {package_id} {version} rests in {_PACKAGES_DIR}/{package_id}/ (not active): "
+                       f"`/act-packages add {package_id}` shows the plan")
+        rest_noted[package_id] = version
+    if not write:
+        rest_noted = rest_remembered  # printed, nothing remembered
+    changed_cache: dict = {}
+    if write and noted != remembered:
+        changed_cache[_ZIP_NOTES_KEY] = noted
+    if write and rest_noted != rest_remembered:
+        changed_cache[_REST_NOTES_KEY] = rest_noted
+    if changed_cache:
+        try:
+            actlib.write_cache(changed_cache)
+        except OSError:
+            pass
+    if waiting:
+        pending.append(f"[act] note: package zip(s) {', '.join(waiting)} would be unpacked to a resting folder "
+                       "(warn mode, not applied)")
+    if active:
+        printed.append(_packages_summary(root, config, active))
     return printed, pending

@@ -41,7 +41,14 @@ already past the newest release keeps its state.
    check (§ Content) on exactly those. All hits go into **one** inbox question for this update: one sub-item per
    hit, quoting both texts (cut to the matching lines), options drop · keep (name the difference) · adapt.
    Nothing is deleted or switched off (`R-work-override`). No such rule or skill in the plan: skip the step.
-7. A template bug noticed along the way: an `act-feedback` entry right away (its immediate trigger).
+7. Packages. With `packages-update` (`docs/ai/config.md` § Packages) `ask` and active packages
+   (`python .act/scripts/packages.py list`): run `python .act/scripts/packages.py fetch <id>` for each of them; a source
+   that cannot deliver is named in one line and skipped. For each package whose fetched version is newer, do
+   `/act-packages update <id>` (skill `act-packages`): its plan and diff, the human's yes to that plan, only then `--yes`
+   — one yes per package, never one for all. Nothing newer: one line saying so. `off`, or no active package: skip.
+   `update.py`'s own package lines (a `requires-template` the new template no longer meets, a newer zip already there)
+   come first and fetch nothing; show them with the rest.
+8. A template bug noticed along the way: an `act-feedback` entry right away (its immediate trigger).
 
 ## `.act/` pulled in some other way
 

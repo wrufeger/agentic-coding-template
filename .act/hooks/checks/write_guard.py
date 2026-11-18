@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 #
 # Purpose: Check 1 — template write-guard (PreToolUse), checked before every other check. Denies
-#          an AI write under .act/**, pointing at docs/ai/local/<path> instead.
+#          an AI write under .act/**, pointing at docs/ai/local/<path> instead. It protects the project's
+#          .act-local/packages/ the same way (the packages the lock records change through packages.py only), and
+#          .act-local itself: moving, renaming or removing the folder that holds them is refused too.
 #
 # Exit-code contract specific to this check: a mechanism error while checking a candidate write is
 # NOT swallowed the way most other checks fail open. Every other check in this template fails open
@@ -22,15 +24,18 @@ from typing import Callable, Optional
 import actlib
 
 from .command_parse import Parse, parse_for
-from .inline_code import WHOLE_FOLDER
+from .inline_code import WHOLE_FOLDER, mentions_interpreter
 from .common import _TOOL_PATH_FIELDS, _check_mode, _note_refusal_class
 from .common import _is_unplaced_target, _unplaced_reason
 from .list_feeds import FIND_HIT, Binding, ShellFacts, find_hits, lists_files, ps_fed_writes, shell_facts
 from .shell_targets import _GIT_WRITES_TEMPLATE_GUARD, _XARGS_INPUT, _is_absolute_target, _is_dynamic_target
+from .shell_targets import _ASSIGNMENT_RE, _RESERVED_PREFIXES, _VALUE_FLAGS, _WINDOWS_SWITCH_RE
+from .shell_targets import _command_name, _raw_redirect_targets, _simple_command_targets
 from .shell_targets import _resolve_path
 
 __all__ = [
     "_PROTECTED_PATH_RE", "_names_protected_path", "_WRITE_GUARD_MESSAGE", "_UNKNOWN_FOLDER_MESSAGE",
+    "_PACKAGES_MESSAGE", "_UNKNOWN_PACKAGES_MESSAGE", "_LOCAL_MESSAGE", "_is_under_packages", "_is_local_itself",
     "_bash_targets_protected_path", "_powershell_targets_protected_path", "_unplaced_message",
     "_targets_protected_path", "_is_under_project_act",
     "_resolve_against", "_guard_root", "check_write_guard",
@@ -43,7 +48,17 @@ __all__ = [
 # so on — enumerating all of those is more fragile than just not requiring one). The suffix
 # check is what excludes ".act-lock.json" and ".act-local/", both project-level state next to
 # the template tree rather than inside it, from this guard.
-_PROTECTED_PATH_RE = re.compile(r"\.act(?:[\\/]|$)", re.IGNORECASE)
+_ACT_PATH_RE = re.compile(r"\.act(?:[\\/]|$)", re.IGNORECASE)
+# The packages folder of a project, `.act-local/packages` as a whole path segment pair (`.act-local/packages-old/` is
+# another folder and stays free): the second tree this check protects. A throwaway project below `.act-local/tmp/`
+# has one of its own, which is free like its `.act/`.
+_PACKAGES_PATH_RE = re.compile(r"\.act-local[\\/]packages(?:[\\/]|$)", re.IGNORECASE)
+# `.act-local` itself as the last part of a target (the folder that holds `packages/`): moving, renaming or
+# removing it takes the packages with it. Names below it (`.act-local/tmp/x`) are no match.
+_LOCAL_ITSELF_RE = re.compile(r"(?:^|[\\/])\.act-local[\\/]*$", re.IGNORECASE)
+# Any of the three, for a text that cannot be resolved.
+_PROTECTED_PATH_RE = re.compile(
+    _ACT_PATH_RE.pattern + "|" + _PACKAGES_PATH_RE.pattern + "|" + _LOCAL_ITSELF_RE.pattern, re.IGNORECASE)
 # A throwaway tree: `.act-local/tmp/` as whole segments. A throwaway project below it carries a `.act/` of
 # its own, which is no part of the project's template tree.
 _THROWAWAY_RE = re.compile(r"(?:^|[\\/])\.act-local[\\/]tmp[\\/]")
@@ -91,6 +106,28 @@ def _names_protected_path(text: str, root: Optional[Path]) -> bool:
         if not all(_PLAIN_SEGMENT_RE.match(segment) for segment in rest):
             return True
     return not all(_PLAIN_SEGMENT_RE.match(segment) for segment in re.split(r"[\\/]", after))
+
+
+def _is_under_packages(resolved: Path, root: Path) -> bool:
+    """True if `resolved` (absolute and already resolved, as for _is_under_project_act) is `root`'s own
+    `.act-local/packages/` or lies below it: the packages the lock records and the folders resting there change
+    through `packages.py` only. Only at the project root: a throwaway project below `.act-local/tmp/` has a
+    `.act-local/packages/` of its own, and `.act-local/packages-old/` is another folder."""
+    packages_root = _resolve_path(str(root / ".act-local" / "packages"))
+    if packages_root is None:
+        packages_root = (root / ".act-local" / "packages").resolve()
+    resolved, packages_root = _folded(resolved), _folded(packages_root)
+    return resolved == packages_root or packages_root in resolved.parents
+
+
+def _is_local_itself(resolved: Path, root: Path) -> bool:
+    """True if `resolved` (absolute and already resolved) is `root`'s own `.act-local` folder as a whole, a parent
+    of `.act-local/packages/` within the project: a move, a rename or a removal of it takes the packages with it.
+    Only the project's own: a throwaway project below `.act-local/tmp/` has a `.act-local` of its own, which is free."""
+    local = _resolve_path(str(root / ".act-local"))
+    if local is None:
+        local = (root / ".act-local").resolve()
+    return _folded(resolved) == _folded(local)
 
 
 def _is_under_project_act(resolved: Path, root: Path) -> bool:
@@ -300,8 +337,9 @@ def _fixed_folder(word: str, base: Optional[str], root: Optional[Path]) -> bool:
     if resolved is None:
         return False
     top = _folded(_resolve_path(str(root)) or root)
-    return not (_is_under_project_act(resolved, root) or _folded(resolved) == top
-                or _folded(resolved) in top.parents)
+    local = _folded(_resolve_path(str(root / ".act-local")) or root / ".act-local")  # holds `packages/`
+    return not (_is_under_project_act(resolved, root) or _is_under_packages(resolved, root)
+                or _folded(resolved) in (top, local) or _folded(resolved) in top.parents)
 
 
 def _source_is_shown(source: str, base: Optional[str], root: Optional[Path]) -> bool:
@@ -476,11 +514,18 @@ def _bash_targets_protected_path(
     targets = list(parse.bash_write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD))
     for raw, base in targets:
         message = _judge_target(raw, base, root, command, facts)
+        if message is not None and message.startswith(_LOCAL_MESSAGE) and _local_destination_only(
+                raw, base, command, parse):
+            continue  # a copy INTO `.act-local` is no write to `.act-local` as a whole
         if message is not None:
-            if message.startswith(_WRITE_GUARD_MESSAGE) and base is not None and (raw, None) in targets:
+            if base is not None and (raw, None) in targets:
                 # the scanner also yields this target with no known folder (after `cd $VAR`, `pushd`, in a
                 # subshell): the folder is not known, so say that; the verdict stays
-                message = _UNKNOWN_FOLDER_MESSAGE + message[len(_WRITE_GUARD_MESSAGE):]
+                for known, unknown in ((_WRITE_GUARD_MESSAGE, _UNKNOWN_FOLDER_MESSAGE),
+                                       (_PACKAGES_MESSAGE, _UNKNOWN_PACKAGES_MESSAGE)):
+                    if message.startswith(known):
+                        message = unknown + message[len(known):]
+                        break
             return message
     if re.search(r"mapfile|readarray", command, re.IGNORECASE):
         for callback, binding in facts().callbacks:
@@ -602,7 +647,7 @@ def _assigned_value_refusal(
     if text is None:
         return None
     message = _judge_text(text, base, root, command, None)
-    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE, _UNKNOWN_FOLDER_MESSAGE):
+    if message in (*_PATH_MESSAGES, _ROOT_REMOVAL_MESSAGE):
         return _read_as(message, raw, text)
     return None
 
@@ -627,7 +672,7 @@ def _assigned_before_use(raw: str, command: str) -> bool:
 def _read_as(message: str, raw: str, text: str) -> str:
     """`message` with the note that the target `raw` was read as `text`, for a refusal that comes from the value
     of a variable; any other message stays as it is."""
-    if message in (_WRITE_GUARD_MESSAGE, _ROOT_REMOVAL_MESSAGE, _UNKNOWN_FOLDER_MESSAGE):
+    if message in (*_PATH_MESSAGES, _ROOT_REMOVAL_MESSAGE):
         return f"{message} (the target `{raw}` was read as `{text}`: the command assigns that value to the name)"
     return message
 
@@ -669,7 +714,7 @@ def _judge_text(
     that is not shown, None when it passes."""
     if base is None or _is_dynamic_target(raw) or root is None:
         if _names_protected_path(raw, root):
-            return _UNKNOWN_FOLDER_MESSAGE
+            return _unknown_message(raw)
         if not _list_is_shown(raw, command, base, root):
             return _LIST_MESSAGE
         return _bound_refusal(raw, facts().bindings, base, root) if facts and _BOUND_VARIABLE_RE.search(raw) else None
@@ -678,7 +723,7 @@ def _judge_text(
         return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
     if _removes_root(resolved, root):
         return _ROOT_REMOVAL_MESSAGE
-    return _WRITE_GUARD_MESSAGE if _is_under_project_act(resolved, root) else None
+    return _resolved_message(resolved, root)
 
 
 def _bound_refusal(
@@ -776,6 +821,284 @@ _ROOT_REMOVAL_MESSAGE = (
     "[act] this removes the project root or a folder that holds it, the template's .act/ included. "
     "Remove only the folder below the project you mean."
 )
+_PACKAGES_MESSAGE = (
+    "[act] .act-local/packages/ holds the packages of this project, and the lock records them: a file written there "
+    "by hand is not what the lock names. Change it through `python .act/scripts/packages.py` (fetch, add, remove); "
+    "that run is no write this check sees. A throwaway copy under .act-local/tmp/ is free."
+)
+_UNKNOWN_PACKAGES_MESSAGE = (
+    "[act] write-guard refused -- the target names .act-local/packages/ but its folder is not known (a variable, a "
+    "substitution, or a relative path after cd to a variable), so it may be this project's own packages folder. A "
+    "throwaway copy under .act-local/tmp/ passes when the command shows the place: write the path out, or set the "
+    "variable once to a literal before its first use, and cd only to a folder written out. Change the packages of "
+    "this project through `python .act/scripts/packages.py` (fetch, add, remove)."
+)
+_LOCAL_MESSAGE = (
+    "[act] .act-local is the folder that holds this project's packages (.act-local/packages/) and its local state: "
+    "moving, renaming or removing it as a whole is refused, like the same for .act/. Work inside it (move or remove a "
+    "folder below it, such as .act-local/tmp/<task>/); the packages change through "
+    "`python .act/scripts/packages.py` (fetch, add, remove)."
+)
+# What a refusal of this check can be: the `message in (...)` and `startswith` tests read this one list.
+_PATH_MESSAGES = (
+    _WRITE_GUARD_MESSAGE, _UNKNOWN_FOLDER_MESSAGE, _PACKAGES_MESSAGE, _UNKNOWN_PACKAGES_MESSAGE, _LOCAL_MESSAGE)
+
+
+def _packages_only(text: str) -> bool:
+    """True when the target text names `.act-local/packages/` and no `.act/`: the message then speaks of packages."""
+    return bool(_PACKAGES_PATH_RE.search(text)) and not _ACT_PATH_RE.search(text)
+
+
+def _local_only(text: str) -> bool:
+    """True when the target text ends in `.act-local` itself and names no `.act/` and no packages folder."""
+    return bool(_LOCAL_ITSELF_RE.search(text)) and not _ACT_PATH_RE.search(text) and not _PACKAGES_PATH_RE.search(text)
+
+
+def _text_message(text: str) -> str:
+    """The refusal for a target `text` that names a protected path (_names_protected_path) and cannot be placed."""
+    if _local_only(text):
+        return _LOCAL_MESSAGE
+    return _PACKAGES_MESSAGE if _packages_only(text) else _WRITE_GUARD_MESSAGE
+
+
+def _unknown_message(text: str) -> str:
+    """The refusal for a target `text` that names a protected path whose folder is not known."""
+    if _local_only(text):
+        return _LOCAL_MESSAGE
+    return _UNKNOWN_PACKAGES_MESSAGE if _packages_only(text) else _UNKNOWN_FOLDER_MESSAGE
+
+
+def _resolved_message(resolved: Path, root: Path) -> Optional[str]:
+    """The refusal for a target that resolves to `resolved` in the project `root`: into `.act/`, into
+    `.act-local/packages/`, onto `.act-local` itself, or None."""
+    if _is_under_project_act(resolved, root):
+        return _WRITE_GUARD_MESSAGE
+    if _is_under_packages(resolved, root):
+        return _PACKAGES_MESSAGE
+    return _LOCAL_MESSAGE if _is_local_itself(resolved, root) else None
+
+
+# --- a copy INTO `.act-local` is no write to `.act-local` as a whole ---------------------------------------------
+# The scanners list every operand a command writes to, the folder a copy fills as well as the folder a `mv` or an
+# `rm` takes away, and do not say which is which. A target that is `.act-local` itself passes only when each
+# command that yields it places files INTO it: `cp`, `mv`, `install` (last operand or `-t`), `rsync`, `robocopy`
+# (destination) and PowerShell's `Copy-Item`, `Move-Item`, `Expand-Archive` (-Destination/-DestinationPath or the
+# second operand). Anything else stays refused: the folder as the thing moved, renamed, removed, made (`mkdir`),
+# written by a redirect or inline code, a copy with `-T`, a sync that deletes (`rsync --delete*`, `robocopy /MIR`,
+# `/PURGE`), a command behind a wrapper (`sudo`, `xargs`, `bash -c`), and every form the reading below cannot place.
+_DESTINATION_WRITERS = frozenset({"cp", "mv", "install", "rsync", "robocopy"})
+_RSYNC_DELETES_RE = re.compile(r"--del(?!a)")  # --delete, --delete-after, --del ...; not --delay-updates
+_ROBOCOPY_DELETES = ("/MIR", "/PURGE")
+_DESTINATION_PLACEHOLDER = "z2c-destination-placeholder"
+
+
+def _indexed_operands(args: list[str], value_flags: frozenset) -> tuple[list[int], dict[str, list[tuple[int, str]]]]:
+    """shell_targets._operands with positions: (the indexes of the operands, flag -> [(index of the word that
+    holds the value, the text in front of the value inside that word)]), for `-t DIR`, `--target-directory=DIR`
+    and `-tDIR`."""
+    operands: list[int] = []
+    values: dict[str, list[tuple[int, str]]] = {}
+    index = 0
+    options_done = False
+    while index < len(args):
+        arg = args[index]
+        here = index
+        index += 1
+        if options_done or arg == "-" or not arg.startswith("-"):
+            operands.append(here)
+        elif arg == "--":
+            options_done = True
+        elif arg.startswith("--") and "=" in arg:
+            name = arg.split("=", 1)[0]
+            if name in value_flags:
+                values.setdefault(name, []).append((here, name + "="))
+        elif arg in value_flags:
+            if index < len(args):
+                values.setdefault(arg, []).append((index, ""))
+                index += 1
+        elif not arg.startswith("--") and len(arg) > 2 and arg[:2] in value_flags:
+            values.setdefault(arg[:2], []).append((here, arg[:2]))
+    return operands, values
+
+
+def _destination_slots(name: str, args: list[str]) -> Optional[list[tuple[int, str]]]:
+    """Where the command `name` with the arguments `args` takes the folder it places files into, as (index in
+    `args`, text in front of the folder inside that word); None when the command is no plain copy into a folder
+    (`-T`, `install -d`, a sync that deletes there, no destination to be read)."""
+    if name in ("cp", "mv", "install"):
+        for arg in args:
+            if arg == "--":
+                break
+            cluster = arg.startswith("-") and not arg.startswith("--")
+            if arg == "--no-target-directory" or (cluster and "T" in arg[1:]):
+                return None
+            if name == "install" and (arg == "--directory" or (cluster and "d" in arg[1:])):
+                return None
+        operands, values = _indexed_operands(args, _VALUE_FLAGS[name])
+        explicit = values.get("-t", []) + values.get("--target-directory", [])
+        if explicit:
+            return explicit
+        return [(operands[-1], "")] if len(operands) >= 2 else None
+    if name == "rsync":
+        if any(_RSYNC_DELETES_RE.match(arg) for arg in args):
+            return None
+        operands, _ = _indexed_operands(args, _VALUE_FLAGS["rsync"])
+        return [(operands[-1], "")] if len(operands) >= 2 else None
+    if name == "robocopy":
+        if any(arg.upper().startswith(_ROBOCOPY_DELETES) for arg in args):
+            return None
+        positional = [index for index, arg in enumerate(args) if not _WINDOWS_SWITCH_RE.match(arg)]
+        return [(positional[1], "")] if len(positional) >= 2 else None
+    return None
+
+
+def _yields_target(words: list, bases: frozenset, raw: str) -> bool:
+    """True when the simple command `words` yields `raw` as a write target (the scanner's own reading of it)."""
+    found, _ = _simple_command_targets(words, bases, _GIT_WRITES_TEMPLATE_GUARD, 0)
+    return any(str(target) == raw for target, _base in found)
+
+
+def _local_destination_only(raw: str, base: Optional[str], command: str, parse: Parse) -> bool:
+    """True when the write target `raw` (resolved against `base`), which names `.act-local` itself, is only the
+    folder that copies of the Bash `command` place files into (see the section comment). Each simple command
+    that yields `raw` must be such a copy with `raw` as its destination, and the same command with the
+    destination word replaced must not yield `raw` any more (a source, a log file or a second operand would).
+    A redirect or inline code that names `raw`, or no command that yields it at all, is no copy: False. Any
+    error of the reading is False, the refusing side."""
+    try:
+        if mentions_interpreter(command) or raw in _raw_redirect_targets(command):
+            return False
+        bases = frozenset({base})
+        explained = False
+        for words, _separator in parse.words():
+            words = list(words)
+            if not _yields_target(words, bases, raw):
+                continue
+            start = 0
+            while start < len(words) and (_ASSIGNMENT_RE.match(words[start]) or words[start] in _RESERVED_PREFIXES):
+                start += 1
+            if start >= len(words) or getattr(words[start], "subs", ()):
+                return False
+            name = _command_name(words[start])
+            args = [str(word) for word in words[start + 1:]]
+            slots = _destination_slots(name, args) if name in _DESTINATION_WRITERS else None
+            if not slots or not any(args[index][len(prefix):] == raw for index, prefix in slots):
+                return False
+            replaced = list(words)
+            for index, prefix in slots:
+                replaced[start + 1 + index] = prefix + _DESTINATION_PLACEHOLDER
+            if _yields_target(replaced, bases, raw):
+                return False
+            explained = True
+        return explained
+    except Exception:  # noqa: BLE001 - what cannot be read is refused, like a target that cannot be placed
+        return False
+
+
+# PowerShell: the cmdlets that copy, move or unpack into a folder, the parameters they read, and what is only read.
+_PS_COPY_NAMES = frozenset({
+    "copy-item", "cpi", "copy", "cp", "move-item", "mi", "move", "mv", "expand-archive"})
+_PS_VALUE_PARAMS = ("path", "literalpath", "destination", "destinationpath")
+_PS_SWITCH_PARAMS = ("recurse", "force", "passthru", "container", "whatif", "confirm", "usetransaction")
+_PS_LOCATION_NAMES = frozenset({
+    "set-location", "sl", "cd", "chdir", "push-location", "pushd", "pop-location", "popd"})
+_PS_READ_NAMES = frozenset({
+    "get-childitem", "gci", "ls", "dir", "get-content", "gc", "cat", "type", "get-item", "gi", "test-path",
+    "select-string", "sls", "write-output", "echo", "write-host", "get-location", "pwd", "measure-object"})
+
+
+def _ps_copy_words(args: list[str]) -> Optional[tuple[list[str], list[str]]]:
+    """(the words that are sources, the words that are the destination) of the arguments of a PowerShell copy,
+    move or unpack: `-Path`/`-LiteralPath`/`-Destination`/`-DestinationPath` by their name (a shortened name is
+    read when it stands for one of them only, `-Name:value` too), else the first operand is the source and the
+    second the destination. None for a parameter that is none of these and no known switch."""
+    operands: list[str] = []
+    named: dict[str, str] = {}
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg.startswith("-") and len(arg) > 1 and arg[1].isalpha():
+            body, colon, inline = arg[1:].partition(":")
+            low = body.lower()
+            values = {"destination" if item.startswith("destination") else item
+                      for item in _PS_VALUE_PARAMS if item.startswith(low)}
+            switches = [item for item in _PS_SWITCH_PARAMS if item.startswith(low)]
+            if switches and not values:
+                continue
+            if len(values) != 1 or switches:
+                return None
+            slot = next(iter(values))
+            if colon:
+                named[slot] = inline
+            elif index < len(args):
+                named[slot] = args[index]
+                index += 1
+        else:
+            operands.append(arg)
+    spare = iter(operands)
+    source = named.get("path") or named.get("literalpath")
+    destination = named.get("destination")
+    if source is None:
+        source = next(spare, None)
+    if destination is None:
+        destination = next(spare, None)
+    if source is None or destination is None:
+        return None
+    return [source, *spare], [destination]
+
+
+_PS_PARAM_PREFIX_RE = re.compile(r"^-[A-Za-z]+:")
+
+
+def _ps_names_local(word: str, base_cwd: str, root: Path) -> bool:
+    """True when the PowerShell word (a list `a,b` word by word, a `-Name:value` by its value) resolves to the
+    `.act-local` folder itself, or cannot be placed (a variable, a wildcard) and ends in `.act-local`."""
+    for part in _PS_PARAM_PREFIX_RE.sub("", word.strip().strip("'\"")).split(","):
+        part = part.strip().strip("'\"")
+        if not part or part.startswith("-"):
+            continue
+        if _is_dynamic_target(part):
+            if _LOCAL_ITSELF_RE.search(part):
+                return True
+            continue
+        resolved = _resolve_path(part, base_cwd)
+        if resolved is None or _is_local_itself(resolved, root):
+            return True
+    return False
+
+
+def _ps_local_destination_only(parse: Parse, base_cwd: str, root: Path) -> bool:
+    """True when no PowerShell command of the call names `.act-local` itself other than as the folder a
+    `Copy-Item`, `Move-Item` or `Expand-Archive` places files into (see the section comment), and at least one
+    does. A location change, a redirect that names it, a source that names it and any other command that has a
+    word naming it (`Remove-Item`, `Rename-Item`, `New-Item`, `Set-Content` ...) make it False; a command that
+    only reads (`Get-ChildItem`) does not. Any error of the reading is False, the refusing side."""
+    try:
+        if any(_ps_names_local(text, base_cwd, root) for text in parse.ps_raw_redirects()):
+            return False
+        explained = False
+        for item in parse.ps_words():
+            name, args = str(item[0]), [str(word) for word in item[1:]]
+            low = name.lower()
+            if low in _PS_LOCATION_NAMES:
+                return False
+            if low in _PS_READ_NAMES:
+                continue
+            if low in _PS_COPY_NAMES:
+                split = _ps_copy_words(args)
+                if split is None:
+                    return False
+                sources, destinations = split
+                if any(_ps_names_local(word, base_cwd, root) for word in sources):
+                    return False
+                explained = explained or any(_ps_names_local(word, base_cwd, root) for word in destinations)
+                continue
+            if any(_ps_names_local(word, base_cwd, root) for word in (name, *args)):
+                return False
+        return explained
+    except Exception:  # noqa: BLE001 - what cannot be read is refused, like a target that cannot be placed
+        return False
 
 
 def _unplaced_message(target: str) -> str:
@@ -811,22 +1134,25 @@ def _powershell_targets_protected_path(
         parse = Parse("PowerShell", command)
     targets = parse.write_targets(base_cwd, _GIT_WRITES_TEMPLATE_GUARD, broad=True)
     if targets is None:
-        return _WRITE_GUARD_MESSAGE if _PROTECTED_PATH_RE.search(command) else None
+        return _text_message(command) if _PROTECTED_PATH_RE.search(command) else None
     for target in targets:
         if _is_unplaced_target(target):
             return _unplaced_message(target)
     for target in targets:
         if _is_dynamic_target(target) or root is None:
             if _names_protected_path(target, root):
-                return _WRITE_GUARD_MESSAGE
+                return _text_message(target)
             continue
         resolved = _resolve_path(target, base_cwd)
         if resolved is None:
             return _WRITE_GUARD_MESSAGE  # cannot place it — fail closed, see the module docstring
         if _removes_root(resolved, root):
             return _ROOT_REMOVAL_MESSAGE
-        if _is_under_project_act(resolved, root):
-            return _WRITE_GUARD_MESSAGE
+        message = _resolved_message(resolved, root)
+        if message == _LOCAL_MESSAGE and _ps_local_destination_only(parse, base_cwd, root):
+            continue  # a copy INTO `.act-local` is no write to `.act-local` as a whole
+        if message is not None:
+            return message
     return _ps_list_refusal(command, base_cwd, root)
 
 
@@ -841,7 +1167,7 @@ def _inside_project(base: Optional[str], root: Optional[Path]) -> bool:
         return False
     top = _folded(_resolve_path(str(root)) or root)
     inside = _folded(resolved) == top or top in _folded(resolved).parents
-    return inside and not _is_under_project_act(resolved, root)
+    return inside and not _is_under_project_act(resolved, root) and not _is_under_packages(resolved, root)
 
 
 def _item_target_refusal(target: str, base: Optional[str], root: Optional[Path], removed: bool = True) -> Optional[str]:
@@ -854,13 +1180,13 @@ def _item_target_refusal(target: str, base: Optional[str], root: Optional[Path],
     if _is_unplaced_target(target):
         return _unplaced_message(target)
     if base is None and not _is_absolute_target(target) or _is_dynamic_target(target) or root is None:
-        return _WRITE_GUARD_MESSAGE if _names_protected_path(target, root) else None
+        return _text_message(target) if _names_protected_path(target, root) else None
     resolved = _resolve_path(target, base)
     if resolved is None:
         return _WRITE_GUARD_MESSAGE if removed else None
     if removed and _removes_root(resolved, root):
         return _ROOT_REMOVAL_MESSAGE
-    return _WRITE_GUARD_MESSAGE if _is_under_project_act(resolved, root) else None
+    return _resolved_message(resolved, root)
 
 
 def _ps_list_refusal(command: str, base_cwd: str, root: Optional[Path]) -> Optional[str]:
@@ -924,15 +1250,16 @@ def _targets_protected_path(
             continue
         if root is None:
             if _names_protected_path(value, root):
-                return _WRITE_GUARD_MESSAGE
+                return _text_message(value)
             continue
         resolved = _resolve_against(base_cwd, value)
         if resolved is None:
             if _names_protected_path(value, root):
-                return _WRITE_GUARD_MESSAGE
+                return _text_message(value)
             continue
-        if _is_under_project_act(resolved, root):
-            return _WRITE_GUARD_MESSAGE
+        message = _resolved_message(resolved, root)
+        if message is not None:
+            return message
     return None
 
 
@@ -959,7 +1286,7 @@ def _guard_root() -> Optional[Path]:
 
 def check_write_guard(payload: dict) -> int:
     """Check 1: deny an AI write under <project root>/.act/**, pointing at
-    docs/ai/local/<path> instead — never a write outside that root, even one whose path
+    docs/ai/local/<path> instead, and one under <project root>/.act-local/packages/**, pointing at packages.py — never a write outside that root, even one whose path
     happens to contain a `.act/` segment (a sibling checkout's template tree, deliberately
     edited from a template-maintenance project, is not this check's business). See this module's
     docstring for why this check's error handling — fail closed, not open — differs from the rest

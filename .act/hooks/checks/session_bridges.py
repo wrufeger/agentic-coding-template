@@ -141,6 +141,19 @@ def _follow_rules_md(root: Path, write: bool) -> list[str]:
     return notes
 
 
+def _with_packages(root: Path, text: str) -> str:
+    """The bridge text of docs/ai/rules.md with what the active packages bring (import blocks, disabled rules),
+    so a re-derived file keeps them; unchanged when there is no package or the lock cannot be read."""
+    try:
+        import package_load
+        packages = actlib.read_packages(root)
+        if not packages:
+            return text
+        return package_load.rules_text(root, text, packages)
+    except Exception:  # noqa: BLE001 - best effort, the bridge without packages is a valid file
+        return text
+
+
 def _scoped_bridge_text(root: Path, dest_rel: str, text: str, record: bool = False) -> str:
     """`text` of a generated bridge as this project's scope (docs/ai/config.md § Scope; act_profile.py)
     wants it written: for docs/ai/rules.md the import line of each excluded rule file is the bare path
@@ -153,6 +166,7 @@ def _scoped_bridge_text(root: Path, dest_rel: str, text: str, record: bool = Fal
     try:
         import act_profile  # deferred like rules/update: a broken module must not end the session
         import rules
+        text = _with_packages(root, text)
         cut_files = act_profile.read_cut(root).rules
         if not cut_files or actlib.read_lock_at(root) is None:
             return text

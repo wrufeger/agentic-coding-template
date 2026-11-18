@@ -12,6 +12,13 @@
 #          never gets it), run any due migrations, hand off to doctor.py, and write
 #          .act-lock.json plus a commit. Stdlib only.
 #
+#          Packages (`.act/formats/package.md`) stay apart from the template's own files: their copies are
+#          recorded under the lock's `package_copies`, never under `copies`, and no step that rewrites a role or
+#          skill file touches a copy an active package owns (a replaced or extended unit). After the template's
+#          own steps one section per active package says whether its `requires-template` is still met and, with
+#          `packages-update: ask`, whether `.act-local/packages/` holds a newer zip. This script never fetches a
+#          package over the network and never runs package code.
+#
 #          There is no "template" git remote to update from — the template's address lives
 #          only in .act-lock.json's `template.source`, set by init.py. A project .act/ that got
 #          replaced by something *other* than this script (e.g. a plain `git pull` of the shared
@@ -1668,6 +1675,24 @@ def step_refresh_copies(
                 if dest_root in restore_dirs:
                     restore.add(dest)
 
+    # Active packages replace or extend template skills: the copy's source is the package's (or the template's plus
+    # the package's text), and a file a replacing package leaves out has no source. The template version is
+    # never written over such a unit (package_load.py, the one place that knows).
+    package_bytes: dict[str, Optional[bytes]] = {}
+    try:
+        import package_load  # deferred: only a project with packages gets here with anything to do
+        package_bytes = package_load.skill_overrides(
+            root, new_specs, lambda dest, src: _copy_data(new_init, root, dest, src, tiers_data, role_rows))
+    except ImportError:
+        package_bytes = {}
+    for dest_rel, data in package_bytes.items():
+        if data is None:
+            new_specs.pop(dest_rel, None)
+
+    def _data_of(dest_rel: str, source_path: Path) -> bytes:
+        override = package_bytes.get(dest_rel)
+        return override if override is not None else _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
+
     new_copies: dict[str, dict] = {}
     replaced, kept, left_deleted, created, adopted, failed = [], [], [], [], [], []
     no_longer_shipped_removed, no_longer_shipped_kept = [], []
@@ -1710,7 +1735,7 @@ def step_refresh_copies(
                     (cut_kept if by_scope else no_longer_shipped_kept).append(dest_rel)
                 continue
         try:
-            data = _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
+            data = _data_of(dest_rel, source_path)
         except OSError:
             new_copies[dest_rel] = old_entry
             failed.append(dest_rel)
@@ -1771,7 +1796,7 @@ def step_refresh_copies(
             continue  # the project deliberately removed this one before; do not resurrect it
         dest_path = root / dest_rel
         try:
-            data = _copy_data(new_init, root, dest_rel, source_path, tiers_data, role_rows)
+            data = _data_of(dest_rel, source_path)
             existing = dest_path.read_bytes() if dest_path.is_file() else None
         except OSError:
             failed.append(dest_rel)
@@ -2008,6 +2033,7 @@ def step_new_role_bridges(
     reference_overrides = overrides if old_overrides is None else old_overrides
     lock = actlib.read_lock()
     removed_by_user: list[str] = list(lock.get("removed_by_user", []))
+    owned = _package_owned(root)  # copies of active packages: neither created, reset, removed nor booked as deleted here
 
     created, restored, reset, left_deleted, kept_failed, dropped = [], [], [], [], [], []
     touched: list[Path] = []
@@ -2038,7 +2064,7 @@ def step_new_role_bridges(
     # since none of it depends on state the loop itself mutates.
     _needs_git_check = [
         dest_rel for dest_rel in sorted(targets)
-        if not _present(dest_rel)
+        if not _present(dest_rel) and dest_rel not in owned
         and not (_tool_of(dest_rel) in force_tools or _changed(_tool_of(dest_rel), _role_of(dest_rel))
                  or _role_of(dest_rel) in returning_roles)
         and dest_rel not in removed_by_user and dest_rel not in known
@@ -2046,6 +2072,8 @@ def step_new_role_bridges(
     _history_hits = _paths_in_git_history(root, _needs_git_check)
 
     for dest_rel, source_path in sorted(targets.items()):
+        if dest_rel in owned:
+            continue
         dest_path = root / dest_rel
         role = _role_of(dest_rel)
         variant = dest_rel in variant_targets
@@ -2104,7 +2132,7 @@ def step_new_role_bridges(
         for role in sorted(changed):
             dest_rel = _bridge_dest(new_init, tool, role, True)
             dest_path = root / dest_rel
-            if dest_rel in targets or not dest_path.is_file():
+            if dest_rel in targets or dest_rel in owned or not dest_path.is_file():
                 continue
             try:
                 fields, _body, _order = new_init.tiers.split_frontmatter(dest_path.read_text(encoding="utf-8"))
@@ -2634,6 +2662,28 @@ def sync_dependent_files(
     return ("; ".join(parts) or "nothing to change"), new_copies, touched
 
 
+def _package_owned(root: Path) -> frozenset[str]:
+    """The project paths an active package owns: the keys of the lock's `package_copies` (replaced, new and dropped
+    unit copies, whatever the state of the package) and every copy path the intact active packages give or take (an
+    extended role included). A step that rewrites role or skill files leaves these alone: the packages' loader is the
+    one writer of them. Empty for a project without packages."""
+    lock = actlib.read_lock_at(root)
+    if lock is None:
+        return frozenset()
+    owned: set[str] = set()
+    record = lock.get("package_copies")
+    if isinstance(record, dict):
+        owned.update(key for key in record if isinstance(key, str))
+    active = actlib.read_packages(root)
+    if active:
+        try:
+            import package_load  # deferred: only a project with packages needs it
+            owned.update(package_load.copy_content(root, active))
+        except (ImportError, OSError, ValueError):
+            pass
+    return frozenset(owned)
+
+
 def _add_omit_claude_md(root: Path, new_init, notes: Optional[list[str]] = None) -> list[str]:
     """Adds `omitClaudeMd: true` to every already-materialized template role bridge (base and
     "-high" variant) whose frontmatter has no `omitClaudeMd` line yet — a project created before the
@@ -2649,9 +2699,12 @@ def _add_omit_claude_md(root: Path, new_init, notes: Optional[list[str]] = None)
         template_roles = set(new_init.tiers.role_bridge_names(root))
     except (OSError, AttributeError):
         return []
+    owned = _package_owned(root)  # a role an active package replaced or extended is the package's, not rewritten here
     changed: list[str] = []
     for dest in sorted(agents_dir.glob("*.md")):
         rel = dest.relative_to(root).as_posix()
+        if rel in owned:
+            continue
         try:
             raw = dest.read_bytes().decode("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
@@ -3157,6 +3210,61 @@ def _refresh_generated_bridges(root: Path, plan: bool) -> tuple[str, list[Path]]
     return "; ".join(parts), touched
 
 
+_REQUIRES_RE = re.compile(r"^requires-template:[ \t]*>=(\d+)\.(\d+)\.(\d+)[ \t]*\r?$", re.MULTILINE)
+
+
+def step_packages(root: Path, act_dir: Path, notes: Optional[list[str]] = None) -> list[str]:
+    """The package section of an update: nothing for a project without active packages, else one line naming how
+    many there are and one line per package: whether the `requires-template` of its `package.md` is met by the template
+    now on disk (`act_dir`'s VERSION; under --plan the fetched one), and with `packages-update: ask` whether
+    `.act-local/packages/` holds a zip of a higher version. A package that is not intact (its folder is missing or a file
+    differs from the lock) is named with the way to fix it. Reads only: nothing is fetched, written or run. A requirement
+    that is not met also goes into `notes` (an open point of the update)."""
+    active = actlib.read_packages(root)
+    if not active:
+        return []
+    try:
+        import package_load  # deferred: only a project with packages needs these
+        import packages
+    except ImportError:
+        return []
+    template = packages.stable(_read_version_file(act_dir)[0])
+    ask = actlib.read_config(root).get("packages-update", "ask").strip("`").strip().lower() != "off"
+    lines = [f"packages: {len(active)} active; this update fetches nothing for them and runs no package code"]
+    for package_id, entry in sorted(active.items()):
+        version = str(entry.get("version", "?"))
+        package = package_load.read_package(root, package_id, entry)
+        parts: list[str] = []
+        if not package.intact:
+            parts.append(f"not intact ({package.problems[0]}): `python .act/scripts/doctor.py` names the fix")
+        else:
+            found = _REQUIRES_RE.search(package.text("package.md")) if "package.md" in package.data else None
+            if found is None:
+                parts.append("no `requires-template` line")
+            else:
+                need = (int(found.group(1)), int(found.group(2)), int(found.group(3)))
+                need_text = ".".join(str(n) for n in need)
+                if template is None:
+                    parts.append(f"requires template >={need_text}, the template's version cannot be read")
+                elif template >= need:
+                    parts.append(f"requires template >={need_text}, met by {'.'.join(str(n) for n in template)}")
+                else:
+                    text = (f"requires template >={need_text}, NOT met by {'.'.join(str(n) for n in template)}: look for a "
+                            f"newer version (`/act-packages add {package_id}`) or `python .act/scripts/packages.py remove {package_id}`")
+                    parts.append(text)
+                    if notes is not None:
+                        notes.append(f"package {package_id} {version}: {text}")
+        newest = packages.newest_zip(root, package_id) if ask else None
+        if newest is not None:
+            zip_version = packages.stable(newest.name[len(package_id) + 1:-len(".zip")])
+            have = packages.stable(version)
+            if zip_version is not None and have is not None and zip_version > have:
+                parts.append(f"newer zip {'.'.join(str(n) for n in zip_version)} in .act-local/packages/: "
+                             f"`/act-packages add {package_id}` shows the diff")
+        lines.append(f"  {package_id} {version}: " + "; ".join(parts))
+    return lines
+
+
 def step_doctor(root: Path, plan: bool) -> tuple[str, list[Path], list[Path]]:
     """Returns (summary, inbox_paths, touched). doctor.py's own exit codes: 0 = no findings, 1 =
     findings (not an error — it already wrote docs/ai/inbox/report-<YYYYMMDD-HHMM>-doctor.md and, per new
@@ -3584,6 +3692,8 @@ def _finish_update(
 
     doctor_summary, doctor_inbox_paths, doctor_touched = step_doctor(root, False)
     _print_step(9, doctor_summary)
+    for package_line in step_packages(root, root / ".act", notes):
+        print(f"[act]   {package_line}")
 
     _print_step(10, step_lock(root, False, source, new_copies, fetched_commit, keep_commit, ref))
 
@@ -3689,6 +3799,8 @@ def _run_catch_up(root: Path, plan: bool, interactive: bool, args, source: str, 
         _print_plan_held_notes(root, act_dir)
         print("[act]   [8/10] " + _plan_migrations_summary(act_dir))
         print("[act]   [9/10] " + step_doctor(root, True)[0])
+        for package_line in step_packages(root, act_dir):
+            print(f"[act]   {package_line}")
         print("[act]   [10/10] " + step_lock(root, True, source, {}, None))
         print("[act] done - --plan: nothing was written")
         return 0
@@ -3935,6 +4047,8 @@ def main(argv: list[str]) -> int:
             _print_plan_held_notes(root, new_act_dir)
             print("[act]   [8/10] " + _plan_migrations_summary(new_act_dir))
             print("[act]   [9/10] " + step_doctor(root, True)[0])
+            for package_line in step_packages(root, new_act_dir):
+                print(f"[act]   {package_line}")
             print("[act]   [10/10] " + step_lock(root, True, source, {}, fetched_commit, ref=lock_ref))
             print("[act] done - --plan: nothing changed in the project (at most the local update note was refreshed)")
             return 0

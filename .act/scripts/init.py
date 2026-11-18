@@ -26,7 +26,7 @@
 #   python .act/scripts/init.py                      # set up the current checkout in place
 #   python .act/scripts/init.py --target <path>       # create/dock in another directory instead
 #                                                      # (never the project itself or a folder inside it)
-#   python .act/scripts/init.py --target <path> --carry skills,rules,exceptions,overrides,topics,agents
+#   python .act/scripts/init.py --target <path> --carry skills,rules,exceptions,overrides,topics,agents,packages
 #                                                      # what to take over from the source project (default all; none)
 #   python .act/scripts/init.py --plan                # show the ten steps, change nothing
 #   python .act/scripts/init.py --non-interactive      # never prompt; take defaults, log to inbox
@@ -45,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 from datetime import date
@@ -2073,7 +2074,7 @@ def _merge_settings_hooks(
 # inbox, never silently dropped. `--no-local` opts out.
 # ---------------------------------------------------------------------------
 
-CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics", "agents")
+CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics", "agents", "packages")
 # What each category takes along from the source project:
 #   skills      own skills: docs/ai/local/skills/<name>/ where .act/skills/<name> does not exist
 #   rules       the "## Own rules" section of docs/ai/rules.md and docs/project/coding_rules.md
@@ -2085,6 +2086,10 @@ CARRY_CATEGORIES = ("skills", "rules", "exceptions", "overrides", "topics", "age
 #   agents      everything under docs/ai/local/agents/ (own roles and overrides of template roles) and the
 #               source's own lines in its role bridges (.claude/agents/<role>.md and <role>-high.md: the
 #               body after the bridge line), appended to the same bridge of the new project
+#   packages    the source's active packages, carried RESTING (step_packages, after the lock is written): the folder
+#               under .act-local/packages/<id>/ (when intact there) and the zip `<id>-<version>.zip` with its `.sig`
+#               (when the source has them), never a lock entry, check rows, rules.md blocks or copies; the target's
+#               session start names each with `/act-packages add <id>`. Neither folder nor zip: a note names the fetch
 # The names follow `settings_export.py` where they fit (skills, topics, agents); its scripts/checklists
 # fall under "overrides" here, its rules/coding areas split into "rules" and "exceptions".
 
@@ -2804,6 +2809,139 @@ def _resolution_area_files(root: Path, result) -> list[Path]:
         if path not in files:
             files.append(path)
     return files
+
+
+def _folder_version(folder: Path) -> str:
+    """The `version:` line of the package.md in a package folder (a plain file in a plain folder), `unknown` when it
+    cannot be read."""
+    try:
+        path = folder / "package.md"
+        if actlib.is_redirect(os.lstat(folder)) or actlib.is_redirect(os.lstat(path)):
+            return "unknown"
+        head = path.read_bytes()[:4000].decode("utf-8", errors="replace")
+    except OSError:
+        return "unknown"
+    found = re.search(r"^version:[ \t]*(\S+)[ \t]*\r?$", head, re.MULTILINE)
+    return found.group(1) if found else "unknown"
+
+
+def _plain_source_file(path: Path) -> bool:
+    """True for a plain file (no link, no reparse point) at `path`."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and not actlib.is_redirect(info)
+
+
+def _carry_package(root: Path, source_root: Path, package_id: str, entry: dict, notes: list[str], plan: bool = False) -> bool:
+    """Take one active package of the source project into the target RESTING: its folder (every file the lock lists,
+    copied from the hash-checked bytes, only when the source's folder is intact) and the zip `<id>-<version>.zip` of the
+    lock entry's version with its `.sig` (plain files, copied byte for byte, so `packages.py add <id>` in the target
+    reads the zip and checks the signature again; a `.sig` without its zip is not carried, a zip the target already has
+    is not overwritten). Never a lock entry, check rows, rules.md blocks, copies or `install.py`: the target's own
+    session start names the folder, and the owner says yes there. A target that already has a folder of that id keeps
+    it: nothing is carried and a note names both versions. A source with neither an intact folder nor the zip gives
+    nothing and a note that names the fetch. A write that fails removes what this package had written and gives a note.
+    With `plan` nothing is written. Returns whether anything of the package is (would be) carried."""
+    import package_load
+    version = str(entry.get("version", "?"))
+    target = root / ".act-local" / "packages" / package_id
+    if os.path.lexists(target):
+        notes.append(f"Package {package_id}: the target already has a folder .act-local/packages/{package_id}/ (version "
+                     f"{_folder_version(target)}), so the source project's {version} was not carried: the target's folder was "
+                     f"left as it is. To take the source's version instead: python .act/scripts/packages.py fetch "
+                     f"{package_id}, then `/act-packages add {package_id}`.")
+        return False
+    package = package_load.read_package(source_root, package_id, entry)
+    zips: list[tuple[Path, Path]] = []  # (source file, target file): the zip, then its signature
+    if re.fullmatch(r"\d+\.\d+\.\d+", version) and re.fullmatch(r"[a-z][a-z0-9-]{1,30}", package_id):
+        name = f"{package_id}-{version}.zip"
+        source_zip = source_root / ".act-local" / "packages" / name
+        if _plain_source_file(source_zip) and not os.path.lexists(root / ".act-local" / "packages" / name):
+            zips.append((source_zip, root / ".act-local" / "packages" / name))
+            source_sig = Path(str(source_zip) + ".sig")
+            if _plain_source_file(source_sig) and not os.path.lexists(Path(str(zips[0][1]) + ".sig")):
+                zips.append((source_sig, Path(str(zips[0][1]) + ".sig")))
+    if not package.intact and not zips:
+        notes.append(f"Package {package_id} {version} was not carried: its folder in the source project is missing or not "
+                     f"intact ({package.problems[0]}) and the source has no zip {package_id}-{version}.zip. Fetch it in the "
+                     f"target: python .act/scripts/packages.py fetch {package_id}, then `/act-packages add {package_id}`.")
+        return False
+    if plan:
+        return True
+    failed = ""
+    try:
+        if package.intact:
+            for rel, data in sorted(package.data.items()):
+                dest = target / rel
+                if not actlib.local_write_ok(root, dest):
+                    failed = "`.act-local` is a link or leaves the project"
+                    break
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+        for source_file, dest in ([] if failed else zips):
+            if not actlib.local_write_ok(root, dest):
+                failed = "`.act-local` is a link or leaves the project"
+                break
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_file, dest)
+    except OSError as exc:
+        failed = f"{exc.__class__.__name__}: {exc}"
+    if failed:
+        if actlib.local_write_ok(root, target):
+            actlib.remove_tree(target)  # the folder did not exist before: all of it is half-copied
+        for _source_file, dest in zips:
+            if actlib.local_write_ok(root, dest):
+                try:
+                    dest.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        notes.append(f"Package {package_id} {version} was not copied ({failed}) and nothing of it was left. Fetch it in the "
+                     f"target: python .act/scripts/packages.py fetch {package_id}, then `/act-packages add {package_id}`.")
+        return False
+    return True
+
+
+def step_packages(root: Path, plan: bool, source_checkout: Optional[Path], carry: "frozenset[str] | bool",
+                  notes: list[str]) -> tuple[Optional[str], list[Path]]:
+    """After the lock is written (step 9): carry the source project's active packages into the target RESTING
+    (`--target` from a project, category `packages` of `--carry`: folder and zip, never a lock entry; a package the
+    target's lock already has is left as it is, see `_carry_package`), then load whatever packages the target's OWN lock
+    records (package_load.sync_packages: import blocks in docs/ai/rules.md, skill and role copies), also when the target
+    was docked onto a project that had packages. Silent (None) for a run with nothing to carry and no package in the
+    target. Returns (summary, the project paths to commit): a carried package is under `.act-local/`, which is not
+    versioned, so it adds none."""
+    carry = _as_carry(carry)
+    taken: dict[str, dict] = {}
+    if source_checkout is not None and "packages" in carry and _configured_project_root(source_checkout):
+        own = actlib.read_packages(root) if (root / ".act-lock.json").is_file() else {}
+        for package_id, entry in sorted(actlib.read_packages(source_checkout).items()):
+            if package_id in own:
+                notes.append(f"Package {package_id}: the target's lock already has it, the source project's entry was not carried.")
+            else:
+                taken[package_id] = entry
+    carried: list[str] = []
+    if source_checkout is not None:
+        carried = [package_id for package_id, entry in taken.items()
+                   if _carry_package(root, source_checkout, package_id, entry, notes, plan)]
+    if plan:
+        return (f"would carry {len(carried)} package(s) resting from the source project: {', '.join(carried)}" if carried else None), []
+    parts = []
+    if carried:
+        parts.append(f"carried {len(carried)} package(s) resting from the source project ({', '.join(carried)}): "
+                     "/act-packages add <id> activates each")
+    paths: list[Path] = []
+    if actlib.read_packages(root):
+        import package_load
+        try:
+            changed = package_load.sync_packages(root)
+        except Exception as exc:  # noqa: BLE001 - a package that cannot be loaded must not end the setup
+            notes.append(f"Packages were not loaded ({exc.__class__.__name__}): the first session start tries again.")
+            changed = []
+        paths = [root / rel for rel in changed if (root / rel).is_file()]
+        parts.append(f"{len(actlib.read_packages(root))} active package(s) loaded: {len(changed)} file(s) written")
+    return ("; ".join(parts) if parts else None), paths
 
 
 def step_source_and_profile(
@@ -4121,7 +4259,9 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, Optional[str], fro
                              "groups switched off, with reason), overrides (`replaces` lines and the other "
                              "docs/ai/local/ files: rule, script, checklist overrides), topics "
                              "(docs/ai/local/rules/topics/), agents (own roles in docs/ai/local/agents/ "
-                             "and own lines in the role bridges); none = nothing")
+                             "and own lines in the role bridges), packages (the source's active packages, "
+                             "carried resting: folder and zip, no lock entry; `/act-packages add <id>` "
+                             "activates each); none = nothing")
     parser.add_argument("--no-profile", action="store_true",
                         help="don't offer the owner profile at %%APPDATA%%\\act\\settings.md / "
                              "~/.config/act/settings.md (on by default)")
@@ -4510,6 +4650,9 @@ def main(argv: list[str]) -> int:
                                         rules_md_existed_before=rules_md_existed_before,
                                         settings_booking=mat.pending_booking.get("booking")))
 
+    packages_summary, package_paths = step_packages(root, plan, source_act.parent if is_target else None, carry, notes)
+    if packages_summary:
+        print(f"[act]   packages: {packages_summary}")
     inbox_path = _write_inbox_note(root, cfg["owner"], notes, plan)
     commit_paths = [
         root / ".act", root / ".act-lock.json", *mat.touched_bridges, *touched_gitfiles, *own_root_files,
@@ -4517,7 +4660,7 @@ def main(argv: list[str]) -> int:
         # skills + their tool bridges) each report exactly the paths they wrote -- never a
         # whole-directory add (`docs/ai/local`, `.claude`, `.agents`), which would sweep in
         # anything else already sitting there, including a target's own untracked files.
-        *mat.imported_paths,
+        *mat.imported_paths, *package_paths,
     ]
     if inbox_path is not None:
         commit_paths.append(inbox_path)

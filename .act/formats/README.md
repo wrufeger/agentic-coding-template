@@ -22,5 +22,8 @@ here. A project changes a format in two ways; the file wins.
 `documents/` is a different kind of file: a guide to which project document to write and short scaffolds (decision
 record, API spec, security checklist, deployment note) to copy into `docs/project/`. No switch, no override.
 
+`package.md` is a kind of its own too: the layout, header and sections of a package and how its units are
+named (read by `packages.py`). No switch, no override.
+
 Never edit files here in a project (`R-work-override`); `docs/project/formats/` is the project's place.
 `act-export-settings` carries the project's format files along, `act-load-settings` writes them back.

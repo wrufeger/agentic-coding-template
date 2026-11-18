@@ -120,6 +120,20 @@ opens the file itself (`python script.py`, `docker run --env-file`) is invisible
 path, unless it is a read tool of the IDE server's known list (`ide-mcp`; each path argument of those is checked as a
 Read). A word that merely looks like a secret name (`grep .env README`) is refused as well.
 
+**`secret-read-allow`** (§ Checks, default `none`) lists files that may be read although they look like secrets: a
+comma-separated list, each entry a file relative to the project root, starting with `~`, or absolute. A `*` is allowed
+only in the last part of the path (`config/.env.*`). An entry is ignored, so it allows nothing, when it holds `**`, `?`,
+`[`, `{`, a `*` before the last part, a last part that is only `*`, a trailing slash, or when it names a folder. A target
+equal to an entry, read the way every target is (relative paths against the call's working directory, `~`, `..`, either
+slash style; the case is folded on Windows and macOS only), is not refused; every other secret file stays refused, also
+one next to a listed file or below it. A Grep `glob` is never matched against the list, and neither is the value of
+grep's `--include` or of rg's `-g`, `--glob`, `--iglob` (any spelling: `=`, a separate argument, the glued short form):
+it names files by pattern anywhere below the search path, so `grep -r KEY . --include=.env` stays refused with `.env`
+listed. The real path counts too: a target that reaches another file through a link (`link/../.env` with `link`
+leading elsewhere, a listed name that is itself a link to another secret file) is refused, a listed real file is read,
+and so is a listed name that links to a file that is no secret. Only the owner writes this row in `docs/ai/config.md`:
+a package cannot set it (its `## checks` line is refused).
+
 ## `R-safe-no-secret-diff` — Check the diff before every commit
 
 Checks: secret-scan (and danger-scan, same commit trigger).
@@ -302,6 +316,9 @@ session start, kept under `.act-local/protected-watch/`) after every tool call o
 `.git/hooks/**` and `.git/config` (only the keys that start code) of the repository and its linked git directories,
 `.claude/settings*.json`, `.claude/agents/**`, `.claude/skills/**`, `.claude/commands/**`, `.github/agents/**`, and
 `.mcp.json`, `.envrc`, `.devcontainer.json`, `.devcontainer/**`, `.vscode/tasks.json` at the project root. It never follows a link.
+`.act-lock.json` is watched on two keys only, `packages` and `package_copies` (what the installed packages are and what
+they copied); the rest of the lock is never touched. A worker's change of those keys is put back, the orchestrator's is
+reported with the way to restore the previous state, and a lock that cannot be read is skipped.
 
 Switch `protected-watch`: `block` (default), `warn` (reports every change, restores nothing), `off` (no snapshot, no
 comparison); `ACT_PROTECTED_WATCH` in the environment for one run. On a change:
@@ -316,7 +333,11 @@ comparison); `ACT_PROTECTED_WATCH` in the environment for one run. On a change:
   state becomes the reference. One exception, the orchestrator's call only: a file under `.claude/skills/` that the
   copy step (`init`, `act-update`, session start) writes for this project (exact path, not removed by you) and whose
   bytes equal what it writes is not reported; a deleted file, any other path and any difference is. Limit: a skill
-  changed through its source (`.act/skills/`, `docs/ai/local/skills/`) is not reported, the source is versioned.
+  changed through its source (`.act/skills/`, `docs/ai/local/skills/`) is not reported, the source is versioned. The
+  same exception covers the copies the active packages make (skill and role files under `.claude/`): the orchestrator's
+  call passes one only when its bytes equal what the lock and the package folders give, worked out afresh and never
+  from a note some script left behind; a deleted file is passed only where the packages give none. A worker gets no
+  such exception: its change of a package copy is put back like any other.
 
 Limits: it reports after the call and prevents nothing. A change made between two calls by someone else (the human,
 Claude Code, another session) is attributed to the next call; a worker's change first seen in the orchestrator's call
@@ -345,6 +366,20 @@ project root or of a folder that holds it is refused. Limit: a relative
 refused (the verdict is the same as for the project's own `.act/`), with the message that says its folder is not
 known, because the scan yields that target with no known folder as well; `cd <literal folder> && cp ...
 .act/...` into such a project passes, so write the folder out.
+
+`template-write-guard` also protects the project's own `.act-local/packages/` (the packages the lock records, resting
+folders, staging): a write there is refused, naming `python .act/scripts/packages.py` (fetch, add, remove) as the way;
+`packages.py` itself is no write the guard sees. It refuses moving, renaming or removing `.act-local` itself, the
+folder that holds `packages/`, in the same way (a `mv`, `Rename-Item` or `Remove-Item` of it, a `rmdir`, a `mkdir`, a
+redirect or the Write tool onto it; a recursive removal of it is refused by the guard before `recursive-delete` sees
+it), and a mirroring copy into it (`rsync --delete*`, `robocopy /MIR` or `/PURGE`), which deletes what is there. A copy
+INTO it passes this rule: `cp`, `cp -t`, `mv`, `install -t`, `rsync`, `robocopy`, `tar -C`, `unzip -d`, `Copy-Item`,
+`Move-Item` and `Expand-Archive` with `.act-local` as the destination folder; `outside-root` and the other checks judge
+it as before (a recursive copy into it is refused there, because of `outside-allow/`). Where the guard cannot tell the
+destination from a removal (a wrapper such as `sudo`, `xargs` or `bash -c`, `cp -T`, inline code, a location change
+before a PowerShell copy), it keeps refusing. Moves and writes inside `.act-local`, reads, a throwaway project's own
+`.act-local` under `.act-local/tmp/` and `.act-local/packages-old/` stay free: only the project's own folder counts. A
+list over `.act-local` is refused like one over the project root. Limit: a loop word naming the folder is not seen.
 
 The write-guard reads shell names the same way: a target made of a name that the command assigns exactly once, as
 a literal, before its first use (`f=.act/x && echo y > $f`, also `local`/`declare`/`export`/`readonly f=...`) is
@@ -404,6 +439,53 @@ program's own text and an ambiguous abbreviation (counts as unknown) are not han
 a lookup that runs past about 4 seconds gives the line `[act] commit-hashes incomplete (time limit <n> s) …`, no refusal.
 A crash of the check (an exception, not a hash that is unknown) refuses a `git commit` of the main session, by the
 dispatcher, naming the check, the exception class, `commit-hashes: off` and `.act/scripts/doctor.py`.
+
+## Packages — check modules, the source switch and the scan (no rule of its own)
+
+A package installed with `packages.py add` (an entry in `.act-lock.json` § packages, its folder
+`.act-local/packages/<id>/`; format: `.act/formats/package.md`) may bring PreToolUse check modules,
+`hooks/checks/<module>.py` on its `pre-template/` or `post-template/` side. Claude Code only; the other tools have no
+dispatcher.
+
+- **Loading.** The dispatcher reads the files the lock lists, once, compares each file's hash with the lock's and
+  compiles and runs exactly the bytes it hashed, as module `actpkg_<id>_<module>` (never importable as a template
+  module). A folder without a lock entry, a package that only rests there, is never read. A package check module is
+  code the owner installed and is trusted like `install.py`.
+- **Interface and order.** A module defines `check_<module>(payload: dict) -> int` (0 allows, anything else refuses;
+  the reason goes to stderr before a refusal, text on stdout is a note), the same as a template check; it gets a deep
+  copy of the hook payload. Modules of `pre-template/` run before every template check, those of `post-template/` after
+  them; the first refusal ends the call. A package check can only refuse or note. The template guards its verdict
+  against the module's return value (a 0 overrules no template check) and against changes to the payload copy; it does
+  not guard against what code can do: a module can end the process, replace another module or set the environment.
+  The guarantee that comes before is the plan, the static scan and the signature of the package (`packages.py`, below).
+- **Broken.** A module that is missing, differs from the lock, or whose package folder is gone is not loaded, and the
+  calls it would have judged are not checked by it. One note per module, at the first call of each session, names the
+  package, the module and the fix; on a refused call the note goes to stderr with the refusal. The fix is a command
+  the owner types himself with the `!` prefix, which still runs while every tool call of the session is refused:
+  `! python .act/scripts/packages.py remove <id>` (or `add <id>` again).
+- **Crash.** An exception, a missing function or a return value that is no int refuses the call; the message names the
+  package, the module and the exception class, never a value of the call or of the exception.
+  A crash of the loader itself refuses every call the same way (the exception class only, an incident log entry).
+  A lock that exists but cannot be read (a merge conflict, invalid JSON), or whose `packages` entry is no object, hides
+  which packages are active: while `.act-local/packages/` holds a package folder (a folder whose name does not start with
+  a dot) every call is refused, naming the folders and the fix the owner runs with `!`; with no package folder the call
+  goes ahead with one note per session. A lock without a `packages` entry (or no lock) passes the loader and is never
+  refused by it.
+- **Time limit.** A module runs in a daemon thread with its own limit (2 s, never past the hook's budget); past it the
+  call is refused with "timed out" and the dispatcher returns at once without waiting for the module. A package check
+  that could not run is never a pass.
+- **`packages-unverified`** (§ Packages, `block` default): what `packages.py add` does with a package that carries no
+  valid signature of the template author. `block` refuses it, `scan` shows the findings of the static scan in red before
+  it asks, `allow` asks with a warning only. A package with a valid signature of the template author passes in every
+  mode; a signature that does not match is refused in every mode; the plan, the diff and the human's yes apply in every
+  mode.
+- **The static scan** (`python .act/scripts/package_scan.py <folder>`, exit 1 when it finds something) reads the folder
+  and never runs anything in it. Each finding starts with `RED `: every `## disables` line, every `## checks` line weaker
+  than the template's default (`off` < `warn` < `block`), every file under `scripts/` and `hooks/checks/`, an
+  `install.py`, an `install.md` (an AI-guided setup will follow it), every MCP server (a `.mcp.json` or `mcp.json`,
+  `mcpServers` in any file, `mcp add` in `install.md`, `install.py` or a script), a link and a file too large to read.
+  A package's `## checks` lines set rows of § Checks in `docs/ai/config.md`, each marked in its Guards cell with the
+  package and the value before; the owner's later change of a value is never undone by removing the package.
 
 ## `cd-git` — `cd` and `git` in one call (no rule of its own)
 

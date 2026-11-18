@@ -16,6 +16,12 @@
 #          R-cost-delegate) — a worker may only write where its assignment's `Write scope:` line
 #          allows.
 #
+#          Package check modules: a package installed in the project (`.act-lock.json` § packages) may bring
+#          PreToolUse check modules, `hooks/checks/<module>.py` in its `pre-template/` or `post-template/` side
+#          (`.act/formats/package.md`). The ones of `pre-template/` run before every check above, the ones of
+#          `post-template/` after them; first denial wins as everywhere. See "Package check modules" below for the
+#          interface, the verification against the lock, the crash and the time limit.
+#
 #          To add a new PreToolUse check: write checks/<name>.py exporting a function
 #          check_<name>(payload: dict) -> int (0 = allow, 2 = deny — print the reason to stderr
 #          before returning 2, same as every existing check) and add ("<name>", "check_<name>")
@@ -236,13 +242,16 @@
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
 import re
 import stat
 import sys
+import threading
 import time
+import types
 
 from pathlib import Path  # noqa: E402
 from typing import NamedTuple  # noqa: E402
@@ -1154,6 +1163,267 @@ def _hook_time_limit(remaining: "tuple[tuple[str, str], ...]", payload: dict) ->
     return 2
 
 
+# ---------------------------------------------------------------------------
+# Package check modules
+# ---------------------------------------------------------------------------
+#
+# A package installed in the project (an entry in `.act-lock.json` § packages, folder `.act-local/packages/<id>/`)
+# may bring check modules: `<side>/hooks/checks/<module>.py`, <side> being `pre-template` or `post-template`, the
+# module named `<id with _ for ->_<name>`. Only the files the lock entry lists under `files` count; a folder without
+# a lock entry (a package that is only resting there) is never read.
+#
+# Interface, the same as a template PreToolUse check: the module defines `check_<module>(payload: dict) -> int`
+# (<module> as in the file name, e.g. `acme_deny.py` defines `check_acme_deny`), 0 = allow, anything else = refuse
+# the call. Text the check prints to stderr is the reason shown to the model (print it before returning a refusal);
+# text on stdout is a note, as for a template check. The payload is a deep copy of the hook payload (tool_name,
+# tool_input, cwd, session_id, ...): changing it changes nothing for any other check. A package check can refuse
+# or note, never allow: the template guards its verdict against the module's return value (0 never overrules a
+# template check; the first refusal ends the call) and against changes to the payload copy. It does not guard
+# against what code can do: a package check module is code the owner installed, trusted like `install.py` (it can
+# end the process, replace a module, set the environment). The guarantee before that is the plan, the static scan
+# and the signature of `packages.py`.
+#
+# Loading: the file is read once, its hash (the lock's, over the LF form) compared with the lock's, and exactly
+# those bytes are compiled and run, as module `actpkg_<id>_<module>` (never a name a template import finds). A
+# module that is missing, differs from the lock, or whose package folder is gone is not loaded; one note per module
+# reaches the model at the first call of each session (the incident of a broken package, not a refusal), naming the
+# package, the module and the fix (the owner runs `! python .act/scripts/packages.py remove <id>`, or `add <id>` again).
+#
+# Failure: an exception while compiling, importing or running a module, a missing function or a return value that
+# is no int refuses the call with a message naming the package, the module and the exception class (never a
+# value of the payload). A module runs in a daemon thread with a time limit of _PACKAGE_CHECK_LIMIT seconds, and
+# never past the hook's budget; past it the call is refused with "timed out" and the dispatcher goes on at once,
+# it never waits for the module. A package check that could not run is never a pass.
+
+_PACKAGE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+_PACKAGE_MODULE_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_PACKAGE_SIDES = ("pre-template", "post-template")
+_PACKAGE_CHECK_LIMIT = 2.0  # seconds one package check may take (never more than the hook budget still left)
+_PACKAGE_NOTE_DIR = "package-notes"  # .act-local/<this>/<session id>.json: the broken modules already noted
+_PACKAGE_NOTE_TTL = 7 * 86400.0  # seconds a session's note file stays
+_PACKAGE_SESSION_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_PACKAGE_NOTES: "list[tuple[str, str]]" = []  # (key, text) of the broken package modules found by this call
+
+
+class _PackageLockUnusable(Exception):
+    """The lock cannot be read, or its `packages` is no object, while package folders exist: the call is refused
+    (what the package check modules would have judged cannot be told). The text names the folders."""
+
+
+class _PackageCheck(NamedTuple):
+    package: str
+    module: str
+    path: str
+    source: bytes
+
+
+def _package_fix(package_id: str) -> str:
+    # the owner types it into the session himself: the `!` prefix runs it even while every tool call is refused
+    return (f"the owner runs `! python .act/scripts/packages.py remove {package_id}` "
+            f"(or `add {package_id}` again)")
+
+
+def _package_folders(root: Path) -> "list[str]":
+    """The names of the package folders in `.act-local/packages/` of `root` (a folder whose name does not start
+    with a dot; `.staging` and the like are no package); [] when there is none or the folder cannot be listed
+    because it does not exist. Never raises for a missing folder."""
+    folder = root / ".act-local" / "packages"
+    try:
+        return sorted(entry.name for entry in folder.iterdir() if not entry.name.startswith(".") and entry.is_dir())
+    except FileNotFoundError:
+        return []
+    except NotADirectoryError:
+        return []
+
+
+def _load_package_checks(root: Path) -> "tuple[list[_PackageCheck], list[_PackageCheck]]":
+    """The package check modules of the project at `root`, (pre-template ones, post-template ones), each verified
+    against the lock and holding the bytes that were verified. A module that cannot be loaded adds its note to
+    _PACKAGE_NOTES and is left out. Reads only what the lock lists, from folders that have a lock entry."""
+    pre: "list[_PackageCheck]" = []
+    post: "list[_PackageCheck]" = []
+    raw = actlib._raw_packages(root)
+    if raw is None and os.path.lexists(root / ".act-lock.json"):
+        # The lock is there but unreadable (a merge conflict, a broken edit), or its `packages` is no object: which
+        # packages are active is unknown. Package folders in the project make that a refusal, as for a loader crash;
+        # a project with none loses nothing by it and gets one note per session.
+        folders = _package_folders(root)
+        if folders:
+            raise _PackageLockUnusable(", ".join(folders))
+        _PACKAGE_NOTES.append((".act-lock.json", (
+            "[act] .act-lock.json cannot be read, or its `packages` entry is not an object, so the package check "
+            "modules of this project cannot be told; no package folder is in .act-local/packages/, so nothing is "
+            "refused. The owner repairs the file (resolve a merge conflict, or restore it with "
+            "`! git checkout -- .act-lock.json`).")))
+    packages = {str(key): value for key, value in (raw or {}).items() if isinstance(value, dict)}
+    for package_id in sorted(packages):
+        files = packages[package_id].get("files")
+        if not isinstance(files, dict):
+            continue
+        modules = []
+        for rel, recorded in sorted(files.items()):
+            parts = str(rel).split("/")
+            if (len(parts) == 4 and parts[0] in _PACKAGE_SIDES and parts[1] == "hooks" and parts[2] == "checks"
+                    and parts[3].endswith(".py")):
+                modules.append((parts[0], str(rel), parts[3][:-3], recorded))
+        if not modules:
+            continue
+        folder = root / ".act-local" / "packages" / package_id
+        if not _PACKAGE_ID_RE.match(package_id) or not folder.is_dir():
+            _PACKAGE_NOTES.append((package_id, (
+                f"[act] package {package_id}: its folder .act-local/packages/{package_id}/ is missing, so its check "
+                f"modules are not loaded and the calls they would judge are not checked by them; "
+                f"{_package_fix(package_id)}")))
+            continue
+        for side, rel, module, recorded in modules:
+            reason = ""
+            data = b""
+            if not _PACKAGE_MODULE_RE.match(module) or not isinstance(recorded, str):
+                reason = "its lock entry is not valid"
+            else:
+                try:
+                    data = (folder / rel).read_bytes()
+                except OSError:
+                    reason = "its file is missing or cannot be read"
+                else:
+                    if actlib.lock_hash(data) != recorded:
+                        reason = "its file differs from the lock"
+            if reason:
+                _PACKAGE_NOTES.append((f"{package_id}/{module}", (
+                    f"[act] package {package_id}: check module {module} is not loaded ({reason}), so the calls it "
+                    f"would judge are not checked by it; {_package_fix(package_id)}")))
+                continue
+            (pre if side == "pre-template" else post).append(
+                _PackageCheck(package_id, module, str(folder / rel), data))
+    return pre, post
+
+
+def _run_package_check(check: _PackageCheck, payload: dict) -> int:
+    """Run one package check on a copy of `payload`: 0 = allow, 2 = refused (reason on stderr). Never raises."""
+    who = f"package {check.package} check {check.module}"
+    name = f"actpkg_{check.package.replace('-', '_')}_{check.module}"
+    left = _hook_budget() - (time.monotonic() - _HOOK_STARTED)
+    if left <= 0.1:
+        print(f"[act] {who} did not run: the hook time limit of {_hook_budget():g} s is used up; the call is "
+              "refused unchecked. Run it again.", file=sys.stderr)
+        return 2
+    limit = min(_PACKAGE_CHECK_LIMIT, left)
+    outcome: dict = {}
+    call_payload = copy.deepcopy(payload)
+
+    def work() -> None:
+        try:
+            program = compile(check.source, check.path, "exec", dont_inherit=True)
+            module = types.ModuleType(name)
+            module.__file__ = check.path
+            sys.modules[name] = module
+            exec(program, module.__dict__)  # noqa: S102 -- the verified bytes of a package the owner installed
+            func = getattr(module, f"check_{check.module}", None)
+            if not callable(func):
+                outcome["missing"] = True
+                return
+            outcome["result"] = func(call_payload)
+        except BaseException as exc:  # noqa: BLE001 -- SystemExit and the like end the module, never the dispatcher
+            outcome["error"] = type(exc).__name__
+
+    import io
+    real_stdout, real_stderr = sys.stdout, sys.stderr
+    out, err = io.StringIO(), io.StringIO()
+    thread = threading.Thread(target=work, name=name, daemon=True)
+    started = False
+    sys.stdout, sys.stderr = out, err
+    try:
+        thread.start()
+        started = True
+        thread.join(limit)
+    except RuntimeError as exc:
+        outcome["error"] = type(exc).__name__
+    finally:
+        sys.stdout, sys.stderr = real_stdout, real_stderr
+    fix = _package_fix(check.package)
+    if started and thread.is_alive():
+        _note_incident("check-error", name[:40], payload, "timeout")
+        print(f"[act] {who} timed out after {limit:g} s -- the call is refused unchecked; {fix}", file=sys.stderr)
+        return 2
+    sys.modules.pop(name, None)
+    if "error" in outcome or outcome.get("missing") or "result" not in outcome:
+        reason = (f"raised {outcome['error']}" if "error" in outcome
+                  else f"has no function check_{check.module}" if outcome.get("missing") else "did not finish")
+        _note_incident("check-error", name[:40], payload, outcome.get("error", "failed"))
+        print(f"[act] {who} failed ({reason}) -- the call is refused unchecked; {fix}", file=sys.stderr)
+        return 2
+    result = outcome["result"]
+    if not isinstance(result, int):
+        print(f"[act] {who} failed (returned {type(result).__name__}, not an int) -- the call is refused "
+              f"unchecked; {fix}", file=sys.stderr)
+        return 2
+    if result == 0:
+        sys.stdout.write(out.getvalue())
+        sys.stderr.write(err.getvalue())
+        return 0
+    reason_text = " ".join((err.getvalue() or out.getvalue()).split())[:1500]
+    print(f"[act] {who} refused this call" + (f": {reason_text}" if reason_text else " (it gave no reason)"),
+          file=sys.stderr)
+    return 2
+
+
+def _package_checks_not_run(checks: "list[_PackageCheck]") -> int:
+    """The hook's time is used up before these package checks could run: they can refuse, so the call is refused
+    unchecked (2); 0 when there are none."""
+    if not checks:
+        return 0
+    names = ", ".join(f"{check.package}:{check.module}" for check in checks)
+    print(f"[act] hook time limit {_hook_budget():g} s used up before the package checks ran: {names}; the "
+          "call is refused unchecked. Run it again.", file=sys.stderr)
+    return 2
+
+
+def _deliver_package_notes(payload: dict, refused: bool) -> None:
+    """The notes of broken package modules (_PACKAGE_NOTES), once per session: on an allowed call they go with the
+    check failures (the human's systemMessage and, from this call's PostToolUse, the model's context), on a refused
+    one to stderr, which the model reads for a refusal. A session that has no usable id gets them on every call.
+    Never raises."""
+    if not _PACKAGE_NOTES:
+        return
+    try:
+        marker = None
+        noted: set = set()
+        session = payload.get("session_id")
+        if isinstance(session, str) and _PACKAGE_SESSION_RE.match(session):
+            candidate = _QUEUE_ROOT / ".act-local" / _PACKAGE_NOTE_DIR / f"{session}.json"
+            if actlib.local_write_ok(_QUEUE_ROOT, candidate):
+                marker = candidate
+                try:
+                    data = json.loads(marker.read_text(encoding="utf-8"))
+                    noted = set(data.get("noted", [])) if isinstance(data, dict) else set()
+                except (OSError, ValueError):
+                    noted = set()
+        fresh = [(key, text) for key, text in dict(_PACKAGE_NOTES).items() if key not in noted]
+        if not fresh:
+            return
+        texts = [text for _key, text in fresh]
+        if refused:
+            print("\n".join(texts), file=sys.stderr)
+        else:
+            _CHECK_FAILURES.extend(texts)
+        if marker is not None:
+            from checks.state_files import write_json_atomic
+            write_json_atomic(marker, {"noted": sorted(noted | {key for key, _text in fresh})})
+            _prune_package_notes(marker.parent)
+    except Exception as exc:  # noqa: BLE001 -- a note that cannot be kept must never change a verdict
+        print(f"[act] package notes not kept ({type(exc).__name__})", file=sys.stderr)
+
+
+def _prune_package_notes(folder: Path) -> None:
+    """Remove the session note files older than _PACKAGE_NOTE_TTL; best effort."""
+    try:
+        for entry in folder.glob("*.json"):
+            if time.time() - entry.stat().st_mtime > _PACKAGE_NOTE_TTL:
+                entry.unlink()
+    except OSError:
+        pass
+
+
 def _run_checks(payload: dict) -> "tuple[int, str | None]":
     """(exit code, denying module's name) — the name is None on allow (exit code 0), and passed on
     to _run_pre_tool_use_observers so checks.event_log.observe can name the check that denied
@@ -1164,9 +1434,34 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
     parse = _build_parse(payload)
     if parse is not None:
         checked_payload["_act_parse"] = parse  # one reading of the command for all checks of this call
+    package_pre: "list[_PackageCheck]" = []
+    package_post: "list[_PackageCheck]" = []
+    _PACKAGE_NOTES.clear()
+    try:
+        package_pre, package_post = _load_package_checks(_QUEUE_ROOT)
+    except _PackageLockUnusable as exc:
+        _note_incident("check-error", "package_loader", payload, "LockUnusable")
+        print("[act] .act-lock.json cannot be read, or its `packages` entry is not an object, while package folders "
+              f"are in .act-local/packages/ ({exc}) -- which packages are active is unknown, so the call is refused "
+              "unchecked. The owner repairs the lock (resolve the merge conflict, or restore it with "
+              "`! git checkout -- .act-lock.json`, or by hand), or moves the folders out of .act-local/packages/ if "
+              "the packages are no longer wanted",
+              file=sys.stderr)
+        return 2, "package_loader"
+    except Exception as exc:  # noqa: BLE001 -- a crashed loader refuses, like a crashed check: never a silent pass
+        _note_incident("check-error", "package_loader", payload, type(exc).__name__)
+        print(f"[act] package check modules could not be loaded ({type(exc).__name__}) -- the call is refused "
+              "unchecked; the owner runs `! python .act/scripts/packages.py list`, then "
+              "`! python .act/scripts/packages.py remove <id>` (or `add <id>` again) for the package at fault",
+              file=sys.stderr)
+        return 2, "package_loader"
+    for check in package_pre:
+        result = _run_package_check(check, payload)
+        if result != 0:
+            return result, f"package:{check.package}:{check.module}"
     for position, (module_name, func_name) in enumerate(_PRE_TOOL_USE_CHECKS):
         if time.monotonic() - _HOOK_STARTED >= _hook_budget():
-            code = _hook_time_limit(_PRE_TOOL_USE_CHECKS[position:], payload)
+            code = _hook_time_limit(_PRE_TOOL_USE_CHECKS[position:], payload) or _package_checks_not_run(package_post)
             return (code, "hook_time_limit") if code else (0, None)
         func, reason = _load(module_name, func_name)
         failed = False
@@ -1196,6 +1491,10 @@ def _run_checks(payload: dict) -> "tuple[int, str | None]":
             if not failed:
                 _count_refusal(module_name, payload)
             return result, module_name
+    for check in package_post:
+        result = _run_package_check(check, payload)
+        if result != 0:
+            return result, f"package:{check.package}:{check.module}"
     return 0, None
 
 
@@ -1495,6 +1794,7 @@ def main(argv: list[str]) -> int:
             _run_pre_tool_use_observers(payload, denied=(result != 0), denied_by=denied_by)
         finally:
             sys.stdout = real_stdout
+        _deliver_package_notes(payload, result != 0)
         if result == 0:
             _CHECK_FAILURES.extend(_inline_size_notes())  # a note, not a failure: same way to the model
         if result == 0 and _CHECK_FAILURES:

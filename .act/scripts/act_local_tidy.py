@@ -69,6 +69,8 @@ KNOWN_ENTRIES: tuple[str, ...] = (
     "import", "export",         # import/export scripts
     "feedback",                 # feedback.py: state, outbox entries, sent protocol
     "learn",                    # act-teach skill: learning record per topic
+    "packages",                 # packages.py: package folders resting before they are installed
+    "package-notes",            # hooks/dispatch.py: once-per-session marker folder of the package notes (it prunes it itself)
     "usage",                    # hooks/checks/usage.py: event files
     "incidents.*",              # incidents.py: the incident log (events and the delivered offset)
     "update-channel-hint",      # update.py: marker for the release-channel hint
