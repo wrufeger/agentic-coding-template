@@ -10,26 +10,35 @@ removes this file (step 8, recognized by the marker on its first line, like the 
 
 ## [Unreleased]
 
-Formats and a changelog for every project, `Tests:` lines and an incident log for workers, shorter core rules,
-safety checks that see more, refuse fewer harmless commands and never pass when out of time or broken, Copilot roles
-with a model each.
+## [2.6.0] - 2026-11-18
+
+Formats and a changelog for every project, `Tests:` lines for workers, a daily incident log, shorter core rules,
+safety checks that see more, refuse fewer harmless commands and never pass when out of time or broken, finished
+entries archived again, Copilot roles with a model each.
 
 ### Highlights
 - **Formats and a changelog for every project:** presets for commits, changelog, release notes and README in
   `docs/ai/config.md` § Formats, or your own in `docs/project/formats/`; a `CHANGELOG.md` (`changelog`, default
-  `file`), offered by `act-update`.
+  `file`), created by `act-update`.
 - **Incident log:** real faults (restored files, warn-mode misses, crashed checks, model switches) arrive as one inbox
   report per day at session start; no commands or paths are logged; `ACT_INCIDENT_LOG=off` pauses it.
 - **Safety checks never pass unchecked:** a check that runs out of time or crashes, or a hook whose 8 s run out
   before it, refuses the call and names the row that switches it off (`<row>: off`); run the command again.
 - **Shorter core rules:** the rules loaded in every session are about 8 000 characters shorter, `act-adopt` half as
   long; every rule id stays.
-- **Copilot roles with a model each:** with `copilot` in `tools`, each role gets `.github/agents/<role>.agent.md`
-  with a model list per tier; set your own in the `Copilot` column of § Roles, then run
-  `python .act/scripts/update.py --catch-up --yes`.
+- **Finished entries are archived again:** `done-entries` is gone; finished tasks, backlog items and inbox entries
+  move to `docs/ai/work/archive/` and `act-compact` folds them into monthly files, under Git too.
 
-### Upgrading
+### Upgrading from v2.5.0
 - Assignments that run tests need a `Tests:` line beside `Write scope:`; workers run tests only with it.
+- `done-entries` is gone: projects that deleted finished entries (the v2.5.0 default under Git) archive them again;
+  the update removes the row, and `entries.py purge` only prints a notice.
+- With `claude-code` in `tools`, a Bash call with `cd` and `git` is refused: use `git -C <folder>`, or add the row
+  `cd-git` with `warn` under § Checks.
+- `git branch -D` of a branch HEAD does not contain (e.g. one taken over by cherry-pick) is refused; merge it first,
+  or set `git-discard: warn`.
+- `act-update` creates `CHANGELOG.md`, and `act-commit` adds entries from then on; to avoid it, first add the row
+  `changelog` with `off` under § Formats of `docs/ai/config.md`.
 - If `docs/ai/local/` overrides `.act/rules/shared/00-core.md`, `10-safety.md` or `20-code.md`, copy in the new
   sentences of `R-role-worker`, `R-work-bounded-output`, `R-safe-approval` and `R-code-encoding`.
 - An absolute `outside-root-allow` entry outside the project and home is read-only now; writes there are refused.
@@ -38,7 +47,8 @@ with a model each.
 - `act-update` skips new coding rule sets while `coding_rules.md` has uncommitted changes; commit, then run
   `python .act/scripts/rules.py --add-new-coding`.
 - Fix what `act-doctor` and `rules.py` report: `docs/ai/local/` files whose template file is gone, shadowed rule files.
-- Optional: to change the default changelog handling, add the `changelog` row to `docs/ai/config.md` § Formats.
+- New keys (§ Formats, `methods`, `cd-git`, `protected-watch` …) take their default until you copy their row from
+  `.act/skeleton/config.md`; `/act-config` changes only rows that exist.
 - A project older than `v2.2.0` is no longer updated by `act-update`; it stops with a message naming `act-adopt`.
 - A `file:` entry in `outside-root-allow` is now ignored.
 - Shorten the `[Unreleased]` entries of your `CHANGELOG.md` that `act-doctor` names (over 250 characters), or set
@@ -46,15 +56,17 @@ with a model each.
 - If `update.py` stops because its source is itself a set-up project, run it once with `--source <template address>`
   as the message names.
 - Copilot projects: after `act-update`, compare the models in `.github/agents/` with `/model` and put differences in
-  the `Copilot` column of `docs/ai/config.md` § Roles.
+  the `Copilot` column of `docs/ai/config.md` § Roles, then run `python .act/scripts/update.py --catch-up --yes`.
 - Each skill override under `docs/ai/local/skills/` is an `act-doctor` finding until you keep it with
   `python .act/scripts/doctor.py --accept skill:<name>` or delete it.
 - If `.act-local` is a link out of the project, a worker start with a `Write scope:` or `Tests:` line is now
   refused; make it a plain folder, or set `worker-write-scope` and `worker-scope-overlap` to `warn`.
 - Reasoning `none` in `docs/ai/config.md` § Roles or a local role or skill file is read as `default` now; `act-doctor`
-  names each place, write `default` there.
+  names each place, write `default` there; its `-high` variant now runs at `high`.
 
 ### Added
+- Copilot roles: with `copilot` in `tools`, each role gets `.github/agents/<role>.agent.md` with a model list per
+  tier (`Copilot` column of § Roles); not yet tried in a live Copilot CLI.
 - Rust coding rules: new group `CR-rust-async` (no blocking in tasks, bounded channels, cancel-safe `select!`,
   `async fn` in traits) and points on numeric casts, overflow, lints and dependency MSRV; uncheck it in
   `docs/project/coding_rules.md`.
@@ -72,7 +84,8 @@ with a model each.
 - Rule `R-work-process-error`: a fault in how the work runs is reported once as an inbox question, then fixed.
 - `protected-watch` (`block`|`warn`|`off`, default `block`) puts back protected files a worker changed (`.git/hooks`,
   `.claude/settings*.json`, `.mcp.json`); changes by the orchestrator are only reported.
-- `model-switch` check (`warn`|`off`, default `warn`) tells you when a worker or session continues on another model.
+- `model-switch` check (`warn`|`off`, default `warn`) tells the orchestrator, which reports it to you, when a
+  worker or the session continues on another model.
 - Format keys `commit-format`, `changelog-format`, `release-notes-format`, `readme-format`; `changelog` also takes
   `release-notes-only` or `off`; `act-export-settings --with-formats` carries your formats over.
 - `act-release` publishes the release on GitHub or GitLab after an explicit yes and a pushed tag.
@@ -133,7 +146,7 @@ with a model each.
 - `/act-version` shows three lines (`--all` the long list); `/act-info` and `/act-version` are answered by the hook.
 - `init` sets the scope profile from the stack (`full` for web, else `standard`); existing projects keep theirs.
 - `git-reset-hard` and `git-discard` are one check (both lines stay); `git branch -D` only for a branch HEAD contains.
-- Nothing leaves `docs/` before it is in its monthly file; `done-entries: delete` projects now archive (migration 008).
+- Nothing leaves `docs/` before it is in its monthly file.
 - The recommended option of an inbox question comes first, as `**Recommended:**`; tier proposals are short.
 - Hooks also try `py -3`, so checks no longer go silent on Windows with only that launcher.
 - `protected-watch` leaves Claude Code's own "always allow" entries in `settings.local.json` and reports them.
@@ -514,7 +527,8 @@ First public pre-release of the previous generation (now the branch `v1`), docum
 ### Added
 - Rules in two layers (`AGENTS.md`, `CLAUDE.md`), 8 sub-agents, 6 skills and a `docs/ai/` working folder.
 
-[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/wrufeger/agentic-coding-template/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.5.0...v2.6.0
 [2.5.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.4.0...v2.5.0
 [2.4.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/wrufeger/agentic-coding-template/compare/v2.2.0...v2.3.0
