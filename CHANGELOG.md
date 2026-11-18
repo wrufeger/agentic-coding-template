@@ -49,6 +49,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
 ### Fixed
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is
   started once more and then refuses the commit.
+- Scaffold `docs/ai/local/resources.md`: the example lines put their placeholders in code spans, so a Markdown editor
+  no longer reports `<title>` as an unclosed HTML element.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is

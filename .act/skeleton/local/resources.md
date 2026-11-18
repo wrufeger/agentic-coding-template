@@ -15,7 +15,7 @@ Sources this project relies on: specifications, vendor documentation, articles, 
 One line each: title, link, one or two sentences on what it is good for here, and the date you
 last checked it.
 
-- <title> — <link> — <what it is good for in this project> (checked <date>)
+- `<title>` — `<link>` — `<what it is good for in this project>` (checked `<date>`)
 
 ## Private links
 
@@ -24,4 +24,4 @@ are never sent with the template's feedback, but the file is committed with the 
 with access to the repository sees it: keep links nobody else may see out of a shared or public
 repository, and put no credentials or tokens in a link.
 
-- <title> — <link> — <note>
+- `<title>` — `<link>` — `<note>`
