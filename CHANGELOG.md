@@ -39,6 +39,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   zips); each is named at the first session start, and `/act-packages add <id>` activates it after your yes.
 - `act-doctor` names packages that are broken, need a newer template or bring a unit twice, and settings blocks of a
   package that is not installed.
+- `.act/package-signers` carries the template author's key, so a package the author signed counts as verified and is
+  admitted even with `packages-unverified: block`.
 
 ### Changed
 - `protected-watch` also watches the package record in `.act-lock.json`; package copies pass only on the

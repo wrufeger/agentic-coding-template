@@ -130,7 +130,7 @@
   "migrations/007-changelog-file.py": "6ed0afc4117d81f9310fffa8ef2dfac3ab4398fa18d58ea8263072ceec88a1f8",
   "migrations/008-done-entries-keep.py": "2a3ccb8e0648292e6f2e83a7b187e387750dbed5f4e9fb833279936508ee6c5f",
   "migrations/_links.py": "b1dca738364c8a14b0719d7f4132d1266b2f353d121a14e297f9b5a772ae1b80",
-  "package-signers": "10c0d612e7c90c0d6ce2626a1dbedfdb291dbdac9da0466133d82f9ccaca29cd",
+  "package-signers": "a950f0392a020e6c602827d0d72f5e140022ff90e31dda52c7300600af27a778",
   "rules/orchestrator/00-role.md": "baf4cb1f1c78e7b05b642be25eca0479f2bb7e1f26c6fde6c4fad230207ddf04",
   "rules/orchestrator/10-work.md": "dd82b9e2c1b5bea77648b64c7766b8b60d4011bb7aa7e3e25d8f176ce5192ab5",
   "rules/orchestrator/20-human.md": "f8d5a7b43eb45979b886bd355cc000b4275281625a4e49b9c3023a094c8af69c",
