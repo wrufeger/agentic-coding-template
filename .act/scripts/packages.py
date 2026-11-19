@@ -1223,7 +1223,8 @@ def _response_socket(response: object) -> Optional[socket.socket]:
 
 def _http_get(url: str, limit: int) -> bytes:
     """The body of an `https://` address, at most `limit` bytes, within NET_TIMEOUT per operation and NET_DEADLINE
-    in all: before each read the socket's time limit is set to the time left (at most NET_TIMEOUT), so a server
+    in all: before each read the socket's time limit is set to the time left (at most NET_TIMEOUT; not once the
+    connection is closed, which happens when a body with Content-Length is read completely), so a server
     sending one byte at a time cannot hold the call past the deadline (FetchTimeout); anything that is no success
     is a PackageRefused naming the address."""
     opener = urllib.request.build_opener(_HttpsOnly)
@@ -1246,7 +1247,7 @@ def _http_get(url: str, limit: int) -> bytes:
                 left = NET_DEADLINE - (time.monotonic() - started)
                 if left <= 0:
                     raise FetchTimeout(f"`{url}` took longer than {NET_DEADLINE} s")
-                if sock is not None:
+                if sock is not None and not response.isclosed() and sock.fileno() != -1:  # a fully read body closes the socket
                     sock.settimeout(min(NET_TIMEOUT, left))
                 chunk = response.read1(65536)
                 if not chunk:
