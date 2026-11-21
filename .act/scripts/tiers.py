@@ -563,6 +563,7 @@ def _apply_resolved_fields(text: str, model: str, effort: Optional[str]) -> Opti
 
 _COPILOT_MODEL_LINE_RE = re.compile(r"^model:\s*")
 _COPILOT_MODELS_LINE_RE = re.compile(r"^models:\s*")
+_COPILOT_POLICY_LINE_RE = re.compile(r"^model-policy:")
 _COPILOT_EFFORT_LINE_RE = re.compile(r"^reasoning-effort:\s*")
 
 
@@ -591,7 +592,9 @@ def _apply_resolved_copilot_fields(
     `model:` nor a `models:` line is the project's own choice of model and returns None, like a file
     with no frontmatter fence or a result byte-identical to `text` -- unless `insert_missing` is
     set: then `model:`, `models:`, `model-policy: preferred` and `reasoning-effort:` (when `effort`)
-    are inserted before the closing `---`."""
+    are inserted before the closing `---`. On a refresh, `model-policy: preferred` goes right after the
+    `models:` line when `models` has more than one entry and the block has no `model-policy:` line; an
+    existing one keeps its value."""
     if not models:
         return None
     lines = text.splitlines(keepends=True)
@@ -638,6 +641,11 @@ def _apply_resolved_copilot_fields(
     for kind in ("model", "models", "effort"):
         if kind not in seen and wanted[kind]:
             new_block.append(f"{wanted[kind]}{eol}")
+    if len(models) > 1 and not any(_COPILOT_POLICY_LINE_RE.match(b.rstrip("\r\n")) for b in new_block):
+        # several models without a policy line: add the soft preference right after `models:`
+        at = next((i for i, b in enumerate(new_block) if _COPILOT_MODELS_LINE_RE.match(b.rstrip("\r\n"))), None)
+        if at is not None:
+            new_block.insert(at + 1, f"model-policy: preferred{eol}")
     new_text = "".join(lines[:1] + new_block + lines[close_index:])
     return new_text if new_text != text else None
 

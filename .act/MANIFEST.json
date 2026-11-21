@@ -194,7 +194,7 @@
   "scripts/settings_format.py": "50b52e88dc1b15de3e25f2c899bcf91adbc2567dc8c40e46e3214fb14bbd944e",
   "scripts/settings_load.py": "b13e2dad850efd928627c5f753c2b522fa4a6529965deff8ebbf790771d41770",
   "scripts/skills.py": "57156b71870fa03bbd0442d0b8ae1c82874ce06c0fe33c36d4b1c4834ad3ca68",
-  "scripts/tiers.py": "748f82eaed868275ec7c906b33dd68b86b03555b66ff7b63e154ed38dcb7574a",
+  "scripts/tiers.py": "9f6ed026024f77fe4b2a09137d5ca49a81b07154a45e187ad36e00d09832c5d4",
   "scripts/unit_copies.py": "4ce4e6cb451af717f4617018a56a85f9ba5f821d37bc4069c2a1bf981854e827",
   "scripts/update.py": "067cb1e9c0140ea1238bd0c65749ecf8e6510fdbb4d2b7b77dfd8963ac36ee8c",
   "scripts/usage.py": "060477c88dd2905c0bebfbdcb4352fd7abbc7bf6be4ab1247245381e2a127e2b",

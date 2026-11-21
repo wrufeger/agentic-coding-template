@@ -61,6 +61,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   no longer reports `<title>` as an unclosed HTML element.
 - `packages.py fetch` and `packages.py index` reported "no source delivered" for every `https://` source once the
   download had finished; both now work.
+- Refreshing a Copilot role file that already has a model line now adds `model-policy: preferred` after
+  `models:` when it lists several models, as a fresh insertion already did; an existing `model-policy:` value is kept.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is
