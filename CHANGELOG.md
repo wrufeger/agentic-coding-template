@@ -80,6 +80,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   installed; it shows the files first and deletes them only with `--yes <id>`, instead of exiting 1.
 - `fetch` and `index` report a server answering with a broken HTTP reply (such as `BadStatusLine`) as a normal
   reason, not a traceback.
+- `feedback.py` now counts its own script run inside its error guard, so a broken `usage.py` gives
+  "feedback: error: …" instead of a traceback.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is
