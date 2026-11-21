@@ -28,8 +28,9 @@
 # Limit:   an event appended while a delivery rewrites the file (only when delivered lines are older than
 #          KEEP_DAYS) waits for the append lock; it is lost only when that wait runs out; two session starts at the same instant may both
 #          deliver the same events; when the offset cannot be written after a delivery, the same events
-#          come again with the next one. An append lock that does not come free within half a second is
-#          ignored.
+#          come again with the next one. An event is appended only while the append lock is held:
+#          a lock not taken within two seconds means the event is not written (never an unlocked append, which
+#          could mix two lines); a stale lock is broken. Worst added wait per call: two seconds.
 
 from __future__ import annotations
 
@@ -50,7 +51,8 @@ APPEND_LOCK = Path(".act-local") / "incidents.lock"
 KEEP_DAYS = 30
 OFF_ENV = "ACT_INCIDENT_LOG"  # "off" turns the log off for one run
 _LOCK_WAIT = 1.0  # seconds to wait for entries.lock: SessionStart has a hard time limit
-_APPEND_WAIT = 0.5  # seconds to wait for the append lock before appending without it
+_APPEND_WAIT = 2.0  # seconds to wait for the append lock; after that the event is not written
+_DENIED_GIVE_UP = 0.25  # seconds of PermissionError in a row after which the lock is given up
 _APPEND_STALE = 5.0  # a lock older than this belongs to a process that died
 TITLE_PREFIX = "Incident log "
 _WORD_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9_.-]{0,30}\Z")  # a plain command word: no `=`, path or quote
@@ -100,13 +102,15 @@ def is_off() -> bool:
 
 class _AppendLock:
     """A lock held for the instant of one append (an exclusively created file). Best effort: a lock that does
-    not come free within _APPEND_WAIT is ignored, a stale one is removed -- an event is never dropped for it.
+    not come free within _APPEND_WAIT is not held (`held` stays False), a stale one is removed. A caller that
+    appends checks `held` first.
     The file holds its owner's token and only the owner removes it; a stale one is renamed away first, so only one
     waiter takes it, and put back when what was taken is fresh (the same as the note lock in checks/common.py;
     that one cannot be imported here)."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, wait: Optional[float] = None) -> None:
         self.path = path
+        self.wait = _APPEND_WAIT if wait is None else wait
         self.held = False
         self.token = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
 
@@ -130,23 +134,35 @@ class _AppendLock:
         return True
 
     def __enter__(self) -> "_AppendLock":
-        deadline = time.monotonic() + _APPEND_WAIT
+        deadline = time.monotonic() + self.wait
+        denied_since: Optional[float] = None  # start of the current streak of PermissionError
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 self.held = True
+                denied_since = None
                 try:
                     os.write(fd, self.token.encode("ascii"))
                 finally:
                     os.close(fd)
                 return self
             except FileExistsError:
+                denied_since = None
                 try:
                     if time.time() - self.path.stat().st_mtime > _APPEND_STALE and self._break_stale():
                         continue
                 except OSError:
                     pass
                 if time.monotonic() >= deadline:
+                    return self
+                time.sleep(0.005)
+            except PermissionError:
+                # Windows reports a lock its owner is deleting like this: busy, so retried. A streak longer than
+                # _DENIED_GIVE_UP is a permanent refusal (a read-only folder, an ACL; POSIX gives EACCES too).
+                now = time.monotonic()
+                if denied_since is None:
+                    denied_since = now
+                if now >= deadline or now - denied_since > _DENIED_GIVE_UP:
                     return self
                 time.sleep(0.005)
             except OSError:
@@ -161,9 +177,11 @@ class _AppendLock:
                 pass
 
 
-def record(root: Path, kind: str, source: str, message: str = "", role: str = "") -> None:
+def record(root: Path, kind: str, source: str, message: str = "", role: str = "",
+           wait: Optional[float] = None) -> None:
     """Append one event. Never raises and writes nothing through a linked .act-local or with
-    ACT_INCIDENT_LOG=off."""
+    ACT_INCIDENT_LOG=off. `wait` is the longest wait for the append lock (default _APPEND_WAIT; 0 tries it
+    once): a caller with a time limit of its own passes less."""
     try:
         if _off():
             return
@@ -174,7 +192,9 @@ def record(root: Path, kind: str, source: str, message: str = "", role: str = ""
                  "role": _clean(role, 30), "msg": _clean(message, 100)}
         path.parent.mkdir(parents=True, exist_ok=True)
         line = (json.dumps(event, ensure_ascii=True) + "\n").encode("ascii")
-        with _AppendLock(root / APPEND_LOCK):
+        with _AppendLock(root / APPEND_LOCK, wait) as lock:
+            if not lock.held:
+                return  # an unlocked append could mix two lines: the event is not written
             fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o666)
             try:
                 os.write(fd, line)

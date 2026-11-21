@@ -29,9 +29,10 @@ is silent when nothing is new. Delivered lines are kept 30 days. It is written b
 `warn` the start only says how many events wait. There is no config row of its own, but `ACT_INCIDENT_LOG=off` in the
 environment writes, counts and delivers nothing for one run (a test suite that drives the hooks). Limits: two appends at
 the same instant are serialised by a short lock file (`.act-local/incidents.lock`), also held while a delivery cuts old
-lines out; a wait for it is given up after half a second and the event is appended anyway, so an event is lost only
-when a delivery's rewrite takes longer than that; when the offset cannot be written after a delivery, the same events
-come again.
+lines out; an event is appended only while the lock is held, waiting up to two seconds for it; when the lock cannot
+be taken in that time the event is not written (never an unlocked append, which could mix two lines), and a stale lock is
+broken. A hook passes a shorter wait, down to none, so that its own time limit holds; when the offset cannot be written
+after a delivery, the same events come again.
 
 **Refusals counted.** Every refusal of a check is counted silently in `.act-local/usage.json` (`checks.<check>.refusals`,
 per day and role, `main` for the main session; the check's module name and the role name only, never a command or a

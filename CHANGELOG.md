@@ -96,6 +96,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
 - `git-metadata-guard` no longer refuses a note written with `cat > x.md` and a quoted heredoc after `mkdir -p`
   or before other commands; a copy source that runs out of time is now named in the refusal, with a hint to the
   Write tool.
+- The incident log appends an event only while it holds its append lock (waiting up to 2 s, a hook less):
+  parallel writers no longer mix or lose lines; an event whose lock stays taken longer is dropped.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is

@@ -943,6 +943,15 @@ def _load(module_name: str, func_name: str):
     return func, None
 
 
+def _incident_wait() -> float:
+    """How long an incident event may wait for the log's append lock: at most the log's own wait, and never so long
+    that the hook passes its own time limit (the refusal or exit code that follows is worth more than the event);
+    0 when little is left, so the lock is tried once."""
+    import incidents  # noqa: E402 -- .act/scripts/ is on sys.path
+    remaining = _hook_budget() - (time.monotonic() - _HOOK_STARTED)
+    return max(0.0, min(incidents._APPEND_WAIT, remaining - 0.5))
+
+
 def _note_incident(kind: str, source: str, payload: dict, detail: str = "") -> None:
     """Append one event to the incident log (.act/scripts/incidents.py), delivered to the inbox at the next
     session start. Identifiers only: the tool name, a shell command's first word when it is a plain word.
@@ -955,7 +964,8 @@ def _note_incident(kind: str, source: str, payload: dict, detail: str = "") -> N
             tool_input = payload.get("tool_input")
             parts.append(incidents.command_word(tool_input.get("command") if isinstance(tool_input, dict) else None))
         role = "worker" if payload.get("agent_id") else "main"
-        incidents.record(actlib.repo_root(), kind, source, " ".join(part for part in parts if part), role)
+        incidents.record(actlib.repo_root(), kind, source, " ".join(part for part in parts if part), role,
+                        wait=_incident_wait())
     except Exception:  # noqa: BLE001 -- the log must never change a verdict
         pass
 
