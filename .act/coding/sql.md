@@ -48,7 +48,7 @@ summary: versioned naming, idempotent, reversible, one tool
 
 ## `CR-sql-mariadb` — MySQL and MariaDB (InnoDB) pitfalls
 
-summary: gap locks on range writes, error 1020 under snapshot isolation, `LOCK IN SHARE MODE` instead of `FOR SHARE`, `ALTER` and ENUM changes on versioned tables, `CONVERT_TZ` without zone tables
+summary: gap locks on range writes, error 1020 under snapshot isolation, `LOCK IN SHARE MODE` instead of `FOR SHARE`, `ALTER` and ENUM changes on versioned tables, `CONVERT_TZ` without zone tables, cascade plus `SET NULL` on one row of a versioned table
 
 - InnoDB (default isolation level `REPEATABLE READ`): a range `UPDATE` or `DELETE` on a table that others insert into
   takes gap locks and can deadlock with a concurrent `INSERT`. Read the ids first without a lock, then change by `WHERE
@@ -75,3 +75,8 @@ summary: gap locks on range writes, error 1020 under snapshot isolation, `LOCK I
   the default with `ALTER COLUMN … SET DEFAULT`. Test the migration against a database that has such history rows.
 - MySQL/MariaDB: `CONVERT_TZ` with zone names returns `NULL` without any error when the time-zone tables are not loaded
   (common on managed or container databases). Hand the offset in as a number, or do the conversion in application code.
+- MariaDB, system-versioned table: deleting a parent row whose child rows cascade, where the child also has a
+  self-reference with `ON DELETE SET NULL`, can write the same history row twice and fail with a duplicate-key error
+  (reported; the affected versions are not known, so test on the one you run). Avoid it: within one transaction, a
+  first statement removes the child rows, a second one removes the parent. A test builds a chain of at least two
+  linked rows, because a single row does not trigger it.

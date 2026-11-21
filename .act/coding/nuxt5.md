@@ -36,12 +36,15 @@ summary: `nuxt-nightly@5x` as a tag, the lockfile as the only pin, pnpm re-resol
   new entries only, none changed or removed; otherwise start over as a deliberate Nuxt update. A nightly CLI that moved
   along is taken back in the lockfile. The same steps lift the module copies named in `CR-nuxt5-checks` to the fixed
   version without moving the nightly. Drops with the pnpm line above.
-- A nightly can raise its own `vue` range; a project `vue` entry left on the old minimum keeps a second Vue copy.
-  After every move, read the nightly's range (`npm view <nightly>@<version> dependencies.vue`, `pnpm view` alike),
-  raise your entry to it, then `npm ls vue` / `pnpm why vue` shows one version. Run `nuxt prepare` too: the
+- A nightly can raise its own `vue` range and peer ranges such as `vue-router`, also within a major; a project entry
+  left on the old minimum keeps a second copy. After every move, read the nightly's ranges (`npm view
+  <nightly>@<version> dependencies.vue peerDependencies`, `pnpm view` alike), raise your entries to them, then `npm
+  ls vue` / `pnpm why vue` (and the same for `vue-router`) shows one version. Run `nuxt prepare` too: the
   generated ESLint config can point at the old store path until it runs (`postinstall` usually does it).
 - pnpm 11's `minimumReleaseAge` makes `pnpm update nuxt` take the newest nightly older than that age: do not work
   around it; name the version actually installed in the commit and the upgrade log.
+- pnpm measures `minimumReleaseAge` from the moment a version appeared on npm, and that moment may come after its
+  GitHub release; a version that looks old enough by the release date can still be held back.
 - After `dev` or `build`, read the diff of `package.json`: every entry the tooling added on its own is one you can
   explain.
 
@@ -58,15 +61,15 @@ summary: `NUXT_B8013` means switched off, Pinia 4 with its peer, the i18n way ba
   and the client redirect ends in a hydration mismatch. Drop it once a release closes
   nuxt-modules/i18n#4066 (Nuxt 5 and Nitro 3 support). `experimental.nitroViteEnvironment: false` is no longer
   needed from nightly `5.0.0-2611031025` on; remove it once `build` and the E2E tests pass without it.
-- Under Nuxt 5 the `server` provider of `@nuxt/icon` does not serve the icons: it answers with an empty body (2.5.1),
-  or the browser asks the public Iconify API directly (2.6.2 with `@iconify/vue` 5) (reported, upstream nuxt/icon
-  issue 571). Use the bundled setup from `CR-nuxt-ssr` and an E2E check that icons render and no request goes to
-  the Iconify API; drop when that issue is fixed in a release.
+- Use the bundled icon setup from `CR-nuxt-ssr` and an E2E check that icons render and no request goes to the public
+  Iconify API. Older `@nuxt/icon` versions needed a workaround: a server-side icon provider plus a hand-set cache
+  `allowQuery` for the icon endpoint. It is no longer needed from `@nuxt/icon` 2.6.3 on (reported on Nitro 3); look
+  for both in the config and remove them.
 - Never rebuild the Nitro v2 bridge (`NUXT_B9003`) in your own code.
 
 ## `CR-nuxt5-server` — Nitro 3 and h3 v2
 
-summary: explicit imports from `nuxt/server`, `event.req` as a web request, typed bodies, `status`/`statusText`, no comma in export-line comments, headers and CSP, no file deleted under the owner's dev server
+summary: explicit imports from `nuxt/server`, `event.req` as a web request, typed bodies, `status`/`statusText`, no comma in export-line comments, headers and CSP (nonce in dev, keep-alive hang), no file deleted under the owner's dev server
 
 - In `server/`, import `defineEventHandler`, `readBody`, `getQuery`, `createError` … from `nuxt/server`, and define
   plugins with `definePlugin` from `nitro`; `server/utils/` stays auto-imported.
@@ -93,6 +96,24 @@ summary: explicit imports from `nuxt/server`, `event.req` as a web request, type
   scripts and a nonce per request on the payload script; Nuxt puts a nonce on its own streaming scripts only if a
   head script already carries one. A CSP an early middleware sets overrides the renderer's, so set one there only
   for API routes. Drops once a CSP module (e.g. `nuxt-security`) declares Nuxt 5 support.
+- Strict nonce CSP in dev: the dev error badge (reported from nightly 2611132210) reads a nonce only from head tags
+  present before `render:html` runs, so a nonce that first appears inside `render:html` leaves the badge blocked. In
+  dev only (`import.meta.dev`) give the badge the nonce the payload script has, never `unsafe-inline`. Nitro's reload
+  script on 5xx pages in dev (reported on Nitro 3.0.261103-rc) has no nonce at all; expect one CSP message from it
+  and filter it out of console checks. The older workaround for the overlay is no longer needed from that nightly
+  on; remove it. An E2E helper provokes the error with a 5xx response. This dev part drops once a nightly gives the
+  dev badge the nonce set in `render:html` and gives the dev reload script on 5xx pages a nonce of its own.
+- Keep-alive hang (reported with Nitro 3.0.261103-rc, srvx 1.0.8, h3 2.0.8, on Linux, Windows and the production
+  build, nightly 2611172312): a request rejected early (413, 401) with its body unread leaves the next request on the
+  same connection hanging until `keepAliveTimeout`. As a stopgap a server middleware sets `Connection: close` on
+  unsafe methods, also in the headers of the error response. Drops once a release fixes the hang after an early
+  rejection with an unread body; note that upstream issue by description next to the workaround.
+- Keep-alive in dev: `Connection: close` stays, and in addition read the request body to its end before the early
+  rejection. Only for unsafe methods, only with a known length up to the largest upload limit, never a body that is
+  already read or locked, and around the whole middleware chain (`next()` in a try/catch), not only your own guard.
+  Unit tests pass their own stub for `next`.
+- Test the keep-alive hang with a POST over the limit followed by a second request through the same agent, and with
+  several raw `node:http` clients in parallel sending a body just above the limit.
 - After renaming or removing an export in `server/utils/`, restart your own test server (its port as
   `R-safe-dev-server` says) before tests against it count; the owner's server only after asking. No transitional alias for the old name. Never set `NUXT_IGNORE_LOCK` or `NUXT_LOCK=0`.
 - Deleting a file from an auto-imported folder while the owner's dev server runs makes every page answer 500 until
@@ -103,7 +124,7 @@ summary: explicit imports from `nuxt/server`, `event.req` as a web request, type
 
 ## `CR-nuxt5-app` — Pages, routing, data fetching, head
 
-summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route targets, Unhead 3 and its og hint, no `baseUrl`
+summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route targets, server `navigateTo` and the query, Unhead 3 and its og hint, no `baseUrl`
 
 - `import.meta.*` instead of `process.*` (`import.meta.client`, `import.meta.dev` …).
 - `query` instead of `params` in the options of `$fetch`/`useFetch`.
@@ -125,13 +146,18 @@ summary: `import.meta.*`, `query` instead of `params`, typed `$fetch` and route 
   default description) go into `app.vue` **and** `error.vue`, since Nuxt renders `error.vue` in place of `app.vue`.
   A head value that is missing is left out, never passed as `undefined` — `useSeoMeta({ description: undefined })`
   removes the fallback (so the `og:title` case above is solved by leaving tags out, not by `undefined`).
+- A server-side `navigateTo` in middleware rebuilds `Location` from the router path, so the query comes out in the
+  router's encoding (reported from nightly 2611151847): signed parameters, OAuth return links and shared links break
+  without any error. On the server pass a relative target of the same origin with the option `external: true` (with
+  `@nuxtjs/i18n` build that target with `localePath(...)`, else it loses the locale prefix); on the client leave
+  navigation to the router. A test compares the exact search string in the `Location` header.
 - Pin `workspaceDir` as the security line in `CR-nuxt-basics` says; it holds for Nuxt 5 as well.
 - No `compilerOptions.baseUrl` in `tsconfig.json` — Nuxt ignores it; aliases go into `nuxt.config.ts` only
   (`CR-nuxt-basics`).
 
 ## `CR-nuxt5-checks` — Checks after every Nuxt update
 
-summary: the full check chain, the type error list compared rather than counted, warnings (a known listener warning), copies (how to count, the expected `@nuxt/schema` hit) and `invalid` in the tree, workarounds against upstream, a build before commits to auto-imported folders or `nuxt.config`, a record
+summary: the full check chain, the type error list compared rather than counted, warnings (a list per nightly, a known listener warning), copies (how to count, the expected `@nuxt/schema` hit) and `invalid` in the tree, workarounds against upstream, a build before commits to auto-imported folders or `nuxt.config`, the typecheck in the own `buildDir`, a record
 
 - Save the typecheck output before the update and compare the errors afterwards — the list, not the count.
 - Then `npm run lint`, `typecheck`, `test`, `build`, `dev` (main pages answer 200, no hydration warning), the main
@@ -142,6 +168,9 @@ summary: the full check chain, the type error list compared rather than counted,
   `app/utils/`) or `nuxt.config` runs `build` besides lint, typecheck and tests: they stay green on a broken export
   scan (`CR-nuxt5-server`), only the build fails. Build with its own `buildDir` and Nitro output dir as
   `CR-nuxt-tests` says, never into the owner's `.nuxt/` while their dev server runs (`R-safe-dev-server`).
+- Keep the list of warnings per nightly and compare it after each update, as with the type errors. Reported with nightly
+  2611151847 and `@nuxtjs/i18n` 10.6.0: new warnings `NUXT_B2003`, `NUXT_B2010`, `NUXT_B2014` and `NUXT_E8013`
+  without any runtime effect; a new warning is looked up before it is accepted.
 - Read the warnings (`NUXT_B8013`, `NUXT_B9003`, `[unhead]`), check for duplicate copies, run
   `python .act/scripts/security_scan.py --deps`.
 - Count copies of a package with `npm ls <package>` / `pnpm why <package>`; folders under `node_modules/.pnpm` left from
@@ -159,7 +188,10 @@ summary: the full check chain, the type error list compared rather than counted,
   <package>`, `pnpm update <package>`, under the pnpm line of `CR-nuxt5-channel`); entries already known stand
   in the upgrade log, report only new ones.
 - Check every workaround in this set against the upstream issue or release it names; drop the one whose condition is
-  met, and note it in the upgrade log.
+  met, and note it in the upgrade log. A workaround's exit condition (keep-alive, CSP) describes the upstream issue
+  in words, so that a fix is noticed.
+- `nuxt typecheck` takes the own `buildDir` variable like the build and the test servers (`CR-nuxt-tests`); a builder
+  assignment that includes the typecheck names it, so the owner's `.nuxt/` stays untouched.
 - Record every break in an upgrade log of the project (e.g. `docs/project/nuxt-5-upgrade.md`): the symptom quoted in
   short, the cause checked or marked **assumption**, the fix, the location. A general lesson becomes an own rule in
   `docs/project/coding_rules.md` and goes to the template through `act-feedback`.

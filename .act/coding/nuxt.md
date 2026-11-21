@@ -115,7 +115,7 @@ summary: /types, /constants, /server and shared/utils/ at the repo root, each th
 
 ## `CR-nuxt-ssr` — Choose the SSR mode on purpose
 
-summary: ask before assuming SSR, know the hydration cost, check for mismatches after SSR work, bundle icons without SSR
+summary: ask before assuming SSR, know the hydration cost, check for mismatches after SSR work, `app:mounted` before hydration ends, bundle icons without SSR
 
 - `ssr: false` or a plain SPA is often the simpler choice for a purely local UI with no SEO or
   first-paint requirement (e.g. an admin tool). Ask the user once, when scaffolding or restructuring
@@ -134,6 +134,11 @@ summary: ask before assuming SSR, know the hydration cost, check for mismatches 
   lint nor the type check notices; move the comment in front of the whole chain or into one branch.
 - Copying a `useFetch`/`useAsyncData` result into your own `ref` is a common hydration-mismatch
   cause too — see `CR-nuxt-basics` for why and the fix, not repeated here.
+- `app:mounted` fires when `mount()` returns, but under Suspense hydration goes on until `app:suspense:resolve`. Code
+  that starts at `app:mounted` and changes shared state (a live stream, a counter feeding the store) can change it in
+  the middle of hydration; the mismatch then shows only on slow machines. When `useNuxtApp().isHydrating` is true,
+  wait once for `app:suspense:resolve` and start at once otherwise. Reproduce it with CPU throttling in the browser
+  (the DevTools protocol), not on a fast machine.
 - With `ssr: false`, `@nuxt/icon` (also through `@nuxt/ui`) fetches icons at runtime from the public Iconify API
   unless they are bundled: install the icon sets as `@iconify-json/<set>`, provider `none`, `clientBundle.scan`,
   `fallbackToApi: false`; an unknown icon then shows as missing with a console warning.
@@ -148,7 +153,7 @@ summary: ESLint with `@nuxt/eslint` plus Prettier, whichever the project has set
 
 ## `CR-nuxt-tests` — Unit and end-to-end tests
 
-summary: vitest/Playwright by default, but whichever suite the project runs must pass; anchored locators, isolated parallel test servers
+summary: vitest/Playwright by default, but whichever suite the project runs must pass; anchored locators, isolated parallel test servers, typecheck with its own `buildDir`
 
 - `vitest` (`vitest.config.ts`) for unit and component tests, `@playwright/test`
   (`playwright.config.ts`) for end-to-end tests — the template's usual choice; if the project has a
@@ -169,3 +174,7 @@ summary: vitest/Playwright by default, but whichever suite the project runs must
   `nuxt dev` ends a non-interactive holder, so a test runner on the owner's port can stop the owner's server
   (`R-safe-dev-server`). A stale lock file in a test server's own `buildDir` may be removed before start only when
   its process is gone or its PID now belongs to another process, never by its age.
+- `nuxt typecheck` writes generated files (tsconfig, the types of the server imports, the ESLint config, build info)
+  into the default `buildDir`, even while the owner's dev server runs; a build may be redirected elsewhere, but
+  this command has no such detour. Run it with the same environment variable for the own `buildDir` as the build and the test servers, and name
+  that variable in every builder assignment that includes a typecheck (`R-safe-dev-server`).

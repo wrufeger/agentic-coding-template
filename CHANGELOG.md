@@ -41,6 +41,9 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   package that is not installed.
 - `.act/package-signers` carries the template author's key, so a package the author signed counts as verified and is
   admitted even with `packages-unverified: block`.
+- Nuxt 5 rules: dev nonce CSP, keep-alive hang workaround, server `navigateTo` query encoding, per-nightly
+  warning list, icon workaround dropped; Nuxt rules: `app:mounted` timing, typecheck in own `buildDir`; MariaDB
+  versioned cascade rule.
 
 ### Changed
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
