@@ -6,7 +6,8 @@
 #          word for word; a section edited later may leave out the assistant's prose, never an id, hash,
 #          version, date, path or number of the original, nor a line of the human's own words. Only text
 #          that is recognisably the assistant's may go (a paragraph opening with a bold label such as "**Context**"
-#          and the option list directly below it); every other non-empty line of the original, marked
+#          and the option list directly below it; a bold part heading `**1. …**` alone on its line is no
+#          label); every other non-empty line of the original, marked
 #          or not, counts as the human's and must stand verbatim; it also counts if it stands in the link form
 #          `compact` writes (a link to a folded file pointing at its collection and anchor). A note, and a todo captured from a
 #          chat prefix, are the human's in full (a note up to the assistant's first reply block). The
@@ -54,6 +55,7 @@ _NUMBER_RE = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)?(?![\w])")
 _LIST_MARKER_RE = re.compile(r"(?m)^\s*\d+[.)]\s")
 _HUMAN_LINE_RE = re.compile(r"^\s*(?:>|\**\s*(?:Antwort|Answer|Reply)\b)", re.IGNORECASE)
 _LABEL_RE = re.compile(r"^\s*\*\*[^*\n]+\*\*")
+_PART_HEADING_RE = re.compile(r"^\s*\*\*\s*\d+\.[^*\n]*\*\*\s*$")  # `**1. PART**`: a part heading, no label
 _HUMAN_LABEL_RE = re.compile(r"^\s*\*\*\s*(?:Antwort|Answer|Reply)\b", re.IGNORECASE)
 _LIST_LINE_RE = re.compile(r"^(?:\s*(?:[-*+]|\d+[.)])\s|\s{2,}\S)")
 _REPLY_BLOCK_RE = re.compile(r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\b")
@@ -143,7 +145,8 @@ def _paragraphs(lines: list[str]) -> list[tuple[int, int]]:
 def human_lines(text: str, header: str = "") -> list[str]:
     """The lines of an entry body that must stay verbatim, whitespace folded: everything except text that is
     recognisably the assistant's. That is a paragraph opening with a bold label (other than Answer/Antwort/
-    Reply) and the option list directly below it; after an empty label (`**Label:**` alone on its line) the
+    Reply) and the option list directly below it (a bold part heading `**<n>. …**` alone on its line is no
+    label); after an empty label (`**Label:**` alone on its line) the
     lines up to the next blank line are the human's, after an empty Answer/Antwort/Reply label (the last line
     of every new question) everything up to the next paragraph opening with a bold label. Block quotes and Answer/Antwort/Reply lines are the
     human's everywhere. With `triage:` in the header (captured from a chat prefix) the whole text is the
@@ -162,7 +165,7 @@ def human_lines(text: str, header: str = "") -> list[str]:
         if first < limit:
             after_label = False
             continue
-        label = _LABEL_RE.match(lines[first])
+        label = None if _PART_HEADING_RE.match(lines[first]) else _LABEL_RE.match(lines[first])
         if label and _HUMAN_LABEL_RE.match(lines[first]):
             human[first:after] = [True] * (after - first)
             after_label = False

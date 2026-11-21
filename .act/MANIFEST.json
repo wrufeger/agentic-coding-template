@@ -159,7 +159,7 @@
   "scripts/adopt_scan.py": "301c53682768888dadcce05b16528efee01b8607cbe4c07a9cb4d7a59de6da70",
   "scripts/advisory.py": "107520a81d8d9eafe1a4de5c46097451d8a14daccb34807c4c5176d95982a024",
   "scripts/board.py": "168bf92f36a1addbdbf7297f21bd17d468e878a188d5e32a36c2ee4cefc222fc",
-  "scripts/compact_check.py": "0c143d7476be784d29d920cdeaa6c3ad2c23791ebf4f02f5f883d0984ef53757",
+  "scripts/compact_check.py": "031806db3006385c37b284ecb22e85ed5111eb2e8d7234fc7cfebc079ee2758c",
   "scripts/config.py": "6b86c951b5e9a91fa69d836edf8be72ac6be2f3de863fc041d370df3f9b41f75",
   "scripts/context_size.py": "59039dcf2bfaf785a6d60c0e9dca06bc0392e271f73a12f75d2f8aad73ecd8ac",
   "scripts/doctor.py": "74d028124d2c4ccf4ff636f3c9ce86ba423f7f156425f53bbe3939dfdfb62f0d",
