@@ -306,6 +306,13 @@ writes `.claude/settings*.json`, `.claude/agents`, `.claude/skills`, `.claude/co
 `.vscode/tasks.json` or a `*.code-workspace` with a file tool, or writes `.vscode/tasks.json` with a shell command; the
 human writes such a file themselves.
 
+The body of a quoted heredoc is read as commands (a line `cp x .git/hooks/p` is a copy) unless the whole command only
+stores it as text; `cat > <note>` into a plain relative `.md`, `.txt`, `.json`, `.log` or `.csv` file outside every
+protected place counts as storing even behind a `mkdir -p <paths> &&` or before further commands, as long as those do
+not name or glob that file (they stay read as commands). A copy source is read from disk for at most 4 s; one that
+cannot be read in that time refuses the call and names the source, since a copy whose landing places are unknown is
+not let through. Text for a note or another file is better written with the Write tool than with a heredoc.
+
 Limits. The checks read the text of a call and run nothing: what a program or script file writes itself
 (`pre-commit install`, `python script.py`) is invisible; a Python program handed to `python` (`-c`, heredoc,
 here-string) is read for literal paths and literal command lines, not for computed ones (a variable, an f-string).

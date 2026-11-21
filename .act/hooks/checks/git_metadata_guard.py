@@ -33,9 +33,11 @@
 #             protected place only the files that can land on one are mapped (`_LandingFilter`); a source
 #             that cannot be read within the time budget is refused (`_CopySourceTooLarge`). The body of a
 #             quoted heredoc is left out of this reading only when the whole command is one text reader
-#             (`_without_text_reader_heredoc`: `cat > notes.md <<'EOF'`, `tee`, `git commit -F -`) or an
-#             inline Python program read in full (below); any other body is read as commands, since what
-#             runs it cannot be told. When a target cannot be placed (dynamic, unknown base, scanner
+#             (`_without_text_reader_heredoc`: `cat > notes.md <<'EOF'`, `tee`, `git commit -F -`), or
+#             when `cat >` stores it in a plain note file (`.md .txt .json .log .csv`, no protected
+#             place) behind a `mkdir -p` and/or before commands that do not name or glob that file, or
+#             an inline Python program read in full (below); any other body is read as commands, since
+#             what runs it cannot be told. When a target cannot be placed (dynamic, unknown base, scanner
 #             failure) the raw-text search `_RAW_LAUNCH_RE` (workers) / `_RAW_TASKS_RE` (everyone) decides instead.
 #             Limit: a shell write of a `*.code-workspace` with a folderOpen task is not seen.
 #          4. Inline Python read as Python (`_python_program_reason`, reader: inline_code.py). A Bash
@@ -1177,7 +1179,11 @@ def _copy_source_files(
         try:
             if candidate.is_dir():
                 top = "" if candidate.name in ("", ".", "..") else candidate.name
-                for count, (inside, name) in enumerate(_walk_files(candidate, deadline), 1):
+                try:
+                    walked = _walk_files(candidate, deadline)
+                except _CopySourceTooLarge:
+                    raise _CopySourceTooLarge(source) from None  # name the source as the command wrote it
+                for count, (inside, name) in enumerate(walked, 1):
                     if deadline is not None and count % 256 == 0 and time.monotonic() > deadline:
                         raise _CopySourceTooLarge(source)
                     if keep is not None and not keep.keep(top, inside, name):
@@ -1213,36 +1219,142 @@ _TEXT_READER_RE = re.compile(
 _MESSAGE_FROM_STDIN_RE = re.compile(r"[ \t](?:-F[ \t]*-|--file(?:=|[ \t]+)-)(?=[ \t]|\Z)")
 
 
+# The stored-text form that may be followed by other commands, and may follow a `mkdir -p`: `cat >
+# <file>` (or `>>`) with the file one plain word, behind an optional `mkdir -p <plain paths> &&`.
+_STORED_NOTE_RE = re.compile(
+    r"\A(?:mkdir[ \t]+-p(?:[ \t]+" + _PLAIN_FILE_WORD + r")+[ \t]*&&[ \t]*)?"
+    r"cat[ \t]*>>?[ \t]*(?P<target>" + _PLAIN_FILE_WORD + r")\Z"
+)
+# The files whose text is only ever read as text: a note, a log, data. A script or a config is not.
+_STORED_NOTE_SUFFIXES = frozenset({".md", ".txt", ".json", ".log", ".csv"})
+# A folder or file name that starts something this guard protects (git metadata, Claude settings and
+# agents, Copilot roles, editor tasks, dev container, `.envrc`, MCP config); a name with a `:` (an
+# alternate data stream) or a `~` (a short name such as `git~1`) is not told apart from them either.
+_PROTECTED_NAME_RE = re.compile(
+    r"\A(?:\.git|\.claude|\.github|\.vscode|\.devcontainer|\.envrc|\.mcp)|[:~]", re.IGNORECASE,
+)
+
+
+def _stored_note_target(reader: str) -> Optional[str]:
+    """The one file `reader` (the command around a heredoc, blanks collapsed) stores its text in when it
+    is `[mkdir -p <paths> &&] cat > <file>` and the file is a note nobody runs: one plain relative word
+    (no `$`, glob character, backtick, `~`, `:`, no `..`), none of its folders or its name a protected
+    place (`_PROTECTED_NAME_RE`), and its extension one of `_STORED_NOTE_SUFFIXES`. The file as a
+    slash-separated relative path, or None for anything else."""
+    match = _STORED_NOTE_RE.match(reader)
+    if match is None:
+        return None
+    target = match.group("target")
+    if target[0] in "'\"":
+        target = target[1:-1]
+    if re.search(r"[$`~:*?\[\]{}]", target) or target.startswith(("/", "\\")):
+        return None
+    parts = [part for part in re.split(r"[\\/]+", target) if part]
+    if not parts or any(part in (".", "..") or _PROTECTED_NAME_RE.search(part) for part in parts):
+        return None
+    suffix = os.path.splitext(parts[-1])[1].lower()
+    if suffix not in _STORED_NOTE_SUFFIXES or parts[-1].startswith(suffix):
+        return None  # no note extension, or a bare dot name (`.md`) with no stem
+    return "/".join(parts)
+
+
+# The opener of a quoted heredoc (not a here-string `<<<`) in a later command, and the words that hand a
+# name over to a command the text does not show.
+_LATER_HEREDOC_RE = re.compile(r"(?<!<)<<(-?)[ \t]*(?:'([^'\s]+)'|\"([^\"\s]+)\"|\\([^\s'\"\\]+))")
+_NAME_HANDOVER_WORDS = frozenset({"xargs", "eval", "-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _without_later_heredoc_bodies(text: str) -> str:
+    """`text` without the bodies of its quoted heredocs (the opener line stays, the body and its end word
+    go; a body without an end word runs to the end): such a body is another program's text, judged on its
+    own (an inline Python program), not shell words of these commands."""
+    lines = text.split("\n")
+    kept: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+        opener = _LATER_HEREDOC_RE.search(line)
+        if opener is None:
+            continue
+        word = opener.group(2) or opener.group(3) or opener.group(4)
+        while index < len(lines):
+            body_line = lines[index].rstrip("\r")
+            index += 1
+            if (body_line.lstrip("\t") if opener.group(1) else body_line) == word:
+                break
+    return "\n".join(kept)
+
+
+def _note_may_run(target: str, rest: str) -> bool:
+    """Whether the commands `rest` (everything after the end word of a heredoc that stored a note in
+    `target`, relative) may run that note, so that the body might be commands after all: its file name
+    occurs in them, or a word of theirs with a glob character stands for it (`sh *.md`, `bash notes/*`),
+    or they hold something the text cannot be read through -- a `$`, a backtick, a `{`, a backslash, a
+    quote inside a word (`n''.md`), or `xargs`, `eval`, `-exec`, `-execdir`, `-ok`, `-okdir`. The last
+    group is read in the shell words only: the body of a later quoted heredoc is left out."""
+    lowered = rest.lower()
+    name = target.rsplit("/", 1)[-1].lower()
+    if name in lowered:
+        return True
+    for word in re.findall(r"[^\s;&|<>()'\"]*[*?\[][^\s;&|<>()'\"]*", lowered):
+        word = word[2:] if word.startswith("./") else word
+        if fnmatch.fnmatchcase(name, word) or fnmatch.fnmatchcase(target.lower(), word):
+            return True
+    shell_text = _without_later_heredoc_bodies(lowered)
+    if re.search(r"[$`{\\]", shell_text):
+        return True
+    for word in re.findall(r"[^\s;&|<>()]+", shell_text):
+        if word in _NAME_HANDOVER_WORDS:
+            return True
+        inner = word[1:] if word[0] in "'\"" else word
+        if re.search(r"['\"]", inner[:-1]):
+            return True
+    return False
+
+
 def _without_text_reader_heredoc(command: str) -> str:
     """`command` without the body of its quoted heredoc when that body is text nobody runs; otherwise
-    `command` as it is. The body is text only when the whole command is ONE simple command that
-    merely stores what it reads -- `cat` (alone or into a file with `>`/`>>`), `tee [-a] <file>`,
+    `command` as it is. The body is text when the whole command is ONE simple command that merely
+    stores what it reads -- `cat` (alone or into a file with `>`/`>>`), `tee [-a] <file>`,
     `git commit -F -`/`--file=-`, `git tag ... -F -` -- and nothing else: no second command (`;`,
     `&&`, `||`, `|`, `&`, a line after the end word), no substitution (`$(`, a backtick), no wrapper
     in front (`sudo`, `env`, `exec`, ...), one heredoc, its delimiter quoted (`'EOF'`, `"EOF"`,
     `\\EOF` -- an unquoted body is expanded and may run a substitution). Such a body is text: a note
-    holding `cp x .git/hooks/p` as a line is not a copy. Every other body stays and is read as
-    commands, as before, since what reads it cannot be told -- a shell, an interpreter, `make`, a file
-    run afterwards (`cat > x.sh <<'EOF' ... EOF` and then `./x.sh`). Hence an allow-list of the few
-    readers that only store text, not a list of the runners, which has no end."""
+    holding `cp x .git/hooks/p` as a line is not a copy. A second form is a stored note
+    (`_stored_note_target`): `cat > <file>` into a plain relative file of a text extension, behind a
+    `mkdir -p <paths> &&` and/or followed by more commands as long as those do not name or glob that file
+    (`_note_may_run`); the other commands stay in the text and are read as they always were, only the
+    body goes. Every other body stays and is read as commands, as before, since what reads it cannot be
+    told -- a shell, an interpreter, `make`, a file run afterwards (`cat > x.sh <<'EOF' ... EOF` and then
+    `./x.sh`). Hence an allow-list of the few readers that only store text, not a list of the runners,
+    which has no end."""
     match = _QUOTED_HEREDOC_LINE_RE.match(command)
     if match is None:
         return command
     reader = re.sub(r"\s+", " ", f"{match.group('before')} {match.group('after')}").strip()
     reader_match = _TEXT_READER_RE.match(reader)
-    if reader_match is None:
+    note_target = _stored_note_target(reader)
+    if reader_match is None and note_target is None:
         return command
-    git_args = reader_match.group("gitargs")
-    if git_args is not None and not _MESSAGE_FROM_STDIN_RE.search(git_args):
-        return command
+    if reader_match is not None:
+        git_args = reader_match.group("gitargs")
+        if git_args is not None and not _MESSAGE_FROM_STDIN_RE.search(git_args):
+            return command
     word = match.group("w1") or match.group("w2") or match.group("w3")
-    lines = command[match.end():].split("\n")
-    for index, line in enumerate(lines):
+    position = match.end()
+    for line in command[position:].split("\n"):
+        line_end = position + len(line)
         line = line.rstrip("\r")
         if (line.lstrip("\t") if match.group("dash") else line) == word:
-            if any(rest.strip() for rest in lines[index + 1:]):
-                return command  # a second command after the end word
-            return command[:match.end()] + line
+            rest = command[line_end + 1:]
+            if not rest.strip():
+                return command[:match.end()] + line
+            if note_target is not None and not _note_may_run(note_target, rest):
+                return command[:match.end()] + line + "\n" + rest
+            return command  # a second command after the end word
+        position = line_end + 1
     return command  # no end word: the body runs to the end of the input and stays as it is
 
 
@@ -1526,11 +1638,13 @@ def _violation(payload: dict) -> Optional[str]:
         )
         if reason:
             return reason
-    except _CopySourceTooLarge:
+    except _CopySourceTooLarge as too_large:
+        source = " ".join(str(too_large.args[0]).split())[:80] if too_large.args else ""
         return (
-            "copies a source that is too large to check in time, so it cannot be told whether it writes "
-            "a git hook, the repository config or another protected file (copy it in smaller parts, or "
-            "ask the human to run it)"
+            f"copies a source that is too large to check in time ({source or 'source not named'}), so it "
+            "cannot be told whether it writes a git hook, the repository config or another protected file "
+            "(copy it in smaller parts, or ask the human to run it; text for a note or another file is "
+            "better written with the Write tool than with a heredoc)"
         )
     except _inline_code.ReaderFailure as failure:
         return (
