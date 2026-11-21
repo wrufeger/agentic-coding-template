@@ -227,7 +227,9 @@ only. Neither runs in a dry run or from any session-start or check path.
 `--yes <id>` gives the check rows back, drops the lock entry, unloads the package and deletes
 `.act-local/packages/<id>/` (never following a link), unless `--keep`, which leaves the folder resting: nothing loads
 from a folder the lock does not record. It works when the folder is already missing, and a resting folder with no lock
-entry is deleted the same way. `add` followed by `remove` leaves the project byte for byte as it was. `packages.py list`
+entry is deleted the same way. For an id with neither a lock entry nor a folder, `remove <id>` names the files
+`fetch` kept for it (`<id>-X.Y.Z.zip` and `.zip.sig` in `.act-local/packages/`) and `--yes <id>` deletes them.
+`add` followed by `remove` leaves the project byte for byte as it was. `packages.py list`
 shows the lock's packages and the resting folders and names a broken package (its folder is missing or a file differs
 from the lock) with the fix: `add <id>` again, or `remove <id>`.
 

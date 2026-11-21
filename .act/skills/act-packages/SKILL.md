@@ -92,7 +92,8 @@ it does in the project, the config lines it sets. Show it; change nothing.
 `python .act/scripts/packages.py remove <id> > .act-local/tmp/<YYYYMMDD>-act-packages/<id>-remove.txt 2>&1`: show the file
 list, each diff cut like above, the folder line. Ask "Remove `<id>`?" (with `--keep` the folder stays resting; mention it
 when the human may want the package back). Only after the explicit yes: `python .act/scripts/packages.py remove <id> --yes <id>`
-(plus `--keep` when asked). The package's settings go with it; what the human changed by hand in the files it
+(plus `--keep` when asked). A package only fetched, never added, shows just its zip and signature, removed the same
+way. The package's settings go with it; what the human changed by hand in the files it
 touched is named in the diff and stays theirs.
 
 ## `update <id>`

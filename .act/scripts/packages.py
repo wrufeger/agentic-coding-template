@@ -59,7 +59,8 @@
 #                  and `remove exactly this: ... remove <id> --yes <id>`; exit 0. With `--yes <id>`: the check rows
 #                  given back, the lock entry dropped, the package unloaded, then the folder deleted (never followed
 #                  into a link). Works when the folder is already missing; a folder resting in `.act-local/packages/`
-#                  with no lock entry is deleted the same way.
+#                  with no lock entry is deleted the same way. An id with neither: the files `fetch` kept for it
+#                  (`<id>-X.Y.Z.zip`, `.zip.sig`) are listed, and deleted with `--yes <id>`; none: exit 1.
 #   list:          one line per package in the lock (id, version, source, check; a broken one adds `broken:` lines and
 #                  the fix) and one per resting folder; `no packages` when both are empty. A lock that cannot be
 #                  read: reason, exit 1.
@@ -79,6 +80,7 @@ import argparse
 import contextlib
 import difflib
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -1263,8 +1265,8 @@ def _http_get(url: str, limit: int) -> bytes:
         raise PackageRefused(f"`{url}` cannot be reached: {error.reason}")
     except (TimeoutError, socket.timeout):
         raise late()
-    except OSError as error:
-        raise PackageRefused(f"`{url}` cannot be read: {error}")
+    except (OSError, http.client.HTTPException) as error:
+        raise PackageRefused(f"`{url}` cannot be read: {type(error).__name__}: {error}")
     return bytes(data)
 
 
@@ -2211,10 +2213,33 @@ def _delete_package_folder(root: Path, package_id: str) -> str:
     return f"deleted .act-local/packages/{package_id}/"
 
 
+def _fetched_files(root: Path, package_id: str) -> list[Path]:
+    """The plain files `fetch` keeps for `<id>` in `.act-local/packages/`: exactly `<id>-<X.Y.Z>.zip` and
+    `.zip.sig` (the id compared whole, so a longer id with the same start never matches)."""
+    base = root / ".act-local" / "packages"
+    pattern = re.compile(re.escape(package_id) + r"-\d+\.\d+\.\d+\.zip(\.sig)?")
+    try:
+        for step in (root / ".act-local", base):
+            info = os.lstat(step)
+            if actlib.is_redirect(info) or not stat.S_ISDIR(info.st_mode):
+                return []
+        names = sorted(os.listdir(base))
+    except OSError:
+        return []
+    found: list[Path] = []
+    for name in names:
+        if pattern.fullmatch(name):
+            info = os.lstat(base / name)
+            if stat.S_ISREG(info.st_mode) and not actlib.is_redirect(info):
+                found.append(base / name)
+    return found
+
+
 def cmd_remove(package_id: str, keep: bool, yes: Optional[str], root: Path) -> int:
     """Take a package out: the plan and diff of what that changes, then with `--yes <id>` the writes (config rows given
     back, the lock entry dropped, package_load.sync_packages, then the folder deleted unless `--keep`). Works when
-    the folder is already missing, and for a folder resting in `.act-local/packages/` that the lock does not record."""
+    the folder is already missing, and for a folder resting in `.act-local/packages/` that the lock does not record.
+    With neither a lock entry nor a folder, the files `fetch` kept for the id are listed, and deleted with `--yes`."""
     if actlib.read_lock_at(root) is None:
         print(f"remove: {LOCK_REL} is missing or cannot be read; fix or restore it first", file=sys.stderr)
         return 1
@@ -2223,6 +2248,27 @@ def cmd_remove(package_id: str, keep: bool, yes: Optional[str], root: Path) -> i
     folder = root / ".act-local" / "packages" / package_id
     state = _folder_state(folder)
     if entry is None and state != "folder":
+        kept = _fetched_files(root, package_id)
+        if kept:
+            if yes is None:
+                for path in kept:
+                    print(f"would remove .act-local/packages/{path.name}")
+                print(f"remove exactly this: python .act/scripts/packages.py remove {package_id} --yes {package_id}")
+                print("dry run: nothing was deleted")
+                return 0
+            if yes.strip() != package_id:
+                return _print_refused(package_id, [f"`--yes` must carry the package id `{package_id}`, not `{yes}`"])
+            failed = 0
+            for path in kept:
+                try:
+                    os.remove(path)
+                except OSError as error:
+                    failed += 1
+                    print(f"remove: could not remove .act-local/packages/{path.name} ({type(error).__name__})",
+                          file=sys.stderr)
+                    continue
+                print(f"removed .act-local/packages/{path.name}")
+            return 1 if failed else 0
         print(f"remove: `{package_id}` is not in the lock and there is no folder .act-local/packages/{package_id}/",
               file=sys.stderr)
         return 1

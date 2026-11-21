@@ -76,6 +76,10 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   download had finished; both now work.
 - Refreshing a Copilot role file that already has a model line now adds `model-policy: preferred` after
   `models:` when it lists several models, as a fresh insertion already did; an existing `model-policy:` value is kept.
+- `packages.py remove <id>` now also takes the zip and signature that `fetch` kept for an id that is not
+  installed; it shows the files first and deletes them only with `--yes <id>`, instead of exiting 1.
+- `fetch` and `index` report a server answering with a broken HTTP reply (such as `BadStatusLine`) as a normal
+  reason, not a traceback.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is
