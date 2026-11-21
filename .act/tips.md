@@ -9,10 +9,12 @@ what `tips.py`'s parser reads, so keep new entries in the same form.
 `when:` is one of: `always` · `config:<key>=<value>` (a `docs/ai/config.md` row) ·
 `exists:<path>` / `missing:<path>` (repo-root-relative) · `unused:<key>` (never recorded by
 `.act/scripts/usage.py`) · `older:<path>><n>m` (`<path>`'s last commit, or its mtime when it has
-no commit history, is older than `<n>` months). `<path>` may list several candidates separated by
-`|` (`older:package.json|composer.json>6m`): fires once at least one of them exists and every
-existing one is old. A tip whose condition stops matching just drops out of the rotation — nothing
-to clean up, and it comes back on its own if the situation changes again.
+no commit history, is older than `<n>` months) · `update:available` (a newer template state is
+pending; such a tip goes ahead of the rotation, within the `tips` cadence: once a day under
+`occasionally`, once a session under `regularly`). `<path>` may list several candidates separated
+by `|` (`older:package.json|composer.json>6m`): fires once at least one of them exists and every
+existing one is old. A tip whose condition stops matching just drops out of the rotation —
+nothing to clean up, and it comes back on its own if the situation changes again.
 
 ### TIP-review-before-accept
 when: unused:reviewer
@@ -100,3 +102,23 @@ off for this template.
 when: always
 Entry ids such as `T12` can be clickable in Markdown files in VS Code and IntelliJ (link, go to definition,
 hover): run `python .act/scripts/id_links_install.py` once per machine; details in `.act/rules/topics/id-links.md`.
+
+### TIP-write-anytime
+when: always
+You can write or ask at any time, also while the assistant is working — an answer in the meantime
+says it rests on the state before the running workers' results.
+
+### TIP-feedback-general
+when: always
+Feedback to the template author is welcome: `/act-feedback` sends a hand-written note about what
+worked, what got in the way, or what is missing — never anything about the project itself.
+
+### TIP-update-available
+when: update:available
+A newer template state is available: `/act-update` brings it into this project, and only after
+your consent.
+
+### TIP-fresh-session
+when: always
+A fresh session between tasks saves tokens: everything said so far is read again with every step,
+and the board, journal and docs carry the state over.

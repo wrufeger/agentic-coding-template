@@ -94,7 +94,7 @@
   "hooks/checks/recursive_delete.py": "279abd94dee78f973eaddf6788da0714a6b16b53c4e48cf774db01e7f8471b4d",
   "hooks/checks/secret_read.py": "7e4a623a3f371e4bbf3db0ab23a2d1c49f6d90b0365a36fa88ff89c242e77b18",
   "hooks/checks/secret_scan.py": "6b0e3ab1e4e031ca9661542ecf68700820e9f9235c7affc8014b65ac938829e2",
-  "hooks/checks/session.py": "fa9d2f4f152dfc8b0ae979ea7b443a08567a69d4904e57a8028f5b62cb1394ea",
+  "hooks/checks/session.py": "c77f73df8cc5800a68462ed7a92b246e352dc7df1f99fe887cae50695ee37194",
   "hooks/checks/session_bridges.py": "fa4061dd9e5b076815a328aa461a4ff850a41844acfbf4987e0e7951d4a122b2",
   "hooks/checks/session_context.py": "7e25bedb03dcc400a4a7db04198478ad22b8579c916db98533ffb96ec3774d2e",
   "hooks/checks/session_notes.py": "54732da432f67a80ea1740ced347f334531f551dc407f7c54e9c93c7087bc5ff",
@@ -105,7 +105,7 @@
   "hooks/checks/state_files.py": "4071b7342b4c71fd8a6a7ceac9021b025e0288e704e42fc94d396509fec77560",
   "hooks/checks/status_poll.py": "51773b2ad5fbf494369591e357b9dd1643d0b82ef91cac41997527a7ca11e715",
   "hooks/checks/throwaway_place.py": "5a0adc4d3dd2caca387239a0dae62548d09445ab09ffbac0fcd21a04ab4300f8",
-  "hooks/checks/tips.py": "b18b6ce59813d07ee030192ce6927817261fe710a2b20f7d8b07268cf4f3d584",
+  "hooks/checks/tips.py": "995bc9c19a7a5d7800576e3e21f0db76ed5ed904bb956dafdf6771cbfffbb884",
   "hooks/checks/usage.py": "7f8ea8aba46540427290e26ca3e7ca35652b2cd8f08a52e33b33ceafbacb048d",
   "hooks/checks/worker_cap.py": "35d2f87b9ed499cac94611427c408af36d958577296934dcad8cc57cfb9568b7",
   "hooks/checks/worker_docs_ai.py": "bdf4c18ef3e848aa5842f76033b8c292fd0bd819a53c03223da7410dba141743",
@@ -133,7 +133,7 @@
   "package-signers": "a950f0392a020e6c602827d0d72f5e140022ff90e31dda52c7300600af27a778",
   "rules/orchestrator/00-role.md": "baf4cb1f1c78e7b05b642be25eca0479f2bb7e1f26c6fde6c4fad230207ddf04",
   "rules/orchestrator/10-work.md": "dd82b9e2c1b5bea77648b64c7766b8b60d4011bb7aa7e3e25d8f176ce5192ab5",
-  "rules/orchestrator/20-human.md": "f8d5a7b43eb45979b886bd355cc000b4275281625a4e49b9c3023a094c8af69c",
+  "rules/orchestrator/20-human.md": "c04dc8d0300081a7a2408cb06fa3c73a72bea0966aa56c0ba491d0c87e5a043f",
   "rules/orchestrator/30-cost.md": "47484b4a9426b51200565034f903ec4a9ef19565066234d20e1307f64aa41d6a",
   "rules/shared/00-core.md": "5edfe36735c117a3ff2c13569adfbc193b7b5473b6cf9f2b3e4c7765e8679ffe",
   "rules/shared/10-safety.md": "55e88858d886db66e1abc427de7af631b4b9e4cda3ff7d7586469a6e99b83c16",
@@ -263,5 +263,5 @@
   "skills/act-version/SKILL.md": "647924c0d24708b023ac1478f8ca6ff7f3f687572e2ca15a775b66750080dd51",
   "skills/act/SKILL.md": "3bc45ccfbd3ac209d82dca6b3594db63068b984a79b2f3e636b56ad27a3e28d8",
   "tiers.json": "3e6c0b507c1f53bd031cf573e8e04518a0094d61bafb51282dbf87eacc25bdf3",
-  "tips.md": "c9e90e37d734133cb88f72a10c1ae72353c9536c711b13c37eee384be1f4394a"
+  "tips.md": "a2ef44b9af362fe2e2f1c5307a8297be87918f6ac51a8ac6dab948941860064e"
 }

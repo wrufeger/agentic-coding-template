@@ -22,12 +22,13 @@
 #               rotation (the eligible tip not shown longest, never picked at random) among the
 #               tips whose `when:` condition currently holds.
 #
-#          Both are silenced together by `output-depth: sparse` and by any open point at session
-#          start — inbox entries waiting (session.py's own `waiting`, the single inbox at
-#          docs/ai/inbox/, all kinds) or a feedback reminder
-#          due (is_feedback_due() below, called by session.py separately so it can also fold into
-#          its own status line) — and never shown twice in the same session (session_id, or twice
-#          in the same calendar day for `tips: occasionally`).
+#          Both are silenced together by work that waits for the assistant at session start — inbox
+#          entries answered or marked `triage: open` (session.py's own `waiting`, the single inbox at
+#          docs/ai/inbox/), a feedback reminder due (is_feedback_due() below, called by session.py
+#          separately so it can also fold into its own status line) or ideas to work through. Neither
+#          `output-depth: sparse` (that level shapes the chat, not what the hook says) nor an open todo
+#          or question for the human silences them. Never shown twice in the same session (session_id,
+#          or twice in the same calendar day for `tips: occasionally`).
 #
 # Usage: not run directly — session.py calls session_line() from refresh_session() (SessionStart)
 #        and is_feedback_due() to decide the feedback_due status-line flag; dispatch.py's
@@ -61,6 +62,10 @@
 #                              (`older:package.json|composer.json>6m`): fires once at least one
 #                              exists and every existing one is old — a fresh package.json next to
 #                              a stale composer.json must not fire.
+#   update:available          actlib.pending_update(root) reports a newer template state. Such a tip is
+#                              due ahead of the rotation, within the `tips` cadence all the same
+#                              (once a day under `occasionally`, once a session under `regularly`);
+#                              `tips: never` silences it too.
 #
 # docs/ai/local/reminders.md line grammar (see _read_reminders; documented for humans in
 # .act/skeleton/local/README.md):
@@ -313,6 +318,12 @@ def _eval_when(root: Path, config: dict, condition: str) -> bool:
             return usage.is_unused(root, key)
         except Exception:
             return False
+    if condition == "update:available":
+        try:
+            pending = actlib.pending_update(root)
+        except Exception:
+            return False
+        return bool(pending and pending.get("pending"))
     older = _OLDER_RE.match(condition)
     if older:
         months = int(older.group(2))
@@ -345,17 +356,21 @@ def _due_tip(root: Path, config: dict, state: dict) -> Optional[dict]:
         return None
     history = state.get("history", {})
     eligible = []
+    urgent = []
     for tip in _load_tips(root):
         try:
             ok = _eval_when(root, config, tip["when"])
         except Exception:
             ok = False
         if ok:
-            eligible.append((history.get(tip["id"], ""), tip))
-    if not eligible:
+            pair = (history.get(tip["id"], ""), tip)
+            (urgent if tip["when"].strip() == "update:available" else eligible).append(pair)
+    # a tip on a pending update goes ahead of the rotation (within the cadence, see above)
+    chosen = urgent or eligible
+    if not chosen:
         return None
-    eligible.sort(key=lambda pair: pair[0])
-    return eligible[0][1]
+    chosen.sort(key=lambda pair: pair[0])
+    return chosen[0][1]
 
 
 # ---------------------------------------------------------------------------
@@ -496,8 +511,7 @@ def session_line(payload: dict, root: Path, config: dict, waiting: int) -> Optio
     sess["date"] = today
     already_shown = bool(sess.get("tip_shown"))
 
-    depth = str(config.get("output-depth", "normal")).strip().lower()
-    silence = depth == "sparse" or waiting > 0
+    silence = waiting > 0  # `output-depth` shapes the chat only: sparse silences neither tips nor reminders
 
     line: Optional[str] = None
     changed = bool(session_id)  # sess["date"]/"started_at" above already touched the state
@@ -537,9 +551,6 @@ def session_line(payload: dict, root: Path, config: dict, waiting: int) -> Optio
 def _prompt_reminder_line(root: Path, config: dict, payload: dict) -> Optional[str]:
     session_id = payload.get("session_id")
     if not isinstance(session_id, str) or not session_id:
-        return None
-    depth = str(config.get("output-depth", "normal")).strip().lower()
-    if depth == "sparse":
         return None
     reminders = [r for r in _read_reminders(root) if r["cadence_kind"] in ("minutes", "hours")]
     if not reminders:

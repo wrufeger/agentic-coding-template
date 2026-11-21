@@ -866,9 +866,10 @@ def _collect_session(payload: dict, state: dict, rules_text: dict) -> bool:
         print(note)
     # At most one line, last of all — either a due reminder from docs/ai/local/reminders.md
     # (user's own, always checked first) or a rotated .act/tips.md tip (config.md § Tips),
-    # silenced by `output-depth: sparse` and by any open point above (inbox/feedback
-    # due) inside tips.session_line() itself. Same lazy-import-and-swallow pattern as every other
-    # sub-step here.
+    # silenced inside tips.session_line() itself by work waiting for the assistant (inbox entries
+    # answered or `triage: open`, feedback due, ideas); `output-depth: sparse` and open todos or
+    # questions for the human do not. Same lazy-import-and-swallow pattern as every other sub-step
+    # here.
     try:
         from . import tips as _tips
         tip_line = _tips.session_line(payload, root, config,

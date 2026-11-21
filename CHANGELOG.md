@@ -44,6 +44,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
 - Nuxt 5 rules: dev nonce CSP, keep-alive hang workaround, server `navigateTo` query encoding, per-nightly
   warning list, icon workaround dropped; Nuxt rules: `app:mounted` timing, typecheck in own `buildDir`; MariaDB
   versioned cascade rule.
+- Tip condition `update:available` puts a tip ahead of the rotation when a template update is pending; new
+  tips: write anytime, `/act-feedback`, `/act-update`, fresh session between tasks.
 
 ### Changed
 - An inbox question marks the recommended option `(Recommended)` / `(Empfehlung)` right after the letter, not
@@ -53,6 +55,9 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   orchestrator's calls and only when they equal what the active packages give.
 - `R-safe-foreign-text`: the `install.md` of a package you said yes to counts as your instruction for that
   installation only.
+- After starting workers, the closing line says only how many run; it no longer invites talking meanwhile.
+- `output-depth: sparse` no longer silences tips and reminders (session start and the minute/hour reminders);
+  a `[act] tip:` line goes unchanged into the first answer at every depth.
 
 ### Fixed
 - Scaffold `config.md`: the `security-check` row now says that a background dependency scan that never finishes is
