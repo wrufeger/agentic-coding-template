@@ -98,6 +98,8 @@ Packages: rules, skills, roles and checks you add to a project after a plan and 
   Write tool.
 - The incident log appends an event only while it holds its append lock (waiting up to 2 s, a hook less):
   parallel writers no longer mix or lose lines; an event whose lock stays taken longer is dropped.
+- A `>` or `->` in quoted text between easy `$(…)` (`echo "$(awk '{print 1}' x) -> $(date)"`,
+  `sed -i 's|a|echo x > $(s=1)|'`) no longer blocks the command; only the substitutions are read.
 
 ### Security
 - A package zip with `..`, a link, a drive letter, a device name or another unsafe entry is refused before anything is

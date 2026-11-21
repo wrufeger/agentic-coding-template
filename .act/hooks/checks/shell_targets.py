@@ -130,9 +130,15 @@
 #     run opens no span (and therefore cannot swallow a redirection after the string). An unquoted
 #     `$(...)` is still handled by the operator mechanism (`$` a word character, the parentheses
 #     operators) and a word that contains `$(` after dequoting is scanned again as text, so a `$(`
-#     inside single quotes outside double quotes is still recursed into as if bash ran it (a false
-#     block, never a miss); a backtick in single quotes of that word is blanked first, so it cannot
-#     break the re-reading (_without_quoted_backticks). The body of an `$((...))` is scanned as if it
+#     inside single quotes outside double quotes is still recursed into as if bash ran it; a backtick
+#     in single quotes of that word is blanked first, so it cannot break the re-reading
+#     (_without_quoted_backticks). When every `$(` of the word starts a substitution that is easy to
+#     delimit (_QUOTED_SUBSTITUTION_RE: no double quote, backslash, backtick, `$` or parenthesis
+#     inside, except that a single-quoted span is skipped whole), the word holds no backtick and no
+#     `$((`, and the statement names no ssh, only the text inside those substitutions is read as
+#     command text and the text between them is not (_rescan_word, _quoted_substitutions): a `>` or
+#     `->` there is no redirection. Any other word is read whole (a false block, never a miss).
+#     The body of an `$((...))` is scanned as if it
 #     were a command (over-scanning its arithmetic, the safe side: a `>` in it counts as a
 #     redirection), but the expansion itself is no target and no command text (_rescan_word). A word
 #     of an `ssh [options]
@@ -3696,16 +3702,27 @@ def _escaped_substitutions_only(word: str) -> bool:
     return True
 
 
-def _rescan_word(word: str, bases: _Bases, git_writes: frozenset, depth: int) -> list[_Target]:
+def _rescan_word(word: str, bases: _Bases, git_writes: frozenset, depth: int,
+                 substitutions_only: bool = True) -> list[_Target]:
     """Read a word that holds `$(` as command text once more (a command substitution runs commands).
     An arithmetic expansion `$((...))` in it is not a command: its body is read as command text instead
     (a `$(...)` inside it still runs, `$(( a[$(cmd > f)] ))`; a `>` in it counts as a redirection, the
     safe side), and what is left of the word only when that still holds `$(`. Without this the
     expansion itself, `$((n+3))`, came back as a write target of its own. A backtick in single quotes of the
-    word is blanked first (_without_quoted_backticks)."""
+    word is blanked first (_without_quoted_backticks).
+    Otherwise (substitutions_only), when every `$(` of the word starts a substitution that is easy to
+    delimit (_quoted_substitutions) and the word holds no backtick, only the text inside those
+    substitutions is read as command text: the text between them is a string the shell does not run, so a
+    `>` or `->` in it is no redirection (`"$(a) -> $(b)"`). Any other word is read whole, as before."""
     word = _without_quoted_backticks(word)
     parts = _arithmetic_parts(word)
     if parts is None:
+        inner = _quoted_substitutions(word) if substitutions_only and "`" not in word else None
+        if inner is not None:
+            found_inner: list[_Target] = []
+            for text in inner:
+                found_inner.extend(_scan_command(text, bases, git_writes, depth + 1))
+            return found_inner
         return _scan_command(word, bases, git_writes, depth + 1)
     bodies, rest = parts
     found: list[_Target] = []
@@ -3726,7 +3743,13 @@ _SIMPLE_SUBSTITUTION_RE = re.compile(r"\$\(([^()'\"`\\$]*)\)")
 _SUBSTITUTION_HAZARD_RE = re.compile(r"#|<<|[\r\n]|\bcase\b")
 
 
-def _simple_substitutions(word: str) -> Optional[list[str]]:
+# The same, plus single-quoted spans (`$(awk '{print 1}' x)`): a quote is skipped to its partner, so a `)`
+# in it does not end the substitution. Only for the re-reading of a word that is not remote ssh text
+# (_quoted_substitutions); the ssh reading keeps _SIMPLE_SUBSTITUTION_RE.
+_QUOTED_SUBSTITUTION_RE = re.compile(r"\$\(((?:[^()'\"`\\$]|'[^']*')*)\)")
+
+
+def _simple_substitutions(word: str, pattern: "re.Pattern[str]" = _SIMPLE_SUBSTITUTION_RE) -> Optional[list[str]]:
     """The text inside every `$(...)` of `word`, or None when one of them is not easy to delimit — or when
     the word is not what it seems once they are cut out: a `)` left over that closes nothing in the rest
     of the word means a substitution ended later than its first `)` (`$(case a in a) cmd;; esac)`), and a
@@ -3742,7 +3765,7 @@ def _simple_substitutions(word: str) -> Optional[list[str]]:
             outside.append(word[index:])
             break
         outside.append(word[index:at])
-        match = _SIMPLE_SUBSTITUTION_RE.match(word, at)
+        match = pattern.match(word, at)
         if match is None or _SUBSTITUTION_HAZARD_RE.search(match.group(1)):
             return None
         inner.append(match.group(1))
@@ -3753,6 +3776,12 @@ def _simple_substitutions(word: str) -> Optional[list[str]]:
         if depth < 0:
             return None
     return inner
+
+
+def _quoted_substitutions(word: str) -> Optional[list[str]]:
+    """What _simple_substitutions answers for `word` with single-quoted spans allowed inside a `$(...)`
+    (_QUOTED_SUBSTITUTION_RE); None when a `$(` is not easy to delimit, or the word has none."""
+    return _simple_substitutions(word, _QUOTED_SUBSTITUTION_RE) if "$(" in word else None
 
 
 # Set while _bash_write_targets / _bash_inline_code_targets walk a command a second time with the
@@ -4224,6 +4253,7 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
     found: list[_Target] = []
     written = _WrittenPlaces()  # the places `found` names so far, asked before a `cd` counts as certain
     creation_stream_ok = _creation_stream_ok(tokens)
+    ssh_named: Optional[bool] = None  # whether a word of `tokens` names ssh, see the re-reading of `$(` words
     bases = start_bases
     list_start = start_bases
     after_list = start_bases
@@ -4303,9 +4333,14 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
         if words or redirect_targets or other_redirect_words:
             found.extend(_pairs(redirect_targets, bases))
             remote_start = _ssh_remote_start(words) if _SSH_REMOTE_IS_REMOTE else None
+            # A command that names ssh anywhere keeps the whole-word reading of every word (the text of an ssh call
+            # may run on this machine through an option, a shadowed `ssh` or a host that is this machine, and an
+            # unquoted `$(...)` in the call splits it into statements): the substitutions-only reading is not for it.
             for position, word in enumerate(words + redirect_targets):
                 if "$(" not in word:
                     continue
+                if ssh_named is None:  # (looked for once per token stream, and only when a `$(` word turns up)
+                    ssh_named = any(not is_op and _SSH_WORD_RE.search(str(part)) is not None for part, is_op in tokens)
                 in_remote_text = remote_start is not None and remote_start <= position < len(words)
                 if not in_remote_text and (_substitutions_are_quoted_text(word)
                                             or (depth == 0 and _escaped_substitutions_only(word))):
@@ -4326,7 +4361,8 @@ def _scan_tokens(tokens: list[_Token], start_bases: _Bases, git_writes: frozense
                         # expansion, never the text around it: that text is the remote one. Any other
                         # word is read whole below, and nothing of it is taken out.
                         _REMOTE_SINK.extend(_scan_command(word, bases, git_writes, depth + 1))
-                found.extend(_rescan_word(word, bases, git_writes, depth))
+                found.extend(_rescan_word(word, bases, git_writes, depth,
+                                          substitutions_only=not in_remote_text and not ssh_named))
             local_text = _ssh_local_effects(words)[1]
             if local_text is not None:
                 # `ssh localhost 'echo x > f'`: the text runs on this machine.
